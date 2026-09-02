@@ -524,11 +524,38 @@ _make_agent_skill() {
   mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
   printf -- '---\nname: paired\n---\nbody\n' \
     > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
-  printf -- '---\nname: paired\n---\nbody\n' \
+  printf -- '---\nname: paired\nagent: paired\n---\nbody\n' \
     > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
 
   _run_validate --quiet
   [[ "$output" != *"never reaches Pi"* ]]
+}
+
+@test "a skill whose agent field names another agent fails" {
+  # The filename check this replaced passed on exactly this: the directory is
+  # there, so the agent reads as covered, while ai/skills/steps.sh splices the
+  # other agent's protocol in and this one reaches Pi nowhere.
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+  printf -- '---\nname: paired\nagent: elsewhere\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"declares agent 'elsewhere'"* ]]
+}
+
+@test "a skill directory that declares no agent at all fails" {
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"declares agent '<none>'"* ]]
 }
 
 @test "a programmatic agent needs no skill" {

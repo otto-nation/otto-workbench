@@ -49,7 +49,14 @@ KNOWN_HARNESSES=(claude pi)
 
 # Tool names that exist only in Claude Code. Word-boundary matched, so prose
 # mentioning "the task" or "an agent" is not a hit.
-CLAUDE_ONLY_TOOLS=(TodoWrite NotebookEdit ExitPlanMode EnterPlanMode)
+#
+# Not exhaustive, and cannot be: Claude Code's tool surface is not published
+# anywhere this repo can read, and it grows between releases. The list is the
+# set of names rule text has actually reached for, so maintaining it means
+# adding a name the moment a rule names it — not auditing Claude Code. A rule
+# that names a tool missing from here passes and reaches Pi saying it, which is
+# how `EnterWorktree` sat in git-operations.md for a whole phase.
+CLAUDE_ONLY_TOOLS=(TodoWrite NotebookEdit ExitPlanMode EnterPlanMode EnterWorktree ExitWorktree)
 
 # _harness_known NAME — whether NAME is a harness this workbench installs into.
 _harness_known() {
@@ -151,11 +158,18 @@ done
 echo
 if (( FOUND == 0 )); then
   echo -e "  ${DIM}no rule files found${NC}"
-  exit 0
-elif (( ERRORS == 0 )); then
-  success "$CHECKS checks passed ($FOUND rules)"
-  exit 0
-else
+fi
+
+# ERRORS is consulted before FOUND, not after: every _fail today sits inside the
+# per-file loop, so FOUND == 0 does imply a clean run — but only today. The first
+# check added outside that loop would be swallowed by an early exit here, which
+# is exactly what happened in validate-skills before this shape replaced it.
+if (( ERRORS > 0 )); then
   err "$ERRORS of $CHECKS checks failed"
   exit 1
+elif (( FOUND == 0 )); then
+  exit 0
+else
+  success "$CHECKS checks passed ($FOUND rules)"
+  exit 0
 fi

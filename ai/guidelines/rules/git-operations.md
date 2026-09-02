@@ -9,7 +9,7 @@ Never mention Claude Code, AI assistance, or co-authorship in commit messages, P
 - Never edit or write files directly on `main`, `master`, or any shared/protected branch — always create a worktree first
 - For implementation work on any branch, prefer using a worktree to isolate changes from the working tree — this prevents accidental modifications to uncommitted work and keeps the primary checkout clean
 - Read-only operations (searching, reading files, exploring code) do not require a worktree
-- Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never use the built-in `EnterWorktree` tool or the `superpowers:using-git-worktrees` skill
+- Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never a worktree tool built into the harness you are running in, and never the `superpowers:using-git-worktrees` skill. Only `wt` applies this machine's naming rules and pre-switch hooks; anything else cuts a worktree somewhere the rest of these rules do not describe
 
 ## Worktree Naming
 

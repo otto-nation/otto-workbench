@@ -252,6 +252,12 @@ done
 # protocol. Claude reads the agent file either way, which is exactly why the gap
 # is invisible without this check — debugger, incident and migrate each had an
 # agent file and no skill for a whole phase and nothing said so.
+#
+# The skill's `agent:` field is what carries the protocol, not the directory
+# name: ai/skills/steps.sh splices in the agent the field names. A matching
+# directory whose field points elsewhere installs that other agent's protocol
+# twice under two names and leaves this one reaching Pi nowhere — which a
+# filename check reports as covered.
 AGENTS_DIR="$WORKBENCH_DIR/ai/claude/agents"
 for agent_file in "$AGENTS_DIR"/*.md; do
   [[ -f "$agent_file" ]] || continue
@@ -259,10 +265,16 @@ for agent_file in "$AGENTS_DIR"/*.md; do
   if _agent_is_programmatic "$agent_name"; then
     continue
   fi
-  if [[ -f "$WORKBENCH_DIR/ai/skills/$agent_name/SKILL.md" ]]; then
+  agent_skill="$WORKBENCH_DIR/ai/skills/$agent_name/SKILL.md"
+  if [[ ! -f "$agent_skill" ]]; then
+    _fail "agents/$agent_name: has no ai/skills/$agent_name/SKILL.md, so its protocol never reaches Pi — add an agent-backed skill stub or list it in PROGRAMMATIC_AGENTS"
+    continue
+  fi
+  declared_agent="$(skill_agent "$agent_skill")"
+  if [[ "$declared_agent" == "$agent_name" ]]; then
     _pass "agents/$agent_name: reaches Pi as a skill"
   else
-    _fail "agents/$agent_name: has no ai/skills/$agent_name/SKILL.md, so its protocol never reaches Pi — add an agent-backed skill stub or list it in PROGRAMMATIC_AGENTS"
+    _fail "agents/$agent_name: ai/skills/$agent_name/SKILL.md declares agent '${declared_agent:-<none>}', so this agent's protocol never reaches Pi — set agent: $agent_name"
   fi
 done
 

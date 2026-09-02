@@ -77,13 +77,37 @@ _normalize_path() {
   printf '/%s' "${stack[@]}"
 }
 
-# _skill_symlink_owned PATH — true when PATH is a symlink whose target
-# resolves under a layer root this step installs from (SKILLS_SRC_DIR or
-# USER_SKILLS_DIR).
+# _skill_symlink_owned PATH — true when PATH is a symlink pointing at a skills
+# directory inside the workbench checkout or the user override root.
+#
+# install_symlink is the only thing that writes a symlink into a discovery
+# root, and every path it writes is a skills directory under the workbench
+# (rewritten through WORKBENCH_STABLE_DIR) or under the override root — so that
+# shape, not the two layer directories resolve_layers happens to read today, is
+# what ownership means. Testing the layer directories instead orphans every
+# symlink the workbench wrote from a source path that has since moved: the
+# links left behind by ai/claude/skills point inside the checkout and were
+# written by this step, yet would read as the operator's and be refused on
+# every sync forever. Any later move of the source tree lands in the same
+# place, so the test names the shape rather than the addresses.
+#
+# The skills/ component is what keeps that generality from swallowing the
+# checkout whole: a hand-placed link to a file elsewhere in the repo — a note,
+# a doc — is not something this step ever wrote, and is refused alongside a
+# link pointing outside the workbench entirely.
 _skill_symlink_owned() {
-  local target
+  local target root
   target="$(_skill_layer_target "$1")"
-  [[ "$target" == "$SKILLS_SRC_DIR"/* || "$target" == "$USER_SKILLS_DIR"/* ]]
+  case "$target" in
+    */skills/*) ;;
+    *) return 1 ;;
+  esac
+  for root in "$WORKBENCH_STABLE_DIR" "$WORKBENCH_DIR" "$USER_AI_DIR"; do
+    if [[ -n "$root" && "$target" == "$root"/* ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # _clear_skill_entry PATH — empties a discovery-root slot the workbench owns.
@@ -98,12 +122,12 @@ _skill_symlink_owned() {
 # whose only action either way is to skip the entry (as _prune_skills does)
 # may treat them alike.
 #
-# A symlink is the workbench's only when its target resolves under one of the
-# two layer roots resolve_layers reads from — install_symlink is the only
-# thing that writes a symlink into a discovery root, but a hand-placed one
-# pointing anywhere else is the operator's, not ours, and gets the same
-# refusal a marker-less directory does. A real directory is the workbench's
-# only when it carries SKILL_INSTALL_MARKER, which _install_agent_skill drops
+# A symlink is the workbench's only when it points at a skills directory inside
+# the workbench checkout or the user override root (see _skill_symlink_owned) —
+# a hand-placed one pointing anywhere else is the operator's, not ours, and gets
+# the same refusal a marker-less directory does. A real directory is the
+# workbench's only when it carries SKILL_INSTALL_MARKER, which
+# _install_agent_skill drops
 # in every directory it materialises — both roots are documented homes for
 # hand-written skills, and silently deleting one of those is not this step's
 # call to make. An empty slot is already in the shape the caller wants, so it

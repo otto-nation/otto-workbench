@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 
 from pr_domains import VERDICT_PROSE_PREFIX_RE
-from review_grammar import finding_tag, posted_finding_tag
+from review_grammar import finding_tag, posted_finding_tag, sid_marker
 from review_sections import ReviewSections, SectionConfig
 from review_types import SEVERITIES, Finding, severity_by_key
 
@@ -201,8 +201,18 @@ def renumber_for_posting(
 # ── Comment formatting ──────────────────────────────────────────────────────
 
 def format_inline_comment(f: Finding) -> dict:
-    """Format a finding as a GitHub inline review comment."""
-    body = f"{posted_finding_tag(f.posted_id, f.severity)} {f.body}"
+    """Format a finding as a GitHub inline review comment.
+
+    The comment carries the finding's stable ID in an HTML comment, invisible to
+    the reviewer reading the thread and the only handle a later round has on
+    which finding the thread belongs to: the `posted_id` in the tag is assigned
+    by diff position, so the same finding wears a different number in the review
+    file the next round reads.
+    """
+    head = posted_finding_tag(f.posted_id, f.severity)
+    if f.stable_id:
+        head += sid_marker(f.stable_id)
+    body = f"{head} {f.body}"
 
     comment: dict = {
         "path": f.full_path,

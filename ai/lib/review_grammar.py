@@ -112,8 +112,12 @@ def has_sid_marker(text: str) -> bool:
 def strip_sid_markers(text: str) -> str:
     """`text` with every stable-ID marker gone, the space before it included.
 
-    The markers are an internal handle on a finding's identity, so a document
-    on its way to a reader loses them.
+    The markers are a handle on a finding's identity rather than part of what it
+    says, so a document on its way to a reader loses them. The one exception is
+    a posted inline comment, which keeps its marker so a later round can find
+    the thread again — GitHub renders an HTML comment as nothing, and the reader
+    sees the same words either way. `review_dedup` strips it back off before
+    scoring, since the fresh finding it is compared against carries none.
     """
     return _SID_SPACED_RE.sub("", text)
 
@@ -325,6 +329,10 @@ def parse_finding_line(stripped: str) -> Finding | None:
     prior-findings ledger writes finding lines under its own heading. A caller
     after the findings of a whole review asks `ReviewDocument.findings`, which
     is the reading that knows which headings declare findings.
+
+    The `stable_id` is set here rather than derived from the finding returned,
+    because `finding_spans` replaces `body` with the whole multi-line span and
+    the identity hashes the declaration line's own wording.
     """
     id_match = FINDING_ID_RE.match(stripped)
     if not id_match:
@@ -336,10 +344,12 @@ def parse_finding_line(stripped: str) -> Finding | None:
     location = finding_location(after_id)
     body = _extract_body_text(stripped) if location.named else after_id.strip()
     declined = _match_decline(body, stripped)
+    identity = FindingIdentity.of(stripped)
     return Finding(
         id=f"{sev}{seq}", severity=sev, seq=seq,
         path=location.path, line=location.line, end_line=location.end_line,
         body=body,
+        stable_id=identity.stable_id if identity else "",
         checked=(checkbox is not None and checkbox.lower() == "x"),
         declined=declined is not None,
         decline_reason=(declined.group(1) or "").strip() if declined else "",

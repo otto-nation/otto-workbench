@@ -19,12 +19,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 . "$WORKBENCH_DIR/lib/ui.sh"
 
-# Source all tool step files — any subdirectory containing steps.sh is a tool
-for _dir in "$SCRIPT_DIR"/*/; do
-  # shellcheck source=/dev/null
-  if [[ -f "${_dir}steps.sh" ]]; then . "${_dir}steps.sh"; fi
-done
-unset _dir
+# The AI dispatcher sources every tool's steps.sh — any subdirectory containing
+# one is a tool — and owns ai_tool_order, the constraint on the order those
+# tools' steps run in. Sourced rather than re-globbed here so setup and sync
+# read the same list of tools and the same ordering rule.
+# shellcheck source=./steps.sh
+. "$SCRIPT_DIR/steps.sh"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -118,11 +118,15 @@ unset _tool_dir
 
 # Framework contract: missing register_<tool>_steps is a hard error — the tool's
 # steps.sh is broken and cannot run. Individual step failures are soft (warn + continue).
-for _tool in "${SELECTED_TOOLS[@]}"; do
+#
+# run_steps runs in registration order, so registration is where the ordering
+# constraint is applied — the saved selection is the order the operator typed at
+# the menu and says nothing about what depends on what.
+while IFS= read -r _tool; do
   declare -f "register_${_tool}_steps" > /dev/null \
     || { err "register_${_tool}_steps is not defined — check ${_tool}/steps.sh"; exit 1; }
   "register_${_tool}_steps"
-done
+done < <(ai_tool_order "${SELECTED_TOOLS[@]}")
 
 run_steps
 

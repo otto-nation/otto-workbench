@@ -67,11 +67,56 @@ _run_step() {
 
 @test "a machine-local rule reaches the context file" {
   # The case that reading the repo sources instead would silently drop: a
-  # *.local.md exists nowhere but the installed directory.
+  # *.local.md exists nowhere but the installed directory. The synced rule
+  # beside it is what makes this a synced machine rather than the
+  # never-synced one the case below covers.
+  _rule general.md "" "GENERAL RULE BODY"
   _rule testing.local.md "" "RUN PYTEST BARE"
 
   _run_step
   grep -q "RUN PYTEST BARE" "$HOME/.pi/agent/AGENTS.md"
+}
+
+@test "an empty paths list is not a scope" {
+  # frontmatter_field keeps an inline list's brackets, so `paths: []` reads
+  # back as the non-empty string "[]" — path-scoped, on a rule scoped to
+  # nothing.
+  _rule general.md 'paths: []' "GENERAL RULE BODY"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+}
+
+@test "a dangling rule symlink is skipped rather than read" {
+  # frontmatter_field answers empty for a path that is not there, so a
+  # dangling link passes the reaches-Pi predicate and then kills awk — taking
+  # the whole sync down before sync_claude, the only thing that prunes such a
+  # link, has run.
+  _rule general.md "" "GENERAL RULE BODY"
+  _rule issue-tracker.md "" "TRACKER RULE BODY"
+  echo "gone" > "$TMPDIR/deleted.md"
+  ln -s "$TMPDIR/deleted.md" "$RULES/dangling.md"
+  rm "$TMPDIR/deleted.md"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+  grep -q "TRACKER RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+  [ ! -e "$HOME/.pi/agent/AGENTS.md.tmp" ]
+}
+
+@test "a rules directory holding only local rules writes nothing" {
+  # claude-rules add does its own mkdir -p, so a machine that added a local
+  # rule before ever syncing has a rules directory holding one file. Writing
+  # the context file there produces a preamble plus one rule and a success
+  # line that reads as complete.
+  _rule go.local.md "" "GO LOCAL BODY"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.pi/agent/AGENTS.md" ]
+  [[ "$output" == *"machine-local"* ]]
 }
 
 @test "frontmatter is stripped from the concatenated body" {

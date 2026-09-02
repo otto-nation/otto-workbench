@@ -12,6 +12,7 @@ setup() {
   TMPDIR="$(mktemp -d)"
   STUBS="$TMPDIR/stubs"
   mkdir -p "$STUBS"
+  mkdir -p "$TMPDIR/home"
 
   # Exported, because the stub and the script it prints for bash to run are
   # separate processes that read them from the environment.
@@ -37,24 +38,41 @@ teardown() {
 # Runs the step against a PATH holding only the stubs and the base system, so a
 # pi or curl the developer happens to have is never reached. PATH is narrowed
 # after the libs load, since output.sh needs a modern bash to source at all.
+#
+# HOME is redirected before the libs load: PI_NATIVE_BIN is resolved from it in
+# lib/constants.sh at source time, and it is now the guard the step reads.
 _run_step() {
   bash -c '
+    HOME="$3"
     . "$2/lib/ui.sh"
     . "$2/ai/pi/steps.sh"
     PATH="$1"
     PI_INSTALL_URL="https://example.invalid/install.sh"
     step_install_pi
-  ' _ "${PATH_OVERRIDE:-$STUBS:/usr/bin:/bin}" "$REPO_ROOT"
+  ' _ "${PATH_OVERRIDE:-$STUBS:/usr/bin:/bin}" "$REPO_ROOT" "$TMPDIR/home"
 }
 
-@test "a machine that already has pi installs nothing" {
-  printf '#!/bin/sh\nexit 0\n' > "$STUBS/pi"
-  chmod +x "$STUBS/pi"
+@test "a machine holding the managed pi installs nothing" {
+  mkdir -p "$TMPDIR/home/.local/bin"
+  printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/home/.local/bin/pi"
+  chmod +x "$TMPDIR/home/.local/bin/pi"
 
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" == *"Pi already installed"* ]]
   [ ! -e "$INSTALLER_RAN" ]
+}
+
+@test "a pi on PATH that is not the managed one does not suppress the install" {
+  # The Homebrew/npm-global shadow. `command -v pi` answers it just as readily
+  # as the installer's launcher, which is how #1094's install silently never
+  # took on a machine that already had one.
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/pi"
+  chmod +x "$STUBS/pi"
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ -f "$INSTALLER_RAN" ]
 }
 
 @test "a machine without pi runs the installer" {

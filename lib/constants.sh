@@ -188,6 +188,11 @@ PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
 # writable PATH directory it recognises — ~/.local/bin here, which the workbench
 # already puts on PATH.
 PI_INSTALL_URL="https://pi.dev/install.sh"
+# The launcher that installer manages. step_install_pi tests this path by name
+# rather than asking `command -v pi`, which an npm-global copy under Homebrew's
+# node answers just as readily — and such a copy cannot be replaced by
+# `pi update`, which is the whole reason the vendor installer is used here.
+PI_NATIVE_BIN="$HOME/.local/bin/pi"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"

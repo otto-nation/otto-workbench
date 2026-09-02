@@ -1,12 +1,16 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from review_grammar import (  # noqa: E402
-    SID_MARKER_RE, FindingIdentity, has_sid_marker, sid_marker,
+    BODY_FINDING_RE, BOLD_FINDING_ID_RE, SID_MARKER_RE, FindingIdentity,
+    finding_tag, has_sid_marker, posted_finding_tag, sid_marker,
     strip_line_suffix, strip_sid_markers,
 )
+from review_types import SEVERITIES  # noqa: E402
 
 DESC = "missing error check"
 
@@ -206,3 +210,36 @@ class TestSidMarkerIsWrittenAndReadTheSameWay:
         )
         assert ident.path == "handler.go"
         assert ident.line == 42
+
+
+class TestThePostedSpellingIsWrittenAndReadTheSameWay:
+    """A finding wears two tags, and both readers here accept both.
+
+    The review file writes `**[M1]**` and a posted comment writes
+    `**[M1] [must-fix]**`. Only the first had an owner: the second was spelled
+    twice in `review_format` and read by nobody, so every reader below returned
+    nothing on a posted body and the thread-state annotation never fired.
+    """
+
+    @pytest.mark.parametrize("severity", [s.key for s in SEVERITIES])
+    def test_every_severitys_posted_tag_yields_its_id_back(self, severity):
+        tag = posted_finding_tag(f"{severity}1", severity)
+        assert BOLD_FINDING_ID_RE.search(tag).group(1) == f"{severity}1"
+
+    def test_the_review_file_tag_still_yields_its_id_back(self):
+        assert BOLD_FINDING_ID_RE.search(finding_tag("M1")).group(1) == "M1"
+
+    def test_a_posted_body_line_reads_its_path_and_body(self):
+        line = f"- {posted_finding_tag('M1', 'M')} `ai/lib/x.py:12` — {DESC}"
+        m = BODY_FINDING_RE.search(line)
+        assert strip_line_suffix(m.group(1) or m.group(2)) == "ai/lib/x.py"
+        assert m.group(3) == DESC
+
+    def test_a_review_file_body_line_still_reads(self):
+        line = f"- {finding_tag('M1')} `ai/lib/x.py:12` — {DESC}"
+        m = BODY_FINDING_RE.search(line)
+        assert strip_line_suffix(m.group(1) or m.group(2)) == "ai/lib/x.py"
+        assert m.group(3) == DESC
+
+    def test_a_bracketed_token_that_is_not_a_severity_label_is_not_the_tag(self):
+        assert BOLD_FINDING_ID_RE.search("**[M1] [whatever]**") is None

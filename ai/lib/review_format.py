@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 
 from pr_domains import VERDICT_PROSE_PREFIX_RE
+from review_grammar import finding_tag, posted_finding_tag
 from review_sections import ReviewSections, SectionConfig
 from review_types import SEVERITIES, Finding, severity_by_key
 
@@ -201,8 +202,7 @@ def renumber_for_posting(
 
 def format_inline_comment(f: Finding) -> dict:
     """Format a finding as a GitHub inline review comment."""
-    label = f"**[{f.posted_id}] [{severity_by_key(f.severity).label}]**"
-    body = f"{label} {f.body}"
+    body = f"{posted_finding_tag(f.posted_id, f.severity)} {f.body}"
 
     comment: dict = {
         "path": f.full_path,
@@ -233,9 +233,9 @@ def _format_path_ref(f: Finding) -> str:
 def _format_finding_line(f: Finding, include_label: bool = True) -> str:
     """Format a single body finding as a markdown list item."""
     if include_label:
-        tag = f"**[{f.posted_id}] [{severity_by_key(f.severity).label}]**"
+        tag = posted_finding_tag(f.posted_id, f.severity)
     else:
-        tag = f"**[{f.posted_id}]**"
+        tag = finding_tag(f.posted_id)
     if f.path:
         return f"- {tag} {_format_path_ref(f)} — {f.body}"
     return f"- {tag} {f.body}"

@@ -31,7 +31,7 @@ Only add a rule when Claude gets something wrong without it. For each existing r
 - One actionable statement per bullet — concrete enough to execute immediately
 - Include rationale ("why") so Claude can generalize to edge cases
 - Keep each file under 200 lines — long files cause rules to be ignored
-- Use path-scoped frontmatter so rules only load when relevant files are touched
+- Use path-scoped frontmatter so rules only load when relevant files are touched — but read § Which harnesses a rule reaches first, because `paths:` also takes the rule away from Pi entirely
 
 ## Which harnesses a rule reaches
 

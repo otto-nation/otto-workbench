@@ -110,33 +110,27 @@ install_cask() {
   success "$label installed"
 }
 
-# install_via_installer CMD URL LABEL [MANAGED_BIN] — installs LABEL by running
-# the vendor's own install script at URL, announcing it as LABEL and returning
-# non-zero with a pointer to URL when curl is missing or the installer fails.
-# The install is skipped when MANAGED_BIN is an executable file, or — when
-# MANAGED_BIN is omitted — when CMD is already in PATH.
+# install_via_installer CMD URL LABEL — installs LABEL by running the vendor's
+# own install script at URL, announcing it as LABEL and returning non-zero with
+# a pointer to URL when curl is missing or the installer fails. The install is
+# skipped when CMD is already in PATH.
 #
 # The counterpart to install_cask for a tool whose artifact is a bare
 # executable: the installer's curl download carries no com.apple.quarantine
 # attribute, so Gatekeeper never asks the question a cask's bare Mach-O cannot
 # answer. Such installers also self-update, which a cask does not.
 #
-# MANAGED_BIN exists for an installer that writes to a fixed path of its own,
-# where `command -v CMD` would also answer to a cask or an npm-global of the
-# same name and skip the install that was meant to replace it. Pass it only when
-# the installer documents that path: a guard naming a file the installer never
-# writes can never be satisfied, so the step reinstalls on every run — and a
-# caller that treats the same guard as a post-check fails forever. An installer
-# that lands in a prefix the machine chooses, such as npm's global one, has no
-# such path and takes the `command -v` default.
+# There was once an optional MANAGED_BIN argument that replaced the `command -v`
+# guard with a test on the installer's own launcher path, so a cask or an
+# npm-global of the same name could not suppress the install. Both installers
+# here land where the machine decides — npm's global prefix, Homebrew's on a
+# machine whose Node came from there — so no such path exists to name, and a
+# guard on one the installer never writes can never be satisfied: the step
+# reinstalls on every run. Reintroduce it only for an installer that documents
+# a fixed target, and cover it with a test at the same time.
 install_via_installer() {
-  local cmd="$1" url="$2" label="$3" managed_bin="${4:-}"
-  if [[ -n "$managed_bin" ]]; then
-    if [[ -x "$managed_bin" ]]; then
-      success "$label already installed"
-      return
-    fi
-  elif command -v "$cmd" >/dev/null 2>&1; then
+  local cmd="$1" url="$2" label="$3"
+  if command -v "$cmd" >/dev/null 2>&1; then
     success "$label already installed"
     return
   fi

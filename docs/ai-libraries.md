@@ -1436,9 +1436,10 @@ one :class:`FixRecord` per run, and every domain carries a record because
 pass gains somewhere to record it by declaring nothing.
 
 This module is below the domains rather than beside them: ``pr_domains`` imports
-it, and it imports nothing from ``ai/lib`` in return. That is what lets the
-record hang off the base class without the domains and the vocabulary they are
-written in forming a cycle.
+it, and what it imports back — :class:`~land.CommitStatus`, the vocabulary a
+landing reports in — comes from ``land``, which sits below both. That is what
+lets the record hang off the base class without the domains and the vocabulary
+they are written in forming a cycle.
 
 Not every member of :class:`FixOutcome` is a verdict a pass reached. An item can
 turn out to have been settled somewhere else entirely — a thread the reviewer
@@ -2124,9 +2125,9 @@ one read HEAD and one did not, and only one of them consulted the publishing
 gate.
 
 Landing is one act with one result. `land` performs it and `LandResult` is what
-it did, in the `CommitStatus` vocabulary `pr_fix` already defines, so a pass
-records an outcome rather than reconstructing one from a `CmdResult` and a
-`PushResult` it has to reconcile itself.
+it did, in the `CommitStatus` vocabulary land owns, so a pass records an
+outcome rather than reconstructing one from a `CmdResult` and a `PushResult`
+it has to reconcile itself.
 
 `land_head` is the same act for a caller whose commits already exist — `pr
 rebase` replays the branch's own, so it has nothing to stage and everything

@@ -42,7 +42,8 @@ import run_lock
 import log
 import timeouts
 from agent_types import Phase
-from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
+from land import CommitStatus
+from pr_fix import FixOutcome, FixRecord, ItemOutcome
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 

@@ -44,8 +44,9 @@ import proc
 import run_lock
 import publishing
 import push
+from land import CommitStatus
 from pr_comments_state import ThreadRecord, ThreadState
-from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome, SettledBy
+from pr_fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
 import review_issue
 import text
 import timeouts
@@ -708,7 +709,7 @@ class CommitClaim(StrEnum):
 @dataclass
 class CommitPushResult:
     sha: str | None
-    # A pr_fix.CommitStatus. Typed as `str` because a status read back out
+    # A land.CommitStatus. Typed as `str` because a status read back out
     # of a state file is a plain string, and CommitStatus is a StrEnum
     # precisely so the two compare equal.
     status: str

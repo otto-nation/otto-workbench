@@ -19,7 +19,7 @@ if LIB_DIR not in sys.path:
 
 import land  # noqa: E402
 import push  # noqa: E402
-from pr_fix import CommitStatus  # noqa: E402
+from land import CommitStatus  # noqa: E402
 from proc import CmdResult  # noqa: E402
 
 _PUSHED = push.PushResult(
@@ -91,6 +91,21 @@ def test_an_unverified_push_is_not_folded_into_lost():
     """Neither "the remote has it" nor "it does not" is a claim the run can make."""
     assert land.commit_status(push.PushStatus.UNVERIFIED) is CommitStatus.PUSH_UNVERIFIED
     assert land.commit_status(push.PushStatus.LOST) is CommitStatus.PUSH_LOST
+
+
+def test_land_owns_the_commit_vocabulary():
+    """The enum land maps push results into is land's own, not pr_fix's.
+
+    `pr_fix` sits above `git` in the layer order, so an enum land imports from
+    it is an upward edge — and land is the only consumer of it below `pr`.
+    """
+    import land
+
+    assert land.CommitStatus.PUSHED == "pushed"
+    assert {s.value for s in land.CommitStatus} >= {
+        "pushed", "push_held", "push_failed", "push_lost", "push_unverified",
+        "commit_failed", "no_changes", "reconciled",
+    }
 
 
 # ── nothing to commit ───────────────────────────────────────────────────────

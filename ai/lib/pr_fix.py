@@ -10,9 +10,10 @@ one :class:`FixRecord` per run, and every domain carries a record because
 pass gains somewhere to record it by declaring nothing.
 
 This module is below the domains rather than beside them: ``pr_domains`` imports
-it, and it imports nothing from ``ai/lib`` in return. That is what lets the
-record hang off the base class without the domains and the vocabulary they are
-written in forming a cycle.
+it, and what it imports back — :class:`~land.CommitStatus`, the vocabulary a
+landing reports in — comes from ``land``, which sits below both. That is what
+lets the record hang off the base class without the domains and the vocabulary
+they are written in forming a cycle.
 
 Not every member of :class:`FixOutcome` is a verdict a pass reached. An item can
 turn out to have been settled somewhere else entirely — a thread the reviewer
@@ -41,42 +42,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import StrEnum
 
-
-class CommitStatus(StrEnum):
-    """How the fix pass left the commit — the state everything downstream reads.
-
-    A `StrEnum`, so the persisted values and the JSON payload are the same
-    strings they have always been: a state file written before this existed
-    still loads, and its plain strings still compare equal to these members.
-    The enum is for the code: two of these values are easily confused for one
-    another, which is the argument for naming them in one place.
-    """
-
-    # Committed and on the remote.
-    PUSHED = "pushed"
-    # Nothing to commit: the fix pass changed no files.
-    NO_CHANGES = "no_changes"
-    # A commit was attempted and refused — a hook, or a dirty tree left behind.
-    COMMIT_FAILED = "commit_failed"
-    # Committed locally; the push was attempted and failed.
-    PUSH_FAILED = "push_failed"
-    # Committed locally; the push was withheld.
-    PUSH_HELD = "push_held"
-    # Committed locally; git reported the push and the remote does not hold it.
-    # Kept apart from `push_failed` because the operator sees a clean push and
-    # would otherwise be told a push failed that, as far as their terminal went,
-    # did not.
-    PUSH_LOST = "push_lost"
-    # Committed locally; the push was reported and the remote could not be asked
-    # whether it arrived. Almost certainly on the remote, which is why it is not
-    # `push_lost` — that names a remote that answered, and answered no. Treated
-    # as unpushed everywhere it matters, because "probably" is not a SHA a
-    # reviewer can be handed.
-    PUSH_UNVERIFIED = "push_unverified"
-    # Render-time only, never persisted: HEAD has moved past the snapshot, but
-    # the commit that moved it is not one a reviewer can open, so the summary
-    # says the work was handled without naming a SHA for it.
-    RECONCILED = "reconciled"
+from land import CommitStatus
 
 
 class FixOutcome(StrEnum):

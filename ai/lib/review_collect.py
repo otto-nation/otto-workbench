@@ -29,8 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import git_client
+import git_topology
 import log
-import pr_context
 from agent_types import Mode
 from review_budget import (
     FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
@@ -162,7 +162,7 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     # no-PR self-review path, so nothing upstream has named a base, and a
     # `master` repository was previously fetched and diffed against a branch it
     # does not have.
-    base = base or pr_context.default_branch(wt_path)
+    base = base or git_topology.default_branch(wt_path)
     fetch_base(wt_path, base)
     head_sha = git_client.head_sha(cwd=wt_path)
     branch = git_client.current_branch(cwd=wt_path)
@@ -491,7 +491,7 @@ def _fit_to_budget(
 def collect_preflight_data(job: ReviewJob) -> PreflightData:
     """Everything a prompt for ``job`` can be built from, already within budget."""
     wt = Path(job.wt_path)
-    base = job.pr.base or pr_context.default_branch(wt)
+    base = job.pr.base or git_topology.default_branch(wt)
 
     diff, commit_log = _collect_git_data(
         job.wt_path, base, job.pr.files, include_worktree=job.mode == Mode.SELF,

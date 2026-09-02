@@ -88,8 +88,8 @@ from pathlib import Path
 
 import gh_client
 import git_client
+import git_topology
 import log
-import pr_context
 import pr_domains
 import pr_state
 from pr_domains import SupersessionKind, SupersessionSignal
@@ -265,7 +265,7 @@ def detect(
     knows the default branch does not pay for it twice; empty means resolve it
     here.
     """
-    base = base or f"origin/{pr_context.default_branch(wt_path)}"
+    base = base or f"origin/{git_topology.default_branch(wt_path)}"
     signals: list[SupersessionSignal] = []
 
     skew = _rebase_skew_days(wt_path, base)
@@ -321,7 +321,7 @@ def detect_cached(
     inventing a `PRIdentity` this module has no business deciding, and the
     command that owns the state writes it moments later anyway.
     """
-    base = base or f"origin/{pr_context.default_branch(wt_path)}"
+    base = base or f"origin/{git_topology.default_branch(wt_path)}"
     head_sha, base_sha = _rev(wt_path, "HEAD"), _rev(wt_path, base)
 
     state = pr_state.load_state(target_dir) if target_dir else None

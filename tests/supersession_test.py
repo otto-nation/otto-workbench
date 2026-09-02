@@ -195,7 +195,7 @@ class TestDetect:
 
     def test_the_base_is_resolved_when_the_caller_does_not_know_it(self):
         """The one caller that has already paid for it passes it; the rest don't."""
-        with patch.object(supersession.pr_context, "default_branch",
+        with patch.object(supersession.git_topology, "default_branch",
                           return_value="trunk") as resolve, \
              patch("proc.subprocess.run",
                           side_effect=_git_stub()):

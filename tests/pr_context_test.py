@@ -13,12 +13,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import git_topology
 import pr_context
 import pr_target
 from pr_context import (
-    _parse_pr_input, _resolve_branch, default_branch, resolve_bare_repo_worktree,
-    find_worktree_for_branch, PRHead, ResolvedContext, update_to_remote,
-    fetch_and_reset, create_worktree_for_branch,
+    _parse_pr_input, PRHead, ResolvedContext, update_to_remote,
+    fetch_and_reset,
 )
 
 from conftest import git_in, make_ctx, run_checked  # noqa: E402
@@ -224,7 +224,7 @@ def test_fetch_and_reset_blocks_when_unpushed_commits_cannot_be_counted(mock_run
 
 
 def _make_ctx(**overrides):
-    """A context on the branch these tests' _current_branch_quiet mock returns."""
+    """A context on the branch these tests' current_branch_quiet mock returns."""
     return make_ctx(**{"branch": "feat/x", "pr_number": 1, "head_sha": "aaa",
                        **overrides})
 
@@ -240,7 +240,7 @@ def test_update_to_remote_noop_without_branch():
 
 
 @patch("pr_context.log")
-@patch("pr_context._current_branch_quiet", return_value="other-branch")
+@patch("git_topology.current_branch_quiet", return_value="other-branch")
 def test_update_to_remote_skips_on_branch_mismatch(mock_branch, mock_log):
     ctx = _make_ctx()
     assert update_to_remote(ctx) is ctx
@@ -248,7 +248,7 @@ def test_update_to_remote_skips_on_branch_mismatch(mock_branch, mock_log):
     assert "other-branch" in mock_log.info.call_args.args[0]
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context.subprocess.run")
 def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log, _mock_branch):
@@ -259,7 +259,7 @@ def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log, _mock
     assert "uncommitted" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context.subprocess.run")
 def test_update_to_remote_skips_when_the_status_read_failed(mock_run, mock_log, _mock_branch):
@@ -273,7 +273,7 @@ def test_update_to_remote_skips_when_the_status_read_failed(mock_run, mock_log, 
     assert "uncommitted" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context._head_sha", return_value="local111")
 @patch("pr_context.subprocess.run")
@@ -292,7 +292,7 @@ def test_update_to_remote_skips_when_unpushed_commits_cannot_be_counted(
     assert "could not count" in mock_log.warn.call_args.args[0].lower()
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context.subprocess.run")
 def test_update_to_remote_skips_on_fetch_failure(mock_run, _mock_branch):
     mock_run.side_effect = [
@@ -303,7 +303,7 @@ def test_update_to_remote_skips_on_fetch_failure(mock_run, _mock_branch):
     assert update_to_remote(ctx) is ctx
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context._head_sha", return_value="aaa111")
 @patch("pr_context.subprocess.run")
 def test_update_to_remote_skips_when_already_current(mock_run, mock_sha, _mock_branch):
@@ -316,7 +316,7 @@ def test_update_to_remote_skips_when_already_current(mock_run, mock_sha, _mock_b
     assert update_to_remote(ctx) is ctx
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context._head_sha", return_value="local111")
 @patch("pr_context.subprocess.run")
@@ -333,7 +333,7 @@ def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log
     assert "unpushed" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context._head_sha", return_value="old111")
 @patch("pr_context.subprocess.run")
@@ -354,282 +354,6 @@ def test_update_to_remote_resets_when_safe(mock_run, mock_sha, mock_log, _mock_b
     assert "--hard" in reset_call
 
 
-# ── Branch resolution ──────────────────────────────────────────────────────
-
-
-@patch("pr_context.subprocess.run", side_effect=FileNotFoundError)
-@patch("pr_context._current_branch", return_value="fallback-branch")
-def test_resolve_branch_uses_hint_on_missing_script(mock_current, mock_run):
-    assert _resolve_branch("some-hint") == "some-hint"
-    mock_current.assert_not_called()
-
-
-@patch("pr_context.subprocess.run", side_effect=FileNotFoundError)
-@patch("pr_context._current_branch", return_value="fallback-branch")
-def test_resolve_branch_falls_back_on_missing_script_no_hint(mock_current, mock_run):
-    assert _resolve_branch("") == "fallback-branch"
-    mock_current.assert_called_once_with(None)
-
-
-@patch("pr_context.subprocess.run")
-@patch("pr_context._current_branch", return_value="fallback-branch")
-def test_resolve_branch_returns_hint_on_failure(mock_current, mock_run):
-    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
-    assert _resolve_branch("bad-hint") == "bad-hint"
-    mock_current.assert_not_called()
-
-
-@patch("pr_context.subprocess.run")
-def test_resolve_branch_returns_stdout(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout="isaac/feat/resolved_branch\n")
-    assert _resolve_branch("resolved") == "isaac/feat/resolved_branch"
-
-
-# ── Default branch ────────────────────────────────────────────────────────
-
-
-@patch("pr_context.subprocess.run")
-def test_default_branch_strips_the_remote_prefix(mock_run):
-    mock_run.return_value = MagicMock(
-        returncode=0, stdout="refs/remotes/origin/main\n",
-    )
-    assert default_branch() == "main"
-
-
-@patch("pr_context.subprocess.run")
-def test_default_branch_is_not_hardcoded_to_main(mock_run):
-    mock_run.return_value = MagicMock(
-        returncode=0, stdout="refs/remotes/origin/trunk\n",
-    )
-    assert default_branch() == "trunk"
-
-
-@patch("pr_context.subprocess.run")
-def test_default_branch_falls_back_when_origin_head_is_unset(mock_run):
-    """An unfetched clone has no origin/HEAD; callers need a base ref anyway."""
-    # returncode is not inspected — the implementation only checks stdout.strip()
-    # for truthiness.  A zero exit with empty stdout is the real trigger for the
-    # "main" fallback (git symbolic-ref exits 0 but prints nothing when origin/HEAD
-    # is unset on some git versions).
-    mock_run.return_value = MagicMock(returncode=0, stdout="")
-    assert default_branch() == "main"
-
-
-@patch("pr_context.subprocess.run", side_effect=OSError("no git"))
-def test_default_branch_falls_back_when_git_is_missing(mock_run):
-    assert default_branch() == "main"
-
-
-@patch("pr_context.subprocess.run")
-def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
-    mock_run.return_value = MagicMock(
-        returncode=0, stdout="refs/remotes/origin/main\n",
-    )
-    default_branch("/wt/feature")
-    # Scoped via subprocess's cwd, matching every other git call in this module.
-    assert mock_run.call_args.kwargs["cwd"] == "/wt/feature"
-    assert mock_run.call_args[0][0][0] == "git"
-
-
-# ── find_worktree_for_branch ──────────────────────────────────────────────
-
-
-_WORKTREE_LIST_HIJACKED = (
-    "worktree /repo\n"
-    "bare\n"
-    "\n"
-    "worktree /repo/main\n"
-    "HEAD f94475d\n"
-    "branch refs/heads/feat/x\n"
-    "\n"
-    "worktree /repo/feat-other\n"
-    "HEAD abc1234\n"
-    "branch refs/heads/feat/other\n"
-)
-
-
-@patch("pr_context.subprocess.run")
-def test_find_worktree_for_branch_prefers_exact_tag(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
-    assert find_worktree_for_branch("feat/other") == Path("/repo/feat-other")
-
-
-@patch("pr_context.subprocess.run")
-def test_find_worktree_for_branch_ignores_dir_named_like_another_branch(mock_run):
-    """Regression: /repo/main holding feat/x was returned as main's worktree.
-
-    review-threads then hard-reset it to origin/main, destroying feat/x.
-    """
-    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
-    assert find_worktree_for_branch("main") is None
-
-
-@patch("pr_context.subprocess.run")
-def test_find_worktree_dir_named_matches_regardless_of_occupant(mock_run):
-    """The lenient lookup answers "which directory", not "which branch"."""
-    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
-    assert pr_context.find_worktree_dir_named("main") == Path("/repo/main")
-
-
-@patch("pr_context.subprocess.run")
-def test_find_worktree_dir_named_skips_the_bare_repo(mock_run):
-    """The bare entry is not a checkout and must never be handed back as one."""
-    mock_run.return_value = MagicMock(
-        returncode=0, stdout="worktree /repo/main\nbare\n",
-    )
-    assert pr_context.find_worktree_dir_named("main") is None
-
-
-@patch("pr_context.subprocess.run")
-def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
-    mock_run.return_value = MagicMock(
-        returncode=0,
-        stdout=(
-            "worktree /repo\nbare\n\n"
-            "worktree /repo/main\nHEAD f94475d\ndetached\n"
-        ),
-    )
-    assert find_worktree_for_branch("main") == Path("/repo/main")
-
-
-@patch("pr_context.subprocess.run")
-def test_find_worktree_for_branch_handles_paths_with_spaces_and_brackets(mock_run):
-    """The human listing packs path and [branch] onto one line; porcelain doesn't."""
-    mock_run.return_value = MagicMock(
-        returncode=0,
-        stdout=(
-            "worktree /repo/we ird [x]\n"
-            "HEAD abc1234\n"
-            "branch refs/heads/spacey\n"
-        ),
-    )
-    assert find_worktree_for_branch("spacey") == Path("/repo/we ird [x]")
-
-
-# ── Bare-repo worktree resolution ─────────────────────────────────────────
-
-
-@patch("pr_context.find_worktree_for_branch")
-def testresolve_bare_repo_worktree_prefers_branch(mock_find):
-    mock_find.return_value = Path("/wt/feat-branch")
-    result = resolve_bare_repo_worktree(None, "feat/branch")
-    assert result == Path("/wt/feat-branch")
-    mock_find.assert_called_once_with("feat/branch", None)
-
-
-@patch("pr_context.create_worktree_for_branch")
-@patch("pr_context.find_worktree_for_branch")
-def testresolve_bare_repo_worktree_creates_missing_branch_worktree(mock_find, mock_create):
-    """A requested branch with no worktree gets one created, not main's."""
-    mock_find.return_value = None
-    mock_create.return_value = Path("/wt/nonexistent")
-    result = resolve_bare_repo_worktree(None, "nonexistent")
-    assert result == Path("/wt/nonexistent")
-    mock_create.assert_called_once_with("nonexistent", None)
-
-
-@patch("pr_context.create_worktree_for_branch", return_value=None)
-@patch("pr_context.find_worktree_for_branch")
-def testresolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_create):
-    """Regression: returning main's worktree here let callers hijack main/."""
-    mock_find.return_value = None
-    result = resolve_bare_repo_worktree(None, "nonexistent")
-    assert result is None
-    # find_worktree_for_branch must never be consulted for the default branch
-    # when an explicit branch was requested.
-    for call in mock_find.call_args_list:
-        assert call.args[0] != "main"
-
-
-@patch("pr_context.find_worktree_dir_named", return_value=None)
-@patch("pr_context.find_worktree_for_branch", return_value=None)
-@patch("pr_context.subprocess.run")
-def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find, mock_named):
-    mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
-    result = resolve_bare_repo_worktree(None, None)
-    assert result is None
-
-
-@patch("pr_context.find_worktree_dir_named", return_value=Path("/repo/main"))
-@patch("pr_context.find_worktree_for_branch", return_value=None)
-@patch("pr_context.subprocess.run")
-def testresolve_bare_repo_worktree_falls_back_to_dir_name(mock_run, mock_find, mock_named):
-    """No branch requested: a main/ holding someone else's branch is still a cwd.
-
-    Regression: tightening find_worktree_for_branch made this return None, and
-    the callers that dereference worktree_root without a guard blew up.
-    """
-    mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
-    assert resolve_bare_repo_worktree(None, None) == Path("/repo/main")
-
-
-@patch("pr_context.find_worktree_for_branch")
-@patch("pr_context._resolve_branch", return_value="isaac/improve-ci-failures-skill")
-def test_resolve_bare_repo_worktree_fuzzy_resolves_branch(mock_resolve, mock_find):
-    """Bare repo resolution uses fuzzy matching when exact branch hint doesn't match."""
-    mock_find.side_effect = [None, Path("/wt/isaac-improve-ci-failures-skill")]
-    result = resolve_bare_repo_worktree(None, "isaac-improve-ci-failures-skill")
-    assert result == Path("/wt/isaac-improve-ci-failures-skill")
-    assert mock_find.call_count == 2
-    mock_find.assert_any_call("isaac-improve-ci-failures-skill", None)
-    mock_find.assert_any_call("isaac/improve-ci-failures-skill", None)
-
-
-@patch("pr_context.create_worktree_for_branch")
-@patch("pr_context._resolve_branch", side_effect=lambda hint, cwd=None: hint)
-@patch("pr_context.find_worktree_for_branch", return_value=None)
-def test_find_bare_repo_worktree_creates_nothing(_mock_find, _mock_resolve, mock_create):
-    """The non-creating half of the pair: a command that only reads state must
-    not leave a checkout behind as the price of finding its target."""
-    assert pr_context.find_bare_repo_worktree(None, "nonexistent") is None
-    mock_create.assert_not_called()
-
-
-@patch("pr_context.create_worktree_for_branch")
-@patch("pr_context.find_worktree_dir_named", return_value=None)
-@patch("pr_context.find_worktree_for_branch", return_value=None)
-@patch("pr_context.subprocess.run")
-def test_find_bare_repo_worktree_creates_nothing_without_a_branch(
-        mock_run, _mock_find, _mock_named, mock_create):
-    mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
-    assert pr_context.find_bare_repo_worktree(None, None) is None
-    mock_create.assert_not_called()
-
-
-# ── create_worktree_for_branch ─────────────────────────────────────────────
-
-
-@patch("pr_context.subprocess.run")
-def test_create_worktree_for_branch_returns_path(mock_run):
-    mock_run.return_value = MagicMock(
-        returncode=0,
-        stdout='✓ created\n{"action":"created","path":"/wt/feat-x"}\n',
-    )
-    assert create_worktree_for_branch("feat/x") == Path("/wt/feat-x")
-    assert mock_run.call_args.args[0][:3] == ["wt", "switch", "feat/x"]
-
-
-@patch("pr_context.subprocess.run")
-def test_create_worktree_for_branch_passes_cwd(mock_run):
-    mock_run.return_value = MagicMock(
-        returncode=0, stdout='{"path":"/wt/feat-x"}\n',
-    )
-    create_worktree_for_branch("feat/x", "/repo")
-    assert mock_run.call_args.args[0][-2:] == ["-C", "/repo"]
-
-
-@patch("pr_context.subprocess.run")
-def test_create_worktree_for_branch_returns_none_when_wt_fails(mock_run):
-    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
-    assert create_worktree_for_branch("feat/x") is None
-
-
-@patch("pr_context.subprocess.run")
-def test_create_worktree_for_branch_survives_malformed_json(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout="{not json}\n", stderr="")
-    assert create_worktree_for_branch("feat/x") is None
-
-
 # ── target_dir / PR head resolution ────────────────────────────────────────
 
 
@@ -640,7 +364,7 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead())
-    monkeypatch.setattr(pr_context, "_current_branch",
+    monkeypatch.setattr(git_topology, "current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
     with pytest.raises(SystemExit) as excinfo:
@@ -657,7 +381,7 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
-    monkeypatch.setattr(pr_context, "_current_branch",
+    monkeypatch.setattr(git_topology, "current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
     with pytest.raises(SystemExit) as excinfo:
@@ -673,7 +397,7 @@ def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
-    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "other")
+    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "other")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/login", sha="pr-sha"))
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
@@ -690,7 +414,7 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
                         lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
-    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
+    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha-a"))
@@ -715,9 +439,9 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
-    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "feat/login")
+    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "feat/login")
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
-    monkeypatch.setattr(pr_context, "_resolve_branch", lambda hint, cwd=None: hint)
+    monkeypatch.setattr(git_topology, "resolve_branch", lambda hint, cwd=None: hint)
     monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: 2973)
 
     monkeypatch.setattr(pr_context, "_resolve_worktree",
@@ -742,7 +466,7 @@ def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
-    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
+    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha"))
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: None)
 
@@ -760,7 +484,7 @@ def test_update_to_remote_preserves_the_target_dir(monkeypatch, tmp_path):
         worktree_root=tmp_path, head_sha="old", current_branch="feat/a",
         target_dir=tmp_path / "target",
     )
-    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "feat/a")
+    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "feat/a")
     monkeypatch.setattr(pr_context, "_worktree_is_dirty", lambda cwd: False)
     monkeypatch.setattr(pr_context, "_unpushed_count", lambda cwd, branch: 0)
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "old")
@@ -858,16 +582,16 @@ def test_resolve_local_exits_without_an_origin_remote(monkeypatch, tmp_path, cap
 def test_resolve_local_does_not_create_a_worktree_in_a_bare_repo(monkeypatch):
     """`pr status` used to make a checkout as a side effect of being run."""
     monkeypatch.setattr(pr_context, "_git_toplevel", lambda cwd=None: None)
-    monkeypatch.setattr(pr_context, "is_bare_repo", lambda cwd=None: True)
-    monkeypatch.setattr(pr_context, "find_bare_repo_worktree",
+    monkeypatch.setattr(git_topology, "is_bare_repo", lambda cwd=None: True)
+    monkeypatch.setattr(git_topology, "find_bare_repo_worktree",
                         lambda cwd, branch: None)
-    monkeypatch.setattr(pr_context, "_resolve_branch", lambda hint, cwd=None: hint)
+    monkeypatch.setattr(git_topology, "resolve_branch", lambda hint, cwd=None: hint)
     monkeypatch.setattr(
         pr_target, "repo_identity_from_origin",
         lambda cwd=None: pr_target.RepoIdentity(label="acme/widget", key="widget"),
     )
     monkeypatch.setattr(
-        pr_context, "create_worktree_for_branch",
+        git_topology, "create_worktree_for_branch",
         lambda *a, **kw: pytest.fail("resolve_local must not create a worktree"),
     )
 
@@ -1026,17 +750,6 @@ def test_detect_repo_rejects_an_empty_name_from_a_zero_exit(monkeypatch, capsys)
     assert "no git remotes found" in capsys.readouterr().err
 
 
-def test_current_branch_quotes_git_stderr(monkeypatch, capsys):
-    _stub_run(monkeypatch, 128, stderr=(
-        "fatal: not a git repository (or any of the parent directories): .git"))
-
-    with pytest.raises(SystemExit) as excinfo:
-        pr_context._current_branch()
-
-    assert excinfo.value.code == 1
-    assert "not a git repository" in capsys.readouterr().err
-
-
 # ── PR head resolution ─────────────────────────────────────────────────────
 
 
@@ -1096,47 +809,6 @@ def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, ca
     assert "keys a run's state and lock" in err
 
 
-# ── wt switch ──────────────────────────────────────────────────────────────
-
-
-def _stub_raise(monkeypatch, exc):
-    def boom(*args, **kwargs):
-        raise exc
-    monkeypatch.setattr(pr_context.subprocess, "run", boom)
-
-
-def test_wt_switch_says_not_installed_when_wt_is_missing(monkeypatch, capsys):
-    _stub_raise(monkeypatch, FileNotFoundError(2, "No such file or directory", "wt"))
-
-    assert pr_context.wt_switch("feat/x") is None
-    assert "not installed" in capsys.readouterr().err
-
-
-def test_wt_switch_does_not_call_a_permission_error_a_missing_binary(monkeypatch, capsys):
-    """Regression: every exception rendered as "worktrunk is not available"."""
-    _stub_raise(monkeypatch, PermissionError(13, "Permission denied", "wt"))
-
-    assert pr_context.wt_switch("feat/x") is None
-    err = capsys.readouterr().err
-    assert "not installed" not in err
-    assert "Permission denied" in err
-
-
-def test_wt_switch_reports_a_failed_run_rather_than_returning_none_silently(
-        monkeypatch, capsys):
-    _stub_run(monkeypatch, 1, stderr="error: no branch named feat/x")
-
-    assert pr_context.wt_switch("feat/x") is None
-    assert "no branch named feat/x" in capsys.readouterr().err
-
-
-def test_wt_switch_stays_quiet_when_it_lands_on_a_worktree(monkeypatch, capsys):
-    _stub_run(monkeypatch, 0, stdout='{"path": "/repo/feat-x"}\n')
-
-    assert pr_context.wt_switch("feat/x") == "/repo/feat-x"
-    assert capsys.readouterr().err == ""
-
-
 def _reset_run_sequence(reset_result):
     """The subprocess results update_to_remote consumes before reset --hard."""
     return [
@@ -1148,7 +820,7 @@ def _reset_run_sequence(reset_result):
     ]
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context._head_sha", return_value="old111")
 @patch("pr_context.subprocess.run")
 def test_update_to_remote_quotes_why_the_reset_failed(
@@ -1165,7 +837,7 @@ def test_update_to_remote_quotes_why_the_reset_failed(
     assert "keeping the existing worktree state" in err
 
 
-@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("git_topology.current_branch_quiet", return_value="feat/x")
 @patch("pr_context._head_sha", return_value="old111")
 @patch("pr_context.subprocess.run")
 def test_update_to_remote_degrades_when_reset_says_nothing(
@@ -1178,61 +850,3 @@ def test_update_to_remote_degrades_when_reset_says_nothing(
     assert update_to_remote(ctx) is ctx
     warning = capsys.readouterr().err.splitlines()[0]
     assert warning.endswith("git reset --hard origin/feat/x failed (exit 1)")
-
-
-@patch("pr_context.subprocess.run")
-@patch("pr_context._current_branch", return_value="fallback-branch")
-def test_resolve_branch_quotes_what_resolve_branch_said(
-        _mock_current, mock_run, capsys):
-    """Regression: resolve-branch's diagnosis was dropped for a generic line."""
-    mock_run.return_value = MagicMock(
-        returncode=1, stdout="",
-        stderr="error: no branch matches 'bad-hint'\n")
-
-    assert _resolve_branch("bad-hint") == "bad-hint"
-    err = capsys.readouterr().err
-    assert "no branch matches 'bad-hint'" in err
-    assert "as-is" in err
-
-
-@patch("pr_context.subprocess.run")
-@patch("pr_context._current_branch", return_value="fallback-branch")
-def test_resolve_branch_degrades_when_the_script_says_nothing(
-        _mock_current, mock_run, capsys):
-    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
-
-    assert _resolve_branch("bad-hint") == "bad-hint"
-    warning = capsys.readouterr().err.splitlines()[0]
-    assert warning.endswith("resolve-branch could not resolve 'bad-hint' (exit 1)")
-
-
-# Every wt_switch failure path already names its own cause, so
-# create_worktree_for_branch must add nothing: the count is the assertion, since
-# a second generic line reads as a second, unrelated failure.
-@patch("pr_context.log")
-@patch("pr_context.subprocess.run",
-       side_effect=FileNotFoundError(2, "No such file or directory", "wt"))
-def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
-    assert create_worktree_for_branch("feat/x") is None
-    assert mock_log.warn.call_count == 1
-    assert "not installed" in mock_log.warn.call_args.args[0]
-
-
-@patch("pr_context.log")
-@patch("pr_context.subprocess.run",
-       side_effect=PermissionError(13, "Permission denied", "wt"))
-def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log):
-    assert create_worktree_for_branch("feat/x") is None
-    assert mock_log.warn.call_count == 1
-    assert "Permission denied" in mock_log.warn.call_args.args[0]
-
-
-@patch("pr_context.log")
-@patch("pr_context.subprocess.run")
-def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
-    mock_run.return_value = MagicMock(
-        returncode=1, stdout="", stderr="error: branch feat/x is checked out")
-
-    assert create_worktree_for_branch("feat/x") is None
-    assert mock_log.warn.call_count == 1
-    assert "branch feat/x is checked out" in mock_log.warn.call_args.args[0]

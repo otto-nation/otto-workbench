@@ -160,7 +160,7 @@ def finding_tag(posted_id: str) -> str:
     return f"**[{posted_id}]**"
 
 
-def posted_finding_tag(posted_id: str, severity_key: str) -> str:
+def posted_finding_tag(posted_id: str, severity: str) -> str:
     """The bold tag a posted comment's finding opens with, severity label included.
 
     The other spelling, and the reason it is written here rather than where it
@@ -171,7 +171,7 @@ def posted_finding_tag(posted_id: str, severity_key: str) -> str:
     patterns are built from, so a new severity reaches the writer and the
     readers together.
     """
-    return f"**[{posted_id}] [{severity_by_key(severity_key).label}]**"
+    return f"**[{posted_id}] [{severity_by_key(severity).label}]**"
 
 
 # ── The location a declaration names ─────────────────────────────────────────

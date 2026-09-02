@@ -155,6 +155,16 @@ PY
   [[ "$result" == "False" ]]
 }
 
+@test "is_noise: approval carrying a substantive nit is not noise" {
+  result=$(_py 'import retro_github; print(retro_github.is_noise("approved with one nit: rename X"))')
+  [[ "$result" == "False" ]]
+}
+
+@test "is_noise: approval with trailing punctuation is noise" {
+  result=$(_py 'import retro_github; print(retro_github.is_noise("LGTM!"))')
+  [[ "$result" == "True" ]]
+}
+
 # ── parse_review_comment ─────────────────────────────────────────────────────
 
 @test "parse_review_comment: extracts fields from API response" {

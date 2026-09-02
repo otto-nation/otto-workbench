@@ -31,7 +31,7 @@ from retro_report import COMMENT_BODY_MAX
 # ── Constants ────────────────────────────────────────────────────────────────
 
 NOISE_PATTERNS = re.compile(
-    r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?|\U0001f44d)\s*$", re.IGNORECASE
+    r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?|\U0001f44d)[\s!.]*$", re.IGNORECASE
 )
 
 GQL_MERGED_PRS_LIMIT = 50

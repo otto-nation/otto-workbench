@@ -179,6 +179,7 @@ def strip_line_suffix(path: str) -> str:
     """
     return _LINE_SUFFIX_TAIL_RE.sub("", path)
 
+
 # A filename holding spaces. It has no character class to stop it, so every
 # use has to bound it: the extension ends it, and whatever follows has to be
 # the end of the span it was found in.

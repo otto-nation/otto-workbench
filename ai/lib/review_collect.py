@@ -15,7 +15,7 @@ The bounds on what a prompt may carry are `review_budget`'s, not this module's �
 review can afford to inline, reading the same numbers `review_prompt` budgets
 against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
-fills in are `review_types`'.
+fills in are `review_types`' and `gh_types`'.
 """
 
 # doc-group: pipeline
@@ -31,6 +31,9 @@ from pathlib import Path
 import git_client
 import git_topology
 import log
+import numstat
+import pr_context
+from gh_types import PRMetadata
 from phases import Mode
 from review_budget import (
     FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
@@ -42,7 +45,7 @@ from review_document import ReviewHeader
 from review_grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
-from review_types import PreflightData, PRMetadata, ReviewJob
+from review_types import PreflightData, ReviewJob
 
 
 # ── Git reads ────────────────────────────────────────────────────────────────
@@ -113,43 +116,6 @@ def worktree_diff(wt_path: str, since: str, *, numstat: bool = False) -> str:
     )
 
 
-@dataclass(frozen=True)
-class Numstat:
-    """What ``git diff --numstat`` says a change set touched.
-
-    ``files`` is one ``{path, additions, deletions}`` entry per line, in the
-    order git listed them; ``additions`` and ``deletions`` are the totals over
-    all of them.
-    """
-
-    files: list[dict]
-    additions: int
-    deletions: int
-
-
-def parse_numstat(numstat: str) -> Numstat:
-    """Read ``git diff --numstat`` output into per-file and total counts.
-
-    A binary file's counts are ``-``; they land as zero rather than being
-    dropped, so the file still appears in the review's file list.
-    """
-    files = []
-    total_add = 0
-    total_del = 0
-    for line in numstat.strip().split("\n"):
-        if not line:
-            continue
-        parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        add = int(parts[0]) if parts[0] != "-" else 0
-        delete = int(parts[1]) if parts[1] != "-" else 0
-        files.append({"path": parts[2], "additions": add, "deletions": delete})
-        total_add += add
-        total_del += delete
-    return Numstat(files=files, additions=total_add, deletions=total_del)
-
-
 def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     """Describe a branch from its worktree, the way a PR describes itself.
 
@@ -174,7 +140,9 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     # Diffing from the fork point reaches the working tree, so the file list
     # matches the diff `worktree_diff` builds for self-review: committed,
     # uncommitted and untracked changes alike.
-    counts = parse_numstat(worktree_diff(wt_path, fork_point(wt_path, base), numstat=True))
+    counts = numstat.parse_numstat(
+        worktree_diff(wt_path, fork_point(wt_path, base), numstat=True)
+    )
 
     return PRMetadata(
         title=first_subject,

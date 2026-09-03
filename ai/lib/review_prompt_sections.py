@@ -24,6 +24,7 @@ import json
 
 import git_client
 from agent_types import EFFORT_PRESETS
+from gh_types import FILE_STAT_FMT, PRContext, PRMetadata
 from phases import Effort
 from review_budget import (
     FileFit, MAX_DELTA_LIST_ENTRIES, MAX_REVIEW_BODY_LEN, MIN_DELTA_DIFF_BYTES,
@@ -31,9 +32,7 @@ from review_budget import (
 from review_collect import scope_diff, truncate_diff
 from review_reply_threads import ReplyThreads
 from review_scout import format_leads_block, is_scout_output, parse_scout_output
-from review_types import (
-    FILE_STAT_FMT, PRContext, PreflightData, PRMetadata, ReplyState, ReviewJob,
-)
+from review_types import PreflightData, ReplyState, ReviewJob
 
 
 def _build_pr_header(

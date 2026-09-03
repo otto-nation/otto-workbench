@@ -12,7 +12,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import review_types as rt
-from review_types import PRContext, PRMetadata, ReviewJob
+from gh_types import PRContext, PRMetadata
+from review_types import ReviewJob
 
 
 def _make_job(head_sha: str, prior_review: str = "") -> ReviewJob:
@@ -53,40 +54,9 @@ class TestArtifactDir:
         assert job.artifact_dir != "/tmp/reviews"
 
 
-def _make_meta(total_lines: int) -> PRMetadata:
-    return PRMetadata(
-        title="test",
-        body="",
-        head="feature",
-        base="main",
-        head_sha="abc1234",
-        additions=total_lines,
-        deletions=0,
-        changed_files=1,
-        files=[{"path": "a.py", "additions": total_lines, "deletions": 0}],
-    )
-
-
-class TestFileStatsThreshold:
-    """The effort preset owns the threshold; file_stats must not re-derive it."""
-
-    def test_low_effort_uses_wider_threshold(self):
-        from agent_types import EFFORT_PRESETS
-        from phases import Effort
-
-        low = EFFORT_PRESETS[Effort.LOW].multi_phase_line_threshold
-        assert _make_meta(750).file_stats(low) == ""
-
-    def test_medium_effort_uses_narrower_threshold(self):
-        from agent_types import EFFORT_PRESETS
-        from phases import Effort
-
-        medium = EFFORT_PRESETS[Effort.MEDIUM].multi_phase_line_threshold
-        assert "a.py" in _make_meta(750).file_stats(medium)
-
-    def test_the_module_constant_is_gone(self):
-        """A second owner is what this change removed; it must not come back."""
-        assert not hasattr(rt, "MULTI_PHASE_LINE_THRESHOLD")
+def test_the_module_constant_is_gone():
+    """A second owner is what this change removed; it must not come back."""
+    assert not hasattr(rt, "MULTI_PHASE_LINE_THRESHOLD")
 
 
 class TestReplyStateIsAStringOnTheWire:

@@ -275,7 +275,7 @@ The bounds on what a prompt may carry are `review_budget`'s, not this module's �
 review can afford to inline, reading the same numbers `review_prompt` budgets
 against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
-fills in are `review_types`'.
+fills in are `review_types`' and `gh_types`'.
 
 ### review_document.py
 
@@ -886,8 +886,8 @@ review pipeline *does*.
 
 Nothing in the review layer is imported here, and nothing should be: this is the
 layer everything else in it sits on. The heavier imports — `agent_types`,
-`serde`, `workbench_config` and `pr_state.now_iso` — are all below the review
-layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
+`gh_types`, `serde`, `workbench_config` and `pr_state.now_iso` — are all below
+the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
 
 ### review_verify.py
 
@@ -952,6 +952,15 @@ it does not say where one stops.
 ## Publishing
 
 Everything that leaves the machine — review comments, replies, summaries, tracking issues — and the draft gate they all pass through first.
+
+### gh_types.py
+
+What a GitHub PR read returns: the PR's own metadata, and its conversation.
+
+Below `gh/pr_reads`, which is the module that fetches both, so the shapes a read
+answers with sit at or beneath the layer that answers. `review_collect` builds
+the same `PRMetadata` from local git for a branch with no PR behind it, which is
+why the type is not spelled in terms of the API's field names.
 
 ### pr_comments.py
 
@@ -2210,6 +2219,14 @@ the plain answer:
 Centralized human-facing stderr output for otto-workbench AI scripts.
 
 NOT for structured event logging — use trail.py for that.
+
+### numstat.py
+
+What `git diff --numstat` says a change set touched.
+
+Read by every caller that has to size a diff before anything looks at it — the
+review pipeline from a worktree, and the GitHub reads from the API's own
+numstat. One reader so the two agree on what a binary file counts as.
 
 ### proc.py
 

@@ -34,7 +34,8 @@ import review_types
 from proc import TIMEOUT_RETURNCODE, CmdResult
 from phases import Effort, Phase
 from pr_fix import FixOutcome, ItemOutcome
-from review_types import Finding, PRContext, PRMetadata, ReviewJob
+from gh_types import PRContext, PRMetadata
+from review_types import Finding, ReviewJob
 
 # What the push owner answers when the fix pass's commit reached the remote.
 # The pass no longer pushes for itself — `land` does — so stubbing the owner is

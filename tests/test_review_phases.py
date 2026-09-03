@@ -80,7 +80,8 @@ class TestPhaseOutputPath:
 
 
 def _job(tmp_path, effort=Effort.MEDIUM):
-    from review_types import PRContext, PRMetadata, ReviewJob
+    from gh_types import PRContext, PRMetadata
+    from review_types import ReviewJob
 
     return ReviewJob(
         repo="org/repo", pr_number="42",

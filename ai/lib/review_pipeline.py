@@ -32,7 +32,8 @@ from review_grouping import (
     GROUP_TIER3, group_files, merge_smallest_groups,
 )
 from review_outcome import _post_process_review, _write_review_sidecar, is_complete_review
-from review_types import PRContext, PRMetadata, ReviewJob, ReviewType
+from gh_types import PRContext, PRMetadata
+from review_types import ReviewJob, ReviewType
 from review_prompt import PromptTooLarge
 from review_prompt_sections import _is_incremental
 from review_registry import build_prompt

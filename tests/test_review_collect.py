@@ -22,8 +22,9 @@ if str(LIB_DIR) not in sys.path:
 import git_client
 import review_budget
 import review_collect as rc
+from gh_types import PRContext, PRMetadata
 from review_collect import fetch_branch_metadata
-from review_types import PRContext, PreflightData, PRMetadata, ReviewJob
+from review_types import PreflightData, ReviewJob
 
 
 def _job(tmp_path: Path, files: list[dict], **overrides) -> ReviewJob:
@@ -866,34 +867,6 @@ class TestFetchBranchMetadata:
         pr = fetch_branch_metadata(str(repo))
         assert pr.base == "master"
         assert [f["path"] for f in pr.files] == ["feat.go"]
-
-
-# ── parse_numstat ───────────────────────────────────────────────────────────
-
-
-class TestParseNumstat:
-    def test_normal_output(self):
-        counts = rc.parse_numstat("10\t5\tpkg/handler.go\n3\t1\tpkg/util.go\n")
-        assert len(counts.files) == 2
-        assert counts.files[0] == {
-            "path": "pkg/handler.go", "additions": 10, "deletions": 5,
-        }
-        assert counts.additions == 13
-        assert counts.deletions == 6
-
-    def test_binary_files(self):
-        counts = rc.parse_numstat("-\t-\timage.png\n5\t2\tfile.go\n")
-        assert len(counts.files) == 2
-        assert counts.files[0]["additions"] == 0
-        assert counts.files[0]["deletions"] == 0
-        assert counts.additions == 5
-        assert counts.deletions == 2
-
-    def test_empty_input(self):
-        counts = rc.parse_numstat("")
-        assert counts.files == []
-        assert counts.additions == 0
-        assert counts.deletions == 0
 
 
 # ── worktree_diff ───────────────────────────────────────────────────────────

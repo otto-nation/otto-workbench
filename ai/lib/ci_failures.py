@@ -270,7 +270,10 @@ _PYTEST_SUMMARY_HEADER_RE = re.compile(r"^=+ short test summary info =+$")
 # are all of that shape: the summary comes back empty, the whole pytest path is
 # skipped, and the run falls back to the marker window this parser exists to
 # replace. Both words name a test the reader has to open.
-_PYTEST_SUMMARY_ENTRY_RE = re.compile(r"^(FAILED|ERROR) ([^\s:]+)::(\S+)(?: - (.*))?$")
+# The node id runs to the ` - ` that opens the reason, not to the first space:
+# a parametrized case can carry one in its id, and a pattern that stops there
+# matches no part of the line at all, dropping the entry from the run.
+_PYTEST_SUMMARY_ENTRY_RE = re.compile(r"^(FAILED|ERROR) ([^\s:]+)::(.+?)(?: - (.*))?$")
 # Every word of the title must carry a character that is neither a space nor an
 # underscore, which is what tells a heading apart from the `_ _ _ _` rule pytest
 # draws between the frames *inside* one block. A pattern that accepts the rule
@@ -280,7 +283,7 @@ _PYTEST_SECTION_HEAD_RE = re.compile(r"^_+ (\S*[^\s_]\S*(?: \S*[^\s_]\S*)*) _+$"
 # An error block is titled for the phase it failed in rather than for the test
 # alone, so its heading has to be reduced to the node id before it can be found
 # by one.
-_PYTEST_ERROR_HEAD_RE = re.compile(r"^ERROR at \w+ of (\S+)$")
+_PYTEST_ERROR_HEAD_RE = re.compile(r"^ERROR at \w+ of (.+)$")
 _PYTEST_RULE_RE = re.compile(r"^=+ .* =+$")
 # A frame that is not the innermost carries nothing after its colon, so what
 # follows the line number is a space or the end of the line. Requiring the space

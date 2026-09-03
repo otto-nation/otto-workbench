@@ -594,10 +594,11 @@ def test_extract_pytest_failures_without_a_section():
     assert failure.context == "FAILED tests/a_test.py::test_collected_but_never_reported - RuntimeError: boom"
 
 
-# pytest 9.0.3 run over three tests: one whose fixture raises in the test's own
-# file, one whose fixture raises in `conftest.py`, and one plain assertion. The
-# summary calls the first two `ERROR` rather than `FAILED`, and titles their
-# blocks for the phase they failed in.
+# pytest 9.0.3 run over four tests: one whose fixture raises in the test's own
+# file, one whose fixture raises in `conftest.py`, one parametrized on a value
+# that puts a space in its node id, and one plain assertion. The summary calls
+# every one but the last `ERROR` rather than `FAILED`, and titles their blocks
+# for the phase they failed in.
 _PYTEST_ERRORS_AND_FAILURES = "\n".join([
     "==================================== ERRORS ====================================",
     "________________ ERROR at setup of TestGroup.test_local_fixture ________________",
@@ -616,6 +617,14 @@ _PYTEST_ERRORS_AND_FAILURES = "\n".join([
     "E       RuntimeError: shared fixture blew up",
     "",
     "tests/conftest.py:6: RuntimeError",
+    "______________ ERROR at setup of TestGroup.test_spaced_param[a b] ______________",
+    "",
+    "    @pytest.fixture",
+    "    def local_broken():",
+    ">       raise RuntimeError(\"local fixture blew up\")",
+    "E       RuntimeError: local fixture blew up",
+    "",
+    "tests/errprobe_test.py:6: RuntimeError",
     "=================================== FAILURES ===================================",
     "________________________ TestGroup.test_plain_assertion ________________________",
     "",
@@ -630,7 +639,8 @@ _PYTEST_ERRORS_AND_FAILURES = "\n".join([
     "FAILED tests/errprobe_test.py::TestGroup::test_plain_assertion - assert 1 == 2",
     "ERROR tests/errprobe_test.py::TestGroup::test_local_fixture - RuntimeError: l...",
     "ERROR tests/errprobe_test.py::TestGroup::test_shared_fixture - RuntimeError: ...",
-    "========================= 1 failed, 2 errors in 0.03s ==========================",
+    "ERROR tests/errprobe_test.py::TestGroup::test_spaced_param[a b] - RuntimeErro...",
+    "========================= 1 failed, 3 errors in 0.02s ==========================",
 ])
 
 
@@ -640,7 +650,15 @@ def test_extract_pytest_failures_reads_error_summary_entries():
         "TestGroup::test_plain_assertion",
         "TestGroup::test_local_fixture",
         "TestGroup::test_shared_fixture",
+        "TestGroup::test_spaced_param[a b]",
     ]
+
+
+def test_extract_pytest_failures_read_a_node_id_carrying_a_space():
+    """A parametrized id runs to the reason's ` - `, not to the first space."""
+    by_name = {f.name: f for f in extract_test_failures(_PYTEST_ERRORS_AND_FAILURES)}
+    assert by_name["TestGroup::test_spaced_param[a b]"].location == SourceLocation(
+        "tests/errprobe_test.py", 6)
 
 
 def test_extract_pytest_failures_locate_an_error_by_its_phase_titled_block():

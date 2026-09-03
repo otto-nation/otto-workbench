@@ -165,19 +165,20 @@ class TestFetchBotComments:
             assert review_dedup._fetch_bot_comments("org/repo", "1") == []
 
 
-class TestDedupAgainstPosted:
-    def _make_finding(self, id_str, path, body):
-        return review_dedup.Finding(
-            id=id_str, severity=id_str[0], seq=int(id_str[1:]),
-            path=path, line=42, end_line=None, body=body,
-        )
+def _make_finding(id_str, path, body):
+    return review_dedup.Finding(
+        id=id_str, severity=id_str[0], seq=int(id_str[1:]),
+        path=path, line=42, end_line=None, body=body,
+    )
 
+
+class TestDedupAgainstPosted:
     @patch("review_dedup._fetch_bot_comments")
     def test_skips_duplicate(self, mock_fetch):
         mock_fetch.return_value = [
             review_dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
         ]
-        f = self._make_finding("M1", "handler.go", "missing error check on db.Query result")
+        f = _make_finding("M1", "handler.go", "missing error check on db.Query result")
         kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 0
         assert len(deduped) == 1
@@ -188,7 +189,7 @@ class TestDedupAgainstPosted:
         mock_fetch.return_value = [
             review_dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
         ]
-        f = self._make_finding("S1", "handler.go", "unused import os")
+        f = _make_finding("S1", "handler.go", "unused import os")
         kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0
@@ -198,26 +199,20 @@ class TestDedupAgainstPosted:
         mock_fetch.return_value = [
             review_dedup.PostedFinding("handler.go", "missing error check"),
         ]
-        f = self._make_finding("M1", "other.go", "missing error check")
+        f = _make_finding("M1", "other.go", "missing error check")
         kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
 
     @patch("review_dedup._fetch_bot_comments")
     def test_no_existing_comments_keeps_all(self, mock_fetch):
         mock_fetch.return_value = []
-        f = self._make_finding("M1", "handler.go", "finding text")
+        f = _make_finding("M1", "handler.go", "finding text")
         kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0
 
 
 class TestDedupAgainstPostedEdgeCases:
-    def _make_finding(self, id_str, path, body):
-        return review_dedup.Finding(
-            id=id_str, severity=id_str[0], seq=int(id_str[1:]),
-            path=path, line=42, end_line=None, body=body,
-        )
-
     @patch("review_dedup._fetch_bot_comments")
     def test_jaccard_at_threshold_boundary(self, mock_fetch):
         # Build words so Jaccard is exactly 0.6: 3 shared out of 5 total
@@ -225,7 +220,7 @@ class TestDedupAgainstPostedEdgeCases:
         mock_fetch.return_value = [
             review_dedup.PostedFinding("file.go", "a b c d e"),
         ]
-        f = self._make_finding("M1", "file.go", "a b c")
+        f = _make_finding("M1", "file.go", "a b c")
         kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(deduped) == 1
         assert deduped[0].skip_reason == "duplicate of existing comment"
@@ -235,9 +230,7 @@ class TestDedupAgainstPostedEdgeCases:
         mock_fetch.return_value = [
             review_dedup.PostedFinding("", "missing error check"),
         ]
-        f = self._make_finding("M1", "", "missing error check")
-        # Override to set path="" since _make_finding sets path to the arg
-        f.path = ""
+        f = _make_finding("M1", "", "missing error check")
         kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0

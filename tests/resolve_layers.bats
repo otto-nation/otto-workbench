@@ -112,6 +112,8 @@ _rule_layers() {
   GUIDELINES_RULES_SRC_DIR="$TMPDIR/repo"
   GENERATED_RULES_DIR="$TMPDIR/generated"
   USER_RULES_DIR="$TMPDIR/override"
+  # Read by resolve_rules, not by anything in this file.
+  # shellcheck disable=SC2034
   RULES_GLOB="*.md"
   mkdir -p "$GUIDELINES_RULES_SRC_DIR" "$GENERATED_RULES_DIR" "$USER_RULES_DIR"
 }

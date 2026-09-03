@@ -36,10 +36,10 @@ def _load_lib(name: str):
 
 
 # The same cache for the other half of the tree. Scripts under `bin/`,
-# `bin/local/`, `ai/bin/` and `ai/claude/bin/` carry no `.py` extension, so a test cannot
-# import one — it has to execute the file. Two callers executing the same file
-# hold two module objects for one script, and the two are not interchangeable:
-# `mock.patch("<name>.f")` resolves its target through `sys.modules`, while a
+# `bin/local/`, `ai/bin/` and `ai/claude/bin/` carry no `.py` extension, so a
+# test cannot import one — it has to execute the file. Two callers executing the
+# same file hold two module objects for one script, and the two are not
+# interchangeable: `mock.patch("<name>.f")` resolves through `sys.modules`, while a
 # test that kept its own reference calls straight into the module it built. The
 # patch lands on one copy and the call reads the other, so a mock silently does
 # nothing — a failure that appears only when both callers are live in one

@@ -486,6 +486,12 @@ def test_the_gate_covers_every_lib_module():
 
 # Build a map of {name: defining_module} for all names across all lib modules.
 # Dynamically discovered — adding a module or function updates the map.
+# setdefault() means that when two modules define the same name, the one that
+# sorts first wins the map entry; that is deliberate, since this check only
+# asks whether a bare reference resolves to some peer module, not which one.
+# The consequence: for a colliding name, the "defined in X" naming in a
+# failure message reports the first-sorted definer, which may not be the
+# module the author actually meant to import from.
 _PEER_DEFS: dict[str, str] = {}
 for _mod_name in ALL_LIB_MODULES:
     _mod_path = LIB_DIR / f"{_mod_name}.py"

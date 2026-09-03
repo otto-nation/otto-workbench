@@ -12,7 +12,7 @@ renders the same way, owned here rather than hand-copied into each one, so an
 agent's write mechanism, its worktree, and what it owes a generated file are
 described identically wherever the prompt came from.
 
-Stdlib only, like ``agent_types`` and for the same reason: a prompt is the last
+Stdlib only, like ``phases`` and for the same reason: a prompt is the last
 thing that should need the PR state machine to render.
 """
 

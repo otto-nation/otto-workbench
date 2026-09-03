@@ -1,8 +1,9 @@
 """The vocabulary a phase is named in: what runs, at what depth, in what mode.
 
-Enums and nothing else. The shapes that describe an inventory of phases —
-`PhaseSpec`, `EffortPreset`, `ItemScaling`, `RetryBudget` — live one layer up,
-in the module that reads this one.
+Enums and the prefix their keys are built from. The shapes that describe an
+inventory of phases — `PhaseSpec`, `EffortPreset`, `ItemScaling`,
+`RetryBudget` — live one layer up, in the module that owns the phase
+inventory's shapes.
 
 Split from them because the config types its fields with these names: with the
 vocabulary in the agent layer, the config would import the agent layer while the
@@ -18,6 +19,10 @@ from enum import StrEnum
 
 # Prefix on every per-phase override env key. Read by `Phase`'s two derived
 # keys and by `agent_phases`' three global ones.
+#
+# ``WORKBENCH_AI_`` rather than the old ``CLAUDE_REVIEW_``: these keys size
+# agent invocations across the whole workbench, not just reviews, and the
+# backend behind them is a choice (``_PROVIDER``) rather than a given.
 ENV_PREFIX = "WORKBENCH_AI_"
 
 

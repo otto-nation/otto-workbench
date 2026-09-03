@@ -31,9 +31,10 @@ running is not part of the reason it failed.
 
 The one owner of an agent invocation: resolve the phase, run it, guard it.
 
-``agent_types`` says what a phase is, ``agent_registry`` says which phases there
-are, ``agent_phases`` says what one resolves to here, and ``ai_backend`` knows
-how to talk to a CLI. This module is what sits between them: given a phase and
+``phases`` says what a phase is named, ``agent_types`` says what a phase's
+shape is, ``agent_registry`` says which phases there are, ``agent_phases``
+says what one resolves to here, and ``ai_backend`` knows how to talk to a
+CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
 level and provider, runs it, and hands the result to ``agent_retry``'s guard.
 
@@ -77,7 +78,8 @@ land on the same model.
 
 Every phase the workbench knows how to run, and what each one defaults to.
 
-``agent_types`` says what a phase *is*; this module says which ones there are.
+``phases`` says what a phase is *named*; ``agent_types`` says what a phase's
+*shape* is; this module says which ones there are.
 One entry per phase, and the entry is the whole declaration — the config key,
 the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
 preflight model list are all derived from it, so adding a phase is a member on
@@ -136,7 +138,7 @@ renders the same way, owned here rather than hand-copied into each one, so an
 agent's write mechanism, its worktree, and what it owes a generated file are
 described identically wherever the prompt came from.
 
-Stdlib only, like ``agent_types`` and for the same reason: a prompt is the last
+Stdlib only, like ``phases`` and for the same reason: a prompt is the last
 thing that should need the PR state machine to render.
 
 ### agent_types.py
@@ -205,9 +207,10 @@ be a fix pass asserting something outward nobody approved.
 
 The vocabulary a phase is named in: what runs, at what depth, in what mode.
 
-Enums and nothing else. The shapes that describe an inventory of phases —
-`PhaseSpec`, `EffortPreset`, `ItemScaling`, `RetryBudget` — live one layer up,
-in the module that reads this one.
+Enums and the prefix their keys are built from. The shapes that describe an
+inventory of phases — `PhaseSpec`, `EffortPreset`, `ItemScaling`,
+`RetryBudget` — live one layer up, in the module that owns the phase
+inventory's shapes.
 
 Split from them because the config types its fields with these names: with the
 vocabulary in the agent layer, the config would import the agent layer while the
@@ -528,8 +531,8 @@ Which prompt each phase builds, and which scan reads its output.
 One table. A phase that prompts names its builder here and nowhere else, and a
 phase whose output is read before the next one starts names its scan here too.
 
-It cannot live on `PhaseSpec`: `agent_types` imports nothing but the standard
-library, and the builders live in `review_prompt`, which imports
+It cannot live on `PhaseSpec`: `agent_types` imports nothing but `phases` and
+the standard library, and the builders live in `review_prompt`, which imports
 `agent_registry` — putting them on the spec is a cycle as well as a layering
 break. A table one layer down is the same declaration made once, and this is
 that layer.

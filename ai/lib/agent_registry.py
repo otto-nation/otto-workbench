@@ -1,6 +1,7 @@
 """Every phase the workbench knows how to run, and what each one defaults to.
 
-``agent_types`` says what a phase *is*; this module says which ones there are.
+``phases`` says what a phase is *named*; ``agent_types`` says what a phase's
+*shape* is; this module says which ones there are.
 One entry per phase, and the entry is the whole declaration — the config key,
 the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
 preflight model list are all derived from it, so adding a phase is a member on

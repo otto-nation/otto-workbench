@@ -1,8 +1,9 @@
 """The one owner of an agent invocation: resolve the phase, run it, guard it.
 
-``agent_types`` says what a phase is, ``agent_registry`` says which phases there
-are, ``agent_phases`` says what one resolves to here, and ``ai_backend`` knows
-how to talk to a CLI. This module is what sits between them: given a phase and
+``phases`` says what a phase is named, ``agent_types`` says what a phase's
+shape is, ``agent_registry`` says which phases there are, ``agent_phases``
+says what one resolves to here, and ``ai_backend`` knows how to talk to a
+CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
 level and provider, runs it, and hands the result to ``agent_retry``'s guard.
 

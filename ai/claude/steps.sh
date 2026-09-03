@@ -139,6 +139,62 @@ step_claude_rules() {
   "$CLAUDE_SRC_DIR/bin/claude-rules" sync
 }
 
+# _claude_env_json VAR... — prints, as a JSON object, the values ~/.env.local
+# sets for the named variables. Variables the file does not export are absent
+# from the object rather than present and empty.
+#
+# The file is read directly instead of the ambient environment because the sync
+# that matters most cannot see one: maintenance/bin/otto-workbench-maintenance
+# runs `otto-workbench sync` from launchd with nothing but PATH set, so an
+# environment-derived block would be blanked on every unattended run and restored
+# by hand the next time someone synced from a terminal.
+_claude_env_json() {
+  local json="{}" var line value
+  for var in "$@"; do
+    line=$(grep -m1 "^export ${var}=" "$ENV_LOCAL_FILE") || continue
+    value=${line#*=}
+    # A shell file quotes what needs quoting; settings.json carries the value.
+    value=${value#\"}
+    value=${value%\"}
+    value=${value#\'}
+    value=${value%\'}
+    [[ -n "$value" ]] || continue
+    json=$(jq --arg k "$var" --arg v "$value" '.[$k] = $v' <<< "$json")
+  done
+  printf '%s' "$json"
+}
+
+# _claude_mirror_env JSON — echoes the merged settings document with its `env`
+# block reconciled against ~/.env.local, and echoes it back untouched when that
+# file does not exist.
+#
+# The reconciliation is a mirror rather than a merge: a variable dropped from
+# ~/.env.local is deleted here too, or a CLAUDE_CODE_USE_VERTEX left behind
+# outlives the decision to stop routing through Vertex — settings.json wins over
+# the environment in Claude Code, so a stale entry cannot be overridden from a
+# shell. Only variables a registry declared with `meta.claude_env: true` are in
+# scope; anything else under `.env` was put there by hand and stays.
+_claude_mirror_env() {
+  local result="$1"
+
+  local -a managed=()
+  collect_claude_env_vars managed "$WORKBENCH_STABLE_DIR"
+  if [[ ! -f "$ENV_LOCAL_FILE" || ${#managed[@]} -eq 0 ]]; then
+    printf '%s' "$result"
+    return 0
+  fi
+
+  local env_json managed_json
+  env_json=$(_claude_env_json "${managed[@]}")
+  managed_json=$(printf '%s\n' "${managed[@]}" | jq -Rn '[inputs]')
+
+  jq --argjson env "$env_json" --argjson managed "$managed_json" '
+    .settings.env = (((.settings.env // {})
+      | with_entries(select(.key | IN($managed[]) | not))) + $env)
+    | if (.settings.env | length) == 0 then del(.settings.env) else . end
+  ' <<< "$result"
+}
+
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
 # Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
@@ -204,6 +260,12 @@ step_claude_settings() {
   result=$(jq -n --argjson t "$template" --argjson e "$existing" --argjson m "$manifest" \
     -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }
+
+  # After the merge, not through the template: sync-settings.jq adds a top-level
+  # key only when the live file lacks one, so an env block routed that way would
+  # be written once and never corrected again.
+  result=$(_claude_mirror_env "$result") \
+    || { err "Failed to mirror $ENV_LOCAL_FILE into settings.json"; return 1; }
 
   # Both halves are staged before either is published. The two files describe
   # each other: a manifest that ran ahead of the settings file — or trailed it —

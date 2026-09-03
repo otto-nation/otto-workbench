@@ -35,6 +35,7 @@ meta:
   install_check_command: colima      # check if command exists in PATH
   install_check_symlink: ~/.docker   # check if symlink exists (~ and ${WORKBENCH_*_DIR} expand)
   install_check_symlink_contains: x  # check if symlink target contains string
+  claude_env: true                   # mirror this registry's env[] into Claude's settings.json
 ```
 
 `loading` controls AI context generation: `always` puts tools in every Claude session; `scoped` (default) loads only when editing related files.
@@ -98,6 +99,14 @@ auth:
 ```
 
 Env var names must be unique across all registries — the validator enforces no duplicates.
+
+### `claude_env` — variables Claude Code needs without a shell
+
+A Claude Code session started outside an interactive shell — the desktop app, a launchd job, an IDE extension — inherits nothing from `~/.env.local`, so a variable that decides how the CLI routes has to reach it through `~/.claude/settings.json` instead. `meta.claude_env: true` marks a registry whose `env[]` belongs in that file: on every sync, [`step_claude_settings`](../ai/claude/steps.sh) reads the values `~/.env.local` sets for those variables and writes them into the settings file's `env` block.
+
+The block is a mirror, not a merge. A variable dropped from `~/.env.local` is removed from the settings file too — settings.json wins over the environment in Claude Code, so an entry left behind could not be overridden from a shell afterwards. Variables under `env` that no flagged registry declares were put there by hand and are left alone, and a machine with no `~/.env.local` at all is left alone entirely.
+
+The flag is opt-in per registry because the two files have different audiences: `~/.env.local` holds API tokens and is the operator's alone, while `~/.claude/settings.json` is written world-readable. Set it only on a registry whose variables are all safe to publish there — routing, model selection, region — never on one declaring a credential. `~/.zshrc` is not a place for these either: the config layers are sourced before it, so a value exported there is invisible to them (see [Execution Flow](execution-flow.md)) and the mirror never sees it at all.
 
 ## Cross-Validation Modes
 

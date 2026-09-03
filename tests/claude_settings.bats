@@ -1338,6 +1338,119 @@ _sync_run() {
   [ "$status" -eq 0 ]
 }
 
+# ── the env block mirrored from ~/.env.local ─────────────────────────────────
+# A Claude Code session started outside an interactive shell — the desktop app,
+# a launchd job — inherits none of ~/.env.local, so the routing variables have to
+# reach it through settings.json. The block is a mirror of that file rather than
+# a merge, since settings.json wins over the environment and a stale entry there
+# cannot be overridden from a shell.
+
+# _seed_env_local FAKE_HOME LINE... — writes a sandbox ~/.env.local.
+_seed_env_local() {
+  local home="$1"; shift
+  mkdir -p "$home"
+  printf '%s\n' "$@" > "$home/.env.local"
+}
+
+@test "env mirror: values from ~/.env.local land in the settings env block" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" \
+    'export CLAUDE_CODE_USE_VERTEX=1' \
+    "export ANTHROPIC_VERTEX_PROJECT_ID='proj-x'" \
+    'export ANTHROPIC_MODEL="claude-opus-5"'
+  _sync_run "$home" "$state"
+
+  # Quoting is the shell file's business; the settings file carries the value.
+  run jq -r '.env.CLAUDE_CODE_USE_VERTEX' "$home/.claude/settings.json"
+  [ "$output" = "1" ]
+  run jq -r '.env.ANTHROPIC_VERTEX_PROJECT_ID' "$home/.claude/settings.json"
+  [ "$output" = "proj-x" ]
+  run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
+  [ "$output" = "claude-opus-5" ]
+}
+
+@test "env mirror: a var absent from ~/.env.local is left out" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" 'export CLAUDE_CODE_USE_VERTEX=1'
+  _sync_run "$home" "$state"
+  run jq -e '.env | has("CLOUD_ML_REGION")' "$home/.claude/settings.json"
+  [ "$status" -ne 0 ]
+}
+
+@test "env mirror: a var dropped from ~/.env.local is withdrawn from settings" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" \
+    'export CLAUDE_CODE_USE_VERTEX=1' \
+    'export CLOUD_ML_REGION=us-east5'
+  _sync_run "$home" "$state"
+  run jq -r '.env.CLOUD_ML_REGION' "$home/.claude/settings.json"
+  [ "$output" = "us-east5" ]
+
+  # Turning Vertex off is a deletion in ~/.env.local and nowhere else.
+  _seed_env_local "$home" 'export CLAUDE_CODE_USE_VERTEX=1'
+  _sync_run "$home" "$state"
+  run jq -e '.env | has("CLOUD_ML_REGION")' "$home/.claude/settings.json"
+  [ "$status" -ne 0 ]
+}
+
+@test "env mirror: a var no registry declares is left where the operator put it" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" 'export CLAUDE_CODE_USE_VERTEX=1'
+  _sync_run "$home" "$state"
+
+  local settings="$home/.claude/settings.json" tmp="$BATS_TEST_TMPDIR/edit.json"
+  jq '.env.OPERATOR_OWN_VAR = "keep-me"' "$settings" > "$tmp" && mv "$tmp" "$settings"
+
+  _sync_run "$home" "$state"
+  run jq -r '.env.OPERATOR_OWN_VAR' "$settings"
+  [ "$output" = "keep-me" ]
+  run jq -r '.env.CLAUDE_CODE_USE_VERTEX' "$settings"
+  [ "$output" = "1" ]
+}
+
+@test "env mirror: a credential in ~/.env.local never reaches settings.json" {
+  # ~/.env.local is where the machine's API tokens live and settings.json is
+  # written 0644 — only a var a registry volunteered with claude_env crosses.
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" \
+    'export CLAUDE_CODE_USE_VERTEX=1' \
+    'export JIRA_API_TOKEN=super-secret'
+  _sync_run "$home" "$state"
+  run grep -c super-secret "$home/.claude/settings.json"
+  [ "$status" -ne 0 ]
+}
+
+@test "env mirror: no ~/.env.local leaves the settings env block untouched" {
+  # A machine with no ~/.env.local has nothing to mirror *from*, which is not the
+  # same as having nothing to mirror — emptying the block there would strip a
+  # hand-written one on the first sync after the file was renamed or moved.
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  mkdir -p "$home/.claude"
+  printf '%s\n' '{"env":{"ANTHROPIC_MODEL":"claude-opus-5"}}' > "$home/.claude/settings.json"
+  _sync_run "$home" "$state"
+  run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
+  [ "$output" = "claude-opus-5" ]
+}
+
+@test "env mirror: nothing to mirror leaves no empty env block behind" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" '# nothing this machine routes'
+  _sync_run "$home" "$state"
+  run jq -e 'has("env")' "$home/.claude/settings.json"
+  [ "$status" -ne 0 ]
+}
+
+@test "env mirror: a second sync reproduces the block byte for byte" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" \
+    'export CLAUDE_CODE_USE_VERTEX=1' \
+    'export CLOUD_ML_REGION=global'
+  _sync_run "$home" "$state"
+  cp "$home/.claude/settings.json" "$BATS_TEST_TMPDIR/first.json"
+  _sync_run "$home" "$state"
+  diff "$BATS_TEST_TMPDIR/first.json" "$home/.claude/settings.json"
+}
+
 # ── script paths referenced from settings ────────────────────────────────────
 # Hook and statusline commands name installed scripts by absolute path, and
 # nothing resolves those paths at install time. A wrong directory therefore

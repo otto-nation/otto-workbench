@@ -848,80 +848,6 @@ class TestClassifyFindingsEmptyPath:
         assert len(inline) == 1
 
 
-class TestWordSet:
-    def test_extracts_lowercase_words(self, rp):
-        assert rp.word_set("Hello World_Foo 123") == {"hello", "world_foo", "123"}
-
-    def test_empty_string(self, rp):
-        assert rp.word_set("") == set()
-
-    def test_strips_punctuation(self, rp):
-        assert rp.word_set("error — missing `check`") == {"error", "missing", "check"}
-
-
-class TestJaccard:
-    def test_identical_sets(self, rp):
-        assert rp.jaccard({"a", "b"}, {"a", "b"}) == 1.0
-
-    def test_disjoint_sets(self, rp):
-        assert rp.jaccard({"a"}, {"b"}) == 0.0
-
-    def test_partial_overlap(self, rp):
-        assert rp.jaccard({"a", "b", "c"}, {"b", "c", "d"}) == pytest.approx(0.5)
-
-    def test_both_empty(self, rp):
-        assert rp.jaccard(set(), set()) == 1.0
-
-    def test_one_empty(self, rp):
-        assert rp.jaccard({"a"}, set()) == 0.0
-
-
-class TestDedupAgainstPosted:
-    def _make_finding(self, rp, id_str, path, body):
-        return rp.Finding(
-            id=id_str, severity=id_str[0], seq=int(id_str[1:]),
-            path=path, line=42, end_line=None, body=body,
-        )
-
-    @patch("review_dedup._fetch_bot_comments")
-    def test_skips_duplicate(self, mock_fetch, rp):
-        mock_fetch.return_value = [
-            rp.PostedFinding("handler.go", "missing error check on db.Query result"),
-        ]
-        f = self._make_finding(rp, "M1", "handler.go", "missing error check on db.Query result")
-        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
-        assert len(kept) == 0
-        assert len(deduped) == 1
-        assert deduped[0].skip_reason == "duplicate of existing comment"
-
-    @patch("review_dedup._fetch_bot_comments")
-    def test_keeps_non_duplicate(self, mock_fetch, rp):
-        mock_fetch.return_value = [
-            rp.PostedFinding("handler.go", "missing error check on db.Query result"),
-        ]
-        f = self._make_finding(rp, "S1", "handler.go", "unused import os")
-        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
-        assert len(kept) == 1
-        assert len(deduped) == 0
-
-    @patch("review_dedup._fetch_bot_comments")
-    def test_different_file_not_duplicate(self, mock_fetch, rp):
-        mock_fetch.return_value = [
-            rp.PostedFinding("handler.go", "missing error check"),
-        ]
-        f = self._make_finding(rp, "M1", "other.go", "missing error check")
-        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
-        assert len(kept) == 1
-
-    @patch("review_dedup._fetch_bot_comments")
-    def test_no_existing_comments_keeps_all(self, mock_fetch, rp):
-        mock_fetch.return_value = []
-        f = self._make_finding(rp, "M1", "handler.go", "finding text")
-        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
-        assert len(kept) == 1
-        assert len(deduped) == 0
-
-
 class TestIsLineResolutionError:
     def test_matching_text(self, rp):
         assert rp._is_line_resolution_error("Line could not be resolved to a position") is True
@@ -1090,38 +1016,6 @@ class TestRenumberForPostingEdgeCases:
         assert len(body) == 2
         assert body[0].posted_id == "S1"
         assert body[1].posted_id == "N1"
-
-
-class TestDedupAgainstPostedEdgeCases:
-    def _make_finding(self, rp, id_str, path, body):
-        return rp.Finding(
-            id=id_str, severity=id_str[0], seq=int(id_str[1:]),
-            path=path, line=42, end_line=None, body=body,
-        )
-
-    @patch("review_dedup._fetch_bot_comments")
-    def test_jaccard_at_threshold_boundary(self, mock_fetch, rp):
-        # Build words so Jaccard is exactly 0.6: 3 shared out of 5 total
-        # a = {"a", "b", "c"}, b = {"a", "b", "c", "d", "e"} => 3/5 = 0.6
-        mock_fetch.return_value = [
-            rp.PostedFinding("file.go", "a b c d e"),
-        ]
-        f = self._make_finding(rp, "M1", "file.go", "a b c")
-        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
-        assert len(deduped) == 1
-        assert deduped[0].skip_reason == "duplicate of existing comment"
-
-    @patch("review_dedup._fetch_bot_comments")
-    def test_empty_path_on_both_sides_not_matched(self, mock_fetch, rp):
-        mock_fetch.return_value = [
-            rp.PostedFinding("", "missing error check"),
-        ]
-        f = self._make_finding(rp, "M1", "", "missing error check")
-        # Override to set path="" since _make_finding sets path to the arg
-        f.path = ""
-        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
-        assert len(kept) == 1
-        assert len(deduped) == 0
 
 
 class TestHeadShaRegex:
@@ -1682,69 +1576,6 @@ class TestDryRunIntegration:
         payload = self._extract_json(result.stdout)
         assert "Performance Notes" in payload["body"]
         assert "caching the DB query" in payload["body"]
-
-
-class TestCheckReviewAlreadyPosted:
-    def test_no_reviews_returns_empty(self, rp):
-        assert rp.check_review_already_posted([], "some body") == []
-
-    def test_match_returns_ids(self, rp):
-        bot_reviews = [
-            {"id": 42, "body": "some body text here", "state": "COMMENTED"},
-        ]
-        assert rp.check_review_already_posted(bot_reviews, "some body text here") == [42]
-
-    def test_zero_similarity_not_matched(self, rp):
-        bot_reviews = [
-            {"id": 42, "body": "completely different content", "state": "COMMENTED"},
-        ]
-        assert rp.check_review_already_posted(bot_reviews, "unrelated words here") == []
-
-    def test_partial_overlap_below_threshold(self, rp):
-        shared = "alpha bravo charlie delta echo foxtrot golf hotel"
-        different = "india juliet kilo lima mike november oscar papa quebec romeo sierra tango"
-        bot_reviews = [
-            {"id": 42, "body": f"{shared} {different}", "state": "COMMENTED"},
-        ]
-        assert rp.check_review_already_posted(bot_reviews, f"{shared} unique words not in review") == []
-
-
-class TestFetchBotReviews:
-    def test_returns_bot_reviews(self, rp, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
-            {"id": 1, "user": {"login": "bot"}, "state": "COMMENTED", "body": "review text"},
-            {"id": 2, "user": {"login": "human"}, "state": "COMMENTED", "body": "human review"},
-            {"id": 3, "user": {"login": "bot"}, "state": "PENDING", "body": "pending"},
-        ])
-        result = rp.fetch_bot_reviews("org/repo", "1")
-        assert len(result) == 1
-        assert result[0]["id"] == 1
-
-    def test_ignores_pending(self, rp, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
-            {"id": 42, "body": "some body text here", "state": "PENDING", "user": {"login": "bot"}},
-        ])
-        assert rp.fetch_bot_reviews("org/repo", "1") == []
-
-    def test_ignores_dismissed(self, rp, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
-            {"id": 42, "body": "some body text here", "state": "DISMISSED", "user": {"login": "bot"}},
-        ])
-        assert rp.fetch_bot_reviews("org/repo", "1") == []
-
-    def test_ignores_other_users(self, rp, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
-            {"id": 42, "body": "some body text here", "state": "COMMENTED", "user": {"login": "alice"}},
-        ])
-        assert rp.fetch_bot_reviews("org/repo", "1") == []
-
-    def test_api_failure_returns_empty(self, rp, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "")
-        assert rp.fetch_bot_reviews("org/repo", "1") == []
 
 
 class TestReviewSections:

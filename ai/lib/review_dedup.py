@@ -87,7 +87,10 @@ def get_bot_login() -> str:
 
 def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[PostedFinding]:
     if pr_data is not None:
-        posted = [PostedFinding(c["path"], c["body"]) for c in pr_data.bot_inline_comments(bot_user)]
+        posted = [
+            PostedFinding(c.get("path", ""), c.get("body", ""))
+            for c in pr_data.bot_inline_comments(bot_user)
+        ]
     else:
         all_comments = gh_client.api_json(f"repos/{repo}/pulls/{pr}/comments", default=[])
         posted = [

@@ -14,7 +14,7 @@ import review_pipeline
 import review_phases
 import review_steps
 from agent_registry import REVIEW_PHASES
-from agent_types import AgentKind, Effort, Phase, Thinking
+from phases import AgentKind, Effort, Phase, Thinking
 
 
 class TestPhaseLogPath:
@@ -80,7 +80,8 @@ class TestPhaseOutputPath:
 
 
 def _job(tmp_path, effort=Effort.MEDIUM):
-    from review_types import PRContext, PRMetadata, ReviewJob
+    from gh_types import PRContext, PRMetadata
+    from review_types import ReviewJob
 
     return ReviewJob(
         repo="org/repo", pr_number="42",

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent_phases
 from agent_registry import PHASES
-from agent_types import Effort, Phase
+from phases import Effort, Phase
 
 
 class TestPhaseTurns:

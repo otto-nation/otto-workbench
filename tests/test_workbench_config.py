@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import workbench_config as wc
 import workbench_config_report as wcr
 import workbench_config_write as wcw
-from agent_types import Effort, Phase, Thinking
+from phases import Effort, Phase, Thinking
 
 # The PyYAML write path only exists for a machine without yq, so the tests for
 # it only run where PyYAML is installed — the same shape test_review_grouping

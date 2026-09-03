@@ -9,9 +9,9 @@ one read HEAD and one did not, and only one of them consulted the publishing
 gate.
 
 Landing is one act with one result. `land` performs it and `LandResult` is what
-it did, in the `CommitStatus` vocabulary `pr_fix` already defines, so a pass
-records an outcome rather than reconstructing one from a `CmdResult` and a
-`PushResult` it has to reconcile itself.
+it did, in the `CommitStatus` vocabulary land owns, so a pass records an
+outcome rather than reconstructing one from a `CmdResult` and a `PushResult`
+it has to reconcile itself.
 
 `land_head` is the same act for a caller whose commits already exist — `pr
 rebase` replays the branch's own, so it has nothing to stage and everything
@@ -78,13 +78,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 import git_client
 import log
 import proc
 import push
-from pr_fix import CommitStatus
 from proc import CmdResult
 from push import PushResult, PushStatus
 from trail import EXCERPT_LIMIT, Trail
@@ -97,6 +97,44 @@ _EMPTY_COMMIT_MARKERS = (
     "nothing added to commit",
     "no changes added to commit",
 )
+
+
+class CommitStatus(StrEnum):
+    """How the fix pass left the commit — the state everything downstream reads.
+
+    A `StrEnum`, so the persisted values and the JSON payload are the same
+    strings they have always been: a state file written before this existed
+    still loads, and its plain strings still compare equal to these members.
+    The enum is for the code: two of these values are easily confused for one
+    another, which is the argument for naming them in one place.
+    """
+
+    # Committed and on the remote.
+    PUSHED = "pushed"
+    # Nothing to commit: the fix pass changed no files.
+    NO_CHANGES = "no_changes"
+    # A commit was attempted and refused — a hook, or a dirty tree left behind.
+    COMMIT_FAILED = "commit_failed"
+    # Committed locally; the push was attempted and failed.
+    PUSH_FAILED = "push_failed"
+    # Committed locally; the push was withheld.
+    PUSH_HELD = "push_held"
+    # Committed locally; git reported the push and the remote does not hold it.
+    # Kept apart from `push_failed` because the operator sees a clean push and
+    # would otherwise be told a push failed that, as far as their terminal went,
+    # did not.
+    PUSH_LOST = "push_lost"
+    # Committed locally; the push was reported and the remote could not be asked
+    # whether it arrived. Almost certainly on the remote, which is why it is not
+    # `push_lost` — that names a remote that answered, and answered no. Treated
+    # as unpushed everywhere it matters, because "probably" is not a SHA a
+    # reviewer can be handed.
+    PUSH_UNVERIFIED = "push_unverified"
+    # Render-time only, never persisted: HEAD has moved past the snapshot, but
+    # the commit that moved it is not one a reviewer can open, so the summary
+    # says the work was handled without naming a SHA for it.
+    RECONCILED = "reconciled"
+
 
 # The push owner's answers in the commit vocabulary. Complete by construction —
 # `land_test` asserts it covers `PushStatus`, because a status this map does not

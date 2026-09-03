@@ -17,7 +17,8 @@ from conftest import write_thrash_log
 import agent_retry
 import ai_usage
 from agent_registry import PHASES
-from agent_types import DEFAULT_RETRY_CEILING, Phase
+from agent_types import DEFAULT_RETRY_CEILING
+from phases import Phase
 import review_phases
 import review_retry
 from agent_diagnosis import Diagnosis, DiagnosisKind

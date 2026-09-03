@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 import pr_state
+from land import CommitStatus
 from pr_comments_fix import CLOSEOUT_COMMAND, FixSummary
 from pr_domains import (
     CIDomain,
@@ -21,7 +22,7 @@ from pr_domains import (
     ReviewSummary, ReviewVerdict, ReviewStatus,
     SupersessionDomain, SupersessionKind, SupersessionSignal,
 )
-from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
+from pr_fix import FixOutcome, FixRecord, ItemOutcome
 from pr_state import (
     PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,

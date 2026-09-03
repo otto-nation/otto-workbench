@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import agent_invoke
 import agent_phases
 import ai_backend
-from agent_types import Phase, PhaseShape
+from phases import Phase, PhaseShape
 
 
 def _answers(*replies):

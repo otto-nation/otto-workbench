@@ -34,7 +34,8 @@ from proc import CmdResult
 from pr_comments_state import ThreadState
 from pr_comments_fix import FixSummary
 from pr_domains import SupersessionKind
-from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome, SettledBy
+from land import CommitStatus
+from pr_fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
 from pr_state import PRIdentity, PRState
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,

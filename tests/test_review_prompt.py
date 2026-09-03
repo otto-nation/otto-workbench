@@ -16,11 +16,11 @@ from review_budget import (
     FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, fit_files,
 )
 from review_collect import format_preflight_data
+from gh_types import PRContext, PRMetadata
 from review_types import (
-    FindingRef, PRContext, PreflightData, PriorDisposition, PriorFinding,
-    PRMetadata, ReviewJob,
+    FindingRef, PreflightData, PriorDisposition, PriorFinding, ReviewJob,
 )
-from agent_types import Effort, Mode, Phase
+from phases import Effort, Mode, Phase
 from dataclasses import asdict
 
 from review_grammar import parse_ledger_line

@@ -26,9 +26,9 @@ from dataclasses import dataclass, field
 import gh_client
 import git_client
 import log
+import numstat
 import proc
-from review_collect import parse_numstat
-from review_types import PRContext, PRMetadata
+from gh_types import PRContext, PRMetadata
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ def fetch_pr_metadata(
     # --recover completes a run against the commit it started from, so the
     # changeset must come from the pinned checkout rather than the moved PR head.
     if pin_sha and pin_sha != head_sha and wt_path:
-        counts = parse_numstat(git_client.out(
+        counts = numstat.parse_numstat(git_client.out(
             "diff", "--numstat", f"origin/{data['baseRefName']}...HEAD", cwd=wt_path,
         ))
         files = counts.files

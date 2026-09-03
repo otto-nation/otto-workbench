@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import log
-from review_types import Group, PRMetadata
+from gh_types import PRMetadata
+from review_types import Group
 
 try:
     import yaml

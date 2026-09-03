@@ -1,8 +1,9 @@
 """The one owner of an agent invocation: resolve the phase, run it, guard it.
 
-``agent_types`` says what a phase is, ``agent_registry`` says which phases there
-are, ``agent_phases`` says what one resolves to here, and ``ai_backend`` knows
-how to talk to a CLI. This module is what sits between them: given a phase and
+``phases`` says what a phase is named, ``agent_types`` says what a phase's
+shape is, ``agent_registry`` says which phases there are, ``agent_phases``
+says what one resolves to here, and ``ai_backend`` knows how to talk to a
+CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
 level and provider, runs it, and hands the result to ``agent_retry``'s guard.
 
@@ -34,7 +35,7 @@ import log
 import review_agent
 from agent_diagnosis import Diagnosis
 from agent_registry import PHASES
-from agent_types import Effort, Phase, PhaseShape
+from phases import Effort, Phase, PhaseShape
 from ai_backend import AgentInvocation
 from workbench_config import WorkbenchConfig
 

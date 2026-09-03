@@ -25,7 +25,7 @@ import log
 import serde
 from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import SCAN_PHASES
-from agent_types import Phase
+from phases import Phase
 from pr_domains import ReviewStatus
 from review_agent import _parse_session_cost
 from review_document import SECTION_SUMMARY, set_section, set_status

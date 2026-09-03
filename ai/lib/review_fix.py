@@ -45,7 +45,7 @@ import fix_types
 import git_client
 import log
 import proc
-from agent_types import Phase
+from phases import Phase
 from pr_fix import FixOutcome, ItemOutcome
 from review_paths import phase_log_path
 from review_document import ReviewDocument, is_skipped

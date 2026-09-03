@@ -35,7 +35,9 @@ import agent_retry
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES
-from agent_types import EFFORT_PRESETS, Phase, PhaseShape
+from agent_types import EFFORT_PRESETS
+from gh_types import FILE_STAT_FMT
+from phases import Phase, PhaseShape
 from agent_invoke import run_agent
 from ai_backend import AgentInvocation
 from review_agent import (
@@ -56,7 +58,7 @@ from review_retry import (
     _retry_hint_for, _retry_missing_output, _was_skipped,
 )
 from review_state import PipelineState, _update_group_done, _update_group_failed
-from review_types import FILE_STAT_FMT, SEVERITIES, Group, GroupSkip, ReviewJob
+from review_types import SEVERITIES, Group, GroupSkip, ReviewJob
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases

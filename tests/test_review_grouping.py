@@ -24,7 +24,8 @@ from review_grouping import (
     match_profiles,
     merge_smallest_groups,
 )
-from review_types import Group, PRMetadata
+from gh_types import PRMetadata
+from review_types import Group
 
 try:
     import yaml as _yaml

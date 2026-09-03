@@ -15,7 +15,7 @@ The bounds on what a prompt may carry are `review_budget`'s, not this module's �
 review can afford to inline, reading the same numbers `review_prompt` budgets
 against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
-fills in are `review_types`'.
+fills in are `review_types`' and `gh_types`'.
 """
 
 # doc-group: pipeline
@@ -31,7 +31,10 @@ from pathlib import Path
 import git_client
 import git_topology
 import log
-from agent_types import Mode
+import numstat
+import pr_context
+from gh_types import PRMetadata
+from phases import Mode
 from review_budget import (
     FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
     MAX_COMMIT_LOG_BYTES, MAX_DELTA_DIFF_BYTES, MAX_DELTA_LOG_BYTES,
@@ -42,7 +45,7 @@ from review_document import ReviewHeader
 from review_grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
-from review_types import PreflightData, PRMetadata, ReviewJob
+from review_types import PreflightData, ReviewJob
 
 
 # ── Git reads ────────────────────────────────────────────────────────────────
@@ -72,9 +75,9 @@ def _untracked_files(wt_path: str) -> list[str]:
     return git_client.lines("ls-files", "--others", "--exclude-standard", cwd=wt_path)
 
 
-def _diff_untracked(wt_path: str, paths: list[str], numstat: bool = False) -> str:
+def _diff_untracked(wt_path: str, paths: list[str], counts_only: bool = False) -> str:
     """Diff each untracked path against nothing, as a whole-file addition."""
-    flags = ["--numstat"] if numstat else []
+    flags = ["--numstat"] if counts_only else []
     parts = []
     for path in paths:
         # --no-index exits 1 whenever the two sides differ, which is always here,
@@ -85,7 +88,7 @@ def _diff_untracked(wt_path: str, paths: list[str], numstat: bool = False) -> st
         if not out:
             continue
         # numstat names the pair "/dev/null => <path>"; the diff body is already clean.
-        parts.append(out.rsplit("\t", 1)[0] + "\t" + path if numstat else out)
+        parts.append(out.rsplit("\t", 1)[0] + "\t" + path if counts_only else out)
     return "\n".join(parts)
 
 
@@ -93,12 +96,12 @@ def _join_nonempty(*parts: str) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def worktree_diff(wt_path: str, since: str, *, numstat: bool = False) -> str:
+def worktree_diff(wt_path: str, since: str, *, counts_only: bool = False) -> str:
     """Every change from ``since`` to the working tree, untracked files included.
 
-    ``numstat`` asks for the per-file add/delete counts instead of the patch,
-    so the file list a review reports and the diff it sends come off the same
-    range rather than off two commands that could disagree.
+    ``counts_only`` asks for the per-file add/delete counts instead of the
+    patch, so the file list a review reports and the diff it sends come off
+    the same range rather than off two commands that could disagree.
 
     ``since`` bounds the tracked half only. Untracked files have no history to
     compare against, so they come through whole every time — on a delta review
@@ -106,48 +109,11 @@ def worktree_diff(wt_path: str, since: str, *, numstat: bool = False) -> str:
     """
     # ceiling: untracked files ignore `since`; upgrade to diffing against the
     # prior review's copy if repeated deltas start drowning in re-shown files.
-    flags = ["--numstat"] if numstat else []
+    flags = ["--numstat"] if counts_only else []
     return _join_nonempty(
         git_client.out("diff", *flags, since, cwd=wt_path),
-        _diff_untracked(wt_path, _untracked_files(wt_path), numstat=numstat),
+        _diff_untracked(wt_path, _untracked_files(wt_path), counts_only=counts_only),
     )
-
-
-@dataclass(frozen=True)
-class Numstat:
-    """What ``git diff --numstat`` says a change set touched.
-
-    ``files`` is one ``{path, additions, deletions}`` entry per line, in the
-    order git listed them; ``additions`` and ``deletions`` are the totals over
-    all of them.
-    """
-
-    files: list[dict]
-    additions: int
-    deletions: int
-
-
-def parse_numstat(numstat: str) -> Numstat:
-    """Read ``git diff --numstat`` output into per-file and total counts.
-
-    A binary file's counts are ``-``; they land as zero rather than being
-    dropped, so the file still appears in the review's file list.
-    """
-    files = []
-    total_add = 0
-    total_del = 0
-    for line in numstat.strip().split("\n"):
-        if not line:
-            continue
-        parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        add = int(parts[0]) if parts[0] != "-" else 0
-        delete = int(parts[1]) if parts[1] != "-" else 0
-        files.append({"path": parts[2], "additions": add, "deletions": delete})
-        total_add += add
-        total_del += delete
-    return Numstat(files=files, additions=total_add, deletions=total_del)
 
 
 def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
@@ -174,7 +140,9 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     # Diffing from the fork point reaches the working tree, so the file list
     # matches the diff `worktree_diff` builds for self-review: committed,
     # uncommitted and untracked changes alike.
-    counts = parse_numstat(worktree_diff(wt_path, fork_point(wt_path, base), numstat=True))
+    counts = numstat.parse_numstat(
+        worktree_diff(wt_path, fork_point(wt_path, base), counts_only=True)
+    )
 
     return PRMetadata(
         title=first_subject,

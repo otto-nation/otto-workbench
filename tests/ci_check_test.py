@@ -21,7 +21,8 @@ ci_check = load_script("ci_check", CI_CHECK)
 import fix_engine  # noqa: E402
 import land  # noqa: E402
 import publishing  # noqa: E402
-from pr_fix import CommitStatus, FixOutcome, ItemOutcome  # noqa: E402
+from land import CommitStatus  # noqa: E402
+from pr_fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr_state import PRIdentity, PRState  # noqa: E402
 from proc import CmdResult  # noqa: E402
 

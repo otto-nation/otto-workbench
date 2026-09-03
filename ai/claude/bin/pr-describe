@@ -30,7 +30,7 @@ import git_topology
 import log
 import pr_context
 import pr_state
-from agent_types import Phase
+from phases import Phase
 from pr_domains import DescribeSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args

@@ -31,7 +31,8 @@ import git_client
 import json
 import log
 from agent_templates import build_output_block
-from agent_types import EFFORT_PRESETS, Mode
+from agent_types import EFFORT_PRESETS
+from phases import Mode
 from pr_domains import ReviewVerdict
 from review_budget import (
     FileFit, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,

@@ -49,7 +49,7 @@ import land
 import log
 from agent_diagnosis import Diagnosis
 from agent_registry import PHASES
-from agent_types import Effort, Phase
+from phases import Effort, Phase
 from fix_types import FixItem
 from pr_fix import FixOutcome, ItemOutcome
 from trail import Trail

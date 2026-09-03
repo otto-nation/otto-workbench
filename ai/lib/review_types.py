@@ -13,8 +13,9 @@ review pipeline *does*.
 
 Nothing in the review layer is imported here, and nothing should be: this is the
 layer everything else in it sits on. The heavier imports — `agent_types`,
-`serde`, `workbench_config` and `pr_state.now_iso` — are all below the review
-layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
+`gh_types`, `serde`, `workbench_config` and `pr_state.now_iso` — are all below
+the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh_types`
+and the rest.
 """
 
 # doc-group: findings
@@ -29,7 +30,9 @@ from pathlib import Path
 
 import serde
 import workbench_config
-from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
+from agent_types import EFFORT_PRESETS
+from gh_types import PRContext, PRMetadata
+from phases import Effort, Mode, Phase
 from pr_state import now_iso
 
 
@@ -463,60 +466,6 @@ class FindingSpan:
 
 
 # ── What is under review ─────────────────────────────────────────────────────
-
-# One file's churn, as the prompt and the review header both list it.
-FILE_STAT_FMT = "  - {path} (+{additions} -{deletions})"
-
-
-@dataclass
-class PRMetadata:
-    title: str
-    body: str
-    head: str
-    base: str
-    head_sha: str
-    additions: int
-    deletions: int
-    changed_files: int
-    files: list[dict]
-    is_draft: bool = False
-    labels: list[str] = field(default_factory=list)
-    author: str = ""
-
-    @property
-    def total_lines(self):
-        return self.additions + self.deletions
-
-    def file_stats(self, line_threshold: int):
-        """The per-file churn breakdown, or "" for a PR small enough not to need it.
-
-        The threshold is an argument rather than a module constant because
-        ``EFFORT_PRESETS`` varies it by effort; re-deriving it here is what let
-        the two owners disagree.
-        """
-        if self.total_lines <= line_threshold:
-            return ""
-        sorted_files = sorted(
-            self.files, key=lambda f: f["additions"] + f["deletions"], reverse=True
-        )
-        return "\n".join(
-            FILE_STAT_FMT.format(**f) for f in sorted_files
-        )
-
-    @property
-    def all_files_formatted(self):
-        return "\n".join(
-            FILE_STAT_FMT.format(**f) for f in self.files
-        )
-
-
-@dataclass
-class PRContext:
-    commits: str = ""
-    reviews: str = "[]"
-    review_comments: str = "[]"
-    comments: str = "[]"
-
 
 @dataclass
 class PreflightData:

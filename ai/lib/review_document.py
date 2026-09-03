@@ -65,7 +65,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
-from agent_types import Mode
+from phases import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_spans import finding_spans
 from review_types import SEVERITIES, Finding, FindingScope, ReviewMeta, ReviewType, meta_enum

@@ -21,7 +21,9 @@ from pathlib import Path
 import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
-from agent_types import EFFORT_PRESETS, Mode, Phase
+from agent_types import EFFORT_PRESETS
+from gh_types import PRContext, PRMetadata
+from phases import Mode, Phase
 from review_paths import phase_log_path
 from review_collect import fetch_branch_metadata
 from review_github import (
@@ -31,7 +33,7 @@ from review_grouping import (
     GROUP_TIER3, group_files, merge_smallest_groups,
 )
 from review_outcome import _post_process_review, _write_review_sidecar, is_complete_review
-from review_types import PRContext, PRMetadata, ReviewJob, ReviewType
+from review_types import ReviewJob, ReviewType
 from review_prompt import PromptTooLarge
 from review_prompt_sections import _is_incremental
 from review_registry import build_prompt

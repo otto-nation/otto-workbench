@@ -58,7 +58,7 @@ import proc
 import publishing
 import push
 import timeouts
-from agent_types import Phase
+from phases import Phase
 from pr_domains import RebaseStatus, RebaseSummary
 from proc import CmdResult
 from tool_parser import ToolParser

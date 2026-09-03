@@ -520,7 +520,7 @@ class DescribeSummary(Domain):
 class SupersessionKind(StrEnum):
     """Which supersession check produced a finding. Printed, and sent to the trail.
 
-    A `StrEnum` for the same reason `pr_fix.CommitStatus` is one: these strings are
+    A `StrEnum` for the same reason `land.CommitStatus` is one: these strings are
     persisted in the state file and read back by a later process, so the values
     are the contract and the enum is for the code.
     """

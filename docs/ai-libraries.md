@@ -31,9 +31,10 @@ running is not part of the reason it failed.
 
 The one owner of an agent invocation: resolve the phase, run it, guard it.
 
-``agent_types`` says what a phase is, ``agent_registry`` says which phases there
-are, ``agent_phases`` says what one resolves to here, and ``ai_backend`` knows
-how to talk to a CLI. This module is what sits between them: given a phase and
+``phases`` says what a phase is named, ``agent_types`` says what a phase's
+shape is, ``agent_registry`` says which phases there are, ``agent_phases``
+says what one resolves to here, and ``ai_backend`` knows how to talk to a
+CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
 level and provider, runs it, and hands the result to ``agent_retry``'s guard.
 
@@ -77,7 +78,8 @@ land on the same model.
 
 Every phase the workbench knows how to run, and what each one defaults to.
 
-``agent_types`` says what a phase *is*; this module says which ones there are.
+``phases`` says what a phase is *named*; ``agent_types`` says what a phase's
+*shape* is; this module says which ones there are.
 One entry per phase, and the entry is the whole declaration — the config key,
 the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
 preflight model list are all derived from it, so adding a phase is a member on
@@ -136,18 +138,20 @@ renders the same way, owned here rather than hand-copied into each one, so an
 agent's write mechanism, its worktree, and what it owes a generated file are
 described identically wherever the prompt came from.
 
-Stdlib only, like ``agent_types`` and for the same reason: a prompt is the last
+Stdlib only, like ``phases`` and for the same reason: a prompt is the last
 thing that should need the PR state machine to render.
 
 ### agent_types.py
 
-The vocabulary every agent invocation is described in.
+The shapes that describe an inventory of phases.
 
 A phase is one agent invocation the workbench knows how to size: what model it
 runs, how hard it thinks, how many turns it gets, which agent definition it
-adopts, which prompt template it renders. This module owns the names for those
-things — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
-``Mode`` — and ``PhaseSpec``, the shape a phase's built-in defaults take.
+adopts, which prompt template it renders. The vocabulary those things are named
+in — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
+``Mode`` — lives in ``phases``, below this module. This module owns
+``PhaseSpec``, the shape a phase's built-in defaults take, and the presets and
+budgets built from it.
 
 Which phases exist, and what each one's defaults are, is ``agent_registry``'s
 job. The vocabulary is a closed set of names that grows only when a new kind of
@@ -155,12 +159,12 @@ knob appears; the registry is an inventory that grows with the workbench.
 Keeping them apart is also what stops the enum reaching back into the registry
 to answer questions about itself — a ``PhaseSpec`` answers those now.
 
-It imports nothing but the standard library, and that is the point. The
-vocabulary used to sit in the review pipeline's shared-helper module, which
-reached the PR state machine, the usage ledger and the git client; ``ai_backend``
-needed one enum from it and took all of that with it, and ``workbench_config``
-needed three. Anything may depend on the vocabulary, so the vocabulary depends
-on nothing.
+It imports nothing but ``phases`` and the standard library. The vocabulary used
+to sit here too, alongside the review pipeline's shared-helper module's reach
+into the PR state machine, the usage ledger and the git client; ``ai_backend``
+needed one enum and took all of that with it, and ``workbench_config`` needed
+three. Splitting the vocabulary into its own module below both let each import
+only the names, not the shapes built from them.
 
 Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs
@@ -198,6 +202,20 @@ The gate is not a parameter. Every pass here runs on an operator's behalf, so
 the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
+
+### phases.py
+
+The vocabulary a phase is named in: what runs, at what depth, in what mode.
+
+Enums and the prefix their keys are built from. The shapes that describe an
+inventory of phases — `PhaseSpec`, `EffortPreset`, `ItemScaling`,
+`RetryBudget` — live one layer up, in the module that owns the phase
+inventory's shapes.
+
+Split from them because the config types its fields with these names: with the
+vocabulary in the agent layer, the config would import the agent layer while the
+agent layer imports the config. A vocabulary has no dependencies, so it goes
+below both.
 
 ### prompt.py
 
@@ -257,7 +275,7 @@ The bounds on what a prompt may carry are `review_budget`'s, not this module's �
 review can afford to inline, reading the same numbers `review_prompt` budgets
 against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
-fills in are `review_types`'.
+fills in are `review_types`' and `gh_types`'.
 
 ### review_document.py
 
@@ -513,8 +531,8 @@ Which prompt each phase builds, and which scan reads its output.
 One table. A phase that prompts names its builder here and nowhere else, and a
 phase whose output is read before the next one starts names its scan here too.
 
-It cannot live on `PhaseSpec`: `agent_types` imports nothing but the standard
-library, and the builders live in `review_prompt`, which imports
+It cannot live on `PhaseSpec`: `agent_types` imports nothing but `phases` and
+the standard library, and the builders live in `review_prompt`, which imports
 `agent_registry` — putting them on the spec is a cycle as well as a layering
 break. A table one layer down is the same declaration made once, and this is
 that layer.
@@ -868,8 +886,9 @@ review pipeline *does*.
 
 Nothing in the review layer is imported here, and nothing should be: this is the
 layer everything else in it sits on. The heavier imports — `agent_types`,
-`serde`, `workbench_config` and `pr_state.now_iso` — are all below the review
-layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
+`gh_types`, `serde`, `workbench_config` and `pr_state.now_iso` — are all below
+the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh_types`
+and the rest.
 
 ### review_verify.py
 
@@ -934,6 +953,15 @@ it does not say where one stops.
 ## Publishing
 
 Everything that leaves the machine — review comments, replies, summaries, tracking issues — and the draft gate they all pass through first.
+
+### gh_types.py
+
+What a GitHub PR read returns: the PR's own metadata, and its conversation.
+
+Below the `gh`-layer module that fetches both, so the shapes a read answers
+with sit at or beneath the layer that answers. `review_collect` builds
+the same `PRMetadata` from local git for a branch with no PR behind it, which is
+why the type is not spelled in terms of the API's field names.
 
 ### pr_comments.py
 
@@ -1436,9 +1464,10 @@ one :class:`FixRecord` per run, and every domain carries a record because
 pass gains somewhere to record it by declaring nothing.
 
 This module is below the domains rather than beside them: ``pr_domains`` imports
-it, and it imports nothing from ``ai/lib`` in return. That is what lets the
-record hang off the base class without the domains and the vocabulary they are
-written in forming a cycle.
+it, and what it imports back — :class:`~land.CommitStatus`, the vocabulary a
+landing reports in — comes from ``land``, which sits below both. That is what
+lets the record hang off the base class without the domains and the vocabulary
+they are written in forming a cycle.
 
 Not every member of :class:`FixOutcome` is a verdict a pass reached. An item can
 turn out to have been settled somewhere else entirely — a thread the reviewer
@@ -2124,9 +2153,9 @@ one read HEAD and one did not, and only one of them consulted the publishing
 gate.
 
 Landing is one act with one result. `land` performs it and `LandResult` is what
-it did, in the `CommitStatus` vocabulary `pr_fix` already defines, so a pass
-records an outcome rather than reconstructing one from a `CmdResult` and a
-`PushResult` it has to reconcile itself.
+it did, in the `CommitStatus` vocabulary land owns, so a pass records an
+outcome rather than reconstructing one from a `CmdResult` and a `PushResult`
+it has to reconcile itself.
 
 `land_head` is the same act for a caller whose commits already exist — `pr
 rebase` replays the branch's own, so it has nothing to stage and everything
@@ -2191,6 +2220,14 @@ the plain answer:
 Centralized human-facing stderr output for otto-workbench AI scripts.
 
 NOT for structured event logging — use trail.py for that.
+
+### numstat.py
+
+What `git diff --numstat` says a change set touched.
+
+Read by every caller that has to size a diff before anything looks at it — the
+review pipeline from a worktree, and the GitHub reads from the API's own
+numstat. One reader so the two agree on what a binary file counts as.
 
 ### proc.py
 

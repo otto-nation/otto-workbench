@@ -1,6 +1,7 @@
 """Every phase the workbench knows how to run, and what each one defaults to.
 
-``agent_types`` says what a phase *is*; this module says which ones there are.
+``phases`` says what a phase is *named*; ``agent_types`` says what a phase's
+*shape* is; this module says which ones there are.
 One entry per phase, and the entry is the whole declaration — the config key,
 the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
 preflight model list are all derived from it, so adding a phase is a member on
@@ -29,10 +30,8 @@ from __future__ import annotations
 
 import argparse
 
-from agent_types import (
-    AgentKind, ItemScaling, Mode, Phase, PhaseDomain, PhaseShape, PhaseSpec,
-    RetryBudget, Thinking,
-)
+from agent_types import ItemScaling, PhaseSpec, RetryBudget
+from phases import AgentKind, Mode, Phase, PhaseDomain, PhaseShape, Thinking
 
 _SPECS: tuple[PhaseSpec, ...] = (
     # `single` and `synthesis` are the two phases a self-review prompts

@@ -3,8 +3,8 @@
 One table. A phase that prompts names its builder here and nowhere else, and a
 phase whose output is read before the next one starts names its scan here too.
 
-It cannot live on `PhaseSpec`: `agent_types` imports nothing but the standard
-library, and the builders live in `review_prompt`, which imports
+It cannot live on `PhaseSpec`: `agent_types` imports nothing but `phases` and
+the standard library, and the builders live in `review_prompt`, which imports
 `agent_registry` — putting them on the spec is a cycle as well as a layering
 break. A table one layer down is the same declaration made once, and this is
 that layer.
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import agent_templates
 import log
 from agent_registry import PHASES
-from agent_types import Phase
+from phases import Phase
 from review_budget import MAX_PROMPT_BYTES
 from review_paths import phase_output_path
 from review_prompt import (

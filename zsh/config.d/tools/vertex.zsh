@@ -8,8 +8,9 @@
 # other Google tooling keeps it, because the two are the same variable to gcloud
 # and overwriting it here would repoint every other consumer in the shell.
 #
-# The mirror is attempted twice, because the source variable is not guaranteed to
-# exist by the time this file runs. ~/.env.local is sourced ahead of every config
+# The mirror is attempted again at the first prompt when the first attempt found
+# nothing, because the source variable is not guaranteed to exist by the time
+# this file runs. ~/.env.local is sourced ahead of every config
 # layer and is where the workbench asks for the project id, but ~/.zshrc's own
 # machine-specific block sits *below* the line that sources the loader — an id
 # exported there arrives after this file has already run and returned. The

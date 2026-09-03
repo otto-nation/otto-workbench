@@ -96,24 +96,44 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "a conflicting value is left in ~/.zshrc and reported" {
-  # ~/.zshrc runs last today, so its value is the one the shell ends up with.
-  # Deleting it would silently switch the machine to the other one.
+@test "a conflicting value keeps the one the shell was using" {
+  # ~/.zshrc is read after ~/.env.local, so its value is the one in effect. The
+  # shell has to answer the same after the migration as before it.
   _legacy_zshrc
   printf '%s\n' 'export CLOUD_ML_REGION=us-east5' > "$ENV_LOCAL"
 
   run _run_migration
   [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN Set in both"* ]]
+  [[ "$output" == *"WARN Set in both files"* ]]
   [[ "$output" == *"CLOUD_ML_REGION"* ]]
 
-  run grep -qx 'export CLOUD_ML_REGION=global' "$ZSHRC"
+  run grep -q '^export CLOUD_ML_REGION=' "$ZSHRC"
+  [ "$status" -ne 0 ]
+  run grep -c '^export CLOUD_ML_REGION=' "$ENV_LOCAL"
+  [ "$output" -eq 1 ]
+  run grep -qx 'export CLOUD_ML_REGION=global' "$ENV_LOCAL"
   [ "$status" -eq 0 ]
-  run grep -qx 'export CLOUD_ML_REGION=us-east5' "$ENV_LOCAL"
+}
+
+@test "a superseded value is commented out, not deleted" {
+  _legacy_zshrc
+  printf '%s\n' 'export CLOUD_ML_REGION=us-east5' > "$ENV_LOCAL"
+
+  run _run_migration
   [ "$status" -eq 0 ]
-  # The variables that did not conflict still moved.
-  run grep -qx 'export ANTHROPIC_MODEL=claude-opus-5' "$ENV_LOCAL"
+  run grep -q '^# superseded by the same export moved out of ~/.zshrc.*us-east5' "$ENV_LOCAL"
   [ "$status" -eq 0 ]
+}
+
+@test "the value a conflict resolves to is the one a shell reads last" {
+  # Reading the file is the only assertion that settles it — the moved line has
+  # to land after the commented-out one, whatever order the migration wrote in.
+  _legacy_zshrc
+  printf '%s\n' 'export CLOUD_ML_REGION=us-east5' > "$ENV_LOCAL"
+  _run_migration
+
+  run bash -c 'set -a; . "$1"; printf "%s" "$CLOUD_ML_REGION"' _ "$ENV_LOCAL"
+  [ "$output" = "global" ]
 }
 
 @test "the header is written once, not once per run" {

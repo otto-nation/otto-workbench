@@ -149,19 +149,27 @@ step_claude_rules() {
 # environment-derived block would be blanked on every unattended run and restored
 # by hand the next time someone synced from a terminal.
 _claude_env_json() {
-  local json="{}" var line value
+  local -a pairs=()
+  local var line value
   for var in "$@"; do
     line=$(grep -m1 "^export ${var}=" "$ENV_LOCAL_FILE") || continue
     value=${line#*=}
     # A shell file quotes what needs quoting; settings.json carries the value.
-    value=${value#\"}
-    value=${value%\"}
-    value=${value#\'}
-    value=${value%\'}
+    # Only a matched pair comes off — a lone quote is part of a line nothing here
+    # can read confidently, and it travels intact rather than half-stripped.
+    if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+      value=${value:1:${#value}-2}
+    fi
     [[ -n "$value" ]] || continue
-    json=$(jq --arg k "$var" --arg v "$value" '.[$k] = $v' <<< "$json")
+    pairs+=("$var"$'\t'"$value")
   done
-  printf '%s' "$json"
+
+  if [[ ${#pairs[@]} -eq 0 ]]; then
+    printf '{}'
+    return 0
+  fi
+  printf '%s\n' "${pairs[@]}" \
+    | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
 }
 
 # _claude_mirror_env JSON — echoes the merged settings document with its `env`

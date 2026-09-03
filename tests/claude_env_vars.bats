@@ -118,7 +118,9 @@ tools: []'
   local -a vars=()
   collect_claude_env_vars vars "$REPO_ROOT"
   printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_MODEL
+  printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_DEFAULT_OPUS_MODEL
   printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_DEFAULT_SONNET_MODEL
+  printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_DEFAULT_HAIKU_MODEL
 }
 
 @test "no credential the registries declare reaches the allowlist" {

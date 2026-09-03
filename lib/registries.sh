@@ -283,6 +283,8 @@ collect_claude_env_vars() {
     [[ "$flagged" == "true" ]] || continue
 
     count=$(yq '.env | length' "$file" 2>/dev/null) || continue
+    [[ "$count" -gt 0 ]] || continue
+
     for (( i=0; i<count; i++ )); do
       var=$(yq ".env[$i].var // \"\"" "$file")
       [[ -n "$var" && "$var" != "null" ]] || continue

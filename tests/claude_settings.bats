@@ -1432,6 +1432,30 @@ _seed_env_local() {
   [ "$output" = "claude-opus-5" ]
 }
 
+@test "env mirror: a ~/.env.local setting none of them keeps a hand-written block" {
+  # The file exists and has content, but nothing in it is the mirror's — the two
+  # states that look alike from here are "no values" and "no file", and only the
+  # second is a reason to leave the block entirely alone.
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" 'export JIRA_API_TOKEN=super-secret'
+  mkdir -p "$home/.claude"
+  printf '%s\n' '{"env":{"OPERATOR_OWN_VAR":"keep-me"}}' > "$home/.claude/settings.json"
+
+  _sync_run "$home" "$state"
+  run jq -r '.env.OPERATOR_OWN_VAR' "$home/.claude/settings.json"
+  [ "$output" = "keep-me" ]
+  run jq -r '.env | length' "$home/.claude/settings.json"
+  [ "$output" = "1" ]
+}
+
+@test "env mirror: a value carrying an = sign survives intact" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" 'export ANTHROPIC_MODEL=claude-opus-5=beta'
+  _sync_run "$home" "$state"
+  run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
+  [ "$output" = "claude-opus-5=beta" ]
+}
+
 @test "env mirror: nothing to mirror leaves no empty env block behind" {
   local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
   _seed_env_local "$home" '# nothing this machine routes'

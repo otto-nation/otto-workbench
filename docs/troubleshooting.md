@@ -255,6 +255,22 @@ TEST_JOBS=2 bin/local/run-tests       # or leave capacity for whatever else is r
 
 `bin/local/run-tests` already sizes itself from the free cores rather than the total, so a second suite started through it takes the share the first left. A run started while the machine was still idle — or one whose load the one-minute average has not caught up to yet — can still land here.
 
+## The same hint under a failure that looks like a real assertion
+
+`MachineContention` covers the subprocesses the *fixtures* run. The code under test runs its own — `land` commits, `pr` calls `gh` — and `proc.run` hands a starved one back as an ordinary failure result, because every caller already handles a non-zero exit and none of them has a handler for an exception. So the code proceeds exactly as designed and the assertion that trips afterwards is about a mock that was never called, or a file that was never written:
+
+```
+E   AttributeError: 'NoneType' object has no attribute 'kwargs'
+---- MachineContention — the code under test lost a subprocess ----
+  git -C /tmp/.../repo commit -m wip — timed out after 30s
+
+This is a machine problem, not a test defect: ...
+```
+
+The section under the traceback is the tell. `proc.run` records every command it saw the machine end, and `tests/conftest.py` clears that record before each test and attaches whatever it holds to a failing one. Treat a failure carrying the section the same way as the exception above: re-run it on an idle machine before reading the assertion as real.
+
+A failure with no section is the other half of the answer. The record was empty for that test, so no production subprocess was starved during it — that is evidence the failure is genuine, rather than merely the absence of a marker.
+
 ## "merge conflict" in `~/.claude/settings.json`
 
 The AI sync merges `settings.json` rather than overwriting. If you see unexpected values, re-sync:

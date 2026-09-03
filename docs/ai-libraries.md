@@ -2285,6 +2285,17 @@ the call sites that has none; as a result code it degrades through
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
 
+Both of those are also *recorded*, in `MACHINE_KILLS`. Returning them as
+ordinary results is right for the caller and is exactly what makes them
+invisible to anyone watching from outside: a starved `git commit` comes back as
+`COMMIT_FAILED`, the caller handles it as designed, and whatever goes wrong
+afterwards carries no sign that the machine was the cause. So `run` appends a
+`MachineKill` on its way past, and a reader that wants to know can ask — which
+is what `tests/conftest.py` does when a test fails, so a contention casualty
+arriving through the code under test is as recognisable as one arriving through
+a fixture. Nothing about the result the caller gets changes, and no branch here
+knows it is being observed.
+
 The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
 `bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a
 literal 124, 127 or 130 written where something exits with it or reads it back

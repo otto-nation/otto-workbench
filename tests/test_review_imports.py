@@ -46,7 +46,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 BUILTINS = {"__name__", "__file__", "__class__", "__spec__"}
 
 ALL_LIB_MODULES = sorted(
-    p.stem for p in LIB_DIR.glob("review_*.py")
+    p.stem for p in LIB_DIR.glob("*.py") if not p.stem.startswith("__")
 )
 
 POST_LIB_MODULES = [
@@ -468,6 +468,18 @@ def test_main_callable(script, fixture, request):
     mod = request.getfixturevalue(fixture)
     assert hasattr(mod, "main"), f"{script.name} has no main() function"
     assert callable(mod.main)
+
+
+def test_the_gate_covers_every_lib_module():
+    """A new ai/lib module joins the check by existing, not by being remembered.
+
+    The check that catches a cross-module private import is only as wide as this
+    list; a module outside it is unpoliced, which is what four retro_* modules
+    were after #1095 split them out.
+    """
+    on_disk = {p.stem for p in LIB_DIR.glob("*.py") if not p.stem.startswith("__")}
+
+    assert set(ALL_LIB_MODULES) == on_disk
 
 
 # ── 8. Cross-module bare references (dynamic) ────────────────────────────────

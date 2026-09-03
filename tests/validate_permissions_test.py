@@ -293,7 +293,7 @@ def test_fix_is_idempotent_on_order(tmp_path, monkeypatch, capsys):
 # that reach credentials; these stand in for it so the tests do not move when
 # the real file gains a directory.
 
-TRACKED = perms.TrackedRules(allow=["bin/*", "ai/claude/bin/*"], ask=["bin/get-secret:*"])
+TRACKED = perms.TrackedRules(allow=["bin/*", "ai/bin/*"], ask=["bin/get-secret:*"])
 
 # A grant `TRACKED` already covers via `Bash(bin/*)` — shared across the tests
 # below so they read as one known-covered example rather than a fresh literal.
@@ -323,8 +323,8 @@ def test_a_grant_under_a_granted_directory_is_covered(tmp_path):
 
 def test_a_grant_carrying_arguments_is_covered(tmp_path):
     """The tracked wildcard ends in `*`, so the whole invocation is inside it."""
-    assert _covered(tmp_path, "Bash(ai/claude/bin/pr --tool-schema)") == [
-        ("Bash(ai/claude/bin/pr --tool-schema)", "Bash(ai/claude/bin/*)")
+    assert _covered(tmp_path, "Bash(ai/bin/pr --tool-schema)") == [
+        ("Bash(ai/bin/pr --tool-schema)", "Bash(ai/bin/*)")
     ]
 
 
@@ -700,7 +700,7 @@ def test_fix_removes_nothing_the_tracked_rules_do_not_already_grant(tmp_path, mo
                                                                    capsys):
     """The no-op proof: every pruned rule's commands are matched by a tracked rule."""
     drifting = [COVERED_GRANT, "Bash(bin/local/compose-docs --check)",
-                "Bash(ai/claude/bin/pr --tool-schema)", "Bash(bin/local/validate-ceiling *)"]
+                "Bash(ai/bin/pr --tool-schema)", "Bash(bin/local/validate-ceiling *)"]
     path = _local(tmp_path, *drifting, "Bash(sh /tmp/probe.sh)")
     before = set(json.loads(Path(path).read_text())["permissions"]["allow"])
 

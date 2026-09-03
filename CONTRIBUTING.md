@@ -100,7 +100,7 @@ in is decided by how far it should reach.
 | `ai/claude/settings.json` | every repo on the machine, via `~/.claude/settings.json` | shell builtins, filesystem ops, and registry-derived tool grants |
 | `.claude/settings.local.json` | one checkout, untracked | nothing worth keeping |
 
-The tracked project file grants three directories — `bin/`, `git/bin/`, and
+The tracked project file grants four directories — `bin/`, `git/bin/`, `ai/bin/`, and
 `ai/claude/bin/`. That is arbitrary execution of anything the repo ships in a bin
 directory, and it is deliberate: it is the trust level a checkout of this repo
 already implies, and a directory wildcard means adding a script needs no

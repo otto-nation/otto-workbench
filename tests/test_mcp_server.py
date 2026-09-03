@@ -261,7 +261,7 @@ class TestDiscovery:
         """
         builder = (
             Path(__file__).resolve().parent.parent
-            / "ai" / "claude" / "bin" / "build-otto-ai-tools-tarball"
+            / "ai" / "bin" / "build-otto-ai-tools-tarball"
         )
         if not builder.exists():
             pytest.skip("builder not found")
@@ -277,7 +277,7 @@ class TestDiscovery:
         """
         launcher = (
             Path(__file__).resolve().parent.parent
-            / "ai" / "claude" / "bin" / "otto-mcp-server"
+            / "ai" / "bin" / "otto-mcp-server"
         )
         if not launcher.exists():
             pytest.skip("launcher not found")
@@ -369,7 +369,7 @@ class TestDiscovery:
 
     def test_discovers_real_tools(self):
         """Verify discovery works with actual ToolParser-enabled scripts."""
-        bin_dir = WORKBENCH_DIR / "ai" / "claude" / "bin"
+        bin_dir = WORKBENCH_DIR / "ai" / "bin"
         if not (bin_dir / "pr").exists():
             pytest.skip("scripts not found")
 
@@ -737,7 +737,7 @@ class TestRegistryVisibility:
 
     def test_the_pr_subcommands_are_not_offered_beside_pr(self):
         """The case that motivated this: hidden in the registry, hidden here."""
-        bin_dir = WORKBENCH_DIR / "ai" / "claude" / "bin"
+        bin_dir = WORKBENCH_DIR / "ai" / "bin"
         if not (bin_dir / "pr-rebase").exists():
             pytest.skip("scripts not found")
 
@@ -792,7 +792,7 @@ class TestWorkbenchToolDirs:
 
     def test_an_untold_scan_discovers_the_workbench_tools(self):
         """The regression guard: a config-only server yielded no tools at all."""
-        if not (WORKBENCH_DIR / "ai" / "claude" / "bin" / "pr").exists():
+        if not (WORKBENCH_DIR / "ai" / "bin" / "pr").exists():
             pytest.skip("scripts not found")
 
         assert "pr" in discover_tools()
@@ -1143,7 +1143,7 @@ REPLY_POLL_INTERVAL = 0.1
 
 uv_required = pytest.mark.skipif(
     shutil.which("uv") is None,
-    reason="the server runs under `uv run --with mcp`, as ai/claude/bin/otto-mcp-server does",
+    reason="the server runs under `uv run --with mcp`, as ai/bin/otto-mcp-server does",
 )
 
 _ECHO_TOOL = '''\

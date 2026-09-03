@@ -7,7 +7,7 @@ setup() {
   load 'test_helper'
   common_setup
   TMPDIR="$(mktemp -d)"
-  PROMOTE_SCAN="$REPO_ROOT/ai/claude/bin/promote-scan"
+  PROMOTE_SCAN="$REPO_ROOT/ai/bin/promote-scan"
   sandbox_state_dir
 }
 

@@ -38,8 +38,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = [
-    REPO_ROOT / "ai" / "claude" / "bin" / "review-post",
-    REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate",
+    REPO_ROOT / "ai" / "bin" / "review-post",
+    REPO_ROOT / "ai" / "bin" / "review-orchestrate",
 ]
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 

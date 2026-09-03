@@ -739,7 +739,7 @@ re-derives from `HOME` and `WORKBENCH_STATE_DIR` did not.
 Its own module rather than part of `constants.sh` because two other consumers
 need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh`
 alongside its own `ui.sh` facade (see `BASH_MODULES` in
-`ai/claude/bin/build-otto-ai-tools-tarball`), and `registries.sh` sources it
+`ai/bin/build-otto-ai-tools-tarball`), and `registries.sh` sources it
 directly when a caller has not loaded `constants.sh`.
 
 Two definitions outside `lib/` express the same chain, and

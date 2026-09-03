@@ -23,13 +23,13 @@ import permissions as perms  # noqa: E402
 # tracked .claude/settings.json and `gh pr:*` for ~/.claude/settings.json, which
 # is the only one most registered repos have.
 TRACKED = perms.TrackedRules(allow=["bin/*"], ask=["bin/get-secret:*"])
-MACHINE = perms.TrackedRules(allow=["gh pr:*"], ask=["ai/claude/bin/pr:*"])
+MACHINE = perms.TrackedRules(allow=["gh pr:*"], ask=["ai/bin/pr:*"])
 
 # One example grant per class, named the way tests/validate_permissions_test.py
 # names its own so a rename stays a one-line change in each.
 COVERED_GRANT = "Bash(bin/local/validate-all)"
 MACHINE_GRANT = "Bash(gh pr view 12)"
-OVERRIDE_GRANT = "Bash(ai/claude/bin/pr status)"
+OVERRIDE_GRANT = "Bash(ai/bin/pr status)"
 ONE_OFF_GRANT = "Bash(printenv)"
 
 
@@ -150,7 +150,7 @@ def test_the_repos_own_file_wins_the_attribution(tmp_path):
 def test_a_machine_ask_rule_makes_a_local_allow_an_override(tmp_path):
     report = _scan(tmp_path, OVERRIDE_GRANT)
     assert [(g.rule, g.tracked) for g in report.overrides] == [
-        (OVERRIDE_GRANT, "Bash(ai/claude/bin/pr:*)")
+        (OVERRIDE_GRANT, "Bash(ai/bin/pr:*)")
     ]
     assert report.covered == []
 
@@ -158,7 +158,7 @@ def test_a_machine_ask_rule_makes_a_local_allow_an_override(tmp_path):
 def test_an_override_outranks_a_covered_reading_of_the_same_rule(tmp_path):
     """An ask anywhere means a person is meant to see the call; an allow
     elsewhere does not cancel that."""
-    tracked = perms.TrackedRules(allow=["ai/claude/bin/*"])
+    tracked = perms.TrackedRules(allow=["ai/bin/*"])
     report = ps.scan_file(_local(tmp_path, OVERRIDE_GRANT), tracked,
                           MACHINE, False)
     assert [g.rule for g in report.overrides] == [OVERRIDE_GRANT]

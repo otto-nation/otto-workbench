@@ -21,7 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 TEMPLATE_DIR = LIB_DIR / "review-templates"
-BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
+BIN_DIR = REPO_ROOT / "ai" / "bin"
 AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 
 # Insert lib dir so we can import the review modules directly
@@ -217,7 +217,7 @@ class TestPhaseSkipFlags:
         )
         for script in ("claude-review", "review-orchestrate"):
             helped = subprocess.run(
-                [str(REPO_ROOT / "ai" / "claude" / "bin" / script), "--help"],
+                [str(REPO_ROOT / "ai" / "bin" / script), "--help"],
                 capture_output=True, text=True, timeout=60,
             ).stdout
             for flag in generated:

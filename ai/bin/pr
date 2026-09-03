@@ -18,7 +18,7 @@ from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name
-sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
+sys.path.insert(0, str(BIN_DIR.parent / "lib"))
 
 import pr_context
 import pr_domains

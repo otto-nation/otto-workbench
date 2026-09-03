@@ -7,7 +7,7 @@ setup() {
   load 'test_helper'
   common_setup
   TMPDIR="$(mktemp -d)"
-  RETRO_SCAN="$REPO_ROOT/ai/claude/bin/retro-scan"
+  RETRO_SCAN="$REPO_ROOT/ai/bin/retro-scan"
   sandbox_state_dir
 }
 

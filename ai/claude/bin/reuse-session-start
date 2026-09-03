@@ -19,6 +19,9 @@ import sys
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
+# The harness-neutral CLIs live one directory up, in ai/bin/ — this hook is a
+# Claude Code construct and stays under ai/claude/, but ceiling-scan is not.
+AI_BIN_DIR = BIN_DIR.parent.parent / "bin"
 # ai/lib goes after this script's own directory, not in front of it: a module
 # named the same in both belongs to the hook.
 sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
@@ -56,7 +59,7 @@ def _ceiling_counts(repo: str) -> dict | None:
     flat-cost local read: a breach means something is wrong, not that the repo
     is large.
     """
-    ceiling_scan = BIN_DIR / "ceiling-scan"
+    ceiling_scan = AI_BIN_DIR / "ceiling-scan"
     try:
         result = proc.run(
             [sys.executable, str(ceiling_scan), "--json", repo],

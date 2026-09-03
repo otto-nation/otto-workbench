@@ -14,11 +14,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "build-otto-ai-tools-tarball"
-BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
+BUILD_SCRIPT = REPO_ROOT / "ai" / "bin" / "build-otto-ai-tools-tarball"
+BIN_DIR = REPO_ROOT / "ai" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 
-BIN_EXCLUDE = {"build-otto-ai-tools-tarball", "_version.py"}
+BIN_EXCLUDE = {"build-otto-ai-tools-tarball", "_version.py",
+               "build-claude-config-tarball", "workbench-export"}
 
 PACKAGED_BINARIES = sorted(
     p for p in BIN_DIR.iterdir()

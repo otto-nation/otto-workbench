@@ -6,7 +6,7 @@ from pathlib import Path
 from conftest import load_script
 from conftest import write_marker_file as _write
 
-BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
+BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 
 ceiling_scan = load_script("ceiling_scan", BIN_DIR / "ceiling-scan")
 

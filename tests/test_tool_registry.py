@@ -246,7 +246,7 @@ def test_the_checkout_names_the_scripts_it_ships():
 def test_the_pr_family_is_registered_the_way_the_server_reads_it():
     """`pr` is the tool; `pr rebase` and `pr ci` run the other two."""
     entries = load_registry_entries(REPO_ROOT)
-    bin_dir = REPO_ROOT / "ai" / "claude" / "bin"
+    bin_dir = REPO_ROOT / "ai" / "bin"
 
     assert entries[bin_dir / "pr"].visibility is Visibility.FULL
     assert entries[bin_dir / "pr-rebase"].visibility is Visibility.HIDDEN

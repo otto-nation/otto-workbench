@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(ai/bin/*)",
       "Bash(ai/claude/bin/*)",
       "Bash(bin/*)",
       "Bash(git/bin/*)"

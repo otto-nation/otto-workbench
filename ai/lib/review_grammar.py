@@ -231,7 +231,7 @@ SPACED_FILE = rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+"
 #
 #   1. pkg/handler.go            — an extension ends the filename
 #   2. src/café brûlé.py         — a filename holding spaces
-#   3. ai/claude/bin/ci-check    — an extensionless script, slash required
+#   3. ai/bin/ci-check           — an extensionless script, slash required
 #
 # Shapes 1 and 3 keep prose out by starting at the span's first character and
 # stopping at the first space: a sentence only passes if its opening word is

@@ -33,7 +33,7 @@ def template_dir() -> Path:
     """The absolute path to the template directory.
 
     Derived from this module's own location so it holds wherever the repo is
-    checked out, and so a caller in ``ai/claude/bin`` does not have to count
+    checked out, and so a caller in ``ai/bin`` does not have to count
     parent directories to reach it.
     """
     return Path(__file__).resolve().parent.parent / TEMPLATE_DIR_REL

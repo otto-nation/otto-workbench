@@ -9,7 +9,7 @@ setup() {
   TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR"
   export NO_COLOR=1
-  DREAM_VERIFY="$REPO_ROOT/ai/claude/bin/dream-verify"
+  DREAM_VERIFY="$REPO_ROOT/ai/bin/dream-verify"
 }
 
 teardown() {

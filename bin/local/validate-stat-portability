@@ -137,7 +137,7 @@ def _discover_extensionless(repo_root: str, shebang_re: re.Pattern) -> set[str]:
     """Find extensionless bash scripts in known directories by shebang."""
     scripts: set[str] = set()
 
-    for subdir in ('bin', 'ai/claude/bin', 'git/hooks', 'git/bin'):
+    for subdir in ('bin', 'ai/bin', 'ai/claude/bin', 'git/hooks', 'git/bin'):
         search_dir = os.path.join(repo_root, subdir)
         if not os.path.isdir(search_dir):
             continue

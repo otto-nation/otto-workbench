@@ -1,6 +1,6 @@
 """Tests for conftest's owner of executed scripts.
 
-`bin/`, `bin/local/` and `ai/claude/bin/` hold extensionless scripts, so a test
+`bin/`, `bin/local/` and `ai/bin/` hold extensionless scripts, so a test
 reaches one by executing the file rather than importing it. Executing it twice
 builds two module objects for one script, and the two answer different
 questions: `mock.patch("<name>.f")` rewrites whatever `sys.modules[<name>]`

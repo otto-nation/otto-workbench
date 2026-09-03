@@ -359,10 +359,10 @@ EOF
 
 # ── output_schema tool ───────────────────────────────────────────────────────
 
-# Helper: create an executable in the fake workbench's ai/claude/bin/
+# Helper: create an executable in the fake workbench's ai/bin/
 _make_tool() {
   local name="$1" body="$2"
-  local bin_dir="$FAKE_WORKBENCH/ai/claude/bin"
+  local bin_dir="$FAKE_WORKBENCH/ai/bin"
   mkdir -p "$bin_dir"
   printf '#!/usr/bin/env bash\n%s\n' "$body" > "$bin_dir/$name"
   chmod +x "$bin_dir/$name"

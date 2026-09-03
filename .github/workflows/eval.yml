@@ -37,7 +37,7 @@ jobs:
       # Costs nothing and needs no credentials: proves every manifest names a
       # task the runner can resolve before anything is spent.
       - name: Validate the corpus
-        run: python3 ai/claude/bin/eval-models --dry-run
+        run: python3 ai/bin/eval-models --dry-run
 
       - name: Check for credentials
         id: creds
@@ -68,7 +68,7 @@ jobs:
         run: |
           set -o pipefail
           rc=0
-          python3 ai/claude/bin/eval-models \
+          python3 ai/bin/eval-models \
             --models "$EVAL_MODELS" --runs "$EVAL_RUNS" --compare \
             2>&1 | tee eval-output.txt || rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"

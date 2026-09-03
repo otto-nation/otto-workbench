@@ -198,10 +198,11 @@ if [[ "$sq_stripped" =~ $re_expand ]]; then
 fi
 
 # The directories otto-workbench's tracked .claude/settings.json grants, longest
-# first so `ai/claude/bin/pr` is named as itself rather than as the `bin/` inside
-# it. A rule there is written repo-root-relative, which is the only form it can
-# match — a `./` prefix and an absolute worktree path both miss it and earn a
-# one-off settings.local.json entry that dies with the worktree.
+# first so `ai/claude/bin/claude-rules` is named as itself rather than as the
+# `ai/bin` or the `bin/` inside it. A rule there is written repo-root-relative,
+# which is the only form it can match — a `./` prefix and an absolute worktree
+# path both miss it and earn a one-off settings.local.json entry that dies with
+# the worktree.
 #
 # ceiling: matching on path text alone rather than on a resolved repo root costs
 # two things. An absolute path whose tail happens to read `git/bin/` or
@@ -211,7 +212,7 @@ fi
 # that builds its binaries into it.
 # Upgrade to resolving the repo root once either shows up in a settings.local.json
 # again.
-REPO_SCRIPT_DIRS=(ai/claude/bin git/bin bin/local bin)
+REPO_SCRIPT_DIRS=(ai/claude/bin ai/bin git/bin bin/local bin)
 
 # Ahead of the PATH-binary rule below: a repo path ending in bin/local/ is the
 # narrower match, and the two would otherwise both fire on a repo rooted at /bin.
@@ -221,9 +222,9 @@ if [[ "$stripped" =~ $re_reposcript ]]; then
   for dir in "${REPO_SCRIPT_DIRS[@]}"; do
     # A `./` prefix names the repo root, so there a granted directory counts
     # only at the start of what follows: matching it anywhere reads the `bin/`
-    # in `./ai/bin/workbench-export` as the top-level one and names a script
-    # that does not exist — the repo also ships ai/bin, ai/serena/bin, and
-    # docker/bin, none of them granted. Absolutely spelled there is no root to
+    # in `./ai/serena/bin/x` as the top-level one and names a script that does
+    # not exist — the repo also ships ai/serena/bin and docker/bin, neither of
+    # them granted. Absolutely spelled there is no root to
     # anchor to, which is the ceiling above, and a bare `bin` says too little to
     # claim a path in whatever tree it belongs to (`/tmp/venv/bin/pip`), so only
     # the multi-component entries match loosely.

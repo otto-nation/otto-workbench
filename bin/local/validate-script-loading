@@ -3,7 +3,7 @@
 
 Usage: bin/local/validate-script-loading [--quiet] [file...]
 
-Scripts under bin/, bin/local/ and ai/claude/bin/ carry no .py extension, so a
+Scripts under bin/, bin/local/, ai/bin/ and ai/claude/bin/ carry no .py extension, so a
 test reaches one by executing the file rather than importing it. Two callers
 executing the same file hold two module objects for one script, and the two are
 not interchangeable: `mock.patch("<name>.f")` rewrites whatever

@@ -222,7 +222,7 @@ def value_taking_options(parser: ArgumentParser) -> list[str]:
                 "one value (nargs=None or 1). Callers skip a fixed one token after such "
                 "an option, so answering for this one would misclassify the next. Give "
                 "the option a single value, or teach both this function and "
-                "_positional_index in ai/claude/bin/pr to carry a count."
+                "_positional_index in ai/bin/pr to carry a count."
             )
         options.update(action.option_strings)
     return sorted(options)
@@ -232,7 +232,7 @@ def subparsers(parser: ArgumentParser) -> dict[str, ArgumentParser]:
     """Every subcommand of *parser*, keyed by the name it is invoked as.
 
     A dispatcher that wants to introspect what one of its subcommands declares
-    (``ai/claude/bin/pr`` asking whether a command takes a value-consuming
+    (``ai/bin/pr`` asking whether a command takes a value-consuming
     option) needs the subparser that declares it, and ``add_subparsers`` hands
     that back only at construction time.  Reading it off the built parser
     instead means the answer cannot drift from the parser that is actually
@@ -256,7 +256,7 @@ def subparsers(parser: ArgumentParser) -> dict[str, ArgumentParser]:
 def handle_value_flags(parser: ArgumentParser, args=None) -> None:
     """Answer the ``--value-flags`` probe, printing one option per line.
 
-    A wrapper CLI that classifies a bare positional (``ai/claude/bin/pr``)
+    A wrapper CLI that classifies a bare positional (``ai/bin/pr``)
     cannot tell a target from a flag's value without knowing the delegate's
     arity.  The delegate's own parser is the single source of truth for that,
     so the wrapper asks rather than mirroring a list that would rot.

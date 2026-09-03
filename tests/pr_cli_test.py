@@ -16,7 +16,7 @@ import pytest
 from conftest import assert_no_worktree_exit, load_script, make_ctx, seed_review
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
+BIN_DIR = REPO_ROOT / "ai" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -226,7 +226,7 @@ def test_commands_registry_exists():
 
 
 def test_commands_registry_has_all_subcommands():
-    # Keep this set in sync with _COMMANDS in ai/claude/bin/pr
+    # Keep this set in sync with _COMMANDS in ai/bin/pr
     expected = {"create", "status", "ci", "review", "comments",
                 "fix", "rebase", "describe", "gc"}
     assert set(pr_cli._COMMANDS.keys()) == expected

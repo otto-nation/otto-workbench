@@ -5,7 +5,7 @@ per invocation. Replaces the duplicated discovery logic ci-check,
 review-threads, and the review pipeline each carried a copy of.
 
 How much of that a command wants is one of three axes every `pr` subcommand
-declares in its `_COMMANDS` entry in `ai/claude/bin/pr`. They are separate
+declares in its `_COMMANDS` entry in `ai/bin/pr`. They are separate
 because they routinely disagree:
 
 | Axis | What it decides |

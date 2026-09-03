@@ -3,8 +3,8 @@
 setup_file() {
   load 'test_helper'
   # warm .pyc cache; errors caught at import
-  python3 -m compileall -q "$REPO_ROOT/ai/claude/lib" "$REPO_ROOT/ai/claude/bin" 2>/dev/null || true
-  export ORCHESTRATE="$REPO_ROOT/ai/claude/bin/review-orchestrate"
+  python3 -m compileall -q "$REPO_ROOT/ai/lib" "$REPO_ROOT/ai/bin" 2>/dev/null || true
+  export ORCHESTRATE="$REPO_ROOT/ai/bin/review-orchestrate"
 }
 
 setup() {

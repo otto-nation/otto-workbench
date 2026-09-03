@@ -1058,7 +1058,10 @@ class TestRunSynthesisOrFallback:
             ro._build_mechanical_fallback(
                 job, count, merged, skipped_groups=skipped_groups,
             ).write(job.review_file)
-            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
+            return review_pipeline.PhaseResult(
+                str(tmp_path / "synthesis.jsonl"),
+                diagnosis=ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK),
+            )
 
         monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
@@ -1068,6 +1071,38 @@ class TestRunSynthesisOrFallback:
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
         assert state.failed == {Phase.SYNTHESIS: ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)}
+
+    def test_a_synthesised_review_quoting_the_note_is_not_a_fallback(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """A review whose prose contains MECHANICAL_NOTE was still written by the agent.
+
+        The diagnosis is the pipeline's own record of which path wrote the
+        file, so a review discussing the fallback machinery is not diagnosed
+        as one.
+        """
+        import review_pipeline
+        import review_steps
+        from review_verdict import MECHANICAL_NOTE
+
+        job = self._make_job(ro, tmp_path)
+        state = self._make_state(ro)
+
+        def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
+            Path(job.review_file).write_text(
+                "# Review\n\n## Summary\nThe merge path stamps "
+                f"{MECHANICAL_NOTE} on the document.\n\n## Verdict\nApprove\n"
+            )
+            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
+
+        monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+
+        merged = self.MERGED
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, merged, [], 0, 0.0, 20.0,
+        )
+        assert Phase.SYNTHESIS not in state.failed
 
     def test_synthesis_reports_what_its_log_records(self, ro, tmp_path, monkeypatch):
         import review_pipeline

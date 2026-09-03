@@ -50,10 +50,7 @@ from review_state import (
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
 )
-from review_verdict import (
-    BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY,
-    open_counts,
-)
+from review_verdict import BUDGET_SUMMARY, SKIPPED_SUMMARY, open_counts
 from review_verify import apply_disprove_results, parse_disprove_output
 from text import plural
 
@@ -239,9 +236,8 @@ def _run_synthesis_or_fallback(
         skipped_groups=n_skipped,
     )
     state.done.add(Phase.SYNTHESIS)
-    review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-    if MECHANICAL_NOTE in review_content or FALLBACK_SUMMARY in review_content:
-        state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
+    if result.diagnosis:
+        state.failed[Phase.SYNTHESIS] = result.diagnosis
     _write_pipeline_state(job, state)
     _inject_failures_and_status(job.review_file, state)
     return result
@@ -283,7 +279,9 @@ def _phase_synthesis(
             job, group_count, merged_content, skipped_groups=skipped_groups,
         )
         _write_review_sidecar(job)
-        return PhaseResult.of(synthesis_log)
+        return PhaseResult.of(
+            synthesis_log, diagnosis=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
+        )
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
 
@@ -306,6 +304,7 @@ def _phase_synthesis(
 
     if is_complete_review(job.review_file):
         _post_process_review(job)
+        diagnosis = None
     else:
         reason = "no output" if not _has_output(job.review_file) else "incomplete output"
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
@@ -313,11 +312,12 @@ def _phase_synthesis(
         _write_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=skipped_groups,
         )
+        diagnosis = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
 
     _write_review_sidecar(job)
     # Charged whether the agent produced a review or the mechanical fallback
     # did: a synthesis that fell back still spent whatever its log records.
-    return PhaseResult.of(synthesis_log)
+    return PhaseResult.of(synthesis_log, diagnosis=diagnosis)
 
 
 def _carry_forward_prior_findings(

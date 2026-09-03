@@ -239,8 +239,8 @@ class _LogFallback:
         return bool(self.annotations)
 
 
-def _tap_annotation(failure: ci.TestFailure) -> dict:
-    """One TAP failure in the annotation shape `_annotations_to_items` reads.
+def _test_annotation(failure: ci.TestFailure) -> dict:
+    """One test failure in the annotation shape `_annotations_to_items` reads.
 
     A located failure withholds the title so its id stays `err-<path>-<line>`;
     the test name is the first line of the message either way. An unlocated one
@@ -259,9 +259,10 @@ def _tap_annotation(failure: ci.TestFailure) -> dict:
 def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> _LogFallback:
     """Fetch job logs and extract failure context as synthetic annotations.
 
-    A TAP log becomes one annotation per failing test rather than one window
-    over the whole run, so a suite with several failures surfaces as several
-    items and each carries the location bats printed under it.
+    A log in a format `ci.extract_test_failures` parses becomes one annotation
+    per failing test rather than one window over the whole run, so a suite with
+    several failures surfaces as several items and each carries the location
+    the suite itself printed for it.
     """
     job_id = job.get("databaseId", 0)
     log_text = _fetch_job_logs(repo, job_id) if job_id else ""
@@ -272,11 +273,11 @@ def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) ->
         return _LogFallback([], "", kind, structured=False)
 
     job_name = job.get("name", "unknown")
-    tap = ci.extract_tap_failures(log_text)
-    if tap:
-        context = "\n\n".join(f.context for f in tap)
+    tests = ci.extract_test_failures(log_text)
+    if tests:
+        context = "\n\n".join(f.context for f in tests)
         return _LogFallback(
-            [_tap_annotation(f) for f in tap], context,
+            [_test_annotation(f) for f in tests], context,
             ci.classify_job(job_name, [context]),
             structured=True,
         )

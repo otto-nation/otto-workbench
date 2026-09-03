@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     compute_progression, sync_ci_domain, render_dashboard,
-    extract_failure_context, extract_headline, extract_tap_failures,
+    extract_failure_context, extract_headline, extract_test_failures,
     LogMarker, LOG_MARKERS, SourceLocation, _MAX_CONTEXT_CHARS,
 )
 from pr_domains import CIDomain
@@ -420,26 +420,26 @@ _BATS_RUN_2893 = "\n".join([
 ])
 
 
-def _as_log_failed(log: str) -> str:
+def _as_log_failed(log: str, job: str = "Tests (bats)", step: str = "Run bats tests") -> str:
     """The same log as `gh run view --log-failed` renders it — job/step prefixed."""
-    return "\n".join(f"Tests (bats)\tRun bats tests\t{line}" for line in log.splitlines())
+    return "\n".join(f"{job}\t{step}\t{line}" for line in log.splitlines())
 
 
 def test_extract_tap_failures_anchors_on_the_failing_assertion():
-    failures = extract_tap_failures(_BATS_RUN_2893)
+    failures = extract_test_failures(_BATS_RUN_2893)
     assert len(failures) == 1
     assert failures[0].location == SourceLocation("tests/ui_facade.bats", 164)
     assert failures[0].name == "bats_skip survives a setup that sources lib/ui.sh"
 
 
 def test_extract_tap_failures_ignores_trailing_warning_traces():
-    failures = extract_tap_failures(_BATS_RUN_2893)
+    failures = extract_test_failures(_BATS_RUN_2893)
     assert all("install_targeted" not in f.location.file for f in failures)
 
 
 def test_extract_tap_failures_reads_log_failed_prefixed_lines():
-    prefixed = extract_tap_failures(_as_log_failed(_BATS_RUN_2893))
-    assert prefixed == extract_tap_failures(_BATS_RUN_2893)
+    prefixed = extract_test_failures(_as_log_failed(_BATS_RUN_2893))
+    assert prefixed == extract_test_failures(_BATS_RUN_2893)
 
 
 def test_extract_tap_failures_prefers_the_test_file_over_the_helper():
@@ -449,7 +449,7 @@ def test_extract_tap_failures_prefers_the_test_file_over_the_helper():
         "#  in test file tests/b.bats, line 18)",
         "#   `helper_fn' failed",
     ])
-    assert extract_tap_failures(log)[0].location == SourceLocation("tests/b.bats", 18)
+    assert extract_test_failures(log)[0].location == SourceLocation("tests/b.bats", 18)
 
 
 def test_extract_tap_failures_surfaces_every_failure():
@@ -462,26 +462,143 @@ def test_extract_tap_failures_surfaces_every_failure():
         "not ok 4 failing late in 1ms",
         "# (in test file tests/b.bats, line 18)",
     ])
-    failures = extract_tap_failures(log)
+    failures = extract_test_failures(log)
     assert [f.location for f in failures] == [
         SourceLocation("tests/a.bats", 10), SourceLocation("tests/b.bats", 18),
     ]
 
 
 def test_extract_tap_failures_without_a_location():
-    failures = extract_tap_failures("not ok 1 setup_file failed in 2ms")
+    failures = extract_test_failures("not ok 1 setup_file failed in 2ms")
     assert failures[0].location is None
     assert failures[0].name == "setup_file failed"
 
 
 def test_extract_tap_failures_keeps_an_undescribed_failure():
-    failures = extract_tap_failures("not ok 5\n# (in test file tests/a.bats, line 3)\nnot ok 6 named")
+    failures = extract_test_failures("not ok 5\n# (in test file tests/a.bats, line 3)\nnot ok 6 named")
     assert [f.name for f in failures] == ["test 5", "named"]
     assert failures[0].location == SourceLocation("tests/a.bats", 3)
 
 
 def test_extract_tap_failures_empty_for_a_non_tap_log():
-    assert extract_tap_failures("--- FAIL: TestFoo (0.01s)\nFAIL") == ()
+    assert extract_test_failures("--- FAIL: TestFoo (0.01s)\nFAIL") == ()
+
+
+# Two of the ten failures from run 32793239084, job 97639079627 ("Tests
+# (pytest)"), verbatim but for the argument dumps and the eight other blocks —
+# the same trimming `_BATS_RUN_2893` above applies to its own run. The first
+# block is the one this fixture exists for: its failure is raised in a helper
+# and pytest prints the caller's frame too, separated by the `_ _ _ _` rule.
+_PYTEST_RUN_32793239084 = "\n".join([
+    "2026-08-25T00:21:37.7671403Z _________ TestRunFixPassRetry.test_retries_on_zero_progress_max_turns __________",
+    "2026-08-25T00:21:37.7671971Z [gw0] linux -- Python 3.12.3 /opt/pipx/venvs/pytest/bin/python",
+    "2026-08-25T00:21:37.7672257Z",
+    "2026-08-25T00:21:37.7672488Z self = <test_review_fix_pass.TestRunFixPassRetry object at 0x7f3c7789c830>",
+    "2026-08-25T00:21:37.7676115Z",
+    "2026-08-25T00:21:37.7677635Z     @patch(\"review_fix.build_prompt\", return_value=\"prompt\")",
+    "2026-08-25T00:21:37.7677998Z     def test_retries_on_zero_progress_max_turns(",
+    "2026-08-25T00:21:37.7678572Z         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,",
+    "2026-08-25T00:21:37.7678985Z     ):",
+    "2026-08-25T00:21:37.7679183Z >       job = self._make_job(tmp_path)",
+    "2026-08-25T00:21:37.7679364Z",
+    "2026-08-25T00:21:37.7679478Z tests/test_review_fix_pass.py:954:",
+    "2026-08-25T00:21:37.7679799Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _",
+    "2026-08-25T00:21:37.7680042Z",
+    "2026-08-25T00:21:37.7680246Z self = <test_review_fix_pass.TestRunFixPassRetry object at 0x7f3c7789c830>",
+    "2026-08-25T00:21:37.7681484Z",
+    "2026-08-25T00:21:37.7681593Z     def _make_job(self, tmp_path):",
+    "2026-08-25T00:21:37.7684895Z >       _git(wt, \"init\", \"-q\", \"-b\", \"main\")",
+    "2026-08-25T00:21:37.7705587Z E       NameError: name '_git' is not defined",
+    "2026-08-25T00:21:37.7705987Z",
+    "2026-08-25T00:21:37.7706200Z tests/test_review_fix_pass.py:937: NameError",
+    "2026-08-25T00:21:37.7800031Z _ TestRunFixPassWhenTheSnapshotFails.test_the_retrys_work_is_not_dropped_when_the_snapshot_fails _",
+    "2026-08-25T00:21:37.7800608Z [gw0] linux -- Python 3.12.3 /opt/pipx/venvs/pytest/bin/python",
+    "2026-08-25T00:21:37.7800880Z",
+    "2026-08-25T00:21:37.7801286Z self = <test_review_fix_pass.TestRunFixPassWhenTheSnapshotFails object at 0x7f3c7789da00>",
+    "2026-08-25T00:21:37.7812920Z >       assert _git(git_wt, \"log\", \"--oneline\").strip().count(\"\\n\") == 0",
+    "2026-08-25T00:21:37.7813295Z E       NameError: name '_git' is not defined",
+    "2026-08-25T00:21:37.7813487Z",
+    "2026-08-25T00:21:37.7813611Z tests/test_review_fix_pass.py:1193: NameError",
+    "2026-08-25T00:21:37.7814000Z ----------------------------- Captured stderr call -----------------------------",
+    "2026-08-25T00:21:37.7814459Z ▸ Fix pass — applying review findings...",
+    "2026-08-25T00:21:37.7814843Z ⚠ Fix pass made no progress (agent hit max turns (20))",
+    "2026-08-25T00:21:37.7819142Z =========================== short test summary info ============================",
+    "2026-08-25T00:21:37.7822162Z FAILED tests/test_review_fix_pass.py::TestRunFixPassRetry::test_retries_on_zero_progress_max_turns - NameError: name '_git' is not defined",
+    "2026-08-25T00:21:37.7829015Z FAILED tests/test_review_fix_pass.py::TestRunFixPassWhenTheSnapshotFails::test_the_retrys_work_is_not_dropped_when_the_snapshot_fails - NameError: name '_git' is not defined",
+    "2026-08-25T00:21:37.7829821Z ================= 10 failed, 5309 passed, 11 skipped in 41.88s =================",
+    "2026-08-25T00:21:37.8604173Z ##[error]Process completed with exit code 1.",
+])
+
+
+def test_extract_pytest_failures_surfaces_one_item_per_summary_entry():
+    failures = extract_test_failures(_PYTEST_RUN_32793239084)
+    assert [f.name for f in failures] == [
+        "TestRunFixPassRetry::test_retries_on_zero_progress_max_turns",
+        "TestRunFixPassWhenTheSnapshotFails::test_the_retrys_work_is_not_dropped_when_the_snapshot_fails",
+    ]
+
+
+def test_extract_pytest_failures_anchors_on_the_frame_that_raised():
+    failures = extract_test_failures(_PYTEST_RUN_32793239084)
+    assert failures[0].location == SourceLocation("tests/test_review_fix_pass.py", 937)
+    assert failures[1].location == SourceLocation("tests/test_review_fix_pass.py", 1193)
+    # 954 is the caller's frame, above the `_ _ _ _` rule and inside the same
+    # block — read, and passed over for the deeper one that raised.
+    assert "tests/test_review_fix_pass.py:954:" in failures[0].context
+
+
+def test_extract_pytest_failures_lead_with_the_line_naming_the_test():
+    for failure in extract_test_failures(_PYTEST_RUN_32793239084):
+        assert failure.context.startswith(f"FAILED tests/test_review_fix_pass.py::{failure.name} - ")
+
+
+def test_extract_pytest_failures_stops_at_the_captured_output():
+    context = extract_test_failures(_PYTEST_RUN_32793239084)[1].context
+    assert "NameError: name '_git' is not defined" in context
+    assert "Captured stderr" not in context
+    assert "applying review findings" not in context
+
+
+def test_extract_pytest_failures_excludes_the_summary_and_the_annotation():
+    for failure in extract_test_failures(_PYTEST_RUN_32793239084):
+        assert "##[error]" not in failure.context
+        assert "short test summary info" not in failure.context
+
+
+def test_extract_pytest_failures_reads_log_failed_prefixed_lines():
+    prefixed = _as_log_failed(_PYTEST_RUN_32793239084, "Tests (pytest)", "Run pytest")
+    assert extract_test_failures(prefixed) == extract_test_failures(_PYTEST_RUN_32793239084)
+
+
+def test_extract_pytest_failures_prefers_the_test_file_over_the_helper():
+    log = "\n".join([
+        "_______________________ test_thing ________________________",
+        ">       helper(value)",
+        "tests/a_test.py:12: ",
+        "_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _",
+        "E       AssertionError",
+        "tests/helpers.py:88: AssertionError",
+        "=========================== short test summary info ============================",
+        "FAILED tests/a_test.py::test_thing - AssertionError",
+    ])
+    assert extract_test_failures(log)[0].location == SourceLocation("tests/a_test.py", 12)
+
+
+def test_extract_pytest_failures_without_a_section():
+    log = "\n".join([
+        "=========================== short test summary info ============================",
+        "FAILED tests/a_test.py::test_collected_but_never_reported - RuntimeError: boom",
+    ])
+    failure = extract_test_failures(log)[0]
+    assert failure.location is None
+    assert failure.context == "FAILED tests/a_test.py::test_collected_but_never_reported - RuntimeError: boom"
+
+
+def test_extract_failure_context_pytest_joins_every_block():
+    result = extract_failure_context(_PYTEST_RUN_32793239084, FailureKind.TEST)
+    assert "tests/test_review_fix_pass.py:937: NameError" in result
+    assert "tests/test_review_fix_pass.py:1193: NameError" in result
+    assert "##[error]" not in result
 
 
 def test_extract_failure_context_bats_uses_the_tap_block():

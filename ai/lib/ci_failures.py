@@ -262,13 +262,143 @@ def _tap_failures(lines: list[str]) -> list[TestFailure]:
     return failures
 
 
-def extract_tap_failures(log_text: str) -> tuple[TestFailure, ...]:
-    """The failing tests a TAP log reports, in the order it reported them.
+# ── pytest ─────────────────────────────────────────────────────────────────
 
-    Empty for a log in any other format, which is what lets a caller ask every
-    test job and act only on the ones that answer.
+_PYTEST_SUMMARY_HEADER_RE = re.compile(r"^=+ short test summary info =+$")
+_PYTEST_FAILED_RE = re.compile(r"^FAILED ([^\s:]+)::(\S+)(?: - (.*))?$")
+# The title must carry a character that is neither a space nor an underscore,
+# which is what tells a heading apart from the `_ _ _ _` rule pytest draws
+# between the frames *inside* one block. A pattern that accepts the rule as a
+# heading ends the block at the outermost frame, and the failure is then
+# reported at the line that made the call rather than the line that raised.
+_PYTEST_SECTION_HEAD_RE = re.compile(r"^_+ (\S*[^\s_]\S*) _+$")
+_PYTEST_RULE_RE = re.compile(r"^=+ .* =+$")
+# A frame that is not the innermost carries nothing after its colon, so what
+# follows the line number is a space or the end of the line. Requiring the space
+# alone drops those frames from any log whose trailing whitespace was stripped
+# in transit, and the innermost frame is then the only one a block can offer.
+_PYTEST_FRAME_RE = re.compile(r"^(\S+):(\d+):(?:\s|$)")
+_PYTEST_CAPTURED_RE = re.compile(r"^-+ Captured \w+ \w+ -+$")
+
+
+@dataclass(frozen=True)
+class _SummaryEntry:
+    """One `FAILED <path>::<test>` line of pytest's short test summary."""
+    path: str
+    tail: str
+    reason: str
+
+
+def _pytest_summary(lines: list[str]) -> list[_SummaryEntry]:
+    """The `FAILED` lines of the short test summary, which names every failure.
+
+    The summary is the authoritative list rather than the traceback sections
+    below: pytest prints a line here for every failing test, including one
+    whose failure produced no section of its own, so a run's item count is
+    taken from what it said failed.
     """
-    return tuple(_tap_failures(_strip_timestamps(log_text).splitlines()))
+    entries: list[_SummaryEntry] = []
+    in_summary = False
+    for line in lines:
+        if _PYTEST_SUMMARY_HEADER_RE.match(line):
+            in_summary = True
+            continue
+        if not in_summary:
+            continue
+        if _PYTEST_RULE_RE.match(line):
+            break
+        match = _PYTEST_FAILED_RE.match(line)
+        if match:
+            path, tail, reason = match.groups()
+            entries.append(_SummaryEntry(path, tail, reason or ""))
+    return entries
+
+
+def _pytest_sections(lines: list[str]) -> dict[str, list[str]]:
+    """Each per-test block of pytest's FAILURES report, keyed by its heading.
+
+    A block runs from its underscore-ruled heading to the next heading or the
+    next `=` rule, and stops at the first `Captured stdout/stderr` separator.
+    The traceback above that separator is what locates the failure, and a run
+    of ten failures whose captured output is carried in full truncates at
+    `_MAX_CONTEXT_CHARS` before the later failures are reached at all.
+    """
+    sections: dict[str, list[str]] = {}
+    body: list[str] | None = None
+    for line in lines:
+        head = _PYTEST_SECTION_HEAD_RE.match(line)
+        if head:
+            body = sections.setdefault(head.group(1), [])
+        elif body is None:
+            continue
+        elif _PYTEST_RULE_RE.match(line) or _PYTEST_CAPTURED_RE.match(line):
+            body = None
+        else:
+            body.append(line)
+    return sections
+
+
+def _pytest_failures(lines: list[str]) -> list[TestFailure]:
+    """Every failure the short test summary names, located by its own traceback.
+
+    The path comes from the summary's node id and the line from the last
+    traceback frame in that test's block *citing that same path*: a failure
+    raised inside a helper or a fixture reports the helper's frame too, and it
+    is the test file the reader has to open. Same rule `_tap_failures` applies
+    to a bats failure reported through a helper, which is why neither takes
+    simply the last location in the block.
+
+    A test whose block carries no frame in its own file keeps `location=None`
+    rather than borrowing another file's, and the caller then keys the item on
+    the test name — what it already does for an unlocated TAP failure.
+
+    Each context leads with the summary line, because a pytest block opens on
+    the failing statement and names the test only in the heading above it. A
+    reader — and `extract_headline`, which takes the first line — otherwise gets
+    the exception with nothing saying which test raised it. TAP needs no such
+    line: its `not ok` marker carries the test name already.
+    """
+    summary = _pytest_summary(lines)
+    if not summary:
+        return []
+    sections = _pytest_sections(lines)
+    failures: list[TestFailure] = []
+    for entry in summary:
+        body = sections.get(entry.tail.replace("::", "."), [])
+        frames = [
+            match for match in (_PYTEST_FRAME_RE.match(line) for line in body)
+            if match and match.group(1) == entry.path
+        ]
+        header = f"FAILED {entry.path}::{entry.tail}"
+        failures.append(TestFailure(
+            name=entry.tail,
+            location=SourceLocation(entry.path, int(frames[-1].group(2))) if frames else None,
+            context="\n".join([f"{header} - {entry.reason}" if entry.reason else header, *body]).strip(),
+        ))
+    return failures
+
+
+# ── Test log formats ───────────────────────────────────────────────────────
+
+# Every parser reads the same cleaned lines and answers with the same type, so
+# a caller asks once and never learns which suite wrote the log. A third format
+# joins by being added here rather than by a second call site learning of it.
+_TEST_LOG_FORMATS = (_tap_failures, _pytest_failures)
+
+
+def extract_test_failures(log_text: str) -> tuple[TestFailure, ...]:
+    """The failing tests a log reports, in the order it reported them.
+
+    Each known test-output format is asked in turn and the first to answer
+    wins. Empty for a log in none of them, which is what lets a caller ask
+    every test job and act only on the ones that answer.
+    """
+    lines = _strip_timestamps(log_text).splitlines()
+    for parse in _TEST_LOG_FORMATS:
+        failures = parse(lines)
+        if failures:
+            return tuple(failures)
+    return ()
 
 
 def extract_failure_context(log_text: str, kind: FailureKind) -> str:
@@ -300,14 +430,16 @@ def extract_failure_context(log_text: str, kind: FailureKind) -> str:
 def _extract_test_context(lines: list[str]) -> str:
     """Extract test failure output — captures from first failure marker to summary.
 
-    TAP is handled first and per failure. The window below spans the first
-    marker to the last, so a suite whose failures are thousands of lines apart
-    truncates at `_MAX_CONTEXT_CHARS` and loses every failure after the first —
-    joining the blocks instead keeps all of them.
+    A log in a format `_TEST_LOG_FORMATS` parses is handled first and per
+    failure. The window below spans the first marker to the last, so a suite
+    whose failures are thousands of lines apart truncates at
+    `_MAX_CONTEXT_CHARS` and loses every failure after the first — joining the
+    blocks instead keeps all of them.
     """
-    tap = _tap_failures(lines)
-    if tap:
-        return "\n\n".join(failure.context for failure in tap)
+    for parse in _TEST_LOG_FORMATS:
+        parsed = parse(lines)
+        if parsed:
+            return "\n\n".join(failure.context for failure in parsed)
 
     fail_indices = []
     for i, line in enumerate(lines):

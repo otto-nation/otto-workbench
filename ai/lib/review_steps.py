@@ -236,7 +236,7 @@ def _run_synthesis_or_fallback(
         skipped_groups=n_skipped,
     )
     state.done.add(Phase.SYNTHESIS)
-    if result.diagnosis:
+    if result.diagnosis is not None:
         state.failed[Phase.SYNTHESIS] = result.diagnosis
     _write_pipeline_state(job, state)
     _inject_failures_and_status(job.review_file, state)

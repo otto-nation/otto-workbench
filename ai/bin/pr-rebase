@@ -41,7 +41,7 @@ from enum import StrEnum
 from functools import cache
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import agent_invoke
 import ai_backend
@@ -910,7 +910,7 @@ def _git_add(filepath: str, cwd: str) -> bool:
 _FIX_ERROR_MAX_CHARS = 4000
 _COMMIT_HEADER_MAX = 72
 _FALLBACK_FIX_SUBJECT = "fix: resolve pre-push check failures after rebase"
-_CONVENTIONS_SH = Path(__file__).resolve().parents[3] / "lib" / "conventions.sh"
+_CONVENTIONS_SH = Path(__file__).resolve().parents[2] / "lib" / "conventions.sh"
 
 
 @cache

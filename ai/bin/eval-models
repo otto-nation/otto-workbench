@@ -21,7 +21,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from eval_scoring import (  # noqa: E402
     SCHEMA_VERSION,
@@ -249,7 +249,7 @@ def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
 
 
 def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
-    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    repo_root = Path(__file__).resolve().parent.parent.parent
     corpus_dir = args.corpus
     if not Path(corpus_dir).is_absolute():
         corpus_dir = str(repo_root / corpus_dir)

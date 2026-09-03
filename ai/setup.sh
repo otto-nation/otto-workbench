@@ -108,8 +108,13 @@ if ! state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TOOLS _AVAILABLE
   select_tools
 fi
 
-# Install scripts for each selected tool before running steps —
-# tools like claude-rules must be in PATH for their setup steps.
+# The harness-neutral CLIs first, unconditionally: pr, otto-log, ceiling-scan
+# and the rest serve whichever harness the operator picked, so gating them on a
+# selection would leave a Pi-only machine with none of them on PATH.
+sync_component_bin "$SCRIPT_DIR"
+
+# Then each selected tool's own scripts, before running steps — tools like
+# claude-rules must be in PATH for their setup steps.
 for _tool in "${SELECTED_TOOLS[@]}"; do
   _tool_dir="$SCRIPT_DIR/$_tool"
   if [[ -d "$_tool_dir/bin" ]]; then

@@ -26,7 +26,7 @@
 ## Script Invocation
 - Never invoke scripts by absolute path — use the relative path from the repo root (`bin/local/validate-skills`, not `/Users/.../bin/local/validate-skills`). Permission rules match the first word of the command; an absolute path triggers a permission prompt every time. This applies wherever a statement begins, not just at the start of the command: `ls; /Users/.../bin/local/validate-skills` counts
 - Never prefix that relative path with `./` either — `bin/otto-workbench sync` and `./bin/otto-workbench sync` run the same script, but the grant is written `Bash(bin/*)` and only the first form matches it. The `./` form is a separate prompt and earns its own one-off entry
-- In otto-workbench the granted directories are `bin/`, `git/bin/`, and `ai/claude/bin/`, from the repo's tracked `.claude/settings.json`. A script outside them has no grant, so it prompts however it is spelled — see CONTRIBUTING.md § Permission grants
+- In otto-workbench the granted directories are `bin/`, `git/bin/`, `ai/bin/`, and `ai/claude/bin/`, from the repo's tracked `.claude/settings.json`. A script outside them has no grant, so it prompts however it is spelled — see CONTRIBUTING.md § Permission grants
 
 ## Portability
 - Target macOS BSD userland — avoid GNU-specific flags and syntax

@@ -53,6 +53,7 @@ def _discover_python_sources() -> list[Path]:
     sources: list[Path] = list(sorted(LIB_DIR.glob("*.py")))
 
     bin_dirs = [
+        REPO_ROOT / "ai" / "bin",
         REPO_ROOT / "ai" / "claude" / "bin",
         REPO_ROOT / "bin" / "local",
     ]

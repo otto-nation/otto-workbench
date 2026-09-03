@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum, auto
 from pathlib import Path
 
-LIB_DIR = Path(__file__).resolve().parent.parent.parent / "lib"
+LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
 import ai_usage

@@ -13,7 +13,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from review_format import HunkRange  # noqa: E402
 
-SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "validate-review-positions"
+SCRIPT = REPO_ROOT / "ai" / "bin" / "validate-review-positions"
 
 
 @pytest.fixture(scope="session")

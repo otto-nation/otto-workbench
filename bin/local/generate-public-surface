@@ -109,7 +109,12 @@ _registries_for() {
     [[ "$validation" == "bindir" ]] || continue
     [[ "$scope" != "workbench" ]] || continue
     owner="otto-workbench"
-    [[ "$rel" == ai/claude/* ]] && owner="otto-ai-tools"
+    # The AI package is ai/registry.yml plus ai/claude/, named rather than
+    # globbed as ai/*: the harness-neutral CLIs moved up to ai/bin and the
+    # otto-ai-tools tarball is built from there, so a test pinned to ai/claude/
+    # would hand the tarball's own contents to the root package — while ai/*
+    # would sweep in ai/serena, which the tarball does not ship.
+    [[ "$rel" == ai/registry.yml || "$rel" == ai/claude/* ]] && owner="otto-ai-tools"
     [[ "$owner" == "$package" ]] || continue
     echo "$f"
   done

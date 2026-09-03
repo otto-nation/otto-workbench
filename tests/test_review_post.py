@@ -1588,7 +1588,7 @@ class TestDryRunIntegration:
 
     from pathlib import Path as _Path
     _REPO_ROOT = _Path(__file__).resolve().parent.parent
-    _REVIEW_POST = _REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
+    _REVIEW_POST = _REPO_ROOT / "ai" / "bin" / "review-post"
 
     REVIEW_MD = (
         "# Review: test-org/test-repo#42 — Fix handler\n"

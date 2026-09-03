@@ -3,8 +3,8 @@
 setup_file() {
   load 'test_helper'
   # warm .pyc cache; errors caught at import
-  python3 -m compileall -q "$REPO_ROOT/ai/claude/lib" "$REPO_ROOT/ai/claude/bin" 2>/dev/null || true
-  export ORCHESTRATE="$REPO_ROOT/ai/claude/bin/review-orchestrate"
+  python3 -m compileall -q "$REPO_ROOT/ai/lib" "$REPO_ROOT/ai/bin" 2>/dev/null || true
+  export ORCHESTRATE="$REPO_ROOT/ai/bin/review-orchestrate"
 }
 
 setup() {
@@ -91,7 +91,7 @@ EOF
 {"repo":"org/repo","pr_number":"42","head_sha":"abc123","head_ref":"feat/test","base_ref":"main","review_type":"full","title":"Test PR","changed_files":3,"mode":"pr"}
 EOF
 
-  "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+  "$REPO_ROOT/ai/bin/review-rebuild" \
     --review-dir "$TMPDIR/review" --pr 42
 
   [ -f "$TMPDIR/review/review.md" ]
@@ -115,7 +115,7 @@ EOF
 {"repo":"org/repo","pr_number":"","head_sha":"abc","head_ref":"feat/self","base_ref":"main","review_type":"full","mode":"self"}
 EOF
 
-  "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+  "$REPO_ROOT/ai/bin/review-rebuild" \
     --review-dir "$TMPDIR/review" --pr ""
 
   grep -q "# Self-Review: org/repo — feat/self" "$TMPDIR/review/review.md"
@@ -127,7 +127,7 @@ EOF
   cat > "$TMPDIR/empty/meta.json" <<'EOF'
 {"repo":"org/repo"}
 EOF
-  run "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+  run "$REPO_ROOT/ai/bin/review-rebuild" \
     --review-dir "$TMPDIR/empty" --pr 1
   [ "$status" -ne 0 ]
 }
@@ -145,7 +145,7 @@ EOF
 {"repo":"org/repo"}
 EOF
 
-  "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+  "$REPO_ROOT/ai/bin/review-rebuild" \
     --review-dir "$TMPDIR/review" --pr 99
 
   [ -f "$TMPDIR/review/review.md" ]
@@ -163,7 +163,7 @@ EOF
 - **[${must_prefix}1]** **\`foo.py:1\`** — bug
 EOF
 
-  run "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+  run "$REPO_ROOT/ai/bin/review-rebuild" \
     --review-dir "$TMPDIR/no-meta" --pr 1
   [ "$status" -ne 0 ]
 }

@@ -195,7 +195,7 @@ def test_an_unparseable_file_answers_neither_clean_nor_dirty(tmp_path, capsys):
 
 def test_discover_finds_extensionless_python_scripts():
     scripts = vm.discover_scripts(str(REPO_ROOT))
-    assert str(REPO_ROOT / "ai" / "claude" / "bin" / "pr") in scripts
+    assert str(REPO_ROOT / "ai" / "bin" / "pr") in scripts
     assert str(REPO_ROOT / "ai" / "lib" / "proc.py") in scripts
 
 

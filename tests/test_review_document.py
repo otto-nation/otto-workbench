@@ -615,8 +615,8 @@ class TestFindingLocation:
 
     def test_extensionless_script_path(self):
         """Bin scripts have no extension; a pathless finding never reconciles."""
-        loc = finding_location("`ai/claude/bin/ci-check:777`")
-        assert (loc.path, loc.line, loc.end_line) == ("ai/claude/bin/ci-check", 777, None)
+        loc = finding_location("`ai/bin/ci-check:777`")
+        assert (loc.path, loc.line, loc.end_line) == ("ai/bin/ci-check", 777, None)
 
     def test_extensionless_script_path_with_range(self):
         loc = finding_location("**`git/hooks/pre-push-workbench:124-131`**")

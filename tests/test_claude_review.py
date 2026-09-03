@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "ai" / "claude" / "bin" / "claude-review"
+SCRIPT_PATH = REPO_ROOT / "ai" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)

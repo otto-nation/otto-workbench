@@ -79,6 +79,13 @@ ai_tool_order() {
 sync_ai() {
   local _tool
   local -a _tools=()
+
+  # ai/bin holds the CLIs that serve every harness — pr, otto-log, ceiling-scan
+  # and the rest. They install ahead of the selection check and regardless of
+  # what it holds: a machine running Pi alone still needs them on PATH, and a
+  # machine with no sub-tool selected at all still has them in its registry.
+  sync_component_bin "$AI_SRC_DIR"
+
   while IFS= read -r _tool; do
     [[ -z "$_tool" ]] && continue
     _tools+=("$_tool")

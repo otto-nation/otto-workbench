@@ -12,7 +12,7 @@ setup_file() {
   # Build the tarball once for all tests
   TARBALL_DIR="$BATS_FILE_TMPDIR/tarball_build"
   mkdir -p "$TARBALL_DIR"
-  run bash -c "cd '$TARBALL_DIR' && '$REPO_ROOT/ai/claude/bin/build-otto-ai-tools-tarball' '$TEST_VERSION'"
+  run bash -c "cd '$TARBALL_DIR' && '$REPO_ROOT/ai/bin/build-otto-ai-tools-tarball' '$TEST_VERSION'"
   if [[ "$status" -ne 0 ]]; then
     echo "Tarball build failed: $output" >&2
     return 1
@@ -157,14 +157,14 @@ print('ok')
 @test "unknown flag is rejected without building a tarball" {
   local probe_dir="$BATS_TEST_TMPDIR/probe"
   mkdir -p "$probe_dir"
-  run bash -c "cd '$probe_dir' && '$REPO_ROOT/ai/claude/bin/build-otto-ai-tools-tarball' --tool-schema"
+  run bash -c "cd '$probe_dir' && '$REPO_ROOT/ai/bin/build-otto-ai-tools-tarball' --tool-schema"
   [ "$status" -eq 2 ]
   [[ "$output" == *"unknown option"* ]]
   [ -z "$(find "$probe_dir" -name '*.tar.gz')" ]
 }
 
 @test "extra positional arguments are rejected" {
-  run "$REPO_ROOT/ai/claude/bin/build-otto-ai-tools-tarball" 1.0.0 extra
+  run "$REPO_ROOT/ai/bin/build-otto-ai-tools-tarball" 1.0.0 extra
   [ "$status" -eq 2 ]
   [[ "$output" == *"at most one argument"* ]]
 }

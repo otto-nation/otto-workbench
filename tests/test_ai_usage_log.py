@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
 import ai_usage
 
-BIN = REPO_ROOT / "ai" / "claude" / "bin" / "ai-usage-log"
+BIN = REPO_ROOT / "ai" / "bin" / "ai-usage-log"
 
 
 @pytest.fixture(scope="session")

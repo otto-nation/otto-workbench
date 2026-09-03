@@ -119,9 +119,12 @@ _validate_output_schema() {
     return
   fi
 
-  tool_script="$WORKBENCH_DIR/ai/claude/bin/$tool_name"
+  tool_script="$WORKBENCH_DIR/ai/bin/$tool_name"
   if [[ ! -x "$tool_script" ]]; then
-    _fail "$display: output_schema tool '$tool_name' not found in ai/claude/bin/"
+    tool_script="$WORKBENCH_DIR/ai/claude/bin/$tool_name"
+  fi
+  if [[ ! -x "$tool_script" ]]; then
+    _fail "$display: output_schema tool '$tool_name' not found in ai/bin/ or ai/claude/bin/"
     return
   fi
 

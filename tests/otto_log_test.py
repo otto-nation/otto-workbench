@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import load_script
 
-BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
+BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 sys.path.insert(0, str(BIN_DIR))

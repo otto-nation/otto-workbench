@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate CLI flag conventions across ai/claude/bin/ scripts.
+# Validate CLI flag conventions across ai/bin/ and ai/claude/bin/ scripts.
 #
 # Checks:
 #   1. No --repo alias on --repo-dir (confuses slug vs directory semantics)
@@ -20,7 +20,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--quiet]
 
-Validate CLI flag conventions across ai/claude/bin/ scripts.
+Validate CLI flag conventions across ai/bin/ and ai/claude/bin/ scripts.
 
 Options:
   --quiet     Suppress per-check output; show only the final summary
@@ -39,7 +39,10 @@ SCRIPTS_CHECKED=0
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); echo -e "  ${RED}✗${NC} $*" >&2; }
 
-BIN_DIR="$_SCRIPT_ROOT/ai/claude/bin"
+# Both AI bin dirs: the harness-neutral CLIs and Claude Code's own scripts hold
+# themselves to one flag contract, and a script moving between them must not
+# drop out of the check.
+BIN_GLOBS=("$_SCRIPT_ROOT/ai/bin"/* "$_SCRIPT_ROOT/ai/claude/bin"/*)
 
 # Internal scripts allowed to use --repo as slug (not user-facing)
 # ai-usage-log, otto-log: --repo is a ledger/trail data field recorded alongside
@@ -90,7 +93,7 @@ _check_exclusivity_bash() {
 
 # ── Main loops ─────────────────────────────────────────────────────────────
 
-for script in "$BIN_DIR"/*; do
+for script in "${BIN_GLOBS[@]}"; do
   [[ -f "$script" ]] || continue
   name="$(basename "$script")"
   grep -q 'add_argument' "$script" 2>/dev/null || continue
@@ -101,7 +104,7 @@ for script in "$BIN_DIR"/*; do
   _check_exclusivity_python "$name" "$script"
 done
 
-for script in "$BIN_DIR"/*; do
+for script in "${BIN_GLOBS[@]}"; do
   [[ -f "$script" ]] || continue
   name="$(basename "$script")"
   head -1 "$script" | grep -q 'bash' || continue

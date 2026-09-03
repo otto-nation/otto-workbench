@@ -1,9 +1,9 @@
 ---
 paths:
-  - "ai/claude/bin/claude-review"
-  - "ai/claude/bin/review-*"
-  - "ai/claude/bin/ci-check"
-  - "ai/claude/bin/pr"
+  - "ai/bin/claude-review"
+  - "ai/bin/review-*"
+  - "ai/bin/ci-check"
+  - "ai/bin/pr"
   - "ai/lib/**"
   - "ai/claude/agents/reviewer.md"
 ---
@@ -138,7 +138,7 @@ The review's trail is not in this directory. Every script appends to one root â€
 
 ## pr CLI Development
 
-The `pr` script (`ai/claude/bin/pr`) is a thin dispatch layer. Each subcommand
+The `pr` script (`ai/bin/pr`) is a thin dispatch layer. Each subcommand
 delegates to an external script via `subprocess.run()`. JSON on stdout, status
 messages on stderr.
 
@@ -163,7 +163,7 @@ messages on stderr.
 
 ### Adding a new subcommand
 
-1. Create the external script in `ai/claude/bin/`
+1. Create the external script in `ai/bin/`
 2. Add argparse subparser in `pr`
 3. Add `cmd_<name>` wrapper that delegates via `subprocess.run()`
 4. If the subcommand has persistent state: add a `Domain` subclass to `pr_domains.py`

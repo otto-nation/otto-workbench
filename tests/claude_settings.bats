@@ -120,7 +120,7 @@ project_granted_dirs() {
 
 @test "the tracked project settings file grants every repo bin directory" {
   local dir
-  for dir in bin git/bin ai/claude/bin; do
+  for dir in bin git/bin ai/bin ai/claude/bin; do
     run jq -e --arg r "Bash($dir/*)" '.permissions.allow | index($r) != null' "$PROJECT_SETTINGS"
     [ "$status" -eq 0 ] || { echo "no grant for $dir/"; return 1; }
   done
@@ -494,13 +494,12 @@ _init_test_repo() {
   [[ "$output" == *"'git/bin/local/generate-git-rules'"* ]]
 }
 
-# ai/claude/bin sits under a `bin/` of its own, so the longest granted directory
-# has to win — naming it `bin/review-post` would suggest a path that does not
-# exist.
-@test "reposcript hook: names the ai/claude/bin path in full" {
-  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/ai/claude/bin/review-post --pr 1"}}'
+# ai/bin sits under a `bin/` of its own, so the longest granted directory has to
+# win — naming it `bin/review-post` would suggest a path that does not exist.
+@test "reposcript hook: names the ai/bin path in full" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/ai/bin/review-post --pr 1"}}'
   [ "$status" -eq 2 ]
-  [[ "$output" == *"'ai/claude/bin/review-post'"* ]]
+  [[ "$output" == *"'ai/bin/review-post'"* ]]
 }
 
 @test "reposcript hook: blocks a ./ prefix on a top-level bin script" {
@@ -509,10 +508,10 @@ _init_test_repo() {
   [[ "$output" == *"'bin/otto-workbench'"* ]]
 }
 
-@test "reposcript hook: blocks a ./ prefix on an ai/claude/bin script" {
-  run _run_guard '{"tool_input":{"command":"./ai/claude/bin/otto-log stats"}}'
+@test "reposcript hook: blocks a ./ prefix on an ai/bin script" {
+  run _run_guard '{"tool_input":{"command":"./ai/bin/otto-log stats"}}'
   [ "$status" -eq 2 ]
-  [[ "$output" == *"'ai/claude/bin/otto-log'"* ]]
+  [[ "$output" == *"'ai/bin/otto-log'"* ]]
 }
 
 # The repo ships bin/ directories that no rule grants. A `./` prefix names the
@@ -521,7 +520,7 @@ _init_test_repo() {
 # script of that name, and there is none.
 @test "reposcript hook: leaves a ./ prefixed nested bin directory alone" {
   local script
-  for script in ai/bin/workbench-export ai/serena/bin/serena-mcp docker/bin/cleanup-testcontainers; do
+  for script in ai/serena/bin/serena-mcp docker/bin/cleanup-testcontainers; do
     [ -f "$REPO_ROOT/$script" ] || { echo "no such script: $script"; return 1; }
     run _run_guard "{\"tool_input\":{\"command\":\"./$script\"}}"
     [ "$status" -eq 0 ] || { echo "blocked ./$script: $output"; return 1; }
@@ -529,7 +528,14 @@ _init_test_repo() {
 }
 
 @test "reposcript hook: leaves the relative form of a nested bin directory alone" {
-  run _run_guard '{"tool_input":{"command":"ai/bin/workbench-export"}}'
+  run _run_guard '{"tool_input":{"command":"ai/serena/bin/serena-mcp"}}'
+  [ "$status" -eq 0 ]
+}
+
+# ai/bin is granted, so its repo-root-relative form is the one the allow list
+# matches — the guard has nothing to steer.
+@test "reposcript hook: leaves the relative form of an ai/bin script alone" {
+  run _run_guard '{"tool_input":{"command":"ai/bin/otto-log stats"}}'
   [ "$status" -eq 0 ]
 }
 

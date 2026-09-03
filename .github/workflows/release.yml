@@ -202,7 +202,7 @@ jobs:
       - name: Build otto-ai-tools tarball
         run: |
           VERSION="${{ needs.release.outputs.cr_version }}"
-          ./ai/claude/bin/build-otto-ai-tools-tarball "$VERSION"
+          ./ai/bin/build-otto-ai-tools-tarball "$VERSION"
           TARBALL="otto-ai-tools-${VERSION}.tar.gz"
           TARBALL_SHA256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
           echo "TARBALL=$TARBALL" >> $GITHUB_ENV

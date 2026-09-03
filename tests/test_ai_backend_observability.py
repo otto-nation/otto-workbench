@@ -253,7 +253,7 @@ def _is_python_source(path: Path) -> bool:
 
 def _ai_sources() -> list[Path]:
     candidates = list((AI_DIR / "lib").glob("*.py"))
-    candidates.extend((AI_DIR / "claude" / "bin").iterdir())
+    candidates.extend((AI_DIR / "bin").iterdir())
     return sorted(p for p in candidates if _is_python_source(p))
 
 

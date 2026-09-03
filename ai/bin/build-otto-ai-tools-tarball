@@ -21,7 +21,7 @@ shopt -s nullglob
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 WORKBENCH_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-_CLAUDE_DIR="$(dirname "$SCRIPT_DIR")"
+_CLAUDE_DIR="$WORKBENCH_ROOT/ai/claude"
 _AI_LIB_DIR="$WORKBENCH_ROOT/ai/lib"
 
 # ─── Constants ────────────────────────────────────────────────────────────
@@ -38,8 +38,10 @@ BASH_MODULES=(output.sh prompts.sh roots.sh)
 # lib/, so they land beside the ai/lib modules that import them.
 WORKBENCH_PY_MODULES=(git_layout.py gitenv.py git_remote.py)
 
-# Files excluded from bin/ discovery (this script + support files)
-BIN_EXCLUDE="${0##*/}|_version.py"
+# Files excluded from bin/ discovery: the workbench's own build and export
+# tooling, which ships nothing to a tarball consumer, plus _version.py, whose
+# git fallback has no repo to read outside the monorepo.
+BIN_EXCLUDE="${0##*/}|_version.py|build-claude-config-tarball|workbench-export"
 
 # Minimum expected file counts — catches silent glob failures
 MIN_BIN_SCRIPTS=5
@@ -57,7 +59,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 # Reject flags and extra arguments. MCP tool discovery probes executables in
-# ai/claude/bin with the schema flag; without this, it was accepted as a version
+# ai/bin with the schema flag; without this, it was accepted as a version
 # string and the probe built a stray tarball into the caller's CWD. Naming the
 # flag literally here would make this file look like a protocol implementation
 # to the source scan in ai/claude/mcps/server.py.
@@ -112,15 +114,9 @@ if (( bin_count < MIN_BIN_SCRIPTS )); then
   exit 1
 fi
 
-# Patch Python sys.path for tarball layout — in the tarball, bin/ and lib/ are
-# siblings under one root. In the repo, scripts are at ai/claude/bin/ and modules
-# at ai/lib/ (one extra parent level). Remove one .parent from lib path chains.
-for pyscript in "$DEST/bin/"*; do
-  [[ -f "$pyscript" ]] || continue
-  head -1 "$pyscript" | grep -q python3 || continue
-  sed -i.bak 's/\.parent\.parent \/ "lib"/.parent \/ "lib"/g' "$pyscript"
-  rm -f "$pyscript.bak"
-done
+# No sys.path patching: bin/ and lib/ are siblings under one root in both
+# layouts — ai/bin/ beside ai/lib/ in the repo, bin/ beside lib/ in the tarball
+# — so a script's own `.parent.parent / "lib"` resolves correctly in each.
 
 # Library files — all Python modules
 for py in "$_AI_LIB_DIR/"*.py; do

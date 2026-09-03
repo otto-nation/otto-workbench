@@ -24,7 +24,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # source paths in scope at once.
 . "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 
-CEILING_SCAN="$CLAUDE_SRC_DIR/bin/ceiling-scan"
+CEILING_SCAN="$AI_SRC_DIR/bin/ceiling-scan"
 
 target="${1:-$PWD}"
 

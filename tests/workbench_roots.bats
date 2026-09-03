@@ -271,7 +271,7 @@ resolve_python_retro_consumed() {
   python3 -c "
 import importlib.machinery, importlib.util, sys
 loader = importlib.machinery.SourceFileLoader(
-    'retro_scan', '$REPO_ROOT/ai/claude/bin/retro-scan')
+    'retro_scan', '$REPO_ROOT/ai/bin/retro-scan')
 spec = importlib.util.spec_from_loader('retro_scan', loader)
 mod = importlib.util.module_from_spec(spec)
 sys.modules['retro_scan'] = mod

@@ -75,7 +75,7 @@ def format_report(scan_data: dict, version: str) -> str:
     """The scan's markdown report.
 
     `version` names the scanner build in the report's header comment; it comes
-    from `_version` under `ai/claude/bin/`, which this module — under
+    from `_version` under `ai/bin/`, which this module — under
     `ai/lib/` — cannot import, so the caller resolves it and passes it in.
     """
     repos = scan_data.get("repos", [])

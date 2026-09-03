@@ -15,7 +15,7 @@ than inventing a threshold to get past a check.
     ceiling:            must name a trigger
     ceiling-permanent:  accepted for good, counted separately
 
-The trigger grammar is ai/claude/bin/ceiling-scan's, and this validator reuses
+The trigger grammar is ai/bin/ceiling-scan's, and this validator reuses
 that scanner rather than re-deriving it — two parsers for one comment format is
 how the ledger and the gate come to disagree about the same marker.
 
@@ -36,7 +36,7 @@ _WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
 from ansi import DIM, GREEN, NC, RED  # noqa: E402
 
-SCANNER = _WORKBENCH_DIR / "ai" / "claude" / "bin" / "ceiling-scan"
+SCANNER = _WORKBENCH_DIR / "ai" / "bin" / "ceiling-scan"
 
 
 @functools.cache

@@ -669,7 +669,7 @@ def test_serde_owns_the_only_atomic_rename():
     a module that is not this one.
     """
     ai = Path(__file__).resolve().parent.parent / "ai"
-    # The extensionless `ai/claude/bin/*` commands are Python too, so match on
+    # The extensionless `ai/bin/*` commands are Python too, so match on
     # the shebang rather than the suffix — a copy lands wherever it is written.
     sources = (
         p for p in ai.rglob("*")

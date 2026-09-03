@@ -1,0 +1,135 @@
+# Harness-neutral AI script registry — installed whenever the AI subsystem is
+# set up, whichever harnesses the operator selected.
+# Regenerate: generate-tool-context
+
+meta:
+  section: "AI Tooling"
+  validation: bindir
+  source: ai/bin
+
+tools:
+  - name: pr
+    permission: true
+    visibility: full
+    description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
+    when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
+    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto <ref>]  |  pr gc"
+
+  - name: claude-review
+    permission: true
+    visibility: full
+    description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
+    when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. Use --recover to finish a review whose agents failed — it completes at the commit the run started from, even if the branch has new commits (so it cannot be combined with --fix once HEAD has moved). For multiple PRs, dispatch separate Agent subagents — do not background with &"
+    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review [--self] --recover [<pr_url_or_number>]"
+
+  - name: otto-log
+    permission: true
+    visibility: full
+    description: "Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats"
+    when_to_use: "Tracing what an AI script did (recent, query, show, list), seeing what AI calls cost across scripts, tasks, models, and days (stats), or reclaiming the trail root ahead of its retention horizon (prune)"
+    usage: "otto-log recent [--repo org/repo]  |  otto-log list --script pr  |  otto-log query --pr 641  |  otto-log show <invocation>  |  otto-log stats [--since 7d] [--by script|task|model|day] [--json]  |  otto-log prune [--keep 6]"
+
+  - name: ceiling-scan
+    permission: true
+    visibility: brief
+    description: "Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger"
+
+  - name: dream-scan
+    permission: true
+    visibility: brief
+    description: "Scan session transcripts and memory state for dream consolidation"
+
+  - name: dream-verify
+    permission: true
+    visibility: brief
+    description: "Verify dream memory file integrity across all projects"
+
+  - name: promote-scan
+    permission: true
+    visibility: brief
+    description: "Scan memories and workbench artifacts for promotion evaluation"
+
+  - name: retro-scan
+    permission: true
+    visibility: brief
+    description: "Scan PR review comments and cross-reference against coding rules"
+
+  - name: workbench-reference
+    permission: true
+    visibility: brief
+    description: "Reference card — lists all workbench skills, agents, and reuse modes"
+
+  - name: ci-check
+    permission: true
+    visibility: hidden
+    description: "Fetch CI run data, classify failures, and output status dashboard"
+
+  - name: pr-rebase
+    permission: false
+    visibility: hidden
+    description: "Rebase current branch onto its base with conflict detection and force-push"
+
+  - name: pr-describe
+    permission: false
+    visibility: hidden
+    description: "Revise the PR description against the repo's PR template once the branch stops moving"
+
+  - name: review-orchestrate
+    permission: false
+    visibility: hidden
+    description: "Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging"
+
+  - name: review-post
+    permission: false
+    visibility: hidden
+    description: "Deterministic posting of review findings to GitHub as a PENDING PR review"
+
+  - name: review-rebuild
+    permission: false
+    visibility: hidden
+    description: "Rebuild review.md from group finding files — recovers from synthesis formatting drift"
+
+  - name: review-threads
+    permission: false
+    visibility: hidden
+    description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
+
+  - name: review-thread-triage
+    permission: false
+    visibility: hidden
+    description: "Deprecated — redirects to review-threads --triage"
+
+  - name: validate-review-positions
+    permission: false
+    visibility: hidden
+    description: "Validates review finding positions against a PR diff to ensure comment placement accuracy"
+
+  - name: ai-usage-log
+    permission: false
+    visibility: hidden
+    description: "Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record"
+
+  - name: eval-models
+    permission: false
+    visibility: hidden
+    description: "Evaluation runner — scores AI calls against a corpus, one task per manifest"
+
+  - name: otto-mcp-server
+    permission: false
+    visibility: hidden
+    description: "Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients"
+
+  - name: build-otto-ai-tools-tarball
+    permission: false
+    visibility: hidden
+    description: "Package otto-ai-tools into a self-contained tarball for distribution"
+
+  - name: build-claude-config-tarball
+    permission: false
+    visibility: hidden
+    description: "Package Claude Code configuration into a tarball for server or container deployment"
+
+  - name: workbench-export
+    permission: false
+    visibility: hidden
+    description: "Export workbench Claude configs as a self-contained tarball, filtered by profile"

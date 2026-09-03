@@ -17,7 +17,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from trail import Trail, add_trail_args  # noqa: E402
 import gh_client as _gh  # noqa: E402

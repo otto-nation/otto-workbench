@@ -36,7 +36,7 @@ def _load_lib(name: str):
 
 
 # The same cache for the other half of the tree. Scripts under `bin/`,
-# `bin/local/` and `ai/claude/bin/` carry no `.py` extension, so a test cannot
+# `bin/local/`, `ai/bin/` and `ai/claude/bin/` carry no `.py` extension, so a test cannot
 # import one — it has to execute the file. Two callers executing the same file
 # hold two module objects for one script, and the two are not interchangeable:
 # `mock.patch("<name>.f")` resolves its target through `sys.modules`, while a
@@ -497,11 +497,11 @@ def _guard_repo_config():
     _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
-REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
-REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
-REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
-CI_CHECK = REPO_ROOT / "ai" / "claude" / "bin" / "ci-check"
-EVAL_MODELS = REPO_ROOT / "ai" / "claude" / "bin" / "eval-models"
+REVIEW_POST = REPO_ROOT / "ai" / "bin" / "review-post"
+REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "bin" / "review-orchestrate"
+REVIEW_THREADS = REPO_ROOT / "ai" / "bin" / "review-threads"
+CI_CHECK = REPO_ROOT / "ai" / "bin" / "ci-check"
+EVAL_MODELS = REPO_ROOT / "ai" / "bin" / "eval-models"
 REUSE_SESSION_START = REPO_ROOT / "ai" / "claude" / "bin" / "reuse-session-start"
 
 

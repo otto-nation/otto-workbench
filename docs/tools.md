@@ -12,6 +12,30 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 
 | Script | Description |
 |--------|-------------|
+| `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
+| `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
+| `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
+| `ceiling-scan` | Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger |
+| `dream-scan` | Scan session transcripts and memory state for dream consolidation |
+| `dream-verify` | Verify dream memory file integrity across all projects |
+| `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
+| `retro-scan` | Scan PR review comments and cross-reference against coding rules |
+| `workbench-reference` | Reference card — lists all workbench skills, agents, and reuse modes |
+| `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
+| `pr-rebase` | Rebase current branch onto its base with conflict detection and force-push |
+| `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
+| `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
+| `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
+| `review-rebuild` | Rebuild review.md from group finding files — recovers from synthesis formatting drift |
+| `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
+| `review-thread-triage` | Deprecated — redirects to review-threads --triage |
+| `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
+| `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
+| `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
+| `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
+| `build-otto-ai-tools-tarball` | Package otto-ai-tools into a self-contained tarball for distribution |
+| `build-claude-config-tarball` | Package Claude Code configuration into a tarball for server or container deployment |
+| `workbench-export` | Export workbench Claude configs as a self-contained tarball, filtered by profile |
 | `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
@@ -23,35 +47,13 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-nesting` | Validate bash, Python, and Go script nesting depth to enforce flat control flow |
 | `gcloud-reauth` | Check GCP application-default credentials and re-login if expired, with self-managed launchd agent |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
-| `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
-| `review-rebuild` | Rebuild review.md from group finding files — recovers from synthesis formatting drift |
-| `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
-| `review-thread-triage` | Deprecated — redirects to review-threads --triage |
-| `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
-| `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
-| `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
-| `build-otto-ai-tools-tarball` | Package otto-ai-tools into a self-contained tarball for distribution |
-| `dream-scan` | Scan session transcripts and memory state for dream consolidation |
-| `dream-verify` | Verify dream memory file integrity across all projects |
-| `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
-| `retro-scan` | Scan PR review comments and cross-reference against coding rules |
-| `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
-| `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
-| `pr-rebase` | Rebase current branch onto its base with conflict detection and force-push |
-| `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
-| `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
-| `ceiling-scan` | Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger |
+| `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
 | `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |
-| `workbench-reference` | Reference card — lists all workbench skills, agents, and reuse modes |
 | `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
-| `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
-| `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
-| `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
-| `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI |
 | `validate-all` | Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI |

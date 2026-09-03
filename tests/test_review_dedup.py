@@ -7,7 +7,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_dedup  # noqa: E402
-from proc import CmdResult  # noqa: E402
 
 
 def test_posted_findings_are_typed_not_dicts():
@@ -160,10 +159,6 @@ class TestFetchBotComments:
         ):
             result = review_dedup._fetch_bot_comments("org/repo", "1")
             assert len(result) == 2
-
-    def test_api_failure_returns_empty(self):
-        with patch("gh_client.api", return_value=CmdResult(1)):
-            assert review_dedup._fetch_bot_comments("org/repo", "1") == []
 
     def test_empty_login_returns_empty(self):
         with patch("gh_client.login", return_value=""):

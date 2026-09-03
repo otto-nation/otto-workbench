@@ -23,6 +23,7 @@ sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 import pr_context
 import pr_domains
 import pr_state
+import pr_sync
 import push_intent
 import schema_gen
 import review_gc
@@ -1077,7 +1078,7 @@ def main():
         workbench_projects.register(ctx.worktree_root)
 
     if need.update:
-        ctx = pr_context.update_to_remote(ctx)
+        ctx = pr_sync.update_to_remote(ctx)
 
     # The lock is acquired before _dispatch so contention costs no trail
     # artifacts.

@@ -8,8 +8,9 @@ from dataclasses import dataclass
 
 import gh_client
 import git_client
+import git_topology
 import log
-import pr_context
+import pr_sync
 import proc
 
 
@@ -30,10 +31,10 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
 
     log.info(f"Setting up worktree for PR #{pr_number}...")
 
-    wt_path = pr_context.wt_switch(f"pr:{pr_number}", repo_dir)
+    wt_path = git_topology.wt_switch(f"pr:{pr_number}", repo_dir)
     if wt_path:
         if pr_head:
-            pr_context.fetch_and_reset(wt_path, pr_head)
+            pr_sync.fetch_and_reset(wt_path, pr_head)
         return WorktreeResult(path=wt_path, cleanup_ref=f"pr:{pr_number}", is_fallback=False)
 
     log.info("Branch deleted, fetching via PR ref...")
@@ -81,7 +82,7 @@ def detached_worktree_at(sha: str, repo_dir: str, label: str) -> WorktreeResult 
 def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
     log.info(f"Switching to branch {branch}...")
 
-    wt_path = pr_context.wt_switch(branch, repo_dir)
+    wt_path = git_topology.wt_switch(branch, repo_dir)
     if wt_path:
         return WorktreeResult(path=wt_path, cleanup_ref=branch, is_fallback=False)
 

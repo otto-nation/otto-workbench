@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import agent_invoke
 import gh_client
 import git_client
+import git_topology
 import log
 import pr_context
 import pr_state
@@ -211,7 +212,7 @@ def run_describe(
         return 1
     title, body = fetched
 
-    base = pr_context.default_branch(wt_path)
+    base = git_topology.default_branch(wt_path)
     commits = _git(wt_path, "log", "--oneline", f"origin/{base}..HEAD")
     changed_files = _git(wt_path, "diff", "--name-only", f"origin/{base}...HEAD")
 

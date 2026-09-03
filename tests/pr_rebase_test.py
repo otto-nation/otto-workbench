@@ -2615,7 +2615,7 @@ def test_pr_base_branch_survives_gh_being_absent():
 def _resolve_target(onto=None, *, pr_base=None, default_branch="main"):
     """Resolve the target ref with both probes forced."""
     with mock.patch.object(pr_rebase_cli, "_pr_base_branch", return_value=pr_base), \
-         mock.patch.object(pr_rebase_cli.pr_context, "default_branch",
+         mock.patch.object(pr_rebase_cli.git_topology, "default_branch",
                            return_value=default_branch):
         return pr_rebase_cli._resolve_target_ref("/fake", _landed_ctx(), onto)
 
@@ -2638,7 +2638,7 @@ def test_resolve_target_ref_falls_back_to_the_default_branch():
 
 def test_resolve_target_ref_never_asks_the_default_branch_when_a_pr_answers():
     with mock.patch.object(pr_rebase_cli, "_pr_base_branch", return_value=_OTHER_BASE), \
-         mock.patch.object(pr_rebase_cli.pr_context, "default_branch") as mock_default:
+         mock.patch.object(pr_rebase_cli.git_topology, "default_branch") as mock_default:
         pr_rebase_cli._resolve_target_ref("/fake", _landed_ctx(), None)
 
     mock_default.assert_not_called()
@@ -3869,7 +3869,7 @@ def _run_main(cmd_start_rc: int, *flags: str,
     with mock.patch("sys.argv", ["pr-rebase", *flags]), \
          mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=fake_ctx), \
          mock.patch.object(pr_rebase_cli, "_pr_base_branch", return_value=pr_base), \
-         mock.patch.object(pr_rebase_cli.pr_context, "default_branch",
+         mock.patch.object(pr_rebase_cli.git_topology, "default_branch",
                            return_value=default_branch), \
          mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls, \
          mock.patch.object(pr_rebase_cli, "cmd_start", return_value=cmd_start_rc) as mock_start, \

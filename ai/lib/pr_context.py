@@ -71,16 +71,16 @@ carries no trail flag of its own for a command to add itself to.
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field, replace as dataclass_replace
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import NoReturn
 
 import gh_client
+import git_topology
 import log
 import pr_target
 import timeouts
@@ -89,20 +89,8 @@ import timeouts
 # consumers nothing.
 from proc import failure_message  # noqa: F401
 
-# `git_remote` is a workbench-wide module rather than an `ai/lib` one, because
-# the pre-push hooks and the surface gate resolve the same default branch. In a
-# checkout that is one directory up; in the otto-ai-tools tarball, which
-# flattens both into one `lib/`, it is already beside this file and the path
-# below does not exist.
-_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent / "lib"
-if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
-    sys.path.insert(0, str(_WORKBENCH_LIB))
-import git_remote  # noqa: E402
-
 _PR_URL_RE = re.compile(r"/pull/(\d+)")
 _PR_NUMBER_RE = re.compile(r"^\d+$")
-
-RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent / "bin" / "resolve-branch"
 
 
 def is_pr_ref(s: str) -> bool:
@@ -287,16 +275,16 @@ def resolve(
         # the PR, and the caller may be sitting on an unrelated branch.
         head_sha = head.sha
     elif branch:
-        branch_name = _resolve_branch(branch, cwd)
+        branch_name = git_topology.resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
     else:
-        branch_name = _current_branch(cwd)
+        branch_name = git_topology.current_branch(cwd)
         pr_number = _pr_from_current(cwd)
 
     if not pr:
         head_sha = _head_sha(cwd) if worktree_root else ""
 
-    current = _current_branch_quiet(cwd) if worktree_root else None
+    current = git_topology.current_branch_quiet(cwd) if worktree_root else None
 
     return ResolvedContext(
         repo=repo,
@@ -336,7 +324,10 @@ def resolve_local(
         cwd, pr=None, branch=branch, create_missing=False,
     )
 
-    branch_name = _resolve_branch(branch, cwd) if branch else _current_branch(cwd)
+    branch_name = (
+        git_topology.resolve_branch(branch, cwd) if branch
+        else git_topology.current_branch(cwd)
+    )
 
     identity = _target_identity(cwd)
 
@@ -346,7 +337,7 @@ def resolve_local(
         branch=branch_name,
         worktree_root=worktree_root,
         head_sha=_head_sha(cwd) if worktree_root else "",
-        current_branch=_current_branch_quiet(cwd) if worktree_root else None,
+        current_branch=git_topology.current_branch_quiet(cwd) if worktree_root else None,
         target_dir=pr_target.target_dir(identity.key, branch_name),
     )
 
@@ -385,116 +376,6 @@ def _exit_without_an_origin() -> NoReturn:
     sys.exit(1)
 
 
-def _reset_guard_read(cwd: str, *args: str) -> subprocess.CompletedProcess:
-    """A local git read in *cwd*, with a failure to run reported as a non-zero exit.
-
-    The two reads below guard a `git reset --hard`, and both have to treat "did
-    not complete" exactly as they treat "exited non-zero" — a `TimeoutExpired`
-    raised out of `subprocess.run` would otherwise abort the command from
-    inside a safety check. `proc.run` folds the same exception into a result
-    for the callers that go through the git client.
-    """
-    argv = ["git", "-C", cwd, *args]
-    try:
-        return subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeouts.LOCAL,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return subprocess.CompletedProcess(argv, 1, "", f"{type(exc).__name__}: {exc}")
-
-
-def _worktree_is_dirty(cwd: str) -> bool:
-    """Whether *cwd* has uncommitted changes, or git could not say.
-
-    Fails towards dirty, the direction `_unpushed_count` below fails in and for
-    the same reason: both answer `_reset_blocker`, which is deciding whether a
-    `git reset --hard` would destroy work. A `status` that was killed or timed
-    out says nothing about the tree, and reading that silence as clean is how a
-    worktree full of uncommitted work gets reset. The other direction costs a
-    skipped reset and a logged reason.
-    """
-    r = _reset_guard_read(cwd, "status", "--porcelain")
-    if r.returncode != 0:
-        log.warn(failure_message(
-            f"Could not read the state of {cwd} — treating it as dirty", r,
-        ))
-        return True
-    return bool(r.stdout.strip())
-
-
-def _unpushed_count(cwd: str, branch: str) -> int | None:
-    """Commits in *cwd* that origin/*branch* does not have, or None if unknown.
-
-    Only meaningful once origin/<branch> has been fetched — against a stale
-    remote ref this over-reports, which is the safe direction for callers
-    using it to decide whether a hard reset would destroy work. None carries
-    that same safety into the case over-reporting cannot cover: a `rev-list`
-    that never ran counted no commits, and a caller reading that back as zero
-    resets over however many there were.
-    """
-    r = _reset_guard_read(cwd, "rev-list", f"origin/{branch}..HEAD", "--count")
-    if r.returncode != 0:
-        log.warn(failure_message(f"Could not count unpushed commits in {cwd}", r))
-        return None
-    count = r.stdout.strip()
-    if not count.isdigit():
-        log.warn(f"Could not count unpushed commits in {cwd} — git answered {count!r}")
-        return None
-    return int(count)
-
-
-def _reset_blocker(wt_path: str, branch: str) -> str | None:
-    """Why hard-resetting *wt_path* to origin/*branch* would destroy work.
-
-    Returns None when the reset is safe. Call only after fetching the branch.
-
-    Every read behind it fails towards blocked, so None means the reads agreed
-    the worktree holds nothing — not that they were unable to look. The reason
-    strings stay true either way, and the read that could not answer has
-    already logged git's own account of why.
-    """
-    current = _current_branch_quiet(wt_path)
-    if current != branch:
-        return f"it is on {current or 'detached HEAD'}, not {branch}"
-    if _worktree_is_dirty(wt_path):
-        return "it has uncommitted changes, or its state could not be read"
-    unpushed = _unpushed_count(wt_path, branch)
-    if unpushed is None:
-        return "its unpushed commits could not be counted"
-    if unpushed:
-        return f"it has {unpushed} unpushed commit(s)"
-    return None
-
-
-def fetch_and_reset(wt_path: str, branch: str) -> None:
-    """Fetch branch from origin and hard-reset worktree to match.
-
-    Skips the reset unless *wt_path* is provably on *branch*, clean, and fully
-    pushed — a check git could not complete blocks it too. Callers locate this
-    worktree by branch, but find_worktree_for_branch can return one that merely
-    has the right directory name — resetting it unconditionally destroys
-    whatever is actually checked out there.
-    """
-    try:
-        subprocess.run(
-            ["git", "-C", wt_path, "fetch", "origin", branch],
-            capture_output=True, text=True, check=True, timeout=timeouts.TRANSFER,
-        )
-    except Exception:
-        return
-    blocker = _reset_blocker(wt_path, branch)
-    if blocker:
-        log.warn(f"Not resetting {wt_path} to origin/{branch} — {blocker}")
-        return
-    try:
-        subprocess.run(
-            ["git", "-C", wt_path, "reset", "--hard", f"origin/{branch}"],
-            capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
-        )
-    except Exception:
-        pass
-
-
 def head_sha(cwd: str | None = None) -> str:
     """Current HEAD sha of the worktree at *cwd*, or "" if it can't be read.
 
@@ -504,103 +385,14 @@ def head_sha(cwd: str | None = None) -> str:
     return _head_sha(cwd)
 
 
-def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
-    """Fetch branch from remote and reset worktree to match, safely.
-
-    Skips when the worktree has uncommitted changes or unpushed commits, and
-    equally when git could not report either — a read that failed is not a
-    worktree that turned out to be empty. Returns a new context with the
-    updated head_sha when reset succeeds.
-    """
-    if not ctx.worktree_root or not ctx.branch:
-        return ctx
-
-    cwd = str(ctx.worktree_root)
-
-    current = _current_branch_quiet(cwd)
-    if current != ctx.branch:
-        log.info(f"Worktree is on {current}, not {ctx.branch} — skipping update to remote")
-        return ctx
-
-    if _worktree_is_dirty(cwd):
-        log.warn(
-            "Worktree has uncommitted changes, or its state could not be read "
-            "— skipping update to remote"
-        )
-        return ctx
-
-    r = subprocess.run(
-        ["git", "-C", cwd, "fetch", "origin", ctx.branch],
-        capture_output=True, text=True, timeout=timeouts.TRANSFER,
-    )
-    if r.returncode != 0:
-        return ctx
-
-    r = subprocess.run(
-        ["git", "-C", cwd, "rev-parse", "--verify", f"origin/{ctx.branch}"],
-        capture_output=True, text=True, timeout=timeouts.LOCAL,
-    )
-    if r.returncode != 0:
-        return ctx
-    remote_sha = r.stdout.strip()
-
-    local_sha = _head_sha(cwd)
-    if local_sha == remote_sha:
-        return ctx
-
-    unpushed = _unpushed_count(cwd, ctx.branch)
-    if unpushed is None:
-        log.dim("skipping update to remote")
-        return ctx
-    if unpushed > 0:
-        log.warn(f"Branch has {unpushed} unpushed commit(s) — skipping update to remote")
-        return ctx
-
-    r = subprocess.run(
-        ["git", "-C", cwd, "reset", "--hard", f"origin/{ctx.branch}"],
-        capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
-    )
-    if r.returncode != 0:
-        log.warn(failure_message(f"git reset --hard origin/{ctx.branch} failed", r))
-        log.dim("keeping the existing worktree state")
-        return ctx
-
-    log.info(f"Updated worktree to origin/{ctx.branch}")
-    return dataclass_replace(ctx, head_sha=remote_sha)
-
-
-def _current_branch_quiet(cwd: str | None = None) -> str | None:
-    """Return current branch name, or None on failure (e.g. detached HEAD)."""
-    r = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    if r.returncode != 0 or not r.stdout.strip() or r.stdout.strip() == "HEAD":
-        return None
-    return r.stdout.strip()
-
-
-def _find_worktree_by_branch(
-    branch_hint: str, cwd: str,
-) -> Path | None:
-    """Find a worktree for branch_hint, trying exact then fuzzy resolution."""
-    wt = find_worktree_for_branch(branch_hint, cwd)
-    if wt:
-        return wt
-    resolved = _resolve_branch(branch_hint, cwd)
-    if resolved != branch_hint:
-        return find_worktree_for_branch(resolved, cwd)
-    return None
-
-
 def _redirect_to_branch_worktree(
     branch: str, effective_cwd: str,
 ) -> Path | None:
     """If CWD's branch differs from the target, find the target's worktree."""
-    current = _current_branch_quiet(effective_cwd)
+    current = git_topology.current_branch_quiet(effective_cwd)
     if current is None or current == branch:
         return None
-    return _find_worktree_by_branch(branch, effective_cwd)
+    return git_topology.find_worktree_by_branch(branch, effective_cwd)
 
 
 def _resolve_worktree(
@@ -637,7 +429,7 @@ def _resolve_non_worktree(
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
     """Handle bare repos and non-git directories."""
-    if is_bare_repo(cwd):
+    if git_topology.is_bare_repo(cwd):
         return _resolve_bare(
             cwd, pr=pr, branch=branch, create_missing=create_missing,
         )
@@ -656,8 +448,8 @@ def _resolve_bare(
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree from a bare repo."""
-    wt = (resolve_bare_repo_worktree(cwd, branch) if create_missing
-          else find_bare_repo_worktree(cwd, branch))
+    wt = (git_topology.resolve_bare_repo_worktree(cwd, branch) if create_missing
+          else git_topology.find_bare_repo_worktree(cwd, branch))
     if wt:
         return wt, str(wt)
     if not pr and not branch:
@@ -678,40 +470,6 @@ def detect_repo(cwd: str | None = None) -> str:
         log.error(failure_message("Cannot determine repository via `gh repo view`", r))
         sys.exit(1)
     return slug
-
-
-def _current_branch(cwd: str | None = None) -> str:
-    r = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    branch = r.stdout.strip()
-    if r.returncode != 0 or not branch:
-        log.error(failure_message("Cannot determine current branch", r))
-        sys.exit(1)
-    if branch == "HEAD":
-        log.error("Cannot determine current branch — HEAD is detached")
-        sys.exit(1)
-    return branch
-
-
-def _resolve_branch(hint: str, cwd: str | None = None) -> str:
-    try:
-        r = subprocess.run(
-            [str(RESOLVE_BRANCH), hint],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-        # resolve-branch exited non-zero or returned nothing — use hint as-is
-        # rather than silently discarding the user's explicit --branch value
-        log.warn(failure_message(f"resolve-branch could not resolve {hint!r}", r))
-        log.dim(f"using {hint!r} as-is")
-        return hint
-    # A resolver that hangs is a resolver that did not answer, which this
-    # function already knows how to survive.
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return hint if hint else _current_branch(cwd)
 
 
 def _git_toplevel(cwd: str | None = None) -> Path | None:
@@ -781,207 +539,3 @@ def _pr_head(repo: str, pr_number: int) -> PRHead:
     return PRHead(branch=parts[0], sha=parts[1])
 
 
-# ── Bare-repo helpers ──────────────────────────────────────────────────────
-
-
-def is_bare_repo(cwd: str | None = None) -> bool:
-    try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--is-bare-repository"],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-        )
-        return r.stdout.strip() == "true"
-    except Exception:
-        return False
-
-
-def _parse_worktree_block(block: str) -> tuple[Path, str | None] | None:
-    """One ``--porcelain`` record as ``(path, branch)``, or None if not a checkout.
-
-    Branch is None for a detached HEAD. The bare repo is not a checkout and is
-    dropped — handing it back as one would point callers at the .git directory.
-    """
-    path: Path | None = None
-    branch: str | None = None
-    for line in block.splitlines():
-        if line == "bare":
-            return None
-        if line.startswith("worktree "):
-            path = Path(line.removeprefix("worktree "))
-        elif line.startswith("branch refs/heads/"):
-            branch = line.removeprefix("branch refs/heads/")
-    return (path, branch) if path else None
-
-
-def _worktree_entries(cwd: str | None = None) -> list[tuple[Path, str | None]]:
-    """Every non-bare worktree as ``(path, branch)``; branch None when detached.
-
-    Parses ``--porcelain`` rather than the human listing, which packs path,
-    SHA and ``[branch]`` onto one whitespace-separated line: a path containing
-    a space gets truncated by a naive split, and one containing a bracket reads
-    as a branch tag. Porcelain gives the path verbatim on its own line.
-    """
-    try:
-        r = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-        )
-    except Exception:
-        return []
-    parsed = map(_parse_worktree_block, r.stdout.split("\n\n"))
-    return [entry for entry in parsed if entry]
-
-
-def find_worktree_for_branch(
-    branch: str, cwd: str | None = None,
-) -> Path | None:
-    """Find the worktree git reports as checked out on *branch*.
-
-    Falls back to a worktree whose directory name matches the sanitized branch
-    (slashes to dashes) so detached-HEAD worktrees are still found — but only
-    when git reports no branch for it. A worktree named ``main/`` with someone
-    else's branch checked out is not the main worktree, and callers that reset
-    or check out what they get back would clobber that branch.
-
-    Use find_worktree_dir_named when you only need a working directory.
-    """
-    entries = _worktree_entries(cwd)
-    for path, wt_branch in entries:
-        if wt_branch == branch:
-            return path
-    sanitized = branch.replace("/", "-")
-    for path, wt_branch in entries:
-        if wt_branch is None and path.name == sanitized:
-            return path
-    return None
-
-
-def find_worktree_dir_named(
-    branch: str, cwd: str | None = None,
-) -> Path | None:
-    """Any worktree whose directory is named after *branch*, whatever is in it.
-
-    Answers "which directory is this repo's <branch> checkout" rather than
-    "which worktree is on <branch>". Only for callers that need somewhere to
-    run read-only commands — never for ones that reset or check out the result,
-    which is how a feature branch parked in main/ got hard-reset away.
-    """
-    sanitized = branch.replace("/", "-")
-    for path, _ in _worktree_entries(cwd):
-        if path.name == sanitized:
-            return path
-    return None
-
-
-def create_worktree_for_branch(
-    branch: str, cwd: str | None = None,
-) -> Path | None:
-    """Create a worktree for *branch*, or None if it can't be created.
-
-    Delegates to ``wt switch`` so the worktree lands wherever worktrunk's
-    path template puts it, keeping tooling-created worktrees in the same
-    layout as hand-created ones.
-    """
-    path = wt_switch(branch, cwd)
-    if not path:
-        # wt_switch names the cause on every failure path it has; a second,
-        # vaguer line here would only bury the one that says something.
-        return None
-    log.info(f"Created worktree for {branch} at {path}")
-    return Path(path)
-
-
-def wt_switch(ref: str, cwd: str | None = None) -> str | None:
-    """Path of the worktree ``wt switch`` lands on for *ref*, or None.
-
-    *ref* is anything worktrunk accepts — a branch name or a ``pr:<n>`` ref.
-    Non-interactive and hook-free so it is safe to call from tooling.
-    """
-    try:
-        r = subprocess.run(
-            ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y"]
-            + (["-C", cwd] if cwd else []),
-            capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
-        )
-    except FileNotFoundError:
-        log.warn("worktrunk (wt) is not installed — cannot switch worktrees")
-        return None
-    except OSError as e:
-        log.warn(f"Cannot run worktrunk (wt) — cannot switch worktrees: {e}")
-        return None
-    path = parse_wt_switch_path(r.stdout)
-    if not path:
-        log.warn(failure_message(f"wt switch {ref} reported no worktree path", r))
-    return path
-
-
-def parse_wt_switch_path(stdout: str) -> str | None:
-    """Pull the ``path`` field out of ``wt switch --format json`` output."""
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            path = json.loads(line).get("path", "")
-        except json.JSONDecodeError:
-            continue
-        if path:
-            return path
-    return None
-
-
-def default_branch(cwd: str | Path | None = None) -> str:
-    """The repo's default branch name, via lib/git_remote.py's shared ladder.
-
-    Falls back to "main" whenever git cannot answer — an unfetched clone has no
-    origin/HEAD, and every caller needs a base ref more than it needs an error.
-    Before the shared ladder this stopped at the symref, so a repository whose
-    trunk is `master` was told its default branch was one it does not have.
-
-    Deliberately uncached: this is imported by every `pr` script, and a
-    module-level cache here would outlive the tests that set up their own repos.
-    Call sites that need it per-file wrap it in their own cache.
-    """
-    return git_remote.resolve_default_branch(str(cwd) if cwd is not None else None)
-
-
-def find_bare_repo_worktree(
-    cwd: str | None, branch: str | None,
-) -> Path | None:
-    """Worktree discovery for bare repos, creating nothing.
-
-    Tries the requested branch (with fuzzy resolution). Only falls back to the
-    default branch's worktree when no branch was requested at all.
-
-    Never substitutes another branch's worktree for an explicitly requested
-    branch: callers check the branch out, so handing back the default branch's
-    worktree makes them displace it.
-    """
-    if branch:
-        return _find_worktree_by_branch(branch, cwd)
-
-    # With no branch requested this is "give me a working directory for this
-    # repo", not "is this worktree on <default>" — so the directory named after
-    # the default branch will do even when something else is checked out there.
-    # Returning None instead would strand ~10 callers that dereference
-    # worktree_root without a guard.
-    default = default_branch(cwd)
-    return (
-        find_worktree_for_branch(default, cwd)
-        or find_worktree_dir_named(default, cwd)
-    )
-
-
-def resolve_bare_repo_worktree(
-    cwd: str | None, branch: str | None,
-) -> Path | None:
-    """The same discovery, creating a worktree for *branch* when it is missing.
-
-    Creating a checkout is a side effect a caller has to ask for, which is why
-    it lives here rather than in find_bare_repo_worktree: a command that only
-    reads state should not leave a worktree behind. See create_worktree_for_branch.
-    """
-    wt = find_bare_repo_worktree(cwd, branch)
-    if wt or not branch:
-        return wt
-    return create_worktree_for_branch(branch, cwd)

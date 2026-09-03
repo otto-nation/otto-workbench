@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import gh_client
 import git_client
+import git_topology
 import log
 import pr_context
 import pr_domains
@@ -576,10 +577,10 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
 
 def _resolve_bare_repo_worktree(branch: str = "") -> str:
-    wt = pr_context.resolve_bare_repo_worktree(None, branch or None)
+    wt = git_topology.resolve_bare_repo_worktree(None, branch or None)
     if wt:
         return str(wt)
-    display_branch = branch or pr_context.default_branch()
+    display_branch = branch or git_topology.default_branch()
     log.error(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
     sys.exit(1)
 
@@ -1053,7 +1054,7 @@ def _resolve_wt_path(repo_dir: str, branch: str) -> str:
     if toplevel is not None:
         return str(toplevel)
 
-    if not repo_dir and pr_context.is_bare_repo(cwd):
+    if not repo_dir and git_topology.is_bare_repo(cwd):
         return _resolve_bare_repo_worktree(branch)
 
     if repo_dir:

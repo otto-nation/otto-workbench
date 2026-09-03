@@ -31,6 +31,7 @@ import agent_invoke
 import fix_engine
 import fix_types
 import git_client
+import git_topology
 import land
 import pr_comments as pc
 import pr_comments_fix
@@ -38,6 +39,7 @@ import pr_comments_state as pcs
 import pr_context
 import pr_domains
 import pr_state
+import pr_sync
 import proc
 import run_lock
 import publishing
@@ -598,7 +600,7 @@ def _main_worktree_block(main_wt: Path | None) -> str:
 
 @functools.cache
 def _resolve_default_branch(wt_path: Path) -> str:
-    """`pr_context.default_branch`, cached for the run.
+    """`git_topology.default_branch`, cached for the run.
 
     The default branch cannot change mid-run and several call sites need it per
     file processed, so the shared resolver is memoised here rather than in the
@@ -609,18 +611,18 @@ def _resolve_default_branch(wt_path: Path) -> str:
     with different mocked git state must call `_resolve_default_branch.cache_clear()`
     between cases to avoid stale results from an earlier call.
     """
-    return pr_context.default_branch(wt_path)
+    return git_topology.default_branch(wt_path)
 
 
 def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
     """Find the default-branch worktree and update it to match origin."""
     default_branch = _resolve_default_branch(wt_path)
 
-    main_wt = pr_context.find_worktree_for_branch(default_branch, str(wt_path))
+    main_wt = git_topology.find_worktree_for_branch(default_branch, str(wt_path))
     if not main_wt:
         return None
 
-    pr_context.fetch_and_reset(str(main_wt), default_branch)
+    pr_sync.fetch_and_reset(str(main_wt), default_branch)
     return main_wt
 
 

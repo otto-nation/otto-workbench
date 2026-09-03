@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -11,6 +11,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import git_topology
 import pr_context
 import pr_target
 from pr_context import PRHead
@@ -23,7 +24,7 @@ def test_pr_and_branch_mutually_exclusive():
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo"))
-@patch.object(pr_context, "_current_branch_quiet", return_value="feat/bar")
+@patch.object(git_topology, "current_branch_quiet", return_value="feat/bar")
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(pr_context, "_pr_head", return_value=PRHead(branch="feat/bar", sha="pr-sha"))
@@ -39,11 +40,11 @@ def test_pr_only_resolves(mock_head, mock_sha, mock_repo, mock_current, mock_top
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo"))
-@patch.object(pr_context, "_current_branch_quiet", return_value="main")
-@patch.object(pr_context, "_find_worktree_by_branch", return_value=None)
+@patch.object(git_topology, "current_branch_quiet", return_value="main")
+@patch.object(git_topology, "find_worktree_by_branch", return_value=None)
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_resolve_branch", return_value="feat/baz")
+@patch.object(git_topology, "resolve_branch", return_value="feat/baz")
 @patch.object(pr_context, "_pr_from_branch", return_value=99)
 def test_branch_only_resolves(mock_pr, mock_resolve, mock_sha, mock_repo,
                               mock_find_wt, mock_current, mock_top,
@@ -59,12 +60,12 @@ def test_branch_only_resolves(mock_pr, mock_resolve, mock_sha, mock_repo,
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=None)
-@patch.object(pr_context, "is_bare_repo", return_value=True)
-@patch.object(pr_context, "resolve_bare_repo_worktree", return_value=Path("/wt/main"))
+@patch.object(git_topology, "is_bare_repo", return_value=True)
+@patch.object(git_topology, "resolve_bare_repo_worktree", return_value=Path("/wt/main"))
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="def456")
-@patch.object(pr_context, "_current_branch_quiet", return_value="main")
-@patch.object(pr_context, "_current_branch", return_value="main")
+@patch.object(git_topology, "current_branch_quiet", return_value="main")
+@patch.object(git_topology, "current_branch", return_value="main")
 @patch.object(pr_context, "_pr_from_current", return_value=None)
 def test_bare_repo_finds_worktree(mock_pr, mock_branch, mock_quiet, mock_sha, mock_repo,
                                   mock_resolve_wt, mock_bare, mock_top, mock_repo_name):
@@ -77,8 +78,8 @@ def test_bare_repo_finds_worktree(mock_pr, mock_branch, mock_quiet, mock_sha, mo
 
 
 @patch.object(pr_context, "_git_toplevel", return_value=None)
-@patch.object(pr_context, "is_bare_repo", return_value=True)
-@patch.object(pr_context, "resolve_bare_repo_worktree", return_value=None)
+@patch.object(git_topology, "is_bare_repo", return_value=True)
+@patch.object(git_topology, "resolve_bare_repo_worktree", return_value=None)
 def test_bare_repo_no_worktree_no_args_exits(mock_resolve_wt, mock_bare, mock_top):
     with pytest.raises(SystemExit):
         pr_context.resolve()
@@ -86,10 +87,10 @@ def test_bare_repo_no_worktree_no_args_exits(mock_resolve_wt, mock_bare, mock_to
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=None)
-@patch.object(pr_context, "is_bare_repo", return_value=True)
-@patch.object(pr_context, "resolve_bare_repo_worktree", return_value=None)
+@patch.object(git_topology, "is_bare_repo", return_value=True)
+@patch.object(git_topology, "resolve_bare_repo_worktree", return_value=None)
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
-@patch.object(pr_context, "_resolve_branch", return_value="feat/thing")
+@patch.object(git_topology, "resolve_branch", return_value="feat/thing")
 @patch.object(pr_context, "_pr_from_branch", return_value=42)
 def test_bare_repo_with_branch_continues(mock_pr, mock_resolve, mock_repo,
                                          mock_resolve_wt, mock_bare, mock_top,
@@ -102,13 +103,13 @@ def test_bare_repo_with_branch_continues(mock_pr, mock_resolve, mock_repo,
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=None)
-@patch.object(pr_context, "is_bare_repo", return_value=True)
-@patch.object(pr_context, "_find_worktree_by_branch",
+@patch.object(git_topology, "is_bare_repo", return_value=True)
+@patch.object(git_topology, "find_worktree_by_branch",
               return_value=Path("/wt/isaac-improve-ci-failures-skill"))
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_current_branch_quiet", return_value="isaac/improve-ci-failures-skill")
-@patch.object(pr_context, "_resolve_branch", return_value="isaac/improve-ci-failures-skill")
+@patch.object(git_topology, "current_branch_quiet", return_value="isaac/improve-ci-failures-skill")
+@patch.object(git_topology, "resolve_branch", return_value="isaac/improve-ci-failures-skill")
 @patch.object(pr_context, "_pr_from_branch", return_value=42)
 def test_bare_repo_fuzzy_branch_resolves_worktree(
     mock_pr, mock_resolve, mock_quiet, mock_sha, mock_repo,
@@ -122,106 +123,15 @@ def test_bare_repo_fuzzy_branch_resolves_worktree(
 
 
 @patch.object(pr_context, "_git_toplevel", return_value=None)
-@patch.object(pr_context, "is_bare_repo", return_value=False)
+@patch.object(git_topology, "is_bare_repo", return_value=False)
 def test_not_git_repo_exits(mock_bare, mock_top):
     with pytest.raises(SystemExit):
         pr_context.resolve()
 
 
-# ── Bare-repo helpers (unit) ───────────────────────────────────────────────
-
-
-@patch.object(pr_context, "subprocess")
-def test_is_bare_repo_true(mock_sub):
-    mock_sub.run.return_value = MagicMock(stdout="true\n")
-    assert pr_context.is_bare_repo("/some/path") is True
-
-
-@patch.object(pr_context, "subprocess")
-def test_is_bare_repo_false(mock_sub):
-    mock_sub.run.return_value = MagicMock(stdout="false\n")
-    assert pr_context.is_bare_repo("/some/path") is False
-
-
-def _porcelain(*entries: tuple[str, str | None]) -> str:
-    """``git worktree list --porcelain`` output for (path, branch) pairs.
-
-    A None branch renders as a detached-HEAD entry.
-    """
-    blocks = [
-        f"worktree {path}\nHEAD abc1234\n"
-        + (f"branch refs/heads/{branch}\n" if branch else "detached\n")
-        for path, branch in entries
-    ]
-    return "\n".join(blocks)
-
-
-@patch.object(pr_context, "subprocess")
-def test_find_worktree_for_branch_found(mock_sub):
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
-        ("/home/user/repo/feat-branch", "feat/branch"),
-        ("/home/user/repo/main", "main"),
-    ))
-    result = pr_context.find_worktree_for_branch("feat/branch")
-    assert result == Path("/home/user/repo/feat-branch")
-
-
-@patch.object(pr_context, "subprocess")
-def test_find_worktree_for_branch_not_found(mock_sub):
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
-        ("/home/user/repo/main", "main"),
-    ))
-    result = pr_context.find_worktree_for_branch("nonexistent")
-    assert result is None
-
-
-@patch.object(pr_context, "subprocess")
-def test_find_worktree_for_branch_detached_head_fallback(mock_sub):
-    """Detached-HEAD worktree has no branch — falls back to sanitized dir name."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
-        ("/home/user/repo/isaac-feat-auth", None),
-        ("/home/user/repo/main", "main"),
-    ))
-    result = pr_context.find_worktree_for_branch("isaac/feat/auth")
-    assert result == Path("/home/user/repo/isaac-feat-auth")
-
-
-@patch.object(pr_context, "subprocess")
-def test_find_worktree_for_branch_prefers_branch_over_dir_name(mock_sub):
-    """When git reports the branch, prefer it over the directory-name fallback."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
-        ("/home/user/repo/wrong-dir", "feat/branch"),
-        ("/home/user/repo/feat-branch", None),
-    ))
-    result = pr_context.find_worktree_for_branch("feat/branch")
-    assert result == Path("/home/user/repo/wrong-dir")
-
-
-@patch.object(pr_context, "subprocess")
-def test_find_worktree_for_branch_sanitized_no_match(mock_sub):
-    """Neither the branch nor a sanitized dir name matches — returns None."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
-        ("/home/user/repo/other-branch", None),
-        ("/home/user/repo/main", "main"),
-    ))
-    result = pr_context.find_worktree_for_branch("feat/nonexistent")
-    assert result is None
-
-
-# ── _current_branch detached HEAD ─────────────────────────────────────────
-
-
-@patch.object(pr_context, "subprocess")
-def test_current_branch_detached_head_exits(mock_sub):
-    """_current_branch exits when HEAD is detached."""
-    mock_sub.run.return_value = MagicMock(returncode=0, stdout="HEAD\n")
-    with pytest.raises(SystemExit):
-        pr_context._current_branch("/repo")
-
-
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo"))
-@patch.object(pr_context, "_current_branch_quiet", return_value=None)
+@patch.object(git_topology, "current_branch_quiet", return_value=None)
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(pr_context, "_pr_head", return_value=PRHead(branch="feat/bar", sha="pr-sha"))
@@ -239,11 +149,11 @@ def test_resolve_sets_current_branch_none_on_detached_head(
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo/main"))
-@patch.object(pr_context, "_current_branch_quiet", return_value="main")
-@patch.object(pr_context, "find_worktree_for_branch", return_value=Path("/repo/feat-branch"))
+@patch.object(git_topology, "current_branch_quiet", return_value="main")
+@patch.object(git_topology, "find_worktree_for_branch", return_value=Path("/repo/feat-branch"))
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_resolve_branch", return_value="feat/branch")
+@patch.object(git_topology, "resolve_branch", return_value="feat/branch")
 @patch.object(pr_context, "_pr_from_branch", return_value=42)
 def test_branch_redirects_to_correct_worktree(
     mock_pr, mock_resolve, mock_sha, mock_repo,
@@ -257,10 +167,10 @@ def test_branch_redirects_to_correct_worktree(
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo/feat-branch"))
-@patch.object(pr_context, "_current_branch_quiet", return_value="feat/branch")
+@patch.object(git_topology, "current_branch_quiet", return_value="feat/branch")
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_resolve_branch", return_value="feat/branch")
+@patch.object(git_topology, "resolve_branch", return_value="feat/branch")
 @patch.object(pr_context, "_pr_from_branch", return_value=42)
 def test_branch_matching_cwd_stays_in_place(
     mock_pr, mock_resolve, mock_sha, mock_repo, mock_current, mock_top, mock_repo_name,
@@ -272,9 +182,9 @@ def test_branch_matching_cwd_stays_in_place(
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo/main"))
-@patch.object(pr_context, "_current_branch_quiet", return_value="main")
-@patch.object(pr_context, "find_worktree_for_branch", return_value=None)
-@patch.object(pr_context, "_resolve_branch", return_value="feat/branch")
+@patch.object(git_topology, "current_branch_quiet", return_value="main")
+@patch.object(git_topology, "find_worktree_for_branch", return_value=None)
+@patch.object(git_topology, "resolve_branch", return_value="feat/branch")
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(pr_context, "_pr_from_branch", return_value=None)
@@ -289,9 +199,9 @@ def test_branch_no_worktree_falls_back_to_cwd(
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo/main"))
-@patch.object(pr_context, "_current_branch_quiet", return_value="main")
-@patch.object(pr_context, "find_worktree_for_branch", side_effect=[None, Path("/repo/feat")])
-@patch.object(pr_context, "_resolve_branch", return_value="feat/resolved")
+@patch.object(git_topology, "current_branch_quiet", return_value="main")
+@patch.object(git_topology, "find_worktree_for_branch", side_effect=[None, Path("/repo/feat")])
+@patch.object(git_topology, "resolve_branch", return_value="feat/resolved")
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(pr_context, "_pr_from_branch", return_value=None)
@@ -309,10 +219,10 @@ def test_branch_fuzzy_resolved_finds_worktree(
 
 @patch.object(pr_target, "repo_key_from_origin", return_value="repo")
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo/main"))
-@patch.object(pr_context, "_current_branch_quiet", return_value=None)
+@patch.object(git_topology, "current_branch_quiet", return_value=None)
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_resolve_branch", return_value="feat/branch")
+@patch.object(git_topology, "resolve_branch", return_value="feat/branch")
 @patch.object(pr_context, "_pr_from_branch", return_value=None)
 def test_detached_head_skips_worktree_redirect(
     mock_pr, mock_resolve, mock_sha, mock_repo, mock_current, mock_top, mock_repo_name,

@@ -3,9 +3,10 @@
 
 Usage: validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
 
-Checks nesting depth in bash, Python, and Go scripts. Each language has
-its own default max depth (bash/python: 2, go: 3) overridable with
---max-depth.
+Checks nesting depth in bash, Python, and Go scripts. Each language's checker
+in lib/nesting/ owns its default max depth as DEFAULT_MAX_DEPTH; --max-depth
+overrides all of them. The numbers are deliberately not restated here — this
+text said go was 3 while every checker had long since settled on 2.
 
 When no files are given, discovers all scripts in the repo by extension
 and shebang. With --diff, only reports violations on lines added since

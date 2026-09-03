@@ -26,7 +26,7 @@ class Numstat:
     deletions: int
 
 
-def parse_numstat(numstat: str) -> Numstat:
+def parse_numstat(numstat_text: str) -> Numstat:
     """Read ``git diff --numstat`` output into per-file and total counts.
 
     A binary file's counts are ``-``; they land as zero rather than being
@@ -35,7 +35,7 @@ def parse_numstat(numstat: str) -> Numstat:
     files = []
     total_add = 0
     total_del = 0
-    for line in numstat.strip().split("\n"):
+    for line in numstat_text.strip().split("\n"):
         if not line:
             continue
         parts = line.split("\t")

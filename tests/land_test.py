@@ -99,8 +99,6 @@ def test_land_owns_the_commit_vocabulary():
     `pr_fix` sits above `git` in the layer order, so an enum land imports from
     it is an upward edge — and land is the only consumer of it below `pr`.
     """
-    import land
-
     assert land.CommitStatus.PUSHED == "pushed"
     assert {s.value for s in land.CommitStatus} >= {
         "pushed", "push_held", "push_failed", "push_lost", "push_unverified",

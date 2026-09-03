@@ -198,7 +198,7 @@ if [[ "$sq_stripped" =~ $re_expand ]]; then
 fi
 
 # The directories otto-workbench's tracked .claude/settings.json grants, longest
-# first so `ai/claude/bin/claude-rules` is named as itself rather than as the
+# first so `ai/claude/bin/claude-bash-guard` is named as itself rather than as the
 # `ai/bin` or the `bin/` inside it. A rule there is written repo-root-relative,
 # which is the only form it can match — a `./` prefix and an absolute worktree
 # path both miss it and earn a one-off settings.local.json entry that dies with

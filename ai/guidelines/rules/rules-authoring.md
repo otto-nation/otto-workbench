@@ -13,8 +13,8 @@ paths:
 |---|---|
 | `ai/claude/CLAUDE.md` | Claude Code's own instructions — agent protocols. Not read by other harnesses |
 | `ai/guidelines/rules/*.md` | Language and domain rules — path-scoped via frontmatter |
-| `claude-rules add <domain> "rule"` | Machine-specific local rules (not tracked) |
-| `claude-rules project add "rule"` | Append a rule to the current repo's CLAUDE.md |
+| `workbench-rules add <domain> "rule"` | Machine-specific local rules (not tracked) |
+| `workbench-rules project add "rule"` | Append a rule to the current repo's CLAUDE.md |
 
 ## When to add a rule
 

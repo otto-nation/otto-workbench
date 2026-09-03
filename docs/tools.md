@@ -15,6 +15,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
+| `workbench-rules` | Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed |
 | `ceiling-scan` | Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger |
 | `dream-scan` | Scan session transcripts and memory state for dream consolidation |
 | `dream-verify` | Verify dream memory file integrity across all projects |
@@ -47,7 +48,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-nesting` | Validate bash, Python, and Go script nesting depth to enforce flat control flow |
 | `gcloud-reauth` | Check GCP application-default credentials and re-login if expired, with self-managed launchd agent |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
-| `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
 | `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
 | `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
@@ -231,7 +231,7 @@ resolve-worktree [<path>]
 | `2` | Not a bare repository — nothing to resolve |
 | `64` | Usage error |
 
-Exit `2` is the ordinary answer for an everyday repo, a worktree, or a directory outside any repo, so callers treat it as "carry on here" rather than a failure. This is the one owner of that resolution in bash. The [`claude` shell wrapper](architecture.md#shell-zsh) calls it directly — redirecting a launch is all it wants. A tool that resolves a tree in order to *write* a project artifact into it calls [`lib/worktree.sh`](libraries.md)'s `project_root` instead, which lets a working tree name itself first and falls back to this only when there is none; the ceiling-debt Stop hook, `serena-mcp`, `claude-rules`, and `otto-workbench ai init` all reach it that way.
+Exit `2` is the ordinary answer for an everyday repo, a worktree, or a directory outside any repo, so callers treat it as "carry on here" rather than a failure. This is the one owner of that resolution in bash. The [`claude` shell wrapper](architecture.md#shell-zsh) calls it directly — redirecting a launch is all it wants. A tool that resolves a tree in order to *write* a project artifact into it calls [`lib/worktree.sh`](libraries.md)'s `project_root` instead, which lets a working tree name itself first and falls back to this only when there is none; the ceiling-debt Stop hook, `serena-mcp`, `workbench-rules`, and `otto-workbench ai init` all reach it that way.
 
 [`lib/permission_mirror.py`](libraries.md) applies the same rule in Python to pick the worktree a container's [permission mirror](../CONTRIBUTING.md#permission-grants) is copied from. The two must agree — a session redirected to a worktree the mirror never wrote from is a session missing the grants the mirror exists to deliver, with nothing to say so — and `tests/container_source.bats` fails if they diverge.
 
@@ -355,18 +355,18 @@ The gate is fail-open: it only stops runs it can prove are misconfigured. It pro
 
 Requires application-default credentials (`gcloud auth application-default login`) with read access to `serviceusage.googleapis.com`. The check is skipped entirely on non-Claude backends (`AI_BACKEND=pi`).
 
-### `claude-rules`
+### `workbench-rules`
 
-Manages local Claude Code rule additions not tracked in the workbench.
+Manages this machine's own coding-rule layers — the local additions and overrides that no harness ships. Installing the merged set is each harness's own sync step (`step_claude_rules` symlinks it into `~/.claude/rules/`, `step_pi_guidelines` concatenates it into `~/.pi/agent/AGENTS.md`), so a machine running either harness alone gets the same rules.
 
 ```
-claude-rules <command> [<args>]
+workbench-rules <command> [<args>]
 ```
 
 | Command | Description |
 |---------|-------------|
-| `sync` | Re-symlink workbench rules and regenerate `workbench.md` |
-| `add <domain> "rule"` | Append a rule to `~/.claude/rules/<domain>.local.md` |
+| `sync` | Regenerate `workbench.md` in the generated layer |
+| `add <domain> "rule"` | Append a rule to `~/.config/workbench/overrides/ai/guidelines/rules/<domain>.local.md` |
 | `list` | List all local rule files with line counts |
 | `status` | Show local rules not tracked in workbench |
 | `open [domain]` | Open a local rule file in `$EDITOR` |

@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# Manage local Claude Code rule additions.
+# Manage this machine's coding-rule layers, for whichever harnesses are installed.
 #
-# Usage: claude-rules <command> [args]
+# Usage: workbench-rules <command> [args]
 #
 # Commands:
-#   sync                  Re-symlink workbench rules and regenerate workbench.md
-#   add <domain> "rule"   Append a rule to ~/.claude/rules/<domain>.local.md
+#   sync                  Regenerate the machine's generated rule layer
+#   add <domain> "rule"   Append a rule to the override layer's <domain>.local.md
 #   list                  List all local rule files with line counts
 #   status                Show local rules not tracked in workbench
 #   open [domain]         Open a local rule file in $EDITOR
 #   project add "rule"    Append a rule to the current repo's CLAUDE.md
 #   project show          Display the current repo's CLAUDE.md
 #
-# Local rule files (*.local.md) are never touched by workbench setup or sync.
-# They complement workbench-managed symlinks for machine-specific additions.
-# Run 'claude-rules status' to review before contributing back to the workbench.
+# This owns the two rule layers that exist only on this machine — the operator's
+# *.local.md additions and the generated workbench.md — and nothing about any
+# one harness. Installing the merged set is each harness's own step:
+# step_claude_rules symlinks it into ~/.claude/rules/, step_pi_guidelines
+# concatenates it into ~/.pi/agent/AGENTS.md. Both read the merged set through
+# resolve_rules, so neither depends on the other having run.
 
 set -e
 
@@ -22,12 +25,15 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 
-RULES_DIR="$CLAUDE_RULES_DIR"
+# Where `add` writes and `list`/`status` read: the operator's own layer, beside
+# the rule files they override. Machine-local rules lived in ~/.claude/rules/
+# until they were the one layer a machine without Claude Code could not reach.
+RULES_DIR="$USER_RULES_DIR"
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS=(
-  "sync"               "Re-symlink workbench rules and regenerate workbench.md"
-  "add <domain> \"rule\"" "Append a rule to ~/.claude/rules/<domain>.local.md"
+  "sync"               "Regenerate the machine's generated rule layer"
+  "add <domain> \"rule\"" "Append a rule to the override layer's <domain>.local.md"
   "list"               "List all local rule files with line counts"
   "status"             "Show local rules not tracked in workbench"
   "open [domain]"      "Open a local rule file in \$EDITOR"
@@ -90,8 +96,14 @@ _write_frontmatter() {
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 # _install_workbench_rule — writes the workbench.md rule file with current paths baked in.
+#
+# Into the generated layer rather than a harness's installed directory: it is a
+# rule like any other once written, so every harness picks it up through
+# resolve_rules instead of one harness generating it and the rest reading that
+# harness's output.
 _install_workbench_rule() {
-  local target="$RULES_DIR/workbench.md"
+  mkdir -p "$GENERATED_RULES_DIR"
+  local target="$GENERATED_RULES_DIR/workbench.md"
 
   cat > "$target" <<EOF
 # Workbench
@@ -107,9 +119,9 @@ git config, or developer tooling — make the change in the workbench repo and r
 the relevant setup script. Do not edit \`~/\` directly.
 
 Re-run AI setup:   bash $AI_SRC_DIR/setup.sh
-Add a local rule:  claude-rules add <domain> "rule text"
-Edit local rules:  claude-rules open [domain]
-Review untracked:  claude-rules status
+Add a local rule:  workbench-rules add <domain> "rule text"
+Edit local rules:  workbench-rules open [domain]
+Review untracked:  workbench-rules status
 EOF
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "workbench.md" || true
 }
@@ -133,64 +145,23 @@ _check_local_rules() {
     if [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]]; then
       echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }Local rule additions not tracked in workbench: $details" >> "$WORKBENCH_INSTALL_LOG"
     fi
-    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}" || true
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}  Run 'workbench-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}" || true
   fi
 }
 
+# cmd_sync — refreshes the two layers that exist only on this machine.
+#
+# No harness is touched here. Each one installs the merged set in its own step,
+# which runs after this: the alternative is a CLI in ai/bin/ that knows how
+# every harness wants its rules laid out, and gains a branch for each new one.
 cmd_sync() {
-  local rules_src="$GUIDELINES_RULES_SRC_DIR"
-  [[ -d "$rules_src" ]] || { err "Rules not found at $rules_src"; exit 1; }
+  [[ -d "$GUIDELINES_RULES_SRC_DIR" ]] \
+    || { err "Rules not found at $GUIDELINES_RULES_SRC_DIR"; exit 1; }
 
   mkdir -p "$RULES_DIR"
 
-  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Syncing workbench rules → $RULES_DIR" || true
-
-  # Build merged layer: default rules + user overrides/additions
-  local -A layers
-  resolve_layers "$rules_src" "$USER_RULES_DIR" "$RULES_GLOB" layers
-
-  # Drop the rules this harness is scoped out of, before the prune loop below
-  # sees the map. Removing them here rather than at install time is what makes a
-  # rule that *becomes* Pi-only get pruned from ~/.claude/rules/ on the next
-  # sync, instead of lingering as a symlink nothing will ever remove.
-  local rule
-  for rule in "${!layers[@]}"; do
-    rule_harness_ok "${layers[$rule]}" claude || unset "layers[$rule]"
-  done
-
-  # Prune stale symlinks pointing into the workbench or user source dirs
-  local item target
-  for item in "$RULES_DIR"/$RULES_GLOB; do
-    [[ -L "$item" ]] || continue
-    target=$(readlink "$item")
-    [[ "$target" == "$rules_src"/* || "$target" == "${USER_RULES_DIR:-__none__}"/* ]] || continue
-    local name
-    name=$(basename "$item")
-    if [[ -z "${layers[$name]+set}" ]]; then
-      rm "$item"
-      echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}"
-    fi
-  done
-
-  # Replace old copies with symlinks where source exists
-  for item in "$RULES_DIR"/$RULES_GLOB; do
-    [[ -f "$item" && ! -L "$item" ]] || continue
-    local name
-    name=$(basename "$item")
-    if [[ -n "${layers[$name]+set}" ]]; then rm "$item"; fi
-  done
-
-  # Install from merged layers
-  local name source label
-  for name in "${!layers[@]}"; do
-    source="${layers[$name]}"
-    label="${name%.md}"
-    install_symlink "$source" "$RULES_DIR/$name" "$label"
-  done
-
   if [[ "${WORKBENCH_SYNC:-}" != true ]]; then
-    echo
-    info "Generating workbench.md"
+    info "Generating workbench.md → $GENERATED_RULES_DIR"
   fi
   _install_workbench_rule
 
@@ -200,7 +171,7 @@ cmd_sync() {
 cmd_add() {
   local domain="${1:-}" rule="${2:-}"
   if [[ -z "$domain" || -z "$rule" ]]; then
-    err "Usage: claude-rules add <domain> \"rule text\""
+    err "Usage: workbench-rules add <domain> \"rule text\""
     echo "Any domain name is accepted (e.g. general, go, linear, workflow)." >&2
     echo "Common: general, kotlin, java, go, typescript, python, bash, docker, yaml, sql" >&2
     exit 1
@@ -311,7 +282,7 @@ _find_repo_root() {
 cmd_project_add() {
   local rule="${1:-}"
   if [[ -z "$rule" ]]; then
-    err "Usage: claude-rules project add \"rule text\""
+    err "Usage: workbench-rules project add \"rule text\""
     exit 1
   fi
 
@@ -353,14 +324,14 @@ cmd_project() {
     add)  cmd_project_add "$@" ;;
     show) cmd_project_show ;;
     -h|--help)
-      echo "Usage: claude-rules project <command>"
+      echo "Usage: workbench-rules project <command>"
       echo
       echo "Commands:"
       commands_usage COMMANDS_PROJECT
       exit 0
       ;;
     *)
-      echo "Usage: claude-rules project <command>" >&2
+      echo "Usage: workbench-rules project <command>" >&2
       echo >&2
       echo "Commands:" >&2
       commands_usage COMMANDS_PROJECT >&2
@@ -373,9 +344,9 @@ cmd_project() {
 
 usage() {
   cat <<EOF
-Usage: claude-rules <command> [args]
+Usage: workbench-rules <command> [args]
 
-Manage local Claude Code rule additions.
+Manage this machine's coding-rule layers, for whichever harnesses are installed.
 
 Commands:
 $(commands_usage)

@@ -45,10 +45,9 @@ FOUND=0
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
-# Every harness this workbench installs into — not to be confused with
-# ai/steps.sh's _AI_TOOL_ORDER, which is only the subset with a fixed sync
-# order. The two happen to list the same names today; a harness with no
-# ordering constraint would need adding here without ever touching the other.
+# Every harness this workbench installs into — the names a rule's `harness:`
+# frontmatter may take. A sub-tool under ai/ that is not a harness (serena) is
+# deliberately absent: no rule can be scoped to it.
 KNOWN_HARNESSES=(claude pi)
 
 # Tool names that exist only in Claude Code. Word-boundary matched, so prose

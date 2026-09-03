@@ -251,6 +251,37 @@ resolve_layers() {
   fi
 }
 
+# resolve_rules RESULT_NAMEREF
+# Merges the three rule layers into an associative array: basename -> source path.
+# Later layers win for a same-named file: repo defaults, then the operator's
+# override layer, then what workbench-rules generated for this machine.
+# RESULT_NAMEREF must be a declared associative array in the caller.
+#
+# The one answer to "which rules does this machine apply", because each harness
+# would otherwise have to reconstruct it: before this existed, Pi read Claude
+# Code's installed rules directory to get the merged set, which is why a machine
+# without Claude Code ended up with no Pi context file at all. Each harness now
+# takes this set and filters it by its own scoping rules — neither reads the
+# other's output.
+resolve_rules() {
+  resolve_layers "$GUIDELINES_RULES_SRC_DIR" "$USER_RULES_DIR" "$RULES_GLOB" "$1"
+
+  local -n __rules=$1
+  local item
+  for item in "$GENERATED_RULES_DIR"/$RULES_GLOB; do
+    [[ -e "$item" ]] || continue
+    __rules["$(basename "$item")"]="$item"
+  done
+  return 0
+}
+
+# rules_layer_roots — prints the directory each rule layer is resolved from, one
+# per line, so a caller pruning stale installs can tell a link it owns from one
+# an operator made by hand.
+rules_layer_roots() {
+  printf '%s\n' "$GUIDELINES_RULES_SRC_DIR" "$USER_RULES_DIR" "$GENERATED_RULES_DIR"
+}
+
 # is_disabled USER_DIR NAME — returns 0 if a .disabled sentinel exists.
 is_disabled() {
   [[ -f "${1%/}/${2}.disabled" ]]

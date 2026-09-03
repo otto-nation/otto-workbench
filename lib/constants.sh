@@ -251,6 +251,12 @@ AI_SRC_DIR="$WORKBENCH_DIR/ai"
 SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/skills"
 GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
 RULES_GLOB="*.md"
+# The third rule layer: what workbench-rules generates for this machine, as
+# opposed to what the repo ships (above) or what the operator wrote
+# (USER_RULES_DIR below). Under the state root because it is regenerated on
+# every sync — an operator editing it would have the edit overwritten, which is
+# the distinction the config root's hand-authored layers do not carry.
+GENERATED_RULES_DIR="$WORKBENCH_STATE_DIR/rules"
 
 AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"

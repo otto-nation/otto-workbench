@@ -134,9 +134,59 @@ step_claude_guidelines() {
   fi
 }
 
-# step_claude_rules — delegates to claude-rules sync which owns all rules logic.
+# step_claude_rules — installs the rules that reach Claude Code as symlinks in
+# ~/.claude/rules/.
+#
+# The merged set comes from resolve_rules, which every harness shares. This step
+# owns only the half that is Claude Code's: which of those rules it is scoped to
+# load, and the directory layout it wants them in. workbench-rules refreshes the
+# layers resolve_rules reads and installs for nobody.
 step_claude_rules() {
-  "$CLAUDE_SRC_DIR/bin/claude-rules" sync
+  local -A layers
+  resolve_rules layers
+
+  # Drop the rules this harness is scoped out of before the prune loop sees the
+  # map. Removing them here rather than at install time is what makes a rule
+  # that *becomes* Pi-only get pruned from ~/.claude/rules/ on the next sync,
+  # instead of lingering as a symlink nothing will ever remove.
+  local rule
+  for rule in "${!layers[@]}"; do
+    rule_harness_ok "${layers[$rule]}" claude || unset "layers[$rule]"
+  done
+
+  mkdir -p "$CLAUDE_RULES_DIR"
+
+  # Prune the links this step is responsible for — one pointing into a layer
+  # root — and leave anything else an operator put here alone.
+  local -a roots=()
+  while IFS= read -r rule; do roots+=("$rule"); done < <(rules_layer_roots)
+
+  local item target name root owned
+  for item in "$CLAUDE_RULES_DIR"/$RULES_GLOB; do
+    [[ -L "$item" ]] || continue
+    target=$(readlink "$item")
+    owned=false
+    for root in "${roots[@]}"; do
+      if [[ "$target" == "$root"/* ]]; then owned=true; break; fi
+    done
+    [[ "$owned" == true ]] || continue
+    name=$(basename "$item")
+    if [[ -z "${layers[$name]+set}" ]]; then
+      rm "$item"
+      echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}"
+    fi
+  done
+
+  # Replace old copies with symlinks where a source exists
+  for item in "$CLAUDE_RULES_DIR"/$RULES_GLOB; do
+    [[ -f "$item" && ! -L "$item" ]] || continue
+    name=$(basename "$item")
+    if [[ -n "${layers[$name]+set}" ]]; then rm "$item"; fi
+  done
+
+  for name in "${!layers[@]}"; do
+    install_symlink "${layers[$name]}" "$CLAUDE_RULES_DIR/$name" "${name%.md}"
+  done
 }
 
 # _claude_env_json VAR... — prints, as a JSON object, the values ~/.env.local

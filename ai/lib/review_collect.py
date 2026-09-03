@@ -75,9 +75,9 @@ def _untracked_files(wt_path: str) -> list[str]:
     return git_client.lines("ls-files", "--others", "--exclude-standard", cwd=wt_path)
 
 
-def _diff_untracked(wt_path: str, paths: list[str], numstat: bool = False) -> str:
+def _diff_untracked(wt_path: str, paths: list[str], counts_only: bool = False) -> str:
     """Diff each untracked path against nothing, as a whole-file addition."""
-    flags = ["--numstat"] if numstat else []
+    flags = ["--numstat"] if counts_only else []
     parts = []
     for path in paths:
         # --no-index exits 1 whenever the two sides differ, which is always here,
@@ -88,7 +88,7 @@ def _diff_untracked(wt_path: str, paths: list[str], numstat: bool = False) -> st
         if not out:
             continue
         # numstat names the pair "/dev/null => <path>"; the diff body is already clean.
-        parts.append(out.rsplit("\t", 1)[0] + "\t" + path if numstat else out)
+        parts.append(out.rsplit("\t", 1)[0] + "\t" + path if counts_only else out)
     return "\n".join(parts)
 
 
@@ -96,12 +96,12 @@ def _join_nonempty(*parts: str) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def worktree_diff(wt_path: str, since: str, *, numstat: bool = False) -> str:
+def worktree_diff(wt_path: str, since: str, *, counts_only: bool = False) -> str:
     """Every change from ``since`` to the working tree, untracked files included.
 
-    ``numstat`` asks for the per-file add/delete counts instead of the patch,
-    so the file list a review reports and the diff it sends come off the same
-    range rather than off two commands that could disagree.
+    ``counts_only`` asks for the per-file add/delete counts instead of the
+    patch, so the file list a review reports and the diff it sends come off
+    the same range rather than off two commands that could disagree.
 
     ``since`` bounds the tracked half only. Untracked files have no history to
     compare against, so they come through whole every time — on a delta review
@@ -109,10 +109,10 @@ def worktree_diff(wt_path: str, since: str, *, numstat: bool = False) -> str:
     """
     # ceiling: untracked files ignore `since`; upgrade to diffing against the
     # prior review's copy if repeated deltas start drowning in re-shown files.
-    flags = ["--numstat"] if numstat else []
+    flags = ["--numstat"] if counts_only else []
     return _join_nonempty(
         git_client.out("diff", *flags, since, cwd=wt_path),
-        _diff_untracked(wt_path, _untracked_files(wt_path), numstat=numstat),
+        _diff_untracked(wt_path, _untracked_files(wt_path), counts_only=counts_only),
     )
 
 
@@ -141,7 +141,7 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     # matches the diff `worktree_diff` builds for self-review: committed,
     # uncommitted and untracked changes alike.
     counts = numstat.parse_numstat(
-        worktree_diff(wt_path, fork_point(wt_path, base), numstat=True)
+        worktree_diff(wt_path, fork_point(wt_path, base), counts_only=True)
     )
 
     return PRMetadata(

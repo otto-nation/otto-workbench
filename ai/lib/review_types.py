@@ -14,7 +14,8 @@ review pipeline *does*.
 Nothing in the review layer is imported here, and nothing should be: this is the
 layer everything else in it sits on. The heavier imports — `agent_types`,
 `gh_types`, `serde`, `workbench_config` and `pr_state.now_iso` — are all below
-the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
+the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh_types`
+and the rest.
 """
 
 # doc-group: findings

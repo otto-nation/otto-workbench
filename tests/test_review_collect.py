@@ -895,7 +895,7 @@ class TestWorktreeDiff:
         assert "three" in diff
 
     def test_numstat_form_names_the_same_files(self, tmp_path):
-        numstat = rc.worktree_diff(str(self._repo(tmp_path)), "HEAD", numstat=True)
+        numstat = rc.worktree_diff(str(self._repo(tmp_path)), "HEAD", counts_only=True)
         paths = sorted(line.split("\t")[-1] for line in numstat.splitlines())
         assert paths == ["new.go", "tracked.go"]
         assert "3\t0\tnew.go" in numstat

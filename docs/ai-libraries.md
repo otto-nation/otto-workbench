@@ -887,7 +887,8 @@ review pipeline *does*.
 Nothing in the review layer is imported here, and nothing should be: this is the
 layer everything else in it sits on. The heavier imports — `agent_types`,
 `gh_types`, `serde`, `workbench_config` and `pr_state.now_iso` — are all below
-the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
+the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh_types`
+and the rest.
 
 ### review_verify.py
 
@@ -957,8 +958,8 @@ Everything that leaves the machine — review comments, replies, summaries, trac
 
 What a GitHub PR read returns: the PR's own metadata, and its conversation.
 
-Below `gh/pr_reads`, which is the module that fetches both, so the shapes a read
-answers with sit at or beneath the layer that answers. `review_collect` builds
+Below the `gh`-layer module that fetches both, so the shapes a read answers
+with sit at or beneath the layer that answers. `review_collect` builds
 the same `PRMetadata` from local git for a branch with no PR behind it, which is
 why the type is not spelled in terms of the API's field names.
 

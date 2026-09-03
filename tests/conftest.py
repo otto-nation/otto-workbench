@@ -167,11 +167,11 @@ def _agent_env_keys() -> list[str]:
 
     Imported lazily, like the other fixtures that reach into ai/lib: a
     module-scope import here would make every test's collection depend on
-    agent_types importing cleanly.
+    phases importing cleanly.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from agent_types import ENV_PREFIX
+    from phases import ENV_PREFIX
     return [k for k in os.environ if k.startswith(ENV_PREFIX)]
 
 

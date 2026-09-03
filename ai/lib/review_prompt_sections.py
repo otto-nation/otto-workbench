@@ -23,7 +23,8 @@ from __future__ import annotations
 import json
 
 import git_client
-from agent_types import EFFORT_PRESETS, Effort
+from agent_types import EFFORT_PRESETS
+from phases import Effort
 from review_budget import (
     FileFit, MAX_DELTA_LIST_ENTRIES, MAX_REVIEW_BODY_LEN, MIN_DELTA_DIFF_BYTES,
 )

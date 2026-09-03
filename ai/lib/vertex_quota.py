@@ -29,7 +29,7 @@ import proc
 import serde
 import timeouts
 import workbench_paths
-from agent_types import Phase
+from phases import Phase
 
 try:
     from google.auth import default as _google_auth_default

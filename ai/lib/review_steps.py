@@ -23,7 +23,7 @@ from pathlib import Path
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES, SCAN_PHASES, phase_skip_argv
-from agent_types import Phase
+from phases import Phase
 from review_agent import _parse_session_cost
 from review_document import ReviewDocument
 from review_grouping import HOLISTIC_MIN_GROUPS

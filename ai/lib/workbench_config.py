@@ -62,7 +62,7 @@ from pathlib import Path
 import serde
 import timeouts
 import workbench_paths
-from agent_types import Effort, Phase, Thinking
+from phases import Effort, Phase, Thinking
 
 # `git_layout` is a workbench-wide module rather than an `ai/lib` one, because
 # the permission mirror reads the same layout. In a checkout that is one

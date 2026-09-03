@@ -50,7 +50,7 @@ from pr_fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
 import review_issue
 import text
 import timeouts
-from agent_types import Phase
+from phases import Phase
 from pr_thread_models import (
     ClassificationResult,
     CommentFixResult,

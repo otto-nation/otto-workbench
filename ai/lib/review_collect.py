@@ -31,7 +31,7 @@ from pathlib import Path
 import git_client
 import git_topology
 import log
-from agent_types import Mode
+from phases import Mode
 from review_budget import (
     FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
     MAX_COMMIT_LOG_BYTES, MAX_DELTA_DIFF_BYTES, MAX_DELTA_LOG_BYTES,

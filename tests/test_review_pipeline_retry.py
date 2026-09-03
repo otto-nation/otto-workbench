@@ -16,7 +16,7 @@ import review_retry
 import review_state
 import review_types
 from agent_diagnosis import Diagnosis, DiagnosisKind
-from agent_types import Phase
+from phases import Phase
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)

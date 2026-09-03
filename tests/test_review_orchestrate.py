@@ -12,7 +12,7 @@ from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent_types import Phase
+from phases import Phase
 from review_verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, SKIPPED_SUMMARY
 
 

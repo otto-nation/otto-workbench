@@ -22,7 +22,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 import pytest
-from agent_types import Mode
+from phases import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
     ReviewDocument, ReviewHeader,

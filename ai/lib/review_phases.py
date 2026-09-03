@@ -35,7 +35,8 @@ import agent_retry
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES
-from agent_types import EFFORT_PRESETS, Phase, PhaseShape
+from agent_types import EFFORT_PRESETS
+from phases import Phase, PhaseShape
 from agent_invoke import run_agent
 from ai_backend import AgentInvocation
 from review_agent import (

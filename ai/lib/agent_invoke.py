@@ -34,7 +34,7 @@ import log
 import review_agent
 from agent_diagnosis import Diagnosis
 from agent_registry import PHASES
-from agent_types import Effort, Phase, PhaseShape
+from phases import Effort, Phase, PhaseShape
 from ai_backend import AgentInvocation
 from workbench_config import WorkbenchConfig
 

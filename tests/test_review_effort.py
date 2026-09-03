@@ -11,7 +11,7 @@ import agent_phases
 import review_phases
 import review_pipeline
 import review_steps
-from agent_types import AgentKind, Effort, Phase, Thinking
+from phases import AgentKind, Effort, Phase, Thinking
 from review_phases import PhaseResult
 from review_state import PipelineState
 from review_types import PRContext, PRMetadata, ReviewJob

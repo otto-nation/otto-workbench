@@ -71,13 +71,15 @@ class TestFileStatsThreshold:
     """The effort preset owns the threshold; file_stats must not re-derive it."""
 
     def test_low_effort_uses_wider_threshold(self):
-        from agent_types import EFFORT_PRESETS, Effort
+        from agent_types import EFFORT_PRESETS
+        from phases import Effort
 
         low = EFFORT_PRESETS[Effort.LOW].multi_phase_line_threshold
         assert _make_meta(750).file_stats(low) == ""
 
     def test_medium_effort_uses_narrower_threshold(self):
-        from agent_types import EFFORT_PRESETS, Effort
+        from agent_types import EFFORT_PRESETS
+        from phases import Effort
 
         medium = EFFORT_PRESETS[Effort.MEDIUM].multi_phase_line_threshold
         assert "a.py" in _make_meta(750).file_stats(medium)

@@ -20,7 +20,7 @@ from review_types import (
     FindingRef, PRContext, PreflightData, PriorDisposition, PriorFinding,
     PRMetadata, ReviewJob,
 )
-from agent_types import Effort, Mode, Phase
+from phases import Effort, Mode, Phase
 from dataclasses import asdict
 
 from review_grammar import parse_ledger_line

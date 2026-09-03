@@ -52,7 +52,7 @@ import log
 import serde
 import workbench_paths
 from agent_registry import PHASES, REVIEW_PHASES
-from agent_types import Phase
+from phases import Phase
 from ai_usage import SessionUsage, parse_session_log
 from pr_state import now_iso
 from review_types import ReviewMeta, review_meta_from_dict

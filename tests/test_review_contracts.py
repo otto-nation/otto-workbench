@@ -35,7 +35,7 @@ import agent_templates  # noqa: E402
 import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
-from agent_types import Mode, Phase, PhaseShape  # noqa: E402
+from phases import Mode, Phase, PhaseShape  # noqa: E402
 import review_fix  # noqa: E402
 import review_grammar  # noqa: E402
 import review_prompt  # noqa: E402

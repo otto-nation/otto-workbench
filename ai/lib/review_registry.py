@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import agent_templates
 import log
 from agent_registry import PHASES
-from agent_types import Phase
+from phases import Phase
 from review_budget import MAX_PROMPT_BYTES
 from review_paths import phase_output_path
 from review_prompt import (

@@ -1,10 +1,12 @@
-"""The vocabulary every agent invocation is described in.
+"""The shapes that describe an inventory of phases.
 
 A phase is one agent invocation the workbench knows how to size: what model it
 runs, how hard it thinks, how many turns it gets, which agent definition it
-adopts, which prompt template it renders. This module owns the names for those
-things — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
-``Mode`` — and ``PhaseSpec``, the shape a phase's built-in defaults take.
+adopts, which prompt template it renders. The vocabulary those things are named
+in — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
+``Mode`` — lives in ``phases``, below this module. This module owns
+``PhaseSpec``, the shape a phase's built-in defaults take, and the presets and
+budgets built from it.
 
 Which phases exist, and what each one's defaults are, is ``agent_registry``'s
 job. The vocabulary is a closed set of names that grows only when a new kind of
@@ -12,12 +14,12 @@ knob appears; the registry is an inventory that grows with the workbench.
 Keeping them apart is also what stops the enum reaching back into the registry
 to answer questions about itself — a ``PhaseSpec`` answers those now.
 
-It imports nothing but the standard library, and that is the point. The
-vocabulary used to sit in the review pipeline's shared-helper module, which
-reached the PR state machine, the usage ledger and the git client; ``ai_backend``
-needed one enum from it and took all of that with it, and ``workbench_config``
-needed three. Anything may depend on the vocabulary, so the vocabulary depends
-on nothing.
+It imports nothing but ``phases`` and the standard library. The vocabulary used
+to sit here too, alongside the review pipeline's shared-helper module's reach
+into the PR state machine, the usage ledger and the git client; ``ai_backend``
+needed one enum and took all of that with it, and ``workbench_config`` needed
+three. Splitting the vocabulary into its own module below both let each import
+only the names, not the shapes built from them.
 
 Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs
@@ -30,138 +32,27 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import StrEnum
 from types import MappingProxyType
 
-# Every per-phase and global override key starts here. `WORKBENCH_AI_` rather
-# than the old `CLAUDE_REVIEW_`: these keys size agent invocations across the
-# whole workbench, not just reviews, and the backend behind them is a choice
-# (`_PROVIDER`) rather than a given.
-ENV_PREFIX = "WORKBENCH_AI_"
+from phases import (
+    AgentKind,
+    Effort,
+    Mode,
+    Phase,
+    PhaseDomain,
+    PhaseShape,
+    Thinking,
+)
 
 # Turns a second attempt may not exceed when a phase names no ceiling of its
 # own. A retry has already proven the first pass's budget insufficient, so the
 # ceiling sits above it rather than clamping the retry to what just ran out.
 DEFAULT_RETRY_CEILING = 30
 
-
-class PhaseDomain(StrEnum):
-    """Which entry point runs a phase.
-
-    A phase belongs to exactly one `pr` domain, and the domain is what says
-    where its artifacts live: only ``REVIEW`` phases write into the review
-    directory, so only they name a log or a findings file. Without it, adding a
-    fix phase for another domain would silently mint review artifact names for
-    a phase that never enters a review.
-    """
-
-    REVIEW = "review"
-    COMMENTS = "comments"
-    CI = "ci"
-    REBASE = "rebase"
-    DESCRIBE = "describe"
-
-
-class PhaseShape(StrEnum):
-    """Which backend entry point a phase is run through.
-
-    The three shapes are the three things ``ai_backend`` can do, so a phase's
-    shape decides which ``agent_invoke`` function will accept it. A read-only
-    reviewer handed to the fix runner, or a stateless prompt handed a session
-    log it will never write, is a mistake the shape catches at the owner rather
-    than in a backend argument that is silently ignored.
-    """
-
-    PROMPT = "prompt"
-    AGENT = "agent"
-    FIX = "fix"
-
-
-class Phase(StrEnum):
-    """One agent invocation the workbench sizes from a registry entry.
-
-    Both the config key and the override env keys are derived from the member's
-    value, so adding a phase means one member here plus one ``agent_registry``
-    entry — callers, preflight checks, and failure hints all read the derived
-    keys rather than spelling them out. Deriving both from one place is what
-    keeps ``agent.phases.<phase>`` and ``WORKBENCH_AI_<PHASE>_*`` naming the
-    same phase; the member name is a second spelling that could drift from it.
-
-    A member is a name and nothing more. Everything else about a phase — the
-    entry point that runs it, its defaults, the files it writes — lives on its
-    ``PhaseSpec``, so the vocabulary answers no question that needs the
-    inventory.
-    """
-
-    SINGLE = "single"
-    HOLISTIC = "holistic"
-    SCOUT = "scout"
-    GROUP = "group"
-    SYNTHESIS = "synthesis"
-    DISPROVE = "disprove"
-    FIX = "fix"
-    COMMENTS_FIX = "comments_fix"
-    COMMENTS_TRIAGE = "comments_triage"
-    CI_FIX = "ci_fix"
-    REBASE = "rebase"
-    DESCRIBE = "describe"
-
-    @property
-    def model_env_key(self) -> str:
-        return f"{ENV_PREFIX}{self.upper()}_MODEL"
-
-    @property
-    def thinking_env_key(self) -> str:
-        return f"{ENV_PREFIX}{self.upper()}_THINKING"
-
-
 # The phases whose output is the review document itself, and the one fan-out
 # phase whose artifacts carry an index. Both are read by `PhaseSpec` below.
 _WRITES_REVIEW_FILE = frozenset({Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX})
 _INDEXED = frozenset({Phase.GROUP})
-
-
-class Mode(StrEnum):
-    """What the review is reviewing: an open PR or the working branch.
-
-    Vocabulary rather than review state: two phases render a different prompt
-    template per mode, and ``PhaseSpec`` is what says which. Owning it here is
-    what lets the spec answer that without importing the review layer.
-    """
-
-    PR = "pr"
-    SELF = "self"
-
-
-class Effort(StrEnum):
-    """Review depth. Selects a preset of budgets, thresholds, and phase skips."""
-
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-class Thinking(StrEnum):
-    """Extended-thinking level passed through to the backend."""
-
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-class AgentKind(StrEnum):
-    """Which reviewer agent definition a phase runs under.
-
-    ``REVIEWER_LITE`` skips context gathering, so it only suits phases that are
-    handed everything they need up front.
-
-    Every member here is a review persona forbidden from editing the workspace.
-    Phases that write to the branch pass ``None`` instead of an ``AgentKind`` —
-    see ``agent_invoke.run_fix``.
-    """
-
-    REVIEWER = "reviewer"
-    REVIEWER_LITE = "reviewer-lite"
 
 
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0

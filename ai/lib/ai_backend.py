@@ -30,7 +30,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import ai_usage
-from agent_types import AgentKind
+from phases import AgentKind
 
 ENV_AI_BACKEND = "AI_BACKEND"
 

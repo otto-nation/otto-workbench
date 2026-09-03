@@ -141,13 +141,15 @@ thing that should need the PR state machine to render.
 
 ### agent_types.py
 
-The vocabulary every agent invocation is described in.
+The shapes that describe an inventory of phases.
 
 A phase is one agent invocation the workbench knows how to size: what model it
 runs, how hard it thinks, how many turns it gets, which agent definition it
-adopts, which prompt template it renders. This module owns the names for those
-things — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
-``Mode`` — and ``PhaseSpec``, the shape a phase's built-in defaults take.
+adopts, which prompt template it renders. The vocabulary those things are named
+in — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
+``Mode`` — lives in ``phases``, below this module. This module owns
+``PhaseSpec``, the shape a phase's built-in defaults take, and the presets and
+budgets built from it.
 
 Which phases exist, and what each one's defaults are, is ``agent_registry``'s
 job. The vocabulary is a closed set of names that grows only when a new kind of
@@ -155,12 +157,12 @@ knob appears; the registry is an inventory that grows with the workbench.
 Keeping them apart is also what stops the enum reaching back into the registry
 to answer questions about itself — a ``PhaseSpec`` answers those now.
 
-It imports nothing but the standard library, and that is the point. The
-vocabulary used to sit in the review pipeline's shared-helper module, which
-reached the PR state machine, the usage ledger and the git client; ``ai_backend``
-needed one enum from it and took all of that with it, and ``workbench_config``
-needed three. Anything may depend on the vocabulary, so the vocabulary depends
-on nothing.
+It imports nothing but ``phases`` and the standard library. The vocabulary used
+to sit here too, alongside the review pipeline's shared-helper module's reach
+into the PR state machine, the usage ledger and the git client; ``ai_backend``
+needed one enum and took all of that with it, and ``workbench_config`` needed
+three. Splitting the vocabulary into its own module below both let each import
+only the names, not the shapes built from them.
 
 Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs
@@ -198,6 +200,19 @@ The gate is not a parameter. Every pass here runs on an operator's behalf, so
 the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
+
+### phases.py
+
+The vocabulary a phase is named in: what runs, at what depth, in what mode.
+
+Enums and nothing else. The shapes that describe an inventory of phases —
+`PhaseSpec`, `EffortPreset`, `ItemScaling`, `RetryBudget` — live one layer up,
+in the module that reads this one.
+
+Split from them because the config types its fields with these names: with the
+vocabulary in the agent layer, the config would import the agent layer while the
+agent layer imports the config. A vocabulary has no dependencies, so it goes
+below both.
 
 ### prompt.py
 

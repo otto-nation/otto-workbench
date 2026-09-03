@@ -55,7 +55,7 @@ import publishing  # noqa: E402
 
 from pr_context import detect_repo  # noqa: E402
 from agent_registry import add_phase_skip_flags, phase_skips  # noqa: E402
-from agent_types import Effort, Mode  # noqa: E402
+from phases import Effort, Mode  # noqa: E402
 from review_document import (  # noqa: E402
     SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
 )

@@ -21,7 +21,8 @@ from pathlib import Path
 import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
-from agent_types import EFFORT_PRESETS, Mode, Phase
+from agent_types import EFFORT_PRESETS
+from phases import Mode, Phase
 from review_paths import phase_log_path
 from review_collect import fetch_branch_metadata
 from review_github import (

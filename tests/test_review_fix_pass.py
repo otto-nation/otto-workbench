@@ -32,7 +32,7 @@ import review_fix
 import review_paths
 import review_types
 from proc import TIMEOUT_RETURNCODE, CmdResult
-from agent_types import Effort, Phase
+from phases import Effort, Phase
 from pr_fix import FixOutcome, ItemOutcome
 from review_types import Finding, PRContext, PRMetadata, ReviewJob
 

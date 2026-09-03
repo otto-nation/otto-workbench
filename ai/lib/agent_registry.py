@@ -29,10 +29,8 @@ from __future__ import annotations
 
 import argparse
 
-from agent_types import (
-    AgentKind, ItemScaling, Mode, Phase, PhaseDomain, PhaseShape, PhaseSpec,
-    RetryBudget, Thinking,
-)
+from agent_types import ItemScaling, PhaseSpec, RetryBudget
+from phases import AgentKind, Mode, Phase, PhaseDomain, PhaseShape, Thinking
 
 _SPECS: tuple[PhaseSpec, ...] = (
     # `single` and `synthesis` are the two phases a self-review prompts

@@ -13,7 +13,7 @@ a judgement — a review file parses the same way whatever this module decides.
 
 from __future__ import annotations
 
-from agent_types import Mode
+from phases import Mode
 from pr_domains import ReviewVerdict
 from review_document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
 from review_types import SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD

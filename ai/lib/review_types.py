@@ -29,7 +29,8 @@ from pathlib import Path
 
 import serde
 import workbench_config
-from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
+from agent_types import EFFORT_PRESETS
+from phases import Effort, Mode, Phase
 from pr_state import now_iso
 
 

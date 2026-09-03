@@ -14,7 +14,7 @@ import review_pipeline
 import review_phases
 import review_steps
 from agent_registry import REVIEW_PHASES
-from agent_types import AgentKind, Effort, Phase, Thinking
+from phases import AgentKind, Effort, Phase, Thinking
 
 
 class TestPhaseLogPath:

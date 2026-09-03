@@ -32,11 +32,8 @@ from enum import StrEnum
 
 import workbench_config
 from agent_registry import PHASES, REVIEW_PHASES
-from agent_types import (
-    ENV_PREFIX,
-    EFFORT_PRESETS,
-    Effort, Phase, Thinking,
-)
+from agent_types import EFFORT_PRESETS
+from phases import ENV_PREFIX, Effort, Phase, Thinking
 from workbench_config import WorkbenchConfig
 
 # The keys that cover every phase at once, one layer below the per-phase ones.

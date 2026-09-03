@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import _load_lib, git_in
+from conftest import _load_lib, git_in, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SHELL = REPO_ROOT / "lib" / "git_remote.sh"
@@ -31,10 +31,9 @@ def _make_clone(tmp_path: Path, initial_branch: str, extra_branches=()) -> Path:
     """
     remote = tmp_path / "remote.git"
     clone = tmp_path / "repo"
-    subprocess.run(["git", "init", "--bare", "-q", f"--initial-branch={initial_branch}",
-                    str(remote)], check=True)
-    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True,
-                   capture_output=True)
+    run_checked(["git", "init", "--bare", "-q", f"--initial-branch={initial_branch}",
+                 str(remote)])
+    run_checked(["git", "clone", "-q", str(remote), str(clone)])
     git_in(clone, "-c", "user.name=t", "-c", "user.email=t@t",
            "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
     git_in(clone, "push", "-q", "origin", initial_branch)
@@ -45,9 +44,12 @@ def _make_clone(tmp_path: Path, initial_branch: str, extra_branches=()) -> Path:
     # sets `refs/remotes/origin/HEAD` on a fetch that finds it missing, which
     # would hand every case below its answer from the symref rung and leave the
     # candidate ladder — the thing these tests are about — never run.
+    # Not `run_checked`, and not `!= 0`: this is the one git call here expected to
+    # fail, so a positive exit is the assertion and a negative one is a signal
+    # death that never asked the question at all.
     symref = subprocess.run(["git", "-C", str(clone), "symbolic-ref",
                              "refs/remotes/origin/HEAD"], capture_output=True)
-    assert symref.returncode != 0, "fixture leaked an origin/HEAD symref"
+    assert symref.returncode > 0, "fixture leaked an origin/HEAD symref"
     return clone
 
 

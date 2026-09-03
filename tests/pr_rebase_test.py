@@ -3135,8 +3135,7 @@ def test_fresh_refuses_a_merged_branch_whose_remote_was_pruned(tmp_path, capsys)
     assert json.loads(captured.out)["signal"] == pr_rebase_cli.RefusalSignal.PR_MERGED.value
     assert "Cannot checkout" not in captured.err
     # The prune really happened, so the old order really would have failed here.
-    refs = subprocess.run(["git", "-C", str(work), "branch", "-r"],
-                          capture_output=True, text=True)
+    refs = run_checked(["git", "-C", str(work), "branch", "-r"])
     assert f"origin/{_LANDED_BRANCH}" not in refs.stdout
 
 

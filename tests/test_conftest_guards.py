@@ -30,7 +30,7 @@ import pytest
 from conftest import (
     _agent_env_keys, _assert_config_unchanged, _backend_binaries,
     _clear_agent_env, _describe_config_change, _guarded_lines, _load_lib,
-    _section_of, init_worktree, seed_repo,
+    _section_of, init_worktree, run_checked, seed_repo,
 )
 
 gitenv = _load_lib("gitenv")
@@ -290,9 +290,8 @@ class TestALeakedIdentityIsCaughtAndUndone:
         before = config.read_bytes()
 
         named = init_worktree(tmp_path / "named")
-        subprocess.run(
+        run_checked(
             ["git", "-C", str(named), "config", "user.email", "test@example.com"],
-            check=True, capture_output=True,
             env={**os.environ, "GIT_DIR": str(elsewhere / ".git")},
         )
         return config, before

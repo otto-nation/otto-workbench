@@ -600,11 +600,11 @@ and a push typed by hand is recorded by the global `pre-push` hook for `pr` to r
 ## Guidelines & Rules
 
 The workbench resolves a layered rule system, which every harness it installs
-reads from:
+reads from. A later layer wins a name, and the operator's is last:
 
 - **Repo defaults** ([`ai/guidelines/rules/`](../ai/guidelines/rules/)) — path-scoped rules that auto-load based on file type, plus always-on, harness-neutral rules. [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) and [`git.generated.md`](../ai/guidelines/rules/git.generated.md) are derived from registries and conventions
-- **Operator overrides** (`~/.config/workbench/overrides/ai/guidelines/rules/`) — a same-named `<domain>.md` replaces the repo's, and a `<domain>.local.md` is carried alongside it
 - **Generated** (`~/.local/state/workbench/rules/`) — `workbench.md`, rewritten on every sync with this machine's paths baked in
+- **Operator overrides** (`~/.config/workbench/overrides/ai/guidelines/rules/`) — a same-named `<domain>.md` replaces the layer below, a `<domain>.local.md` is carried alongside it, and a `<domain>.disabled` sentinel suppresses it entirely
 
 `resolve_rules` ([`lib/files.sh`](../lib/files.sh)) merges the three, and each
 harness installs that one set the way it wants it — which is what lets a machine

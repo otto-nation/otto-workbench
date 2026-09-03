@@ -52,6 +52,8 @@ _run_migration() {
 }
 
 @test "leaves the installed symlinks alone" {
+  # go.local.md is the work that makes this a non-noop run — the migration has to
+  # walk the directory the symlink sits in and still leave the symlink there.
   echo "# General" > "$TMPDIR/general.md"
   ln -s "$TMPDIR/general.md" "$INSTALLED/general.md"
   echo "- local" > "$INSTALLED/go.local.md"
@@ -59,6 +61,9 @@ _run_migration() {
   _run_migration
   [ "$status" -eq 0 ]
   [ -L "$INSTALLED/general.md" ]
+  [ "$(readlink "$INSTALLED/general.md")" = "$TMPDIR/general.md" ]
+  [ "$(cat "$OVERRIDE_RULES/go.local.md")" = "- local" ]
+  [ ! -e "$INSTALLED/go.local.md" ]
 }
 
 @test "leaves a *.local.md that is already a symlink where it is" {

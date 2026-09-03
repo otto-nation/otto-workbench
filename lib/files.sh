@@ -253,8 +253,9 @@ resolve_layers() {
 
 # resolve_rules RESULT_NAMEREF
 # Merges the three rule layers into an associative array: basename -> source path.
-# Later layers win for a same-named file: repo defaults, then the operator's
-# override layer, then what workbench-rules generated for this machine.
+# Later layers win for a same-named file: the repo's defaults, then what
+# workbench-rules generated for this machine, then the operator's override layer.
+# A .disabled sentinel in the override layer suppresses a rule from any of them.
 # RESULT_NAMEREF must be a declared associative array in the caller.
 #
 # The one answer to "which rules does this machine apply", because each harness
@@ -263,16 +264,16 @@ resolve_layers() {
 # without Claude Code ended up with no Pi context file at all. Each harness now
 # takes this set and filters it by its own scoping rules — neither reads the
 # other's output.
+#
+# Two passes so the override layer is last and therefore final. It is the only
+# layer an operator writes by hand, so a file they put there has to beat both the
+# shipped default and the generated one, and their sentinels have to be able to
+# suppress either. The second pass names the generated layer as its base and so
+# re-adds entries the first already holds, which is the price of keeping the
+# sentinel handling in resolve_layers rather than repeating it here.
 resolve_rules() {
-  resolve_layers "$GUIDELINES_RULES_SRC_DIR" "$USER_RULES_DIR" "$RULES_GLOB" "$1"
-
-  local -n __rules=$1
-  local item
-  for item in "$GENERATED_RULES_DIR"/$RULES_GLOB; do
-    [[ -e "$item" ]] || continue
-    __rules["$(basename "$item")"]="$item"
-  done
-  return 0
+  resolve_layers "$GUIDELINES_RULES_SRC_DIR" "$GENERATED_RULES_DIR" "$RULES_GLOB" "$1"
+  resolve_layers "$GENERATED_RULES_DIR" "$USER_RULES_DIR" "$RULES_GLOB" "$1"
 }
 
 # rules_layer_roots — prints the directory each rule layer is resolved from, one

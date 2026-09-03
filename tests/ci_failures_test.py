@@ -594,6 +594,75 @@ def test_extract_pytest_failures_without_a_section():
     assert failure.context == "FAILED tests/a_test.py::test_collected_but_never_reported - RuntimeError: boom"
 
 
+# pytest 9.0.3 run over three tests: one whose fixture raises in the test's own
+# file, one whose fixture raises in `conftest.py`, and one plain assertion. The
+# summary calls the first two `ERROR` rather than `FAILED`, and titles their
+# blocks for the phase they failed in.
+_PYTEST_ERRORS_AND_FAILURES = "\n".join([
+    "==================================== ERRORS ====================================",
+    "________________ ERROR at setup of TestGroup.test_local_fixture ________________",
+    "",
+    "    @pytest.fixture",
+    "    def local_broken():",
+    ">       raise RuntimeError(\"local fixture blew up\")",
+    "E       RuntimeError: local fixture blew up",
+    "",
+    "tests/errprobe_test.py:6: RuntimeError",
+    "_______________ ERROR at setup of TestGroup.test_shared_fixture ________________",
+    "",
+    "    @pytest.fixture",
+    "    def shared_broken():",
+    ">       raise RuntimeError(\"shared fixture blew up\")",
+    "E       RuntimeError: shared fixture blew up",
+    "",
+    "tests/conftest.py:6: RuntimeError",
+    "=================================== FAILURES ===================================",
+    "________________________ TestGroup.test_plain_assertion ________________________",
+    "",
+    "self = <errprobe_test.TestGroup object at 0x1075dbce0>",
+    "",
+    "    def test_plain_assertion(self):",
+    ">       assert 1 == 2",
+    "E       assert 1 == 2",
+    "",
+    "tests/errprobe_test.py:17: AssertionError",
+    "=========================== short test summary info ============================",
+    "FAILED tests/errprobe_test.py::TestGroup::test_plain_assertion - assert 1 == 2",
+    "ERROR tests/errprobe_test.py::TestGroup::test_local_fixture - RuntimeError: l...",
+    "ERROR tests/errprobe_test.py::TestGroup::test_shared_fixture - RuntimeError: ...",
+    "========================= 1 failed, 2 errors in 0.03s ==========================",
+])
+
+
+def test_extract_pytest_failures_reads_error_summary_entries():
+    failures = extract_test_failures(_PYTEST_ERRORS_AND_FAILURES)
+    assert [f.name for f in failures] == [
+        "TestGroup::test_plain_assertion",
+        "TestGroup::test_local_fixture",
+        "TestGroup::test_shared_fixture",
+    ]
+
+
+def test_extract_pytest_failures_locate_an_error_by_its_phase_titled_block():
+    by_name = {f.name: f for f in extract_test_failures(_PYTEST_ERRORS_AND_FAILURES)}
+    assert by_name["TestGroup::test_local_fixture"].location == SourceLocation(
+        "tests/errprobe_test.py", 6)
+    assert "local fixture blew up" in by_name["TestGroup::test_local_fixture"].context
+
+
+def test_extract_pytest_failures_leave_a_conftest_only_traceback_unlocated():
+    """The block cites `conftest.py` alone, and that is not the test's own file."""
+    by_name = {f.name: f for f in extract_test_failures(_PYTEST_ERRORS_AND_FAILURES)}
+    assert by_name["TestGroup::test_shared_fixture"].location is None
+    assert "shared fixture blew up" in by_name["TestGroup::test_shared_fixture"].context
+
+
+def test_extract_pytest_failures_keep_the_summary_verb():
+    contexts = [f.context for f in extract_test_failures(_PYTEST_ERRORS_AND_FAILURES)]
+    assert contexts[0].startswith("FAILED tests/errprobe_test.py::")
+    assert contexts[1].startswith("ERROR tests/errprobe_test.py::")
+
+
 def test_extract_failure_context_pytest_joins_every_block():
     result = extract_failure_context(_PYTEST_RUN_32793239084, FailureKind.TEST)
     assert "tests/test_review_fix_pass.py:937: NameError" in result

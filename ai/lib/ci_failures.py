@@ -265,13 +265,22 @@ def _tap_failures(lines: list[str]) -> list[TestFailure]:
 # ── pytest ─────────────────────────────────────────────────────────────────
 
 _PYTEST_SUMMARY_HEADER_RE = re.compile(r"^=+ short test summary info =+$")
-_PYTEST_FAILED_RE = re.compile(r"^FAILED ([^\s:]+)::(\S+)(?: - (.*))?$")
-# The title must carry a character that is neither a space nor an underscore,
-# which is what tells a heading apart from the `_ _ _ _` rule pytest draws
-# between the frames *inside* one block. A pattern that accepts the rule as a
-# heading ends the block at the outermost frame, and the failure is then
+# `ERROR` is the summary's word for a test whose fixture or setup raised, and it
+# carries no ` - <reason>` tail. Reading only `FAILED` loses a run whose failures
+# are all of that shape: the summary comes back empty, the whole pytest path is
+# skipped, and the run falls back to the marker window this parser exists to
+# replace. Both words name a test the reader has to open.
+_PYTEST_SUMMARY_ENTRY_RE = re.compile(r"^(FAILED|ERROR) ([^\s:]+)::(\S+)(?: - (.*))?$")
+# Every word of the title must carry a character that is neither a space nor an
+# underscore, which is what tells a heading apart from the `_ _ _ _` rule pytest
+# draws between the frames *inside* one block. A pattern that accepts the rule
+# as a heading ends the block at the outermost frame, and the failure is then
 # reported at the line that made the call rather than the line that raised.
-_PYTEST_SECTION_HEAD_RE = re.compile(r"^_+ (\S*[^\s_]\S*) _+$")
+_PYTEST_SECTION_HEAD_RE = re.compile(r"^_+ (\S*[^\s_]\S*(?: \S*[^\s_]\S*)*) _+$")
+# An error block is titled for the phase it failed in rather than for the test
+# alone, so its heading has to be reduced to the node id before it can be found
+# by one.
+_PYTEST_ERROR_HEAD_RE = re.compile(r"^ERROR at \w+ of (\S+)$")
 _PYTEST_RULE_RE = re.compile(r"^=+ .* =+$")
 # A frame that is not the innermost carries nothing after its colon, so what
 # follows the line number is a space or the end of the line. Requiring the space
@@ -283,14 +292,20 @@ _PYTEST_CAPTURED_RE = re.compile(r"^-+ Captured \w+ \w+ -+$")
 
 @dataclass(frozen=True)
 class _SummaryEntry:
-    """One `FAILED <path>::<test>` line of pytest's short test summary."""
+    """One `FAILED`/`ERROR` line of pytest's short test summary."""
+    verb: str
     path: str
     tail: str
     reason: str
 
+    @property
+    def line(self) -> str:
+        """The summary line itself, as pytest wrote it."""
+        return f"{self.verb} {self.path}::{self.tail}" + (f" - {self.reason}" if self.reason else "")
+
 
 def _pytest_summary(lines: list[str]) -> list[_SummaryEntry]:
-    """The `FAILED` lines of the short test summary, which names every failure.
+    """The short test summary's entries, which name every test that did not pass.
 
     The summary is the authoritative list rather than the traceback sections
     below: pytest prints a line here for every failing test, including one
@@ -307,28 +322,33 @@ def _pytest_summary(lines: list[str]) -> list[_SummaryEntry]:
             continue
         if _PYTEST_RULE_RE.match(line):
             break
-        match = _PYTEST_FAILED_RE.match(line)
+        match = _PYTEST_SUMMARY_ENTRY_RE.match(line)
         if match:
-            path, tail, reason = match.groups()
-            entries.append(_SummaryEntry(path, tail, reason or ""))
+            verb, path, tail, reason = match.groups()
+            entries.append(_SummaryEntry(verb, path, tail, reason or ""))
     return entries
 
 
 def _pytest_sections(lines: list[str]) -> dict[str, list[str]]:
-    """Each per-test block of pytest's FAILURES report, keyed by its heading.
+    """Each per-test block of the FAILURES and ERRORS reports, keyed by node id.
 
     A block runs from its underscore-ruled heading to the next heading or the
     next `=` rule, and stops at the first `Captured stdout/stderr` separator.
     The traceback above that separator is what locates the failure, and a run
     of ten failures whose captured output is carried in full truncates at
     `_MAX_CONTEXT_CHARS` before the later failures are reached at all.
+
+    A FAILURES heading is the node id already; an ERRORS heading names the phase
+    too, and is reduced to the node id so one lookup finds either.
     """
     sections: dict[str, list[str]] = {}
     body: list[str] | None = None
     for line in lines:
         head = _PYTEST_SECTION_HEAD_RE.match(line)
         if head:
-            body = sections.setdefault(head.group(1), [])
+            title = head.group(1)
+            phase = _PYTEST_ERROR_HEAD_RE.match(title)
+            body = sections.setdefault(phase.group(1) if phase else title, [])
         elif body is None:
             continue
         elif _PYTEST_RULE_RE.match(line) or _PYTEST_CAPTURED_RE.match(line):
@@ -339,7 +359,7 @@ def _pytest_sections(lines: list[str]) -> dict[str, list[str]]:
 
 
 def _pytest_failures(lines: list[str]) -> list[TestFailure]:
-    """Every failure the short test summary names, located by its own traceback.
+    """Every test the short test summary names, located by its own traceback.
 
     The path comes from the summary's node id and the line from the last
     traceback frame in that test's block *citing that same path*: a failure
@@ -369,11 +389,10 @@ def _pytest_failures(lines: list[str]) -> list[TestFailure]:
             match for match in (_PYTEST_FRAME_RE.match(line) for line in body)
             if match and match.group(1) == entry.path
         ]
-        header = f"FAILED {entry.path}::{entry.tail}"
         failures.append(TestFailure(
             name=entry.tail,
             location=SourceLocation(entry.path, int(frames[-1].group(2))) if frames else None,
-            context="\n".join([f"{header} - {entry.reason}" if entry.reason else header, *body]).strip(),
+            context="\n".join([entry.line, *body]).strip(),
         ))
     return failures
 

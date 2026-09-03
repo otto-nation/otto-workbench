@@ -25,6 +25,9 @@
 #   User-added hooks are preserved; managed hooks are replaced with the template.
 #
 # Top-level keys (e.g. enabledPlugins) are added from the template only if absent.
+# `env` is deliberately not one of them: ai/claude/steps.sh mirrors that block
+# from ~/.env.local after this script runs, because a key added here once is a
+# key no later sync ever corrects.
 
 (if ($m | length) > 0 then $m else ($e._workbench // {}) end) as $prev |
 

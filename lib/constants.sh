@@ -188,24 +188,15 @@ PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
 # AGENTS.override.md sorts ahead of it in Pi's candidate list, which gives the
 # operator an unmanaged escape hatch the workbench needs no code to support.
 PI_CONTEXT_FILE="$PI_AGENT_DIR/AGENTS.md"
-# Pi's own installer, which step_install_pi pipes to bash. It installs the npm
-# package into a managed root under ~/.pi and links the launcher into the first
-# writable PATH directory it recognises — ~/.local/bin here, which the workbench
-# already puts on PATH.
+# Pi's own installer, which step_install_pi pipes to bash. It runs
+# `npm install -g` into npm's global prefix, so the launcher it produces is
+# `$(npm prefix -g)/bin/pi` — /opt/homebrew/bin/pi wherever Node came from
+# Homebrew. A self-managed root under ~/.pi with its launcher linked into
+# ~/.local/bin is reached only under PI_EXPERIMENTAL=1, which the workbench
+# does not set. There is no fixed path to test the install by name, and no need
+# for one: `pi update` reads the install method off the copy it is running from
+# and handles the npm one natively.
 PI_INSTALL_URL="https://pi.dev/install.sh"
-# The launcher that installer manages. step_install_pi tests this path by name
-# rather than asking `command -v pi`, which an npm-global copy under Homebrew's
-# node answers just as readily — and such a copy cannot be replaced by
-# `pi update`, which is the whole reason the vendor installer is used here.
-#
-# ceiling: hardcodes ~/.local/bin as the installer's link target from observed
-# behavior, not a documented contract — Pi's installer script doesn't commit to
-# it. If it ever picks a different writable PATH directory on some machine,
-# step_install_pi re-runs harmlessly but the shadow-pi migration
-# (ai/pi/migrations/20260902-replace-shadow-pi.sh) never converges there.
-# Upgrade to reading the installer's own output/log for the real link target
-# if a machine surfaces this mismatch.
-PI_NATIVE_BIN="$HOME/.local/bin/pi"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"

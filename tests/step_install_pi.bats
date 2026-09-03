@@ -39,8 +39,8 @@ teardown() {
 # pi or curl the developer happens to have is never reached. PATH is narrowed
 # after the libs load, since output.sh needs a modern bash to source at all.
 #
-# HOME is redirected before the libs load: PI_NATIVE_BIN is resolved from it in
-# lib/constants.sh at source time, and it is now the guard the step reads.
+# HOME is redirected before the libs load: the Pi paths in lib/constants.sh are
+# resolved from it at source time.
 _run_step() {
   bash -c '
     HOME="$3"
@@ -52,27 +52,17 @@ _run_step() {
   ' _ "${PATH_OVERRIDE:-$STUBS:/usr/bin:/bin}" "$REPO_ROOT" "$TMPDIR/home"
 }
 
-@test "a machine holding the managed pi installs nothing" {
-  mkdir -p "$TMPDIR/home/.local/bin"
-  printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/home/.local/bin/pi"
-  chmod +x "$TMPDIR/home/.local/bin/pi"
-
-  run _run_step
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Pi already installed"* ]]
-  [ ! -e "$INSTALLER_RAN" ]
-}
-
-@test "a pi on PATH that is not the managed one does not suppress the install" {
-  # The Homebrew/npm-global shadow. `command -v pi` answers it just as readily
-  # as the installer's launcher, which is how #1094's install silently never
-  # took on a machine that already had one.
+@test "a machine that already has pi installs nothing" {
+  # An npm-global pi under Homebrew's node is what the installer itself
+  # produces — `npm install -g` into `npm prefix -g` is its default path, and
+  # `pi update` maintains that copy. Reinstalling over it is work, not repair.
   printf '#!/bin/sh\nexit 0\n' > "$STUBS/pi"
   chmod +x "$STUBS/pi"
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ -f "$INSTALLER_RAN" ]
+  [[ "$output" == *"Pi already installed"* ]]
+  [ ! -e "$INSTALLER_RAN" ]
 }
 
 @test "a machine without pi runs the installer" {

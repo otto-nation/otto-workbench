@@ -1,0 +1,319 @@
+"""ToolParser — drop-in argparse replacement with self-description.
+
+Two hidden flags let one script read another's argparse parser rather than keep
+a mirror of it. Both are answered here, and any script built on ``ToolParser``
+supports both for free.
+
+``--tool-schema`` emits a JSON document describing the tool's name, description,
+input schema (derived from argparse actions), and output schema (explicitly
+annotated). It is how the MCP server discovers tools — it probes every
+executable in the workbench's component ``bin/`` directories, plus any
+``tool_dirs`` adds — and it is what a skill's ``output_schema`` cites.
+
+MCP discovery only probes scripts whose source names ``ToolParser`` or
+``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
+the protocol some other way will not be discovered. Naming the flag in a script
+under one of those directories is therefore a claim, and
+``bin/local/validate-tool-schema`` holds the build to it: it probes every
+candidate discovery would and fails when one cannot answer.
+``bin/local/validate-skills`` asserts the converse for the tool a skill's
+``output_schema`` names — that one must implement the protocol whether or not it
+carries a marker, or the skill cites a contract nothing publishes.
+
+The output schema is generated from the tool's dataclass by ``schema_gen``,
+which describes what ``serde`` will accept for each field rather than deciding
+that for itself.
+
+``--value-flags`` prints one option string per line: every option of that parser
+that consumes a following value. ``pr`` asks a delegate this before deciding
+whether a bare token is the command's target or some other flag's argument.
+Without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR number
+and swallows it.
+
+The two stay separate on purpose. ``--tool-schema`` is keyed by ``dest``, drops
+``help=SUPPRESS`` actions, and loses option aliases, so arity cannot be
+recovered from it faithfully — and declaring it also enrolls a script in MCP
+discovery, which is not a side effect an arity probe should carry.
+
+A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
+in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
+the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
+``pr`` falls back to its arity-blind scan — no error, just the occasional flag
+value classified as the command's target. A ``ToolParser`` script answers the
+flag without opting in.
+
+One constraint comes with the protocol: every *option* the parser declares must
+consume exactly one value. A flat list of option strings cannot express
+``nargs='?'``, ``'+'``, ``'*'``, or an int above 1, so the probe refuses to
+answer rather than report a wrong arity — it names the offending option on
+stderr, exits 2, and ``pr`` reprints the message before degrading. Positionals
+are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
+
+Argparse introspection that reaches past the public API is collected here —
+``value_taking_options`` and ``subparsers`` — so a caller never has to.
+
+``enum_arg`` is here for the same reason from the other side: it is the argparse
+``type`` every enum-valued option in the workbench is declared with, so the
+message a bad value gets is written once rather than per parser.
+"""
+
+# doc-group: platform
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import sys
+from argparse import SUPPRESS, ArgumentParser, ArgumentTypeError, _SubParsersAction
+from collections.abc import Callable
+from enum import StrEnum
+from typing import TypeVar
+
+_EnumT = TypeVar("_EnumT", bound=StrEnum)
+
+
+# Args that are injected by the pr dispatcher / context system, not user-facing.
+_CONTEXT_ARGS = frozenset({"repo_dir", "branch", "pr"})
+
+# Args managed by the framework, not the tool.
+# "debug" is registered by add_trail_args() in the pr dispatcher, not by ToolParser.
+_FRAMEWORK_ARGS = frozenset({"help", "tool_schema", "debug"})
+
+# Hidden probe asking a script which of its options consume a following value.
+VALUE_FLAGS_FLAG = "--value-flags"
+
+# The nargs values that mean "this option consumes exactly one token", which is
+# the only arity the --value-flags answer can express.  argparse spells the
+# default two ways: None (plain store) and a literal 1.
+_SINGLE_VALUE_NARGS = (None, 1)
+
+
+class ToolParser(ArgumentParser):
+    """ArgumentParser subclass that supports --tool-schema introspection.
+
+    Usage::
+
+        parser = ToolParser(
+            prog="pr-rebase",
+            description="Rebase branch onto origin/main",
+            output_schema=RebaseSummary,  # dataclass or dict
+        )
+        parser.add_argument("--fix", action="store_true", help="Auto-resolve conflicts")
+        args = parser.parse_args()
+    """
+
+    def __init__(self, *posargs, output_schema=None, ok_exit_codes=None, **kwargs):
+        super().__init__(*posargs, **kwargs)
+        self._output_schema = output_schema
+        self._ok_exit_codes = ok_exit_codes or []
+        self.add_argument("--tool-schema", action="store_true", help=SUPPRESS)
+
+    def parse_args(self, args=None, namespace=None):
+        if args is None:
+            args = sys.argv[1:]
+
+        if "--tool-schema" in args:
+            json.dump(self._build_schema(), sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            sys.exit(0)
+
+        handle_value_flags(self, args)
+
+        return super().parse_args(args, namespace)
+
+    def _build_schema(self) -> dict:
+        schema: dict = {
+            "name": self.prog or "",
+            "description": self.description or "",
+            "input_schema": self._build_input_schema(),
+        }
+        if self._output_schema is not None:
+            schema["output_schema"] = self._resolve_output_schema()
+        if self._ok_exit_codes:
+            schema["ok_exit_codes"] = self._ok_exit_codes
+        return schema
+
+    def _build_input_schema(self) -> dict:
+        properties = {}
+        required = []
+
+        for action in self._actions:
+            if action.dest in _FRAMEWORK_ARGS:
+                continue
+            if action.help is SUPPRESS:
+                continue
+
+            prop = _action_to_property(action)
+            if prop is None:
+                continue
+
+            name = action.dest
+            is_context = name in _CONTEXT_ARGS
+            prop_entry = prop.copy()
+            if is_context:
+                prop_entry["x-context"] = True
+
+            properties[name] = prop_entry
+
+            if action.required and not is_context:
+                required.append(name)
+
+        schema: dict = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
+
+    def _resolve_output_schema(self) -> dict:
+        if isinstance(self._output_schema, dict):
+            return self._output_schema
+
+        if dataclasses.is_dataclass(self._output_schema):
+            from core.schema_gen import dataclass_to_schema
+            return dataclass_to_schema(self._output_schema)
+
+        raise TypeError(
+            f"output_schema must be a dict or dataclass, got {type(self._output_schema)}"
+        )
+
+
+def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
+    """An argparse ``type`` that converts to ``enum_cls`` by value.
+
+    Passing the enum class directly as ``type=`` drops the valid-value list from
+    the error message, because a failed conversion never reaches argparse's own
+    ``choices`` check — so the message is reproduced here.
+    """
+    def parse(value: str) -> _EnumT:
+        try:
+            return enum_cls(value)
+        except ValueError:
+            choices = ", ".join(repr(str(m)) for m in enum_cls)
+            raise ArgumentTypeError(
+                f"invalid choice: {value!r} (choose from {choices})"
+            ) from None
+
+    return parse
+
+
+def value_taking_options(parser: ArgumentParser) -> list[str]:
+    """Every option string of *parser* that consumes a following value.
+
+    Aliases are listed individually — ``--repo-dir`` and ``--worktree`` are
+    two answers to the same question, and a caller matching raw argv tokens
+    needs both.  Store-true/count/help actions declare ``nargs=0`` and are
+    excluded; everything else (``store``, ``append``, typed options) takes one.
+
+    The answer is a flat set of option strings, so it can only say "this option
+    eats the next token" — it has no way to say how many.  An option declared
+    ``nargs='?'``, ``'+'``, ``'*'``, ``REMAINDER`` or an int above 1 therefore
+    raises ``ValueError`` instead of being reported as single-valued, which
+    would make the caller skip the wrong number of tokens and silently
+    misclassify the one after them.  Positionals are exempt because they never
+    appear in the answer — ``claude-review`` declares ``args`` with ``nargs='*'``.
+    """
+    options = set()
+    for action in parser._actions:
+        if not action.option_strings or action.nargs == 0:
+            continue
+        if action.nargs not in _SINGLE_VALUE_NARGS:
+            raise ValueError(
+                f"{'/'.join(action.option_strings)} declares nargs={action.nargs!r}, "
+                f"but {VALUE_FLAGS_FLAG} can only describe options that consume exactly "
+                "one value (nargs=None or 1). Callers skip a fixed one token after such "
+                "an option, so answering for this one would misclassify the next. Give "
+                "the option a single value, or teach both this function and "
+                "_positional_index in ai/bin/pr to carry a count."
+            )
+        options.update(action.option_strings)
+    return sorted(options)
+
+
+def subparsers(parser: ArgumentParser) -> dict[str, ArgumentParser]:
+    """Every subcommand of *parser*, keyed by the name it is invoked as.
+
+    A dispatcher that wants to introspect what one of its subcommands declares
+    (``ai/bin/pr`` asking whether a command takes a value-consuming
+    option) needs the subparser that declares it, and ``add_subparsers`` hands
+    that back only at construction time.  Reading it off the built parser
+    instead means the answer cannot drift from the parser that is actually
+    parsing argv, and spares every caller a bespoke return type.
+
+    Aliases appear under each name they answer to, because that is how argparse
+    stores them and a caller matching a raw argv token needs all of them.
+    Returns empty for a parser with no subcommands.
+
+    ``_SubParsersAction`` is private, as is the ``_actions`` list this walks —
+    the same list ``value_taking_options`` above reads.  Both are stable across
+    every Python argparse has shipped with, and keeping the two reads in one
+    module is why this lives here rather than at its call site.
+    """
+    for action in parser._actions:
+        if isinstance(action, _SubParsersAction):
+            return dict(action.choices)
+    return {}
+
+
+def handle_value_flags(parser: ArgumentParser, args=None) -> None:
+    """Answer the ``--value-flags`` probe, printing one option per line.
+
+    A wrapper CLI that classifies a bare positional (``ai/bin/pr``)
+    cannot tell a target from a flag's value without knowing the delegate's
+    arity.  The delegate's own parser is the single source of truth for that,
+    so the wrapper asks rather than mirroring a list that would rot.
+
+    This is deliberately separate from ``--tool-schema``: that document is
+    keyed by ``dest``, drops ``help=SUPPRESS`` actions, and loses option
+    aliases, so arity cannot be recovered from it faithfully.  Declaring
+    ``--tool-schema`` also enrolls a script in MCP tool discovery
+    (``ai/claude/mcps/server.py``), which is not a side effect an arity probe
+    should carry.
+
+    A parser this protocol cannot describe (see ``value_taking_options``) is
+    reported on stderr and exits 2 rather than raising: the probe runs as a
+    subprocess, so a traceback would reach nobody, while a one-line diagnosis
+    is reprinted by the caller that captured it.
+    """
+    if VALUE_FLAGS_FLAG not in (sys.argv[1:] if args is None else args):
+        return
+    try:
+        options = value_taking_options(parser)
+    except ValueError as exc:
+        sys.stderr.write(f"{parser.prog}: {VALUE_FLAGS_FLAG}: {exc}\n")
+        sys.exit(2)
+    sys.stdout.write("".join(f"{opt}\n" for opt in options))
+    sys.exit(0)
+
+
+def _action_to_property(action) -> dict | None:
+    """Convert an argparse action to a JSON Schema property."""
+    # Skip positional args that are just subcommand names
+    if not action.option_strings:
+        if action.dest == "args":
+            return None
+        return {"type": "string", "description": action.help or ""}
+
+    if action.const is True and action.default is False:
+        prop: dict = {"type": "boolean", "default": False}
+    elif action.const is False and action.default is True:
+        prop = {"type": "boolean", "default": True}
+    elif action.type is int:
+        prop = {"type": "integer"}
+        if action.default is not None:
+            prop["default"] = action.default
+    elif action.type is float:
+        prop = {"type": "number"}
+        if action.default is not None:
+            prop["default"] = action.default
+    elif action.choices:
+        prop = {"type": "string", "enum": list(action.choices)}
+        if action.default is not None:
+            prop["default"] = action.default
+    else:
+        prop = {"type": "string"}
+        if action.default is not None:
+            prop["default"] = action.default
+
+    if action.help and action.help != SUPPRESS:
+        prop["description"] = action.help
+
+    return prop

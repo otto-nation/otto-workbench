@@ -25,7 +25,6 @@ import pr_domains
 import pr_state
 import pr_sync
 import push_intent
-import schema_gen
 import review_gc
 import log
 import proc
@@ -859,7 +858,14 @@ Run 'pr <command> -h' for details on a specific command."""
 
 
 def _tool_schema() -> dict:
-    """Build --tool-schema output for the pr command."""
+    """Build --tool-schema output for the pr command.
+
+    No ``output_schema``. One of the nine subcommands prints a ``PRState``
+    document, and not even that one before a state file exists — so declaring
+    the schema for every invocation made the MCP server reject the other eight
+    for printing no JSON object. Per-subcommand output schemas are the real
+    fix and belong to #909; until then the honest contract is none.
+    """
     return {
         "name": SCRIPT,
         "description": "Unified PR lifecycle CLI — CI, review, comments, rebase",
@@ -877,7 +883,6 @@ def _tool_schema() -> dict:
             },
             "required": ["command"],
         },
-        "output_schema": schema_gen.dataclass_to_schema(pr_state.PRState),
     }
 
 

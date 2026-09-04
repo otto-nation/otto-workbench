@@ -2308,6 +2308,15 @@ arriving through the code under test is as recognisable as one arriving through
 a fixture. Nothing about the result the caller gets changes, and no branch here
 knows it is being observed.
 
+Two things about the child are decided here rather than by each caller. Its
+stdin is closed unless the caller passes text for it, because inheriting stdin
+is how a subprocess reaches a stream its parent was in the middle of using —
+the MCP server's stdin is the JSON-RPC transport, and a tool reading one byte
+takes it out of the stream. And `kill_process_group` decides whether an expired
+bound kills the direct child or the whole group: a caller running something
+that spawns a tree of its own needs the group, or a timed-out call leaves the
+tree running with nothing holding a handle to it.
+
 The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
 `bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a
 literal 124, 127 or 130 written where something exits with it or reads it back

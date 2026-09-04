@@ -562,6 +562,21 @@ warning level on stderr with the reason. A tool you added that never appears in 
 client is explained there. Executables with no marker are not tools and are skipped
 without comment.
 
+**How a script is run.** Both the probe and a tool call go through one spawn helper, which
+gives the child two things `subprocess.run` does not. Its stdin is closed rather than
+inherited: the server's own stdin *is* the stdio JSON-RPC stream the client writes requests
+into, so a script that reads a single byte takes that byte out of the transport and the
+session dies on a parse error naming no tool. The probe is the likeliest reader — a script
+that does not recognise `--tool-schema` falls through to its real work, and that work may
+read stdin.
+
+The child also gets a session of its own, so an expired bound `SIGKILL`s the whole process
+group instead of the one process. A tool spawns agents — `pr review` is the case — and
+signalling only the direct child leaves them running against the account with nothing
+holding a handle to them. There is no grace window before the kill: the budget has already
+expired, and a TERM-then-KILL ladder would double the worst case on a call that is already
+late.
+
 **A probe that never answers is a different finding.** The probe prints a schema the
 script already holds, so it belongs in the `QUICK` tier of
 [`ai/lib/timeouts.py`](../ai/lib/timeouts.py) and a breach is a wedged process or a machine
@@ -598,6 +613,15 @@ and fails when a candidate in the checkout cannot answer or no registry entry na
 rather than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden`
 entry is a decision somebody made, and the probe has to cover the script anyway because
 `pr` runs it.
+
+**Two scripts, one name.** Discovery keys on the name a script answers with, not on its
+filename, so two scripts can claim one tool. At runtime the first the scan reached wins and
+the other is logged at error level naming both paths. Raising instead would run in the
+re-discovery thread as well as at startup, where one ambiguity would either take the server
+down or stop re-discovery for the session — first-wins leaves a working tool working. Which
+of the two a client actually reaches is then decided by directory order, so
+`bin/local/validate-tool-schema` fails the build on a collision. That is the only place it
+can be an error rather than a log line.
 
 It carries the same split. A probe that ran out of time is counted and reported apart from
 the broken ones and points at the runner's load rather than at the script — on an
@@ -641,6 +665,12 @@ answer before the caller sees it. Such a tool that prints no JSON object is ther
 contract breach, not a plain result: the call comes back as an error naming the tool and
 quoting the head of what it did print. Tools with no `output_schema` return text and
 nothing more.
+
+That contract is per tool, and `pr` is one command wrapping nine subcommands, so it
+declares none. It used to declare `PRState` for every invocation, which only `pr status`
+prints — and not even that one before a state file exists — so the other eight came back
+`isError` for printing no JSON object. Declaring an output schema is worth it once it can
+be per subcommand.
 
 The launcher runs `uv run --no-project --with mcp`. A client spawns the server with its own
 project as the working directory, and without `--no-project` uv would resolve and install

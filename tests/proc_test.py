@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -320,3 +321,165 @@ class TestMachineKills:
             proc.MACHINE_KILLS.append(proc.MachineKill("git status", "timed out"))
 
         assert len(proc.MACHINE_KILLS) == proc.MACHINE_KILL_LIMIT
+
+
+class TestRunStdin:
+    """The child never inherits this process's stdin.
+
+    Inheriting it is how a subprocess reaches a stream its parent was in the
+    middle of using: the MCP server's stdin is the JSON-RPC transport, and a
+    tool reading one byte takes it out of the stream — the session then dies on
+    a parse error naming no tool.
+    """
+
+    def test_a_command_that_reads_stdin_gets_eof(self):
+        r = proc.run(["cat"], timeout=timeouts.QUICK)
+        assert r.ok
+        assert r.stdout == ""
+
+    def test_input_text_is_the_way_to_give_it_something_to_read(self):
+        assert proc.run(["cat"], input_text="fed", timeout=timeouts.QUICK).stdout == "fed"
+
+
+# Long enough that a fixture still holding the pid is a fixture the kill
+# missed, rather than one that was about to exit anyway.
+GRANDCHILD_LIFETIME = 20
+
+
+def _alive(pid: int) -> bool:
+    """Whether *pid* names a live process, without signalling it."""
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _wait_until_gone(pid: int, timeout: float = 5.0) -> bool:
+    """Poll for *pid* to disappear; the kill is a signal, not a synchronous death."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+class TestRunKillProcessGroup:
+    """What an expired bound kills: the direct child, or the tree it started.
+
+    A caller running something that spawns a tree of its own asks for the
+    group. Without it a timed-out call leaves that tree running with nothing
+    holding a handle to it — the MCP server's `pr review` leaving its agents
+    against the account is the case this exists for.
+    """
+
+    def test_a_backgrounded_grandchild_is_killed_with_the_group(self, tmp_path):
+        pidfile = tmp_path / "grandchild.pid"
+        r = proc.run(
+            ["sh", "-c", f"sleep {GRANDCHILD_LIFETIME} & echo $! > {pidfile}; "
+                         f"sleep {GRANDCHILD_LIFETIME}"],
+            timeout=1.0, kill_process_group=True)
+
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        grandchild = int(pidfile.read_text())
+        assert _wait_until_gone(grandchild), (
+            f"pid {grandchild} outlived the call that spawned it")
+
+    def test_the_direct_child_dies_too(self, tmp_path):
+        pidfile = tmp_path / "child.pid"
+        r = proc.run(["sh", "-c", f"echo $$ > {pidfile}; sleep {GRANDCHILD_LIFETIME}"],
+                     timeout=1.0, kill_process_group=True)
+
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert _wait_until_gone(int(pidfile.read_text()))
+
+    def test_a_grandchild_survives_when_the_group_was_not_asked_for(self, tmp_path):
+        """The default kills one process, which is all most callers spawn.
+
+        Asserting the survival rather than skipping it: the flag would read as
+        decorative if the behaviour without it were never pinned down.
+        """
+        pidfile = tmp_path / "grandchild.pid"
+        r = proc.run(
+            ["sh", "-c", f"sleep {GRANDCHILD_LIFETIME} & echo $! > {pidfile}; "
+                         f"sleep {GRANDCHILD_LIFETIME}"],
+            timeout=1.0)
+
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        grandchild = int(pidfile.read_text())
+        try:
+            assert _alive(grandchild)
+        finally:
+            os.kill(grandchild, signal.SIGKILL)
+
+    def test_a_group_it_may_not_signal_still_reports_the_timeout(self, monkeypatch):
+        """The kill runs on the way to returning, so it must not throw.
+
+        An exception here would replace the timeout result every caller
+        branches on with a failure none of them has a branch for. What survived
+        is said in the stderr they already read, because this module has no
+        logger to say it to.
+        """
+        def denied(pid, sig):
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(proc.os, "killpg", denied)
+        # Short-lived, unlike the fixtures above: nothing kills this one, so
+        # `Popen.__exit__` waits it out and its lifetime is the test's cost.
+        r = proc.run(["sleep", "2"], timeout=0.3, kill_process_group=True)
+
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert "could not be signalled and may still be running" in r.stderr
+
+    def test_the_group_goes_even_when_the_way_out_is_not_a_timeout(self, tmp_path,
+                                                                   monkeypatch):
+        """A `KeyboardInterrupt` leaves a tree behind just as a timeout would.
+
+        `Popen.__exit__` only waits, so an exception that is not the expired
+        bound would both orphan the group and block behind its own `wait` —
+        which is the failure this option exists to close, reached by another
+        door.
+        """
+        pidfile = tmp_path / "grandchild.pid"
+
+        def interrupted(*args, **kwargs):
+            # Not before the fixture has a grandchild to leave behind: a kill
+            # that lands first would pass for the wrong reason.
+            deadline = time.monotonic() + 5.0
+            while not pidfile.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            raise KeyboardInterrupt
+
+        # The spawn itself has to be real — the group being killed is the
+        # assertion — so the interrupt goes on the instance rather than on the
+        # class, which `tests/conftest.py`'s backend guard has replaced with a
+        # function of its own anyway.
+        spawn = subprocess.Popen
+
+        def interruptible(*args, **kwargs):
+            process = spawn(*args, **kwargs)
+            process.communicate = interrupted
+            return process
+
+        monkeypatch.setattr(proc.subprocess, "Popen", interruptible)
+        with pytest.raises(KeyboardInterrupt):
+            proc.run(
+                ["sh", "-c", f"sleep {GRANDCHILD_LIFETIME} & echo $! > {pidfile}; "
+                             f"sleep {GRANDCHILD_LIFETIME}"],
+                timeout=timeouts.QUICK, kill_process_group=True)
+
+        grandchild = int(pidfile.read_text())
+        assert _wait_until_gone(grandchild), (
+            f"pid {grandchild} outlived the call that spawned it")
+
+    def test_a_process_that_exited_on_its_own_is_not_an_error(self, monkeypatch):
+        """The race between the bound expiring and the kill is not a failure."""
+        def already_gone(pid, sig):
+            raise ProcessLookupError(3, "No such process")
+
+        monkeypatch.setattr(proc.os, "killpg", already_gone)
+        r = proc.run(["sh", "-c", "sleep 0.5"], timeout=0.1, kill_process_group=True)
+
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert "could not be signalled" not in r.stderr

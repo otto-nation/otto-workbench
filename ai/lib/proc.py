@@ -63,6 +63,15 @@ arriving through the code under test is as recognisable as one arriving through
 a fixture. Nothing about the result the caller gets changes, and no branch here
 knows it is being observed.
 
+Two things about the child are decided here rather than by each caller. Its
+stdin is closed unless the caller passes text for it, because inheriting stdin
+is how a subprocess reaches a stream its parent was in the middle of using —
+the MCP server's stdin is the JSON-RPC transport, and a tool reading one byte
+takes it out of the stream. And `kill_process_group` decides whether an expired
+bound kills the direct child or the whole group: a caller running something
+that spawns a tree of its own needs the group, or a timed-out call leaves the
+tree running with nothing holding a handle to it.
+
 The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
 `bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a
 literal 124, 127 or 130 written where something exits with it or reads it back
@@ -84,6 +93,7 @@ should be free to depend on, and pulling in `log`, `ai_usage`, or
 
 from __future__ import annotations
 
+import os
 import re
 import signal
 import subprocess
@@ -329,6 +339,75 @@ def _text(value: str | bytes | None) -> str:
     return value if isinstance(value, str) else value.decode(errors="replace")
 
 
+def _kill_group(process: subprocess.Popen) -> str:
+    """SIGKILL the group *process* leads, and say what may have survived.
+
+    Returns the empty string when the signal landed or there was nothing left
+    to signal, and a note for the timeout detail when it did not. Nothing here
+    raises: this runs on the way to returning a timeout result, and an
+    exception would replace that result with a failure no call site has a
+    branch for.
+
+    `start_new_session` made the child a group leader, so its pid is the group
+    id. A process that exited between the bound expiring and this call leaves
+    nothing to signal — the race, not a failure. A group this process may not
+    signal is the one case worth telling the caller about, because something is
+    then still running with nothing holding a handle to it.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return ""
+    except PermissionError:
+        return (f"\nprocess group {process.pid} could not be signalled and may "
+                f"still be running")
+    return ""
+
+
+def _timed_out(cmd: list[str], timeout: float | None, exc: subprocess.TimeoutExpired,
+               survivors: str) -> CmdResult:
+    """The result an expired bound comes back as, from either spawn path."""
+    detail = f"timed out after {timeout:g}s: {' '.join(cmd)}{survivors}"
+    partial = _text(exc.stderr)
+    return CmdResult(
+        returncode=TIMEOUT_RETURNCODE,
+        stdout=_text(exc.stdout),
+        stderr=f"{detail}\n{partial}" if partial else detail,
+    )
+
+
+def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | None,
+                      spawn: dict) -> CmdResult:
+    """Run *cmd* as a group leader, killing the whole group if the bound expires.
+
+    `subprocess.run` cannot express this. Its timeout handler kills the direct
+    child and it never yields the pid, so the group id a caller would need to
+    reach the rest of the tree is gone by the time the exception arrives —
+    which is the whole of why this path is hand-rolled rather than sharing the
+    one above.
+
+    An expired bound is not the only way out of `communicate`. A
+    `KeyboardInterrupt`, or a `ValueError` from writing to a stream the child
+    already closed, leaves through the bare clause below, which kills the group
+    on the way and lets the exception continue — `subprocess.run` does the same
+    for the same reason. Without it `Popen.__exit__` only waits, so the tree
+    this function exists to contain would outlive the call that started it and
+    block the exception behind its own `wait`.
+    """
+    stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
+    with subprocess.Popen(cmd, start_new_session=True, stdin=stdin, **spawn) as process:
+        try:
+            stdout, stderr = process.communicate(input_text, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            survivors = _kill_group(process)
+            process.wait()
+            return _timed_out(cmd, timeout, exc, survivors)
+        except BaseException:
+            _kill_group(process)
+            raise
+    return CmdResult(returncode=process.returncode, stdout=stdout or "", stderr=stderr or "")
+
+
 def run(
     cmd: list[str],
     *,
@@ -336,6 +415,7 @@ def run(
     cwd: str | Path | None = None,
     input_text: str | None = None,
     env: dict[str, str] | None = None,
+    kill_process_group: bool = False,
 ) -> CmdResult:
     """Run *cmd*, capturing both streams, and return what it said.
 
@@ -368,22 +448,47 @@ def run(
     here would put them back and quietly make the fixture a worktree of this
     checkout. A caller that wants to add rather than replace passes
     `os.environ | {...}`.
+
+    The child's stdin is closed unless *input_text* gives it something to read.
+    Inheriting it is how a subprocess reaches a stream its parent was in the
+    middle of using: the MCP server's own stdin is the JSON-RPC transport its
+    client writes requests into, and a tool reading one byte takes that byte
+    out of the stream and kills the session on a parse error naming no tool.
+    Nothing here is interactive, so there is nothing for an inherited stdin to
+    be for.
+
+    `kill_process_group` decides what an expired bound kills. By default the
+    direct child, which is `subprocess.run`'s behaviour and right for a command
+    that is one process. A caller running something that spawns its own tree
+    passes True and gets the child in a session of its own, so the whole group
+    goes: an MCP tool call drives agents, and signalling the direct child alone
+    left them running against the account with nothing holding a handle to
+    them. SIGKILL with no grace window either way — the budget has already
+    expired, and a TERM-then-KILL ladder doubles the worst case on a call that
+    is already late.
     """
+    spawn = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "cwd": cwd,
+        "env": env,
+    }
+    if kill_process_group:
+        return _run_in_own_group(cmd, timeout, input_text, spawn)
+    # `input` and `stdin` are mutually exclusive to `subprocess.run` — it opens
+    # the pipe itself when there is something to write, so naming the closed
+    # stream is only ours to do when there is not.
+    if input_text is None:
+        spawn["stdin"] = subprocess.DEVNULL
     try:
-        r = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
-            input=input_text, env=env,
-        )
+        completed = subprocess.run(cmd, input=input_text, timeout=timeout, **spawn)
     except subprocess.TimeoutExpired as exc:
-        cause = f"timed out after {timeout:g}s"
-        _record_kill(cmd, cause)
-        detail = f"{cause}: {' '.join(cmd)}"
-        partial = _text(exc.stderr)
-        return CmdResult(
-            returncode=TIMEOUT_RETURNCODE,
-            stdout=_text(exc.stdout),
-            stderr=f"{detail}\n{partial}" if partial else detail,
-        )
-    if externally_killed(r.returncode):
-        _record_kill(cmd, f"killed by {signal_description(r.returncode)}")
-    return CmdResult(returncode=r.returncode, stdout=r.stdout or "", stderr=r.stderr or "")
+        _record_kill(cmd, f"timed out after {timeout:g}s")
+        # `subprocess.run` has already killed the child and reaped it; what is
+        # left to do is turn the exception into the result every caller reads.
+        return _timed_out(cmd, timeout, exc, "")
+    if externally_killed(completed.returncode):
+        _record_kill(cmd, f"killed by {signal_description(completed.returncode)}")
+    return CmdResult(returncode=completed.returncode,
+                     stdout=completed.stdout or "", stderr=completed.stderr or "")

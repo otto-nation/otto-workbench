@@ -8,7 +8,7 @@ configuration, and the sandbox is demonstrably what makes that true.
 import os
 import subprocess
 
-from conftest import init_repo, seed_repo
+from conftest import GIT_TIMEOUT, init_repo, seed_repo
 
 # Each of these is on for real on a workbench machine, and each costs a test
 # something it never asked for: an orphaned `git fsmonitor--daemon` per temp
@@ -17,10 +17,14 @@ INHERITED_NOTHING = ("core.fsmonitor", "core.untrackedCache")
 
 
 def _config(repo, key):
-    """What the repo at *repo* reads for *key*, or "" when it reads nothing."""
+    """What the repo at *repo* reads for *key*, or "" when it reads nothing.
+
+    Not `git_out`: a key nothing sets exits 1, which `run_checked` beneath it
+    raises on, and an unset key is the expected result of half these cases.
+    """
     result = subprocess.run(
         ["git", "-C", str(repo), "config", "--get", key],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=GIT_TIMEOUT,
     )
     return result.stdout.strip()
 

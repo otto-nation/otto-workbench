@@ -13,7 +13,7 @@
 #   Set       Members            Doc block            Symbol table
 #   lib       lib/*.sh,          `#` block under the  `name()`
 #             lib/ai/*.sh        shebang
-#   ai-lib    ai/lib/*.py        `"""…"""` module     none — the modules are
+#   ai-lib    ai/lib/*/*.py      `"""…"""` module     none — the modules are
 #                                docstring            imported, not sourced
 #
 # Doc block conventions:
@@ -234,7 +234,7 @@ _hash_doc_block() {
 
 # _docstring_doc_block FILE — the module docstring, quotes stripped.
 #
-# A shebang or coding comment above it is skipped, so ai/lib/ci_failures.py
+# A shebang or coding comment above it is skipped, so ai/lib/pr/ci_failures.py
 # renders the same as a module that opens on its docstring. Only the `"""` form
 # is read; a module whose first statement is anything else has no docstring, and
 # _render_module turns that into a failure rather than an empty section.

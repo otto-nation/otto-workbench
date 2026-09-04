@@ -94,7 +94,7 @@ INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
 # ─── Project registry ─────────────────────────────────────────────────────────
 # The repos on this machine that use otto-workbench, one absolute path per line.
-# lib/projects.sh owns every read and write; ai/lib/workbench_paths.py spells the
+# lib/projects.sh owns every read and write; ai/lib/core/workbench_paths.py spells the
 # same filename for Python, and tests/workbench_roots.bats fails when the two
 # drift. Newline-delimited text rather than YAML for the same reason
 # migrations.applied is: every write is an append and every read is a scan, and
@@ -105,7 +105,7 @@ PROJECTS_REGISTRY_FILE="$WORKBENCH_STATE_DIR/$PROJECTS_REGISTRY_NAME"
 # ─── Workbench config ─────────────────────────────────────────────────────────
 # Hand-authored settings, one file per scope: the global file under the config
 # root and one per repo at its toplevel. lib/config.sh reads them;
-# ai/lib/workbench_config.py is the typed owner and the source
+# ai/lib/config/workbench_config.py is the typed owner and the source
 # config.schema.json is generated from. Every name below is spelled a second
 # time there, and tests/config.bats fails when the two sets drift.
 WORKBENCH_CONFIG_NAME="config.yml"
@@ -137,7 +137,7 @@ WORKBENCH_GLOBAL_SCOPE="global"
 
 # ─── Review state ─────────────────────────────────────────────────────────────
 # The shell half of two joins the Python side also spells out — this file for
-# bash, ai/lib/workbench_paths.py's reviews_dir() and retro-scan's
+# bash, ai/lib/core/workbench_paths.py's reviews_dir() and retro-scan's
 # CONSUMED_REVIEWS_NAME for Python. tests/workbench_roots.bats cross-validates
 # both pairs, the same way it does the roots they hang off.
 REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"

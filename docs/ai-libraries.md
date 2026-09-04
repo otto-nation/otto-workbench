@@ -14,7 +14,7 @@ Each section below is the module's own docstring, rendered from `ai/lib/` by [`g
 
 The orchestration of a review run: what it checks before spending anything, how the work is split into phases, what each agent is asked, and where the run's artifacts live.
 
-### agent_diagnosis.py
+### agent/diagnosis.py
 
 Why an agent run produced no output, classified once and rendered on demand.
 
@@ -27,7 +27,7 @@ Nothing here is review-specific, which is why it is not in the review layer: a
 diagnosis is a property of the invocation, and the pipeline that happens to be
 running is not part of the reason it failed.
 
-### agent_invoke.py
+### agent/invoke.py
 
 The one owner of an agent invocation: resolve the phase, run it, guard it.
 
@@ -48,7 +48,7 @@ ledger label spelled a third way. Reaching ``ai_backend`` directly is what let
 those differ; going through here is what stops them, and
 ``TestOneOwnerForBackendCalls`` is what keeps it that way.
 
-### agent_phases.py
+### agent/phases.py
 
 What a phase resolves to here: the spec, the config file, the environment.
 
@@ -74,7 +74,7 @@ the chain passes through untouched. The Claude CLI does this resolution itself;
 the Pi backend does not, so it happens here before dispatch and both backends
 land on the same model.
 
-### agent_registry.py
+### agent/registry.py
 
 Every phase the workbench knows how to run, and what each one defaults to.
 
@@ -101,7 +101,7 @@ line: which phases may be switched off is a property of the specs above, so the
 flags are generated from them rather than listed a second time in each script
 that offers them.
 
-### agent_retry.py
+### agent/retry.py
 
 Shared guard against agents that finish without producing anything.
 
@@ -122,7 +122,20 @@ A second attempt writes over the first one's session log, so `preserve_log` and
 `restore_preserved` live here too: a retry is the only thing that overwrites a
 log, and the pair exists so both attempts' result records survive it.
 
-### agent_templates.py
+### agent/session.py
+
+What an agent run left behind: its cost, its diagnosis, its salvage.
+
+Everything here reads a session log after the fact. Running the agent is
+``agent_invoke``'s job and resolving which model it ran with is
+``agent_phases``'s; this module is what the pipeline asks once the log exists —
+what the run cost, why it produced nothing, whether the document it was denied
+permission to save can still be recovered.
+
+The split matters for the quota retry, whose two halves live apart: this module
+reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
+
+### agent/templates.py
 
 Where prompt templates live, and the one way to render one.
 
@@ -141,7 +154,7 @@ described identically wherever the prompt came from.
 Stdlib only, like ``phases`` and for the same reason: a prompt is the last
 thing that should need the PR state machine to render.
 
-### agent_types.py
+### agent/types.py
 
 The shapes that describe an inventory of phases.
 
@@ -170,7 +183,34 @@ Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs
 this one.
 
-### fix_engine.py
+### core/phases.py
+
+The vocabulary a phase is named in: what runs, at what depth, in what mode.
+
+Enums and the prefix their keys are built from. The shapes that describe an
+inventory of phases — `PhaseSpec`, `EffortPreset`, `ItemScaling`,
+`RetryBudget` — live one layer up, in the module that owns the phase
+inventory's shapes.
+
+Split from them because the config types its fields with these names: with the
+vocabulary in the agent layer, the config would import the agent layer while the
+agent layer imports the config. A vocabulary has no dependencies, so it goes
+below both.
+
+### core/prompt.py
+
+Terminal questions, for the few commands that have one to ask.
+
+Separate from ``log`` because that module owns output and this one owns
+input. Both readers fall back to ``/dev/tty``: these run inside commands
+whose stdin is often a pipe, and a piped stdin does not mean there is
+nobody at the keyboard.
+
+Every function has a no-answer value — ``False`` and ``""`` — so a caller
+in a hook, a CI job, or a subprocess gets a usable result instead of an
+exception. No answer is never consent.
+
+### fix/engine.py
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.
 
@@ -203,47 +243,7 @@ the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
 
-### phases.py
-
-The vocabulary a phase is named in: what runs, at what depth, in what mode.
-
-Enums and the prefix their keys are built from. The shapes that describe an
-inventory of phases — `PhaseSpec`, `EffortPreset`, `ItemScaling`,
-`RetryBudget` — live one layer up, in the module that owns the phase
-inventory's shapes.
-
-Split from them because the config types its fields with these names: with the
-vocabulary in the agent layer, the config would import the agent layer while the
-agent layer imports the config. A vocabulary has no dependencies, so it goes
-below both.
-
-### prompt.py
-
-Terminal questions, for the few commands that have one to ask.
-
-Separate from ``log`` because that module owns output and this one owns
-input. Both readers fall back to ``/dev/tty``: these run inside commands
-whose stdin is often a pipe, and a piped stdin does not mean there is
-nobody at the keyboard.
-
-Every function has a no-answer value — ``False`` and ``""`` — so a caller
-in a hook, a CI job, or a subprocess gets a usable result instead of an
-exception. No answer is never consent.
-
-### review_agent.py
-
-What an agent run left behind: its cost, its diagnosis, its salvage.
-
-Everything here reads a session log after the fact. Running the agent is
-``agent_invoke``'s job and resolving which model it ran with is
-``agent_phases``'s; this module is what the pipeline asks once the log exists —
-what the run cost, why it produced nothing, whether the document it was denied
-permission to save can still be recovered.
-
-The split matters for the quota retry, whose two halves live apart: this module
-reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
-
-### review_budget.py
+### review/budget.py
 
 Every bound on what a prompt may carry, and the one fit that spends them.
 
@@ -256,7 +256,7 @@ same figure rather than two that drifted apart.
 `agent_types.RetryBudget` is a different thing that shares the word — it
 budgets retries, not bytes.
 
-### review_collect.py
+### review/collect.py
 
 What a review collects before a prompt is built, and what it may cost.
 
@@ -277,7 +277,7 @@ against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
 fills in are `review_types`' and `gh_types`'.
 
-### review_document.py
+### review/document.py
 
 `review.md` — the artifact the review subsystem exists to produce.
 
@@ -334,7 +334,7 @@ What a tally of them means — the verdict it supports, and the body a review
 carries when no synthesis agent wrote one — is `review_verdict`'s: a judgement
 over this module's shape rather than part of the shape itself.
 
-### review_gc.py
+### review/gc.py
 
 Removal of review artifacts, at every lifecycle that removes one.
 
@@ -361,7 +361,7 @@ the terminal `pr_outcome` event it fires, no longer depends on someone typing
 `pr gc` by hand. The step is skipped on an install without the ai component,
 which is what puts `pr` on the path.
 
-### review_grouping.py
+### review/grouping.py
 
 How a review's changed files are divided, and what doctrine applies to each.
 
@@ -374,7 +374,7 @@ The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
 it can afford to carry.
 
-### review_outcome.py
+### review/outcome.py
 
 What a run writes to the review file, and what it claims about itself.
 
@@ -388,7 +388,7 @@ nobody can act on.
 Deciding which of those paths a run takes is `review_steps`'; sequencing the
 phases that lead there is `review_pipeline`'s.
 
-### review_paths.py
+### review/paths.py
 
 Where a review lives on disk, and what is allowed to be there.
 
@@ -426,7 +426,7 @@ keeps the last few, so the directory a run finds is the one its predecessor
 left rather than an unbounded pile. That retention is layout too, which is why
 it is decided here and not by the entry point that triggers it.
 
-### review_phases.py
+### review/phases.py
 
 Phase executors for the review pipeline.
 
@@ -451,7 +451,7 @@ a run is `review_pipeline`'s, deciding what each phase's output means for the
 run is `review_steps`', and writing the result to the review file is
 `review_outcome`'s.
 
-### review_pipeline.py
+### review/pipeline.py
 
 Pipeline orchestration for claude-review.
 
@@ -463,7 +463,7 @@ The run ends when the review file is written — what happens to the findings
 afterwards belongs to review_fix, and removing what the run left behind belongs
 to review_gc, which the orchestrator runs once every phase is done.
 
-### review_prompt.py
+### review/prompt.py
 
 Prompt construction for claude-review: the byte budget and the render loop.
 
@@ -484,7 +484,7 @@ builder, which template it renders, and which file the agent is told to write
 are `review_registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
 
-### review_prompt_prior.py
+### review/prompt_prior.py
 
 What a prompt says about the review that came before it.
 
@@ -505,7 +505,7 @@ an agent; both sections here interpolate it rather than restating it, and
 Everything else a prompt says about the PR is `review_prompt_sections`'s, and
 which sections a phase asks for is `review_prompt`'s.
 
-### review_prompt_sections.py
+### review/prompt_sections.py
 
 What a prompt says about the PR, rendered from what was collected.
 
@@ -524,7 +524,7 @@ config-driven registry of sections already written to a review document —
 that module reads what an agent wrote, this one decides what an agent is
 shown before it writes anything.
 
-### review_registry.py
+### review/registry.py
 
 Which prompt each phase builds, and which scan reads its output.
 
@@ -537,7 +537,7 @@ the standard library, and the builders live in `review_prompt`, which imports
 break. A table one layer down is the same declaration made once, and this is
 that layer.
 
-### review_retry.py
+### review/retry.py
 
 Retry and diagnosis routing for the review pipeline.
 
@@ -551,21 +551,21 @@ The hints, the retryability test and the retry driver are shared with the other
 `pr` scripts — see agent_retry. Aliased here so the review modules keep reading
 the way they always have.
 
-### review_scout.py
+### review/scout.py
 
 Lead scout: parse structured investigation leads from scout phase output.
 
 The scout phase replaces the holistic phase's prose output with structured
 leads that tell group reviewers exactly where to focus investigation.
 
-### review_sections.py
+### review/sections.py
 
 Config-driven section registry with auto-discovery for review posting.
 
 Defines section configs declaratively and extracts them from review markdown.
 Replaces per-section parameter threading across the posting pipeline.
 
-### review_state.py
+### review/state.py
 
 Pipeline run state for the review pipeline.
 
@@ -581,7 +581,7 @@ Kept apart from the phases so the state is describable without running one —
 the recovery path, the tests and the phase executors all reach the same
 functions.
 
-### review_static_analysis.py
+### review/static_analysis.py
 
 Static analysis framework for the review pipeline.
 
@@ -589,7 +589,7 @@ Runs machine-checkable tools against changed files and formats violations
 for inclusion in review output. Each checker is a plain function with the
 signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
 
-### review_steps.py
+### review/steps.py
 
 One function per phase of a multi-phase review.
 
@@ -605,7 +605,7 @@ disprove gate runs (`_should_disprove`), and sizing the synthesis turn budget
 (`_synthesis_max_turns`) all read from there. Writing the result to the review
 file is `review_outcome`'s.
 
-### review_verdict.py
+### review/verdict.py
 
 What a set of counts means, and the review a run without an agent writes.
 
@@ -617,7 +617,7 @@ merged review carries when no synthesis agent produced one.
 Kept apart from the document itself because the document is a shape and this is
 a judgement — a review file parses the same way whatever this module decides.
 
-### review_worktree.py
+### review/worktree.py
 
 Worktree lifecycle management for claude-review.
 
@@ -625,7 +625,7 @@ Worktree lifecycle management for claude-review.
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.
 
-### review_dedup.py
+### review/dedup.py
 
 Deduplication of findings against already-posted PR comments.
 
@@ -639,7 +639,7 @@ the exact answer, for carrying a finding forward across reviews of the same
 branch — two findings that are the same finding hash the same there, and a
 near-duplicate does not.
 
-### review_fix.py
+### review/fix.py
 
 Fix pass for claude-review.
 
@@ -675,7 +675,7 @@ the pass's work on a branch somebody else is reading.
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
 
-### review_format.py
+### review/format.py
 
 Diff classification, renumbering for posting, comment formatting, and permalinks.
 
@@ -687,7 +687,7 @@ here: which lines a hunk covers is the same question as whether a finding can
 be posted inline against them, and asking it twice is how a comment lands on a
 line the diff never touched.
 
-### review_grammar.py
+### review/grammar.py
 
 The one reading of a finding line: its ID, its location, its identity.
 
@@ -725,7 +725,7 @@ the different question of whether a finding is about to be posted twice.
 What a document is assembled from is `review_document`'s; what a finding means
 once parsed is `review_types`'.
 
-### review_merge.py
+### review/merge.py
 
 What becomes of findings as the group reviews are folded into one document.
 
@@ -790,7 +790,7 @@ group's IDs are shifted past the groups before it. Deferring that to the
 merge-wide pass would misdirect it: group provenance is gone by then, and the
 pooled map answers with whichever group happens to have declared that number.
 
-### review_reconcile.py
+### review/reconcile.py
 
 Deciding what became of each finding the last review reported.
 
@@ -832,7 +832,7 @@ prior finding. Every finding posted inline opened a review thread,
 independent of that ledger, and what the author did with that thread is the
 other one — `review_reply_threads` reads it.
 
-### review_reply_threads.py
+### review/reply_threads.py
 
 What the author did with the threads the prior review's findings opened.
 
@@ -853,7 +853,7 @@ there is no finding for it to be an account of.
 Fetching is `pr_comments`'s; what a re-review is shown of the result is
 `review_prompt_sections`' and `review_prompt_prior`'s.
 
-### review_spans.py
+### review/spans.py
 
 Where a finding declaration starts in a document, and where its body stops.
 
@@ -871,7 +871,7 @@ below the one it was told to drop.
 single pass over the text, so no two readers of one review can cut it in
 different places.
 
-### review_summary.py
+### review/summary.py
 
 The machine-readable summary of a finished review.
 
@@ -881,7 +881,7 @@ It is the only reader that needs both halves of a review at once — the finding
 document (counts, verdict) and the pipeline state (status, failure detail) —
 which is why it sits above both rather than inside either.
 
-### review_types.py
+### review/types.py
 
 The review subsystem's vocabulary: the nouns, with no behaviour around them.
 
@@ -902,7 +902,7 @@ layer everything else in it sits on. The heavier imports — `agent_types`,
 the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh_types`
 and the rest.
 
-### review_verify.py
+### review/verify.py
 
 What a review claims, checked against the tree it claims it about.
 
@@ -966,68 +966,7 @@ it does not say where one stops.
 
 Everything that leaves the machine — review comments, replies, summaries, tracking issues — and the draft gate they all pass through first.
 
-### gh_types.py
-
-What a GitHub PR read returns: the PR's own metadata, and its conversation.
-
-Below the `gh`-layer module that fetches both, so the shapes a read answers
-with sit at or beneath the layer that answers. `review_collect` builds
-the same `PRMetadata` from local git for a branch with no PR behind it, which is
-why the type is not spelled in terms of the API's field names.
-
-### pr_comments.py
-
-PR comments lifecycle tracking.
-
-Handles thread lifecycle state computation and GitHub data fetching for the
-pr-comments skill. The ledger those threads are recorded in, and the file it
-lives in, belong to `pr_comments_state`.
-
-A thread's lifecycle state is what decides whether the run may report itself
-done. `--post` is a request, not a guarantee: if triage routes any thread to
-`needs_human` — contested, conflicting, a question, or too complex to
-auto-fix — the fix pass *holds* publishing for the rest of the process, and the
-hold outranks `--post`. Nothing reopens it (see `publishing`).
-
-The fixes still get applied and still get committed. What waits is everything
-that asserts the work is done: the push, the `Fixed in <sha>` replies, the
-thread resolutions, and the summary. The commit sits locally with status
-`push_held`, and `--finish --post` is what sends it:
-
-```bash
-pr comments --fix --post   # commits; holds the push, one thread is contested
-# read the thread, answer the reviewer
-pr comments --finish --post   # pushes, then drains the replies and the summary
-```
-
-Until that second command runs, the queue sits in state and the PR shows
-nothing — an undelivered summary is indistinguishable from a run that had
-nothing to say. `pr status` names it (`⚠ closeout owed: summary + 15 replies`)
-and counts it as a merge blocker, so the hold survives the session that created
-it.
-
-This exists because threads are triaged independently. A reviewer saying "the
-root cause you describe does not exist" removes that one thread from the
-fixable set and leaves the pass free to fix, push, and report success on
-everything else — 8 individually-real fixes pushed to a branch that had already
-been superseded.
-
-The halt is deliberately blunt: any open thread, not just a premise-invalidating
-one. Telling those apart is the hard classification problem, and the cost of
-being wrong is asymmetric — a needless hold costs one extra command, while a
-missed one costs a pushed commit and a reply claiming work is done. Running
-`--fix` and `--finish` in the same invocation does not defeat it: the discussion
-is still open at both points, so the hold applies to both.
-
-### pr_thread_models.py
-
-Typed domain objects for PR review thread processing.
-
-Persistence-oriented structures live in pr_domains.py and pr_comments_fix.py;
-these model the runtime pipeline: triage, classification, tracking, and
-fix-pass results.
-
-### publishing.py
+### core/publishing.py
 
 The gate every outward-facing write passes through.
 
@@ -1100,7 +1039,7 @@ still asks. Either way an unanswered question files nothing: no tracking issue
 is created and the deferral replies that would link to it are not sent, rather
 than an issue being filed to a tracker nobody named.
 
-### review_github.py
+### gh/pr_reads.py
 
 The review system's reads of a PR, and the GraphQL queries behind them.
 
@@ -1117,11 +1056,72 @@ Nor is the worktree. A branch with no PR behind it is described from local git
 by `review_collect.fetch_branch_metadata`, which reaches the same `PRMetadata`
 this fetches — every read here goes to GitHub.
 
-### review_issue.py
+### gh/types.py
+
+What a GitHub PR read returns: the PR's own metadata, and its conversation.
+
+Below the `gh`-layer module that fetches both, so the shapes a read answers
+with sit at or beneath the layer that answers. `review_collect` builds
+the same `PRMetadata` from local git for a branch with no PR behind it, which is
+why the type is not spelled in terms of the API's field names.
+
+### pr/comments.py
+
+PR comments lifecycle tracking.
+
+Handles thread lifecycle state computation and GitHub data fetching for the
+pr-comments skill. The ledger those threads are recorded in, and the file it
+lives in, belong to `pr_comments_state`.
+
+A thread's lifecycle state is what decides whether the run may report itself
+done. `--post` is a request, not a guarantee: if triage routes any thread to
+`needs_human` — contested, conflicting, a question, or too complex to
+auto-fix — the fix pass *holds* publishing for the rest of the process, and the
+hold outranks `--post`. Nothing reopens it (see `publishing`).
+
+The fixes still get applied and still get committed. What waits is everything
+that asserts the work is done: the push, the `Fixed in <sha>` replies, the
+thread resolutions, and the summary. The commit sits locally with status
+`push_held`, and `--finish --post` is what sends it:
+
+```bash
+pr comments --fix --post   # commits; holds the push, one thread is contested
+# read the thread, answer the reviewer
+pr comments --finish --post   # pushes, then drains the replies and the summary
+```
+
+Until that second command runs, the queue sits in state and the PR shows
+nothing — an undelivered summary is indistinguishable from a run that had
+nothing to say. `pr status` names it (`⚠ closeout owed: summary + 15 replies`)
+and counts it as a merge blocker, so the hold survives the session that created
+it.
+
+This exists because threads are triaged independently. A reviewer saying "the
+root cause you describe does not exist" removes that one thread from the
+fixable set and leaves the pass free to fix, push, and report success on
+everything else — 8 individually-real fixes pushed to a branch that had already
+been superseded.
+
+The halt is deliberately blunt: any open thread, not just a premise-invalidating
+one. Telling those apart is the hard classification problem, and the cost of
+being wrong is asymmetric — a needless hold costs one extra command, while a
+missed one costs a pushed commit and a reply claiming work is done. Running
+`--fix` and `--finish` in the same invocation does not defeat it: the discussion
+is still open at both points, so the hold applies to both.
+
+### pr/thread_models.py
+
+Typed domain objects for PR review thread processing.
+
+Persistence-oriented structures live in pr_domains.py and pr_comments_fix.py;
+these model the runtime pipeline: triage, classification, tracking, and
+fix-pass results.
+
+### review/issue.py
 
 Issue tracking integration for claude-review.
 
-### review_listing.py
+### review/listing.py
 
 The reviews listing that `pr review --list` serves.
 
@@ -1198,7 +1198,7 @@ Enforcement comes from the supported set being allowed to *shrink* —
 hand-stamps a version into the document: the field echoes back what the caller
 declared and this build agreed to serve, so it cannot go stale on its own.
 
-### review_posting.py
+### review/posting.py
 
 High-level posting orchestration for review-post.
 
@@ -1210,14 +1210,7 @@ and post-tracking metadata.
 
 What a pull request is right now: its target, its threads, its CI, whether it has been pushed or rebased, and whether its reason to exist still holds.
 
-### ci_failures.py
-
-CI failure lifecycle tracking.
-
-Handles failure classification, progression tracking, and rendering for the
-ci-failures skill. State persistence is delegated to pr_domains.CIDomain.
-
-### fix_tracking.py
+### fix/tracking.py
 
 The tracking file a fix pass hands its agent, rendered and read back.
 
@@ -1247,7 +1240,7 @@ The format is deliberately plain markdown. The agent edits it with the same
 tool it edits source with, and an operator reading the file afterwards sees
 what the agent saw.
 
-### fix_types.py
+### fix/types.py
 
 What a fix pass is handed, in terms no one domain owns.
 
@@ -1268,7 +1261,14 @@ Like `pr_fix`, this sits below the domains: it imports the standard library and
 nothing else from ``ai/lib``, so the shared fix machinery can depend on it
 without pulling a review or comments layer in behind it.
 
-### pr_comments_fix.py
+### pr/ci_failures.py
+
+CI failure lifecycle tracking.
+
+Handles failure classification, progression tracking, and rendering for the
+ci-failures skill. State persistence is delegated to pr_domains.CIDomain.
+
+### pr/comments_fix.py
 
 The comment fix pass's domain, and the closeout it owes the PR.
 
@@ -1296,7 +1296,7 @@ vocabulary of its own, beside a top-level ``commit_sha``/``commit_status``/
 a review cycle in flight keeps the outcomes, the reply queue and the deferred
 issue it had accumulated rather than resuming from an empty one.
 
-### pr_comments_state.py
+### pr/comments_state.py
 
 The review-thread ledger, and the one state file that is not a snapshot.
 
@@ -1319,7 +1319,7 @@ Imports ``log`` and ``serde`` and nothing else in ``ai/lib``, so the vocabulary
 the thread pipeline is written in sits below the code that fetches, renders and
 triages it.
 
-### pr_context.py
+### pr/context.py
 
 Shared PR context resolution.
 
@@ -1389,7 +1389,7 @@ cost more than the query itself, and they land in the file every `otto-log`
 query then reads. The exemption is read off these same three axes — `Need`
 carries no trail flag of its own for a command to add itself to.
 
-### pr_domains.py
+### pr/domains.py
 
 The domains a PR's state is made of.
 
@@ -1462,7 +1462,7 @@ except the manual resolution the command exists to avoid. The waiver is the
 resume path passing `force=True` into the same parameter `--force` sets, so
 there is one waiver mechanism rather than two.
 
-### pr_fix.py
+### pr/fix.py
 
 What a fix pass did, in terms no one domain owns.
 
@@ -1500,7 +1500,7 @@ not the same as recording through these types: the review-findings pass
 re-renders the review document from its outcomes rather than writing a record
 at all.
 
-### pr_state.py
+### pr/state.py
 
 Unified PR state framework.
 
@@ -1515,7 +1515,87 @@ The domains this is an envelope over live in ``pr_domains`` — and one of them,
 the comment pass's, in ``pr_comments_fix``. This module imports both; neither
 imports it.
 
-### pr_sync.py
+### pr/supersession.py
+
+Whether a branch's reason to exist is already gone.
+
+A branch can be rebased over a `main` that has deleted the code it was
+fixing, and the reviewer's "this does not exist any more" is one thread among
+ten. None of that needs an AI call to notice — the skew is in the commit dates,
+the re-addition is in the diff, and the PR that removed it is one search away.
+
+Three cheap checks, run by every branch-acting command before it acts:
+
+| Signal | What it reads | Evidence? |
+|---|---|---|
+| `rebase_skew` | author vs committer date on the branch's first commit, ≥ 7 days apart | no |
+| `readds_removed_symbol` | a definition in `git diff origin/<default>...HEAD` that the default branch no longer contains but once did | yes |
+| `superseding_pr` | a merged PR mentioning that symbol, via `gh api search/issues` | yes |
+
+Each finding is printed with its kind, so the output says which check fired.
+Only the last two count as evidence: a branch replayed onto a base that has
+moved is what makes supersession visible, but on its own it describes every
+long-lived branch, and acting on it would fire on the healthy case.
+
+It is a preflight, not an investigation — the symbol scan stops at the first ten
+definitions and only the first two flagged symbols are searched for on GitHub, so
+a clean branch costs two local git commands and no network call at all. The
+verdict is cached in the state file against the HEAD *and* base SHAs it was
+computed from, so the next command on the same branch reuses it rather than
+repeating the search; a moved base invalidates it just as a moved HEAD does,
+because there is nothing to re-add until the default branch deletes it — a
+branch whose own HEAD never moves becomes superseded the moment `main` does.
+
+This module answers the question; it does not decide what to do about it. The
+two are separated because the callers legitimately differ. `pr comments` has
+already spent its money by the time it publishes, so a positive verdict holds
+the publishing — the same acts a contested thread's hold reaches: the push, the
+replies, the resolutions, and the summary, but not the local commit. `pr review`
+spends the largest budget of any command in the repo and the check runs before
+the first agent call, so a positive verdict refuses before the spend rather than
+after it, exit 4. One detection, two policies, each stated where the cost is.
+
+The refusal prints the signals and writes the same JSON shape `pr rebase` uses
+for its already-landed refusal, on the same exit code:
+
+```json
+{
+  "branch": "isaac/703/fix_the_thing",
+  "status": "superseded",
+  "signals": [
+    {
+      "kind": "readds_removed_symbol",
+      "detail": "`dropped_helper` is added by this branch but absent from origin/main, which last touched it in abc1234 (ai/lib/foo.py)",
+      "holds": true
+    }
+  ],
+  "override": "--force"
+}
+```
+
+Read the merged PR the `superseding_pr` signal names before doing anything else.
+If the branch really is still wanted, re-run with `--force`, which skips the
+check entirely. `pr fix` stops on the refusal rather than continuing to its CI
+pass: every remaining pass acts on the same branch, so one refusal answers for
+all of them.
+
+Two flags do *not* override it, and one does. `--post` and `--no-post` set the
+same internal flag `--force` does — they suppress the confirmation prompts,
+because nobody is present to answer one — but an unattended run is the one this
+refusal most has to survive, so the check reads the raw `--force` instead.
+`--recover` is exempt on both entry points: it finishes a run whose spend was
+already made, so refusing it saves nothing and strands the artifacts of the run
+it was asked to complete.
+
+Distinct from `pr rebase`'s already-landed check, which asks whether the work
+has *landed* rather than whether it has been *superseded*. Work can land
+without the branch being superseded, and a branch can be superseded without its
+commits having landed anywhere — someone solved the problem differently. They
+stay separate: two of the landed check's three signals are local-only, and this
+one makes a network call that a rebase should not have to pay for. They share
+the exit code and the override flag, and nothing else.
+
+### pr/sync.py
 
 Bringing a worktree in line with its remote, and the guards that refuse to.
 
@@ -1528,7 +1608,7 @@ Split out of `pr_context` because it is a mutation built on the resolver's
 output rather than part of resolving — it takes a `ResolvedContext` and acts on
 it, where `git_topology` is the topology the resolver reads on the way in.
 
-### pr_target.py
+### pr/target.py
 
 Where a run's bookkeeping lives, keyed by what the run targets.
 
@@ -1631,91 +1711,11 @@ code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
 ``review_listing``) rather than deriving where a review would sit.
 
-### supersession.py
-
-Whether a branch's reason to exist is already gone.
-
-A branch can be rebased over a `main` that has deleted the code it was
-fixing, and the reviewer's "this does not exist any more" is one thread among
-ten. None of that needs an AI call to notice — the skew is in the commit dates,
-the re-addition is in the diff, and the PR that removed it is one search away.
-
-Three cheap checks, run by every branch-acting command before it acts:
-
-| Signal | What it reads | Evidence? |
-|---|---|---|
-| `rebase_skew` | author vs committer date on the branch's first commit, ≥ 7 days apart | no |
-| `readds_removed_symbol` | a definition in `git diff origin/<default>...HEAD` that the default branch no longer contains but once did | yes |
-| `superseding_pr` | a merged PR mentioning that symbol, via `gh api search/issues` | yes |
-
-Each finding is printed with its kind, so the output says which check fired.
-Only the last two count as evidence: a branch replayed onto a base that has
-moved is what makes supersession visible, but on its own it describes every
-long-lived branch, and acting on it would fire on the healthy case.
-
-It is a preflight, not an investigation — the symbol scan stops at the first ten
-definitions and only the first two flagged symbols are searched for on GitHub, so
-a clean branch costs two local git commands and no network call at all. The
-verdict is cached in the state file against the HEAD *and* base SHAs it was
-computed from, so the next command on the same branch reuses it rather than
-repeating the search; a moved base invalidates it just as a moved HEAD does,
-because there is nothing to re-add until the default branch deletes it — a
-branch whose own HEAD never moves becomes superseded the moment `main` does.
-
-This module answers the question; it does not decide what to do about it. The
-two are separated because the callers legitimately differ. `pr comments` has
-already spent its money by the time it publishes, so a positive verdict holds
-the publishing — the same acts a contested thread's hold reaches: the push, the
-replies, the resolutions, and the summary, but not the local commit. `pr review`
-spends the largest budget of any command in the repo and the check runs before
-the first agent call, so a positive verdict refuses before the spend rather than
-after it, exit 4. One detection, two policies, each stated where the cost is.
-
-The refusal prints the signals and writes the same JSON shape `pr rebase` uses
-for its already-landed refusal, on the same exit code:
-
-```json
-{
-  "branch": "isaac/703/fix_the_thing",
-  "status": "superseded",
-  "signals": [
-    {
-      "kind": "readds_removed_symbol",
-      "detail": "`dropped_helper` is added by this branch but absent from origin/main, which last touched it in abc1234 (ai/lib/foo.py)",
-      "holds": true
-    }
-  ],
-  "override": "--force"
-}
-```
-
-Read the merged PR the `superseding_pr` signal names before doing anything else.
-If the branch really is still wanted, re-run with `--force`, which skips the
-check entirely. `pr fix` stops on the refusal rather than continuing to its CI
-pass: every remaining pass acts on the same branch, so one refusal answers for
-all of them.
-
-Two flags do *not* override it, and one does. `--post` and `--no-post` set the
-same internal flag `--force` does — they suppress the confirmation prompts,
-because nobody is present to answer one — but an unattended run is the one this
-refusal most has to survive, so the check reads the raw `--force` instead.
-`--recover` is exempt on both entry points: it finishes a run whose spend was
-already made, so refusing it saves nothing and strands the artifacts of the run
-it was asked to complete.
-
-Distinct from `pr rebase`'s already-landed check, which asks whether the work
-has *landed* rather than whether it has been *superseded*. Work can land
-without the branch being superseded, and a branch can be superseded without its
-commits having landed anywhere — someone solved the problem differently. They
-stay separate: two of the landed check's three signals are local-only, and this
-one makes a network call that a rebase should not have to pay for. They share
-the exit code and the override flag, and nothing else.
-
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
 
-### ai_backend.py
+### agent/backend.py
 
 AI backend abstraction layer.
 
@@ -1734,7 +1734,7 @@ fails the build on a new call site that omits it.
 Every call made through here appends one record to the usage ledger, so what a
 run cost is answerable without instrumenting the call site — see `ai_usage`.
 
-### ai_backend_claude.py
+### agent/backend_claude.py
 
 Claude Code CLI backend for ai_backend.
 
@@ -1747,7 +1747,7 @@ empty stderr — a usage limit is the common one — so a stderr-only error mess
 prints nothing at all and leaves the caller reporting a bare exit code with no
 reason attached.
 
-### ai_backend_events.py
+### agent/backend_events.py
 
 Normalized event parsing for AI backend JSONL streams.
 
@@ -1755,7 +1755,7 @@ Provides a common StreamEvent and parsers for both Claude Code's
 stream-json format and Pi's --mode json format, so stream_progress()
 works identically regardless of backend.
 
-### ai_backend_pi.py
+### agent/backend_pi.py
 
 Pi CLI backend for ai_backend.
 
@@ -1797,7 +1797,7 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
-### ai_usage.py
+### agent/usage.py
 
 AI usage accounting.
 
@@ -1824,7 +1824,7 @@ only, because the CLI reports cost per model but tokens per session — leaving 
 token columns blank beats counting one session's tokens against every model it
 used.
 
-### vertex_quota.py
+### agent/vertex_quota.py
 
 Vertex AI quota checks for the Claude Code backend.
 
@@ -1840,7 +1840,7 @@ backend should import this module.
 
 The eval harness: fixture tasks, the scorers that grade each task's output, and the aggregation the CI ratchet gates on.
 
-### eval_scoring.py
+### eval/scoring.py
 
 Evaluation scoring, aggregation, and baseline comparison.
 
@@ -1865,7 +1865,7 @@ A baseline written before a metric existed leaves it ungated rather than
 failing, so an older baseline still loads. The comparison table marks every
 metric `pass`, `fail`, or `ungated` — including the ones that cannot fail.
 
-### eval_scoring_cifix.py
+### eval/scoring_cifix.py
 
 The ci-fix eval task: hand a failing repo to the fix agent, re-run the check.
 
@@ -1882,7 +1882,7 @@ Because CI failures are usually environment-shaped, these cases put stub
 binaries on `PATH` rather than depending on what the host happens to have
 installed, so they fail the same way everywhere.
 
-### eval_scoring_review.py
+### eval/scoring_review.py
 
 The review eval task: run review-orchestrate, score findings against a manifest.
 
@@ -1902,7 +1902,7 @@ next to its FP count. It annotates rather than fails — `--compare` gates on
 movement away from the baseline, so an absolute bar here would fire on cases
 that have never met it.
 
-### eval_scoring_skill.py
+### eval/scoring_skill.py
 
 The skill eval task: drive a SKILL.md against a fixture, grade what it ran.
 
@@ -1960,7 +1960,7 @@ exchange. Within that turn `SKILL_MAX_TURNS` and `SKILL_MAX_BUDGET` cap the
 tool-call turns and the spend; a scenario needing more of either hits the cap
 silently rather than completing.
 
-### eval_task.py
+### eval/task.py
 
 Task-agnostic evaluation plumbing.
 
@@ -1991,257 +1991,146 @@ that adding a task does not make every other task's dependencies load.
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
 
-### branch_landed.py
+### config/tool_registry.py
 
-Whether a branch's work is already in the ref it would be measured against.
+What the tool registries say about the scripts an MCP client may reach.
 
-Two callers ask this, for opposite reasons, and neither can answer it alone.
-`pr rebase` asks so it can refuse: replaying a branch whose work already landed
-force-pushes back a remote branch the merge deleted. `push_intent` asks so it
-can stay quiet: a recorded push the remote no longer has a ref for looks exactly
-like a push that vanished, and every squash-merged branch in a repo that deletes
-its head refs would otherwise be reported as one.
+The ``*/registry.yml`` files already document every workbench script: a
+description, and for the ones meant to be reached directly a ``when_to_use``
+and a ``usage`` line. ``visibility`` is the field that says who a tool is for —
+``full`` and ``brief`` entries are rendered into the rules Claude loads,
+``hidden`` ones are implementation details of another tool and are rendered
+nowhere.
 
-Three signals, in the order `check` tries them, none of them sufficient alone:
+The MCP server reads the same field, so a tool hidden from a reader is also
+absent from ``tools/list``. Registering a script is the act that offers it. The
+alternative — every marker-bearing script exposed — puts ``ci-check``,
+``pr-rebase`` and ``pr-describe`` in front of a client as peers of ``pr``, the
+CLI whose subcommands run them, and a client picking between them is choosing
+between a tool and its own internals.
 
-* `diff_is_empty` — the trees match. Catches a squash merge, whose commits are
-  unreachable from the squashed commit, so nothing comparing commits notices the
-  work arrive. Stops answering once the target ref moves on with unrelated work.
-* `all_commits_upstream` — every commit has an equivalent patch id upstream.
-  Catches a rebase or a merge-commit landing, and survives the target moving on.
-  Misses a squash, which leaves no per-commit equivalent to match.
-* `merged_pr` — GitHub says the PR merged. The only signal that survives a
-  squash merge once the target ref has moved on, and the only one that costs a
-  round trip, which is why the ladder reaches it last.
+Only ``meta.validation: bindir`` registries are read. That value is the
+declaration that ``meta.source`` is a directory of executables with one
+``tools[]`` entry per file, which is exactly the mapping wanted here, and
+``bin/local/validate-registries`` already enforces both directions of it — so
+the paths built below cannot drift from the files on disk.
 
-Every one of them answers "no" rather than raising when it cannot ask: a ref
-that does not resolve, a base that was never fetched, a `gh` that is absent,
-unauthenticated or rate-limited. "Landed" is the answer that suppresses
-something — a refusal for one caller, a warning for the other — so a question
-nobody could answer must never be able to produce it.
+### config/workbench_config.py
 
-`check` is that ladder for a caller that wants one answer and would rather not
-spend the round trip. The signals are exported one at a time as well, because
-the ordering belongs to the caller: `pr rebase` asks the tracker *first*, and
-before the checkout, because `fetch --prune` has just dropped the
-`origin/<branch>` that checkout would start from — its refusal has to come
-before the checkout or it never comes at all.
+The workbench's typed configuration.
 
-`Landed` carries no branch name. Each detail line describes the comparison
-rather than who was compared, so a caller pairs it with whatever it calls the
-branch and renders the two together.
+One file per scope, deep-merged and typed into ``WorkbenchConfig``. The
+dataclasses here are the single definition: they type the runtime lookups, they
+generate ``config.schema.json`` (``bin/local/generate-config-schema``), and
+their ``Phase``-keyed maps make a phase a valid config key the moment it
+becomes an enum member.
 
-### gh_client.py
+Three scopes, most specific first:
 
-One way to run gh, and the reads every caller was hand-rolling.
+    project    ``.workbench.yml`` at the work-tree root — this checkout
+    container  ``.workbench.yml`` beside a bare repo's worktrees — this repo
+    global     ``config.yml`` under the config root — every repo
 
-`ai/` invoked `gh` as a literal argv head in 45 places across 13 files, and the
-knowledge of how to do it well was spread so thin that most sites had none of
-it. Eight had no timeout at all. Four returned `(exit_code, stdout)`, so the
-stderr explaining a 5xx was discarded before any caller could render it. Retry
-existed at one site out of forty-five, which is why a secondary rate limit
-surfaced everywhere else as "no data" — indistinguishable from an empty result.
+The container scope exists only in the bare-repo worktree layout, where every
+checkout is a peer of the bare ``.git`` inside a container directory. It is the
+scope for an answer that belongs to the repo but cannot be committed to it: a
+worktree file has to be copied into each of the ~100 checkouts a monorepo
+accumulates, is absent in whichever one ``wt switch -c`` cut this morning, and
+is deleted with the worktree by ``wt remove``. A file at the container is
+outside every checkout, so it needs no gitignore entry and survives all three.
 
-The runner is `run`, and `out`, `ok`, `lines` and `json_out` are the shapes
-callers actually wanted from it. `api` and `graphql` sit above them for the
-`gh api` surface, which is most of the traffic. Below all of it are the reads
-that appeared at two or more call sites; a read used once belongs at its call
-site, spelled out with `run`.
+Ordered by specificity, so the checkout in front of you outranks the repo and
+the repo outranks the machine. A repo that is a plain clone has no container
+and keeps exactly the two scopes it always had.
 
-Retry is a property of talking to the API, so it lives with the calls that do:
-`api`, `graphql`, and the reads above that resolve against GitHub rather than
-against a local checkout. A caller driving an artifact download or reading
-gh's own configuration gets no ladder, and should not.
+Those are layers 4 through 6 of the precedence chain, behind CLI flags and env
+vars:
 
-The publishing gate is deliberately not here. `pr_comments` gates its writes on
-`publishing.enabled()` at the call site and keeps doing so — a second implicit
-gate inside the transport would make a policy decision invisible to the code
-that owns it.
+    CLI flag > WORKBENCH_AI_<PHASE>_* > WORKBENCH_AI_* > project > container > global
 
-Like `git_client`, this depends on `log` as well as `proc`, and for more of its
-surface than that one does: a rate-limit ladder that waits five minutes in
-silence reads as a hang, so the waiting is announced. Whether a *failed* call is
-worth logging remains the caller's decision, as it is there.
+so nothing here overrides a value a caller passed or exported.
 
-### git_client.py
+Bash reads through here too, rather than parsing the same files a second time:
+``lib/config.sh``'s ``wb_config_get`` and the machine profile's registry table
+both go out to ``otto-workbench config get``, which is ``lib/config_cli.py``
+over ``config_status``. A partial reader in another language is what let the
+machine profile call a repo's tracker ``unset`` while the SessionStart line in
+the same session named it — so if a bash caller needs a config value, give it
+that command rather than a third implementation of the scopes.
 
-One way to run git, and the reads every caller was hand-rolling.
+What the config *is* is here: the dataclasses, the files, the merge, and the
+key surface a dotted key is judged against. How it is *shown* —
+``config.schema.json``, the docs key reference, ``config status`` — is
+``workbench_config_report``; how it is *changed* is ``workbench_config_write``.
+Both of those import this one and neither is imported back, so the module every
+Claude hook loads on every prompt carries nothing a reader does not need.
 
-`ai/` invoked `git` as a literal argv head in 131 places across 18 files, and
-each one re-decided the same four things: whether to pass `-C` or `cwd=`,
-whether to capture, whether a non-zero exit is a failure or an answer, and what
-to do with stderr. The spread is why a fix applied to one call site — a
-timeout, a retry, quoting non-ASCII paths — was never a fix for the other
-hundred and thirty.
+### config/workbench_config_report.py
 
-The runner is `run`, and `out`, `ok` and `lines` are the three shapes callers
-actually wanted from it. Below them sit the reads that appeared at two or more
-call sites — `head_sha`, `current_branch`, `is_dirty`, `commit_exists`; a read
-used once belongs at its call site, spelled out with `run`.
+How the workbench config is shown.
 
-| Call | What it gives you |
-|---|---|
-| `run(*args, cwd=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
-| `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
-| `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
-| `lines(*args)` | Stdout split into non-empty lines. |
+Three renderings of one surface: the JSON Schema an editor validates a config
+file against, the key reference the docs print, and the resolved status
+``otto-workbench config status`` reports. All three walk ``WorkbenchConfig``
+through ``serde.classify`` rather than listing the keys a second time, so none
+of them can disagree with the config ``workbench_config.load_config`` returns.
 
-`abbrev` is the one call here that runs no git at all: it shortens a sha already
-in hand for display, the way `head_sha(short=True)` shortens one it just asked
-for. How much of a sha a reader is shown is a convention this module owns, and
-before it did, thirty-one call sites each spelled the seven out for themselves.
-`bin/local/validate-magic-values` keeps it that way: under `ai/`, slicing
-anything named for a sha to a literal length is rejected whatever the length,
-since a site free to pick eight is a site free to disagree with the rest.
+Reading only. Nothing here opens a file for writing or decides whether a key
+may be written — that is ``workbench_config_write``. The split is what the
+config *is* (``workbench_config``), how it is *shown* (here), and how it is
+*changed* (there), and it runs one way: both of the others import the config,
+neither imports this.
 
-There is no `timeout` parameter. The bound follows from the subcommand the same
-way `core.quotePath` does — `fetch` takes `TRANSFER`, the subcommands that write
-the tree or run somebody's hooks run `UNBOUNDED`, and everything else is a
-flat-cost metadata read at `LOCAL` — so the knowledge lives with the client that
-owns it rather than at every call site, one of which used to pass a number of
-its own. Where a single subcommand spans both classes the second argv word
-decides: `checkout --theirs <file>` and `stash drop` are named exceptions to the
-tier their subcommand otherwise takes.
+### config/workbench_config_write.py
 
-`config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
-`diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
-escapes a non-ASCII path in that output unless told otherwise, and an escaped
-name is not a pathspec a later `git add` can resolve — so a fix touching such a
-file was staged as nothing and reported as applied. Applying the flag to the
-subcommand rather than to each caller is what stops the next call site from
-forgetting it.
+How the workbench config is changed.
 
-Callers that still invoke git as literal argv are migrating across; a new one
-should go through the client. The one difference to know before moving a call
-site is that the client passes the worktree as `cwd` rather than as `git -C`, so
-a root that does not exist raises `FileNotFoundError` out of Python before git is
-reached rather than coming back as a non-zero exit that `out` and `ok` degrade
-away. An absent worktree is a broken caller, not a question git declined to
-answer — but a call site relying on the old degradation will start failing
-loudly.
+One dotted key at a time, into one of the three scopes ``config_scopes``
+merges, and only after the key and the value have both been judged against the
+surface that will read the file back. Every write here goes through
+``set_value``, so the yq-first ordering that preserves a hand-authored file's
+comments and the checks that keep a value nothing reads out of a shared file are
+each written once.
 
-`out` returning `default` on a non-zero exit is the one place here that
-discards a failure, and it is deliberate: it is what the wrappers it replaces
-already did, because most of these reads are questions with a reasonable
-"don't know" answer. When the exit code or stderr matters — and for a write it
-always does — call `run` and read the `CmdResult`. A yes/no read whose caller
-gates destructive or discarding work on the answer belongs in that second group
-too: through `out` its "don't know" is spelled the same way as its "no", which
-is how `is_dirty` used to report a killed `status` as a clean tree.
+Those checks are what make this its own module rather than three functions on
+the config. A key is judged against two surfaces — this checkout's
+``WorkbenchConfig`` and the schema of the workbench actually installed on the
+machine — because the file outlives the checkout that wrote it. The value is
+judged against the type the field declares, because everything arriving here is
+a string off a command line and ``serde`` replaces a scalar of the wrong type
+with the field's default rather than complaining. Reading needs neither check,
+which is why ``workbench_config`` carries no part of them.
 
-Writes are not modelled beyond `run`. Committing and pushing gets an owner of
-its own, with the publishing gate over it, rather than a convenience wrapper
-here that would turn four gate-less push sites into five.
+### config/workbench_projects.py
 
-Depends on `proc`, and on `log` for the one read that has to announce a failure
-it absorbs: `is_dirty` answering "dirty" because git never answered would
-otherwise be indistinguishable from a genuinely dirty tree. Whether any other
-failed read is worth logging stays the caller's decision, and most of them have
-already decided it is not.
+The repos on this machine that use otto-workbench — Python half.
 
-### git_topology.py
+Membership means a workbench command actually ran in a repo. This side does the
+recording for the tools written in Python: Claude's SessionStart hook, which
+already resolves the repo root, and the ``pr`` CLI, which already resolves a
+worktree root. ``lib/projects.sh`` is the shell half — it owns the one-time
+backfill, the CLI, and the reads that the machine profile generator and the
+checkout-scoped migrations make.
 
-Which directory holds which branch, and creating one when there is none.
+Both halves read and write one file named by ``workbench_paths.projects_registry()``:
+one absolute path per line, optionally followed by a tab and the repo identity
+the shell half records from the sync. This side reads the path ahead of that tab
+and writes bare paths, because resolving an identity means forking git on a
+session's startup path. Text rather than YAML because every write is an append
+and every read is a scan. ``tests/projects.bats`` cross-validates the two halves
+against the same file.
 
-Worktree and bare-repo topology, split out of `pr_context` because the resolver
-needs it rather than because it is part of resolving: nothing here reads a
-`ResolvedContext`, and every read goes to git or to worktrunk. `pr_sync` is the
-other half of that split and points the other way — it takes a resolved context
-and acts on it.
+Nothing here raises. Registration is a side effect of a command that was run for
+some other reason, and a hook that failed because a state file was unwritable
+would cost the user their session for a bookkeeping entry.
 
-The transport is plain `subprocess`: these are local reads with a `timeouts.LOCAL`
-bound, and the one unbounded call is `wt switch`, which creates a checkout.
-
-### land.py
-
-The owner of every commit a fix pass makes, and of the push under it.
-
-`push` answers whether a commit reached the remote. Nothing owned the step
-before it, so each pass wrote its own: stage, build a message, run `commit`,
-decide what an empty commit means, read HEAD back, push, and turn all of that
-into a status. Four passes did it four ways, and the differences were not
-choices — one forgot the empty-commit case, one never named a resume command,
-one read HEAD and one did not, and only one of them consulted the publishing
-gate.
-
-Landing is one act with one result. `land` performs it and `LandResult` is what
-it did, in the `CommitStatus` vocabulary land owns, so a pass records an
-outcome rather than reconstructing one from a `CmdResult` and a `PushResult`
-it has to reconcile itself.
-
-`land_head` is the same act for a caller whose commits already exist — `pr
-rebase` replays the branch's own, so it has nothing to stage and everything
-after that in common. It is also the caller that reads `LandResult.held`: with
-the gate shut, a held landing is `pr rebase --no-push` finishing exactly as
-asked rather than a push that fell short, and `resume` is the line it prints.
-
-Three rules the passes disagreed on, settled here:
-
-1. **Every outcome has a status.** `_PUSH_STATUS` maps the push owner's five
-   answers onto the commit vocabulary and a test asserts it covers the enum, so
-   a new `PushStatus` cannot arrive as a silently missing key.
-2. **Every unfinished outcome names its resume command.** `resume` is the exact
-   thing to run, as data — `push.resume_command` renders it, and a caller
-   passes it to a reviewer, a summary, or `pr status` without knowing which of
-   five ways the push fell short.
-3. **A SHA is citable only once it is on the remote.** `citable` is that rule as
-   a property. A commit link that 404s for the reviewer reading it is worse than
-   a reply deferred a round, and `PUSH_HELD`, `PUSH_LOST` and `PUSH_UNVERIFIED`
-   all leave a SHA that only exists locally.
-
-The commit is ungated and the push is gated, which is the split every caller
-wants and only one of them implemented. A local commit asserts nothing to
-anybody: it makes the pass's work reviewable and durable, and it keeps the next
-round from reading its own dirty tree as a refused commit. The push is the
-outward act, so it waits for the same permission every posted comment waits for.
-`gated=True` is therefore the answer for a pass that runs on somebody's behalf,
-and the entry point opens the gate under `--post`.
-
-`paths` decides the commit's scope. `None` stages the whole tree, which is what
-a pass owning the worktree wants. A list stages exactly those paths as literal
-pathspecs, which is what a pass that computed a snapshot difference wants — it
-is the only thing keeping a build artifact or unrelated work in progress out of
-a commit the pass then pushes.
-
-Two conditions raise rather than returning a status, because neither is an
-outcome: a `git add` that fails, and a HEAD that will not read back after a
-commit git said it made. Both mean the repository is not answering, and a pass
-that treats them as "nothing to commit" reports success having lost the work.
-
-Two things can happen around a landing that are not the landing, and both are
-options rather than defaults, because a caller that does not ask for them wants
-the plain answer:
-
-- `regen` — a pre-push hook that rewrites generated files leaves the tree dirty
-  and the push refused, and the commit underneath it was fine. Naming a message
-  commits what the hook wrote and pushes once more. The retry reports the
-  original commit, which is the one the caller's entries are stamped with; the
-  regeneration rides above it. The retry is abandoned rather than attempted when
-  committing the regenerated files leaves the tree dirty anyway — a hook reads
-  the worktree and not the commits under it, so pushing then sends a HEAD the
-  green run never saw.
-- `recover_from` — the agent a fix pass ran committed its own work, so the pass
-  finds nothing to commit and has a commit it did not make to account for.
-  Naming the HEAD from before the pass lets the owner attribute and push it.
-  Recovery only ever *adds* information: it never overwrites what the caller's
-  own commit attempt concluded, because reporting `no_changes` over a commit a
-  hook rejected publishes "nothing needed doing" about work that was refused.
-
-### log.py
+### core/log.py
 
 Centralized human-facing stderr output for otto-workbench AI scripts.
 
 NOT for structured event logging — use trail.py for that.
 
-### numstat.py
-
-What `git diff --numstat` says a change set touched.
-
-Read by every caller that has to size a diff before anything looks at it — the
-review pipeline from a worktree, and the GitHub reads from the API's own
-numstat. One reader so the two agree on what a binary file counts as.
-
-### proc.py
+### core/proc.py
 
 One type for what a subprocess said, and one helper for running it.
 
@@ -2333,7 +2222,467 @@ Stdlib only, deliberately. This is the module everything else in `ai/lib`
 should be free to depend on, and pulling in `log`, `ai_usage`, or
 `workbench_paths` from here would make that impossible.
 
-### push.py
+### core/run_lock.py
+
+Advisory whole-run lock, scoped to what a run targets.
+
+Two concurrent runs against one PR corrupt each other: they both
+read-modify-write that target's ``state.json``, and with ``--fix`` they both
+edit and commit the same checkout. This serializes them at the process level —
+a second run refuses to start rather than interleaving.
+
+The lock is keyed on the target, not the caller: ``pr review 2973`` from a repo
+root and ``pr review --self`` from inside the PR's own worktree take the same
+lock, while reviews of two different PRs launched from one directory take two.
+
+Uses ``fcntl.flock`` on ``<target_dir>/run.lock``. The kernel drops the lock
+when the holder exits for any reason, including SIGKILL, so there is no
+stale-lock state to reap.
+
+``claude-review`` (both its PR and its ``--self`` paths), ``ci-check`` and
+``review-threads`` take the lock themselves, so invoking those three directly is
+guarded too. When ``pr`` launched them they resolve the same target, compute the
+same key, find it in ``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead
+of deadlocking against the lock their own parent holds.
+
+That list is exhaustive, not an example: ``pr-rebase`` and ``pr-describe`` are
+delegates that take no lock of their own, so running either directly is
+unguarded and only ``pr rebase`` / ``pr describe`` serialize them.
+
+### core/schema_gen.py
+
+JSON Schema generation from Python dataclasses.
+
+Produces JSON Schema from dataclass definitions, describing the documents
+`serde` will accept for them. `serde.classify` owns what a type hint means;
+this module only decides how each kind is written down, so the schema a model
+reads and the reader that accepts the model's answer cannot disagree about
+which shapes are legal. Both dispatch on `classify`'s one answer, so a new
+`HintKind` fails a test in every module that has to handle it.
+
+One case needs the dataclass's help. A class that reads more than one stored
+shape through `_from_raw` — a legacy string, a renamed key — is the only thing
+that knows what those shapes are, so it also defines
+`_raw_schema(object_schema)`, returning the widened fragment. Without it the
+published schema would call a document invalid that `serde` reads without
+complaint; a test fails any `_from_raw` class in `ai/lib/` that does not define
+one.
+
+This is what fills the output schema half of a tool's `--tool-schema` contract —
+see `tool_parser`.
+
+### core/serde.py
+
+Generic dataclass serialization with enum support.
+
+Replaces hand-written _to_dict/_from_dict pairs. Uses dataclasses.asdict()
+for serialization and type-hint-driven reconstruction for deserialization.
+
+`classify` is the type-hint walk itself, exported because reading a value is
+not the only thing that has to know what an annotation means — `schema_gen`
+describes the same hints to a model and dispatches on the same answer.
+
+### core/text.py
+
+Text a human reads, formatted the same way wherever it is written.
+
+Stdlib only, and no domain vocabulary: what lives here is the formatting a
+count or a phrase needs before it reaches a log line, a PR comment or a review
+document, so a module that only wants to say "3 findings" does not have to
+import the review layer to say it.
+
+### core/timeouts.py
+
+How long a subprocess may run, decided once instead of at every call site.
+
+`ai/` decided this in 22 places and four different ways: constants scoped to one
+module, bare literals at the call site, a caller-supplied argument, and — for
+most of the git client — nothing at all. The same operation got a different
+bound depending on which file it was called from; a single `gh api` round trip
+was 30s in `review_github`, 10s in `pr-rebase`, and 10s in `retro-scan`. No
+principle separated those numbers. They were what whoever wrote each site
+happened to pick.
+
+Leaving the choice with callers is what produced the spread, so the fix is not a
+better default for `timeout=` — it is taking the decision away from the call
+site. A caller picks a tier that describes its operation; it does not pick a
+number.
+
+The tempting axis for those tiers is how long the work takes. The axis that
+actually predicts the right answer is **what bounds the cost**:
+
+| Tier | For | Why |
+|---|---|---|
+| `QUICK` | A `--value-flags` probe, a session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
+| `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
+| `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
+| `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
+| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add` | A bound would be wrong, not merely large. |
+
+For the first three tiers the cost is the same whatever the repository holds, so
+a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
+and a timeout is a hang detector. For the last two the cost is whatever the input
+costs, and a breach is indistinguishable from "the repository is large" or "this
+repo's pre-commit hook runs a test suite". A fixed timeout there silently
+converts a large repo into a broken tool, which is why `UNBOUNDED` exists and is
+spelled out rather than omitted.
+
+`bin/local/validate-timeouts` holds the table's monopoly: it rejects a numeric
+literal and a bare `None` on any `timeout=` argument under `ai/`, and rejects a
+`proc.run` or `subprocess.run` call that writes no `timeout=` at all. Reading
+only the bounds that were written down left the omission invisible, which is the
+case this table exists to eliminate — a call with no bound is indistinguishable
+from nobody having thought about one. Nothing under `ai/` is exempt.
+`ai/claude/mcps/server.py` was, on the reading that running under
+`uv run --no-project` put `ai/lib` out of its reach — but it puts that directory
+on `sys.path` itself, which is how it imports `tool_registry`, so `timeouts`
+came along with it and the exemption only meant the file went unchecked.
+
+Three numbers deliberately stay outside it. `ci-check --wait-timeout`,
+`eval_task.EVAL_CASE_BUDGET` and the MCP server's `TOOL_CALL_BUDGET` are
+deadlines for work that could reasonably keep going, not bounds on a subprocess
+that should already have answered; they say how long something is *worth*, which
+is a different question.
+
+Stdlib-only and importing nothing, so that `proc`, `git_client`, and everything
+built on them can depend on it without a cycle.
+
+### core/tool_parser.py
+
+ToolParser — drop-in argparse replacement with self-description.
+
+Two hidden flags let one script read another's argparse parser rather than keep
+a mirror of it. Both are answered here, and any script built on ``ToolParser``
+supports both for free.
+
+``--tool-schema`` emits a JSON document describing the tool's name, description,
+input schema (derived from argparse actions), and output schema (explicitly
+annotated). It is how the MCP server discovers tools — it probes every
+executable in the workbench's component ``bin/`` directories, plus any
+``tool_dirs`` adds — and it is what a skill's ``output_schema`` cites.
+
+MCP discovery only probes scripts whose source names ``ToolParser`` or
+``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
+the protocol some other way will not be discovered. Naming the flag in a script
+under one of those directories is therefore a claim, and
+``bin/local/validate-tool-schema`` holds the build to it: it probes every
+candidate discovery would and fails when one cannot answer.
+``bin/local/validate-skills`` asserts the converse for the tool a skill's
+``output_schema`` names — that one must implement the protocol whether or not it
+carries a marker, or the skill cites a contract nothing publishes.
+
+The output schema is generated from the tool's dataclass by ``schema_gen``,
+which describes what ``serde`` will accept for each field rather than deciding
+that for itself.
+
+``--value-flags`` prints one option string per line: every option of that parser
+that consumes a following value. ``pr`` asks a delegate this before deciding
+whether a bare token is the command's target or some other flag's argument.
+Without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR number
+and swallows it.
+
+The two stay separate on purpose. ``--tool-schema`` is keyed by ``dest``, drops
+``help=SUPPRESS`` actions, and loses option aliases, so arity cannot be
+recovered from it faithfully — and declaring it also enrolls a script in MCP
+discovery, which is not a side effect an arity probe should carry.
+
+A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
+in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
+the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
+``pr`` falls back to its arity-blind scan — no error, just the occasional flag
+value classified as the command's target. A ``ToolParser`` script answers the
+flag without opting in.
+
+One constraint comes with the protocol: every *option* the parser declares must
+consume exactly one value. A flat list of option strings cannot express
+``nargs='?'``, ``'+'``, ``'*'``, or an int above 1, so the probe refuses to
+answer rather than report a wrong arity — it names the offending option on
+stderr, exits 2, and ``pr`` reprints the message before degrading. Positionals
+are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
+
+Argparse introspection that reaches past the public API is collected here —
+``value_taking_options`` and ``subparsers`` — so a caller never has to.
+
+``enum_arg`` is here for the same reason from the other side: it is the argparse
+``type`` every enum-valued option in the workbench is declared with, so the
+message a bad value gets is written once rather than per parser.
+
+### core/trail.py
+
+Structured trail logging for otto-workbench AI scripts.
+
+Every script appends to one root, ``workbench_paths.trail_dir()``, in a file
+named for the emitting event's UTC month. Months past ``TRAIL_KEEP_MONTHS``
+are dropped as runs start, so the root stays bounded whatever writes to it.
+The --debug flag controls stderr echo only; whether a run is recorded at all
+is the caller's ``record`` argument to ``Trail.start``.
+
+One root for every script — ``~/.local/state/workbench/trail/YYYY-MM.jsonl``,
+one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
+repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
+terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
+
+The root keeps six months, counting the month in progress
+(``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it
+opens, so growth is bounded whatever writes to the root, and
+``otto-log prune --keep <n>`` sweeps at a horizon you name when a machine is
+short of space. A file whose stem is not a month — ``legacy.jsonl``, where the
+cutover migration parked the pre-cutover history — is never dropped: its name
+cannot place it in time, and nothing appends to it, so it is a fixed size
+rather than a source of growth.
+
+### core/workbench_paths.py
+
+Where the workbench keeps things.
+
+Three user-level roots — config, state, and cache — each resolving through the
+same chain:
+
+    WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
+
+This module is the Python owner of those roots. Two other definitions express
+the same chain and must stay in step: ``lib/constants.sh`` for shell, and
+``zsh/config.d/aliases/docker.zsh``, which cannot source ``constants.sh`` at
+shell startup. ``tests/workbench_roots.bats`` cross-validates all three.
+
+Roots are resolved per call rather than frozen into module constants: the
+environment is routinely set after import — by tests, and by callers that
+re-point a root before invoking a subprocess — and an import-time constant
+would capture whichever value happened to be live when the first importer
+loaded this module.
+
+### gh/client.py
+
+One way to run gh, and the reads every caller was hand-rolling.
+
+`ai/` invoked `gh` as a literal argv head in 45 places across 13 files, and the
+knowledge of how to do it well was spread so thin that most sites had none of
+it. Eight had no timeout at all. Four returned `(exit_code, stdout)`, so the
+stderr explaining a 5xx was discarded before any caller could render it. Retry
+existed at one site out of forty-five, which is why a secondary rate limit
+surfaced everywhere else as "no data" — indistinguishable from an empty result.
+
+The runner is `run`, and `out`, `ok`, `lines` and `json_out` are the shapes
+callers actually wanted from it. `api` and `graphql` sit above them for the
+`gh api` surface, which is most of the traffic. Below all of it are the reads
+that appeared at two or more call sites; a read used once belongs at its call
+site, spelled out with `run`.
+
+Retry is a property of talking to the API, so it lives with the calls that do:
+`api`, `graphql`, and the reads above that resolve against GitHub rather than
+against a local checkout. A caller driving an artifact download or reading
+gh's own configuration gets no ladder, and should not.
+
+The publishing gate is deliberately not here. `pr_comments` gates its writes on
+`publishing.enabled()` at the call site and keeps doing so — a second implicit
+gate inside the transport would make a policy decision invisible to the code
+that owns it.
+
+Like `git_client`, this depends on `log` as well as `proc`, and for more of its
+surface than that one does: a rate-limit ladder that waits five minutes in
+silence reads as a hang, so the waiting is announced. Whether a *failed* call is
+worth logging remains the caller's decision, as it is there.
+
+### gh/landed.py
+
+Whether a branch's work is already in the ref it would be measured against.
+
+Two callers ask this, for opposite reasons, and neither can answer it alone.
+`pr rebase` asks so it can refuse: replaying a branch whose work already landed
+force-pushes back a remote branch the merge deleted. `push_intent` asks so it
+can stay quiet: a recorded push the remote no longer has a ref for looks exactly
+like a push that vanished, and every squash-merged branch in a repo that deletes
+its head refs would otherwise be reported as one.
+
+Three signals, in the order `check` tries them, none of them sufficient alone:
+
+* `diff_is_empty` — the trees match. Catches a squash merge, whose commits are
+  unreachable from the squashed commit, so nothing comparing commits notices the
+  work arrive. Stops answering once the target ref moves on with unrelated work.
+* `all_commits_upstream` — every commit has an equivalent patch id upstream.
+  Catches a rebase or a merge-commit landing, and survives the target moving on.
+  Misses a squash, which leaves no per-commit equivalent to match.
+* `merged_pr` — GitHub says the PR merged. The only signal that survives a
+  squash merge once the target ref has moved on, and the only one that costs a
+  round trip, which is why the ladder reaches it last.
+
+Every one of them answers "no" rather than raising when it cannot ask: a ref
+that does not resolve, a base that was never fetched, a `gh` that is absent,
+unauthenticated or rate-limited. "Landed" is the answer that suppresses
+something — a refusal for one caller, a warning for the other — so a question
+nobody could answer must never be able to produce it.
+
+`check` is that ladder for a caller that wants one answer and would rather not
+spend the round trip. The signals are exported one at a time as well, because
+the ordering belongs to the caller: `pr rebase` asks the tracker *first*, and
+before the checkout, because `fetch --prune` has just dropped the
+`origin/<branch>` that checkout would start from — its refusal has to come
+before the checkout or it never comes at all.
+
+`Landed` carries no branch name. Each detail line describes the comparison
+rather than who was compared, so a caller pairs it with whatever it calls the
+branch and renders the two together.
+
+### git/client.py
+
+One way to run git, and the reads every caller was hand-rolling.
+
+`ai/` invoked `git` as a literal argv head in 131 places across 18 files, and
+each one re-decided the same four things: whether to pass `-C` or `cwd=`,
+whether to capture, whether a non-zero exit is a failure or an answer, and what
+to do with stderr. The spread is why a fix applied to one call site — a
+timeout, a retry, quoting non-ASCII paths — was never a fix for the other
+hundred and thirty.
+
+The runner is `run`, and `out`, `ok` and `lines` are the three shapes callers
+actually wanted from it. Below them sit the reads that appeared at two or more
+call sites — `head_sha`, `current_branch`, `is_dirty`, `commit_exists`; a read
+used once belongs at its call site, spelled out with `run`.
+
+| Call | What it gives you |
+|---|---|
+| `run(*args, cwd=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
+| `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
+| `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
+| `lines(*args)` | Stdout split into non-empty lines. |
+
+`abbrev` is the one call here that runs no git at all: it shortens a sha already
+in hand for display, the way `head_sha(short=True)` shortens one it just asked
+for. How much of a sha a reader is shown is a convention this module owns, and
+before it did, thirty-one call sites each spelled the seven out for themselves.
+`bin/local/validate-magic-values` keeps it that way: under `ai/`, slicing
+anything named for a sha to a literal length is rejected whatever the length,
+since a site free to pick eight is a site free to disagree with the rest.
+
+There is no `timeout` parameter. The bound follows from the subcommand the same
+way `core.quotePath` does — `fetch` takes `TRANSFER`, the subcommands that write
+the tree or run somebody's hooks run `UNBOUNDED`, and everything else is a
+flat-cost metadata read at `LOCAL` — so the knowledge lives with the client that
+owns it rather than at every call site, one of which used to pass a number of
+its own. Where a single subcommand spans both classes the second argv word
+decides: `checkout --theirs <file>` and `stash drop` are named exceptions to the
+tier their subcommand otherwise takes.
+
+`config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
+`diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
+escapes a non-ASCII path in that output unless told otherwise, and an escaped
+name is not a pathspec a later `git add` can resolve — so a fix touching such a
+file was staged as nothing and reported as applied. Applying the flag to the
+subcommand rather than to each caller is what stops the next call site from
+forgetting it.
+
+Callers that still invoke git as literal argv are migrating across; a new one
+should go through the client. The one difference to know before moving a call
+site is that the client passes the worktree as `cwd` rather than as `git -C`, so
+a root that does not exist raises `FileNotFoundError` out of Python before git is
+reached rather than coming back as a non-zero exit that `out` and `ok` degrade
+away. An absent worktree is a broken caller, not a question git declined to
+answer — but a call site relying on the old degradation will start failing
+loudly.
+
+`out` returning `default` on a non-zero exit is the one place here that
+discards a failure, and it is deliberate: it is what the wrappers it replaces
+already did, because most of these reads are questions with a reasonable
+"don't know" answer. When the exit code or stderr matters — and for a write it
+always does — call `run` and read the `CmdResult`. A yes/no read whose caller
+gates destructive or discarding work on the answer belongs in that second group
+too: through `out` its "don't know" is spelled the same way as its "no", which
+is how `is_dirty` used to report a killed `status` as a clean tree.
+
+Writes are not modelled beyond `run`. Committing and pushing gets an owner of
+its own, with the publishing gate over it, rather than a convenience wrapper
+here that would turn four gate-less push sites into five.
+
+Depends on `proc`, and on `log` for the one read that has to announce a failure
+it absorbs: `is_dirty` answering "dirty" because git never answered would
+otherwise be indistinguishable from a genuinely dirty tree. Whether any other
+failed read is worth logging stays the caller's decision, and most of them have
+already decided it is not.
+
+### git/land.py
+
+The owner of every commit a fix pass makes, and of the push under it.
+
+`push` answers whether a commit reached the remote. Nothing owned the step
+before it, so each pass wrote its own: stage, build a message, run `commit`,
+decide what an empty commit means, read HEAD back, push, and turn all of that
+into a status. Four passes did it four ways, and the differences were not
+choices — one forgot the empty-commit case, one never named a resume command,
+one read HEAD and one did not, and only one of them consulted the publishing
+gate.
+
+Landing is one act with one result. `land` performs it and `LandResult` is what
+it did, in the `CommitStatus` vocabulary land owns, so a pass records an
+outcome rather than reconstructing one from a `CmdResult` and a `PushResult`
+it has to reconcile itself.
+
+`land_head` is the same act for a caller whose commits already exist — `pr
+rebase` replays the branch's own, so it has nothing to stage and everything
+after that in common. It is also the caller that reads `LandResult.held`: with
+the gate shut, a held landing is `pr rebase --no-push` finishing exactly as
+asked rather than a push that fell short, and `resume` is the line it prints.
+
+Three rules the passes disagreed on, settled here:
+
+1. **Every outcome has a status.** `_PUSH_STATUS` maps the push owner's five
+   answers onto the commit vocabulary and a test asserts it covers the enum, so
+   a new `PushStatus` cannot arrive as a silently missing key.
+2. **Every unfinished outcome names its resume command.** `resume` is the exact
+   thing to run, as data — `push.resume_command` renders it, and a caller
+   passes it to a reviewer, a summary, or `pr status` without knowing which of
+   five ways the push fell short.
+3. **A SHA is citable only once it is on the remote.** `citable` is that rule as
+   a property. A commit link that 404s for the reviewer reading it is worse than
+   a reply deferred a round, and `PUSH_HELD`, `PUSH_LOST` and `PUSH_UNVERIFIED`
+   all leave a SHA that only exists locally.
+
+The commit is ungated and the push is gated, which is the split every caller
+wants and only one of them implemented. A local commit asserts nothing to
+anybody: it makes the pass's work reviewable and durable, and it keeps the next
+round from reading its own dirty tree as a refused commit. The push is the
+outward act, so it waits for the same permission every posted comment waits for.
+`gated=True` is therefore the answer for a pass that runs on somebody's behalf,
+and the entry point opens the gate under `--post`.
+
+`paths` decides the commit's scope. `None` stages the whole tree, which is what
+a pass owning the worktree wants. A list stages exactly those paths as literal
+pathspecs, which is what a pass that computed a snapshot difference wants — it
+is the only thing keeping a build artifact or unrelated work in progress out of
+a commit the pass then pushes.
+
+Two conditions raise rather than returning a status, because neither is an
+outcome: a `git add` that fails, and a HEAD that will not read back after a
+commit git said it made. Both mean the repository is not answering, and a pass
+that treats them as "nothing to commit" reports success having lost the work.
+
+Two things can happen around a landing that are not the landing, and both are
+options rather than defaults, because a caller that does not ask for them wants
+the plain answer:
+
+- `regen` — a pre-push hook that rewrites generated files leaves the tree dirty
+  and the push refused, and the commit underneath it was fine. Naming a message
+  commits what the hook wrote and pushes once more. The retry reports the
+  original commit, which is the one the caller's entries are stamped with; the
+  regeneration rides above it. The retry is abandoned rather than attempted when
+  committing the regenerated files leaves the tree dirty anyway — a hook reads
+  the worktree and not the commits under it, so pushing then sends a HEAD the
+  green run never saw.
+- `recover_from` — the agent a fix pass ran committed its own work, so the pass
+  finds nothing to commit and has a commit it did not make to account for.
+  Naming the HEAD from before the pass lets the owner attribute and push it.
+  Recovery only ever *adds* information: it never overwrites what the caller's
+  own commit attempt concluded, because reporting `no_changes` over a commit a
+  hook rejected publishes "nothing needed doing" about work that was refused.
+
+### git/numstat.py
+
+What `git diff --numstat` says a change set touched.
+
+Read by every caller that has to size a diff before anything looks at it — the
+review pipeline from a worktree, and the GitHub reads from the API's own
+numstat. One reader so the two agree on what a binary file counts as.
+
+### git/push.py
 
 The owner of every push this workbench issues, and the only thing that
 checks one landed.
@@ -2406,7 +2755,20 @@ since a second implementation in shell is the thing being avoided. It takes
 `--cwd`, `--branch`, `--remote` and `--set-upstream`, runs ungated, and answers
 in exit codes — `0` pushed, `1` refused, `2` lost, `3` unverified.
 
-### push_intent.py
+### git/topology.py
+
+Which directory holds which branch, and creating one when there is none.
+
+Worktree and bare-repo topology, split out of `pr_context` because the resolver
+needs it rather than because it is part of resolving: nothing here reads a
+`ResolvedContext`, and every read goes to git or to worktrunk. `pr_sync` is the
+other half of that split and points the other way — it takes a resolved context
+and acts on it.
+
+The transport is plain `subprocess`: these are local reads with a `timeouts.LOCAL`
+bound, and the one unbounded call is `wt switch`, which creates a checkout.
+
+### pr/push_intent.py
 
 What every push on this machine was about to do, and whether it did it.
 
@@ -2468,7 +2830,7 @@ escaping exception would take the whole CLI down over a side-feature. Warning
 rather than passing is what keeps a bug in here loud without coupling anything
 to it.
 
-### retro_github.py
+### retro/github.py
 
 Fetching a repo's recent review activity from GitHub.
 
@@ -2482,7 +2844,7 @@ thumbs-up, a bare "nit") is part of producing that plain comment dict, so it
 lives here too — every fetch path in this module needs it applied the same
 way before a comment is fit to compare against a rule.
 
-### retro_report.py
+### retro/report.py
 
 Rendering a retro scan's findings into the markdown report retro-scan prints.
 
@@ -2491,7 +2853,7 @@ and lays them out as headed sections — comments by repo, a rules-coverage
 table, and repeated themes. Deciding which rule a comment is nearest to is
 `retro_rules`'; this module only renders what was already decided.
 
-### retro_reviews.py
+### retro/reviews.py
 
 Turning locally-saved reviews into the same comment shape GitHub PRs produce.
 
@@ -2501,7 +2863,7 @@ renders a local self-review indistinguishably from a GitHub one. Deciding
 which rule a finding is nearest to is `retro_rules`'; matching the comment to
 the exact bullet on the page is `retro_report`'s.
 
-### retro_rules.py
+### retro/rules.py
 
 Matching review-comment text against the workbench's coding rules.
 
@@ -2510,365 +2872,3 @@ the rule nearest a piece of comment text by keyword overlap. `extract_keywords`
 is the vocabulary primitive both rule loading and bullet matching are built
 on — `retro_report` reuses it to find which bullet inside a matched rule is
 closest to the comment being annotated.
-
-### run_lock.py
-
-Advisory whole-run lock, scoped to what a run targets.
-
-Two concurrent runs against one PR corrupt each other: they both
-read-modify-write that target's ``state.json``, and with ``--fix`` they both
-edit and commit the same checkout. This serializes them at the process level —
-a second run refuses to start rather than interleaving.
-
-The lock is keyed on the target, not the caller: ``pr review 2973`` from a repo
-root and ``pr review --self`` from inside the PR's own worktree take the same
-lock, while reviews of two different PRs launched from one directory take two.
-
-Uses ``fcntl.flock`` on ``<target_dir>/run.lock``. The kernel drops the lock
-when the holder exits for any reason, including SIGKILL, so there is no
-stale-lock state to reap.
-
-``claude-review`` (both its PR and its ``--self`` paths), ``ci-check`` and
-``review-threads`` take the lock themselves, so invoking those three directly is
-guarded too. When ``pr`` launched them they resolve the same target, compute the
-same key, find it in ``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead
-of deadlocking against the lock their own parent holds.
-
-That list is exhaustive, not an example: ``pr-rebase`` and ``pr-describe`` are
-delegates that take no lock of their own, so running either directly is
-unguarded and only ``pr rebase`` / ``pr describe`` serialize them.
-
-### schema_gen.py
-
-JSON Schema generation from Python dataclasses.
-
-Produces JSON Schema from dataclass definitions, describing the documents
-`serde` will accept for them. `serde.classify` owns what a type hint means;
-this module only decides how each kind is written down, so the schema a model
-reads and the reader that accepts the model's answer cannot disagree about
-which shapes are legal. Both dispatch on `classify`'s one answer, so a new
-`HintKind` fails a test in every module that has to handle it.
-
-One case needs the dataclass's help. A class that reads more than one stored
-shape through `_from_raw` — a legacy string, a renamed key — is the only thing
-that knows what those shapes are, so it also defines
-`_raw_schema(object_schema)`, returning the widened fragment. Without it the
-published schema would call a document invalid that `serde` reads without
-complaint; a test fails any `_from_raw` class in `ai/lib/` that does not define
-one.
-
-This is what fills the output schema half of a tool's `--tool-schema` contract —
-see `tool_parser`.
-
-### serde.py
-
-Generic dataclass serialization with enum support.
-
-Replaces hand-written _to_dict/_from_dict pairs. Uses dataclasses.asdict()
-for serialization and type-hint-driven reconstruction for deserialization.
-
-`classify` is the type-hint walk itself, exported because reading a value is
-not the only thing that has to know what an annotation means — `schema_gen`
-describes the same hints to a model and dispatches on the same answer.
-
-### text.py
-
-Text a human reads, formatted the same way wherever it is written.
-
-Stdlib only, and no domain vocabulary: what lives here is the formatting a
-count or a phrase needs before it reaches a log line, a PR comment or a review
-document, so a module that only wants to say "3 findings" does not have to
-import the review layer to say it.
-
-### timeouts.py
-
-How long a subprocess may run, decided once instead of at every call site.
-
-`ai/` decided this in 22 places and four different ways: constants scoped to one
-module, bare literals at the call site, a caller-supplied argument, and — for
-most of the git client — nothing at all. The same operation got a different
-bound depending on which file it was called from; a single `gh api` round trip
-was 30s in `review_github`, 10s in `pr-rebase`, and 10s in `retro-scan`. No
-principle separated those numbers. They were what whoever wrote each site
-happened to pick.
-
-Leaving the choice with callers is what produced the spread, so the fix is not a
-better default for `timeout=` — it is taking the decision away from the call
-site. A caller picks a tier that describes its operation; it does not pick a
-number.
-
-The tempting axis for those tiers is how long the work takes. The axis that
-actually predicts the right answer is **what bounds the cost**:
-
-| Tier | For | Why |
-|---|---|---|
-| `QUICK` | A `--value-flags` probe, a session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
-| `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
-| `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
-| `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
-| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add` | A bound would be wrong, not merely large. |
-
-For the first three tiers the cost is the same whatever the repository holds, so
-a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
-and a timeout is a hang detector. For the last two the cost is whatever the input
-costs, and a breach is indistinguishable from "the repository is large" or "this
-repo's pre-commit hook runs a test suite". A fixed timeout there silently
-converts a large repo into a broken tool, which is why `UNBOUNDED` exists and is
-spelled out rather than omitted.
-
-`bin/local/validate-timeouts` holds the table's monopoly: it rejects a numeric
-literal and a bare `None` on any `timeout=` argument under `ai/`, and rejects a
-`proc.run` or `subprocess.run` call that writes no `timeout=` at all. Reading
-only the bounds that were written down left the omission invisible, which is the
-case this table exists to eliminate — a call with no bound is indistinguishable
-from nobody having thought about one. Nothing under `ai/` is exempt.
-`ai/claude/mcps/server.py` was, on the reading that running under
-`uv run --no-project` put `ai/lib` out of its reach — but it puts that directory
-on `sys.path` itself, which is how it imports `tool_registry`, so `timeouts`
-came along with it and the exemption only meant the file went unchecked.
-
-Three numbers deliberately stay outside it. `ci-check --wait-timeout`,
-`eval_task.EVAL_CASE_BUDGET` and the MCP server's `TOOL_CALL_BUDGET` are
-deadlines for work that could reasonably keep going, not bounds on a subprocess
-that should already have answered; they say how long something is *worth*, which
-is a different question.
-
-Stdlib-only and importing nothing, so that `proc`, `git_client`, and everything
-built on them can depend on it without a cycle.
-
-### tool_parser.py
-
-ToolParser — drop-in argparse replacement with self-description.
-
-Two hidden flags let one script read another's argparse parser rather than keep
-a mirror of it. Both are answered here, and any script built on ``ToolParser``
-supports both for free.
-
-``--tool-schema`` emits a JSON document describing the tool's name, description,
-input schema (derived from argparse actions), and output schema (explicitly
-annotated). It is how the MCP server discovers tools — it probes every
-executable in the workbench's component ``bin/`` directories, plus any
-``tool_dirs`` adds — and it is what a skill's ``output_schema`` cites.
-
-MCP discovery only probes scripts whose source names ``ToolParser`` or
-``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
-the protocol some other way will not be discovered. Naming the flag in a script
-under one of those directories is therefore a claim, and
-``bin/local/validate-tool-schema`` holds the build to it: it probes every
-candidate discovery would and fails when one cannot answer.
-``bin/local/validate-skills`` asserts the converse for the tool a skill's
-``output_schema`` names — that one must implement the protocol whether or not it
-carries a marker, or the skill cites a contract nothing publishes.
-
-The output schema is generated from the tool's dataclass by ``schema_gen``,
-which describes what ``serde`` will accept for each field rather than deciding
-that for itself.
-
-``--value-flags`` prints one option string per line: every option of that parser
-that consumes a following value. ``pr`` asks a delegate this before deciding
-whether a bare token is the command's target or some other flag's argument.
-Without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR number
-and swallows it.
-
-The two stay separate on purpose. ``--tool-schema`` is keyed by ``dest``, drops
-``help=SUPPRESS`` actions, and loses option aliases, so arity cannot be
-recovered from it faithfully — and declaring it also enrolls a script in MCP
-discovery, which is not a side effect an arity probe should carry.
-
-A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
-in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
-the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
-``pr`` falls back to its arity-blind scan — no error, just the occasional flag
-value classified as the command's target. A ``ToolParser`` script answers the
-flag without opting in.
-
-One constraint comes with the protocol: every *option* the parser declares must
-consume exactly one value. A flat list of option strings cannot express
-``nargs='?'``, ``'+'``, ``'*'``, or an int above 1, so the probe refuses to
-answer rather than report a wrong arity — it names the offending option on
-stderr, exits 2, and ``pr`` reprints the message before degrading. Positionals
-are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
-
-Argparse introspection that reaches past the public API is collected here —
-``value_taking_options`` and ``subparsers`` — so a caller never has to.
-
-``enum_arg`` is here for the same reason from the other side: it is the argparse
-``type`` every enum-valued option in the workbench is declared with, so the
-message a bad value gets is written once rather than per parser.
-
-### tool_registry.py
-
-What the tool registries say about the scripts an MCP client may reach.
-
-The ``*/registry.yml`` files already document every workbench script: a
-description, and for the ones meant to be reached directly a ``when_to_use``
-and a ``usage`` line. ``visibility`` is the field that says who a tool is for —
-``full`` and ``brief`` entries are rendered into the rules Claude loads,
-``hidden`` ones are implementation details of another tool and are rendered
-nowhere.
-
-The MCP server reads the same field, so a tool hidden from a reader is also
-absent from ``tools/list``. Registering a script is the act that offers it. The
-alternative — every marker-bearing script exposed — puts ``ci-check``,
-``pr-rebase`` and ``pr-describe`` in front of a client as peers of ``pr``, the
-CLI whose subcommands run them, and a client picking between them is choosing
-between a tool and its own internals.
-
-Only ``meta.validation: bindir`` registries are read. That value is the
-declaration that ``meta.source`` is a directory of executables with one
-``tools[]`` entry per file, which is exactly the mapping wanted here, and
-``bin/local/validate-registries`` already enforces both directions of it — so
-the paths built below cannot drift from the files on disk.
-
-### trail.py
-
-Structured trail logging for otto-workbench AI scripts.
-
-Every script appends to one root, ``workbench_paths.trail_dir()``, in a file
-named for the emitting event's UTC month. Months past ``TRAIL_KEEP_MONTHS``
-are dropped as runs start, so the root stays bounded whatever writes to it.
-The --debug flag controls stderr echo only; whether a run is recorded at all
-is the caller's ``record`` argument to ``Trail.start``.
-
-One root for every script — ``~/.local/state/workbench/trail/YYYY-MM.jsonl``,
-one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
-repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
-terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
-
-The root keeps six months, counting the month in progress
-(``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it
-opens, so growth is bounded whatever writes to the root, and
-``otto-log prune --keep <n>`` sweeps at a horizon you name when a machine is
-short of space. A file whose stem is not a month — ``legacy.jsonl``, where the
-cutover migration parked the pre-cutover history — is never dropped: its name
-cannot place it in time, and nothing appends to it, so it is a fixed size
-rather than a source of growth.
-
-### workbench_config.py
-
-The workbench's typed configuration.
-
-One file per scope, deep-merged and typed into ``WorkbenchConfig``. The
-dataclasses here are the single definition: they type the runtime lookups, they
-generate ``config.schema.json`` (``bin/local/generate-config-schema``), and
-their ``Phase``-keyed maps make a phase a valid config key the moment it
-becomes an enum member.
-
-Three scopes, most specific first:
-
-    project    ``.workbench.yml`` at the work-tree root — this checkout
-    container  ``.workbench.yml`` beside a bare repo's worktrees — this repo
-    global     ``config.yml`` under the config root — every repo
-
-The container scope exists only in the bare-repo worktree layout, where every
-checkout is a peer of the bare ``.git`` inside a container directory. It is the
-scope for an answer that belongs to the repo but cannot be committed to it: a
-worktree file has to be copied into each of the ~100 checkouts a monorepo
-accumulates, is absent in whichever one ``wt switch -c`` cut this morning, and
-is deleted with the worktree by ``wt remove``. A file at the container is
-outside every checkout, so it needs no gitignore entry and survives all three.
-
-Ordered by specificity, so the checkout in front of you outranks the repo and
-the repo outranks the machine. A repo that is a plain clone has no container
-and keeps exactly the two scopes it always had.
-
-Those are layers 4 through 6 of the precedence chain, behind CLI flags and env
-vars:
-
-    CLI flag > WORKBENCH_AI_<PHASE>_* > WORKBENCH_AI_* > project > container > global
-
-so nothing here overrides a value a caller passed or exported.
-
-Bash reads through here too, rather than parsing the same files a second time:
-``lib/config.sh``'s ``wb_config_get`` and the machine profile's registry table
-both go out to ``otto-workbench config get``, which is ``lib/config_cli.py``
-over ``config_status``. A partial reader in another language is what let the
-machine profile call a repo's tracker ``unset`` while the SessionStart line in
-the same session named it — so if a bash caller needs a config value, give it
-that command rather than a third implementation of the scopes.
-
-What the config *is* is here: the dataclasses, the files, the merge, and the
-key surface a dotted key is judged against. How it is *shown* —
-``config.schema.json``, the docs key reference, ``config status`` — is
-``workbench_config_report``; how it is *changed* is ``workbench_config_write``.
-Both of those import this one and neither is imported back, so the module every
-Claude hook loads on every prompt carries nothing a reader does not need.
-
-### workbench_config_report.py
-
-How the workbench config is shown.
-
-Three renderings of one surface: the JSON Schema an editor validates a config
-file against, the key reference the docs print, and the resolved status
-``otto-workbench config status`` reports. All three walk ``WorkbenchConfig``
-through ``serde.classify`` rather than listing the keys a second time, so none
-of them can disagree with the config ``workbench_config.load_config`` returns.
-
-Reading only. Nothing here opens a file for writing or decides whether a key
-may be written — that is ``workbench_config_write``. The split is what the
-config *is* (``workbench_config``), how it is *shown* (here), and how it is
-*changed* (there), and it runs one way: both of the others import the config,
-neither imports this.
-
-### workbench_config_write.py
-
-How the workbench config is changed.
-
-One dotted key at a time, into one of the three scopes ``config_scopes``
-merges, and only after the key and the value have both been judged against the
-surface that will read the file back. Every write here goes through
-``set_value``, so the yq-first ordering that preserves a hand-authored file's
-comments and the checks that keep a value nothing reads out of a shared file are
-each written once.
-
-Those checks are what make this its own module rather than three functions on
-the config. A key is judged against two surfaces — this checkout's
-``WorkbenchConfig`` and the schema of the workbench actually installed on the
-machine — because the file outlives the checkout that wrote it. The value is
-judged against the type the field declares, because everything arriving here is
-a string off a command line and ``serde`` replaces a scalar of the wrong type
-with the field's default rather than complaining. Reading needs neither check,
-which is why ``workbench_config`` carries no part of them.
-
-### workbench_paths.py
-
-Where the workbench keeps things.
-
-Three user-level roots — config, state, and cache — each resolving through the
-same chain:
-
-    WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
-
-This module is the Python owner of those roots. Two other definitions express
-the same chain and must stay in step: ``lib/constants.sh`` for shell, and
-``zsh/config.d/aliases/docker.zsh``, which cannot source ``constants.sh`` at
-shell startup. ``tests/workbench_roots.bats`` cross-validates all three.
-
-Roots are resolved per call rather than frozen into module constants: the
-environment is routinely set after import — by tests, and by callers that
-re-point a root before invoking a subprocess — and an import-time constant
-would capture whichever value happened to be live when the first importer
-loaded this module.
-
-### workbench_projects.py
-
-The repos on this machine that use otto-workbench — Python half.
-
-Membership means a workbench command actually ran in a repo. This side does the
-recording for the tools written in Python: Claude's SessionStart hook, which
-already resolves the repo root, and the ``pr`` CLI, which already resolves a
-worktree root. ``lib/projects.sh`` is the shell half — it owns the one-time
-backfill, the CLI, and the reads that the machine profile generator and the
-checkout-scoped migrations make.
-
-Both halves read and write one file named by ``workbench_paths.projects_registry()``:
-one absolute path per line, optionally followed by a tab and the repo identity
-the shell half records from the sync. This side reads the path ahead of that tab
-and writes bare paths, because resolving an identity means forking git on a
-session's startup path. Text rather than YAML because every write is an append
-and every read is a scan. ``tests/projects.bats`` cross-validates the two halves
-against the same file.
-
-Nothing here raises. Registration is a side effect of a command that was run for
-some other reason, and a hook that failed because a state file was unwritable
-would cost the user their session for a bookkeeping entry.

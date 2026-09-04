@@ -206,7 +206,7 @@ Run the same command by hand to see the untruncated output:
 gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
-The same treatment applies to every message in `ai/lib/pr_context.py` that reports a *command* failing — `Cannot determine current branch`, `` `gh pr view` could not read the head of <repo>#<n> ``, `git reset --hard origin/<branch> failed`, `resolve-branch could not resolve <hint>`, and the `wt switch` failures all quote the underlying command's stderr through one helper, `pr_context.failure_message()`. If one of them ever prints a bare action with no cause, the command wrote nothing to stderr; re-run it by hand.
+The same treatment applies to every message in `ai/lib/pr/context.py` that reports a *command* failing — `Cannot determine current branch`, `` `gh pr view` could not read the head of <repo>#<n> ``, `git reset --hard origin/<branch> failed`, `resolve-branch could not resolve <hint>`, and the `wt switch` failures all quote the underlying command's stderr through one helper, `pr_context.failure_message()`. If one of them ever prints a bare action with no cause, the command wrote nothing to stderr; re-run it by hand.
 
 Messages that report the *repository's shape* rather than a command's exit — `Not in a git repository`, `Bare repository — pass --branch or --repo-dir`, `Cannot read the origin remote`, `No worktree for <branch>` — have nothing to quote: the condition is what the code checked, not what a subprocess said, so the message already names the whole cause.
 
@@ -220,7 +220,7 @@ A second `pr` run refused to start because one is already in flight against the 
 
 Two runs against one PR corrupt each other — they both read-modify-write that target's `state.json`, and with `--fix` they both commit to the same branch, whether from one checkout or two. The lock is keyed on what a run targets, not where it was launched: reviews of two different PRs from one directory run concurrently, and two runs against the same PR exclude each other from anywhere. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
 
-`pr status` is read-only and never contends — it takes no lock, makes no network call, and creates nothing, so it answers while a review holds the target, and it answers with `gh` logged out. See [what each `pr` command needs before it runs](ai-libraries.md#pr_contextpy). `pr gc` prunes target state for merged and closed PRs, skips its own target, and takes each target's lock before touching it — so it will not delete state out from under a running review, and it is safe to run at any time.
+`pr status` is read-only and never contends — it takes no lock, makes no network call, and creates nothing, so it answers while a review holds the target, and it answers with `gh` logged out. See [what each `pr` command needs before it runs](ai-libraries.md#prcontextpy). `pr gc` prunes target state for merged and closed PRs, skips its own target, and takes each target's lock before touching it — so it will not delete state out from under a running review, and it is safe to run at any time.
 
 `claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock. Those three are the whole list — `pr-rebase` and `pr-describe` take no lock of their own, so run them as `pr rebase` and `pr describe` if you want them serialized.
 

@@ -225,7 +225,7 @@ claude-review post <pr_url_or_number>
 
 #### Switching a phase off
 
-Every phase the multi-phase pipeline has a path around is marked `optional` in `PHASES` ([`ai/lib/agent_registry.py`](../ai/lib/agent_registry.py)), and each one gets a `--no-<phase>` flag generated from that mark: `--no-holistic`, `--no-scout`, `--no-group`, `--no-synthesis`, `--no-disprove`. Marking a new phase optional is the whole change — the flag, its forwarding to `review-orchestrate`, and the pipeline's skip all read the same field.
+Every phase the multi-phase pipeline has a path around is marked `optional` in `PHASES` ([`ai/lib/agent/registry.py`](../ai/lib/agent/registry.py)), and each one gets a `--no-<phase>` flag generated from that mark: `--no-holistic`, `--no-scout`, `--no-group`, `--no-synthesis`, `--no-disprove`. Marking a new phase optional is the whole change — the flag, its forwarding to `review-orchestrate`, and the pipeline's skip all read the same field.
 
 Phase 1 is one scan chosen from two candidates, so `--no-holistic` alone falls back to the scout scan and `--no-scout` alone falls back to the holistic scan. Only both together drop phase 1.
 
@@ -241,7 +241,7 @@ Re-reviews narrow to what changed since the prior review, and that delta follows
 
 #### Model selection
 
-Each pipeline phase resolves its model as **`--model` flag > `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` > phase default**. The phase names and their defaults live in `PHASES` ([`ai/lib/agent_registry.py`](../ai/lib/agent_registry.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
+Each pipeline phase resolves its model as **`--model` flag > `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` > phase default**. The phase names and their defaults live in `PHASES` ([`ai/lib/agent/registry.py`](../ai/lib/agent/registry.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
 
 Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` when those are set; otherwise the alias is passed to the CLI as-is.
 
@@ -306,7 +306,7 @@ pr [global flags] <command> [flags]
 conflict resolutions and lockfile commands behind `pr rebase --fix`, the
 description `pr describe` writes, and the thread triage `pr comments` runs each
 resolve their model and thinking level from `PHASES`
-([`ai/lib/agent_registry.py`](../ai/lib/agent_registry.py)) through the same
+([`ai/lib/agent/registry.py`](../ai/lib/agent/registry.py)) through the same
 chain, so `WORKBENCH_AI_REBASE_MODEL`, `WORKBENCH_AI_DESCRIBE_THINKING` and
 their siblings move calls that used to take whatever the CLI defaulted to. The
 env keys are derived from the phase name, so the list here is the registry's.
@@ -320,7 +320,7 @@ it, so `--post` neither implies a phase nor is implied by one.
 `--finish --post` is therefore not saying the same thing twice — the first
 names the work, the second opens the gate. The same `--post` gates `pr review`
 and `--reply`; it is one switch for the whole process, not a `comments` flag —
-see `ai/lib/publishing.py`, which owns it.
+see `ai/lib/core/publishing.py`, which owns it.
 
 **Every fix pass answers to the same gate.** `pr ci --fix` and `pr review --fix`
 commit what their agent fixed and draft the push without `--post`, exactly as
@@ -328,7 +328,7 @@ commit what their agent fixed and draft the push without `--post`, exactly as
 makes the work reviewable, and it keeps the next round from reading its own
 dirty tree as a refused commit. The push is the outward act, so it waits. A held
 push prints the command that would send it, and every outcome short of a landed
-push carries that command as data — `ai/lib/land.py` owns the commit and the
+push carries that command as data — `ai/lib/git/land.py` owns the commit and the
 push under it, and `push.resume_command` renders the one thing to run.
 
 Alongside `--fix`, `--post` is a modifier rather than a mode: `pr review --fix
@@ -532,7 +532,7 @@ otto-mcp-server
 A script is discovered when it is executable, its name starts with neither `.` nor `_`,
 and it answers `--tool-schema` with JSON carrying at least `name` and `input_schema`.
 Scripts built on `ToolParser`
-([`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py)) inherit the flag for free.
+([`ai/lib/core/tool_parser.py`](../ai/lib/core/tool_parser.py)) inherit the flag for free.
 
 **Where it looks.** The workbench's own script directories, and nothing else. They are
 derived from the component layout rather than listed — the root `bin/`, plus every
@@ -579,7 +579,7 @@ late.
 
 **A probe that never answers is a different finding.** The probe prints a schema the
 script already holds, so it belongs in the `QUICK` tier of
-[`ai/lib/timeouts.py`](../ai/lib/timeouts.py) and a breach is a wedged process or a machine
+[`ai/lib/core/timeouts.py`](../ai/lib/core/timeouts.py) and a breach is a wedged process or a machine
 with nothing left to schedule — not a broken tool. It is logged at error level and worded
 that way, because the two want different people to look at them. The bound used to be a
 2-second local constant, which is under the cost of starting a Python interpreter on a

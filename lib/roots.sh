@@ -57,7 +57,7 @@
 # Two definitions outside `lib/` express the same chain, and
 # `tests/workbench_roots.bats` cross-validates all three:
 #
-# - [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python
+# - [`ai/lib/core/workbench_paths.py`](../ai/lib/core/workbench_paths.py) — the Python
 #   owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`,
 #   `trail_dir()`, and `reviews_dir()`, resolved per call rather than frozen at
 #   import. `cache_dir` takes a consumer name and rejects anything but a bare

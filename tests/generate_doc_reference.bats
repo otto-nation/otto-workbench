@@ -490,7 +490,7 @@ EOF
   printf '"""Serialization helpers."""\n' > "$AI_LIB_DIR/core/serde.py"
   run main --set ai-lib --groups
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/serde.py declares no group"* ]]
+  [[ "$output" == *"ai/lib/core/serde.py declares no group"* ]]
 }
 
 @test "a module with no docstring cannot declare a group above it" {
@@ -498,7 +498,7 @@ EOF
   printf '# doc-group: platform\n\nfrom __future__ import annotations\n' > "$AI_LIB_DIR/core/serde.py"
   run main --set ai-lib --groups
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/serde.py declares no group"* ]]
+  [[ "$output" == *"ai/lib/core/serde.py declares no group"* ]]
 }
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

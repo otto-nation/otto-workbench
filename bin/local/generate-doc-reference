@@ -206,11 +206,16 @@ _docstring_group() {
 # exist, and this module is not in one. Failing here is what makes declaring a
 # group the whole of adding a module.
 _file_group() {
-  local declared
+  local declared rel
   declared="$("_${SET_COMMENT[$1]}_group" "$2")"
   declared="${declared:-$3}"
   if [[ -z "$declared" ]]; then
-    err "${SET_BASE[$1]}/${2##*/} declares no group — add '# doc-group: <key>' below its doc block"
+    # Relative to the set's base, not the basename: a bare basename is
+    # ambiguous once more than one package can define the same filename
+    # (four packages each have a types.py), and names a path that does not
+    # exist once the file's real directory differs from the set's base.
+    rel="${2#"$SOURCE_ROOT/${SET_BASE[$1]}"/}"
+    err "${SET_BASE[$1]}/$rel declares no group — add '# doc-group: <key>' below its doc block"
     return 1
   fi
   printf '%s' "$declared"

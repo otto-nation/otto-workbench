@@ -127,6 +127,19 @@ HOOK
   [[ "$output" == *"pull first"* ]]
 }
 
+@test "push.py runs under the shipped PYTHONPATH invocation" {
+  # push.py's sibling imports (`from git import client`, `from core import log`)
+  # resolve against ai/lib, not against ai/lib/git where the file lives — the
+  # layer-package move deepened it by one directory, so the interpreter's
+  # automatic sys.path[0] (the script's own directory) is no longer enough.
+  # _push_verified's PYTHONPATH prefix is what closes that gap; --help exits
+  # before argparse's required --branch check runs, so a bare rc=0 here is
+  # entirely a claim about whether the import resolved.
+  unset PYTHONPATH
+  run _push_verified test-branch --help
+  [ "$status" -eq 0 ]
+}
+
 @test "fails when branches have diverged" {
   git push --quiet origin feature/test
   git branch --set-upstream-to=origin/feature/test feature/test --quiet

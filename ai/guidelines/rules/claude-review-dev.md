@@ -11,13 +11,13 @@ paths:
 # claude-review Development
 
 When adding or modifying a review phase, verify these integration points:
-- `review_types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
-- `review_merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
-- `review_reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review_reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
-- `review_registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
-- `review_grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
-- `review_document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
-- `review_spans.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`, `drop_findings()`, `cut_spans()`. A pass that walks a review a finding at a time asks these rather than recognising the next head itself, and keeps only its own selection pattern (which findings it wants) over `FindingSpan.line`. Six passes once measured a body for themselves and cut the same review four different ways, one of them deleting the resolved finding below a dropped one
+- `review/types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
+- `review/merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
+- `review/reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review/reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
+- `review/registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
+- `review/grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
+- `review/document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
+- `review/spans.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`, `drop_findings()`, `cut_spans()`. A pass that walks a review a finding at a time asks these rather than recognising the next head itself, and keeps only its own selection pattern (which findings it wants) over `FindingSpan.line`. Six passes once measured a body for themselves and cut the same review four different ways, one of them deleting the resolved finding below a dropped one
 - `review-post`: `renumber_for_posting()`, `classify_findings()` posting routing. `posted_id` is positional — reassigned on every round from the diff order — so nothing that has to survive to the next round may key on it. What survives is `FindingIdentity.stable_id`, which `format_inline_comment` writes into the posted comment as a `<!-- sid: -->` marker and `_match_thread_to_finding` reads back out. A pass comparing the words of a posted comment strips it first, the way `review_dedup` does; the fresh finding it is scored against carries none
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
@@ -27,11 +27,11 @@ When adding or modifying a review phase, verify these integration points:
 A re-review accounts for every prior finding in a `## Prior findings` ledger —
 one line per prior finding, `- **[M1]** \`path\` — Fixed`, `— Still open`, or
 `— Declined`, with the ID and path copied from the prior review. Those three
-verdicts are `PriorDisposition`, and `review_prompt_prior._build_prior_section()`'s
+verdicts are `PriorDisposition`, and `review.prompt_prior._build_prior_section()`'s
 instruction interpolates the enum's values, so the words asked for and the
 words parsed cannot drift apart. Where the verdict sits in the line is held together by a
 test instead: `TestLedgerInstructionParses` reads every example the instruction
-shows back through `review_grammar.parse_ledger_line`, because an example the parser rejects
+shows back through `review.grammar.parse_ledger_line`, because an example the parser rejects
 is invisible until a whole re-review's bookkeeping is lost. A verdict parses
 when it comes first and ends the line or breaks with one of
 `DISPOSITION_TAIL_PUNCTUATION`; a comma is deliberately not on that list, so
@@ -45,7 +45,7 @@ the prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`,
 `PriorDisposition`, the merge, the synthesis templates, or
 `_build_prior_section()`'s instruction means checking the others.
 
-`review_reconcile.reconcile()` gives every prior finding a disposition, and
+`review.reconcile.reconcile()` gives every prior finding a disposition, and
 `record_prior_findings()` runs it from `_post_process_review()` — before the
 strip, which is the last moment the review still says what it made of them.
 Sources, in the order they are asked: a ledger entry matching the prior
@@ -56,7 +56,7 @@ gone, or whose quoted code was in that file at the prior review's `head_sha`
 and is not in it now. `DispositionSource` records which of those answered, so
 an inference is never read back as something the review stated, and the tree is
 asked last because it cannot produce `Declined`. Every source reads a location
-through `review_grammar.FindingIdentity`, which asks `finding_location()` first
+through `review.grammar.FindingIdentity`, which asks `finding_location()` first
 so a finding citing a bare `` `path` `` with no `:<line>` still yields a path
 and a stable ID — without one it can be neither carried forward nor checked
 against the tree. That one type answers both the dedup key and the stable ID,
@@ -94,7 +94,7 @@ posted after one, which is the run these two answers exist for.
 
 `*(skipped — reason)*` is the second annotation vocabulary, written by the fix
 pass rather than by a review, and `is_skipped()` is its single owner. It is
-what `review_fix._apply_outcomes` writes back for a `needs a person` outcome,
+what `review.fix._apply_outcomes` writes back for a `needs a person` outcome,
 the way it writes `*(declined — reason)*` for a declined one and ticks the box
 for a fix. A skip still belongs to the work set — the next `--fix` retries it —
 but a line already carrying either annotation is left exactly as it is: that
@@ -166,7 +166,7 @@ messages on stderr.
 1. Create the external script in `ai/bin/`
 2. Add argparse subparser in `pr`
 3. Add `cmd_<name>` wrapper that delegates via `subprocess.run()`
-4. If the subcommand has persistent state: add a `Domain` subclass to `pr_domains.py`
+4. If the subcommand has persistent state: add a `Domain` subclass to `pr/domains.py`
    and a field for it on `PRState` — see State management below
 5. Add `_render_<name>_section()` to `pr` for the `cmd_status` dashboard
 6. Register in `ai/claude/registry.yml`
@@ -193,15 +193,15 @@ messages on stderr.
 - A write replaces the stored domain, except for the `fix` record every domain
   carries — `Domain.merge_into` folds that one in for everybody. A domain with
   more to accumulate overrides `merge_into` and chains through `super()` (see
-  `FixSummary` in `pr_comments_fix.py`)
-- What a fix pass did about one item is a `pr_fix.ItemOutcome` on that record, not
+  `FixSummary` in `pr/comments_fix.py`)
+- What a fix pass did about one item is a `pr.fix.ItemOutcome` on that record, not
   a new field on the domain. A fact about the item as the domain fetched it — a
   reviewer login, a job name — is not an outcome; keep it on the domain keyed by
   outcome id (see `FixSummary.reviewers`) rather than widening `ItemOutcome` with
   a field the other passes leave empty
 - Scripts own their state updates — Python scripts import `pr_state` directly
 - **Every reader goes through `pr_state.load_state()`** — never `json.load` on
-  `state.json`. The dataclasses in `pr_domains.py` are the schema; a raw-dict
+  `state.json`. The dataclasses in `pr/domains.py` are the schema; a raw-dict
   reader duplicates it and silently blanks when a field is renamed
 - `load_state()` returns `None` for a missing file and an unreadable one alike,
   warning on the latter. Callers degrade; they do not need to tell them apart

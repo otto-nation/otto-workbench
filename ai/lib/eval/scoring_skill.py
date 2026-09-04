@@ -346,7 +346,7 @@ def write_shims(
 SKILL_MAX_TURNS = 20
 SKILL_MAX_BUDGET = 1.0
 
-_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent / "skills"
 
 _PROMPT = """You are working in a Claude Code session. The repository is at {repo_dir}.
 

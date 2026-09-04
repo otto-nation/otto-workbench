@@ -34,7 +34,7 @@ from review.document import ReviewDocument
 from review.types import Finding
 
 _REVIEW_ORCHESTRATE = (
-    Path(__file__).resolve().parent.parent / "claude" / "bin" / "review-orchestrate"
+    Path(__file__).resolve().parent.parent.parent / "claude" / "bin" / "review-orchestrate"
 )
 
 

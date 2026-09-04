@@ -36,7 +36,7 @@ def template_dir() -> Path:
     checked out, and so a caller in ``ai/bin`` does not have to count
     parent directories to reach it.
     """
-    return Path(__file__).resolve().parent.parent / TEMPLATE_DIR_REL
+    return Path(__file__).resolve().parent.parent.parent / TEMPLATE_DIR_REL
 
 
 def render(name: str, **kwargs) -> str:

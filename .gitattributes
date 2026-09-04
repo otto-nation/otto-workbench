@@ -6,7 +6,7 @@
 # The other generated files (ai/guidelines/rules/tools.generated*.md,
 # git.generated.md) are gitignored, so they need no attributes here.
 
-# bin/local/generate-config-schema, from ai/lib/workbench_config.py
+# bin/local/generate-config-schema, from ai/lib/config/workbench_config.py
 config.schema.json linguist-generated=true
 
 # bin/local/compose-docs, from the docs/*.src.md of the same name

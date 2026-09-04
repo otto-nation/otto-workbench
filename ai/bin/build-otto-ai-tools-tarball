@@ -118,9 +118,10 @@ fi
 # layouts — ai/bin/ beside ai/lib/ in the repo, bin/ beside lib/ in the tarball
 # — so a script's own `.parent.parent / "lib"` resolves correctly in each.
 
-# Library files — all Python modules
-for py in "$_AI_LIB_DIR/"*.py; do
-  cp "$py" "$DEST/lib/"
+# Library files — the layered packages, directories and all
+for pkg in "$_AI_LIB_DIR"/*/; do
+  [[ -f "$pkg/__init__.py" ]] || continue
+  cp -R "${pkg%/}" "$DEST/lib/"
 done
 
 # Library files — bash modules required at runtime

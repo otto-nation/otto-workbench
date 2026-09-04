@@ -97,10 +97,11 @@ class TestTarballCompleteness:
         )
 
     def test_build_script_copies_all_py(self):
-        """Build script must use a glob that covers all .py files in lib/."""
+        """Build script must use a glob that covers every package dir in lib/."""
         content = BUILD_SCRIPT.read_text()
-        assert "*.py" in content, (
-            "Build script should glob *.py to dynamically include all Python modules"
+        assert "__init__.py" in content, (
+            "Build script should glob package directories (identified by "
+            "__init__.py) to dynamically include every layered package"
         )
 
     @pytest.mark.parametrize("binary", PACKAGED_BINARIES, ids=lambda p: p.name)

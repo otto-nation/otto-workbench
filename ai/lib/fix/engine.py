@@ -1,7 +1,7 @@
 """The pipeline every fix pass runs: batch, invoke, retry, land, record.
 
-`fix.types` says what an item is, `fix_tracking` says how the agent is asked
-about it, `agent_invoke` runs the agent and `land` commits what it produced.
+`fix.types` says what an item is, `fix.tracking` says how the agent is asked
+about it, `agent.invoke` runs the agent and `land` commits what it produced.
 This is the order those happen in, written once. Three passes sequenced them
 themselves and the sequences disagreed — one batched its checklist and two
 inlined it whole, two retried the items left over and disagreed about which

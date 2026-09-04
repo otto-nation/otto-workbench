@@ -32,8 +32,8 @@ running is not part of the reason it failed.
 The one owner of an agent invocation: resolve the phase, run it, guard it.
 
 ``phases`` says what a phase is named, ``agent.types`` says what a phase's
-shape is, ``agent.registry`` says which phases there are, ``agent_phases``
-says what one resolves to here, and ``ai_backend`` knows how to talk to a
+shape is, ``agent.registry`` says which phases there are, ``agent.phases``
+says what one resolves to here, and ``agent.backend`` knows how to talk to a
 CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
 level and provider, runs it, and hands the result to ``agent_retry``'s guard.
@@ -214,8 +214,8 @@ exception. No answer is never consent.
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.
 
-`fix.types` says what an item is, `fix_tracking` says how the agent is asked
-about it, `agent_invoke` runs the agent and `land` commits what it produced.
+`fix.types` says what an item is, `fix.tracking` says how the agent is asked
+about it, `agent.invoke` runs the agent and `land` commits what it produced.
 This is the order those happen in, written once. Three passes sequenced them
 themselves and the sequences disagreed — one batched its checklist and two
 inlined it whole, two retried the items left over and disagreed about which

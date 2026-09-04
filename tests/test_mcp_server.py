@@ -25,7 +25,7 @@ from conftest import git_out
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import proc
+from core import proc
 import server
 from server import (
     PROBE_ATTEMPTS,

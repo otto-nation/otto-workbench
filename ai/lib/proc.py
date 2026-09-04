@@ -484,9 +484,6 @@ def run(
     try:
         completed = subprocess.run(cmd, input=input_text, timeout=timeout, **spawn)
     except subprocess.TimeoutExpired as exc:
-    try:
-        completed = subprocess.run(cmd, input=input_text, timeout=timeout, **spawn)
-    except subprocess.TimeoutExpired as exc:
         _record_kill(cmd, f"timed out after {timeout:g}s")
         # `subprocess.run` has already killed the child and reaped it; what is
         # left to do is turn the exception into the result every caller reads.

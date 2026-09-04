@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
-from tool_registry import (  # noqa: E402
+from config.tool_registry import (  # noqa: E402
     RegistryEntry,
     Visibility,
     load_registry_entries,

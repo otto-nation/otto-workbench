@@ -12,10 +12,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import schema_gen
-import serde
-from schema_gen import dataclass_to_schema
-from serde import HintKind
+from core import schema_gen
+from core import serde
+from core.schema_gen import dataclass_to_schema
+from core.serde import HintKind
 
 
 # ── Test fixtures ──────────────────────────────────────────────────────────
@@ -146,13 +146,13 @@ def test_not_a_dataclass():
 
 def test_pr_state_models():
     """Verify schema generation works on the actual pr_state dataclasses."""
-    from pr_domains import (
+    from pr.domains import (
         CIDomain,
         CommentsSummary,
         RebaseSummary,
         ReviewSummary,
     )
-    from pr_state import PRIdentity, PRState
+    from pr.state import PRIdentity, PRState
 
     for cls in [PRIdentity, CIDomain, ReviewSummary, CommentsSummary, RebaseSummary, PRState]:
         schema = dataclass_to_schema(cls)
@@ -162,7 +162,7 @@ def test_pr_state_models():
 
 def test_pr_state_structure():
     """PRState schema should reference nested domain schemas."""
-    from pr_state import PRState
+    from pr.state import PRState
 
     schema = dataclass_to_schema(PRState)
     assert schema["properties"]["ci"]["type"] == "object"
@@ -175,7 +175,7 @@ def test_pr_state_runs_schema_describes_run_history():
     """`pr --tool-schema` publishes PRState as the pr CLI's output contract.
     A bare `dict` hint on CIDomain.runs made this an empty object, so the
     contract said nothing at all about run history."""
-    from pr_state import PRState
+    from pr.state import PRState
 
     runs = dataclass_to_schema(PRState)["properties"]["ci"]["properties"]["runs"]
     run = runs["additionalProperties"]
@@ -347,7 +347,8 @@ def test_every_from_raw_type_in_the_tree_publishes_a_raw_schema():
     lib = Path(__file__).resolve().parent.parent / "ai" / "lib"
     classes = [
         (source.name, node)
-        for source in sorted(lib.glob("*.py"))
+        for source in sorted(lib.glob("*/*.py"))
+        if source.stem != "__init__"
         for node in ast.walk(ast.parse(source.read_text()))
         if isinstance(node, ast.ClassDef)
     ]
@@ -371,7 +372,7 @@ def test_fix_summary_schema_accepts_the_pre_fold_shape_serde_accepts():
     top-level `commit_status`. The published schema described only the current
     names, so it called a state file invalid that `_from_raw` reads without
     complaint."""
-    from pr_state import PRState
+    from pr.state import PRState
 
     fix = dataclass_to_schema(PRState)["properties"]["fix"]["properties"]
     assert fix["commit_sha"] == {"type": "string"}
@@ -391,7 +392,7 @@ def test_a_diagnosis_schema_accepts_the_legacy_string_form():
     `dict[int, Diagnosis]`, so its keys must parse as integers and its values
     are whatever `Diagnosis._from_raw` reads — an object or the rendered string
     an older run wrote."""
-    from review_state import PipelineState
+    from review.state import PipelineState
 
     failed = dataclass_to_schema(PipelineState)["properties"]["groups_failed"]
     assert failed["propertyNames"] == {"pattern": r"^-?[0-9]+$"}

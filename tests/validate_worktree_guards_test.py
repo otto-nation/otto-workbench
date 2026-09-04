@@ -176,7 +176,7 @@ def main(ctx):
 def test_discover_finds_extensionless_python_scripts():
     scripts = vwg.discover_scripts(str(REPO_ROOT))
     assert str(REPO_ROOT / "ai" / "bin" / "pr") in scripts
-    assert str(REPO_ROOT / "ai" / "lib" / "pr_context.py") in scripts
+    assert str(REPO_ROOT / "ai" / "lib" / "pr" / "context.py") in scripts
 
 
 def _tree_with_skipped_dirs(tmp_path):

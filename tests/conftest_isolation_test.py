@@ -21,8 +21,8 @@ import pytest
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-import proc
-import workbench_paths
+from core import proc
+from core import workbench_paths
 
 import conftest
 from conftest import (

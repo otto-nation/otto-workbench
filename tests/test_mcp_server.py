@@ -43,7 +43,7 @@ from server import (
     probe_tools,
     watch_for_tool_changes,
 )
-from tool_registry import RegistryEntry, Visibility
+from config.tool_registry import RegistryEntry, Visibility
 
 
 # ── JSON Extraction ───────────────────────────────────────────────────────

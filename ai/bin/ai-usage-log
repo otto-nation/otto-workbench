@@ -21,8 +21,8 @@ from pathlib import Path
 LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-import ai_usage
-from ai_backend_events import claude_display_text
+from agent import usage as ai_usage
+from agent.backend_events import claude_display_text
 
 
 def _tee(path: str | None):

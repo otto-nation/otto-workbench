@@ -33,7 +33,11 @@ def _collect_import_names(node: ast.AST) -> list[str]:
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
     if isinstance(node, ast.ImportFrom) and node.module:
-        return [node.module]
+        return [
+            f"{node.module}.{alias.name}"
+            for alias in node.names
+            if alias.name != "*"
+        ]
     return []
 
 
@@ -51,12 +55,16 @@ def _extract_python_imports(script: Path) -> set[str]:
 
 def _lib_python_files() -> set[str]:
     """All .py files in the lib directory."""
-    return {p.name for p in LIB_DIR.glob("*.py")}
+    return {p.name for p in LIB_DIR.glob("*/*.py") if p.stem != "__init__"}
 
 
 def _all_required_modules() -> set[str]:
     """Collect all local modules imported by any packaged Python binary."""
-    lib_modules = {p.stem for p in LIB_DIR.glob("*.py")}
+    lib_modules = {
+        f"{p.parent.name}.{p.stem}"
+        for p in LIB_DIR.glob("*/*.py")
+        if p.stem != "__init__"
+    }
     all_imports: set[str] = set()
     for binary in PACKAGED_BINARIES:
         all_imports.update(_extract_python_imports(binary))
@@ -69,7 +77,7 @@ class TestTarballCompleteness:
         required = _all_required_modules()
         missing = sorted(
             mod for mod in required
-            if not (LIB_DIR / f"{mod}.py").exists()
+            if not (LIB_DIR / Path(*mod.split(".")).with_suffix(".py")).exists()
         )
         assert not missing, (
             f"Python modules imported but not found in {LIB_DIR}:\n"

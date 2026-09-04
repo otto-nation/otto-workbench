@@ -23,19 +23,19 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import agent_invoke
-import fix_engine
-import land
-import push
-import review_document
-import review_fix
-import review_paths
-import review_types
-from proc import TIMEOUT_RETURNCODE, CmdResult
-from phases import Effort, Phase
-from pr_fix import FixOutcome, ItemOutcome
-from gh_types import PRContext, PRMetadata
-from review_types import Finding, ReviewJob
+from agent import invoke as agent_invoke
+from fix import engine as fix_engine
+from git import land
+from git import push
+from review import document as review_document
+from review import fix as review_fix
+from review import paths as review_paths
+from review import types as review_types
+from core.proc import TIMEOUT_RETURNCODE, CmdResult
+from core.phases import Effort, Phase
+from pr.fix import FixOutcome, ItemOutcome
+from gh.types import PRContext, PRMetadata
+from review.types import Finding, ReviewJob
 
 # What the push owner answers when the fix pass's commit reached the remote.
 # The pass no longer pushes for itself — `land` does — so stubbing the owner is
@@ -466,7 +466,7 @@ class TestWhatALandedPassLeavesBehind:
         "- [ ] **[M2]** `helper.py:1` — Missing helper\n"
     )
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_only_the_agents_own_changes_are_committed_and_credited(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -494,7 +494,7 @@ class TestWhatALandedPassLeavesBehind:
         assert "*(skipped — hand edit in flight)*" in review
         mock_push.assert_called_once()
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_the_commit_message_reports_what_the_pass_settled(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -511,7 +511,7 @@ class TestWhatALandedPassLeavesBehind:
         assert "[M2] Missing helper" in msg
         assert "[M1] needs a product decision" in msg
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_the_summary_reaches_the_operator_s_terminal(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -522,7 +522,7 @@ class TestWhatALandedPassLeavesBehind:
         assert "Fix summary:" in err
         assert "[M1] by design" in err
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_pass_that_changed_no_files_commits_nothing(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -534,7 +534,7 @@ class TestWhatALandedPassLeavesBehind:
         mock_push.assert_not_called()
         assert "*(declined — by design)*" in Path(job.review_file).read_text()
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_commit_the_hook_refused_still_re_renders_the_review(
         self, mock_push, git_wt, tmp_path, live_git_hooks,
     ):
@@ -560,7 +560,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
     spelled with bytes git escapes before it prints them.
     """
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_file_the_agent_deletes_is_committed_as_a_deletion(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -578,7 +578,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_rename_commits_both_halves(self, mock_push, git_wt, tmp_path):
         """The old path leaves via the diff, the new one via the untracked list."""
         job = _make_job(
@@ -594,7 +594,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_path_git_would_escape_is_staged_verbatim(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -613,7 +613,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
 
         assert _committed_paths(git_wt) == {"café brûlé.py"}
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_path_dirty_before_the_pass_is_not_credited_even_when_edited(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -654,7 +654,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         """Make every later read of the worktree's state fail, as a lock would."""
         (git_wt / ".git" / "index").write_bytes(b"garbage")
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_an_unreadable_worktree_stops_the_pass_before_the_agent_runs(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -671,7 +671,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         mock_push.assert_not_called()
         assert "skipping fix pass" in capsys.readouterr().err
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_the_agents_work_is_not_dropped_when_the_second_snapshot_fails(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -692,7 +692,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         assert "nothing was committed or pushed" in err
         assert str(git_wt) in err
 
-    @patch("land.push.push", return_value=_PUSHED)
+    @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_pass_that_could_not_attribute_its_work_re_renders_nothing(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -717,7 +717,7 @@ class TestRunFixPassWhenTheSnapshotFails:
 
 
 class TestChangedSourceFiles:
-    @patch("review_fix.git_client.run")
+    @patch("review.fix.git_client.run")
     def test_includes_untracked_files(self, mock_run):
         """A fix that only adds a new test file still fixed the finding."""
         mock_run.side_effect = [
@@ -728,13 +728,13 @@ class TestChangedSourceFiles:
             "src/auth.go", "tests/run_ai.bats",
         }
 
-    @patch("review_fix.git_client.run")
+    @patch("review.fix.git_client.run")
     def test_untracked_query_excludes_ignored_files(self, mock_run):
         mock_run.side_effect = [CmdResult(), CmdResult()]
         review_fix._changed_source_files("/wt")
         assert "--exclude-standard" in mock_run.call_args_list[1].args
 
-    @patch("review_fix.git_client.run")
+    @patch("review.fix.git_client.run")
     def test_a_failed_diff_is_not_a_partial_snapshot(self, mock_run):
         """Half a snapshot omits the tracked edits, silently and permanently.
 
@@ -747,7 +747,7 @@ class TestChangedSourceFiles:
         ]
         assert review_fix._changed_source_files("/wt") is None
 
-    @patch("review_fix.git_client.run")
+    @patch("review.fix.git_client.run")
     def test_a_failed_untracked_listing_is_not_a_partial_snapshot(self, mock_run):
         mock_run.side_effect = [
             CmdResult(0, "src/auth.go\n"),
@@ -755,7 +755,7 @@ class TestChangedSourceFiles:
         ]
         assert review_fix._changed_source_files("/wt") is None
 
-    @patch("review_fix.git_client.run")
+    @patch("review.fix.git_client.run")
     def test_a_killed_snapshot_is_not_an_empty_one(self, mock_run):
         mock_run.side_effect = [CmdResult(TIMEOUT_RETURNCODE, "", "")]
         assert review_fix._changed_source_files("/wt") is None

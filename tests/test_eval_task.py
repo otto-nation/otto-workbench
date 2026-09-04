@@ -16,11 +16,11 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import eval_task
-import proc
-import timeouts
-from ai_usage import SessionUsage
-from eval_scoring import ScoringResult
+from eval import task as eval_task
+from core import proc
+from core import timeouts
+from agent.usage import SessionUsage
+from eval.scoring import ScoringResult
 
 
 class TestTaskRegistry:

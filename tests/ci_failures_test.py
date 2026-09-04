@@ -9,13 +9,13 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from ci_failures import (
+from pr.ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     compute_progression, sync_ci_domain, render_dashboard,
     extract_failure_context, extract_headline, extract_test_failures,
     LogMarker, LOG_MARKERS, SourceLocation, _MAX_CONTEXT_CHARS,
 )
-from pr_domains import CIDomain
+from pr.domains import CIDomain
 
 
 def test_failure_item_fields():

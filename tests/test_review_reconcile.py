@@ -19,12 +19,12 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import review_reconcile
-from review_document import SECTION_PRIOR_FINDINGS
-from review_paths import FILENAME_PRIOR_FINDINGS
-from review_grammar import FindingIdentity
-from review_reconcile import DispositionSource, UndecidedReason
-from review_types import PriorDisposition
+from review import reconcile as review_reconcile
+from review.document import SECTION_PRIOR_FINDINGS
+from review.paths import FILENAME_PRIOR_FINDINGS
+from review.grammar import FindingIdentity
+from review.reconcile import DispositionSource, UndecidedReason
+from review.types import PriorDisposition
 
 PRIOR_ONE_FINDING = (
     "## Must fix\n"

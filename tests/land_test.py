@@ -17,10 +17,10 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import land  # noqa: E402
-import push  # noqa: E402
-from land import CommitStatus  # noqa: E402
-from proc import CmdResult  # noqa: E402
+from git import land  # noqa: E402
+from git import push  # noqa: E402
+from git.land import CommitStatus  # noqa: E402
+from core.proc import CmdResult  # noqa: E402
 
 _PUSHED = push.PushResult(
     push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x", remote_sha="9bc3f64ab",
@@ -69,7 +69,7 @@ def _land(repo, *, result=_PUSHED, **kwargs):
     """`land` with the push owner stubbed, so nothing reaches a network."""
     kwargs.setdefault("message", "fix: work")
     kwargs.setdefault("gated", False)
-    with patch("land.push.push", return_value=result) as mock_push:
+    with patch("git.land.push.push", return_value=result) as mock_push:
         landed = land.land(repo, **kwargs)
     return landed, mock_push
 
@@ -191,7 +191,7 @@ def test_a_rejected_commit_is_not_pushed(wt, tmp_path, live_git_hooks):
 
 def test_a_failed_stage_raises_rather_than_reporting_no_changes(wt):
     """"Nothing to commit" on an unreadable repo reports success having lost the work."""
-    with patch("land.git_client.run", return_value=CmdResult(128, "", "index locked")):
+    with patch("git.land.git_client.run", return_value=CmdResult(128, "", "index locked")):
         with pytest.raises(RuntimeError, match="stage"):
             land.land(wt, message="fix: work", gated=False, paths=["src.py"])
 
@@ -199,7 +199,7 @@ def test_a_failed_stage_raises_rather_than_reporting_no_changes(wt):
 def test_a_head_that_will_not_read_back_raises(wt):
     """git made the commit and then would not say what it is — that is not an outcome."""
     (wt / "src.py").write_text("edited\n")
-    with patch("land.git_client.head_sha", return_value=""):
+    with patch("git.land.git_client.head_sha", return_value=""):
         with pytest.raises(RuntimeError, match="HEAD"):
             land.land(wt, message="fix: work", gated=False)
 
@@ -592,7 +592,7 @@ def test_a_commit_the_remote_already_holds_is_not_pushed_again(landable):
     sha = _agent_commit(wt)
     git_out(wt, "push", "-q", "origin", "main")
 
-    with patch("land.push.push", side_effect=AssertionError("pushed again")):
+    with patch("git.land.push.push", side_effect=AssertionError("pushed again")):
         landed = land.land(wt, message="fix: work", gated=False, recover_from=before)
 
     assert landed.status is CommitStatus.PUSHED
@@ -621,7 +621,7 @@ def test_a_dirty_tree_under_no_changes_is_a_refused_commit(wt):
     """
     before = git_out(wt, "rev-parse", "HEAD").strip()
 
-    with patch("land.git_client.is_dirty", return_value=True):
+    with patch("git.land.git_client.is_dirty", return_value=True):
         landed = land.land(
             wt, message="fix: work", gated=False, paths=[], recover_from=before,
         )
@@ -662,7 +662,7 @@ def test_a_caller_that_did_not_ask_recovers_nothing(landable):
 def _land_head(repo, *, result=_PUSHED, **kwargs):
     """`land_head` with the push owner stubbed, so nothing reaches a network."""
     kwargs.setdefault("gated", False)
-    with patch("land.push.push", return_value=result) as mock_push:
+    with patch("git.land.push.push", return_value=result) as mock_push:
         landed = land.land_head(repo, **kwargs)
     return landed, mock_push
 

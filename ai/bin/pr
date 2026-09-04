@@ -20,25 +20,25 @@ BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name
 sys.path.insert(0, str(BIN_DIR.parent / "lib"))
 
-import pr_context
-import pr_domains
-import pr_state
-import pr_sync
-import push_intent
-import review_gc
-import log
-import proc
-import review_listing
-import supersession
-import timeouts
-import workbench_paths
-import workbench_projects
-import run_lock
-from review_paths import find_review_file, review_file_path
-from review_summary import build_review_summary, json_summary
-from review_types import ReviewType
-from tool_parser import VALUE_FLAGS_FLAG
-from trail import Trail, add_trail_args
+from pr import context as pr_context
+from pr import domains as pr_domains
+from pr import state as pr_state
+from pr import sync as pr_sync
+from pr import push_intent
+from review import gc as review_gc
+from core import log
+from core import proc
+from review import listing as review_listing
+from pr import supersession
+from core import timeouts
+from core import workbench_paths
+from config import workbench_projects
+from core import run_lock
+from review.paths import find_review_file, review_file_path
+from review.summary import build_review_summary, json_summary
+from review.types import ReviewType
+from core.tool_parser import VALUE_FLAGS_FLAG
+from core.trail import Trail, add_trail_args
 
 
 # ── Command registry ────────────────────────────────────────────────────────

@@ -26,32 +26,32 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-import log
-import agent_invoke
-import fix_engine
-import fix_types
-import git_client
-import git_topology
-import land
-import pr_comments as pc
-import pr_comments_fix
-import pr_comments_state as pcs
-import pr_context
-import pr_domains
-import pr_state
-import pr_sync
-import proc
-import run_lock
-import publishing
-import push
-from land import CommitStatus
-from pr_comments_state import ThreadRecord, ThreadState
-from pr_fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
-import review_issue
-import text
-import timeouts
-from phases import Phase
-from pr_thread_models import (
+from core import log
+from agent import invoke as agent_invoke
+from fix import engine as fix_engine
+from fix import types as fix_types
+from git import client as git_client
+from git import topology as git_topology
+from git import land
+from pr import comments as pc
+from pr import comments_fix as pr_comments_fix
+from pr import comments_state as pcs
+from pr import context as pr_context
+from pr import domains as pr_domains
+from pr import state as pr_state
+from pr import sync as pr_sync
+from core import proc
+from core import run_lock
+from core import publishing
+from git import push
+from git.land import CommitStatus
+from pr.comments_state import ThreadRecord, ThreadState
+from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
+from review import issue as review_issue
+from core import text
+from core import timeouts
+from core.phases import Phase
+from pr.thread_models import (
     ClassificationResult,
     CommentFixResult,
     CommentItem,
@@ -61,11 +61,11 @@ from pr_thread_models import (
     TriageResult,
     triage_result_from_dict,
 )
-from review_github import fetch_pr_data
-from review_issue import CreatedIssue, IssueDelivery, IssueResult
-import supersession
-from tool_parser import handle_value_flags
-from trail import EXCERPT_LIMIT, Trail, add_trail_args
+from gh.pr_reads import fetch_pr_data
+from review.issue import CreatedIssue, IssueDelivery, IssueResult
+from pr import supersession
+from core.tool_parser import handle_value_flags
+from core.trail import EXCERPT_LIMIT, Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 

@@ -23,15 +23,15 @@ if str(LIB_DIR) not in sys.path:
 
 pr_rebase_cli = load_script("pr_rebase_cli", BIN_DIR / "pr-rebase")
 
-import branch_landed  # noqa: E402
-import git_client  # noqa: E402
-import land  # noqa: E402
-import pr_context  # noqa: E402
-import pr_domains  # noqa: E402
-import pr_state  # noqa: E402
-import push  # noqa: E402
-import timeouts  # noqa: E402
-from land import CommitStatus  # noqa: E402
+from gh import landed as branch_landed  # noqa: E402
+from git import client as git_client  # noqa: E402
+from git import land  # noqa: E402
+from pr import context as pr_context  # noqa: E402
+from pr import domains as pr_domains  # noqa: E402
+from pr import state as pr_state  # noqa: E402
+from git import push  # noqa: E402
+from core import timeouts  # noqa: E402
+from git.land import CommitStatus  # noqa: E402
 
 
 def _unconfigured(cmd):
@@ -2552,7 +2552,7 @@ def _gh_response(payload: str, returncode: int = 0):
     and the tier it picks are both still observable from the call.
     """
     return mock.patch(
-        "proc.subprocess.run",
+        "core.proc.subprocess.run",
         return_value=_completed(["gh"], returncode=returncode, stdout=payload),
     )
 
@@ -2590,7 +2590,7 @@ def test_pr_base_branch_omits_repo_when_the_context_has_none():
 
 def test_pr_base_branch_stays_quiet_without_a_pr_number():
     """Probing by branch name would spend a round trip to learn nothing."""
-    with mock.patch("proc.subprocess.run") as mock_gh:
+    with mock.patch("core.proc.subprocess.run") as mock_gh:
         assert pr_rebase_cli._pr_base_branch("/fake", _landed_ctx(pr_number=None)) is None
 
     mock_gh.assert_not_called()
@@ -2608,7 +2608,7 @@ def test_pr_base_branch_degrades_when_gh_cannot_answer(payload, returncode):
 
 
 def test_pr_base_branch_survives_gh_being_absent():
-    with mock.patch("proc.subprocess.run", side_effect=FileNotFoundError):
+    with mock.patch("core.proc.subprocess.run", side_effect=FileNotFoundError):
         assert pr_rebase_cli._pr_base_branch("/fake", _landed_ctx()) is None
 
 

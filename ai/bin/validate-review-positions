@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from review_format import parse_diff_hunks  # noqa: E402
+from review.format import parse_diff_hunks  # noqa: E402
 
 
 def validate(hunks, findings):

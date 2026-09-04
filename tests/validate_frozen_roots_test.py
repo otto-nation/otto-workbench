@@ -198,7 +198,7 @@ B = workbench_paths.cache_dir()
 def test_discover_finds_extensionless_python_scripts():
     scripts = vfr.discover_scripts(str(REPO_ROOT))
     assert str(REPO_ROOT / "ai" / "bin" / "pr") in scripts
-    assert str(REPO_ROOT / "ai" / "lib" / "ai_usage.py") in scripts
+    assert str(REPO_ROOT / "ai" / "lib" / "agent" / "usage.py") in scripts
 
 
 def test_repo_is_clean():

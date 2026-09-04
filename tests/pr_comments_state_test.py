@@ -11,8 +11,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import serde
-from pr_comments_state import (
+from core import serde
+from pr.comments_state import (
     CommentsState, ThreadRecord, ThreadState, load_state, save_state,
 )
 

@@ -10,7 +10,7 @@ if str(LIB_DIR) not in sys.path:
 if str(REPO_ROOT / "lib") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "lib"))
 
-from review_static_analysis import (
+from review.static_analysis import (
     CheckerResult,
     StaticViolation,
     check_nesting_depth,

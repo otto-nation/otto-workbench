@@ -15,10 +15,10 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 sys.path.insert(0, str(BIN_DIR))
 
-import ai_usage
-import trail as trail_module
-import workbench_paths
-from trail import Trail
+from agent import usage as ai_usage
+from core import trail as trail_module
+from core import workbench_paths
+from core.trail import Trail
 
 otto_log = load_script("otto_log", BIN_DIR / "otto-log")
 

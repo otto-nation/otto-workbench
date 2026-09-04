@@ -14,8 +14,8 @@ if str(LIB_DIR) not in sys.path:
 
 pr_describe_cli = load_script("pr_describe_cli", BIN_DIR / "pr-describe")
 
-import pr_domains  # noqa: E402
-import pr_state  # noqa: E402
+from pr import domains as pr_domains  # noqa: E402
+from pr import state as pr_state  # noqa: E402
 
 
 def _ctx(worktree, head_sha="aaaa111", pr_number=7):

@@ -11,9 +11,9 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_state import PostedAs, PostEvent, PostTracking
-from proc import CmdResult
-from serde import from_dict as serde_from_dict
+from pr.state import PostedAs, PostEvent, PostTracking
+from core.proc import CmdResult
+from core.serde import from_dict as serde_from_dict
 
 
 # A GitHub outage as gh reports it: nothing on stdout, the status line on
@@ -720,27 +720,27 @@ class TestChunkComments:
 class TestCheckExistingPending:
     def test_returns_review_id(self, rp):
         reviews = json.dumps([{"id": 12345, "state": "PENDING"}])
-        with patch("gh_client.api", return_value=CmdResult(0, reviews)):
+        with patch("gh.client.api", return_value=CmdResult(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") == 12345
 
     def test_returns_none_when_no_pending(self, rp):
         reviews = json.dumps([{"id": 1, "state": "APPROVED"}])
-        with patch("gh_client.api", return_value=CmdResult(0, reviews)):
+        with patch("gh.client.api", return_value=CmdResult(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") is None
 
     def test_returns_none_for_empty_list(self, rp):
-        with patch("gh_client.api", return_value=CmdResult(0, "[]")):
+        with patch("gh.client.api", return_value=CmdResult(0, "[]")):
             assert rp._check_existing_pending("org/repo", "1") is None
 
     def test_returns_none_on_api_failure(self, rp):
-        with patch("gh_client.api", return_value=CmdResult(1)):
+        with patch("gh.client.api", return_value=CmdResult(1)):
             assert rp._check_existing_pending("org/repo", "1") is None
 
     def test_api_failure_warns_with_the_cause(self, rp, capsys):
         # None also means "no pending review", and a caller that reads it that
         # way opens a second one — so the failure has to be audible.
         failure = _API_UNAVAILABLE
-        with patch("gh_client.api", return_value=failure):
+        with patch("gh.client.api", return_value=failure):
             assert rp._check_existing_pending("org/repo", "1") is None
         assert "HTTP 503" in capsys.readouterr().err
 
@@ -750,16 +750,16 @@ class TestPostReview:
 
     def test_no_existing_pending(self, rp):
         with (
-            patch("review_github._check_existing_pending", return_value=None),
-            patch("gh_client.api", return_value=CmdResult(0, '{"id": 42}')),
+            patch("gh.pr_reads._check_existing_pending", return_value=None),
+            patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')),
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
 
     def test_deletes_existing_pending(self, rp):
         with (
-            patch("review_github._check_existing_pending", return_value=999),
-            patch("gh_client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
+            patch("gh.pr_reads._check_existing_pending", return_value=999),
+            patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
@@ -769,8 +769,8 @@ class TestPostReview:
 
     def test_with_submit(self, rp):
         with (
-            patch("review_github._check_existing_pending", return_value=None),
-            patch("gh_client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
+            patch("gh.pr_reads._check_existing_pending", return_value=None),
+            patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD, submit=True)
         assert result == {"id": 42}
@@ -780,12 +780,12 @@ class TestPostReview:
 
 class TestSubmitReview:
     def test_success(self, rp):
-        with patch("gh_client.api", return_value=CmdResult(0, '{"ok": true}')) as mock_api:
+        with patch("gh.client.api", return_value=CmdResult(0, '{"ok": true}')) as mock_api:
             assert rp._submit_review("org/repo", "1", 42) is True
         assert mock_api.call_args[0][0] == "repos/org/repo/pulls/1/reviews/42/events"
 
     def test_failure_warns(self, rp, capsys):
-        with patch("gh_client.api", return_value=CmdResult(1, '{"message": "bad request"}')):
+        with patch("gh.client.api", return_value=CmdResult(1, '{"message": "bad request"}')):
             assert rp._submit_review("org/repo", "1", 42) is False
         assert "Failed to submit" in capsys.readouterr().err
 
@@ -796,7 +796,7 @@ class TestFetchPrRefs:
             "head": {"sha": "abc123", "ref": "feat/branch"},
             "base": {"ref": "main"},
         })
-        with patch("gh_client.api", return_value=CmdResult(0, pr_json)):
+        with patch("gh.client.api", return_value=CmdResult(0, pr_json)):
             meta = rp._fetch_pr_refs("org/repo", "1")
             assert meta["head_sha"] == "abc123"
             assert meta["head_ref"] == "feat/branch"
@@ -804,7 +804,7 @@ class TestFetchPrRefs:
 
     def test_failure_exits(self, rp):
         with (
-            patch("gh_client.api", return_value=CmdResult(1)),
+            patch("gh.client.api", return_value=CmdResult(1)),
             pytest.raises(SystemExit),
         ):
             rp._fetch_pr_refs("org/repo", "1")
@@ -812,11 +812,11 @@ class TestFetchPrRefs:
 
 class TestGetDiff:
     def test_success(self, rp):
-        with patch("gh_client.api", return_value=CmdResult(0, "diff --git a/f b/f\n")):
+        with patch("gh.client.api", return_value=CmdResult(0, "diff --git a/f b/f\n")):
             assert rp._get_diff("org/repo", "1") == "diff --git a/f b/f\n"
 
     def test_failure_returns_empty(self, rp):
-        with patch("gh_client.api", return_value=CmdResult(1)):
+        with patch("gh.client.api", return_value=CmdResult(1)):
             assert rp._get_diff("org/repo", "1") == ""
 
 
@@ -1075,9 +1075,9 @@ class TestReclassifyAndRetry:
         )
 
         with (
-            patch("review_github._get_diff", return_value=self.DIFF_NEW),
-            patch("review_posting._post_chunked_review", return_value=[{"id": 42}]),
-            patch("review_github._check_existing_pending", return_value=None),
+            patch("gh.pr_reads._get_diff", return_value=self.DIFF_NEW),
+            patch("review.posting._post_chunked_review", return_value=[{"id": 42}]),
+            patch("gh.pr_reads._check_existing_pending", return_value=None),
         ):
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [body_f],
@@ -1102,9 +1102,9 @@ class TestReclassifyAndRetry:
             return [{"id": 99}]
 
         with (
-            patch("review_github._get_diff", return_value=self.DIFF_NEW),
-            patch("review_posting._post_chunked_review", side_effect=failing_then_succeeding),
-            patch("review_github._check_existing_pending", return_value=None),
+            patch("gh.pr_reads._get_diff", return_value=self.DIFF_NEW),
+            patch("review.posting._post_chunked_review", side_effect=failing_then_succeeding),
+            patch("gh.pr_reads._check_existing_pending", return_value=None),
         ):
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
@@ -1127,9 +1127,9 @@ class TestReclassifyAndRetry:
         )
 
         with (
-            patch("review_github._get_diff", return_value=self.DIFF_NEW),
-            patch("review_posting._post_chunked_review", return_value=[{"id": 42}]),
-            patch("review_github._check_existing_pending", return_value=None),
+            patch("gh.pr_reads._get_diff", return_value=self.DIFF_NEW),
+            patch("review.posting._post_chunked_review", return_value=[{"id": 42}]),
+            patch("gh.pr_reads._check_existing_pending", return_value=None),
         ):
             _, _, body, _, _ = rp._reclassify_and_retry(
                 self._make_args(), [inline_f], [skipped_f],
@@ -1237,7 +1237,7 @@ class TestShaDriftReverify:
             patch.object(rp, "fetch_bot_reviews", return_value=[]),
             patch.object(rp, "check_review_already_posted", return_value=set()),
             patch.object(rp, "_check_existing_pending", return_value=None),
-            patch("gh_client.api_json", side_effect=capture_post),
+            patch("gh.client.api_json", side_effect=capture_post),
             patch.object(rp, "resolve_permalinks"),
         ):
             rp._run_post(trail, args, "org/repo", sidecar, review_file)
@@ -1274,7 +1274,7 @@ class TestShaDriftReverify:
             patch.object(rp, "fetch_bot_reviews", return_value=[]),
             patch.object(rp, "check_review_already_posted", return_value=set()),
             patch.object(rp, "_check_existing_pending", return_value=None),
-            patch("gh_client.api_json", return_value={"id": 42}),
+            patch("gh.client.api_json", return_value={"id": 42}),
             patch.object(rp, "resolve_permalinks"),
         ):
             rp._run_post(trail, args, "org/repo", sidecar, review_file)
@@ -1306,7 +1306,7 @@ class TestShaDriftReverify:
             patch.object(rp, "fetch_bot_reviews", return_value=[]),
             patch.object(rp, "check_review_already_posted", return_value=set()),
             patch.object(rp, "_check_existing_pending", return_value=None),
-            patch("gh_client.api_json", return_value={"id": 42}),
+            patch("gh.client.api_json", return_value={"id": 42}),
             patch.object(rp, "resolve_permalinks"),
         ):
             rp._run_post(trail, args, "org/repo", sidecar, review_file)
@@ -1339,21 +1339,21 @@ class TestCountNewCommits:
             {"sha": "bbb222"},
             {"sha": "ccc333"},
         ]
-        with patch("gh_client.api", return_value=CmdResult(0, json.dumps(commits))):
+        with patch("gh.client.api", return_value=CmdResult(0, json.dumps(commits))):
             assert rp._count_new_commits("org/repo", "1", "bbb222") == 1
 
     def test_no_match_returns_total(self, rp):
         commits = [{"sha": "aaa"}, {"sha": "bbb"}]
-        with patch("gh_client.api", return_value=CmdResult(0, json.dumps(commits))):
+        with patch("gh.client.api", return_value=CmdResult(0, json.dumps(commits))):
             assert rp._count_new_commits("org/repo", "1", "zzz") == 2
 
     def test_api_failure_returns_zero(self, rp):
-        with patch("gh_client.api", return_value=CmdResult(1)):
+        with patch("gh.client.api", return_value=CmdResult(1)):
             assert rp._count_new_commits("org/repo", "1", "aaa") == 0
 
     def test_prefix_match(self, rp):
         commits = [{"sha": "aabbccdd1234"}, {"sha": "eeff5678"}]
-        with patch("gh_client.api", return_value=CmdResult(0, json.dumps(commits))):
+        with patch("gh.client.api", return_value=CmdResult(0, json.dumps(commits))):
             assert rp._count_new_commits("org/repo", "1", "aabbccdd") == 1
 
 

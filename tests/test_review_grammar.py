@@ -5,12 +5,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from review_grammar import (  # noqa: E402
+from review.grammar import (  # noqa: E402
     BODY_FINDING_RE, BOLD_FINDING_ID_RE, SID_MARKER_RE, FindingIdentity,
     finding_tag, has_sid_marker, parse_finding_line, posted_finding_tag,
     sid_marker, strip_line_suffix, strip_sid_markers,
 )
-from review_types import SEVERITIES  # noqa: E402
+from review.types import SEVERITIES  # noqa: E402
 
 DESC = "missing error check"
 

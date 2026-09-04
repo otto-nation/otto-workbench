@@ -11,7 +11,7 @@ from conftest import REPO_ROOT, load_script
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-from review_format import HunkRange  # noqa: E402
+from review.format import HunkRange  # noqa: E402
 
 SCRIPT = REPO_ROOT / "ai" / "bin" / "validate-review-positions"
 

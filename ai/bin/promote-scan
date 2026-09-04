@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _version import version_string as _version_string  # noqa: E402
-from trail import Trail, add_trail_args  # noqa: E402
+from core.trail import Trail, add_trail_args  # noqa: E402
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ STALE_DAYS = 90
 BODY_PREVIEW_LENGTH = 500
 
 
-import log
+from core import log
 
 
 # ── Core functions ───────────────────────────────────────────────────────────

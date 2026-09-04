@@ -16,7 +16,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import timeouts  # noqa: E402
+from core import timeouts  # noqa: E402
 
 TIERS = ["QUICK", "LOCAL", "NETWORK", "TRANSFER"]
 
@@ -46,7 +46,7 @@ def test_the_table_imports_nothing():
     Read from the source rather than from the loaded module: by the time this
     test runs, `sys.modules` says nothing about who imported what.
     """
-    tree = ast.parse((LIB_DIR / "timeouts.py").read_text())
+    tree = ast.parse((LIB_DIR / "core" / "timeouts.py").read_text())
     imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
     names = [getattr(n, "module", None) or "" for n in imports]
     assert names == ["__future__"], f"timeouts.py imports {names}"

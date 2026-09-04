@@ -19,12 +19,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import git_client
-import review_budget
-import review_collect as rc
-from gh_types import PRContext, PRMetadata
-from review_collect import fetch_branch_metadata
-from review_types import PreflightData, ReviewJob
+from git import client as git_client
+from review import budget as review_budget
+from review import collect as rc
+from gh.types import PRContext, PRMetadata
+from review.collect import fetch_branch_metadata
+from review.types import PreflightData, ReviewJob
 
 
 def _job(tmp_path: Path, files: list[dict], **overrides) -> ReviewJob:

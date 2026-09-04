@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from tool_parser import (
+from core.tool_parser import (
     VALUE_FLAGS_FLAG, ToolParser, handle_value_flags, subparsers,
     value_taking_options,
 )

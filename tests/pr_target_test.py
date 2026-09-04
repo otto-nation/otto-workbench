@@ -19,7 +19,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-import pr_target
+from pr import target as pr_target
 
 
 # The slug rule's expectations, spelled out rather than recomputed, so a change

@@ -27,57 +27,57 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from trail import Trail, add_trail_args  # noqa: E402
-import agent_diagnosis as _ad  # noqa: E402
-import agent_invoke as _ai  # noqa: E402
-import agent_phases as _aph  # noqa: E402
-import ai_usage as _au  # noqa: E402
-import review_prompt as _rpmt  # noqa: E402
-import review_prompt_prior as _rprior  # noqa: E402
-import review_prompt_sections as _rpsec  # noqa: E402
-import review_registry as _rreg  # noqa: E402
-import review_agent as _ra  # noqa: E402
-import review_pipeline as _rpl  # noqa: E402
-import review_fix as _rfx  # noqa: E402
-import review_gc as _rgc  # noqa: E402
-import review_paths as _rpath  # noqa: E402
-import review_phases as _rph  # noqa: E402
-import review_steps as _rstp  # noqa: E402
-import review_outcome as _rout  # noqa: E402
-import review_retry as _rrt  # noqa: E402
-import review_state as _rst  # noqa: E402
-import review_types as _rt  # noqa: E402
+from core.trail import Trail, add_trail_args  # noqa: E402
+from agent import diagnosis as _ad  # noqa: E402
+from agent import invoke as _ai  # noqa: E402
+from agent import phases as _aph  # noqa: E402
+from agent import usage as _au  # noqa: E402
+from review import prompt as _rpmt  # noqa: E402
+from review import prompt_prior as _rprior  # noqa: E402
+from review import prompt_sections as _rpsec  # noqa: E402
+from review import registry as _rreg  # noqa: E402
+from agent import session as _ra  # noqa: E402
+from review import pipeline as _rpl  # noqa: E402
+from review import fix as _rfx  # noqa: E402
+from review import gc as _rgc  # noqa: E402
+from review import paths as _rpath  # noqa: E402
+from review import phases as _rph  # noqa: E402
+from review import steps as _rstp  # noqa: E402
+from review import outcome as _rout  # noqa: E402
+from review import retry as _rrt  # noqa: E402
+from review import state as _rst  # noqa: E402
+from review import types as _rt  # noqa: E402
 
-import log  # noqa: E402
-import pr_state  # noqa: E402
-import proc  # noqa: E402
-import publishing  # noqa: E402
+from core import log  # noqa: E402
+from pr import state as pr_state  # noqa: E402
+from core import proc  # noqa: E402
+from core import publishing  # noqa: E402
 
-from pr_context import detect_repo  # noqa: E402
-from agent_registry import add_phase_skip_flags, phase_skips  # noqa: E402
-from phases import Effort, Mode  # noqa: E402
-from review_document import (  # noqa: E402
+from pr.context import detect_repo  # noqa: E402
+from agent.registry import add_phase_skip_flags, phase_skips  # noqa: E402
+from core.phases import Effort, Mode  # noqa: E402
+from review.document import (  # noqa: E402
     SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
 )
-from review_paths import (  # noqa: E402
+from review.paths import (  # noqa: E402
     FILENAME_SESSION, review_artifact_path, stamp_reviewed,
 )
-from tool_parser import enum_arg  # noqa: E402
-from review_collect import collect_preflight_data  # noqa: E402
-from review_reply_threads import fetch_reply_threads  # noqa: E402
-from review_types import Pipeline, ReviewJob, ViewerRole  # noqa: E402
-from agent_invoke import QuotaThrottle  # noqa: E402
-from review_fix import run_fix_pass  # noqa: E402
-from review_gc import cleaned_on_success  # noqa: E402
-from agent_phases import collect_phase_models, resolve_effort  # noqa: E402
-from review_pipeline import (  # noqa: E402
+from core.tool_parser import enum_arg  # noqa: E402
+from review.collect import collect_preflight_data  # noqa: E402
+from review.reply_threads import fetch_reply_threads  # noqa: E402
+from review.types import Pipeline, ReviewJob, ViewerRole  # noqa: E402
+from agent.invoke import QuotaThrottle  # noqa: E402
+from review.fix import run_fix_pass  # noqa: E402
+from review.gc import cleaned_on_success  # noqa: E402
+from agent.phases import collect_phase_models, resolve_effort  # noqa: E402
+from review.pipeline import (  # noqa: E402
     DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, _fetch_metadata,
     run_multi_phase, run_single_agent,
 )
-from review_static_analysis import (  # noqa: E402
+from review.static_analysis import (  # noqa: E402
     format_static_analysis, run_static_analysis,
 )
-import ai_backend  # noqa: E402
+from agent import backend as ai_backend  # noqa: E402
 
 SCRIPT = Path(__file__).name
 

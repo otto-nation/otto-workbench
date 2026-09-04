@@ -16,8 +16,8 @@ from conftest import run_checked
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-import workbench_paths  # noqa: E402
-import workbench_projects  # noqa: E402
+from core import workbench_paths  # noqa: E402
+from config import workbench_projects  # noqa: E402
 
 # Captured before the autouse fixture empties it, so the one test that needs the
 # real rule can put it back.

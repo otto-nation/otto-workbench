@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
-import workbench_config  # noqa: E402
-import workbench_config_write  # noqa: E402
-from workbench_config import ConfigError, ReuseLevel  # noqa: E402
+from config import workbench_config  # noqa: E402
+from config import workbench_config_write  # noqa: E402
+from config.workbench_config import ConfigError, ReuseLevel  # noqa: E402
 
 # Re-exported: the writers below raise it, so a hook catching it should not
 # have to reach past this module for the type.

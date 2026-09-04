@@ -28,17 +28,17 @@ _REAL_SUBPROCESS_RUN = subprocess.run
 
 pr_cli = load_script("pr_cli", BIN_DIR / "pr")
 
-import proc  # noqa: E402
-import pr_comments_fix  # noqa: E402
-import pr_domains  # noqa: E402
-import pr_fix  # noqa: E402
-import pr_state  # noqa: E402
-import run_lock  # noqa: E402
-import timeouts  # noqa: E402
-import tool_parser  # noqa: E402
-import workbench_paths  # noqa: E402
+from core import proc  # noqa: E402
+from pr import comments_fix as pr_comments_fix  # noqa: E402
+from pr import domains as pr_domains  # noqa: E402
+from pr import fix as pr_fix  # noqa: E402
+from pr import state as pr_state  # noqa: E402
+from core import run_lock  # noqa: E402
+from core import timeouts  # noqa: E402
+from core import tool_parser  # noqa: E402
+from core import workbench_paths  # noqa: E402
 
-from pr_comments_fix import CLOSEOUT_COMMAND  # noqa: E402
+from pr.comments_fix import CLOSEOUT_COMMAND  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
@@ -97,7 +97,7 @@ def test_is_pr_target_empty():
 
 
 def test_merge_readiness_all_green():
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
     pr_state.apply(state, pr_domains.ReviewSummary(
@@ -111,7 +111,7 @@ def test_merge_readiness_all_green():
 
 
 def test_merge_readiness_ci_failing():
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.CIDomain(conclusion="failure", updated_at="t"))
     pr_state.apply(state, pr_domains.ReviewSummary(updated_at="t"))
@@ -121,7 +121,7 @@ def test_merge_readiness_ci_failing():
 
 
 def test_merge_readiness_must_fix():
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
     pr_state.apply(state, pr_domains.ReviewSummary(
@@ -133,14 +133,14 @@ def test_merge_readiness_must_fix():
 
 
 def test_merge_readiness_not_checked():
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     result = pr_cli._merge_readiness(state)
     assert "not checked" in result
 
 
 def test_merge_readiness_review_incomplete():
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
     pr_state.apply(state, pr_domains.ReviewSummary(
@@ -152,7 +152,7 @@ def test_merge_readiness_review_incomplete():
 
 
 def test_merge_readiness_review_error():
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
     pr_state.apply(state, pr_domains.ReviewSummary(
@@ -165,7 +165,7 @@ def test_merge_readiness_review_error():
 
 def _green_state():
     """Everything checked and clean — anything blocked here is the closeout."""
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
     pr_state.apply(state, pr_domains.ReviewSummary(
@@ -176,7 +176,7 @@ def _green_state():
 
 
 def test_merge_readiness_blocked_by_a_deferred_summary():
-    import pr_state
+    from pr import state as pr_state
     state = _green_state()
     pr_state.apply(state, pr_comments_fix.FixSummary(summary_deferred=True, updated_at="t"))
     result = pr_cli._merge_readiness(state)
@@ -186,7 +186,7 @@ def test_merge_readiness_blocked_by_a_deferred_summary():
 
 
 def test_merge_readiness_blocked_by_a_pending_reply_queue():
-    import pr_state
+    from pr import state as pr_state
     state = _green_state()
     pr_state.apply(state, pr_comments_fix.FixSummary(replies_pending=True, updated_at="t"))
     assert "closeout not delivered" in pr_cli._merge_readiness(state)
@@ -194,7 +194,7 @@ def test_merge_readiness_blocked_by_a_pending_reply_queue():
 
 def test_merge_readiness_blocked_by_an_unfiled_tracking_issue():
     """Deferred comments with nowhere to live are not a mergeable state."""
-    import pr_state
+    from pr import state as pr_state
     state = _green_state()
     pr_state.apply(state, pr_comments_fix.FixSummary(deferred_issue_pending=True, updated_at="t"))
     result = pr_cli._merge_readiness(state)
@@ -203,7 +203,7 @@ def test_merge_readiness_blocked_by_an_unfiled_tracking_issue():
 
 
 def test_merge_readiness_ignores_a_drained_closeout():
-    import pr_state
+    from pr import state as pr_state
     state = _green_state()
     pr_state.apply(state, pr_comments_fix.FixSummary(
         fix=pr_fix.FixRecord(
@@ -870,7 +870,7 @@ def test_cmd_fix_no_state_returns_error(mock_load):
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_run):
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.ReviewSummary(
         finding_counts={"M": 1}, verdict=pr_domains.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
@@ -888,7 +888,7 @@ def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_run):
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.ReviewSummary(
         finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value, updated_at="t",
@@ -924,7 +924,7 @@ def _first_call_containing(mock_run, script: str) -> list[str]:
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_stops_when_the_review_refuses_the_branch(mock_load, mock_run):
     """A branch not worth reviewing is not worth running the CI fix pass on either."""
-    import supersession
+    from pr import supersession
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.ReviewSummary(
         finding_counts={"M": 1}, verdict=pr_domains.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
@@ -946,7 +946,7 @@ def test_cmd_fix_stops_when_the_review_refuses_the_branch(mock_load, mock_run):
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_describes_last(mock_load, mock_run):
     """The description must reflect the branch state after all fix passes complete."""
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.ReviewSummary(
         finding_counts={"M": 1}, verdict=pr_domains.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
@@ -962,7 +962,7 @@ def test_cmd_fix_describes_last(mock_load, mock_run):
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_does_not_forward_argv_to_describe(mock_load, mock_run):
     """--fix and friends mean nothing to pr-describe."""
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
@@ -974,7 +974,7 @@ def test_cmd_fix_does_not_forward_argv_to_describe(mock_load, mock_run):
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_reports_a_failing_describe(mock_load, mock_run):
-    import pr_state
+    from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=1)
@@ -1487,7 +1487,7 @@ def test_status_prints_only_the_domains_that_have_something_to_say(worktree, cap
     ctx = make_ctx(repo="acme/widget", branch="feat/x", worktree_root=worktree,
                    target_dir=target)
 
-    with patch("pr_domains.git_client.run", return_value=proc.CmdResult(0, "0\n")):
+    with patch("pr.domains.git_client.run", return_value=proc.CmdResult(0, "0\n")):
         assert pr_cli.cmd_status([], ctx) == 0
 
     err = capsys.readouterr().err
@@ -1509,7 +1509,7 @@ def test_status_refreshes_push_without_writing_it_to_state(worktree, capsys):
     ctx = make_ctx(repo="acme/widget", branch="feat/x", worktree_root=worktree,
                    target_dir=target)
 
-    with patch("pr_domains.git_client.run", return_value=proc.CmdResult(0, "2\n")):
+    with patch("pr.domains.git_client.run", return_value=proc.CmdResult(0, "2\n")):
         assert pr_cli.cmd_status([], ctx) == 0
 
     captured = capsys.readouterr()
@@ -1525,7 +1525,7 @@ def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
 
 def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
     """A team review from a repo root must not clobber that root's own state."""
-    import pr_context
+    from pr import context as pr_context
     caller = tmp_path / "repo-root"
     caller.mkdir()
     target = tmp_path / "pr" / "widget-feat-login"

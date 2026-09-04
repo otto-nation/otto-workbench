@@ -16,49 +16,49 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-import gh_client
-import git_client
-import git_topology
-import log
-import pr_context
-import pr_domains
-import pr_state
-import proc
-import run_lock
-import timeouts
-import workbench_paths
-from tool_parser import handle_value_flags
-from trail import Trail, add_trail_args
-from serde import to_dict as _serde_to_dict
+from gh import client as gh_client
+from git import client as git_client
+from git import topology as git_topology
+from core import log
+from pr import context as pr_context
+from pr import domains as pr_domains
+from pr import state as pr_state
+from core import proc
+from core import run_lock
+from core import timeouts
+from core import workbench_paths
+from core.tool_parser import handle_value_flags
+from core.trail import Trail, add_trail_args
+from core.serde import to_dict as _serde_to_dict
 try:
     from _version import version_string
 except ImportError:
     def version_string(name):
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
-from agent_registry import add_phase_skip_flags, phase_skip_argv, phase_skips
-from phases import Mode, Phase
-from review_document import ReviewDocument
-from review_verdict import open_counts, resolve_review_verdict
-from review_paths import (
+from agent.registry import add_phase_skip_flags, phase_skip_argv, phase_skips
+from core.phases import Mode, Phase
+from review.document import ReviewDocument
+from review.verdict import open_counts, resolve_review_verdict
+from review.paths import (
     FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION, FILENAME_PRIOR,
     FILENAME_SESSION, REVIEW_EXT, aggregate_session_usage, archive_review,
     archives_dir, read_review_meta, review_file_path,
 )
-from review_types import (
+from review.types import (
     SEVERITIES, ReviewMeta, ReviewType, review_meta_from_dict,
 )
-from review_state import (
+from review.state import (
     build_failure_detail, read_pipeline_status, read_pipeline_warnings,
 )
-from review_summary import json_summary
-from ai_usage import SessionUsage, format_tokens, parse_session_log
-import prompt
-import review_issue
-import review_worktree
-import supersession
-from pr_state import PostTracking
-from serde import load_file as serde_load_file, to_dict as serde_to_dict
+from review.summary import json_summary
+from agent.usage import SessionUsage, format_tokens, parse_session_log
+from core import prompt
+from review import issue as review_issue
+from review import worktree as review_worktree
+from pr import supersession
+from pr.state import PostTracking
+from core.serde import load_file as serde_load_file, to_dict as serde_to_dict
 
 BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name

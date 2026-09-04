@@ -23,10 +23,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import gh_client  # noqa: E402
-import proc  # noqa: E402
-import timeouts  # noqa: E402
-from proc import CmdResult  # noqa: E402
+from gh import client as gh_client  # noqa: E402
+from core import proc  # noqa: E402
+from core import timeouts  # noqa: E402
+from core.proc import CmdResult  # noqa: E402
 
 
 def _stub_gh(tmp_path: Path, monkeypatch, body: str) -> Path:

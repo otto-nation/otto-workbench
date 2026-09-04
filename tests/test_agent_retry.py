@@ -14,14 +14,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
-import agent_retry
-import ai_usage
-from agent_registry import PHASES
-from agent_types import DEFAULT_RETRY_CEILING
-from phases import Phase
-import review_phases
-import review_retry
-from agent_diagnosis import Diagnosis, DiagnosisKind
+from agent import retry as agent_retry
+from agent import usage as ai_usage
+from agent.registry import PHASES
+from agent.types import DEFAULT_RETRY_CEILING
+from core.phases import Phase
+from review import phases as review_phases
+from review import retry as review_retry
+from agent.diagnosis import Diagnosis, DiagnosisKind
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)

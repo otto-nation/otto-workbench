@@ -26,8 +26,8 @@ def _check(tmp_path, source):
 
 def test_the_watched_values_come_from_the_owning_modules():
     """The check must not carry its own copy of a number it polices."""
-    import proc
-    import trail
+    from core import proc
+    from core import trail
     assert EXITS[proc.INTERRUPT_RETURNCODE] == ["proc.INTERRUPT_RETURNCODE"]
     assert "trail.EXCERPT_LIMIT" in CAPS[trail.EXCERPT_LIMIT]
 
@@ -196,7 +196,7 @@ def test_an_unparseable_file_answers_neither_clean_nor_dirty(tmp_path, capsys):
 def test_discover_finds_extensionless_python_scripts():
     scripts = vm.discover_scripts(str(REPO_ROOT))
     assert str(REPO_ROOT / "ai" / "bin" / "pr") in scripts
-    assert str(REPO_ROOT / "ai" / "lib" / "proc.py") in scripts
+    assert str(REPO_ROOT / "ai" / "lib" / "core" / "proc.py") in scripts
 
 
 def test_a_named_non_python_file_is_not_reported_unparseable(monkeypatch, capsys, tmp_path):

@@ -68,7 +68,7 @@ from server import (  # noqa: E402
     probe_tools,
     tool_candidates,
 )
-from tool_registry import load_registry_entries  # noqa: E402
+from config.tool_registry import load_registry_entries  # noqa: E402
 
 
 # ── Discovery ────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_paths import (
+from review.paths import (
     ARCHIVE_KEEP_COUNT, archive_review, archives_dir, review_artifact_path,
 )
 

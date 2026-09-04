@@ -47,9 +47,9 @@ WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 # project as the working directory, so the workbench's Python has to be named
 # before it can be imported.
 sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
-import proc  # noqa: E402
-import timeouts  # noqa: E402
-from tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
+from core import proc  # noqa: E402
+from core import timeouts  # noqa: E402
+from config.tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
 
 COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
 

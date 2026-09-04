@@ -13,8 +13,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import ai_backend
-import ai_usage
+from agent import backend as ai_backend
+from agent import usage as ai_usage
 
 
 @pytest.fixture
@@ -91,7 +91,7 @@ class TestBackendSelection:
 class TestPreflightDispatch:
     def test_routes_to_claude_backend(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "claude")
-        import ai_backend_claude
+        from agent import backend_claude as ai_backend_claude
         monkeypatch.setattr(ai_backend_claude, "preflight", lambda models, trail: False)
         assert ai_backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is False
 
@@ -102,7 +102,7 @@ class TestPreflightDispatch:
         monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
         monkeypatch.setenv("CLOUD_ML_REGION", "us-east5")
 
-        import vertex_quota
+        from agent import vertex_quota
 
         def _unreachable(*args, **kwargs):
             pytest.fail("Pi run reached the Vertex quota API")
@@ -116,9 +116,9 @@ class TestAgentInvocation:
         """One object, three modules — a reordered field cannot misbind."""
         import inspect
 
-        import ai_backend
-        import ai_backend_claude
-        import ai_backend_pi
+        from agent import backend as ai_backend
+        from agent import backend_claude as ai_backend_claude
+        from agent import backend_pi as ai_backend_pi
 
         for mod in (ai_backend, ai_backend_claude, ai_backend_pi):
             for fn_name in ("invoke_agent", "invoke_fix"):
@@ -126,7 +126,7 @@ class TestAgentInvocation:
                 assert params == ["inv"], f"{mod.__name__}.{fn_name} takes {params}"
 
     def test_defaults_leave_every_optional_field_unset(self):
-        import ai_backend
+        from agent import backend as ai_backend
 
         inv = ai_backend.AgentInvocation(prompt="hi")
         assert inv.cwd == ""
@@ -147,7 +147,7 @@ class TestAgentInvocation:
     def test_is_frozen(self):
         import dataclasses
 
-        import ai_backend
+        from agent import backend as ai_backend
         import pytest
 
         inv = ai_backend.AgentInvocation(prompt="hi")
@@ -155,7 +155,7 @@ class TestAgentInvocation:
             inv.prompt = "bye"
 
     def test_add_dirs_are_not_shared_between_instances(self):
-        import ai_backend
+        from agent import backend as ai_backend
 
         a = ai_backend.AgentInvocation(prompt="a")
         b = ai_backend.AgentInvocation(prompt="b")
@@ -326,7 +326,7 @@ class TestBackendsRunInTheGivenDirectory:
     """The cwd must reach subprocess, not just the invocation object."""
 
     def test_claude_prompt_passes_cwd_to_subprocess(self, monkeypatch, tmp_path):
-        import ai_backend_claude
+        from agent import backend_claude as ai_backend_claude
 
         seen = {}
 
@@ -339,7 +339,7 @@ class TestBackendsRunInTheGivenDirectory:
         assert seen["cwd"] == str(tmp_path)
 
     def test_pi_prompt_passes_cwd_to_subprocess(self, monkeypatch, tmp_path):
-        import ai_backend_pi
+        from agent import backend_pi as ai_backend_pi
 
         seen = {}
 
@@ -355,7 +355,7 @@ class TestBackendsRunInTheGivenDirectory:
     def test_claude_agents_run_in_the_invocation_cwd(
         self, monkeypatch, tmp_path, entry_point,
     ):
-        import ai_backend_claude
+        from agent import backend_claude as ai_backend_claude
 
         seen = {}
 
@@ -408,7 +408,7 @@ class TestBackendsGetTheInvocationEnv:
     zero for a reason its own trace cannot explain.
     """
 
-    BACKENDS = ["ai_backend_claude", "ai_backend_pi"]
+    BACKENDS = ["agent.backend_claude", "agent.backend_pi"]
 
     @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
@@ -443,7 +443,7 @@ class TestBackendsGetTheInvocationEnv:
 
 class TestBuildAddDirs:
     def test_artifact_dir_and_worktree_only(self):
-        import review_agent
+        from agent import session as review_agent
 
         dirs = review_agent.build_add_dirs("/wt", "/reviews/pr-42")
         assert dirs == ["/reviews/pr-42", "/wt"]

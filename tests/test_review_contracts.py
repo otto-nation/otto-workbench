@@ -30,22 +30,22 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import make_ctx  # noqa: E402
 
-import agent_registry  # noqa: E402
-import agent_templates  # noqa: E402
-import fix_engine  # noqa: E402
-import fix_tracking  # noqa: E402
-from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
-from phases import Mode, Phase, PhaseShape  # noqa: E402
-import review_fix  # noqa: E402
-import review_grammar  # noqa: E402
-import review_prompt  # noqa: E402
-import review_registry  # noqa: E402
-import review_spans  # noqa: E402
-import review_types  # noqa: E402
-from gh_types import PRContext, PRMetadata  # noqa: E402
-from pr_state import PRIdentity, PRState  # noqa: E402
-from review_budget import MAX_PROMPT_BYTES  # noqa: E402
-from review_types import PreflightData, ReviewJob  # noqa: E402
+from agent import registry as agent_registry  # noqa: E402
+from agent import templates as agent_templates  # noqa: E402
+from fix import engine as fix_engine  # noqa: E402
+from fix import tracking as fix_tracking  # noqa: E402
+from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
+from core.phases import Mode, Phase, PhaseShape  # noqa: E402
+from review import fix as review_fix  # noqa: E402
+from review import grammar as review_grammar  # noqa: E402
+from review import prompt as review_prompt  # noqa: E402
+from review import registry as review_registry  # noqa: E402
+from review import spans as review_spans  # noqa: E402
+from review import types as review_types  # noqa: E402
+from gh.types import PRContext, PRMetadata  # noqa: E402
+from pr.state import PRIdentity, PRState  # noqa: E402
+from review.budget import MAX_PROMPT_BYTES  # noqa: E402
+from review.types import PreflightData, ReviewJob  # noqa: E402
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -801,7 +801,7 @@ class TestSharedSectionNames:
     """`shared()` takes bare strings — catch typos statically, not at call time."""
 
     def _shared_call_args(self) -> list[tuple[int, str]]:
-        tree = ast.parse((LIB_DIR / "review_prompt.py").read_text())
+        tree = ast.parse((LIB_DIR / "review" / "prompt.py").read_text())
         return [
             (node.lineno, arg.value)
             for node in ast.walk(tree)

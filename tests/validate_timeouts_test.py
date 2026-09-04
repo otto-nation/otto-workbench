@@ -224,7 +224,7 @@ def b(cmd):
 def test_discover_finds_extensionless_python_scripts():
     scripts = vt.discover_scripts(str(REPO_ROOT))
     assert str(REPO_ROOT / "ai" / "bin" / "pr") in scripts
-    assert str(REPO_ROOT / "ai" / "lib" / "proc.py") in scripts
+    assert str(REPO_ROOT / "ai" / "lib" / "core" / "proc.py") in scripts
 
 
 def test_the_mcp_server_is_covered():

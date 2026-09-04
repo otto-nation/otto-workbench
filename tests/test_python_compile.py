@@ -48,9 +48,14 @@ def _discover_bin_sources(bin_dir: Path) -> list[Path]:
     return [p for p in sorted(bin_dir.iterdir()) if _is_python_bin_script(p)]
 
 
+def _discover_lib_sources() -> list[Path]:
+    """Find all .py files across the lib packages."""
+    return sorted(p for p in LIB_DIR.glob("*/*.py") if p.stem != "__init__")
+
+
 def _discover_python_sources() -> list[Path]:
     """Find all Python source files (lib .py + bin scripts with python3 shebang)."""
-    sources: list[Path] = list(sorted(LIB_DIR.glob("*.py")))
+    sources: list[Path] = list(_discover_lib_sources())
 
     bin_dirs = [
         REPO_ROOT / "ai" / "bin",
@@ -216,7 +221,14 @@ def _collect_bare_refs(tree: ast.Module) -> set[str]:
     return refs
 
 
+_LIB_SOURCES = _discover_lib_sources()
 ALL_SOURCES = _discover_python_sources()
+
+
+def test_lib_sources_discovered():
+    """A flat glob after the package move finds nothing; catch that before it hides
+    all 101 lib modules behind the bin scripts merged in below."""
+    assert len(_LIB_SOURCES) > 90
 
 
 @pytest.mark.parametrize(

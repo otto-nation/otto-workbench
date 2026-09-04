@@ -15,15 +15,15 @@ SCRIPT_PATH = REPO_ROOT / "ai" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-import workbench_paths
-from pr_domains import ReviewStatus, ReviewVerdict
-from review_paths import (
+from core import workbench_paths
+from pr.domains import ReviewStatus, ReviewVerdict
+from review.paths import (
     FILENAME_POST_SESSION, ReviewEntryKind, find_review_file,
     iter_review_entries, read_review_meta, review_file_path, stamp_reviewed,
 )
-from review_state import read_pipeline_status, read_pipeline_warnings
-from review_summary import json_summary
-import review_gc
+from review.state import read_pipeline_status, read_pipeline_warnings
+from review.summary import json_summary
+from review import gc as review_gc
 
 from conftest import (
     load_script, make_ctx, run_checked, supersession_context, supersession_evidence,
@@ -537,12 +537,12 @@ def test_read_pipeline_status_complete_no_failures(cr, tmp_path):
 
 
 def test_build_failure_detail_no_dir(cr):
-    from review_state import build_failure_detail
+    from review.state import build_failure_detail
     assert build_failure_detail(None) == ""
 
 
 def test_build_failure_detail_no_failures(cr, tmp_path):
-    from review_state import build_failure_detail
+    from review.state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
@@ -553,7 +553,7 @@ def test_build_failure_detail_no_failures(cr, tmp_path):
 
 
 def test_build_failure_detail_groups_failed(cr, tmp_path):
-    from review_state import build_failure_detail
+    from review.state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
@@ -568,7 +568,7 @@ def test_build_failure_detail_groups_failed(cr, tmp_path):
 
 def test_build_failure_detail_reads_typed_diagnoses(cr, tmp_path):
     """The format `_write_pipeline_state` actually produces."""
-    from review_state import build_failure_detail
+    from review.state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
@@ -588,7 +588,7 @@ def test_build_failure_detail_reads_typed_diagnoses(cr, tmp_path):
 
 
 def test_build_failure_detail_synthesis_failed(cr, tmp_path):
-    from review_state import build_failure_detail
+    from review.state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
@@ -600,7 +600,7 @@ def test_build_failure_detail_synthesis_failed(cr, tmp_path):
 
 
 def test_build_failure_detail_all_groups_failed(cr, tmp_path):
-    from review_state import build_failure_detail
+    from review.state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
@@ -620,7 +620,7 @@ def test_the_two_readers_agree_on_the_all_failed_sentinel(cr, tmp_path):
     compute the all-failed rule separately, and only the status reader honoured
     the sentinel, so the review said `error` and `1/2 groups failed` at once.
     """
-    from review_state import build_failure_detail
+    from review.state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
@@ -656,7 +656,7 @@ def test_a_self_review_states_no_verdict(cr, tmp_path):
     puts self under `mode`. So the branch never fired and a self-review with a
     must-fix finding claimed `changes_requested` against a PR it has no say in.
     """
-    from review_summary import build_review_summary
+    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
 
     result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
@@ -668,7 +668,7 @@ def test_a_self_review_states_no_verdict(cr, tmp_path):
 
 def test_an_incremental_self_review_states_no_verdict(cr, tmp_path):
     """The two fields are orthogonal — being incremental does not restore a verdict."""
-    from review_summary import build_review_summary
+    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "incremental")
 
     result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
@@ -679,7 +679,7 @@ def test_an_incremental_self_review_states_no_verdict(cr, tmp_path):
 
 def test_a_pr_review_still_requests_changes(cr, tmp_path):
     """The same finding under `mode: pr` keeps the verdict it always had."""
-    from review_summary import build_review_summary
+    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
     (review_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/test-repo", "head_sha": "abc",
@@ -697,7 +697,7 @@ def test_an_unknown_meta_vocabulary_reads_as_absent(cr, tmp_path):
     A member this version does not know reads as unset rather than raising, so
     one unrecognised field does not cost the whole summary.
     """
-    from review_summary import build_review_summary
+    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
     (review_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/test-repo", "head_sha": "abc",
@@ -721,7 +721,7 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
         "done": ["synthesis"], "failed": {},
         "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
     }))
-    from review_summary import build_review_summary
+    from review.summary import build_review_summary
     result = build_review_summary("owner/test-repo", "1", str(review_file))
     assert result["status"] == ReviewStatus.PARTIAL.value
     assert "1/2 groups failed" in result["failure_detail"]
@@ -1099,7 +1099,7 @@ def test_gc_preserves_recent_stray_files(cr, reviews_dir):
 # ── prune_merged_reviews ─────────────────────────────────────────────────────
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-42"
     d.mkdir()
@@ -1131,7 +1131,7 @@ def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
     assert not d.exists()
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-99"
     d.mkdir()
@@ -1161,7 +1161,7 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
     assert (d / "review.md").exists()
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_prune_keeps_recent_merged_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-50"
     d.mkdir()
@@ -1176,7 +1176,7 @@ def test_prune_keeps_recent_merged_pr(mock_run, cr, reviews_dir):
     mock_run.assert_not_called()
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-51"
     d.mkdir()
@@ -1201,7 +1201,7 @@ def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
     assert d.exists(), "failed review within 30-day window should be retained"
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_prune_removes_old_failed_review(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-52"
     d.mkdir()
@@ -2125,8 +2125,8 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     Both targets are built through `pr_target` — the repo key is opaque and no
     test may reconstruct one.
     """
-    import pr_state as ps
-    import pr_target
+    from pr import state as ps
+    from pr import target as pr_target
 
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     caller = _caller_checkout(tmp_path / "caller", branch="main")
@@ -2214,7 +2214,7 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     The lock is what stops that, and this branch's docs claim it covers a direct
     `--self` invocation — so a second, unrelated run has to be refused.
     """
-    import run_lock
+    from core import run_lock
 
     target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
@@ -2236,7 +2236,7 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
     cr, tmp_path, reviews_dir, monkeypatch,
 ):
     """Launched by `pr`, a --self run inherits WORKBENCH_RUN_LOCK, not a deadlock."""
-    import run_lock
+    from core import run_lock
 
     target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
@@ -2274,7 +2274,7 @@ def test_context_alone_does_not_refuse(cr, monkeypatch, capsys):
 
 def test_evidence_refuses_before_the_first_agent_call(cr, monkeypatch, capsys):
     """The whole point of refusing here: a review is the largest spend in the repo."""
-    import supersession
+    from pr import supersession
 
     with pytest.raises(SystemExit) as exc:
         _refuse(cr, monkeypatch, supersession_verdict(supersession_evidence()))
@@ -2333,7 +2333,7 @@ def test_recover_overrides_the_refusal_on_both_paths(cr):
 
 def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatch):
     """Ordering, not just presence: the check has to precede the issue lookup."""
-    import supersession
+    from pr import supersession
 
     monkeypatch.setattr(
         cr.supersession, "detect_cached",

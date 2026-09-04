@@ -29,23 +29,23 @@ from typing import TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-import agent_retry
-import ci_failures as ci
-import fix_engine
-import fix_types
-import gh_client
-import pr_context
-import pr_domains
-import pr_state
-import publishing
-import run_lock
-import log
-import timeouts
-from phases import Phase
-from land import CommitStatus
-from pr_fix import FixOutcome, FixRecord, ItemOutcome
-from tool_parser import ToolParser
-from trail import Trail, add_trail_args
+from agent import retry as agent_retry
+from pr import ci_failures as ci
+from fix import engine as fix_engine
+from fix import types as fix_types
+from gh import client as gh_client
+from pr import context as pr_context
+from pr import domains as pr_domains
+from pr import state as pr_state
+from core import publishing
+from core import run_lock
+from core import log
+from core import timeouts
+from core.phases import Phase
+from git.land import CommitStatus
+from pr.fix import FixOutcome, FixRecord, ItemOutcome
+from core.tool_parser import ToolParser
+from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 

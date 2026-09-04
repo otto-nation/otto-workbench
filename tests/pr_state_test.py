@@ -12,18 +12,18 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-import pr_state
-from land import CommitStatus
-from pr_comments_fix import CLOSEOUT_COMMAND, FixSummary
-from pr_domains import (
+from pr import state as pr_state
+from git.land import CommitStatus
+from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
+from pr.domains import (
     CIDomain,
     CommentsSummary, TriageSummary, RebaseSummary,
     PushDomain,
     ReviewSummary, ReviewVerdict, ReviewStatus,
     SupersessionDomain, SupersessionKind, SupersessionSignal,
 )
-from pr_fix import FixOutcome, FixRecord, ItemOutcome
-from pr_state import (
+from pr.fix import FixOutcome, FixRecord, ItemOutcome
+from pr.state import (
     PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
     apply, _domains, domains_of, merge_readiness,
@@ -31,7 +31,7 @@ from pr_state import (
     load_or_init, apply_state_update,
     STATE_VERSION,
 )
-from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
+from pr.ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
 
 
 # ── Dataclass construction ──────────────────────────────────────────────────
@@ -604,7 +604,7 @@ def test_save_never_exposes_a_truncated_file(worktree, monkeypatch):
     A failed write must leave the previous state readable. The temp file the
     guarantee rests on is serde's now, so that is where the failure is
     injected — this asserts save_state still routes through it."""
-    import serde
+    from core import serde
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
                       worktree_root=str(worktree))
@@ -633,7 +633,7 @@ def test_save_leaves_no_temp_files_behind(worktree):
 
 
 def test_save_discards_the_temp_file_when_the_write_fails(worktree, monkeypatch):
-    import serde
+    from core import serde
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
                       worktree_root=str(worktree))

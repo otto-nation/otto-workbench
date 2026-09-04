@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import numstat  # noqa: E402
+from git import numstat  # noqa: E402
 
 
 class TestParseNumstat:

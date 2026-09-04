@@ -12,10 +12,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import git_topology
-import pr_context
-import pr_target
-from pr_context import _parse_pr_input, PRHead, ResolvedContext
+from git import topology as git_topology
+from pr import context as pr_context
+from pr import target as pr_target
+from pr.context import _parse_pr_input, PRHead, ResolvedContext
 
 from conftest import git_in, make_ctx, run_checked  # noqa: E402
 

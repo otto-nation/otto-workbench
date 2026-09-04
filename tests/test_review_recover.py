@@ -29,11 +29,11 @@ from conftest import synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import review_gc
-import review_phases
-import review_pipeline
-import review_state
-import review_steps
+from review import gc as review_gc
+from review import phases as review_phases
+from review import pipeline as review_pipeline
+from review import state as review_state
+from review import steps as review_steps
 
 _MAX_TURNS_RECORD = json.dumps({
     "type": "result", "subtype": "error_max_turns", "is_error": True,

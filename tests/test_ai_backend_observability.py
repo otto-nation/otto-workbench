@@ -22,9 +22,9 @@ AI_DIR = Path(__file__).resolve().parent.parent / "ai"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import ai_backend
-import ai_backend_claude
-import ai_usage
+from agent import backend as ai_backend
+from agent import backend_claude as ai_backend_claude
+from agent import usage as ai_usage
 
 RESULT_ENVELOPE = {
     "type": "result",
@@ -251,17 +251,32 @@ def _is_python_source(path: Path) -> bool:
         return False
 
 
+def _lib_sources() -> list[Path]:
+    """All .py files across the lib packages, excluding package __init__ files."""
+    return [p for p in (AI_DIR / "lib").glob("*/*.py") if p.stem != "__init__"]
+
+
 def _ai_sources() -> list[Path]:
-    candidates = list((AI_DIR / "lib").glob("*.py"))
+    candidates = list(_lib_sources())
     candidates.extend((AI_DIR / "bin").iterdir())
     return sorted(p for p in candidates if _is_python_source(p))
+
+
+def test_lib_sources_discovered():
+    """A flat glob after the package move finds nothing; the bin scripts merged in
+    above would keep every call-site scan non-empty while all 101 lib modules
+    silently drop out of it."""
+    assert len(_lib_sources()) > 90
 
 
 def _backend_bindings(tree: ast.Module) -> tuple[set[str], dict[str, str]]:
     """Local names that reach ai_backend: module aliases, and `from`-imported members.
 
     `ai_backend` seeds the set because `import ai_backend` binds it and the scanner's
-    own unit tests parse bare snippets with no import line.
+    own unit tests parse bare snippets with no import line. Real call sites reach the
+    module through its package home, `agent.backend`, after the layer move — checked
+    alongside the flat form rather than in place of it, since the scanner's own tests
+    still parse bare `ai_backend` snippets.
     """
     modules = {"ai_backend"}
     direct: dict[str, str] = {}
@@ -271,6 +286,12 @@ def _backend_bindings(tree: ast.Module) -> tuple[set[str], dict[str, str]]:
                 a.asname or a.name for a in node.names if a.name == "ai_backend"
             )
         elif isinstance(node, ast.ImportFrom) and node.module == "ai_backend":
+            direct.update((a.asname or a.name, a.name) for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module == "agent":
+            modules.update(
+                a.asname or a.name for a in node.names if a.name == "backend"
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module == "agent.backend":
             direct.update((a.asname or a.name, a.name) for a in node.names)
     return modules, direct
 
@@ -488,9 +509,9 @@ _SPAWNING = frozenset({"prompt", "invoke_agent", "invoke_fix"})
 # operator's config decide what the run measures — the eval would report their
 # settings rather than the model under test.
 _MAY_REACH_THE_BACKEND = {
-    "agent_invoke.py",
-    "eval_scoring_cifix.py",
-    "eval_scoring_skill.py",
+    "invoke.py",
+    "scoring_cifix.py",
+    "scoring_skill.py",
 }
 
 
@@ -534,7 +555,7 @@ class TestOneOwnerForBackendCalls:
 
     def test_the_owner_reaches_all_three(self):
         """A shape whose runner stopped calling the backend would pass silently."""
-        owner = AI_DIR / "lib" / "agent_invoke.py"
+        owner = AI_DIR / "lib" / "agent" / "invoke.py"
         tree = ast.parse(owner.read_text(), filename=str(owner))
         reached = {
             call.func.attr for call in _backend_calls(tree, _SPAWNING)

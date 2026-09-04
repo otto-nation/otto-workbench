@@ -104,9 +104,9 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-import workbench_config  # noqa: E402
-import workbench_config_report  # noqa: E402
-import workbench_config_write  # noqa: E402
+from config import workbench_config  # noqa: E402
+from config import workbench_config_report  # noqa: E402
+from config import workbench_config_write  # noqa: E402
 from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 
 

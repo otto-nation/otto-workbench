@@ -38,8 +38,8 @@ REPO_ROOT = Path(
 )
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
-import workbench_config  # noqa: E402
-import workbench_config_report  # noqa: E402
+from config import workbench_config  # noqa: E402
+from config import workbench_config_report  # noqa: E402
 
 SCHEMA_FILE = REPO_ROOT / workbench_config.SCHEMA_PATH
 

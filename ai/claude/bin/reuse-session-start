@@ -27,16 +27,16 @@ AI_BIN_DIR = BIN_DIR.parent.parent / "bin"
 sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(BIN_DIR))
 
-import git_client  # noqa: E402
-import proc  # noqa: E402
-import timeouts  # noqa: E402
-import workbench_projects  # noqa: E402
+from git import client as git_client  # noqa: E402
+from core import proc  # noqa: E402
+from core import timeouts  # noqa: E402
+from config import workbench_projects  # noqa: E402
 from _reuse_levels import (  # noqa: E402
     LEVEL_DESCRIPTIONS,
     read_default,
     read_level,
 )
-import workbench_config  # noqa: E402
+from config import workbench_config  # noqa: E402
 
 
 def _repo_root() -> str | None:

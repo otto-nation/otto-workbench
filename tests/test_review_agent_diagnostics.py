@@ -8,11 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent_invoke
-import ai_backend
-import review_agent
-import review_retry
-from agent_diagnosis import Diagnosis, DiagnosisKind
+from agent import invoke as agent_invoke
+from agent import backend as ai_backend
+from agent import session as review_agent
+from review import retry as review_retry
+from agent.diagnosis import Diagnosis, DiagnosisKind
 
 
 # Arbitrary — the diagnosis echoes whatever num_turns the result record carries,

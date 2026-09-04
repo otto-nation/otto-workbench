@@ -22,8 +22,8 @@ from conftest import _load_lib, seed_repo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import workbench_config as wc
-import workbench_config_write as wcw
+from config import workbench_config as wc
+from config import workbench_config_write as wcw
 
 config_cli = _load_lib("config_cli")
 

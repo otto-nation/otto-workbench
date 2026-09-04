@@ -24,11 +24,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import branch_landed  # noqa: E402
-import git_client  # noqa: E402
-import push  # noqa: E402
-import push_intent  # noqa: E402
-import serde  # noqa: E402
+from gh import landed as branch_landed  # noqa: E402
+from git import client as git_client  # noqa: E402
+from git import push  # noqa: E402
+from pr import push_intent  # noqa: E402
+from core import serde  # noqa: E402
 
 from conftest import git_in, git_out, run_checked, seed_repo  # noqa: E402
 

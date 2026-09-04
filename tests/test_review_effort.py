@@ -7,15 +7,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent_phases
-import review_phases
-import review_pipeline
-import review_steps
-from gh_types import PRContext, PRMetadata
-from phases import AgentKind, Effort, Phase, Thinking
-from review_phases import PhaseResult
-from review_state import PipelineState
-from review_types import ReviewJob
+from agent import phases as agent_phases
+from review import phases as review_phases
+from review import pipeline as review_pipeline
+from review import steps as review_steps
+from gh.types import PRContext, PRMetadata
+from core.phases import AgentKind, Effort, Phase, Thinking
+from review.phases import PhaseResult
+from review.state import PipelineState
+from review.types import ReviewJob
 
 
 class TestEffortPresets:

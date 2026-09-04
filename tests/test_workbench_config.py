@@ -20,10 +20,10 @@ from conftest import REPO_ROOT, add_worktree, seed_repo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import workbench_config as wc
-import workbench_config_report as wcr
-import workbench_config_write as wcw
-from phases import Effort, Phase, Thinking
+from config import workbench_config as wc
+from config import workbench_config_report as wcr
+from config import workbench_config_write as wcw
+from core.phases import Effort, Phase, Thinking
 
 # The PyYAML write path only exists for a machine without yq, so the tests for
 # it only run where PyYAML is installed — the same shape test_review_grouping
@@ -387,7 +387,7 @@ agent:
 
 
 def test_layer_5_global_config_beats_the_built_in(roots):
-    import agent_phases
+    from agent import phases as agent_phases
 
     config_root, project = roots
     _write(config_root / "config.yml", "agent:\n  model: from-global\n")
@@ -396,14 +396,14 @@ def test_layer_5_global_config_beats_the_built_in(roots):
 
 
 def test_layer_4_project_config_beats_the_global(phase_cfg):
-    import agent_phases
+    from agent import phases as agent_phases
 
     cfg = wc.load_config(phase_cfg)
     assert agent_phases.phase_model(Phase.SCOUT, None, cfg) == "project-phase"
 
 
 def test_a_phase_entry_beats_the_section_within_one_file(roots):
-    import agent_phases
+    from agent import phases as agent_phases
 
     config_root, project = roots
     _write(config_root / "config.yml", """
@@ -419,7 +419,7 @@ agent:
 
 
 def test_layer_3_global_env_beats_the_config(phase_cfg, monkeypatch):
-    import agent_phases
+    from agent import phases as agent_phases
 
     monkeypatch.setenv("WORKBENCH_AI_MODEL", "from-env")
     cfg = wc.load_config(phase_cfg)
@@ -427,7 +427,7 @@ def test_layer_3_global_env_beats_the_config(phase_cfg, monkeypatch):
 
 
 def test_layer_2_phase_env_beats_the_global_env(phase_cfg, monkeypatch):
-    import agent_phases
+    from agent import phases as agent_phases
 
     monkeypatch.setenv("WORKBENCH_AI_MODEL", "from-env")
     monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "from-phase-env")
@@ -436,7 +436,7 @@ def test_layer_2_phase_env_beats_the_global_env(phase_cfg, monkeypatch):
 
 
 def test_layer_1_explicit_beats_every_env_and_file(phase_cfg, monkeypatch):
-    import agent_phases
+    from agent import phases as agent_phases
 
     monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "from-phase-env")
     cfg = wc.load_config(phase_cfg)
@@ -445,7 +445,7 @@ def test_layer_1_explicit_beats_every_env_and_file(phase_cfg, monkeypatch):
 
 def test_phase_model_loads_the_config_itself_when_not_given_one(roots):
     """The default argument is what a single-value caller relies on."""
-    import agent_phases
+    from agent import phases as agent_phases
 
     config_root, _ = roots
     _write(config_root / "config.yml", "agent:\n  model: from-disk\n")
@@ -453,7 +453,7 @@ def test_phase_model_loads_the_config_itself_when_not_given_one(roots):
 
 
 def test_thinking_layers_the_same_way(roots):
-    import agent_phases
+    from agent import phases as agent_phases
 
     config_root, project = roots
     _write(config_root / "config.yml", """
@@ -469,8 +469,8 @@ agent:
 
 
 def test_thinking_falls_back_to_the_effort_preset(roots):
-    import agent_phases
-    from agent_types import EFFORT_PRESETS
+    from agent import phases as agent_phases
+    from agent.types import EFFORT_PRESETS
 
     _, project = roots
     cfg = wc.load_config(project)
@@ -480,7 +480,7 @@ def test_thinking_falls_back_to_the_effort_preset(roots):
 
 
 def test_effort_falls_back_from_config_to_the_built_in(roots):
-    import agent_phases
+    from agent import phases as agent_phases
 
     config_root, project = roots
     _write(config_root / "config.yml", "review:\n  effort: high\n")
@@ -493,7 +493,7 @@ def test_effort_falls_back_from_config_to_the_built_in(roots):
 
 
 def test_adopt_converts_a_project_review_yml(roots):
-    import review_issue
+    from review import issue as review_issue
 
     _, project = roots
     (project / ".claude").mkdir()
@@ -511,7 +511,7 @@ def test_adopt_converts_a_project_review_yml(roots):
 
 def test_adopt_writes_the_top_level_key_not_the_legacy_nesting(roots):
     """The old file's key was review-namespaced; the config's is not."""
-    import review_issue
+    from review import issue as review_issue
 
     _, project = roots
     (project / ".claude").mkdir()
@@ -523,7 +523,7 @@ def test_adopt_writes_the_top_level_key_not_the_legacy_nesting(roots):
 
 def test_adopt_seeds_the_modeline_like_every_other_creator(roots):
     """docs/libraries.md promises every workbench-created file carries it."""
-    import review_issue
+    from review import issue as review_issue
 
     _, project = roots
     (project / ".claude").mkdir()
@@ -534,7 +534,7 @@ def test_adopt_seeds_the_modeline_like_every_other_creator(roots):
 
 
 def test_adopt_leaves_the_old_file_in_place(roots):
-    import review_issue
+    from review import issue as review_issue
 
     _, project = roots
     (project / ".claude").mkdir()
@@ -545,7 +545,7 @@ def test_adopt_leaves_the_old_file_in_place(roots):
 
 
 def test_adopt_is_a_no_op_when_workbench_yml_exists(roots):
-    import review_issue
+    from review import issue as review_issue
 
     _, project = roots
     (project / ".claude").mkdir()
@@ -557,7 +557,7 @@ def test_adopt_is_a_no_op_when_workbench_yml_exists(roots):
 
 
 def test_adopt_is_a_no_op_without_an_old_file(roots):
-    import review_issue
+    from review import issue as review_issue
 
     _, project = roots
     assert review_issue.adopt_project_review_yml(str(project)) is False

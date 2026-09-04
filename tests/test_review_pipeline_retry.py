@@ -8,15 +8,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import review_gc
-import review_outcome
-import review_phases
-import review_pipeline
-import review_retry
-import review_state
-import review_types
-from agent_diagnosis import Diagnosis, DiagnosisKind
-from phases import Phase
+from review import gc as review_gc
+from review import outcome as review_outcome
+from review import phases as review_phases
+from review import pipeline as review_pipeline
+from review import retry as review_retry
+from review import state as review_state
+from review import types as review_types
+from agent.diagnosis import Diagnosis, DiagnosisKind
+from core.phases import Phase
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
@@ -386,13 +386,13 @@ class TestCompleteReviewReadsSectionConstants:
     """
 
     def test_summary_section_marks_a_review_complete(self, tmp_path):
-        from review_document import SECTION_SUMMARY
+        from review.document import SECTION_SUMMARY
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_SUMMARY}\n\nAll good.\n")
         assert review_outcome.is_complete_review(str(f))
 
     def test_verdict_section_marks_a_review_complete(self, tmp_path):
-        from review_document import SECTION_VERDICT
+        from review.document import SECTION_VERDICT
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_VERDICT}\n\nApprove.\n")
         assert review_outcome.is_complete_review(str(f))

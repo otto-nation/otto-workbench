@@ -67,7 +67,8 @@ from core.phases import Effort, Phase, Thinking
 # `git_layout` is a workbench-wide module rather than an `ai/lib` one, because
 # the permission mirror reads the same layout. In a checkout that is one
 # directory up; in the otto-ai-tools tarball, which flattens both into one
-# `lib/`, it is already beside this file and the path below does not exist.
+# `lib/`, it is one directory up from this file too — not beside it — and the
+# path below does not exist.
 _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
     sys.path.insert(0, str(_WORKBENCH_LIB))

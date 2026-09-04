@@ -2,6 +2,13 @@
 
 Fetches existing bot comments (inline and review-body), compares via
 Jaccard similarity, and filters out duplicates before posting.
+
+Fuzzy, and deliberately so: this is the read that decides whether a finding
+about to be posted is one a reviewer already made in different words, so it
+compares word sets rather than identities. `review_grammar.FindingIdentity` is
+the exact answer, for carrying a finding forward across reviews of the same
+branch — two findings that are the same finding hash the same there, and a
+near-duplicate does not.
 """
 
 # doc-group: findings
@@ -11,6 +18,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+from dataclasses import dataclass, replace
 
 import gh_client
 from review_github import PRData, GQL_REVIEWS_LIMIT
@@ -41,13 +49,29 @@ def jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(union)
 
 
+# ── Posted findings ─────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class PostedFinding:
+    """A finding already on the PR, as the posted spelling reports it.
+
+    `path` has any `:line` suffix stripped, matching what `strip_line_suffix`
+    leaves; `body` is the declaration's prose. Named fields rather than a
+    `{"path", "body"}` dict because the similarity read below compares one
+    against the other, and a dict lets a caller pass them the wrong way round.
+    """
+
+    path: str
+    body: str
+
+
 # ── Body finding extraction ────────────────────────────────────────────────
 
-def _extract_body_findings(body: str) -> list[dict]:
+def _extract_body_findings(body: str) -> list[PostedFinding]:
     results = []
     for m in BODY_FINDING_RE.finditer(body):
         raw_path = (m.group(1) or m.group(2) or "")
-        results.append({"path": strip_line_suffix(raw_path), "body": m.group(3)})
+        results.append(PostedFinding(strip_line_suffix(raw_path), m.group(3)))
     return results
 
 
@@ -61,13 +85,16 @@ def get_bot_login() -> str:
 
 # ── Bot comment collection ──────────────────────────────────────────────────
 
-def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[dict]:
+def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[PostedFinding]:
     if pr_data is not None:
-        posted = pr_data.bot_inline_comments(bot_user)
+        posted = [
+            PostedFinding(c.get("path", ""), c.get("body", ""))
+            for c in pr_data.bot_inline_comments(bot_user)
+        ]
     else:
         all_comments = gh_client.api_json(f"repos/{repo}/pulls/{pr}/comments", default=[])
         posted = [
-            {"path": c.get("path", ""), "body": c.get("body", "")}
+            PostedFinding(c.get("path", ""), c.get("body", ""))
             for c in all_comments
             if c.get("user", {}).get("login") == bot_user
         ]
@@ -75,10 +102,10 @@ def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData 
     # rather than part of what it says, and the fresh finding it is about to be
     # scored against carries none — so it comes off before the words are
     # counted, or every comparison loses the two tokens only this side has.
-    return [{**c, "body": strip_sid_markers(c.get("body", ""))} for c in posted]
+    return [replace(c, body=strip_sid_markers(c.body)) for c in posted]
 
 
-def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[dict]:
+def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[PostedFinding]:
     if pr_data is not None:
         bodies = pr_data.bot_review_bodies(bot_user)
     else:
@@ -87,14 +114,14 @@ def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData 
             r.get("body", "") for r in all_reviews
             if r.get("user", {}).get("login") == bot_user
         ]
-    entries: list[dict] = []
+    entries: list[PostedFinding] = []
     for body in bodies:
         if body:
             entries.extend(_extract_body_findings(body))
     return entries
 
 
-def _fetch_bot_comments(repo: str, pr: str, pr_data: PRData | None = None) -> list[dict]:
+def _fetch_bot_comments(repo: str, pr: str, pr_data: PRData | None = None) -> list[PostedFinding]:
     bot_user = pr_data.viewer_login if pr_data is not None else get_bot_login()
     if not bot_user:
         return []
@@ -115,7 +142,7 @@ def dedup_against_posted(
         return findings, []
 
     posted_entries = [
-        (c["path"], word_set(c["body"]))
+        (c.path, word_set(c.body))
         for c in existing
     ]
 

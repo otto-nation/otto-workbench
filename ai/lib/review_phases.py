@@ -167,11 +167,13 @@ class PhaseResult:
     the only phase that writes for its successors rather than into the review
     file, so it is the only one that fills them.
 
-    `diagnosis` says why `content` is empty, and tells that apart from a phase
-    that declined to run and so has nothing to explain. It travels with the
-    result rather than being re-derived, because the reason is only reachable
-    while the retry driver is still holding the session log — by the time the
-    disprove gate records the outcome, the log belongs to whatever ran next.
+    `diagnosis` says why `content` is empty, or — for synthesis, which never
+    fills it — which path wrote the review file instead; either way it tells
+    that apart from a phase that declined to run and so has nothing to
+    explain. It travels with the result rather than being re-derived, because
+    the reason is only reachable while the retry driver is still holding the
+    session log — by the time the disprove gate records the outcome, the log
+    belongs to whatever ran next.
     """
 
     log: str = ""

@@ -632,6 +632,13 @@ Deduplication of findings against already-posted PR comments.
 Fetches existing bot comments (inline and review-body), compares via
 Jaccard similarity, and filters out duplicates before posting.
 
+Fuzzy, and deliberately so: this is the read that decides whether a finding
+about to be posted is one a reviewer already made in different words, so it
+compares word sets rather than identities. `review_grammar.FindingIdentity` is
+the exact answer, for carrying a finding forward across reviews of the same
+branch — two findings that are the same finding hash the same there, and a
+near-duplicate does not.
+
 ### review_fix.py
 
 Fix pass for claude-review.
@@ -709,6 +716,11 @@ The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
 returns is a pair with names rather than two loose strings, because which half
 is the location is not something a call site should have to infer from
 position.
+
+Exact, and deliberately so: a carry-forward asks whether this is the same
+finding as one in the prior review, and a fuzzy answer there silently merges two
+findings about two lines of one file. `review_dedup` is the fuzzy answer, for
+the different question of whether a finding is about to be posted twice.
 
 What a document is assembled from is `review_document`'s; what a finding means
 once parsed is `review_types`'.

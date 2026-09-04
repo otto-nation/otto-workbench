@@ -13,7 +13,7 @@ from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from phases import Phase
-from review_verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, SKIPPED_SUMMARY
+from review_verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
 
 
 
@@ -750,6 +750,30 @@ class TestPhaseSynthesis:
         assert "## Summary" in result
         assert FALLBACK_SUMMARY not in result
 
+    def test_a_successful_synthesis_quoting_both_literals_has_no_diagnosis(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """A genuine agent review that discusses the fallback machinery in prose
+        is not misread as one — the decision is made where the write happened,
+        not by scanning the document for these literals."""
+        job = self._make_job(ro, tmp_path)
+        review_content = (
+            "# Review: org/repo#42 — test PR\n\n## Summary\n"
+            f"Looks good. Quotes {MECHANICAL_NOTE} and {FALLBACK_SUMMARY} in prose.\n\n"
+            "## Verdict\nApprove.\n"
+        )
+
+        def mock_invoke(inv, **kwargs):
+            Path(job.review_file).write_text(review_content)
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+
+        result = ro._phase_synthesis(job, "", 3, "merged content")
+
+        assert result.diagnosis is None
+
     def test_cost_comes_from_the_session_log(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
         review_content = "# Review\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
@@ -784,6 +808,7 @@ class TestPhaseSynthesis:
 
         assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
         assert result.cost == 2.5
+        assert result.diagnosis == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
 
     def test_an_unpromptable_synthesis_falls_back_to_the_merge(
         self, ro, tmp_path, monkeypatch,
@@ -810,12 +835,13 @@ class TestPhaseSynthesis:
         )
 
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        ro._phase_synthesis(job, "", 3, merged)
+        result = ro._phase_synthesis(job, "", 3, merged)
 
         assert invoked == []
         written = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in written
         assert "file.go:1" in written
+        assert result.diagnosis == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
 
     def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -1046,8 +1072,8 @@ class TestRunSynthesisOrFallback:
             mode=ro.Mode(mode), skip_phases=skip_phases,
         )
 
-    def test_self_review_fallback_detected(self, ro, tmp_path, monkeypatch):
-        """Self-reviews without verdict must still detect mechanical fallback."""
+    def test_a_diagnosed_synthesis_lands_in_state_failed(self, ro, tmp_path, monkeypatch):
+        """`_run_synthesis_or_fallback` copies a phase's diagnosis into `state.failed`."""
         import review_pipeline
         import review_steps
 
@@ -1058,7 +1084,10 @@ class TestRunSynthesisOrFallback:
             ro._build_mechanical_fallback(
                 job, count, merged, skipped_groups=skipped_groups,
             ).write(job.review_file)
-            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
+            return review_pipeline.PhaseResult(
+                str(tmp_path / "synthesis.jsonl"),
+                diagnosis=ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK),
+            )
 
         monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
@@ -1068,6 +1097,38 @@ class TestRunSynthesisOrFallback:
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
         assert state.failed == {Phase.SYNTHESIS: ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)}
+
+    def test_a_synthesised_review_quoting_the_note_is_not_a_fallback(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """A review whose prose contains MECHANICAL_NOTE was still written by the agent.
+
+        The diagnosis is the pipeline's own record of which path wrote the
+        file, so a review discussing the fallback machinery is not diagnosed
+        as one.
+        """
+        import review_pipeline
+        import review_steps
+
+        job = self._make_job(ro, tmp_path)
+        state = self._make_state(ro)
+
+        def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
+            Path(job.review_file).write_text(
+                "# Review\n\n## Summary\nThe merge path stamps "
+                f"{MECHANICAL_NOTE} and {FALLBACK_SUMMARY} on the document.\n\n"
+                "## Verdict\nApprove\n"
+            )
+            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
+
+        monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+
+        merged = self.MERGED
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, merged, [], 0, 0.0, 20.0,
+        )
+        assert Phase.SYNTHESIS not in state.failed
 
     def test_synthesis_reports_what_its_log_records(self, ro, tmp_path, monkeypatch):
         import review_pipeline

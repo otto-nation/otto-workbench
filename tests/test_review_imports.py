@@ -46,7 +46,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 BUILTINS = {"__name__", "__file__", "__class__", "__spec__"}
 
 ALL_LIB_MODULES = sorted(
-    p.stem for p in LIB_DIR.glob("review_*.py")
+    p.stem for p in LIB_DIR.glob("*.py") if not p.stem.startswith("__")
 )
 
 POST_LIB_MODULES = [
@@ -470,10 +470,28 @@ def test_main_callable(script, fixture, request):
     assert callable(mod.main)
 
 
+def test_the_gate_covers_every_lib_module():
+    """A new ai/lib module joins the check by existing, not by being remembered.
+
+    The check that catches a cross-module private import is only as wide as this
+    list; a module outside it is unpoliced, which is what four retro_* modules
+    were after #1095 split them out.
+    """
+    on_disk = {p.stem for p in LIB_DIR.glob("*.py") if not p.stem.startswith("__")}
+
+    assert set(ALL_LIB_MODULES) == on_disk
+
+
 # ── 8. Cross-module bare references (dynamic) ────────────────────────────────
 
 # Build a map of {name: defining_module} for all names across all lib modules.
 # Dynamically discovered — adding a module or function updates the map.
+# setdefault() means that when two modules define the same name, the one that
+# sorts first wins the map entry; that is deliberate, since this check only
+# asks whether a bare reference resolves to some peer module, not which one.
+# The consequence: for a colliding name, the "defined in X" naming in a
+# failure message reports the first-sorted definer, which may not be the
+# module the author actually meant to import from.
 _PEER_DEFS: dict[str, str] = {}
 for _mod_name in ALL_LIB_MODULES:
     _mod_path = LIB_DIR / f"{_mod_name}.py"

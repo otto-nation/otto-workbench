@@ -26,6 +26,11 @@ returns is a pair with names rather than two loose strings, because which half
 is the location is not something a call site should have to infer from
 position.
 
+Exact, and deliberately so: a carry-forward asks whether this is the same
+finding as one in the prior review, and a fuzzy answer there silently merges two
+findings about two lines of one file. `review_dedup` is the fuzzy answer, for
+the different question of whether a finding is about to be posted twice.
+
 What a document is assembled from is `review_document`'s; what a finding means
 once parsed is `review_types`'.
 """

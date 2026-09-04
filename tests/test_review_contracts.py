@@ -816,7 +816,7 @@ class TestSharedSectionNames:
         calls = self._shared_call_args()
         assert calls, "found no shared() calls to check — did the API change?"
         bad = [
-            f"review_prompt.py:{lineno} {name!r}"
+            f"review/prompt.py:{lineno} {name!r}"
             for lineno, name in calls
             if name not in review_prompt.COMMON_SECTION_NAMES
         ]

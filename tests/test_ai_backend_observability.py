@@ -338,7 +338,7 @@ def _cwd_bearing_nodes(tree: ast.Module):
     used: a stateless ``ai_backend.prompt(...)`` call, and any
     ``AgentInvocation(...)`` construction. Checking constructions rather than
     ``invoke_*`` call sites is what makes the forwarding wrappers in
-    review_agent.py — which take an already-built ``inv`` — correctly pass,
+    agent/session.py — which take an already-built ``inv`` — correctly pass,
     while still covering the invocation built in review_pipeline.invocation()
     and handed to them.
     """

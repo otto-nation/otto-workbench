@@ -672,7 +672,7 @@ _path_exists() {
 # _is_append_only_ledger SRC DST — true for a pair of files that can be
 # concatenated rather than kept side by side.
 #
-# trail.py and ai_usage.py are the only writers of these, both open them in
+# core/trail.py and agent/usage.py are the only writers of these, both open them in
 # append mode, and otto-log sorts every record by `ts` after loading — so the
 # two halves reassemble in any order. Matched by name rather than by the
 # .jsonl extension on purpose: the review artifacts (session.jsonl,

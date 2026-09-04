@@ -44,8 +44,8 @@
 set -euo pipefail
 
 # Module order is the order a glob expands in, and that follows the collation
-# locale: under en_US.UTF-8 the underscore in `ai_backend_pi.py` sorts before the
-# dot in `ai_backend.py`, under C it sorts after. Both are self-consistent, so a
+# locale: under en_US.UTF-8 the underscore in `agent/backend_pi.py` sorts before
+# the dot in `agent/backend.py`, under C it sorts after. Both are self-consistent, so a
 # contributor whose shell disagrees with CI's regenerates a doc that differs only
 # in module order and fails validate-docs-composed for no real change. Exported so
 # the `sort` calls below agree with the globs, and LC_ALL is unset because it

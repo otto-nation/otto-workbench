@@ -432,6 +432,47 @@ class TestRunKillProcessGroup:
         assert r.returncode == proc.TIMEOUT_RETURNCODE
         assert "could not be signalled and may still be running" in r.stderr
 
+    def test_the_group_goes_even_when_the_way_out_is_not_a_timeout(self, tmp_path,
+                                                                   monkeypatch):
+        """A `KeyboardInterrupt` leaves a tree behind just as a timeout would.
+
+        `Popen.__exit__` only waits, so an exception that is not the expired
+        bound would both orphan the group and block behind its own `wait` —
+        which is the failure this option exists to close, reached by another
+        door.
+        """
+        pidfile = tmp_path / "grandchild.pid"
+
+        def interrupted(*args, **kwargs):
+            # Not before the fixture has a grandchild to leave behind: a kill
+            # that lands first would pass for the wrong reason.
+            deadline = time.monotonic() + 5.0
+            while not pidfile.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            raise KeyboardInterrupt
+
+        # The spawn itself has to be real — the group being killed is the
+        # assertion — so the interrupt goes on the instance rather than on the
+        # class, which `tests/conftest.py`'s backend guard has replaced with a
+        # function of its own anyway.
+        spawn = subprocess.Popen
+
+        def interruptible(*args, **kwargs):
+            process = spawn(*args, **kwargs)
+            process.communicate = interrupted
+            return process
+
+        monkeypatch.setattr(proc.subprocess, "Popen", interruptible)
+        with pytest.raises(KeyboardInterrupt):
+            proc.run(
+                ["sh", "-c", f"sleep {GRANDCHILD_LIFETIME} & echo $! > {pidfile}; "
+                             f"sleep {GRANDCHILD_LIFETIME}"],
+                timeout=timeouts.QUICK, kill_process_group=True)
+
+        grandchild = int(pidfile.read_text())
+        assert _wait_until_gone(grandchild), (
+            f"pid {grandchild} outlived the call that spawned it")
+
     def test_a_process_that_exited_on_its_own_is_not_an_error(self, monkeypatch):
         """The race between the bound expiring and the kill is not a failure."""
         def already_gone(pid, sig):

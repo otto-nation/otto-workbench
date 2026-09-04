@@ -385,6 +385,14 @@ def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | N
     reach the rest of the tree is gone by the time the exception arrives —
     which is the whole of why this path is hand-rolled rather than sharing the
     one above.
+
+    An expired bound is not the only way out of `communicate`. A
+    `KeyboardInterrupt`, or a `ValueError` from writing to a stream the child
+    already closed, leaves through the bare clause below, which kills the group
+    on the way and lets the exception continue — `subprocess.run` does the same
+    for the same reason. Without it `Popen.__exit__` only waits, so the tree
+    this function exists to contain would outlive the call that started it and
+    block the exception behind its own `wait`.
     """
     stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
     with subprocess.Popen(cmd, start_new_session=True, stdin=stdin, **spawn) as process:
@@ -394,6 +402,9 @@ def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | N
             survivors = _kill_group(process)
             process.wait()
             return _timed_out(cmd, timeout, exc, survivors)
+        except BaseException:
+            _kill_group(process)
+            raise
     return CmdResult(returncode=process.returncode, stdout=stdout or "", stderr=stderr or "")
 
 

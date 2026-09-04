@@ -632,13 +632,6 @@ Deduplication of findings against already-posted PR comments.
 Fetches existing bot comments (inline and review-body), compares via
 Jaccard similarity, and filters out duplicates before posting.
 
-Fuzzy, and deliberately so: this is the read that decides whether a finding
-about to be posted is one a reviewer already made in different words, so it
-compares word sets rather than identities. `review_grammar.FindingIdentity` is
-the exact answer, for carrying a finding forward across reviews of the same
-branch — two findings that are the same finding hash the same there, and a
-near-duplicate does not.
-
 ### review_fix.py
 
 Fix pass for claude-review.
@@ -716,11 +709,6 @@ The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
 returns is a pair with names rather than two loose strings, because which half
 is the location is not something a call site should have to infer from
 position.
-
-Exact, and deliberately so: a carry-forward asks whether this is the same
-finding as one in the prior review, and a fuzzy answer there silently merges two
-findings about two lines of one file. `review_dedup` is the fuzzy answer, for
-the different question of whether a finding is about to be posted twice.
 
 What a document is assembled from is `review_document`'s; what a finding means
 once parsed is `review_types`'.
@@ -2297,16 +2285,14 @@ the call sites that has none; as a result code it degrades through
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
 
-Both of those are also *recorded*, in `MACHINE_KILLS`. Returning them as
-ordinary results is right for the caller and is exactly what makes them
-invisible to anyone watching from outside: a starved `git commit` comes back as
-`COMMIT_FAILED`, the caller handles it as designed, and whatever goes wrong
-afterwards carries no sign that the machine was the cause. So `run` appends a
-`MachineKill` on its way past, and a reader that wants to know can ask — which
-is what `tests/conftest.py` does when a test fails, so a contention casualty
-arriving through the code under test is as recognisable as one arriving through
-a fixture. Nothing about the result the caller gets changes, and no branch here
-knows it is being observed.
+Two things about the child are decided here rather than by each caller. Its
+stdin is closed unless the caller passes text for it, because inheriting stdin
+is how a subprocess reaches a stream its parent was in the middle of using —
+the MCP server's stdin is the JSON-RPC transport, and a tool reading one byte
+takes it out of the stream. And `kill_process_group` decides whether an expired
+bound kills the direct child or the whole group: a caller running something
+that spawns a tree of its own needs the group, or a timed-out call leaves the
+tree running with nothing holding a handle to it.
 
 The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
 `bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a

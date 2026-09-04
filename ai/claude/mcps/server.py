@@ -27,9 +27,7 @@ import contextlib
 import json
 import logging
 import os
-import signal
 import stat
-import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -49,6 +47,7 @@ WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 # project as the working directory, so the workbench's Python has to be named
 # before it can be imported.
 sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
+import proc  # noqa: E402
 import timeouts  # noqa: E402
 from tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
 
@@ -116,59 +115,33 @@ POLL_INTERVAL = 2.0
 # ── Spawning ──────────────────────────────────────────────────────────────
 
 
-def _kill_group(process: subprocess.Popen) -> None:
-    """SIGKILL every process in *process*'s group.
-
-    ``start_new_session`` makes the child a group leader, so its pid is also
-    the group id. ``ProcessLookupError`` means the last member exited between
-    the bound expiring and this call — the race, not a failure.
-    """
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def _run_script(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+def _run_script(argv: list[str], timeout: float) -> proc.CmdResult:
     """Run *argv* to completion under *timeout*, isolated from this process.
 
     Every script this server executes goes through here — the discovery probe
-    and the tool call alike — because both need two guarantees
-    ``subprocess.run`` does not give.
+    and the tool call alike — for the two guarantees ``proc.run`` gives a
+    caller that asks for them.
 
-    ``stdin`` is closed rather than inherited. This server's stdin *is* the
-    stdio JSON-RPC stream the client writes requests into, so a script that
-    reads a single byte takes that byte out of the transport and the session
-    dies on a parse error naming no tool. The probe is the likeliest reader: a
-    script that does not recognise ``--tool-schema`` falls through to its real
-    work.
+    Its stdin is closed. This server's stdin *is* the stdio JSON-RPC stream the
+    client writes requests into, so a script that reads a single byte takes
+    that byte out of the transport and the session dies on a parse error naming
+    no tool. The probe is the likeliest reader: a script that does not
+    recognise ``--tool-schema`` falls through to its real work.
 
-    The child also gets a session of its own, so an expired bound kills the
-    whole process group rather than the one process it started. A tool spawns
+    ``kill_process_group`` is what an expired bound needs here. A tool spawns
     agents — ``pr review`` is the case — and signalling only the direct child
     leaves them running against the account with nothing holding a handle to
-    them. ``SIGKILL`` with no grace window: the budget has already expired, and
-    a TERM-then-KILL ladder would double the worst case on a call that is
-    already late.
+    them. The probe asks for it on the same grounds: a script that fell through
+    to its real work is running something nobody planned for.
 
-    Raises ``subprocess.TimeoutExpired`` once the group is dead, so a caller's
-    existing handler reads exactly as it did under ``subprocess.run``.
+    A timeout comes back as ``proc.TIMEOUT_RETURNCODE`` rather than an
+    exception, so both callers check for it before reading the exit code as the
+    script's own. Nothing in the workbench exits 124 deliberately —
+    ``bin/local/validate-magic-values`` holds that code's monopoly under
+    ``ai/`` — so the two cannot be confused in practice.
     """
-    with subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-    ) as process:
-        try:
-            stdout, stderr = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _kill_group(process)
-            raise
-    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+    return proc.run(argv, timeout=timeout, kill_process_group=True,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
 
 
 # ── Tool Discovery ────────────────────────────────────────────────────────
@@ -285,6 +258,12 @@ def probe_tool(script: Path) -> ProbeResult:
                            failure=ProbeFailure.UNMARKED)
     try:
         result = _run_script([str(script), TOOL_SCHEMA_FLAG], DISCOVERY_TIMEOUT)
+        # Before the exit code is read as the script's own: a timeout arrives as
+        # a return code now, and the two failures want different readers.
+        if result.returncode == proc.TIMEOUT_RETURNCODE:
+            return ProbeResult(
+                script, failure=ProbeFailure.TIMED_OUT,
+                reason=f"{TOOL_SCHEMA_FLAG} did not answer within {DISCOVERY_TIMEOUT:g}s")
         if result.returncode != 0:
             return ProbeResult(script, failure=ProbeFailure.BROKEN, reason=(
                 f"{TOOL_SCHEMA_FLAG} exited {result.returncode}: "
@@ -297,10 +276,6 @@ def probe_tool(script: Path) -> ProbeResult:
                                reason=f"schema is missing {', '.join(missing)}")
         schema["_script"] = str(script)
         return ProbeResult(script, schema=schema)
-    except subprocess.TimeoutExpired:
-        return ProbeResult(
-            script, failure=ProbeFailure.TIMED_OUT,
-            reason=f"{TOOL_SCHEMA_FLAG} did not answer within {DISCOVERY_TIMEOUT:g}s")
     except (json.JSONDecodeError, OSError) as exc:
         # Name the exception type rather than trusting its str() to say which
         # of the two it was — docs/tools.md tells readers these are distinct.
@@ -761,11 +736,13 @@ def create_server() -> RunningServer:
         script = schema["_script"]
         cli_args = _args_to_cli(arguments, schema.get("input_schema", {}))
 
-        try:
-            result = await asyncio.to_thread(
-                _run_script, [script] + cli_args, TOOL_CALL_BUDGET,
-            )
-        except subprocess.TimeoutExpired:
+        result = await asyncio.to_thread(
+            _run_script, [script] + cli_args, TOOL_CALL_BUDGET,
+        )
+
+        # Ahead of ok_exit_codes, so a schema listing 124 among its own codes
+        # cannot turn an expired budget into a success the client acts on.
+        if result.returncode == proc.TIMEOUT_RETURNCODE:
             return CallToolResult(
                 content=[TextContent(type="text", text=(
                     f"Tool execution timed out ({TOOL_CALL_BUDGET}s)"))],

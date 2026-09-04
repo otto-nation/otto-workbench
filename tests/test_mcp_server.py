@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import queue
 import re
 import shutil
@@ -17,6 +16,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -25,6 +25,7 @@ from conftest import git_out
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import proc
 import server
 from server import (
     PROBE_ATTEMPTS,
@@ -150,35 +151,13 @@ def _write_executable(path: Path, body: str) -> Path:
     return path
 
 
-# Long enough that a fixture still holding the pid is a fixture the kill
-# missed, rather than one that was about to exit anyway.
-GRANDCHILD_LIFETIME = 20
-
-
-def _alive(pid: int) -> bool:
-    """Whether *pid* names a live process, without signalling it."""
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
-        return False
-    return True
-
-
-def _wait_until_gone(pid: int, timeout: float = 5.0) -> bool:
-    """Poll for *pid* to disappear; the kill is a signal, not a synchronous death."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not _alive(pid):
-            return True
-        time.sleep(0.02)
-    return False
-
-
 class TestSpawnIsolation:
-    """What `_run_script` guarantees that `subprocess.run` does not.
+    """What `_run_script` asks `proc.run` for that a plain spawn does not give.
 
     Both spawn sites go through it, so these hold for a discovery probe and a
-    tool call alike.
+    tool call alike. `proc.run` owns the mechanism and `tests/proc_test.py`
+    covers it in its own right; what is asserted here is that this server asks
+    for it.
     """
 
     def test_a_script_that_reads_stdin_gets_eof(self, tmp_path):
@@ -198,40 +177,30 @@ class TestSpawnIsolation:
 
         assert result.stdout == "READ:''"
 
-    def test_a_timed_out_script_takes_its_grandchildren_with_it(self, tmp_path):
-        """`subprocess.run`'s timeout signals one process; a tool spawns agents.
+    def test_it_asks_for_the_whole_group_to_be_killed(self):
+        """A tool spawns agents — `pr review` is the case.
 
-        The fixture stands in for `pr review`: it backgrounds a process that
-        outlives it and then hangs, so an implementation that killed only the
-        direct child would leave the background one running with nothing
-        holding a handle to it.
+        Signalling only the direct child leaves them running against the
+        account with nothing holding a handle to them. That the group kill
+        reaches a grandchild is `proc.run`'s guarantee and is tested there;
+        what this asserts is that the server asks for it, on the path both the
+        probe and the tool call take.
         """
-        pidfile = tmp_path / "grandchild.pid"
-        script = _write_executable(tmp_path / "spawner", f"""\
+        with mock.patch.object(server.proc, "run") as run:
+            server._run_script(["/bin/true"], 30)
+
+        assert run.call_args.kwargs["kill_process_group"] is True
+
+    def test_a_timed_out_script_comes_back_as_a_result(self, tmp_path):
+        """Both call sites branch on the code; neither has an except clause."""
+        script = _write_executable(tmp_path / "sleeper", """\
             #!/usr/bin/env bash
-            sleep {GRANDCHILD_LIFETIME} &
-            echo "$!" > {str(pidfile)!r}
-            sleep {GRANDCHILD_LIFETIME}
+            sleep 5
         """)
 
-        with pytest.raises(subprocess.TimeoutExpired):
-            server._run_script([str(script)], 1.0)
+        result = server._run_script([str(script)], 0.3)
 
-        grandchild = int(pidfile.read_text())
-        assert _wait_until_gone(grandchild), (
-            f"pid {grandchild} outlived the tool call that spawned it")
-
-    def test_the_direct_child_dies_too(self, tmp_path):
-        script = _write_executable(tmp_path / "sleeper", f"""\
-            #!/usr/bin/env bash
-            echo "$$" > {str(tmp_path / 'child.pid')!r}
-            sleep {GRANDCHILD_LIFETIME}
-        """)
-
-        with pytest.raises(subprocess.TimeoutExpired):
-            server._run_script([str(script)], 1.0)
-
-        assert _wait_until_gone(int((tmp_path / "child.pid").read_text()))
+        assert result.returncode == proc.TIMEOUT_RETURNCODE
 
     def test_it_answers_with_what_the_script_printed(self, tmp_path):
         """The callers read `.returncode`, `.stdout` and `.stderr` off the result."""

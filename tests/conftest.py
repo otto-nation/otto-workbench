@@ -553,7 +553,7 @@ _CONTENTION_HINT = (
 
 
 def _proc():
-    """`ai/lib/proc.py`, imported the way the code under test imports it.
+    """`ai/lib/core/proc.py`, imported the way the code under test imports it.
 
     Through `sys.path` rather than `_load_lib`, so this file and every script
     under test share one module object — the record `proc.run` appends to has
@@ -620,7 +620,7 @@ def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
     names the signal and says plainly that the machine, not the test, is the
     thing that failed. A fault signal (SIGSEGV, SIGABRT, ...) still raises
     ``AssertionError`` — that kind of death does point at the command, and
-    ``ai/lib/proc.py``'s ``externally_killed`` is where which signals get which
+    ``ai/lib/core/proc.py``'s ``externally_killed`` is where which signals get which
     treatment is decided, so this stays in step with ``failure_message`` without
     a second copy of the split.
     """

@@ -2,7 +2,7 @@
 
 The two halves answer the same question for different callers — the bash one for
 both pre-push hooks, the AI Taskfile automation and the surface gate, the Python
-one for `ai/lib/pr_context.py` — so a repository must not be told its trunk is
+one for `ai/lib/pr/context.py` — so a repository must not be told its trunk is
 `master` by one and `main` by the other. Rather than compare the source text
 (the ladder is a procedure, not a list), every case below builds one repository
 and asks both.

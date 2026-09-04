@@ -152,17 +152,17 @@ _make_project() {
 # two files, so a mismatch means one machine's config is written where the
 # other never looks, or validated against a schema the other does not serve.
 
-# resolve_python NAME — the value of ai/lib/workbench_config.NAME.
+# resolve_python NAME — the value of ai/lib/config/workbench_config.NAME.
 resolve_python() {
   python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_config
+from config import workbench_config
 print(workbench_config.$1, end='')
 "
 }
 
-@test "the config constants match ai/lib/workbench_config.py" {
+@test "the config constants match ai/lib/config/workbench_config.py" {
   [ "$WORKBENCH_CONFIG_NAME" = "$(resolve_python CONFIG_NAME)" ]
   [ "$WORKBENCH_PROJECT_CONFIG_NAME" = "$(resolve_python PROJECT_CONFIG_NAME)" ]
   [ "$WORKBENCH_CONFIG_SCHEMA_NAME" = "$(resolve_python SCHEMA_PATH)" ]
@@ -171,7 +171,7 @@ print(workbench_config.$1, end='')
   [ "$WORKBENCH_CONFIG_HEADER" = "$(resolve_python CONFIG_HEADER)" ]
 }
 
-@test "the config keys bash reads match ai/lib/workbench_config.py" {
+@test "the config keys bash reads match ai/lib/config/workbench_config.py" {
   [ "$GITHUB_SSH_443_CONFIG_KEY" = "$(resolve_python GITHUB_SSH_443_KEY)" ]
   [ "$ISSUE_PROVIDER_CONFIG_KEY" = "$(resolve_python ISSUE_PROVIDER_KEY)" ]
 }

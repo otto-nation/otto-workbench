@@ -928,7 +928,9 @@ print(f'done={loaded.groups_done}')
 
 @test "invoke_agent: returns subprocess exit code" {
   result=$(_py "
-import subprocess, ai_backend_claude as abc, ai_backend as ab
+import subprocess
+from agent import backend_claude as abc
+from agent import backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo fail >&2; exit 42']
 rc = abc.invoke_agent(ab.AgentInvocation(prompt='test', cwd='$TMPDIR', session_log='$TMPDIR/test.jsonl', add_dirs=['/tmp', '/tmp']))
@@ -940,7 +942,9 @@ print(rc)
 
 @test "invoke_agent: logs stderr on failure" {
   result=$(_py "
-import subprocess, os, ai_backend_claude as abc, ai_backend as ab
+import subprocess, os
+from agent import backend_claude as abc
+from agent import backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
 abc.invoke_agent(ab.AgentInvocation(prompt='test', cwd='$TMPDIR', session_log='$TMPDIR/stderr_test.jsonl', add_dirs=['/tmp', '/tmp']))
@@ -953,7 +957,8 @@ print('has_stderr=' + str('agent-error-msg' in content))
 
 @test "invoke_agent: tolerates subprocess that exits before reading stdin" {
   result=$(_py "
-import ai_backend_claude as abc, ai_backend as ab
+from agent import backend_claude as abc
+from agent import backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'exit 7']
 rc = abc.invoke_agent(ab.AgentInvocation(prompt='a]long prompt that the subprocess never reads', cwd='$TMPDIR', session_log='$TMPDIR/pipe_test.jsonl', add_dirs=['/tmp', '/tmp']))
@@ -965,7 +970,8 @@ print(rc)
 
 @test "invoke_fix: tolerates subprocess that exits before reading stdin" {
   result=$(_py "
-import ai_backend_claude as abc, ai_backend as ab
+from agent import backend_claude as abc
+from agent import backend as ab
 original = abc._build_fix_cmd
 abc._build_fix_cmd = lambda *a, **kw: ['bash', '-c', 'exit 13']
 rc = abc.invoke_fix(ab.AgentInvocation(prompt='a long prompt that the subprocess never reads', cwd='$TMPDIR', add_dirs=['/tmp']))

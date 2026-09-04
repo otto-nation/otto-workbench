@@ -1,4 +1,4 @@
-"""Tests for ai/lib/tool_registry.py — which scripts the registries name."""
+"""Tests for ai/lib/config/tool_registry.py — which scripts the registries name."""
 
 from __future__ import annotations
 

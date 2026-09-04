@@ -65,7 +65,7 @@ teardown() {
 @test "WORKBENCH_ROOT reaches ai/ through a symlinked TASKFILE_DIR" {
   # The install links lib/ into the checkout and nothing else, so a root taken
   # from TASKFILE_DIR itself finds conventions.sh and no ai/ script at all —
-  # which is how pr:create came to invoke an ai/lib/push.py that wasn't there.
+  # which is how pr:create came to invoke an ai/lib/git/push.py that wasn't there.
   #
   # dash, not sh: on macOS /bin/sh is bash, which sets BASH_SOURCE even under
   # `sh -c`, so `sh -c` here would exercise the BASH_SOURCE branch instead of
@@ -75,7 +75,7 @@ teardown() {
 
   run dash -c "TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
-  [ -f "$output/ai/lib/push.py" ]
+  [ -f "$output/ai/lib/git/push.py" ]
 }
 
 # ─── All tasks source core.sh with TASKFILE_DIR template ────────────────────

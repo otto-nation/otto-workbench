@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for the project registry — lib/projects.sh, its Python half
-# (ai/lib/workbench_projects.py), the agreement between the two, and the
+# (ai/lib/config/workbench_projects.py), the agreement between the two, and the
 # `otto-workbench projects` CLI.
 bats_require_minimum_version 1.5.0
 
@@ -715,7 +715,7 @@ print(git_layout.container_dir('$TMPDIR/container/main'))
   run python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_projects
+from config import workbench_projects
 print(workbench_projects.registry_path())
 "
   [ "$status" -eq 0 ]
@@ -727,7 +727,7 @@ print(workbench_projects.registry_path())
   run python3 -c "
 import os, sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_projects
+from config import workbench_projects
 workbench_projects.TEMP_ROOTS = ()
 os.environ.pop('TMPDIR', None)
 assert workbench_projects.register('$TMPDIR/alpha')
@@ -745,7 +745,7 @@ assert workbench_projects.register('$TMPDIR/alpha')
   run python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_projects
+from config import workbench_projects
 print(*workbench_projects.registered())
 "
   [ "$status" -eq 0 ]
@@ -775,7 +775,7 @@ print(*workbench_projects.registered())
   run python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_projects
+from config import workbench_projects
 print('\n'.join(sorted(workbench_projects.TEMP_ROOTS)))
 "
   [ "$status" -eq 0 ]
@@ -790,7 +790,7 @@ print('\n'.join(sorted(workbench_projects.TEMP_ROOTS)))
   run python3 -c "
 import os, sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_projects
+from config import workbench_projects
 workbench_projects.TEMP_ROOTS = ()
 os.environ.pop('TMPDIR', None)
 print(workbench_projects.register('$TMPDIR/container'))
@@ -806,7 +806,7 @@ print(workbench_projects.register('$TMPDIR/container'))
   run python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_projects
+from config import workbench_projects
 print(*workbench_projects.registered())
 "
   [ "$status" -eq 0 ]
@@ -821,7 +821,7 @@ print(*workbench_projects.registered())
   run python3 -c "
 import os, sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_projects
+from config import workbench_projects
 workbench_projects.TEMP_ROOTS = ()
 os.environ.pop('TMPDIR', None)
 assert workbench_projects.register('$TMPDIR/alpha')

@@ -33,7 +33,12 @@ def _collect_import_names(node: ast.AST) -> list[str]:
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
     if isinstance(node, ast.ImportFrom) and node.module:
-        return [
+        # `node.module` alone covers `from core.trail import Trail` (already the full
+        # dotted module; `alias.name` there is a symbol, not a submodule). The dotted
+        # combination covers the sibling shape, `from config import workbench_config`
+        # (`node.module` is just the package; the submodule rides in the alias). Adding
+        # both rather than choosing one is what keeps either import shape matching.
+        return [node.module] + [
             f"{node.module}.{alias.name}"
             for alias in node.names
             if alias.name != "*"
@@ -73,8 +78,15 @@ def _all_required_modules() -> set[str]:
 
 class TestTarballCompleteness:
     def test_all_python_modules_included(self):
-        """Every module imported by packaged binaries must exist in lib/."""
+        """Every module imported by packaged binaries must exist in lib/.
+
+        The floor guards against an import-shape change that empties (or
+        shrinks) the `all_imports & lib_modules` intersection while leaving
+        every assertion below still vacuously green — `required` shrinking
+        silently is the failure mode, not `missing` growing.
+        """
         required = _all_required_modules()
+        assert len(required) > 70
         missing = sorted(
             mod for mod in required
             if not (LIB_DIR / Path(*mod.split(".")).with_suffix(".py")).exists()

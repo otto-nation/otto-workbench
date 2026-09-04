@@ -123,7 +123,7 @@ tree for each finding — stop at the first match:
    non-deterministic test assertions, error propagation) → **Global rule** in
    `ai/guidelines/rules/`
 4. **Machine-specific tooling concern?** → **Machine-local rule** via
-   `claude-rules add`
+   `workbench-rules add`
 
 Project rules go in the target repo's `CLAUDE.md` under `## Conventions`. If the
 repo has no `CLAUDE.md`, flag it in the report — retro does not create files, but

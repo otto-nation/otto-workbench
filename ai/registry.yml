@@ -29,6 +29,11 @@ tools:
     when_to_use: "Tracing what an AI script did (recent, query, show, list), seeing what AI calls cost across scripts, tasks, models, and days (stats), or reclaiming the trail root ahead of its retention horizon (prune)"
     usage: "otto-log recent [--repo org/repo]  |  otto-log list --script pr  |  otto-log query --pr 641  |  otto-log show <invocation>  |  otto-log stats [--since 7d] [--by script|task|model|day] [--json]  |  otto-log prune [--keep 6]"
 
+  - name: workbench-rules
+    permission: true
+    visibility: brief
+    description: "Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed"
+
   - name: ceiling-scan
     permission: true
     visibility: brief

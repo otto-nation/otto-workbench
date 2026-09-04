@@ -10,11 +10,6 @@ meta:
   source: ai/claude/bin
 
 tools:
-  - name: claude-rules
-    permission: true
-    visibility: brief
-    description: "Manages local Claude Code rule additions not tracked in the workbench"
-
   - name: claude-bash-guard
     permission: false
     visibility: hidden

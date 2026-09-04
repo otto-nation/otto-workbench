@@ -402,24 +402,25 @@ and a push typed by hand is recorded by the global `pre-push` hook for `pr` to r
 
 ## Guidelines & Rules
 
-The workbench installs a layered rule system into Claude Code:
+The workbench resolves a layered rule system, which every harness it installs
+reads from. A later layer wins a name, and the operator's is last:
 
-- **Global guidelines** ([`ai/guidelines/`](../ai/guidelines/)) — universal coding principles, language-specific rules
-- **Tool rules** ([`ai/guidelines/rules/`](../ai/guidelines/rules/)) — path-scoped rules that auto-load based on file type, plus always-on, harness-neutral rules
-- **Generated rules** — [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) and [`git.generated.md`](../ai/guidelines/rules/git.generated.md) are derived from registries and conventions
+- **Repo defaults** ([`ai/guidelines/rules/`](../ai/guidelines/rules/)) — path-scoped rules that auto-load based on file type, plus always-on, harness-neutral rules. [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) and [`git.generated.md`](../ai/guidelines/rules/git.generated.md) are derived from registries and conventions
+- **Generated** (`~/.local/state/workbench/rules/`) — `workbench.md`, rewritten on every sync with this machine's paths baked in
+- **Operator overrides** (`~/.config/workbench/overrides/ai/guidelines/rules/`) — a same-named `<domain>.md` replaces the layer below, a `<domain>.local.md` is carried alongside it, and a `<domain>.disabled` sentinel suppresses it entirely
 
-Rules are symlinked to `~/.claude/rules/` during sync. Add machine-specific rules with:
+`resolve_rules` ([`lib/files.sh`](../lib/files.sh)) merges the three, and each
+harness installs that one set the way it wants it — which is what lets a machine
+with only one of them installed still get its rules. Add machine-specific rules
+with `workbench-rules add <domain> "rule text"`; `list` and `status` show what
+this machine has added.
 
-```bash
-claude-rules add <domain> "rule text"    # add a local rule
-claude-rules list                        # show all rules
-claude-rules status                      # check sync status
-```
-
-Pi reads one context file per directory rather than a rules directory, so
-`step_pi_guidelines` ([`ai/pi/steps.sh`](../ai/pi/steps.sh)) concatenates the
-installed rules — minus anything `paths:`-scoped or `harness:`-excluded from
-`pi` — behind the `ai/pi/AGENTS.head.md` preamble, into `~/.pi/agent/AGENTS.md`.
+`step_claude_rules` ([`ai/claude/steps.sh`](../ai/claude/steps.sh)) symlinks the
+merged set into `~/.claude/rules/`. Pi reads one context file per directory
+rather than a rules directory, so `step_pi_guidelines`
+([`ai/pi/steps.sh`](../ai/pi/steps.sh)) concatenates the same set — minus
+anything `paths:`-scoped or `harness:`-excluded from `pi` — behind the
+`ai/pi/AGENTS.head.md` preamble, into `~/.pi/agent/AGENTS.md`.
 Write `~/.pi/agent/AGENTS.override.md` to replace it; the workbench never
 touches that file. See `rules-authoring.md` § Which harnesses a rule reaches
 for the full frontmatter table.

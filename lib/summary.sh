@@ -193,7 +193,7 @@ print_workbench_summary() {
   echo
   echo -e "  ${CYAN}Quick reference${NC}"
   echo -e "  ${DIM}  Sync config       otto-workbench sync${NC}"
-  echo -e "  ${DIM}  Add a rule        claude-rules add <domain> \"rule\"${NC}"
+  echo -e "  ${DIM}  Add a rule        workbench-rules add <domain> \"rule\"${NC}"
   echo -e "  ${DIM}  Reload shell      exec $(basename "${SHELL:-zsh}")${NC}"
   echo
 }

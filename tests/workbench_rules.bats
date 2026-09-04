@@ -1,18 +1,22 @@
 #!/usr/bin/env bats
-# Tests for claude-rules — domain normalization, add/list/status commands,
-# and project-level rule management.
+# Tests for workbench-rules — domain normalization, add/list/status commands,
+# the generated layer, and project-level rule management.
 
 setup() {
   load 'test_helper'
   common_setup
   TMPDIR="$(mktemp -d)"
-  CLAUDE_RULES="$REPO_ROOT/ai/claude/bin/claude-rules"
+  WORKBENCH_RULES="$REPO_ROOT/ai/bin/workbench-rules"
 
   # Source for function-level tests
   export HOME="$TMPDIR"
+  export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
+  export WORKBENCH_STATE_DIR="$TMPDIR/state"
   export NO_COLOR=1
+  OVERRIDE_RULES="$WORKBENCH_CONFIG_DIR/overrides/ai/guidelines/rules"
+  GENERATED_RULES="$WORKBENCH_STATE_DIR/rules"
   # shellcheck source=/dev/null
-  source "$CLAUDE_RULES"
+  source "$WORKBENCH_RULES"
 
   # Fake source tree for cmd_sync tests — modeled on skills_install.bats.
   FAKE_WORKBENCH="$TMPDIR/workbench"
@@ -24,15 +28,15 @@ teardown() {
   common_teardown
 }
 
-# Helper: run claude-rules CLI with overridden HOME
+# Helper: run workbench-rules CLI with the sandboxed roots
 _run_rules() {
-  HOME="$TMPDIR" NO_COLOR=1 run "$CLAUDE_RULES" "$@"
+  NO_COLOR=1 run "$WORKBENCH_RULES" "$@"
 }
 
-# _run_sync — runs `claude-rules sync` against the fake workbench's rules tree.
+# _run_sync — runs `workbench-rules sync` against the fake workbench's rules tree.
 _run_sync() {
-  HOME="$TMPDIR" WORKBENCH_DIR="$FAKE_WORKBENCH" WORKBENCH_SYNC=true NO_COLOR=1 \
-    run "$CLAUDE_RULES" sync
+  WORKBENCH_DIR="$FAKE_WORKBENCH" WORKBENCH_SYNC=true NO_COLOR=1 \
+    run "$WORKBENCH_RULES" sync
 }
 
 # _make_repo DIR — a real repo with one commit at DIR.
@@ -91,18 +95,18 @@ _make_repo() {
 
 # ── CLI: --help ──────────────────────────────────────────────────────────────
 
-@test "claude-rules --help exits 0" {
+@test "workbench-rules --help exits 0" {
   _run_rules --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"claude-rules"* ]]
+  [[ "$output" == *"workbench-rules"* ]]
 }
 
-@test "claude-rules -h exits 0" {
+@test "workbench-rules -h exits 0" {
   _run_rules -h
   [ "$status" -eq 0 ]
 }
 
-@test "claude-rules no args exits non-zero" {
+@test "workbench-rules no args exits non-zero" {
   _run_rules
   [ "$status" -ne 0 ]
 }
@@ -112,8 +116,16 @@ _make_repo() {
 @test "add: creates local rule file" {
   _run_rules add go "use errors.As"
   [ "$status" -eq 0 ]
-  [ -f "$TMPDIR/.claude/rules/go.local.md" ]
-  grep -q "use errors.As" "$TMPDIR/.claude/rules/go.local.md"
+  [ -f "$OVERRIDE_RULES/go.local.md" ]
+  grep -q "use errors.As" "$OVERRIDE_RULES/go.local.md"
+}
+
+@test "add: writes into the override layer, not a harness's rules directory" {
+  # The layer moved out of ~/.claude/rules/ because a machine without Claude
+  # Code could not reach it there — the whole point of the rename.
+  _run_rules add go "use errors.As"
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.claude" ]
 }
 
 @test "add: appends to existing file" {
@@ -121,7 +133,7 @@ _make_repo() {
   _run_rules add go "second rule"
   [ "$status" -eq 0 ]
   local count
-  count=$(grep -c "^- " "$TMPDIR/.claude/rules/go.local.md")
+  count=$(grep -c "^- " "$OVERRIDE_RULES/go.local.md")
   [ "$count" -eq 2 ]
 }
 
@@ -140,21 +152,21 @@ _make_repo() {
 @test "add: normalizes domain aliases" {
   _run_rules add ts "prefer const"
   [ "$status" -eq 0 ]
-  [ -f "$TMPDIR/.claude/rules/ts.local.md" ]
+  [ -f "$OVERRIDE_RULES/ts.local.md" ]
 }
 
 # ── CLI: list ────────────────────────────────────────────────────────────────
 
 @test "list: no rules shows 'No local rule files'" {
-  mkdir -p "$TMPDIR/.claude/rules"
+  mkdir -p "$OVERRIDE_RULES"
   _run_rules list
   [ "$status" -eq 0 ]
   [[ "$output" == *"No local rule files"* ]]
 }
 
 @test "list: shows existing local rule files" {
-  mkdir -p "$TMPDIR/.claude/rules"
-  echo "- test rule" > "$TMPDIR/.claude/rules/go.local.md"
+  mkdir -p "$OVERRIDE_RULES"
+  echo "- test rule" > "$OVERRIDE_RULES/go.local.md"
   _run_rules list
   [ "$status" -eq 0 ]
   [[ "$output" == *"go.local.md"* ]]
@@ -169,15 +181,15 @@ _make_repo() {
 # ── CLI: status ──────────────────────────────────────────────────────────────
 
 @test "status: no local rules shows clean message" {
-  mkdir -p "$TMPDIR/.claude/rules"
+  mkdir -p "$OVERRIDE_RULES"
   _run_rules status
   [ "$status" -eq 0 ]
   [[ "$output" == *"No untracked"* ]]
 }
 
 @test "status: shows content of local rules" {
-  mkdir -p "$TMPDIR/.claude/rules"
-  echo "- my custom rule" > "$TMPDIR/.claude/rules/go.local.md"
+  mkdir -p "$OVERRIDE_RULES"
+  echo "- my custom rule" > "$OVERRIDE_RULES/go.local.md"
   _run_rules status
   [ "$status" -eq 0 ]
   [[ "$output" == *"go.local.md"* ]]
@@ -185,8 +197,8 @@ _make_repo() {
 }
 
 @test "status: skips frontmatter in display" {
-  mkdir -p "$TMPDIR/.claude/rules"
-  cat > "$TMPDIR/.claude/rules/go.local.md" <<'EOF'
+  mkdir -p "$OVERRIDE_RULES"
+  cat > "$OVERRIDE_RULES/go.local.md" <<'EOF'
 ---
 description: Go rules
 ---
@@ -285,33 +297,38 @@ EOF
   [ ! -e "$container/CLAUDE.md" ]
 }
 
-# ── CLI: sync — harness scoping ──────────────────────────────────────────────
+# ── CLI: sync ────────────────────────────────────────────────────────────────
 
-@test "a rule scoped away from claude is not installed into the claude rules dir" {
-  printf -- '---\nharness: [pi]\n---\n# Pi only\n' \
-    > "$FAKE_WORKBENCH/ai/guidelines/rules/pi-only.md"
+@test "sync: writes workbench.md into the generated layer" {
+  _run_sync
+  [ "$status" -eq 0 ]
+  [ -f "$GENERATED_RULES/workbench.md" ]
+  grep -q "$FAKE_WORKBENCH" "$GENERATED_RULES/workbench.md"
+}
+
+@test "sync: installs into no harness" {
+  # Each harness installs the merged set in its own step. A CLI that also laid
+  # the rules out for one of them is what coupled Pi's context file to Claude
+  # Code's sync having run.
   printf -- '# Shared\n' > "$FAKE_WORKBENCH/ai/guidelines/rules/shared.md"
 
   _run_sync
-  [ ! -e "$HOME/.claude/rules/pi-only.md" ]
-  [ -L "$HOME/.claude/rules/shared.md" ]
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.claude" ]
+  [ ! -e "$HOME/.pi" ]
 }
 
-@test "a rule naming claude among its harnesses is installed" {
-  printf -- '---\nharness: [claude, pi]\n---\n# Both\n' \
-    > "$FAKE_WORKBENCH/ai/guidelines/rules/both.md"
-
+@test "sync: is idempotent" {
   _run_sync
-  [ -L "$HOME/.claude/rules/both.md" ]
+  cp "$GENERATED_RULES/workbench.md" "$TMPDIR/first"
+  _run_sync
+  run diff "$TMPDIR/first" "$GENERATED_RULES/workbench.md"
+  [ "$status" -eq 0 ]
 }
 
-@test "a rule that stops naming claude is pruned on the next sync" {
-  printf -- '# Shared\n' > "$FAKE_WORKBENCH/ai/guidelines/rules/shared.md"
+@test "sync: fails when the workbench has no rules tree" {
+  rm -rf "$FAKE_WORKBENCH/ai/guidelines/rules"
   _run_sync
-  [ -L "$HOME/.claude/rules/shared.md" ]
-
-  printf -- '---\nharness: [pi]\n---\n# Pi only now\n' \
-    > "$FAKE_WORKBENCH/ai/guidelines/rules/shared.md"
-  _run_sync
-  [ ! -e "$HOME/.claude/rules/shared.md" ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Rules not found"* ]]
 }

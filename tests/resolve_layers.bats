@@ -104,6 +104,86 @@ teardown() {
   [[ "${result[skill-b]}" == "$BASE_DIR/skill-b" ]]
 }
 
+# ─── resolve_rules ───────────────────────────────────────────────────────────
+
+# The three roots resolve_rules reads. Pointed at the sandbox rather than the
+# real ones so a rule on the machine running the suite cannot reach the result.
+_rule_layers() {
+  GUIDELINES_RULES_SRC_DIR="$TMPDIR/repo"
+  GENERATED_RULES_DIR="$TMPDIR/generated"
+  USER_RULES_DIR="$TMPDIR/override"
+  # Read by resolve_rules, not by anything in this file.
+  # shellcheck disable=SC2034
+  RULES_GLOB="*.md"
+  mkdir -p "$GUIDELINES_RULES_SRC_DIR" "$GENERATED_RULES_DIR" "$USER_RULES_DIR"
+}
+
+@test "resolve_rules: all three layers are merged" {
+  _rule_layers
+  echo "repo" > "$GUIDELINES_RULES_SRC_DIR/general.md"
+  echo "generated" > "$GENERATED_RULES_DIR/workbench.md"
+  echo "override" > "$USER_RULES_DIR/testing.local.md"
+
+  local -A result
+  resolve_rules result
+
+  [[ ${#result[@]} -eq 3 ]]
+  [[ "${result[general.md]}" == "$GUIDELINES_RULES_SRC_DIR/general.md" ]]
+  [[ "${result[workbench.md]}" == "$GENERATED_RULES_DIR/workbench.md" ]]
+  [[ "${result[testing.local.md]}" == "$USER_RULES_DIR/testing.local.md" ]]
+}
+
+@test "resolve_rules: the generated layer beats the repo default it shadows" {
+  _rule_layers
+  echo "repo" > "$GUIDELINES_RULES_SRC_DIR/workbench.md"
+  echo "generated" > "$GENERATED_RULES_DIR/workbench.md"
+
+  local -A result
+  resolve_rules result
+
+  [[ "${result[workbench.md]}" == "$GENERATED_RULES_DIR/workbench.md" ]]
+}
+
+# The layer an operator writes by hand is last, so it wins a name against either
+# layer below it — the generated one included, which is the leg the two-pass
+# merge exists to get right.
+@test "resolve_rules: an override beats the generated rule it shadows" {
+  _rule_layers
+  echo "generated" > "$GENERATED_RULES_DIR/workbench.md"
+  echo "override" > "$USER_RULES_DIR/workbench.md"
+
+  local -A result
+  resolve_rules result
+
+  [[ ${#result[@]} -eq 1 ]]
+  [[ "${result[workbench.md]}" == "$USER_RULES_DIR/workbench.md" ]]
+}
+
+@test "resolve_rules: an override .disabled sentinel suppresses a generated rule" {
+  _rule_layers
+  echo "generated" > "$GENERATED_RULES_DIR/workbench.md"
+  touch "$USER_RULES_DIR/workbench.disabled"
+
+  local -A result
+  resolve_rules result
+
+  [[ ${#result[@]} -eq 0 ]]
+}
+
+@test "resolve_rules: an absent generated layer resolves the other two" {
+  _rule_layers
+  rmdir "$GENERATED_RULES_DIR"
+  echo "repo" > "$GUIDELINES_RULES_SRC_DIR/general.md"
+  echo "override" > "$USER_RULES_DIR/testing.local.md"
+
+  local -A result
+  resolve_rules result
+
+  [[ ${#result[@]} -eq 2 ]]
+  [[ "${result[general.md]}" == "$GUIDELINES_RULES_SRC_DIR/general.md" ]]
+  [[ "${result[testing.local.md]}" == "$USER_RULES_DIR/testing.local.md" ]]
+}
+
 # ─── is_disabled ─────────────────────────────────────────────────────────────
 
 @test "is_disabled: returns true when sentinel exists" {

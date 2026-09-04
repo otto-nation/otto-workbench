@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Tests for step_pi_guidelines — the generator that turns the rules directory
-# Claude loads into the single context file Pi loads.
+# Tests for step_pi_guidelines — the generator that turns the machine's merged
+# rule layers into the single context file Pi loads.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -8,8 +8,16 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR/home"
-  mkdir -p "$HOME/.claude/rules"
-  RULES="$HOME/.claude/rules"
+  export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
+  export WORKBENCH_STATE_DIR="$TMPDIR/state"
+
+  # One directory per rule layer, so a test can say which layer a rule is in.
+  FAKE_WORKBENCH="$TMPDIR/workbench"
+  RULES="$FAKE_WORKBENCH/ai/guidelines/rules"
+  OVERRIDE_RULES="$WORKBENCH_CONFIG_DIR/overrides/ai/guidelines/rules"
+  GENERATED_RULES="$WORKBENCH_STATE_DIR/rules"
+  mkdir -p "$HOME" "$RULES" "$OVERRIDE_RULES" "$GENERATED_RULES" "$FAKE_WORKBENCH/ai/pi"
+  cp "$REPO_ROOT/ai/pi/AGENTS.head.md" "$FAKE_WORKBENCH/ai/pi/AGENTS.head.md"
 }
 
 teardown() {
@@ -17,24 +25,30 @@ teardown() {
   common_teardown
 }
 
-# _rule NAME FRONTMATTER BODY — writes a rule into the installed rules dir.
+# _write_rule DIR NAME FRONTMATTER BODY — writes one rule into a layer.
 # FRONTMATTER is the block's inner lines, or empty for a file with none.
-_rule() {
-  local name="$1" fm="$2" body="$3"
+_write_rule() {
+  local dir="$1" name="$2" fm="$3" body="$4"
   if [[ -n "$fm" ]]; then
-    printf -- '---\n%s\n---\n%s\n' "$fm" "$body" > "$RULES/$name"
+    printf -- '---\n%s\n---\n%s\n' "$fm" "$body" > "$dir/$name"
   else
-    printf -- '%s\n' "$body" > "$RULES/$name"
+    printf -- '%s\n' "$body" > "$dir/$name"
   fi
 }
+
+# _rule / _local_rule / _generated_rule — one per layer, in resolution order.
+_rule()           { _write_rule "$RULES" "$@"; }
+_local_rule()     { _write_rule "$OVERRIDE_RULES" "$@"; }
+_generated_rule() { _write_rule "$GENERATED_RULES" "$@"; }
 
 _run_step() {
   run bash -c '
     HOME="$2"
+    WORKBENCH_DIR="$3"
     . "$1/lib/ui.sh"
     . "$1/ai/pi/steps.sh"
     step_pi_guidelines
-  ' _ "$REPO_ROOT" "$HOME"
+  ' _ "$REPO_ROOT" "$HOME" "$FAKE_WORKBENCH"
 }
 
 @test "an always-on rule reaches the context file" {
@@ -65,16 +79,48 @@ _run_step() {
   ! grep -q "CLAUDE ONLY BODY" "$HOME/.pi/agent/AGENTS.md"
 }
 
-@test "a machine-local rule reaches the context file" {
-  # The case that reading the repo sources instead would silently drop: a
-  # *.local.md exists nowhere but the installed directory. The synced rule
-  # beside it is what makes this a synced machine rather than the
-  # never-synced one the case below covers.
+@test "the context file is written on a machine that has no Claude Code install" {
+  # The bug this step's rewrite fixes: Pi's rules used to come from
+  # ~/.claude/rules/, which only Claude Code's own sync fills, so a machine
+  # running Pi alone got a warning and no context file at all.
   _rule general.md "" "GENERAL RULE BODY"
-  _rule testing.local.md "" "RUN PYTEST BARE"
+  _local_rule testing.local.md "" "RUN PYTEST BARE"
+  [ ! -e "$HOME/.claude" ]
+
+  _run_step
+  [ "$status" -eq 0 ]
+  grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+  grep -q "RUN PYTEST BARE" "$HOME/.pi/agent/AGENTS.md"
+  [ ! -e "$HOME/.claude" ]
+}
+
+@test "a machine-local rule reaches the context file" {
+  # A *.local.md exists in no repo — reading the workbench's own rules tree
+  # instead of the merged layers is what would silently drop it.
+  _rule general.md "" "GENERAL RULE BODY"
+  _local_rule testing.local.md "" "RUN PYTEST BARE"
 
   _run_step
   grep -q "RUN PYTEST BARE" "$HOME/.pi/agent/AGENTS.md"
+}
+
+@test "the generated layer reaches the context file" {
+  # workbench.md is written by workbench-rules rather than shipped by the repo,
+  # and is the other layer a harness reading only the repo sources would lose.
+  _rule general.md "" "GENERAL RULE BODY"
+  _generated_rule workbench.md "" "MANAGED AT SOME PATH"
+
+  _run_step
+  grep -q "MANAGED AT SOME PATH" "$HOME/.pi/agent/AGENTS.md"
+}
+
+@test "an override replaces the repo rule it shares a name with" {
+  _rule general.md "" "REPO BODY"
+  _local_rule general.md "" "OVERRIDE BODY"
+
+  _run_step
+  grep -q "OVERRIDE BODY" "$HOME/.pi/agent/AGENTS.md"
+  ! grep -q "REPO BODY" "$HOME/.pi/agent/AGENTS.md"
 }
 
 @test "an empty paths list is not a scope" {
@@ -91,8 +137,7 @@ _run_step() {
 @test "a dangling rule symlink is skipped rather than read" {
   # frontmatter_field answers empty for a path that is not there, so a
   # dangling link passes the reaches-Pi predicate and then kills awk — taking
-  # the whole sync down before sync_claude, the only thing that prunes such a
-  # link, has run.
+  # the whole sync down with it.
   _rule general.md "" "GENERAL RULE BODY"
   _rule issue-tracker.md "" "TRACKER RULE BODY"
   echo "gone" > "$TMPDIR/deleted.md"
@@ -104,19 +149,6 @@ _run_step() {
   grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
   grep -q "TRACKER RULE BODY" "$HOME/.pi/agent/AGENTS.md"
   [ ! -e "$HOME/.pi/agent/AGENTS.md.tmp" ]
-}
-
-@test "a rules directory holding only local rules writes nothing" {
-  # claude-rules add does its own mkdir -p, so a machine that added a local
-  # rule before ever syncing has a rules directory holding one file. Writing
-  # the context file there produces a preamble plus one rule and a success
-  # line that reads as complete.
-  _rule go.local.md "" "GO LOCAL BODY"
-
-  _run_step
-  [ "$status" -eq 0 ]
-  [ ! -e "$HOME/.pi/agent/AGENTS.md" ]
-  [[ "$output" == *"machine-local"* ]]
 }
 
 @test "frontmatter is stripped from the concatenated body" {
@@ -132,6 +164,7 @@ _run_step() {
   _run_step
   grep -q "AGENTS.override.md" "$HOME/.pi/agent/AGENTS.md"
   grep -q "otto-workbench" "$HOME/.pi/agent/AGENTS.md"
+  grep -q "$RULES" "$HOME/.pi/agent/AGENTS.md"
 }
 
 @test "the preamble comes first" {
@@ -143,8 +176,9 @@ _run_step() {
 }
 
 @test "two runs produce a byte-identical file" {
-  # Concatenation order must be sorted, not glob order — an unsorted map walk
-  # rewrites the file on every sync and every diff of it is noise.
+  # Concatenation order must be sorted, not the order bash walks an
+  # associative array in — an unsorted walk rewrites the file on every sync and
+  # every diff of it is noise.
   _rule general.md "" "A BODY"
   _rule issue-tracker.md "" "B BODY"
   _rule self-review.md "" "C BODY"
@@ -176,19 +210,17 @@ _run_step() {
   [ "$(cat "$HOME/.pi/agent/AGENTS.override.md")" = "MINE" ]
 }
 
-@test "an absent rules directory writes nothing rather than an empty file" {
-  rm -rf "$HOME/.claude/rules"
-
+@test "no rule at all writes nothing rather than an empty file" {
   _run_step
   [ "$status" -eq 0 ]
   [ ! -e "$HOME/.pi/agent/AGENTS.md" ]
-  [[ "$output" == *"no rules"* ]]
+  [[ "$output" == *"no rule reaches Pi"* ]]
 }
 
-@test "an absent rules directory leaves a previous good file alone" {
+@test "no rule at all leaves a previous good file alone" {
   _rule general.md "" "GENERAL RULE BODY"
   _run_step
-  rm -rf "$HOME/.claude/rules"
+  rm "$RULES/general.md"
 
   _run_step
   grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"

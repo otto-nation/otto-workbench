@@ -20,9 +20,8 @@ WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 . "$WORKBENCH_DIR/lib/ui.sh"
 
 # The AI dispatcher sources every tool's steps.sh — any subdirectory containing
-# one is a tool — and owns ai_tool_order, the constraint on the order those
-# tools' steps run in. Sourced rather than re-globbed here so setup and sync
-# read the same list of tools and the same ordering rule.
+# one is a tool. Sourced rather than re-globbed here so setup and sync read the
+# same list of tools.
 # shellcheck source=./steps.sh
 . "$SCRIPT_DIR/steps.sh"
 
@@ -113,8 +112,12 @@ fi
 # selection would leave a Pi-only machine with none of them on PATH.
 sync_component_bin "$SCRIPT_DIR"
 
-# Then each selected tool's own scripts, before running steps — tools like
-# claude-rules must be in PATH for their setup steps.
+# This machine's own rule layers, likewise ahead of any harness: every harness
+# step installs from them, and none of them owns them.
+"$SCRIPT_DIR/bin/workbench-rules" sync
+
+# Then each selected tool's own scripts, before running steps — a tool's setup
+# steps may call its own bin scripts.
 for _tool in "${SELECTED_TOOLS[@]}"; do
   _tool_dir="$SCRIPT_DIR/$_tool"
   if [[ -d "$_tool_dir/bin" ]]; then
@@ -126,14 +129,14 @@ unset _tool_dir
 # Framework contract: missing register_<tool>_steps is a hard error — the tool's
 # steps.sh is broken and cannot run. Individual step failures are soft (warn + continue).
 #
-# run_steps runs in registration order, so registration is where the ordering
-# constraint is applied — the saved selection is the order the operator typed at
-# the menu and says nothing about what depends on what.
-while IFS= read -r _tool; do
+# No ordering is imposed on the tools: each one's steps read the shared rule
+# layers refreshed above rather than another tool's installed output, so the
+# order the operator typed at the menu is order enough.
+for _tool in "${SELECTED_TOOLS[@]}"; do
   declare -f "register_${_tool}_steps" > /dev/null \
     || { err "register_${_tool}_steps is not defined — check ${_tool}/steps.sh"; exit 1; }
   "register_${_tool}_steps"
-done < <(ai_tool_order "${SELECTED_TOOLS[@]}")
+done
 
 run_steps
 

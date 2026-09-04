@@ -201,11 +201,16 @@ fi
 # instead of exiting, the `-f` test below skips a recorder that is not there,
 # the recorder itself always exits zero, and `|| true` catches a missing
 # interpreter — so `set -e` has nothing left to act on.
-_recorder="$_workbench/ai/lib/push_intent.py"
+_recorder="$_workbench/ai/lib/pr/push_intent.py"
 _toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || _toplevel="$PWD"
 
 if [[ "$_status" -eq 0 && -n "$_refs" && -f "$_recorder" ]]; then
-  replay_refs | python3 "$_recorder" --repo "$_toplevel" --remote "${1:-origin}" || true
+  # push_intent.py's sibling imports (`from gh import landed`, `from git import
+  # client`) resolve against ai/lib, not against ai/lib/pr where the file now
+  # lives — the package move deepened it by one directory, so the interpreter's
+  # automatic sys.path[0] (the script's own directory) is no longer enough.
+  replay_refs | PYTHONPATH="$_workbench/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 "$_recorder" --repo "$_toplevel" --remote "${1:-origin}" || true
 fi
 
 exit "$_status"

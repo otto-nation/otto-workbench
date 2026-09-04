@@ -1,7 +1,7 @@
 """Shared reuse-level constants for the mode tracker and session-start hooks.
 
 The level and its default live in the workbench config
-(``ai/lib/workbench_config.py``), which is what makes them editable in the same
+(``ai/lib/config/workbench_config.py``), which is what makes them editable in the same
 file as everything else the user configures. These readers exist so the hooks
 do not each spell out the fallback chain.
 """
@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
-import workbench_config  # noqa: E402
-import workbench_config_write  # noqa: E402
-from workbench_config import ConfigError, ReuseLevel  # noqa: E402
+from config import workbench_config  # noqa: E402
+from config import workbench_config_write  # noqa: E402
+from config.workbench_config import ConfigError, ReuseLevel  # noqa: E402
 
 # Re-exported: the writers below raise it, so a hook catching it should not
 # have to reach past this module for the type.

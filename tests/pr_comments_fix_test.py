@@ -12,11 +12,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pr_comments_fix
-import pr_domains
-from land import CommitStatus
-from pr_comments_fix import CLOSEOUT_COMMAND
-from pr_fix import FixOutcome, FixRecord, ItemOutcome
+from pr import comments_fix as pr_comments_fix
+from pr import domains as pr_domains
+from git.land import CommitStatus
+from pr.comments_fix import CLOSEOUT_COMMAND
+from pr.fix import FixOutcome, FixRecord, ItemOutcome
 
 # When the run being described happened. Any non-empty stamp means "written",
 # which is the only thing render_status and readiness read it for.

@@ -15,11 +15,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import land
-import pr_domains
-import pr_fix
-import pr_state
-import serde
+from git import land
+from pr import domains as pr_domains
+from pr import fix as pr_fix
+from pr import state as pr_state
+from core import serde
 
 
 # ── FixOutcome ────────────────────────────────────────────────────────────

@@ -12,8 +12,8 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-import run_lock
-from run_lock import LOCK_ENV, LOCK_FILE, LockBusy, acquire
+from core import run_lock
+from core.run_lock import LOCK_ENV, LOCK_FILE, LockBusy, acquire
 
 
 @pytest.fixture(autouse=True)

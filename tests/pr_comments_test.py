@@ -14,16 +14,16 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pr_comments
-import pr_domains
-import pr_state
-import publishing
-import review_issue
-from proc import CmdResult
-from pr_comments import (
+from pr import comments as pr_comments
+from pr import domains as pr_domains
+from pr import state as pr_state
+from core import publishing
+from review import issue as review_issue
+from core.proc import CmdResult
+from pr.comments import (
     compute_thread_state, sync_threads, fetch_threads, render_dashboard,
 )
-from pr_comments_state import ThreadRecord, ThreadState
+from pr.comments_state import ThreadRecord, ThreadState
 
 
 REPO = "owner/repo"
@@ -597,7 +597,7 @@ def no_subprocess(monkeypatch):
     """Any external call in draft mode is a bug, so make one impossible to miss."""
     def boom(*a, **kw):
         raise AssertionError(f"a subprocess ran in draft mode: {a}")
-    monkeypatch.setattr("proc.subprocess.run", boom)
+    monkeypatch.setattr("core.proc.subprocess.run", boom)
     monkeypatch.setattr(review_issue.proc, "run", boom)
 
 
@@ -632,7 +632,7 @@ class TestPublishingGate:
     def test_enable_opens_the_gate(self, monkeypatch):
         calls = []
         monkeypatch.setattr(
-            "proc.subprocess.run",
+            "core.proc.subprocess.run",
             lambda *a, **kw: calls.append(a) or SimpleNamespace(
                 returncode=0, stdout='{"html_url": "u"}', stderr="",
             ),

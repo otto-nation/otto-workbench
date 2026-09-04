@@ -21,16 +21,16 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import agent_invoke  # noqa: E402
-import fix_engine  # noqa: E402
-import fix_tracking  # noqa: E402
-import land  # noqa: E402
-from agent_diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
-from agent_registry import PHASES  # noqa: E402
-from phases import Phase  # noqa: E402
-from fix_types import FixItem  # noqa: E402
-from land import CommitStatus  # noqa: E402
-from pr_fix import FixOutcome  # noqa: E402
+from agent import invoke as agent_invoke  # noqa: E402
+from fix import engine as fix_engine  # noqa: E402
+from fix import tracking as fix_tracking  # noqa: E402
+from git import land  # noqa: E402
+from agent.diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
+from agent.registry import PHASES  # noqa: E402
+from core.phases import Phase  # noqa: E402
+from fix.types import FixItem  # noqa: E402
+from git.land import CommitStatus  # noqa: E402
+from pr.fix import FixOutcome  # noqa: E402
 
 
 # ── the stub domain ─────────────────────────────────────────────────────────

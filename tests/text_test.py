@@ -8,7 +8,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from text import plural
+from core.text import plural
 
 
 def test_plural_only_singular_at_one():

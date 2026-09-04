@@ -16,7 +16,7 @@ from conftest import load_script
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
-import ai_usage
+from agent import usage as ai_usage
 
 BIN = REPO_ROOT / "ai" / "bin" / "ai-usage-log"
 

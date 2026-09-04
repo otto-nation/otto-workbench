@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import phases  # noqa: E402
-from phases import (  # noqa: E402
+from core import phases  # noqa: E402
+from core.phases import (  # noqa: E402
     AgentKind, Effort, Mode, Phase, PhaseDomain, PhaseShape, Thinking,
 )
 
@@ -21,9 +21,13 @@ def test_phase_derives_both_env_keys_from_its_value():
 
 def test_the_vocabulary_reaches_nothing_above_core():
     """phases.py may not import from the agent layer — that is the cycle it breaks."""
-    source = (Path(__file__).resolve().parent.parent / "ai" / "lib" / "phases.py").read_text()
+    source = (
+        Path(__file__).resolve().parent.parent / "ai" / "lib" / "core" / "phases.py"
+    ).read_text()
 
+    assert "agent.types" not in source
     assert "agent_types" not in source
+    assert "config.workbench_config" not in source
     assert "workbench_config" not in source
 
 

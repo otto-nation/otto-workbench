@@ -11,11 +11,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pr_state
-import review_gc
-import run_lock
-import workbench_paths
-from trail import Trail
+from pr import state as pr_state
+from review import gc as review_gc
+from core import run_lock
+from core import workbench_paths
+from core.trail import Trail
 
 
 class _RecordingTrail:
@@ -59,7 +59,7 @@ def _closed(state: pr_state.PRCloseState, ended_at: str = "") -> pr_state.PRClos
 
 
 def test_pr_closure_reports_merged_with_its_timestamp(monkeypatch):
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="", stdout=json.dumps({
             "state": "MERGED", "mergedAt": "2026-08-01T12:00:00Z", "closedAt": None,
         })))
@@ -68,7 +68,7 @@ def test_pr_closure_reports_merged_with_its_timestamp(monkeypatch):
 
 
 def test_pr_closure_reports_closed_with_its_timestamp(monkeypatch):
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="", stdout=json.dumps({
             "state": "CLOSED", "mergedAt": None, "closedAt": "2026-08-02T08:00:00Z",
         })))
@@ -79,7 +79,7 @@ def test_pr_closure_reports_closed_with_its_timestamp(monkeypatch):
 def test_pr_closure_reads_the_timestamp_field_its_state_names(monkeypatch):
     """A merged PR is dated by `mergedAt` even when `closedAt` is also populated —
     GitHub sets both on a merge, and the enum is what picks between them."""
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="", stdout=json.dumps({
             "state": "MERGED",
             "mergedAt": "2026-08-01T12:00:00Z",
@@ -97,7 +97,7 @@ def test_pr_closure_asks_gh_for_every_field_a_closure_needs(monkeypatch):
         seen.append(cmd)
         return MagicMock(returncode=0, stderr="", stdout=json.dumps({"state": "OPEN"}))
 
-    monkeypatch.setattr("proc.subprocess.run", _record)
+    monkeypatch.setattr("core.proc.subprocess.run", _record)
 
     review_gc._pr_closure("acme/widget", 7)
 
@@ -108,7 +108,7 @@ def test_pr_closure_asks_gh_for_every_field_a_closure_needs(monkeypatch):
 def test_pr_closure_treats_a_null_mergedat_as_no_timestamp(monkeypatch):
     """gh's `mergedAt` can still be null in the window right after a merge lands;
     a PR noticed as MERGED then must report an empty string, not the word "None"."""
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="",
         stdout=json.dumps({"state": "MERGED", "mergedAt": None, "closedAt": None})))
     assert review_gc._pr_closure("acme/widget", 7) == pr_state.PRClosure(
@@ -118,7 +118,7 @@ def test_pr_closure_treats_a_null_mergedat_as_no_timestamp(monkeypatch):
 def test_pr_closure_warns_when_gh_fails_rather_than_reading_as_open(monkeypatch, capsys):
     """A gh that cannot answer keeps the artifacts, like an open PR does — but the
     scheduled sweep is unattended, so the two must not look the same in the log."""
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=1, stdout="",
         stderr="gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN\nmore\n"))
 
@@ -133,7 +133,7 @@ def test_pr_closure_warns_when_gh_fails_rather_than_reading_as_open(monkeypatch,
 
 
 def test_pr_closure_warns_with_the_exit_code_when_gh_says_nothing(monkeypatch, capsys):
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=4, stdout="", stderr=""))
 
     assert review_gc._pr_closure("acme/widget", 7) is None
@@ -144,7 +144,7 @@ def test_pr_closure_warns_when_gh_cannot_be_run(monkeypatch, capsys):
     def _boom(*a, **kw):
         raise FileNotFoundError("gh")
 
-    monkeypatch.setattr("proc.subprocess.run", _boom)
+    monkeypatch.setattr("core.proc.subprocess.run", _boom)
 
     assert review_gc._pr_closure("acme/widget", 7) is None
     assert "acme/widget#7" in capsys.readouterr().err
@@ -153,7 +153,7 @@ def test_pr_closure_warns_when_gh_cannot_be_run(monkeypatch, capsys):
 def test_pr_closure_says_nothing_about_an_open_pr(monkeypatch, capsys):
     """OPEN is a real answer, not a failure to ask — warning on it would put a
     line in the maintenance log for every PR still in flight, every cycle."""
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="",
         stdout=json.dumps({"state": "OPEN", "mergedAt": None, "closedAt": None})))
 
@@ -164,7 +164,7 @@ def test_pr_closure_says_nothing_about_an_open_pr(monkeypatch, capsys):
 def test_pr_closure_warns_when_gh_reports_a_state_it_does_not_know(monkeypatch, capsys):
     """A renamed or added gh state exits 0 and parses cleanly, so it would read as
     "still open" forever and quietly retire the prune."""
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="",
         stdout=json.dumps({"state": "LOCKED", "mergedAt": None, "closedAt": None})))
 
@@ -175,7 +175,7 @@ def test_pr_closure_warns_when_gh_reports_a_state_it_does_not_know(monkeypatch, 
 
 
 def test_pr_closure_warns_when_gh_omits_the_state_field(monkeypatch, capsys):
-    monkeypatch.setattr("proc.subprocess.run", lambda *a, **kw: MagicMock(
+    monkeypatch.setattr("core.proc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="", stdout=json.dumps({"mergedAt": None})))
 
     assert review_gc._pr_closure("acme/widget", 7) is None

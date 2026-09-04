@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Cross-validates the three definitions of the workbench roots (SSOT guard):
 #   lib/roots.sh                     — bash, sourced via lib/constants.sh
-#   ai/lib/workbench_paths.py        — Python
+#   ai/lib/core/workbench_paths.py    — Python
 #   zsh/config.d/aliases/docker.zsh  — inline, because it cannot source
 #                                      constants.sh at shell startup
 #
@@ -36,12 +36,12 @@ resolve_shell() {
   bash -c '. "$1/lib/roots.sh"; printf "%s" "${!2}"' _ "$REPO_ROOT" "$1"
 }
 
-# resolve_python FUNC — the value ai/lib/workbench_paths.FUNC() returns.
+# resolve_python FUNC — the value ai/lib/core/workbench_paths.FUNC() returns.
 resolve_python() {
   python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import workbench_paths
+from core import workbench_paths
 print(workbench_paths.$1(), end='')
 "
 }
@@ -276,7 +276,7 @@ spec = importlib.util.spec_from_loader('retro_scan', loader)
 mod = importlib.util.module_from_spec(spec)
 sys.modules['retro_scan'] = mod
 spec.loader.exec_module(mod)
-import workbench_paths
+from core import workbench_paths
 print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
 "
 }
@@ -287,7 +287,7 @@ print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
 }
 
 @test "bash and Python agree on the project registry file" {
-  # lib/projects.sh appends to it and ai/lib/workbench_projects.py appends to it
+  # lib/projects.sh appends to it and ai/lib/config/workbench_projects.py appends to it
   # — two writers, so a drift here is two registries, each holding half the
   # repos the machine profile and the project migrations are meant to visit.
   [ "$(resolve_constants PROJECTS_REGISTRY_FILE)" = "$(resolve_python projects_registry)" ]
@@ -322,7 +322,7 @@ resolve_python_agents_skills() {
   python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
-import ai_backend_pi
+from agent import backend_pi as ai_backend_pi
 print(ai_backend_pi.AGENTS_SKILLS_DIR, end='')
 "
 }

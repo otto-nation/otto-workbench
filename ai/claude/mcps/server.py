@@ -11,7 +11,7 @@ configuration file: the server exposes the workbench's own tools, so what to
 scan is a fact about the checkout rather than a question to ask the user.
 
 Which of them a client is offered comes from the registries — see
-``ai/lib/tool_registry.py``. Carrying the marker makes a script probeable, not
+``ai/lib/config/tool_registry.py``. Carrying the marker makes a script probeable, not
 public: a hidden or unregistered one is skipped before it is ever run.
 
 The client owns this process, spawning it over stdio, so nothing outside can
@@ -47,9 +47,9 @@ WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 # project as the working directory, so the workbench's Python has to be named
 # before it can be imported.
 sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
-import proc  # noqa: E402
-import timeouts  # noqa: E402
-from tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
+from core import proc  # noqa: E402
+from core import timeouts  # noqa: E402
+from config.tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
 
 COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
 
@@ -63,7 +63,7 @@ DISCOVERY_TIMEOUT = timeouts.QUICK
 # Seconds a tool call gets before the client is told it timed out. Not a tier
 # from `timeouts`: those bound a subprocess that should already have answered,
 # while this is a budget for whichever tool the client asked for — `pr review`
-# drives agents for minutes. Same carve-out as `eval_task.EVAL_CASE_BUDGET`.
+# drives agents for minutes. Same carve-out as `eval.task.EVAL_CASE_BUDGET`.
 TOOL_CALL_BUDGET = 300
 
 TOOL_SCHEMA_FLAG = "--tool-schema"
@@ -90,7 +90,7 @@ PROBE_ATTEMPTS = 2
 REQUIRED_SCHEMA_KEYS = ("name", "input_schema")
 
 # The two ways a script can implement the protocol: parse the flag itself, or
-# inherit it from ai/lib/tool_parser.py's ToolParser. A prose mention of the flag
+# inherit it from ai/lib/core/tool_parser.py's ToolParser. A prose mention of the flag
 # also matches — the scan is a cheap filter, not a guarantee, which is why tools
 # that take positional arguments must reject unknown flags on their own.
 DECLARATION_MARKERS = (TOOL_SCHEMA_FLAG.encode(), b"ToolParser")

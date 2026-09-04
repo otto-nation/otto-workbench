@@ -12,7 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_worktree import (
+from review.worktree import (
     WorktreeResult, cleanup_worktree, detached_worktree_at, setup_pr_worktree,
     switch_to_branch, switch_to_pr_branch,
 )
@@ -37,7 +37,7 @@ def test_worktree_result_fields():
 # ── setup_pr_worktree ─────────────────────────────────────────────────────────
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_setup_pr_worktree_via_wt(mock_run):
     wt_json = json.dumps({"path": "/repos/repo/pr-42", "branch": "pr:42"})
 
@@ -69,7 +69,7 @@ def test_setup_pr_worktree_via_wt(mock_run):
     assert result.cleanup_ref == "pr:42"
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_setup_pr_worktree_fallback_when_wt_fails(mock_run):
     def side_effect(cmd, **kwargs):
         m = MagicMock()
@@ -100,7 +100,7 @@ def test_setup_pr_worktree_fallback_when_wt_fails(mock_run):
     assert result.cleanup_ref == "/repos/repo/.worktrees/pr-42-review"
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_setup_pr_worktree_unshallows_if_needed(mock_run):
     calls_made = []
 
@@ -136,8 +136,8 @@ def test_setup_pr_worktree_unshallows_if_needed(mock_run):
     assert len(unshallow_calls) == 1
 
 
-@patch("review_worktree.pr_sync.fetch_and_reset")
-@patch("proc.subprocess.run")
+@patch("review.worktree.pr_sync.fetch_and_reset")
+@patch("core.proc.subprocess.run")
 def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run, mock_far):
     def side_effect(cmd, **kwargs):
         m = MagicMock()
@@ -160,7 +160,7 @@ def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run, mock_far):
     mock_far.assert_called_once_with("/repos/repo/pr-10", "feat/thing")
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_setup_pr_worktree_raises_on_total_failure(mock_run):
     def side_effect(cmd, **kwargs):
         # Both streams are strings, as a real CompletedProcess carries them:
@@ -193,7 +193,7 @@ def test_setup_pr_worktree_raises_on_total_failure(mock_run):
         setup_pr_worktree("owner/repo", 42, "/repos/repo")
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_setup_pr_worktree_quotes_what_git_said(mock_run):
     """The raise names the cause, rather than only the step that failed.
 
@@ -243,7 +243,7 @@ def _detach_side_effect(local_shas: list[str], fetchable: str = "", add_rc: int 
     return side_effect, calls
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_detached_worktree_at_checks_out_a_local_commit(mock_run):
     mock_run.side_effect, calls = _detach_side_effect(["abc1234"])
 
@@ -257,7 +257,7 @@ def test_detached_worktree_at_checks_out_a_local_commit(mock_run):
     assert not [c for c in calls if "fetch" in c]
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_detached_worktree_at_sanitizes_the_label(mock_run):
     mock_run.side_effect, _ = _detach_side_effect(["abc1234"])
 
@@ -267,7 +267,7 @@ def test_detached_worktree_at_sanitizes_the_label(mock_run):
     assert result.path == "/repos/repo/.worktrees/recover-feat-x"
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_detached_worktree_at_fetches_a_missing_commit(mock_run):
     mock_run.side_effect, calls = _detach_side_effect([], fetchable="abc1234")
 
@@ -279,7 +279,7 @@ def test_detached_worktree_at_fetches_a_missing_commit(mock_run):
     ]
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_detached_worktree_at_returns_none_when_unfetchable(mock_run):
     mock_run.side_effect, calls = _detach_side_effect([])
 
@@ -287,7 +287,7 @@ def test_detached_worktree_at_returns_none_when_unfetchable(mock_run):
     assert not [c for c in calls if "worktree" in c and "add" in c]
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_detached_worktree_at_returns_none_when_add_fails(mock_run):
     mock_run.side_effect, _ = _detach_side_effect(["abc1234"], add_rc=1)
 
@@ -297,7 +297,7 @@ def test_detached_worktree_at_returns_none_when_add_fails(mock_run):
 # ── switch_to_branch ──────────────────────────────────────────────────────────
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_switch_to_branch_via_wt(mock_run):
     wt_json = json.dumps({"path": "/repos/repo/feat-auth"})
 
@@ -320,7 +320,7 @@ def test_switch_to_branch_via_wt(mock_run):
     assert result.cleanup_ref == "feat/auth"
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_switch_to_branch_fallback(mock_run):
     def side_effect(cmd, **kwargs):
         m = MagicMock()
@@ -352,7 +352,7 @@ def test_switch_to_branch_fallback(mock_run):
     assert result.cleanup_ref == "/repos/repo/self-review-main"
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_switch_to_branch_sanitizes_slashes(mock_run):
     def side_effect(cmd, **kwargs):
         m = MagicMock()
@@ -378,7 +378,7 @@ def test_switch_to_branch_sanitizes_slashes(mock_run):
     assert result.path == "/repos/repo/self-review-feat-auth"
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_switch_to_branch_returns_none_on_total_failure(mock_run):
     def side_effect(cmd, **kwargs):
         m = MagicMock()
@@ -406,8 +406,8 @@ def test_switch_to_branch_returns_none_on_total_failure(mock_run):
 # ── switch_to_pr_branch ───────────────────────────────────────────────────────
 
 
-@patch("review_worktree.switch_to_branch")
-@patch("proc.subprocess.run")
+@patch("review.worktree.switch_to_branch")
+@patch("core.proc.subprocess.run")
 def test_switch_to_pr_branch_delegates(mock_run, mock_switch):
     expected_result = WorktreeResult(path="/repos/repo/feat-x", cleanup_ref="feat/x", is_fallback=False)
     mock_switch.return_value = expected_result
@@ -433,8 +433,8 @@ def test_switch_to_pr_branch_delegates(mock_run, mock_switch):
     mock_switch.assert_called_once_with("feat/x", "/repos/repo")
 
 
-@patch("review_worktree.switch_to_branch")
-@patch("proc.subprocess.run")
+@patch("review.worktree.switch_to_branch")
+@patch("core.proc.subprocess.run")
 def test_switch_to_pr_branch_already_on_branch(mock_run, mock_switch):
     def side_effect(cmd, **kwargs):
         m = MagicMock()
@@ -457,8 +457,8 @@ def test_switch_to_pr_branch_already_on_branch(mock_run, mock_switch):
     mock_switch.assert_not_called()
 
 
-@patch("review_worktree.switch_to_branch")
-@patch("proc.subprocess.run")
+@patch("review.worktree.switch_to_branch")
+@patch("core.proc.subprocess.run")
 def test_switch_to_pr_branch_returns_none_when_pr_head_unknown(mock_run, mock_switch):
     def side_effect(cmd, **kwargs):
         m = MagicMock()
@@ -480,7 +480,7 @@ def test_switch_to_pr_branch_returns_none_when_pr_head_unknown(mock_run, mock_sw
 # ── cleanup_worktree ──────────────────────────────────────────────────────────
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_cleanup_worktree_fallback_uses_git_remove(mock_run):
     mock_run.return_value.returncode = 0
     result = WorktreeResult(
@@ -499,7 +499,7 @@ def test_cleanup_worktree_fallback_uses_git_remove(mock_run):
     assert result.path in cmd
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_cleanup_worktree_skips_non_fallback(mock_run):
     result = WorktreeResult(
         path="/repos/repo/pr-42",
@@ -511,13 +511,13 @@ def test_cleanup_worktree_skips_non_fallback(mock_run):
     mock_run.assert_not_called()
 
 
-@patch("proc.subprocess.run")
+@patch("core.proc.subprocess.run")
 def test_cleanup_worktree_none_is_noop(mock_run):
     cleanup_worktree(None, "/repos/repo")
     mock_run.assert_not_called()
 
 
-@patch("review_worktree.git_client.run")
+@patch("review.worktree.git_client.run")
 def test_cleanup_worktree_fallback_swallows_errors(mock_run):
     """A git that cannot even be launched must not replace the review's error."""
     mock_run.side_effect = OSError("git not found")

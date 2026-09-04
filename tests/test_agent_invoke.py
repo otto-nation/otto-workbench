@@ -14,10 +14,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent_invoke
-import agent_phases
-import ai_backend
-from phases import Phase, PhaseShape
+from agent import invoke as agent_invoke
+from agent import phases as agent_phases
+from agent import backend as ai_backend
+from core.phases import Phase, PhaseShape
 
 
 def _answers(*replies):

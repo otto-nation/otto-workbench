@@ -113,6 +113,63 @@ TRAIL = workbench_paths.trail_dir()
     assert [v.root for v in violations] == ["workbench_paths.trail_dir"]
 
 
+def test_a_package_imported_module_call_is_flagged(tmp_path):
+    """`from core import workbench_paths` is the shape every caller now uses —
+    it binds the module name through the layer package rather than plainly, and
+    must freeze exactly as hard as a bare `import workbench_paths` does."""
+    violations = _check(tmp_path, """
+from core import workbench_paths
+
+TRAIL = workbench_paths.trail_dir()
+""")
+    assert [v.root for v in violations] == ["workbench_paths.trail_dir"]
+
+
+def test_a_dotted_from_import_is_flagged(tmp_path):
+    """`from core.workbench_paths import state_dir` names the module one level
+    deeper than `_imported_roots` used to accept — it must freeze exactly as
+    hard as the bare `from workbench_paths import state_dir` shape does."""
+    violations = _check(tmp_path, """
+from core.workbench_paths import state_dir
+
+ROOT = state_dir()
+""")
+    assert [(v.line, v.root) for v in violations] == [(4, "state_dir")]
+
+
+def test_a_dotted_aliased_from_import_is_flagged(tmp_path):
+    """The alias on a dotted `from` import is still the name that freezes."""
+    violations = _check(tmp_path, """
+from core.workbench_paths import state_dir as sd
+
+ROOT = sd()
+""")
+    assert [v.root for v in violations] == ["sd"]
+
+
+def test_a_bare_dotted_import_is_flagged(tmp_path):
+    """`import core.workbench_paths` binds only `core` in scope, so the call
+    site has to spell the whole path back out — `core.workbench_paths.state_dir()`
+    — and that full chain is what has to be recognised, not a single hop."""
+    violations = _check(tmp_path, """
+import core.workbench_paths
+
+ROOT = core.workbench_paths.state_dir()
+""")
+    assert [v.root for v in violations] == ["core.workbench_paths.state_dir"]
+
+
+def test_a_bare_dotted_import_aliased_is_flagged(tmp_path):
+    """`import core.workbench_paths as wp` is a single-hop alias one dotted
+    level deeper than `import workbench_paths as wp` — same freeze either way."""
+    violations = _check(tmp_path, """
+import core.workbench_paths as wp
+
+ROOT = wp.state_dir()
+""")
+    assert [v.root for v in violations] == ["wp.state_dir"]
+
+
 def test_an_imported_resolver_is_flagged(tmp_path):
     """`from ... import state_dir` drops the module name, not the freeze."""
     violations = _check(tmp_path, """
@@ -198,7 +255,7 @@ B = workbench_paths.cache_dir()
 def test_discover_finds_extensionless_python_scripts():
     scripts = vfr.discover_scripts(str(REPO_ROOT))
     assert str(REPO_ROOT / "ai" / "bin" / "pr") in scripts
-    assert str(REPO_ROOT / "ai" / "lib" / "ai_usage.py") in scripts
+    assert str(REPO_ROOT / "ai" / "lib" / "agent" / "usage.py") in scripts
 
 
 def test_repo_is_clean():
@@ -219,4 +276,4 @@ def test_main_exits_1_on_a_violation(tmp_path, monkeypatch, capsys):
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "frozen at import" in err
-    assert "ai/lib/workbench_paths.py" in err
+    assert "ai/lib/core/workbench_paths.py" in err

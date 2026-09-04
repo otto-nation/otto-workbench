@@ -15,8 +15,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent_types import ItemScaling, PhaseSpec
-from phases import Mode, Phase, PhaseDomain, PhaseShape
+from agent.types import ItemScaling, PhaseSpec
+from core.phases import Mode, Phase, PhaseDomain, PhaseShape
 
 
 class TestPhaseSpecDefaults:

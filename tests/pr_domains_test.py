@@ -11,9 +11,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pr_domains
-import pr_state
-from proc import CmdResult
+from pr import domains as pr_domains
+from pr import state as pr_state
+from core.proc import CmdResult
 
 # When the run being described happened. Any non-empty stamp means "written",
 # which is the only thing render_status and readiness read it for.
@@ -402,13 +402,13 @@ def test_every_refusal_status_renders_as_a_refusal():
 # ── PushDomain ────────────────────────────────────────────────────────────
 
 
-@patch("pr_domains.git_client.run")
+@patch("pr.domains.git_client.run")
 def test_push_observed_up_to_date(mock_run):
     mock_run.return_value = CmdResult(0, "0\n")
     assert pr_domains.PushDomain.observed(Path("/repo"), "main", updated_at="t").ahead == 0
 
 
-@patch("pr_domains.git_client.run")
+@patch("pr.domains.git_client.run")
 def test_push_observed_counts_ahead_commits(mock_run):
     """Range direction matters — an inverted range counts the wrong side."""
     mock_run.return_value = CmdResult(0, "3\n")
@@ -420,7 +420,7 @@ def test_push_observed_counts_ahead_commits(mock_run):
     assert mock_run.call_args.kwargs["cwd"] == Path("/repo")
 
 
-@patch("pr_domains.git_client.run")
+@patch("pr.domains.git_client.run")
 def test_push_observed_nonzero_returncode_is_unpushed(mock_run):
     """Branch never pushed — git rev-list exits non-zero."""
     mock_run.return_value = CmdResult(128, "", "fatal: unknown revision\n")
@@ -428,13 +428,13 @@ def test_push_observed_nonzero_returncode_is_unpushed(mock_run):
     assert push.ahead is None
 
 
-@patch("pr_domains.git_client.run")
+@patch("pr.domains.git_client.run")
 def test_push_observed_non_digit_output_is_unpushed(mock_run):
     mock_run.return_value = CmdResult(0, "not-a-number\n")
     assert pr_domains.PushDomain.observed(Path("/repo"), "main", updated_at="t").ahead is None
 
 
-@patch("pr_domains.git_client.run")
+@patch("pr.domains.git_client.run")
 def test_push_observed_stamps_the_write_it_was_given(mock_run):
     mock_run.return_value = CmdResult(0, "0\n")
     push = pr_domains.PushDomain.observed(Path("/repo"), "main", updated_at="2026-08-01T00:00:00Z")

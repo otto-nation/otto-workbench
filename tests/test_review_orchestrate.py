@@ -12,8 +12,8 @@ from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from phases import Phase
-from review_verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
+from core.phases import Phase
+from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
 
 
 
@@ -707,10 +707,10 @@ class TestPhaseSynthesis:
         this maps wrong lands the patch on a module the code under test never
         reads and the test passes having mocked nothing.
         """
-        import agent_retry
-        import review_outcome
-        import review_phases
-        import review_steps
+        from agent import retry as agent_retry
+        from review import outcome as review_outcome
+        from review import phases as review_phases
+        from review import steps as review_steps
         owners = {
             "build_prompt": review_steps,
             "post_process_findings": review_outcome,
@@ -820,7 +820,7 @@ class TestPhaseSynthesis:
         and strictly better than discarding a phase's worth of group reviews
         because their cover letter is over the budget.
         """
-        from review_prompt import PromptTooLarge
+        from review.prompt import PromptTooLarge
 
         job = self._make_job(ro, tmp_path)
         invoked = []
@@ -1074,8 +1074,8 @@ class TestRunSynthesisOrFallback:
 
     def test_a_diagnosed_synthesis_lands_in_state_failed(self, ro, tmp_path, monkeypatch):
         """`_run_synthesis_or_fallback` copies a phase's diagnosis into `state.failed`."""
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path, mode="self")
         state = self._make_state(ro)
@@ -1107,8 +1107,8 @@ class TestRunSynthesisOrFallback:
         file, so a review discussing the fallback machinery is not diagnosed
         as one.
         """
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1131,8 +1131,8 @@ class TestRunSynthesisOrFallback:
         assert Phase.SYNTHESIS not in state.failed
 
     def test_synthesis_reports_what_its_log_records(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1153,8 +1153,8 @@ class TestRunSynthesisOrFallback:
         assert result.cost == 1.25
 
     def test_a_clean_review_spends_nothing(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1168,8 +1168,8 @@ class TestRunSynthesisOrFallback:
     def test_a_mention_of_a_finding_id_is_not_a_finding(self, ro, tmp_path, monkeypatch):
         """The merge declares nothing, so the review is clean — a triage note
         naming a prior ID used to send the run to synthesis with no findings."""
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1186,8 +1186,8 @@ class TestRunSynthesisOrFallback:
         assert result == review_pipeline.PhaseResult()
 
     def test_a_synthesis_skipped_on_budget_spends_nothing(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1206,8 +1206,8 @@ class TestRunSynthesisOrFallback:
         with `skipped` as the reason — `all groups failed` would blame the
         agents for a review nobody asked to run.
         """
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.GROUP}))
@@ -1225,8 +1225,8 @@ class TestRunSynthesisOrFallback:
 
     def test_no_synthesis_writes_the_mechanical_merge(self, ro, tmp_path, monkeypatch):
         """`--no-synthesis` reaches the review file without an agent."""
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
@@ -1257,8 +1257,8 @@ class TestRunSynthesisOrFallback:
         Without the section a run resumed at the disprove gate reads its own
         review as unfinished and re-enters synthesis to rewrite it.
         """
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
@@ -1282,8 +1282,8 @@ class TestRunSynthesisOrFallback:
         self, ro, tmp_path, monkeypatch,
     ):
         """The budget path says why synthesis did not run, not that it failed."""
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path)
         (tmp_path / "wt").mkdir()
@@ -1310,8 +1310,8 @@ class TestRunSynthesisOrFallback:
         tree and spend none of the budget that ran out, so the path that ships
         group output on a cut-off post-processes it like every other one.
         """
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(ro, tmp_path)
         (tmp_path / "wt").mkdir()
@@ -1333,8 +1333,8 @@ class TestRunSynthesisOrFallback:
         self, ro, tmp_path, monkeypatch, skipped, cost_so_far,
     ):
         """Neither path weighed the review, so neither approves or blocks it."""
-        import review_pipeline
-        import review_steps
+        from review import pipeline as review_pipeline
+        from review import steps as review_steps
 
         job = self._make_job(
             ro, tmp_path,
@@ -1478,7 +1478,7 @@ class TestRetryFailedGroups:
         )
 
     def test_retries_max_turns_failure(self, ro, tmp_path, monkeypatch):
-        import review_phases
+        from review import phases as review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
@@ -1520,7 +1520,7 @@ class TestRetryFailedGroups:
         assert result == failed
 
     def test_skipped_groups_run_after_retries_succeed(self, ro, tmp_path, monkeypatch):
-        import review_phases
+        from review import phases as review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -1556,7 +1556,7 @@ class TestRetryFailedGroups:
         assert "grp-b" in calls
 
     def test_skipped_groups_kept_when_retries_fail(self, ro, tmp_path, monkeypatch):
-        import review_phases
+        from review import phases as review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -2203,7 +2203,7 @@ class TestPipelineStateFailureRoundTrip:
         return job
 
     def _state(self, ro, groups_failed):
-        from review_state import PipelineState
+        from review.state import PipelineState
         return PipelineState(
             head_sha="abc", group_names=["ui"], groups_failed=groups_failed,
         )
@@ -2295,8 +2295,8 @@ class TestPipelineStateFailureRoundTrip:
 
 class TestBuildFailuresBody:
     def test_no_failures_returns_empty(self):
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from review.state import PipelineState
+        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
@@ -2305,9 +2305,9 @@ class TestBuildFailuresBody:
         assert build_failures_body(state) == ""
 
     def test_group_failures_produce_table(self):
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["ui-components", "api-routes", "tests"],
             groups_done=[1], groups_failed={
@@ -2326,9 +2326,9 @@ class TestBuildFailuresBody:
         assert "pr review --recover" in result
 
     def test_synthesis_fallback_in_table(self):
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
@@ -2345,9 +2345,9 @@ class TestBuildFailuresBody:
         The check this replaced compared the whole rendered reason against the
         marker tuple, so it never fired on `agent error: permission denied`.
         """
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[],
@@ -2361,9 +2361,9 @@ class TestBuildFailuresBody:
         assert "pr review --recover" not in result
 
     def test_recover_hint_survives_one_recoverable_failure(self):
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[],
@@ -2376,9 +2376,9 @@ class TestBuildFailuresBody:
         assert "pr review --recover" in build_failures_body(state)
 
     def test_no_recover_hint_when_every_group_is_unrecoverable(self):
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import build_failures_body
         denial = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied")
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
@@ -2388,9 +2388,9 @@ class TestBuildFailuresBody:
         assert "pr review --recover" not in build_failures_body(state)
 
     def test_recover_hint_offered_for_max_turns(self):
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[], groups_failed={1: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5)},
@@ -2399,9 +2399,9 @@ class TestBuildFailuresBody:
         assert "pr review --recover" in build_failures_body(state)
 
     def test_synthesis_failure_alone_stays_recoverable(self):
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import build_failures_body
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
@@ -2416,8 +2416,8 @@ class TestFailuresSectionInReview:
 
     @staticmethod
     def _state():
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
         return PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1], groups_failed={2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)},
@@ -2427,7 +2427,7 @@ class TestFailuresSectionInReview:
 
     @staticmethod
     def _clean_state():
-        from review_state import PipelineState
+        from review.state import PipelineState
         return PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
@@ -2436,7 +2436,7 @@ class TestFailuresSectionInReview:
 
     def test_mechanical_fallback_includes_failures(self):
         """When synthesis falls back, the review includes ## Agent Failures."""
-        from review_state import set_failures_section
+        from review.state import set_failures_section
         result = set_failures_section("## Summary\n\nnote\n", self._state())
         assert "## Agent Failures" in result
         assert "group-2: api" in result
@@ -2445,20 +2445,20 @@ class TestFailuresSectionInReview:
         assert "fallback" in result
 
     def test_the_section_sits_above_the_summary(self):
-        from review_state import set_failures_section
+        from review.state import set_failures_section
         result = set_failures_section("## Summary\n\nnote\n\n## Verdict\n\nApprove\n", self._state())
         assert result.index("## Agent Failures") < result.index("## Summary")
 
     def test_a_review_with_no_summary_still_gets_the_section(self):
         """A run that never reached synthesis has no Summary to sit above, and
         the failures are the only account of why."""
-        from review_state import set_failures_section
+        from review.state import set_failures_section
         result = set_failures_section("## Must fix\n\n- **[M1]** a.py:1 — bug\n", self._state())
         assert "## Agent Failures" in result
         assert result.index("## Must fix") < result.index("## Agent Failures")
 
     def test_a_rerun_that_failed_nothing_drops_the_section(self):
-        from review_state import set_failures_section
+        from review.state import set_failures_section
         review = "## Agent Failures\n\nold table\n\n## Summary\n\nnote\n"
         assert set_failures_section(review, self._clean_state()).startswith("## Summary")
 
@@ -2485,9 +2485,9 @@ class TestInjectFailuresAndStatus:
 
     def test_replaces_existing_status_line(self, tmp_path):
         """I1: status already present as 'completed' is updated to 'partial' on synthesis failure."""
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import _inject_failures_and_status
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import _inject_failures_and_status
 
         # Write a review file that already has a 'completed' status line
         review_file = tmp_path / "review.md"
@@ -2515,9 +2515,9 @@ class TestInjectFailuresAndStatus:
 
     def test_inserts_status_when_absent(self, tmp_path):
         """Status line is inserted before the generator line when not already present."""
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import _inject_failures_and_status
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import _inject_failures_and_status
 
         review_file = tmp_path / "review.md"
         review_file.write_text(
@@ -2540,9 +2540,9 @@ class TestInjectFailuresAndStatus:
 
     def test_replaces_status_not_duplicated(self, tmp_path):
         """Replacing an existing status line does not add a second status line."""
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_state import PipelineState
-        from review_state import _inject_failures_and_status
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+        from review.state import _inject_failures_and_status
 
         review_file = tmp_path / "review.md"
         review_file.write_text(
@@ -2602,7 +2602,7 @@ class TestCleanupScope:
         Pass *out* to keep the result JSON the run prints; the default throws
         it away, since what most of these tests read is the directory.
         """
-        import fix_engine  # the `ro` fixture has already put `ai/lib` on the path
+        from fix import engine as fix_engine  # the `ro` fixture has already put `ai/lib` on the path
 
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
@@ -2685,10 +2685,10 @@ class TestCleanupScope:
         `pr review --recover` resumes from pipeline.json and the outputs of the
         groups that did succeed, so a sweep here would strand the recovery.
         """
-        import serde
-        from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_paths import FILENAME_PIPELINE_STATE
-        from review_state import PipelineState
+        from core import serde
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.paths import FILENAME_PIPELINE_STATE
+        from review.state import PipelineState
 
         def _partial(job, **_kwargs):
             review_dir = Path(job.artifact_dir)
@@ -2717,7 +2717,7 @@ class TestCleanupScope:
         paid for out of this JSON, so failing to delete a log cannot be what
         loses it.
         """
-        import review_gc
+        from review import gc as review_gc
 
         def _explode(review_dir):
             raise OSError(30, "Read-only file system", str(review_dir / "disprove.jsonl"))
@@ -2745,7 +2745,7 @@ class TestThePublishingGate:
 
     def _gate_at_first_work(self, ro, monkeypatch, tmp_path, argv):
         """Whether the run could publish by the time it started doing anything."""
-        import publishing
+        from core import publishing
 
         seen = {}
 

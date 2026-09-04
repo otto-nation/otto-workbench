@@ -20,9 +20,9 @@ import pytest
 
 _LIB = Path(__file__).resolve().parent.parent / "ai" / "lib"
 
-CORE = "workbench_config"
-REPORT = "workbench_config_report"
-WRITE = "workbench_config_write"
+CORE = "config.workbench_config"
+REPORT = "config.workbench_config_report"
+WRITE = "config.workbench_config_write"
 
 
 def _imported_modules(name: str) -> set[str]:
@@ -30,14 +30,20 @@ def _imported_modules(name: str) -> set[str]:
 
     Walks the whole tree rather than the top level, so a deferred import inside
     a function counts too — a cycle costs the same whichever line it is on.
+
+    A sibling within the same package is imported by its full dotted path
+    (``from config.workbench_config import X``); a cross-package consumer aliases
+    the submodule back to its flat name (``from config import workbench_config as
+    wc``). Both are normalized to the dotted form so either style resolves.
     """
-    tree = ast.parse((_LIB / f"{name}.py").read_text())
+    tree = ast.parse((_LIB / Path(*name.split(".")).with_suffix(".py")).read_text())
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             found.add(node.module)
+            found.update(f"{node.module}.{alias.name}" for alias in node.names)
     return found
 
 

@@ -22,19 +22,19 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 import pytest
-from phases import Mode
-from pr_domains import ReviewStatus, ReviewVerdict
-from review_document import (
+from core.phases import Mode
+from pr.domains import ReviewStatus, ReviewVerdict
+from review.document import (
     ReviewDocument, ReviewHeader,
     review_title, section_span, set_section, set_status,
     strip_sections,
 )
-from review_grammar import (
+from review.grammar import (
     FINDING_ID_RE, _extract_body_text, _FIRST_FILE_RE, finding_location,
     parse_finding_line,
 )
-from review_types import Finding, ReviewMeta, ReviewType
-from review_verdict import (
+from review.types import Finding, ReviewMeta, ReviewType
+from review.verdict import (
     CLEAN_VERDICT, MECHANICAL_NOTE,
     build_mechanical_body, counts_prose, mechanical_verdict,
     open_counts, resolve_review_verdict, states_verdict, verdict_from_counts,

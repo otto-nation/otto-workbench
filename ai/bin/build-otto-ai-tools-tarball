@@ -118,10 +118,22 @@ fi
 # layouts — ai/bin/ beside ai/lib/ in the repo, bin/ beside lib/ in the tarball
 # — so a script's own `.parent.parent / "lib"` resolves correctly in each.
 
-# Library files — all Python modules
-for py in "$_AI_LIB_DIR/"*.py; do
-  cp "$py" "$DEST/lib/"
+# Library files — the layered packages, directories and all.
+for pkg in "$_AI_LIB_DIR"/*/; do
+  [[ -f "$pkg/__init__.py" ]] || continue
+  cp -R "${pkg%/}" "$DEST/lib/"
 done
+
+# `cp -R` above brings along whatever `__pycache__` a prior interpreter run
+# left beside the source. Pruned rather than excluded at the copy — `rsync`
+# would do that in one step, but this repo has decided against depending on
+# it (see lib/migrations.sh's `_adopt_entry`) — and verifiably so: the release
+# workflow publishes this tarball's SHA256, and a stray `.pyc` compiled by
+# whatever CPython happened to run on the build host would make that hash
+# depend on the machine that built it. tests/tarball_smoke.bats asserts none
+# survive, so a path this misses fails loudly rather than shipping quietly.
+find "$DEST/lib" \( -name '__pycache__' -o -name '*.pyc' \) -print0 \
+  | xargs -0 rm -rf
 
 # Library files — bash modules required at runtime
 for sh in "${BASH_MODULES[@]}"; do

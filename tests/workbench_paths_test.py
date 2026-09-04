@@ -17,7 +17,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 MCP_SERVER = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
 sys.path.insert(0, str(LIB_DIR))
 
-import workbench_paths  # noqa: E402
+from core import workbench_paths  # noqa: E402
 
 
 ROOT_VARS = (
@@ -169,7 +169,7 @@ class TestConsumers:
         the process, which is exactly what this module used to do — so the
         assertion has to be a second resolve, not a first one.
         """
-        import review_paths
+        from review import paths as review_paths
 
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "old"))
         before = review_paths.review_file_path("owner/repo", "42")

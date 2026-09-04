@@ -8,7 +8,7 @@
 #
 # The read is not performed here. `wb_config_get` shells out to `otto-workbench
 # config get`, which is [`lib/config_cli.py`](../lib/config_cli.py) over
-# [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) — the typed
+# [`ai/lib/config/workbench_config.py`](../ai/lib/config/workbench_config.py) — the typed
 # owner of these files, and the only thing that knows all three scopes. Bash
 # used to carry two partial readers of its own and they disagreed with the
 # loader about the same repo in the same session: the machine profile called a

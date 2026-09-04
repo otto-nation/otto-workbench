@@ -12,8 +12,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import eval_scoring
-from eval_scoring import (
+from eval import scoring as eval_scoring
+from eval.scoring import (
     ScoringResult,
     aggregate_runs,
     compare_baselines,

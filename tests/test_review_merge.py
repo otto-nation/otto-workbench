@@ -14,10 +14,10 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import review_merge
-from review_document import SECTION_PRIOR_FINDINGS
-from review_grammar import FindingIdentity
-from review_types import SEVERITIES, PriorDisposition
+from review import merge as review_merge
+from review.document import SECTION_PRIOR_FINDINGS
+from review.grammar import FindingIdentity
+from review.types import SEVERITIES, PriorDisposition
 
 
 def _stable_id(path: str, desc: str) -> str:

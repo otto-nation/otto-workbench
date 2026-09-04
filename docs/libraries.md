@@ -104,7 +104,7 @@ wb_config_get "reuse.level" "full"    # value, or the given default
 
 The read is not performed here. `wb_config_get` shells out to `otto-workbench
 config get`, which is [`lib/config_cli.py`](../lib/config_cli.py) over
-[`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) — the typed
+[`ai/lib/config/workbench_config.py`](../ai/lib/config/workbench_config.py) — the typed
 owner of these files, and the only thing that knows all three scopes. Bash
 used to carry two partial readers of its own and they disagreed with the
 loader about the same repo in the same session: the machine profile called a
@@ -640,7 +640,7 @@ ahead of the framework rather than written as a migration, for the reason
 adoption is — see [Execution Flow —
 Migrations](execution-flow.md#migrations).
 
-[`ai/lib/workbench_projects.py`](../ai/lib/workbench_projects.py) is the Python
+[`ai/lib/config/workbench_projects.py`](../ai/lib/config/workbench_projects.py) is the Python
 half — the SessionStart hook and `pr` register through it, against the same
 file in the same shape. It raises nothing: registration is a side effect of a
 command run for some other reason, and a hook that died on an unwritable state
@@ -747,7 +747,7 @@ directly when a caller has not loaded `constants.sh`.
 Two definitions outside `lib/` express the same chain, and
 `tests/workbench_roots.bats` cross-validates all three:
 
-- [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python
+- [`ai/lib/core/workbench_paths.py`](../ai/lib/core/workbench_paths.py) — the Python
   owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`,
   `trail_dir()`, and `reviews_dir()`, resolved per call rather than frozen at
   import. `cache_dir` takes a consumer name and rejects anything but a bare

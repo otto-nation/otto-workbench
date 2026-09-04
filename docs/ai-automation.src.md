@@ -75,7 +75,7 @@ otto-log stats --by day --json      # one JSON object per row
 ```
 
 What is recorded, and what each column means, is documented on
-[`ai_usage.py`](ai-libraries.md#ai_usagepy).
+[`agent/usage.py`](ai-libraries.md#agentusagepy).
 
 ### Evaluating AI quality
 
@@ -91,12 +91,12 @@ eval-models --save-baselines                   # record new baselines
 ```
 
 A manifest's `task` field picks how its case is run and scored, and each task
-pairs a runner with a scorer in `ai/lib/eval_scoring_<task>.py`. What a case of
-each task holds is documented on [`eval_task.py`](ai-libraries.md#eval_taskpy);
+pairs a runner with a scorer in `ai/lib/eval/scoring_<task>.py`. What a case of
+each task holds is documented on [`eval/task.py`](ai-libraries.md#evaltaskpy);
 how each is scored, on the task's own module —
-[`review`](ai-libraries.md#eval_scoring_reviewpy),
-[`ci-fix`](ai-libraries.md#eval_scoring_cifixpy),
-[`skill`](ai-libraries.md#eval_scoring_skillpy). The runner, the fixture repo,
+[`review`](ai-libraries.md#evalscoring_reviewpy),
+[`ci-fix`](ai-libraries.md#evalscoring_cifixpy),
+[`skill`](ai-libraries.md#evalscoring_skillpy). The runner, the fixture repo,
 and the statistics over repeated runs are shared and know nothing about any one
 task.
 
@@ -111,7 +111,7 @@ drops every other. There is no filtered top-up.
 
 `--compare` diffs a run against those baselines and exits `2` on a regression.
 Which metrics that gate covers, and which are reported but never gated, is
-documented on [`eval_scoring.py`](ai-libraries.md#eval_scoringpy).
+documented on [`eval/scoring.py`](ai-libraries.md#evalscoringpy).
 
 The [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on
 demand. It is not a pull-request check: each run spends real money on real model
@@ -327,12 +327,12 @@ task --global REPO_DIR=/path/to/worktree commit
 A related hazard exists one level down, for the AI subprocess rather than the
 shell task: a backend CLI inherits the launching process's working directory
 unless it is told otherwise. Every `ai_backend` entry point therefore takes a
-required `cwd` — see [`ai_backend.py`](ai-libraries.md#ai_backendpy).
+required `cwd` — see [`agent/backend.py`](ai-libraries.md#agentbackendpy).
 
 ### How `pr` decides what a bare token is
 
 `pr` asks a delegate for `--value-flags` — the hidden arity probe answered by
-[`tool_parser.py`](ai-libraries.md#tool_parserpy) — before deciding whether a
+[`core/tool_parser.py`](ai-libraries.md#coretool_parserpy) — before deciding whether a
 bare token is the command's target or some other flag's argument. Without it,
 `pr comments --reply 3777767789` reads the reply ID as a PR number and swallows
 it.
@@ -377,7 +377,7 @@ active member first. The answer is three-valued and only two of the three act:
 The third row is why the check is not a boolean: a sync run offline must neither
 install a package it could not verify nor strip one that already works. What the
 extensions then expose to a run is a separate decision, made in
-[`ai_backend_pi.py`](ai-libraries.md#ai_backend_pipy); how an entry already in
+[`agent/backend_pi.py`](ai-libraries.md#agentbackend_pipy); how an entry already in
 the file is recognised is one [`sync-settings.jq`](../ai/pi/sync-settings.jq)
 documents at the top.
 
@@ -388,11 +388,11 @@ site, and the spread was the bug. Each owns its own reference page:
 
 | Module | Takes over | Reference |
 |---|---|---|
-| `proc` | Running a subprocess, and what a failure is allowed to say — stderr included. | [`proc.py`](ai-libraries.md#procpy) |
-| `timeouts` | How long a subprocess may run, chosen as a tier rather than a number. | [`timeouts.py`](ai-libraries.md#timeoutspy) |
-| `git_client` | Invoking `git` — `cwd`, capture, non-zero handling, and per-subcommand config. | [`git_client.py`](ai-libraries.md#git_clientpy) |
-| `push` | Pushing, and asking the remote whether it actually took it. | [`push.py`](ai-libraries.md#pushpy) |
-| `land` | Committing a pass's work and pushing it, as one act with one result. | [`land.py`](ai-libraries.md#landpy) |
+| `proc` | Running a subprocess, and what a failure is allowed to say — stderr included. | [`core/proc.py`](ai-libraries.md#coreprocpy) |
+| `timeouts` | How long a subprocess may run, chosen as a tier rather than a number. | [`core/timeouts.py`](ai-libraries.md#coretimeoutspy) |
+| `git_client` | Invoking `git` — `cwd`, capture, non-zero handling, and per-subcommand config. | [`git/client.py`](ai-libraries.md#gitclientpy) |
+| `push` | Pushing, and asking the remote whether it actually took it. | [`git/push.py`](ai-libraries.md#gitpushpy) |
+| `land` | Committing a pass's work and pushing it, as one act with one result. | [`git/land.py`](ai-libraries.md#gitlandpy) |
 
 They stack: `land` sits on `push` and `git_client`, which sit on `proc`, which
 requires a `timeouts` tier on every call — `bin/local/validate-timeouts` enforces

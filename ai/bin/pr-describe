@@ -23,17 +23,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-import agent_invoke
-import gh_client
-import git_client
-import git_topology
-import log
-import pr_context
-import pr_state
-from phases import Phase
-from pr_domains import DescribeSummary
-from tool_parser import ToolParser
-from trail import Trail, add_trail_args
+from agent import invoke as agent_invoke
+from gh import client as gh_client
+from git import client as git_client
+from git import topology as git_topology
+from core import log
+from pr import context as pr_context
+from pr import state as pr_state
+from core.phases import Phase
+from pr.domains import DescribeSummary
+from core.tool_parser import ToolParser
+from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 

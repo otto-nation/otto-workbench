@@ -15,9 +15,9 @@ if str(LIB_DIR) not in sys.path:
 
 statusline = load_script("workbench_statusline", BIN_DIR / "workbench-statusline")
 
-import pr_domains  # noqa: E402
-import pr_state  # noqa: E402
-import pr_target  # noqa: E402
+from pr import domains as pr_domains  # noqa: E402
+from pr import state as pr_state  # noqa: E402
+from pr import target as pr_target  # noqa: E402
 
 
 def _at(root: Path):

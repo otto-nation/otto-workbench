@@ -62,7 +62,7 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-import workbench_projects  # noqa: E402
+from config import workbench_projects  # noqa: E402
 from ansi import BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 from permissions import (  # noqa: E402
     Drift, Grant, Settings, TrackedRules,

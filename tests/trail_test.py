@@ -13,8 +13,8 @@ from conftest import run_checked
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-import workbench_paths
-from trail import (
+from core import workbench_paths
+from core.trail import (
     FINISH_ACTION,
     INVOCATION_HEX_WIDTH,
     SCHEMA_VERSION,
@@ -333,7 +333,7 @@ class TestTrailAppend:
 
             import sys
             sys.path.insert(0, {str(LIB_DIR)!r})
-            from trail import Trail
+            from core.trail import Trail
             trail = Trail.start(script=sys.argv[1], context={{}})
             for _ in range(50):
                 trail.info("bulk", "x" * 9000, data={{"pad": "y" * 9000}})

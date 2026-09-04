@@ -33,7 +33,16 @@ def _collect_import_names(node: ast.AST) -> list[str]:
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
     if isinstance(node, ast.ImportFrom) and node.module:
-        return [node.module]
+        # `node.module` alone covers `from core.trail import Trail` (already the full
+        # dotted module; `alias.name` there is a symbol, not a submodule). The dotted
+        # combination covers the sibling shape, `from config import workbench_config`
+        # (`node.module` is just the package; the submodule rides in the alias). Adding
+        # both rather than choosing one is what keeps either import shape matching.
+        return [node.module] + [
+            f"{node.module}.{alias.name}"
+            for alias in node.names
+            if alias.name != "*"
+        ]
     return []
 
 
@@ -51,12 +60,16 @@ def _extract_python_imports(script: Path) -> set[str]:
 
 def _lib_python_files() -> set[str]:
     """All .py files in the lib directory."""
-    return {p.name for p in LIB_DIR.glob("*.py")}
+    return {p.name for p in LIB_DIR.glob("*/*.py") if p.stem != "__init__"}
 
 
 def _all_required_modules() -> set[str]:
     """Collect all local modules imported by any packaged Python binary."""
-    lib_modules = {p.stem for p in LIB_DIR.glob("*.py")}
+    lib_modules = {
+        f"{p.parent.name}.{p.stem}"
+        for p in LIB_DIR.glob("*/*.py")
+        if p.stem != "__init__"
+    }
     all_imports: set[str] = set()
     for binary in PACKAGED_BINARIES:
         all_imports.update(_extract_python_imports(binary))
@@ -65,22 +78,22 @@ def _all_required_modules() -> set[str]:
 
 class TestTarballCompleteness:
     def test_all_python_modules_included(self):
-        """Every module imported by packaged binaries must exist in lib/."""
+        """Every module imported by packaged binaries must exist in lib/.
+
+        The floor guards against an import-shape change that empties (or
+        shrinks) the `all_imports & lib_modules` intersection while leaving
+        every assertion below still vacuously green — `required` shrinking
+        silently is the failure mode, not `missing` growing.
+        """
         required = _all_required_modules()
+        assert len(required) > 70
         missing = sorted(
             mod for mod in required
-            if not (LIB_DIR / f"{mod}.py").exists()
+            if not (LIB_DIR / Path(*mod.split(".")).with_suffix(".py")).exists()
         )
         assert not missing, (
             f"Python modules imported but not found in {LIB_DIR}:\n"
             + "\n".join(f"  - {mod}" for mod in missing)
-        )
-
-    def test_build_script_copies_all_py(self):
-        """Build script must use a glob that covers all .py files in lib/."""
-        content = BUILD_SCRIPT.read_text()
-        assert "*.py" in content, (
-            "Build script should glob *.py to dynamically include all Python modules"
         )
 
     @pytest.mark.parametrize("binary", PACKAGED_BINARIES, ids=lambda p: p.name)

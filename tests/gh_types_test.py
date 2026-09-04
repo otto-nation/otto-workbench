@@ -7,9 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import gh_types  # noqa: E402
-from agent_types import EFFORT_PRESETS  # noqa: E402
-from phases import Effort  # noqa: E402
+from gh import types as gh_types  # noqa: E402
+from agent.types import EFFORT_PRESETS  # noqa: E402
+from core.phases import Effort  # noqa: E402
 
 
 def _metadata(**over):

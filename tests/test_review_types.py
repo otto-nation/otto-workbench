@@ -11,9 +11,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review_types as rt
-from gh_types import PRContext, PRMetadata
-from review_types import ReviewJob
+from review import types as rt
+from gh.types import PRContext, PRMetadata
+from review.types import ReviewJob
 
 
 def _make_job(head_sha: str, prior_review: str = "") -> ReviewJob:
@@ -74,7 +74,7 @@ class TestReplyStateIsAStringOnTheWire:
         # `pr_comments_state.ThreadState` answers the same question from the
         # author's side. The two vocabularies overlap and must not be swapped
         # for one another, so a shared member has to mean the same thing.
-        from pr_comments_state import ThreadState
+        from pr.comments_state import ThreadState
 
         shared = {s.value for s in rt.ReplyState} & {s.value for s in ThreadState}
         assert shared == {"contested", "resolved"}

@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent_phases
+from agent import phases as agent_phases
 
 
 class TestResolveThinking:

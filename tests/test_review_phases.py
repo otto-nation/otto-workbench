@@ -8,13 +8,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent_phases
-import review_paths
-import review_pipeline
-import review_phases
-import review_steps
-from agent_registry import REVIEW_PHASES
-from phases import AgentKind, Effort, Phase, Thinking
+from agent import phases as agent_phases
+from review import paths as review_paths
+from review import pipeline as review_pipeline
+from review import phases as review_phases
+from review import steps as review_steps
+from agent.registry import REVIEW_PHASES
+from core.phases import AgentKind, Effort, Phase, Thinking
 
 
 class TestPhaseLogPath:
@@ -80,8 +80,8 @@ class TestPhaseOutputPath:
 
 
 def _job(tmp_path, effort=Effort.MEDIUM):
-    from gh_types import PRContext, PRMetadata
-    from review_types import ReviewJob
+    from gh.types import PRContext, PRMetadata
+    from review.types import ReviewJob
 
     return ReviewJob(
         repo="org/repo", pr_number="42",
@@ -94,7 +94,7 @@ def _job(tmp_path, effort=Effort.MEDIUM):
 
 
 def _omitted_job(tmp_path, omitted=(), effort=Effort.MEDIUM):
-    from review_types import PreflightData
+    from review.types import PreflightData
 
     job = _job(tmp_path, effort)
     job.preflight = PreflightData(
@@ -252,7 +252,7 @@ class TestPhaseRunnerReachesBackend:
         monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
 
-        import agent_invoke
+        from agent import invoke as agent_invoke
 
         seen = {}
 
@@ -336,7 +336,7 @@ class TestAnnotationsResolve:
 
         owned = [
             (name, obj) for name, obj in vars(review_phases).items()
-            if getattr(obj, "__module__", None) == "review_phases"
+            if getattr(obj, "__module__", None) == "review.phases"
         ]
         return [
             (name, obj) for name, obj in owned if inspect.isfunction(obj)
@@ -468,7 +468,7 @@ class TestGroupTurnBudget:
     """The group budget is resolved when the group runs, not when the module loads."""
 
     def _run(self, job, **kwargs):
-        from review_types import Group
+        from review.types import Group
 
         return review_phases._review_group(
             1, Group(name="g1", files=["a.py"], lines=10),
@@ -507,7 +507,7 @@ class TestParallelGroupTurnBudget:
     serial path — it forwards no `max_turns` of its own."""
 
     def test_parallel_groups_get_the_default_budget(self, tmp_path, monkeypatch):
-        from review_types import Group
+        from review.types import Group
 
         seen = _capture_invocations(monkeypatch)
         job = _omitted_job(tmp_path, omitted=["big.py"])
@@ -537,7 +537,7 @@ class TestPromptTooLargeFailsThePhase:
 
     @staticmethod
     def _raising(monkeypatch):
-        from review_prompt import PromptTooLarge
+        from review.prompt import PromptTooLarge
 
         def boom(*_args, **_kwargs):
             raise PromptTooLarge("scout.md", 600_000)
@@ -545,7 +545,7 @@ class TestPromptTooLargeFailsThePhase:
         monkeypatch.setattr(review_phases, "build_prompt", boom)
 
     def test_a_scan_reports_it_and_never_reaches_the_agent(self, tmp_path, monkeypatch):
-        from agent_diagnosis import DiagnosisKind
+        from agent.diagnosis import DiagnosisKind
 
         seen = _capture_invocations(monkeypatch)
         self._raising(monkeypatch)
@@ -556,8 +556,8 @@ class TestPromptTooLargeFailsThePhase:
         assert "585KB" in result.diagnosis.message
 
     def test_a_group_reports_it_as_a_group_failure(self, tmp_path, monkeypatch):
-        from agent_diagnosis import DiagnosisKind
-        from review_types import Group
+        from agent.diagnosis import DiagnosisKind
+        from review.types import Group
 
         seen = _capture_invocations(monkeypatch)
         self._raising(monkeypatch)
@@ -571,7 +571,7 @@ class TestPromptTooLargeFailsThePhase:
 
     def test_recovery_cannot_fix_it(self):
         """`--recover` re-renders the same phase at the same commit."""
-        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from agent.diagnosis import Diagnosis, DiagnosisKind
 
         assert not Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail="x").recoverable
 

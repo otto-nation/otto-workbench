@@ -96,7 +96,7 @@
 # adoption is — see [Execution Flow —
 # Migrations](execution-flow.md#migrations).
 #
-# [`ai/lib/workbench_projects.py`](../ai/lib/workbench_projects.py) is the Python
+# [`ai/lib/config/workbench_projects.py`](../ai/lib/config/workbench_projects.py) is the Python
 # half — the SessionStart hook and `pr` register through it, against the same
 # file in the same shape. It raises nothing: registration is a side effect of a
 # command run for some other reason, and a hook that died on an unwritable state
@@ -169,7 +169,7 @@ _split_repo_worktree_line() {
 # are workbench commands by every other test. Registering those fills the file
 # with directories that are gone by the time anything reads it. The workbench's
 # own state and cache roots are here for the same reason — the review system
-# builds worktrees under them. ai/lib/workbench_projects.py spells the same set.
+# builds worktrees under them. ai/lib/config/workbench_projects.py spells the same set.
 #
 # Assignable, so a test can register a repo it built in a temp directory — which
 # is the only kind of repo a test is allowed to build.
@@ -179,7 +179,7 @@ _split_repo_worktree_line() {
 #
 # The state and cache roots get a resolved spelling added too, since those come
 # from env vars a caller may well have written with a symlink in them —
-# `ai/lib/workbench_projects.py`'s `excluded()` does the same. This is a one-time
+# `ai/lib/config/workbench_projects.py`'s `excluded()` does the same. This is a one-time
 # fork at array-build time, not a per-comparison one.
 if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
   PROJECTS_EXCLUDED_PREFIXES=(

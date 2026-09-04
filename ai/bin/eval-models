@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from eval_scoring import (  # noqa: E402
+from eval.scoring import (  # noqa: E402
     SCHEMA_VERSION,
     ScoringResult,
     aggregate_runs,
@@ -31,7 +31,7 @@ from eval_scoring import (  # noqa: E402
     format_comparison_table,
     format_summary_table,
 )
-from eval_task import EVAL_CASE_BUDGET, RunOptions, get_task, task_name  # noqa: E402
+from eval.task import EVAL_CASE_BUDGET, RunOptions, get_task, task_name  # noqa: E402
 
 
 def discover_entries(corpus_dir: str, entry_filter: str) -> list[dict]:

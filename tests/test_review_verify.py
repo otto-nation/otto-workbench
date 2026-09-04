@@ -31,11 +31,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review_spans
-import review_verify
-from review_document import SECTION_PRIOR_FINDINGS
-from review_types import SEVERITY_MUST, severity_by_key
-from review_verify import (
+from review import spans as review_spans
+from review import verify as review_verify
+from review.document import SECTION_PRIOR_FINDINGS
+from review.types import SEVERITY_MUST, severity_by_key
+from review.verify import (
     DisproveResult, apply_disprove_results, parse_disprove_output,
     post_process_findings,
 )

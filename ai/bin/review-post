@@ -19,49 +19,49 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from trail import Trail, add_trail_args  # noqa: E402
-import gh_client as _gh  # noqa: E402
-import review_dedup as _rd  # noqa: E402
-import review_format as _rfmt  # noqa: E402
-import review_github as _rg  # noqa: E402
-import review_paths as _rpath  # noqa: E402
-import review_posting as _rp  # noqa: E402
-import review_sections as _rs  # noqa: E402
+from core.trail import Trail, add_trail_args  # noqa: E402
+from gh import client as _gh  # noqa: E402
+from review import dedup as _rd  # noqa: E402
+from review import format as _rfmt  # noqa: E402
+from gh import pr_reads as _rg  # noqa: E402
+from review import paths as _rpath  # noqa: E402
+from review import posting as _rp  # noqa: E402
+from review import sections as _rs  # noqa: E402
 
-import git_client  # noqa: E402
-import log  # noqa: E402
-import proc  # noqa: E402
-from review_dedup import dedup_against_posted  # noqa: E402
-from review_document import ReviewDocument  # noqa: E402
-from review_paths import read_review_meta  # noqa: E402
-from text import plural  # noqa: E402
-from review_types import Finding, ReviewMeta, SEVERITIES  # noqa: E402
-from review_format import (  # noqa: E402
+from git import client as git_client  # noqa: E402
+from core import log  # noqa: E402
+from core import proc  # noqa: E402
+from review.dedup import dedup_against_posted  # noqa: E402
+from review.document import ReviewDocument  # noqa: E402
+from review.paths import read_review_meta  # noqa: E402
+from core.text import plural  # noqa: E402
+from review.types import Finding, ReviewMeta, SEVERITIES  # noqa: E402
+from review.format import (  # noqa: E402
     CLASS_FILE_LEVEL, CLASS_INLINE,
     classify_findings, format_body_text, format_inline_comment,
     renumber_for_posting, resolve_permalinks,
     _format_path_ref, _format_finding_line, _resolve_path, _hunk_end,
     _build_permalink,
 )
-from gh_client import LineResolutionError  # noqa: E402
-from review_github import (  # noqa: E402
+from gh.client import LineResolutionError  # noqa: E402
+from gh.pr_reads import (  # noqa: E402
     PRData, fetch_pr_data,
     _fetch_pr_refs, _get_diff,
     _check_existing_pending, _count_new_commits,
 )
-from review_dedup import (  # noqa: E402
+from review.dedup import (  # noqa: E402
     word_set, jaccard, _extract_body_findings, _fetch_bot_comments,
     get_bot_login, fetch_bot_reviews,
     check_review_already_posted, REVIEW_BODY_DEDUP_THRESHOLD,
 )
-from review_posting import (  # noqa: E402
+from review.posting import (  # noqa: E402
     DEFAULT_CHUNK_SIZE, HEAD_SHA_RE, _CHUNK_PATTERN,
     _post_and_track, _post_as_comment, _print_dry_run,
     _chunk_comments, _post_chunked_review, post_review,
     _submit_review, write_post_tracking, _format_submit_command,
     _reclassify_and_retry,
 )
-from review_sections import ReviewSections  # noqa: E402
+from review.sections import ReviewSections  # noqa: E402
 
 SCRIPT = Path(__file__).name
 

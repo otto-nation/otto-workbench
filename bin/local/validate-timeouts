@@ -3,7 +3,7 @@
 
 Usage: bin/local/validate-timeouts [--quiet] [file...]
 
-`ai/lib/timeouts.py` owns how long a subprocess is allowed to take.  A literal
+`ai/lib/core/timeouts.py` owns how long a subprocess is allowed to take.  A literal
 written at the call site is a decision nobody can audit: 5 here and 30 there
 says nothing about which operations are alike, and the two drift apart the
 first time one of them is found to be too tight.  The tiers name the reason
@@ -224,7 +224,7 @@ def _report_violations(relpath: str, violations: list[Violation]) -> None:
         print(f'    line {v.line}: {v.found} '
               f'{DIM}— use {v.suggestion}{NC}', file=sys.stderr)
     print(f'    {DIM}the tiers and what belongs in each are in '
-          f'ai/lib/{TABLE}.py{NC}', file=sys.stderr)
+          f'ai/lib/core/{TABLE}.py{NC}', file=sys.stderr)
 
 
 def _print_summary(files_checked: int, errors: int) -> None:

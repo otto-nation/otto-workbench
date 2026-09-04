@@ -12,27 +12,27 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_budget import (
+from review.budget import (
     FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, fit_files,
 )
-from review_collect import format_preflight_data
-from gh_types import PRContext, PRMetadata
-from review_types import (
+from review.collect import format_preflight_data
+from gh.types import PRContext, PRMetadata
+from review.types import (
     FindingRef, PreflightData, PriorDisposition, PriorFinding, ReviewJob,
 )
-from phases import Effort, Mode, Phase
+from core.phases import Effort, Mode, Phase
 from dataclasses import asdict
 
-from review_grammar import parse_ledger_line
-from review_prompt import BudgetLever, Cut, _build_common_sections, _fit_budget
-from review_prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
-from review_prompt_sections import (
+from review.grammar import parse_ledger_line
+from review.prompt import BudgetLever, Cut, _build_common_sections, _fit_budget
+from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
+from review.prompt_sections import (
     _build_ci_failure_items, _build_delta_section, _build_env_section,
     _build_omitted_guidance, _build_pr_header,
 )
-import review_registry
-from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
-from pr_domains import CIDomain
+from review import registry as review_registry
+from pr.ci_failures import FailureGroup, FailureItem, FailureKind, RunState
+from pr.domains import CIDomain
 
 
 # ── _build_delta_section with file_filter ──────────────────────────────────
@@ -541,8 +541,8 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         return job
 
     def test_a_prompt_over_the_budget_raises(self, tmp_path):
-        from review_prompt import PromptTooLarge
-        from review_registry import build_prompt
+        from review.prompt import PromptTooLarge
+        from review.registry import build_prompt
 
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge) as exc:
@@ -551,8 +551,8 @@ class TestBuildPromptRefusesAnOversizedPrompt:
 
     def test_the_oversized_prompt_is_on_disk_to_look_at(self, tmp_path):
         """The stats are written before the raise, so the run is diagnosable."""
-        from review_prompt import PromptTooLarge
-        from review_registry import build_prompt
+        from review.prompt import PromptTooLarge
+        from review.registry import build_prompt
 
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge):
@@ -562,7 +562,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         assert (tmp_path / "prompt-scout.md").exists()
 
     def test_an_ordinary_prompt_still_renders(self, tmp_path):
-        from review_registry import build_prompt
+        from review.registry import build_prompt
 
         prompt = build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         assert len(prompt.encode()) <= MAX_PROMPT_BYTES

@@ -17,9 +17,9 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import eval_scoring_skill as ess
-from ai_usage import SessionUsage
-from eval_task import RunArtifacts, RunOptions
+from eval import scoring_skill as ess
+from agent.usage import SessionUsage
+from eval.task import RunArtifacts, RunOptions
 
 
 class TestGroupMatches:
@@ -507,7 +507,7 @@ class TestScore:
 
 class TestTaskRegistration:
     def test_the_runner_can_resolve_it(self):
-        import eval_task
+        from eval import task as eval_task
 
         assert eval_task.get_task("skill").name == "skill"
 

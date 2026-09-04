@@ -23,8 +23,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import branch_landed  # noqa: E402
-import timeouts  # noqa: E402
+from gh import landed as branch_landed  # noqa: E402
+from core import timeouts  # noqa: E402
 
 from conftest import git_in, seed_repo  # noqa: E402
 
@@ -102,7 +102,7 @@ def _gh_response(payload: str, returncode: int = 0):
     and the tier it picks are both still observable from the call.
     """
     return mock.patch(
-        "proc.subprocess.run",
+        "core.proc.subprocess.run",
         return_value=subprocess.CompletedProcess(
             args=["gh"], returncode=returncode, stdout=payload, stderr="",
         ),
@@ -173,7 +173,7 @@ def test_merged_pr_stays_silent_unless_github_says_merged(payload, returncode):
 
 def test_merged_pr_survives_gh_being_absent():
     """The client answers a missing gh with a result, not an exception."""
-    with mock.patch("proc.subprocess.run", side_effect=FileNotFoundError):
+    with mock.patch("core.proc.subprocess.run", side_effect=FileNotFoundError):
         assert branch_landed.merged_pr("/fake", branch=_BRANCH) is None
 
 

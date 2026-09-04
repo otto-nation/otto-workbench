@@ -13,9 +13,9 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import fix_tracking  # noqa: E402
-from fix_types import FixItem  # noqa: E402
-from pr_fix import FixOutcome  # noqa: E402
+from fix import tracking as fix_tracking  # noqa: E402
+from fix.types import FixItem  # noqa: E402
+from pr.fix import FixOutcome  # noqa: E402
 
 
 def _items():

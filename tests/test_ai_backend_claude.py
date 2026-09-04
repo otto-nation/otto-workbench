@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import ai_backend_claude
+from agent import backend_claude as ai_backend_claude
 
 
 class TestLoadAgentDef:

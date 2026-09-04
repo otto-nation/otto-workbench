@@ -25,7 +25,7 @@ from conftest import git_out
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import proc
+from core import proc
 import server
 from server import (
     PROBE_ATTEMPTS,
@@ -43,7 +43,7 @@ from server import (
     probe_tools,
     watch_for_tool_changes,
 )
-from tool_registry import RegistryEntry, Visibility
+from config.tool_registry import RegistryEntry, Visibility
 
 
 # ── JSON Extraction ───────────────────────────────────────────────────────

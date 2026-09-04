@@ -11,10 +11,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent_registry
-from agent_registry import PHASES, REVIEW_PHASES
-from agent_types import EFFORT_PRESETS
-from phases import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking
+from agent import registry as agent_registry
+from agent.registry import PHASES, REVIEW_PHASES
+from agent.types import EFFORT_PRESETS
+from core.phases import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking
 
 
 class TestPhasesRegistry:

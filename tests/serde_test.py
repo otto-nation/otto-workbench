@@ -14,9 +14,9 @@ import pytest
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-from pr_state import PRState
-from review_state import PipelineState
-from serde import from_dict, load_file, to_dict, write_json
+from pr.state import PRState
+from review.state import PipelineState
+from core.serde import from_dict, load_file, to_dict, write_json
 
 
 class Color(str, Enum):
@@ -683,7 +683,7 @@ def test_serde_owns_the_only_atomic_rename():
         and "os.replace(" in text
     )
 
-    assert offenders == ["lib/serde.py"]
+    assert offenders == ["lib/core/serde.py"]
 
 
 def test_load_file_returns_none_when_a_required_field_is_absent(tmp_path):

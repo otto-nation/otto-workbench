@@ -65,19 +65,43 @@ SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
 
 LIB_DIR = os.path.join('ai', 'lib')
 
-# The constants this check holds the monopoly for, as (module, name) under
+
+@dataclass(frozen=True)
+class Owner:
+    """Where a watched module's file lives, and the name a call site spells.
+
+    The two are not derivable from each other: 76 of the 101 ai/lib modules
+    were renamed, not merely relocated, when they moved into packages, so a
+    module's package-relative file path can differ from the bare name a call
+    site still writes under the R41 alias rule.  `review_budget` is one —
+    the file is `review/budget.py`, but a call site still spells the constant
+    `review_budget.MAX_REVIEW_BODY_LEN`.  `proc` and `trail` kept their
+    basenames under `core/`, so `package` differs from their pre-move layout
+    but `display` does not.
+    """
+
+    package: str
+    file: str
+    display: str
+
+
+_PROC = Owner('core', 'proc', 'proc')
+_TRAIL = Owner('core', 'trail', 'trail')
+_REVIEW_BUDGET = Owner('review', 'budget', 'review_budget')
+
+# The constants this check holds the monopoly for, as (owner, name) under
 # ai/lib.  Their values are read from the modules themselves rather than
 # repeated here — a validator that spelled 130 out would be the thing it
 # rejects.
 EXIT_OWNERS = (
-    ('proc', 'TIMEOUT_RETURNCODE'),
-    ('proc', 'INTERRUPT_RETURNCODE'),
-    ('proc', 'MISSING_RETURNCODE'),
+    (_PROC, 'TIMEOUT_RETURNCODE'),
+    (_PROC, 'INTERRUPT_RETURNCODE'),
+    (_PROC, 'MISSING_RETURNCODE'),
 )
 CAP_OWNERS = (
-    ('proc', 'DETAIL_LIMIT'),
-    ('trail', 'EXCERPT_LIMIT'),
-    ('review_budget', 'MAX_REVIEW_BODY_LEN'),
+    (_PROC, 'DETAIL_LIMIT'),
+    (_TRAIL, 'EXCERPT_LIMIT'),
+    (_REVIEW_BUDGET, 'MAX_REVIEW_BODY_LEN'),
 )
 
 ABBREV = 'git_client.abbrev(...)'
@@ -111,13 +135,13 @@ class Violation:
 
 
 @functools.cache
-def _module_constants(repo_root: str, module: str) -> dict[str, int]:
-    """Every module-level integer constant in ai/lib/<module>.py.
+def _module_constants(repo_root: str, owner: Owner) -> dict[str, int]:
+    """Every module-level integer constant in the owner's file.
 
     Cached because several owners share a module, and each of them would
     otherwise re-read and re-parse the same file.
     """
-    path = os.path.join(repo_root, LIB_DIR, f'{module}.py')
+    path = os.path.join(repo_root, LIB_DIR, owner.package, f'{owner.file}.py')
     with open(path) as f:
         tree = ast.parse(f.read(), filename=path)
     return dict(pair for node in tree.body for pair in _int_assignment(node))
@@ -131,13 +155,13 @@ def resolve_owners(repo_root: str, owners) -> dict[int, list[str]]:
     given call site means is a question only its author can answer.
     """
     by_value: dict[int, list[str]] = {}
-    for module, name in owners:
-        constants = _module_constants(repo_root, module)
+    for owner, name in owners:
+        constants = _module_constants(repo_root, owner)
         if name not in constants:
             raise SystemExit(
-                f'{RED}✗{NC} {module}.{name} is gone — this check watches a '
-                f'constant that no longer exists; update its owners table')
-        by_value.setdefault(constants[name], []).append(f'{module}.{name}')
+                f'{RED}✗{NC} {owner.display}.{name} is gone — this check watches '
+                f'a constant that no longer exists; update its owners table')
+        by_value.setdefault(constants[name], []).append(f'{owner.display}.{name}')
     return by_value
 
 

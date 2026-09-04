@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import ai_backend_pi
+from agent import backend_pi as ai_backend_pi
 
 
 class TestBuildFixCmd:

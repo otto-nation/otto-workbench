@@ -171,7 +171,7 @@ def _agent_env_keys() -> list[str]:
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from phases import ENV_PREFIX
+    from core.phases import ENV_PREFIX
     return [k for k in os.environ if k.startswith(ENV_PREFIX)]
 
 
@@ -202,7 +202,7 @@ def _backend_binaries() -> set[str]:
     """The CLI names an AI call can spawn, from the enum that selects between them."""
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from ai_backend import Backend
+    from agent.backend import Backend
     return {b.value for b in Backend}
 
 
@@ -280,7 +280,7 @@ def _isolate_installed_schema(monkeypatch):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import workbench_config_write
+    from config import workbench_config_write
 
     real_which = shutil.which
     launcher = workbench_config_write.INSTALLED_LAUNCHER
@@ -300,7 +300,7 @@ def _clear_lock_env():
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import run_lock
+    from core import run_lock
 
     saved = os.environ.pop(run_lock.LOCK_ENV, None)
     yield
@@ -553,7 +553,7 @@ _CONTENTION_HINT = (
 
 
 def _proc():
-    """`ai/lib/proc.py`, imported the way the code under test imports it.
+    """`ai/lib/core/proc.py`, imported the way the code under test imports it.
 
     Through `sys.path` rather than `_load_lib`, so this file and every script
     under test share one module object — the record `proc.run` appends to has
@@ -561,7 +561,7 @@ def _proc():
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import proc
+    from core import proc
 
     return proc
 
@@ -620,7 +620,7 @@ def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
     names the signal and says plainly that the machine, not the test, is the
     thing that failed. A fault signal (SIGSEGV, SIGABRT, ...) still raises
     ``AssertionError`` — that kind of death does point at the command, and
-    ``ai/lib/proc.py``'s ``externally_killed`` is where which signals get which
+    ``ai/lib/core/proc.py``'s ``externally_killed`` is where which signals get which
     treatment is decided, so this stays in step with ``failure_message`` without
     a second copy of the split.
     """
@@ -776,7 +776,7 @@ def reviews_dir(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import workbench_paths
+    from core import workbench_paths
     d = workbench_paths.reviews_dir()
     d.mkdir(parents=True)
     return d
@@ -811,7 +811,7 @@ def supersession_verdict(*signals):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import supersession
+    from pr import supersession
     return supersession.Verdict(list(signals))
 
 
@@ -819,7 +819,7 @@ def supersession_evidence(detail="`foo` is gone from origin/main"):
     """A signal that argues the branch is superseded."""
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from pr_domains import SupersessionKind, SupersessionSignal
+    from pr.domains import SupersessionKind, SupersessionSignal
     return SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL, detail)
 
 
@@ -827,7 +827,7 @@ def supersession_context(detail="replayed onto a moved base"):
     """A signal that explains the branch without arguing anything about it."""
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from pr_domains import SupersessionKind, SupersessionSignal
+    from pr.domains import SupersessionKind, SupersessionSignal
     return SupersessionSignal(SupersessionKind.REBASE_SKEW, detail, holds=False)
 
 
@@ -963,7 +963,7 @@ def _drafts_only(monkeypatch):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import publishing
+    from core import publishing
     monkeypatch.setattr(publishing, "_enabled", False)
     monkeypatch.setattr(publishing, "_held", "")
 
@@ -971,7 +971,7 @@ def _drafts_only(monkeypatch):
 @pytest.fixture
 def publishing_on(monkeypatch):
     """Open the gate, for tests covering what a write does once it is allowed."""
-    import publishing
+    from core import publishing
     monkeypatch.setattr(publishing, "_enabled", True)
 
 
@@ -979,9 +979,9 @@ def publishing_on(monkeypatch):
 def _clear_bot_login_cache():
     """Clear get_bot_login lru_cache between tests."""
     yield
-    if LIB_DIR in sys.path or "review_dedup" in sys.modules:
+    if LIB_DIR in sys.path or "review.dedup" in sys.modules:
         try:
-            import review_dedup
+            from review import dedup as review_dedup
             review_dedup.get_bot_login.cache_clear()
         except (ImportError, AttributeError):
             pass
@@ -1040,7 +1040,7 @@ def make_ctx(**overrides):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import pr_context
+    from pr import context as pr_context
 
     defaults = dict(
         repo="owner/repo", branch="feat/test", pr_number=42,

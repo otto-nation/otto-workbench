@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import review_dedup  # noqa: E402
+from review import dedup as review_dedup  # noqa: E402
 
 
 def test_posted_findings_are_typed_not_dicts():
@@ -101,13 +101,13 @@ class TestCollectInlineComments:
             {"path": "b.go", "body": "nit", "user": {"login": "human"}},
             {"path": "c.go", "body": "issue", "user": {"login": "bot"}},
         ]
-        with patch("gh_client.api_json", return_value=comments):
+        with patch("gh.client.api_json", return_value=comments):
             result = review_dedup._collect_inline_comments("org/repo", "1", "bot")
             assert len(result) == 2
             assert all(r.path in ("a.go", "c.go") for r in result)
 
     def test_empty_comments(self):
-        with patch("gh_client.api_json", return_value=[]):
+        with patch("gh.client.api_json", return_value=[]):
             result = review_dedup._collect_inline_comments("org/repo", "1", "bot")
             assert result == []
 
@@ -123,7 +123,7 @@ class TestCollectInlineComments:
             "body": "**[M1] [must-fix]** <!-- sid:abc12345 --> Fix bug",
             "user": {"login": "bot"},
         }]
-        with patch("gh_client.api_json", return_value=comments):
+        with patch("gh.client.api_json", return_value=comments):
             result = review_dedup._collect_inline_comments("org/repo", "1", "bot")
         assert result[0].body == "**[M1] [must-fix]** Fix bug"
 
@@ -134,7 +134,7 @@ class TestCollectReviewFindings:
             {"body": "- **[M1]** **`a.go:1`** — issue one", "user": {"login": "bot"}},
             {"body": "no findings", "user": {"login": "human"}},
         ]
-        with patch("gh_client.api_json", return_value=reviews):
+        with patch("gh.client.api_json", return_value=reviews):
             result = review_dedup._collect_review_findings("org/repo", "1", "bot")
             assert len(result) == 1
             assert result[0].path == "a.go"
@@ -143,7 +143,7 @@ class TestCollectReviewFindings:
         reviews = [
             {"body": "", "user": {"login": "bot"}},
         ]
-        with patch("gh_client.api_json", return_value=reviews):
+        with patch("gh.client.api_json", return_value=reviews):
             result = review_dedup._collect_review_findings("org/repo", "1", "bot")
             assert result == []
 
@@ -151,8 +151,8 @@ class TestCollectReviewFindings:
 class TestFetchBotComments:
     def test_combines_inline_and_review_findings(self):
         with (
-            patch("gh_client.login", return_value="bot"),
-            patch("gh_client.api_json", side_effect=[
+            patch("gh.client.login", return_value="bot"),
+            patch("gh.client.api_json", side_effect=[
                 [{"path": "a.go", "body": "inline", "user": {"login": "bot"}}],
                 [{"body": "- **[M1]** **`b.go:1`** — review", "user": {"login": "bot"}}],
             ]),
@@ -161,7 +161,7 @@ class TestFetchBotComments:
             assert len(result) == 2
 
     def test_empty_login_returns_empty(self):
-        with patch("gh_client.login", return_value=""):
+        with patch("gh.client.login", return_value=""):
             assert review_dedup._fetch_bot_comments("org/repo", "1") == []
 
 
@@ -173,7 +173,7 @@ def _make_finding(id_str, path, body):
 
 
 class TestDedupAgainstPosted:
-    @patch("review_dedup._fetch_bot_comments")
+    @patch("review.dedup._fetch_bot_comments")
     def test_skips_duplicate(self, mock_fetch):
         mock_fetch.return_value = [
             review_dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
@@ -184,7 +184,7 @@ class TestDedupAgainstPosted:
         assert len(deduped) == 1
         assert deduped[0].skip_reason == "duplicate of existing comment"
 
-    @patch("review_dedup._fetch_bot_comments")
+    @patch("review.dedup._fetch_bot_comments")
     def test_keeps_non_duplicate(self, mock_fetch):
         mock_fetch.return_value = [
             review_dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
@@ -194,7 +194,7 @@ class TestDedupAgainstPosted:
         assert len(kept) == 1
         assert len(deduped) == 0
 
-    @patch("review_dedup._fetch_bot_comments")
+    @patch("review.dedup._fetch_bot_comments")
     def test_different_file_not_duplicate(self, mock_fetch):
         mock_fetch.return_value = [
             review_dedup.PostedFinding("handler.go", "missing error check"),
@@ -203,7 +203,7 @@ class TestDedupAgainstPosted:
         kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
 
-    @patch("review_dedup._fetch_bot_comments")
+    @patch("review.dedup._fetch_bot_comments")
     def test_no_existing_comments_keeps_all(self, mock_fetch):
         mock_fetch.return_value = []
         f = _make_finding("M1", "handler.go", "finding text")
@@ -213,7 +213,7 @@ class TestDedupAgainstPosted:
 
 
 class TestDedupAgainstPostedEdgeCases:
-    @patch("review_dedup._fetch_bot_comments")
+    @patch("review.dedup._fetch_bot_comments")
     def test_jaccard_at_threshold_boundary(self, mock_fetch):
         # Build words so Jaccard is exactly 0.6: 3 shared out of 5 total
         # a = {"a", "b", "c"}, b = {"a", "b", "c", "d", "e"} => 3/5 = 0.6
@@ -225,7 +225,7 @@ class TestDedupAgainstPostedEdgeCases:
         assert len(deduped) == 1
         assert deduped[0].skip_reason == "duplicate of existing comment"
 
-    @patch("review_dedup._fetch_bot_comments")
+    @patch("review.dedup._fetch_bot_comments")
     def test_empty_path_on_both_sides_not_matched(self, mock_fetch):
         mock_fetch.return_value = [
             review_dedup.PostedFinding("", "missing error check"),
@@ -238,8 +238,8 @@ class TestDedupAgainstPostedEdgeCases:
 
 class TestFetchBotReviews:
     def test_returns_bot_reviews(self, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 1, "user": {"login": "bot"}, "state": "COMMENTED", "body": "review text"},
             {"id": 2, "user": {"login": "human"}, "state": "COMMENTED", "body": "human review"},
             {"id": 3, "user": {"login": "bot"}, "state": "PENDING", "body": "pending"},
@@ -249,28 +249,28 @@ class TestFetchBotReviews:
         assert result[0]["id"] == 1
 
     def test_ignores_pending(self, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "PENDING", "user": {"login": "bot"}},
         ])
         assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
 
     def test_ignores_dismissed(self, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "DISMISSED", "user": {"login": "bot"}},
         ])
         assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
 
     def test_ignores_other_users(self, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "bot")
-        monkeypatch.setattr("gh_client.api_json", lambda *a, **k: [
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "COMMENTED", "user": {"login": "alice"}},
         ])
         assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
 
     def test_api_failure_returns_empty(self, monkeypatch):
-        monkeypatch.setattr("gh_client.login", lambda *a, **k: "")
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "")
         assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
 
 

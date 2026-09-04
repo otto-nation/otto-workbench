@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
 import server  # noqa: E402
-import tool_registry  # noqa: E402
+from config import tool_registry  # noqa: E402
 
 vts = load_script("validate_tool_schema", SCRIPT)
 

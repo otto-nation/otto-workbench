@@ -13,7 +13,7 @@
 #   Set       Members            Doc block            Symbol table
 #   lib       lib/*.sh,          `#` block under the  `name()`
 #             lib/ai/*.sh        shebang
-#   ai-lib    ai/lib/*.py        `"""…"""` module     none — the modules are
+#   ai-lib    ai/lib/*/*.py      `"""…"""` module     none — the modules are
 #                                docstring            imported, not sourced
 #
 # Doc block conventions:
@@ -44,8 +44,8 @@
 set -euo pipefail
 
 # Module order is the order a glob expands in, and that follows the collation
-# locale: under en_US.UTF-8 the underscore in `ai_backend_pi.py` sorts before the
-# dot in `ai_backend.py`, under C it sorts after. Both are self-consistent, so a
+# locale: under en_US.UTF-8 the underscore in `agent/backend_pi.py` sorts before
+# the dot in `agent/backend.py`, under C it sorts after. Both are self-consistent, so a
 # contributor whose shell disagrees with CI's regenerates a doc that differs only
 # in module order and fails validate-docs-composed for no real change. Exported so
 # the `sort` calls below agree with the globs, and LC_ALL is unset because it
@@ -73,7 +73,7 @@ SOURCE_ROOT="${SOURCE_ROOT:-$REPO_ROOT}"
 #                named by the note its members carry. Empty when the set has none.
 declare -gA SET_SOURCES=(
   [lib]="lib/*.sh:core lib/ai/*.sh:ai"
-  [ai-lib]="ai/lib/*.py:"
+  [ai-lib]="ai/lib/*/*.py:"
 )
 declare -gA SET_BASE=(
   [lib]="lib"
@@ -138,6 +138,10 @@ _set_entries() {
     for file in "$SOURCE_ROOT"/$glob; do
       if [[ ! -f "$file" ]]; then continue; fi
       if [[ -n "$facade" && "${file##*/}" == "$facade" ]]; then continue; fi
+      # A package's __init__.py carries no doc-group marker — it declares the
+      # layer's import boundary, not a documented module — so it is excluded
+      # here rather than given a marker just to satisfy the group requirement.
+      if [[ "${file##*/}" == "__init__.py" ]]; then continue; fi
       __out+=("$file"$'\t'"$default")
     done
   done
@@ -202,11 +206,16 @@ _docstring_group() {
 # exist, and this module is not in one. Failing here is what makes declaring a
 # group the whole of adding a module.
 _file_group() {
-  local declared
+  local declared rel
   declared="$("_${SET_COMMENT[$1]}_group" "$2")"
   declared="${declared:-$3}"
   if [[ -z "$declared" ]]; then
-    err "${SET_BASE[$1]}/${2##*/} declares no group — add '# doc-group: <key>' below its doc block"
+    # Relative to the set's base, not the basename: a bare basename is
+    # ambiguous once more than one package can define the same filename
+    # (four packages each have a types.py), and names a path that does not
+    # exist once the file's real directory differs from the set's base.
+    rel="${2#"$SOURCE_ROOT/${SET_BASE[$1]}"/}"
+    err "${SET_BASE[$1]}/$rel declares no group — add '# doc-group: <key>' below its doc block"
     return 1
   fi
   printf '%s' "$declared"
@@ -230,7 +239,7 @@ _hash_doc_block() {
 
 # _docstring_doc_block FILE — the module docstring, quotes stripped.
 #
-# A shebang or coding comment above it is skipped, so ai/lib/ci_failures.py
+# A shebang or coding comment above it is skipped, so ai/lib/pr/ci_failures.py
 # renders the same as a module that opens on its docstring. Only the `"""` form
 # is read; a module whose first statement is anything else has no docstring, and
 # _render_module turns that into a failure rather than an empty section.

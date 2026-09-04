@@ -10,7 +10,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_grouping import (
+from review.grouping import (
     GROUP_TIER1,
     GROUP_TIER3,
     MAX_GROUP_FILES,
@@ -24,8 +24,8 @@ from review_grouping import (
     match_profiles,
     merge_smallest_groups,
 )
-from gh_types import PRMetadata
-from review_types import Group
+from gh.types import PRMetadata
+from review.types import Group
 
 try:
     import yaml as _yaml

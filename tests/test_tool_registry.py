@@ -1,4 +1,4 @@
-"""Tests for ai/lib/tool_registry.py — which scripts the registries name."""
+"""Tests for ai/lib/config/tool_registry.py — which scripts the registries name."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
-from tool_registry import (  # noqa: E402
+from config.tool_registry import (  # noqa: E402
     RegistryEntry,
     Visibility,
     load_registry_entries,

@@ -3,7 +3,7 @@
 
 Usage: bin/local/validate-frozen-roots [--quiet] [file...]
 
-`ai/lib/workbench_paths.py` resolves every root per call, and says in its own
+`ai/lib/core/workbench_paths.py` resolves every root per call, and says in its own
 header why: the environment is routinely re-pointed after import — by tests, and
 by callers that move a root before invoking a subprocess — so a module-level
 
@@ -57,6 +57,17 @@ SEARCH_DIRS = ('ai', 'bin')
 SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
 
 
+def _names_module(dotted: str | None) -> bool:
+    """Whether *dotted* names the watched module, however deep it is packaged.
+
+    `workbench_paths` moved under `core/`, so the shape every caller now writes
+    is `core.workbench_paths`, not the bare name — and matching on the last
+    dotted segment rather than a fixed prefix means the next re-layering does
+    not have to touch this again.
+    """
+    return dotted is not None and (dotted == MODULE or dotted.endswith(f'.{MODULE}'))
+
+
 @dataclass(frozen=True)
 class Violation:
     line: int
@@ -73,32 +84,82 @@ def _imported_roots(tree) -> set[str]:
     A `from workbench_paths import state_dir` leaves nothing at the call site to
     say where `state_dir` came from, so the local name (or its alias) has to be
     remembered to recognise the call. `_module_names` does the same job for the
-    other import form.
+    other import form. `_names_module` accepts the module however it is
+    dotted — `from core.workbench_paths import state_dir` is the same import as
+    far as this check is concerned.
     """
     names = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or node.module != MODULE:
+        if not isinstance(node, ast.ImportFrom) or not _names_module(node.module):
             continue
         names |= {a.asname or a.name for a in node.names if a.name in ROOTS}
     return names
 
 
+def _plain_import_bound_name(alias: ast.alias) -> str | None:
+    """The local name one `import` alias binds, if it names the watched module.
+
+    An aliased `import core.workbench_paths as wp` binds `wp` regardless of how
+    deep the dotted path runs. A bare `import core.workbench_paths` binds only
+    `core` — Python puts nothing else in scope for that form — so it counts
+    here only when it is the exact bare module name; the deeper bare case is
+    `_bare_dotted_imports`' job instead.
+    """
+    if alias.asname:
+        return alias.asname if _names_module(alias.name) else None
+    return alias.name if alias.name == MODULE else None
+
+
 def _module_names(tree) -> set[str]:
-    """Local names bound to the module by a plain `import`, aliases included.
+    """Local names bound to the module itself, aliases included.
 
     `import workbench_paths as wp` writes `wp.state_dir()` at the call site, so
     matching the module's own name would miss it — and an alias freezes a root
-    exactly as hard as the spelled-out name does.
+    exactly as hard as the spelled-out name does. `from core import
+    workbench_paths` binds the same name through a package import rather than a
+    plain one, and is the shape every caller now uses — `not _names_module(node.module)`
+    keeps this from double-counting the `from workbench_paths import state_dir`
+    shape `_imported_roots` already owns.
     """
     names = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Import):
-            continue
-        names |= {a.asname or a.name for a in node.names if a.name == MODULE}
+        if isinstance(node, ast.Import):
+            names |= {n for a in node.names for n in [_plain_import_bound_name(a)] if n}
+        elif isinstance(node, ast.ImportFrom) and not _names_module(node.module):
+            names |= {a.asname or a.name for a in node.names if a.name == MODULE}
     return names
 
 
-def _called_root(func, local_roots: set[str], module_names: set[str]) -> str | None:
+def _bare_dotted_imports(tree) -> set[str]:
+    """Dotted paths to the module bound with no alias, e.g. `import core.workbench_paths`.
+
+    Python binds only the top-level package (`core`) for that form, so the call
+    site has to spell the whole path — `core.workbench_paths.state_dir()` — and
+    `_called_root` matches it as a dotted chain rather than a single attribute
+    hop off a name in `_module_names`.
+    """
+    paths = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        paths |= {a.name for a in node.names if a.asname is None and _names_module(a.name)}
+    return paths
+
+
+def _dotted_name(node) -> str | None:
+    """*node* as a dotted string (`core.workbench_paths`), or None if it is not
+    a plain chain of attribute access on a name — the only shape a bare
+    `import a.b` call site can be written in."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        owner = _dotted_name(node.value)
+        return f'{owner}.{node.attr}' if owner is not None else None
+    return None
+
+
+def _called_root(func, local_roots: set[str], module_names: set[str],
+                  dotted_paths: set[str] = frozenset()) -> str | None:
     """The root resolver a call's *func* names, as written at the call site."""
     if isinstance(func, ast.Name):
         return func.id if func.id in local_roots else None
@@ -107,6 +168,9 @@ def _called_root(func, local_roots: set[str], module_names: set[str]) -> str | N
     owner = func.value
     if isinstance(owner, ast.Name) and owner.id in module_names:
         return f'{owner.id}.{func.attr}'
+    owner_path = _dotted_name(owner)
+    if owner_path is not None and owner_path in dotted_paths:
+        return f'{owner_path}.{func.attr}'
     return None
 
 
@@ -134,7 +198,8 @@ def _eager_calls(node):
         yield from _eager_calls(child)
 
 
-def _resolver_called(node, local_roots: set[str], module_names: set[str]) -> str | None:
+def _resolver_called(node, local_roots: set[str], module_names: set[str],
+                      dotted_paths: set[str] = frozenset()) -> str | None:
     """The root resolver *node* calls, or None if it reaches no root.
 
     Walks the whole subtree, so a root buried in an expression —
@@ -142,7 +207,8 @@ def _resolver_called(node, local_roots: set[str], module_names: set[str]) -> str
     the value is the call happening at import, not where it sits in the term.
     """
     named = (
-        _called_root(c.func, local_roots, module_names) for c in _eager_calls(node)
+        _called_root(c.func, local_roots, module_names, dotted_paths)
+        for c in _eager_calls(node)
     )
     return next((n for n in named if n is not None), None)
 
@@ -185,11 +251,12 @@ def check_file(filepath: str) -> list[Violation]:
         return []
     local_roots = _imported_roots(tree)
     module_names = _module_names(tree)
+    dotted_paths = _bare_dotted_imports(tree)
     found = []
     for node in _module_level_assignments(tree):
         if node.value is None:
             continue
-        root = _resolver_called(node.value, local_roots, module_names)
+        root = _resolver_called(node.value, local_roots, module_names, dotted_paths)
         if root is None:
             continue
         names = _assigned_names(node) or ['<unnamed>']
@@ -234,7 +301,7 @@ def _report_violations(relpath: str, violations: list[Violation]) -> None:
         print(f'    line {v.line}: {v.name} = {v.root}(...) '
               f'{DIM}— move the call into a function{NC}', file=sys.stderr)
     print(f'    {DIM}why the roots resolve per call is in '
-          f'ai/lib/{MODULE}.py{NC}', file=sys.stderr)
+          f'ai/lib/core/{MODULE}.py{NC}', file=sys.stderr)
 
 
 def _print_summary(files_checked: int, errors: int) -> None:

@@ -224,7 +224,7 @@ def b(cmd):
 def test_discover_finds_extensionless_python_scripts():
     scripts = vt.discover_scripts(str(REPO_ROOT))
     assert str(REPO_ROOT / "ai" / "bin" / "pr") in scripts
-    assert str(REPO_ROOT / "ai" / "lib" / "proc.py") in scripts
+    assert str(REPO_ROOT / "ai" / "lib" / "core" / "proc.py") in scripts
 
 
 def test_the_mcp_server_is_covered():
@@ -269,4 +269,4 @@ def test_main_exits_1_on_a_violation(tmp_path, monkeypatch, capsys):
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "not taken from `timeouts`" in err
-    assert "ai/lib/timeouts.py" in err
+    assert "ai/lib/core/timeouts.py" in err

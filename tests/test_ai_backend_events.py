@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import ai_backend_events as events
+from agent import backend_events as events
 
 
 class TestIsWriteTool:

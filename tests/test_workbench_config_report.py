@@ -25,8 +25,8 @@ from conftest import REPO_ROOT
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import workbench_config as wc
-import workbench_config_report as wcr
+from config import workbench_config as wc
+from config import workbench_config_report as wcr
 
 
 @pytest.fixture

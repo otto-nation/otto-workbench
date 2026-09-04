@@ -14,14 +14,14 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 import pytest
-from review_document import ReviewDocument
-from review_spans import (
+from review.document import ReviewDocument
+from review.spans import (
     _finalize_finding, _match_severity_header,
     drop_findings, ends_finding_body,
     finding_spans, is_section_boundary,
     starts_finding_or_section,
 )
-from review_types import Finding, FindingScope
+from review.types import Finding, FindingScope
 
 
 class TestIsSectionBoundary:

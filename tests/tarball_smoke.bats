@@ -44,6 +44,12 @@ teardown() {
   [ -f "$TARBALL_ROOT/VERSION" ]
 }
 
+@test "tarball carries no __pycache__ or .pyc — the artifact hash must not depend on the build host" {
+  local count
+  count=$(find "$TARBALL_ROOT/lib" -name '__pycache__' -o -name '*.pyc' | wc -l | tr -d ' ')
+  [ "$count" -eq 0 ]
+}
+
 # ── 2. VERSION file ────────────────────────────────────────────────────────
 
 @test "VERSION file contains the build version" {
@@ -94,18 +100,18 @@ teardown() {
   run python3 -c "
 import sys
 sys.path.insert(0, '$TARBALL_ROOT/lib')
-import review_paths
-import review_collect
-import review_github
-import review_prompt
-import review_agent
-import review_pipeline
-import review_phases
-import review_retry
-import review_verify
-import review_state
-import review_fix
-import review_types
+from review import paths
+from review import collect
+from gh import pr_reads
+from review import prompt
+from agent import session
+from review import pipeline
+from review import phases
+from review import retry
+from review import verify
+from review import state
+from review import fix
+from review import types
 print('ok')
 "
   [ "$status" -eq 0 ]
@@ -118,12 +124,12 @@ print('ok')
   run python3 -c "
 import sys
 sys.path.insert(0, '$TARBALL_ROOT/lib')
-import review_paths
-import review_dedup
-import review_format
-import review_github
-import review_posting
-import review_types
+from review import paths
+from review import dedup
+from review import format
+from gh import pr_reads
+from review import posting
+from review import types
 print('ok')
 "
   [ "$status" -eq 0 ]

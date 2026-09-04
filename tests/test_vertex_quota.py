@@ -18,7 +18,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import vertex_quota as vq
+from agent import vertex_quota as vq
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ class TestFetchProvisionedModels:
         mock_resp.__exit__.return_value = False
         return mock_resp
 
-    @patch("vertex_quota.urllib.request.urlopen")
+    @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_regional_filters_by_region(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_REGIONAL_RESPONSE)
         models = vq._fetch_provisioned_models("proj", "us-east5", "tok")
@@ -117,21 +117,21 @@ class TestFetchProvisionedModels:
         assert "anthropic-claude-opus-4-6" in models
         assert len(models) == 4
 
-    @patch("vertex_quota.urllib.request.urlopen")
+    @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_regional_excludes_other_regions(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_REGIONAL_RESPONSE)
         models = vq._fetch_provisioned_models("proj", "us-central1", "tok")
         assert len(models) == 1
         assert "anthropic-claude-sonnet-4-5" in models
 
-    @patch("vertex_quota.urllib.request.urlopen")
+    @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_global_no_region_filter(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_GLOBAL_RESPONSE)
         models = vq._fetch_provisioned_models("proj", "global", "tok")
         assert len(models) == 4
         assert "anthropic-claude-sonnet-4-5" in models
 
-    @patch("vertex_quota.urllib.request.urlopen")
+    @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_regional_uses_regional_metric(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_REGIONAL_RESPONSE)
         vq._fetch_provisioned_models("proj", "us-east5", "tok")
@@ -139,14 +139,14 @@ class TestFetchProvisionedModels:
         assert "online_prediction_input_tokens" in url
         assert "global_online_prediction" not in url
 
-    @patch("vertex_quota.urllib.request.urlopen")
+    @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_global_uses_global_metric(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_GLOBAL_RESPONSE)
         vq._fetch_provisioned_models("proj", "global", "tok")
         url = mock_urlopen.call_args[0][0].full_url
         assert "global_online_prediction" in url
 
-    @patch("vertex_quota.urllib.request.urlopen")
+    @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_null_limit_excluded(self, mock_urlopen):
         response = _quota_response([
             _regional_bucket("us-east5", "anthropic-claude-sonnet-4-5", None),
@@ -157,7 +157,7 @@ class TestFetchProvisionedModels:
         assert "anthropic-claude-sonnet-4-5" not in models
         assert "anthropic-claude-sonnet-4-6" in models
 
-    @patch("vertex_quota.urllib.request.urlopen")
+    @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_non_anthropic_excluded(self, mock_urlopen):
         response = _quota_response([
             _regional_bucket("us-east5", "google-gemini-pro", "1000000"),
@@ -219,9 +219,9 @@ class TestCoveringBucket:
 
 
 class TestCheckQuota:
-    @patch("vertex_quota._fetch_provisioned_models")
-    @patch("vertex_quota._get_access_token", return_value="tok")
-    @patch("vertex_quota._check_cache", return_value=None)
+    @patch("agent.vertex_quota._fetch_provisioned_models")
+    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_model_found_ok(self, _cache, _token, mock_fetch):
         mock_fetch.return_value = {"anthropic-claude-sonnet-4-6": "2000000"}
         result = vq.check_quota("claude-sonnet-4-6", "proj", "us-east5")
@@ -229,9 +229,9 @@ class TestCheckQuota:
         assert result.verdict is vq.QuotaVerdict.PROVISIONED
         assert result.model == "anthropic-claude-sonnet-4-6"
 
-    @patch("vertex_quota._fetch_provisioned_models")
-    @patch("vertex_quota._get_access_token", return_value="tok")
-    @patch("vertex_quota._check_cache", return_value=None)
+    @patch("agent.vertex_quota._fetch_provisioned_models")
+    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_model_not_found_fails(self, _cache, _token, mock_fetch):
         """No bucket for the version and none for the family either."""
         mock_fetch.return_value = {
@@ -243,9 +243,9 @@ class TestCheckQuota:
         assert "claude-sonnet-5" in result.error
         assert "anthropic-claude-sonnet-4-5" in result.available_models
 
-    @patch("vertex_quota._fetch_provisioned_models")
-    @patch("vertex_quota._get_access_token", return_value="tok")
-    @patch("vertex_quota._check_cache", return_value=None)
+    @patch("agent.vertex_quota._fetch_provisioned_models")
+    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_a_new_version_passes_on_the_family_bucket(self, _cache, _token, mock_fetch):
         """A model newer than the project's per-version buckets must not block.
 
@@ -261,26 +261,26 @@ class TestCheckQuota:
         assert result.ok
         assert result.verdict is vq.QuotaVerdict.PROVISIONED
 
-    @patch("vertex_quota._get_access_token", return_value=None)
-    @patch("vertex_quota._check_cache", return_value=None)
+    @patch("agent.vertex_quota._get_access_token", return_value=None)
+    @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_no_token_degrades_gracefully(self, _cache, _token):
         result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
         assert result.ok
         assert result.verdict is vq.QuotaVerdict.UNKNOWN
 
-    @patch("vertex_quota._check_cache")
+    @patch("agent.vertex_quota._check_cache")
     def test_cache_hit_found(self, mock_cache):
         mock_cache.return_value = {"anthropic-claude-sonnet-4-6": "2000000"}
         assert vq.check_quota("claude-sonnet-4-6", "proj", "us-east5").ok
 
-    @patch("vertex_quota._check_cache")
+    @patch("agent.vertex_quota._check_cache")
     def test_cache_hit_not_found(self, mock_cache):
         mock_cache.return_value = {"anthropic-claude-sonnet-4-6": "2000000"}
         assert not vq.check_quota("claude-sonnet-5", "proj", "us-east5").ok
 
-    @patch("vertex_quota._fetch_provisioned_models", side_effect=urllib.error.URLError("network"))
-    @patch("vertex_quota._get_access_token", return_value="tok")
-    @patch("vertex_quota._check_cache", return_value=None)
+    @patch("agent.vertex_quota._fetch_provisioned_models", side_effect=urllib.error.URLError("network"))
+    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_api_error_degrades_gracefully(self, _cache, _token, _fetch):
         result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
         assert result.ok
@@ -370,7 +370,7 @@ class TestRunPreflight:
         trail = MagicMock()
         assert vq.run_preflight({"claude-sonnet-5": ["group"]}, trail) is True
 
-    @patch("vertex_quota.check_quota")
+    @patch("agent.vertex_quota.check_quota")
     def test_passes_when_model_found(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
         mock_check.return_value = vq.VertexQuotaResult(
@@ -379,7 +379,7 @@ class TestRunPreflight:
         assert vq.run_preflight({"claude-sonnet-4-6": ["group"]}, trail) is True
         trail.info.assert_called()
 
-    @patch("vertex_quota.check_quota")
+    @patch("agent.vertex_quota.check_quota")
     def test_fails_when_model_not_provisioned(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
         mock_check.return_value = vq.VertexQuotaResult(
@@ -391,7 +391,7 @@ class TestRunPreflight:
         assert vq.run_preflight({"claude-sonnet-5": ["scout"]}, trail) is False
         trail.decision.assert_called()
 
-    @patch("vertex_quota.check_quota")
+    @patch("agent.vertex_quota.check_quota")
     def test_failure_trail_names_requesting_phases(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
         mock_check.return_value = vq.VertexQuotaResult(
@@ -413,7 +413,7 @@ class TestRunPreflight:
         )
         assert "WORKBENCH_AI_SCOUT_MODEL, WORKBENCH_AI_GROUP_MODEL" in lines[-1]
 
-    @patch("vertex_quota.check_quota")
+    @patch("agent.vertex_quota.check_quota")
     def test_cli_shorthand_skipped_not_failed(self, mock_check, monkeypatch):
         """A bare alias has no Vertex base model name to match against."""
         _vertex_env(monkeypatch)
@@ -421,7 +421,7 @@ class TestRunPreflight:
         assert vq.run_preflight({"sonnet": ["group"]}, trail) is True
         mock_check.assert_not_called()
 
-    @patch("vertex_quota.check_quota")
+    @patch("agent.vertex_quota.check_quota")
     def test_checks_each_distinct_model_once(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
         mock_check.return_value = vq.VertexQuotaResult(

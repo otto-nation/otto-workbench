@@ -2,7 +2,7 @@
 # Migration: fold the scattered config files into one config.yml.
 #
 # reuse-level, reuse-default and review.yml each picked their own format. This
-# folds whichever exist into the single config.yml that ai/lib/workbench_config.py
+# folds whichever exist into the single config.yml that ai/lib/config/workbench_config.py
 # types and config.schema.json describes, then renames the originals so a
 # re-run has nothing left to read.
 #

@@ -13,16 +13,16 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from eval_scoring_review import (
+from eval.scoring_review import (
     ExpectedFinding,
     ReviewTask,
     match_findings,
     parse_manifest,
     score_entry,
 )
-from eval_task import RunArtifacts
-from ai_usage import SessionUsage
-from review_types import Finding
+from eval.task import RunArtifacts
+from agent.usage import SessionUsage
+from review.types import Finding
 
 
 def _finding(

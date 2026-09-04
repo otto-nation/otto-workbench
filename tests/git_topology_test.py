@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import git_topology  # noqa: E402
+from git import topology as git_topology  # noqa: E402
 
 
 def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str:
@@ -33,7 +33,7 @@ def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str
     return "\n".join(blocks)
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_worktree_entries_names_its_fields(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/repo/main", "main"), ("/repo/feat-x", "feat/x"), bare="/repo/.git",
@@ -45,7 +45,7 @@ def test_worktree_entries_names_its_fields(mock_run):
     assert [e.branch for e in entries] == ["main", "feat/x"]
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_worktree_entries_drops_the_bare_repo(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/repo/main", "main"), ("/repo/feat-x", "feat/x"), bare="/repo/.git",
@@ -135,36 +135,36 @@ def test_current_branch_detached_head_exits(mock_sub):
 # ── Branch resolution ──────────────────────────────────────────────────────
 
 
-@patch("git_topology.subprocess.run", side_effect=FileNotFoundError)
-@patch("git_topology.current_branch", return_value="fallback-branch")
+@patch("git.topology.subprocess.run", side_effect=FileNotFoundError)
+@patch("git.topology.current_branch", return_value="fallback-branch")
 def test_resolve_branch_uses_hint_on_missing_script(mock_current, mock_run):
     assert git_topology.resolve_branch("some-hint") == "some-hint"
     mock_current.assert_not_called()
 
 
-@patch("git_topology.subprocess.run", side_effect=FileNotFoundError)
-@patch("git_topology.current_branch", return_value="fallback-branch")
+@patch("git.topology.subprocess.run", side_effect=FileNotFoundError)
+@patch("git.topology.current_branch", return_value="fallback-branch")
 def test_resolve_branch_falls_back_on_missing_script_no_hint(mock_current, mock_run):
     assert git_topology.resolve_branch("") == "fallback-branch"
     mock_current.assert_called_once_with(None)
 
 
-@patch("git_topology.subprocess.run")
-@patch("git_topology.current_branch", return_value="fallback-branch")
+@patch("git.topology.subprocess.run")
+@patch("git.topology.current_branch", return_value="fallback-branch")
 def test_resolve_branch_returns_hint_on_failure(mock_current, mock_run):
     mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
     assert git_topology.resolve_branch("bad-hint") == "bad-hint"
     mock_current.assert_not_called()
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_resolve_branch_returns_stdout(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout="isaac/feat/resolved_branch\n")
     assert git_topology.resolve_branch("resolved") == "isaac/feat/resolved_branch"
 
 
-@patch("git_topology.subprocess.run")
-@patch("git_topology.current_branch", return_value="fallback-branch")
+@patch("git.topology.subprocess.run")
+@patch("git.topology.current_branch", return_value="fallback-branch")
 def test_resolve_branch_quotes_what_resolve_branch_said(
         _mock_current, mock_run, capsys):
     """Regression: resolve-branch's diagnosis was dropped for a generic line."""
@@ -178,8 +178,8 @@ def test_resolve_branch_quotes_what_resolve_branch_said(
     assert "as-is" in err
 
 
-@patch("git_topology.subprocess.run")
-@patch("git_topology.current_branch", return_value="fallback-branch")
+@patch("git.topology.subprocess.run")
+@patch("git.topology.current_branch", return_value="fallback-branch")
 def test_resolve_branch_degrades_when_the_script_says_nothing(
         _mock_current, mock_run, capsys):
     mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
@@ -215,7 +215,7 @@ def test_current_branch_quotes_git_stderr(monkeypatch, capsys):
 # ── Default branch ────────────────────────────────────────────────────────
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_default_branch_strips_the_remote_prefix(mock_run):
     mock_run.return_value = MagicMock(
         returncode=0, stdout="refs/remotes/origin/main\n",
@@ -223,7 +223,7 @@ def test_default_branch_strips_the_remote_prefix(mock_run):
     assert git_topology.default_branch() == "main"
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_default_branch_is_not_hardcoded_to_main(mock_run):
     mock_run.return_value = MagicMock(
         returncode=0, stdout="refs/remotes/origin/trunk\n",
@@ -231,7 +231,7 @@ def test_default_branch_is_not_hardcoded_to_main(mock_run):
     assert git_topology.default_branch() == "trunk"
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_default_branch_falls_back_when_origin_head_is_unset(mock_run):
     """An unfetched clone has no origin/HEAD; callers need a base ref anyway."""
     # returncode is not inspected — the implementation only checks stdout.strip()
@@ -242,12 +242,12 @@ def test_default_branch_falls_back_when_origin_head_is_unset(mock_run):
     assert git_topology.default_branch() == "main"
 
 
-@patch("git_topology.subprocess.run", side_effect=OSError("no git"))
+@patch("git.topology.subprocess.run", side_effect=OSError("no git"))
 def test_default_branch_falls_back_when_git_is_missing(mock_run):
     assert git_topology.default_branch() == "main"
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
     mock_run.return_value = MagicMock(
         returncode=0, stdout="refs/remotes/origin/main\n",
@@ -268,13 +268,13 @@ def _hijacked_worktree_list() -> str:
     )
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_find_worktree_for_branch_prefers_exact_tag(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout=_hijacked_worktree_list())
     assert git_topology.find_worktree_for_branch("feat/other") == Path("/repo/feat-other")
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_find_worktree_for_branch_ignores_dir_named_like_another_branch(mock_run):
     """Regression: /repo/main holding feat/x was returned as main's worktree.
 
@@ -284,14 +284,14 @@ def test_find_worktree_for_branch_ignores_dir_named_like_another_branch(mock_run
     assert git_topology.find_worktree_for_branch("main") is None
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_find_worktree_dir_named_matches_regardless_of_occupant(mock_run):
     """The lenient lookup answers "which directory", not "which branch"."""
     mock_run.return_value = MagicMock(returncode=0, stdout=_hijacked_worktree_list())
     assert git_topology.find_worktree_dir_named("main") == Path("/repo/main")
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_find_worktree_dir_named_skips_the_bare_repo(mock_run):
     """The bare entry is not a checkout and must never be handed back as one."""
     mock_run.return_value = MagicMock(
@@ -300,7 +300,7 @@ def test_find_worktree_dir_named_skips_the_bare_repo(mock_run):
     assert git_topology.find_worktree_dir_named("main") is None
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
     mock_run.return_value = MagicMock(
         returncode=0, stdout=_porcelain(("/repo/main", None), bare="/repo"),
@@ -308,7 +308,7 @@ def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
     assert git_topology.find_worktree_for_branch("main") == Path("/repo/main")
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_find_worktree_for_branch_handles_paths_with_spaces_and_brackets(mock_run):
     """The human listing packs path and [branch] onto one line; porcelain doesn't."""
     mock_run.return_value = MagicMock(
@@ -320,7 +320,7 @@ def test_find_worktree_for_branch_handles_paths_with_spaces_and_brackets(mock_ru
 # ── Bare-repo worktree resolution ─────────────────────────────────────────
 
 
-@patch("git_topology.find_worktree_for_branch")
+@patch("git.topology.find_worktree_for_branch")
 def test_resolve_bare_repo_worktree_prefers_branch(mock_find):
     mock_find.return_value = Path("/wt/feat-branch")
     result = git_topology.resolve_bare_repo_worktree(None, "feat/branch")
@@ -328,8 +328,8 @@ def test_resolve_bare_repo_worktree_prefers_branch(mock_find):
     mock_find.assert_called_once_with("feat/branch", None)
 
 
-@patch("git_topology.create_worktree_for_branch")
-@patch("git_topology.find_worktree_for_branch")
+@patch("git.topology.create_worktree_for_branch")
+@patch("git.topology.find_worktree_for_branch")
 def test_resolve_bare_repo_worktree_creates_missing_branch_worktree(mock_find, mock_create):
     """A requested branch with no worktree gets one created, not main's."""
     mock_find.return_value = None
@@ -339,8 +339,8 @@ def test_resolve_bare_repo_worktree_creates_missing_branch_worktree(mock_find, m
     mock_create.assert_called_once_with("nonexistent", None)
 
 
-@patch("git_topology.create_worktree_for_branch", return_value=None)
-@patch("git_topology.find_worktree_for_branch")
+@patch("git.topology.create_worktree_for_branch", return_value=None)
+@patch("git.topology.find_worktree_for_branch")
 def test_resolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_create):
     """Regression: returning main's worktree here let callers hijack main/."""
     mock_find.return_value = None
@@ -352,18 +352,18 @@ def test_resolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_cr
         assert call.args[0] != "main"
 
 
-@patch("git_topology.find_worktree_dir_named", return_value=None)
-@patch("git_topology.find_worktree_for_branch", return_value=None)
-@patch("git_topology.subprocess.run")
+@patch("git.topology.find_worktree_dir_named", return_value=None)
+@patch("git.topology.find_worktree_for_branch", return_value=None)
+@patch("git.topology.subprocess.run")
 def test_resolve_bare_repo_worktree_returns_none(mock_run, mock_find, mock_named):
     mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
     result = git_topology.resolve_bare_repo_worktree(None, None)
     assert result is None
 
 
-@patch("git_topology.find_worktree_dir_named", return_value=Path("/repo/main"))
-@patch("git_topology.find_worktree_for_branch", return_value=None)
-@patch("git_topology.subprocess.run")
+@patch("git.topology.find_worktree_dir_named", return_value=Path("/repo/main"))
+@patch("git.topology.find_worktree_for_branch", return_value=None)
+@patch("git.topology.subprocess.run")
 def test_resolve_bare_repo_worktree_falls_back_to_dir_name(mock_run, mock_find, mock_named):
     """No branch requested: a main/ holding someone else's branch is still a cwd.
 
@@ -374,8 +374,8 @@ def test_resolve_bare_repo_worktree_falls_back_to_dir_name(mock_run, mock_find, 
     assert git_topology.resolve_bare_repo_worktree(None, None) == Path("/repo/main")
 
 
-@patch("git_topology.find_worktree_for_branch")
-@patch("git_topology.resolve_branch", return_value="isaac/improve-ci-failures-skill")
+@patch("git.topology.find_worktree_for_branch")
+@patch("git.topology.resolve_branch", return_value="isaac/improve-ci-failures-skill")
 def test_resolve_bare_repo_worktree_fuzzy_resolves_branch(mock_resolve, mock_find):
     """Bare repo resolution uses fuzzy matching when exact branch hint doesn't match."""
     mock_find.side_effect = [None, Path("/wt/isaac-improve-ci-failures-skill")]
@@ -386,9 +386,9 @@ def test_resolve_bare_repo_worktree_fuzzy_resolves_branch(mock_resolve, mock_fin
     mock_find.assert_any_call("isaac/improve-ci-failures-skill", None)
 
 
-@patch("git_topology.create_worktree_for_branch")
-@patch("git_topology.resolve_branch", side_effect=lambda hint, cwd=None: hint)
-@patch("git_topology.find_worktree_for_branch", return_value=None)
+@patch("git.topology.create_worktree_for_branch")
+@patch("git.topology.resolve_branch", side_effect=lambda hint, cwd=None: hint)
+@patch("git.topology.find_worktree_for_branch", return_value=None)
 def test_find_bare_repo_worktree_creates_nothing(_mock_find, _mock_resolve, mock_create):
     """The non-creating half of the pair: a command that only reads state must
     not leave a checkout behind as the price of finding its target."""
@@ -396,10 +396,10 @@ def test_find_bare_repo_worktree_creates_nothing(_mock_find, _mock_resolve, mock
     mock_create.assert_not_called()
 
 
-@patch("git_topology.create_worktree_for_branch")
-@patch("git_topology.find_worktree_dir_named", return_value=None)
-@patch("git_topology.find_worktree_for_branch", return_value=None)
-@patch("git_topology.subprocess.run")
+@patch("git.topology.create_worktree_for_branch")
+@patch("git.topology.find_worktree_dir_named", return_value=None)
+@patch("git.topology.find_worktree_for_branch", return_value=None)
+@patch("git.topology.subprocess.run")
 def test_find_bare_repo_worktree_creates_nothing_without_a_branch(
         mock_run, _mock_find, _mock_named, mock_create):
     mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
@@ -410,7 +410,7 @@ def test_find_bare_repo_worktree_creates_nothing_without_a_branch(
 # ── create_worktree_for_branch ─────────────────────────────────────────────
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_returns_path(mock_run):
     mock_run.return_value = MagicMock(
         returncode=0,
@@ -420,7 +420,7 @@ def test_create_worktree_for_branch_returns_path(mock_run):
     assert mock_run.call_args.args[0][:3] == ["wt", "switch", "feat/x"]
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_passes_cwd(mock_run):
     mock_run.return_value = MagicMock(
         returncode=0, stdout='{"path":"/wt/feat-x"}\n',
@@ -429,20 +429,20 @@ def test_create_worktree_for_branch_passes_cwd(mock_run):
     assert mock_run.call_args.args[0][-2:] == ["-C", "/repo"]
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_returns_none_when_wt_fails(mock_run):
     mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
     assert git_topology.create_worktree_for_branch("feat/x") is None
 
 
-@patch("git_topology.subprocess.run")
+@patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_survives_malformed_json(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout="{not json}\n", stderr="")
     assert git_topology.create_worktree_for_branch("feat/x") is None
 
 
-@patch("git_topology.log")
-@patch("git_topology.subprocess.run",
+@patch("git.topology.log")
+@patch("git.topology.subprocess.run",
        side_effect=FileNotFoundError(2, "No such file or directory", "wt"))
 def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
     assert git_topology.create_worktree_for_branch("feat/x") is None
@@ -450,8 +450,8 @@ def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
     assert "not installed" in mock_log.warn.call_args.args[0]
 
 
-@patch("git_topology.log")
-@patch("git_topology.subprocess.run",
+@patch("git.topology.log")
+@patch("git.topology.subprocess.run",
        side_effect=PermissionError(13, "Permission denied", "wt"))
 def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log):
     assert git_topology.create_worktree_for_branch("feat/x") is None
@@ -459,8 +459,8 @@ def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log):
     assert "Permission denied" in mock_log.warn.call_args.args[0]
 
 
-@patch("git_topology.log")
-@patch("git_topology.subprocess.run")
+@patch("git.topology.log")
+@patch("git.topology.subprocess.run")
 def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
     mock_run.return_value = MagicMock(
         returncode=1, stdout="", stderr="error: branch feat/x is checked out")

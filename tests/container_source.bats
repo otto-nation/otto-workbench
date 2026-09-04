@@ -13,7 +13,7 @@
 #
 # The rule is the branch the container's own HEAD names. It is spelled twice
 # because one caller is a shell prompt and a Stop hook and the other is the
-# mirror — the same reason lib/roots.sh and ai/lib/workbench_paths.py both
+# mirror — the same reason lib/roots.sh and ai/lib/core/workbench_paths.py both
 # spell the workbench roots, guarded the same way by tests/workbench_roots.bats.
 
 bats_require_minimum_version 1.5.0

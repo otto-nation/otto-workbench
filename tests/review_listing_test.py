@@ -13,9 +13,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pr_domains  # noqa: E402
-import review_listing  # noqa: E402
-import review_types  # noqa: E402
+from pr import domains as pr_domains  # noqa: E402
+from review import listing as review_listing  # noqa: E402
+from review import types as review_types  # noqa: E402
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.

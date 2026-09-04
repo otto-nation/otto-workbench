@@ -71,7 +71,7 @@ launcher on `PATH` is a symlink into the checkout that installed it — so the
 key surface it validates against is the current one no matter which worktree
 the caller is standing in.  Run out of a stale checkout instead, it still
 refuses: `workbench_config_write.check_key` asks the installed schema as well as
-its own.  See `ai/lib/workbench_config_write.py`.
+its own.  See `ai/lib/config/workbench_config_write.py`.
 
 Exit codes: 0 on a completed write, a report that read every scope, or a `get`
 that answered for every DIR; 1 on a refused key, a failed write, or a scope
@@ -104,9 +104,9 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-import workbench_config  # noqa: E402
-import workbench_config_report  # noqa: E402
-import workbench_config_write  # noqa: E402
+from config import workbench_config  # noqa: E402
+from config import workbench_config_report  # noqa: E402
+from config import workbench_config_write  # noqa: E402
 from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 
 

@@ -20,16 +20,16 @@ from pathlib import Path
 _BIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_BIN_DIR.parent / "lib"))
 sys.path.insert(0, str(_BIN_DIR))
-import gh_client  # noqa: E402
-import git_client  # noqa: E402
-import workbench_paths  # noqa: E402
+from gh import client as gh_client  # noqa: E402
+from git import client as git_client  # noqa: E402
+from core import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
-from trail import Trail, add_trail_args  # noqa: E402
-from review_dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
-from retro_github import GQL_MERGED_PRS_LIMIT, fetch_repo_review_data  # noqa: E402
-from retro_report import DATE_FMT, best_matching_bullet, format_report  # noqa: E402
-from retro_reviews import CONSUMED_REVIEWS_NAME, scan_local_reviews  # noqa: E402
-from retro_rules import RULES_REL, find_nearest_rule, load_rules  # noqa: E402
+from core.trail import Trail, add_trail_args  # noqa: E402
+from review.dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
+from retro.github import GQL_MERGED_PRS_LIMIT, fetch_repo_review_data  # noqa: E402
+from retro.report import DATE_FMT, best_matching_bullet, format_report  # noqa: E402
+from retro.reviews import CONSUMED_REVIEWS_NAME, scan_local_reviews  # noqa: E402
+from retro.rules import RULES_REL, find_nearest_rule, load_rules  # noqa: E402
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ SSH_REMOTE_PATTERN = re.compile(r"git@github\.com:(.+?)(?:\.git)?$")
 HTTPS_REMOTE_PATTERN = re.compile(r"https://github\.com/(.+?)(?:\.git)?$")
 
 
-import log
+from core import log
 
 
 # ── Project registry ────────────────────────────────────────────────────────

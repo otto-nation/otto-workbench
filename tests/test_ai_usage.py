@@ -12,8 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-import ai_usage
-from ai_usage import SessionUsage, merge, normalize_usage, parse_session_log
+from agent import usage as ai_usage
+from agent.usage import SessionUsage, merge, normalize_usage, parse_session_log
 
 
 def _write_result(path, **rec):

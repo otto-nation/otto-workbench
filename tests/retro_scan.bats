@@ -121,47 +121,47 @@ PY
 # ── is_noise ─────────────────────────────────────────────────────────────────
 
 @test "is_noise: approvals are noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("LGTM"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("LGTM"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: looks good is noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("Looks good!"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("Looks good!"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: thumbs up is noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("+1"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("+1"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: substantive comment is not noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("This should validate the redirect URI against an allowlist"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("This should validate the redirect URI against an allowlist"))')
   [[ "$result" == "False" ]]
 }
 
 @test "is_noise: short nit-only is noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("nit"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("nit"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: thumbs up emoji is noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("\U0001f44d"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("\U0001f44d"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: nit with detail is not noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("nit: rename this to fooBar for consistency"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("nit: rename this to fooBar for consistency"))')
   [[ "$result" == "False" ]]
 }
 
 @test "is_noise: approval carrying a substantive nit is not noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("approved with one nit: rename X"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("approved with one nit: rename X"))')
   [[ "$result" == "False" ]]
 }
 
 @test "is_noise: approval with trailing punctuation is noise" {
-  result=$(_py 'import retro_github; print(retro_github.is_noise("LGTM!"))')
+  result=$(_py 'from retro import github as retro_github; print(retro_github.is_noise("LGTM!"))')
   [[ "$result" == "True" ]]
 }
 
@@ -169,7 +169,7 @@ PY
 
 @test "parse_review_comment: extracts fields from API response" {
   result=$(_py_here <<'PY'
-import retro_github
+from retro import github as retro_github
 comment = {
     "user": {"login": "reviewer1"},
     "body": "This should validate the redirect URI",
@@ -186,7 +186,7 @@ PY
 
 @test "parse_review_comment: handles missing path (general comment)" {
   result=$(_py_here <<'PY'
-import retro_github
+from retro import github as retro_github
 comment = {
     "user": {"login": "reviewer1"},
     "body": "Overall this looks good but consider X",
@@ -200,7 +200,7 @@ PY
 
 @test "parse_review_comment: truncates long bodies" {
   result=$(_py_here <<'PY'
-import retro_github
+from retro import github as retro_github
 comment = {
     "user": {"login": "r"},
     "body": "x" * 1000,
@@ -216,7 +216,7 @@ PY
 
 @test "_threads_for: uses the batch nodes when nothing was truncated" {
   result=$(_py_here <<'PY'
-import retro_github
+from retro import github as retro_github
 retro_github.fetch_review_threads = lambda *a: (_ for _ in ()).throw(AssertionError("refetched"))
 pr_node = {"number": 7, "reviewThreads": {"totalCount": 2, "nodes": [{"path": "a.py"}, {"path": "b.py"}]}}
 print(len(retro_github._threads_for("o/r", pr_node)))
@@ -227,7 +227,7 @@ PY
 
 @test "_threads_for: refetches every thread when the batch query truncated" {
   result=$(_py_here <<'PY'
-import retro_github
+from retro import github as retro_github
 calls = []
 retro_github.fetch_review_threads = lambda repo, pr: calls.append((repo, pr)) or [{"path": f"f{i}.py"} for i in range(114)]
 pr_node = {"number": 7, "reviewThreads": {"totalCount": 114, "nodes": [{"path": "a.py"}] * 100}}

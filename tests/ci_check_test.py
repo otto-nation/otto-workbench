@@ -18,13 +18,13 @@ if str(LIB_DIR) not in sys.path:
 
 ci_check = load_script("ci_check", CI_CHECK)
 
-import fix_engine  # noqa: E402
-import land  # noqa: E402
-import publishing  # noqa: E402
-from land import CommitStatus  # noqa: E402
-from pr_fix import FixOutcome, ItemOutcome  # noqa: E402
-from pr_state import PRIdentity, PRState  # noqa: E402
-from proc import CmdResult  # noqa: E402
+from fix import engine as fix_engine  # noqa: E402
+from git import land  # noqa: E402
+from core import publishing  # noqa: E402
+from git.land import CommitStatus  # noqa: E402
+from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
+from pr.state import PRIdentity, PRState  # noqa: E402
+from core.proc import CmdResult  # noqa: E402
 
 
 def _no_log_fallback(kind):
@@ -41,7 +41,7 @@ def test_deduplicates_rerun_of_same_workflow():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI"},
         {"databaseId": 100, "headSha": "abc", "workflowName": "CI"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -52,7 +52,7 @@ def test_keeps_distinct_workflows():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200, 201]
 
@@ -64,7 +64,7 @@ def test_rerun_with_multiple_workflows():
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy"},
         {"databaseId": 100, "headSha": "abc", "workflowName": "CI"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [300, 201]
 
@@ -75,13 +75,13 @@ def test_filters_to_latest_sha():
         {"databaseId": 300, "headSha": "def", "workflowName": "CI"},
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [300]
 
 
 def test_empty_run_list():
-    with patch("gh_client.json_out", return_value=[]):
+    with patch("gh.client.json_out", return_value=[]):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == []
 
@@ -92,7 +92,7 @@ def test_filters_skipped_runs():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Dependabot", "conclusion": "skipped"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -103,7 +103,7 @@ def test_filters_cancelled_runs():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Old CI", "conclusion": "cancelled"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -114,7 +114,7 @@ def test_all_skipped_returns_empty():
         {"databaseId": 200, "headSha": "abc", "workflowName": "A", "conclusion": "skipped"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "cancelled"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == []
 
@@ -125,7 +125,7 @@ def test_in_progress_runs_kept():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": None},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy", "conclusion": "skipped"},
     ]
-    with patch("gh_client.json_out", return_value=runs):
+    with patch("gh.client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -724,19 +724,19 @@ def test_parse_run_does_not_enrich_lint_with_uninformative_annotations():
 
 
 def test_commits_behind_main_returns_count():
-    with patch("gh_client.api", return_value=CmdResult(0, "15\n")):
+    with patch("gh.client.api", return_value=CmdResult(0, "15\n")):
         result = ci_check._commits_behind_main("owner/repo", "feat/auth")
     assert result == 15
 
 
 def test_commits_behind_main_returns_zero_on_error():
-    with patch("gh_client.api", return_value=CmdResult(1)):
+    with patch("gh.client.api", return_value=CmdResult(1)):
         result = ci_check._commits_behind_main("owner/repo", "feat/auth")
     assert result == 0
 
 
 def test_commits_behind_main_returns_zero_on_non_numeric():
-    with patch("gh_client.api", return_value=CmdResult(0, "null\n")):
+    with patch("gh.client.api", return_value=CmdResult(0, "null\n")):
         result = ci_check._commits_behind_main("owner/repo", "feat/auth")
     assert result == 0
 
@@ -972,7 +972,7 @@ def test_an_unlocated_tap_failure_keys_on_its_test_name():
 
 def test_job_logs_allow_escape_sequences():
     """gh refuses a coloured log outright, which reads here as a job with no logs."""
-    with patch("gh_client.api", return_value=CmdResult(0, "logs")) as mock_api:
+    with patch("gh.client.api", return_value=CmdResult(0, "logs")) as mock_api:
         ci_check._fetch_job_logs("owner/repo", 10)
     assert mock_api.call_args.kwargs["allow_escape_sequences"] is True
 

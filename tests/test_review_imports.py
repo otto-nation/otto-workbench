@@ -46,25 +46,32 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 BUILTINS = {"__name__", "__file__", "__class__", "__spec__"}
 
 ALL_LIB_MODULES = sorted(
-    p.stem for p in LIB_DIR.glob("*.py") if not p.stem.startswith("__")
+    f"{p.parent.name}.{p.stem}"
+    for p in LIB_DIR.glob("*/*.py")
+    if p.stem != "__init__"
 )
 
 POST_LIB_MODULES = [
-    "review_github",
-    "review_format",
-    "review_dedup",
-    "review_posting",
+    "gh.pr_reads",
+    "review.format",
+    "review.dedup",
+    "review.posting",
 ]
 
 SHARED_LIB_MODULES = [
-    "review_budget",
-    "review_document",
-    "review_grammar",
-    "review_paths",
-    "review_reconcile",
-    "review_spans",
-    "review_verdict",
+    "review.budget",
+    "review.document",
+    "review.grammar",
+    "review.paths",
+    "review.reconcile",
+    "review.spans",
+    "review.verdict",
 ]
+
+
+def _lib_module_path(mod_name: str) -> Path:
+    """Resolve a dotted lib module name (e.g. "review.dedup") to its file path."""
+    return LIB_DIR / Path(*mod_name.split(".")).with_suffix(".py")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -302,7 +309,7 @@ def test_cross_module_calls_use_module_qualified_pattern(mod_name):
     ``from X import func`` creates a local binding. Patching
     ``X.func`` in tests won't reach the local copy, breaking mocks.
     """
-    mod_path = LIB_DIR / f"{mod_name}.py"
+    mod_path = _lib_module_path(mod_name)
     if not mod_path.exists():
         pytest.skip(f"{mod_name}.py not found")
 
@@ -331,7 +338,7 @@ def test_no_duplicate_definitions_across_post_modules():
     defs_by_name: dict[str, list[str]] = {}
 
     for mod_name in all_modules:
-        mod_path = LIB_DIR / f"{mod_name}.py"
+        mod_path = _lib_module_path(mod_name)
         if not mod_path.exists():
             continue
         for defn in _collect_definitions(mod_path):
@@ -387,7 +394,7 @@ def test_proxy_submodules_match_imports(script):
     imports = {
         alias.asname or alias.name
         for node in ast.iter_child_nodes(tree)
-        if isinstance(node, ast.Import)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
         for alias in node.names
     }
 
@@ -477,8 +484,13 @@ def test_the_gate_covers_every_lib_module():
     list; a module outside it is unpoliced, which is what four retro_* modules
     were after #1095 split them out.
     """
-    on_disk = {p.stem for p in LIB_DIR.glob("*.py") if not p.stem.startswith("__")}
+    on_disk = {
+        f"{p.parent.name}.{p.stem}"
+        for p in LIB_DIR.glob("*/*.py")
+        if p.stem != "__init__"
+    }
 
+    assert len(ALL_LIB_MODULES) > 90
     assert set(ALL_LIB_MODULES) == on_disk
 
 
@@ -494,13 +506,13 @@ def test_the_gate_covers_every_lib_module():
 # module the author actually meant to import from.
 _PEER_DEFS: dict[str, str] = {}
 for _mod_name in ALL_LIB_MODULES:
-    _mod_path = LIB_DIR / f"{_mod_name}.py"
+    _mod_path = _lib_module_path(_mod_name)
     for _defn in _collect_all_names(_mod_path):
         _PEER_DEFS.setdefault(_defn, _mod_name)
 
 # All Python files that import review_* modules (lib modules + entry scripts)
 _ALL_PYTHON_SOURCES = [
-    (mod_name, LIB_DIR / f"{mod_name}.py") for mod_name in ALL_LIB_MODULES
+    (mod_name, _lib_module_path(mod_name)) for mod_name in ALL_LIB_MODULES
 ] + [
     (script.name, script) for script in SCRIPTS
 ]
@@ -548,11 +560,11 @@ def _find_missing_cross_module_imports(
 
     wildcard_sources = _collect_wildcard_sources(tree)
     for wc_mod in wildcard_sources:
-        wc_path = LIB_DIR / f"{wc_mod}.py"
+        wc_path = _lib_module_path(wc_mod)
         if wc_path.exists():
             available |= _collect_public_names(wc_path)
 
-    own_module = source_path.stem if source_path.suffix == ".py" else source_name
+    own_module = source_name
 
     missing = []
     for ref in sorted(bare_refs):

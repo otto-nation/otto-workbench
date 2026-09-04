@@ -19,9 +19,9 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-import proc
-import timeouts
-from proc import CmdResult
+from core import proc
+from core import timeouts
+from core.proc import CmdResult
 
 
 class TestCmdResult:

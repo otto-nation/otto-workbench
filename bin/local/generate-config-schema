@@ -4,8 +4,8 @@
 Usage: bin/local/generate-config-schema [--check]
        bin/local/generate-config-schema --emit config-reference
 
-The dataclass in ai/lib/workbench_config.py is the single definition of what
-the workbench config holds; ai/lib/workbench_config_report.py renders it to the
+The dataclass in ai/lib/config/workbench_config.py is the single definition of what
+the workbench config holds; ai/lib/config/workbench_config_report.py renders it to the
 JSON Schema editors and validators read, and to the key reference lib/config.sh's
 header asks for with an `<!-- include: ... --emit config-reference -->` directive.
 tests/test_workbench_config.py fails when the committed schema and the

@@ -70,7 +70,7 @@ LIB_DIR = os.path.join('ai', 'lib')
 class Owner:
     """Where a watched module's file lives, and the name a call site spells.
 
-    The two are not derivable from each other: 77 of the 101 ai/lib modules
+    The two are not derivable from each other: 76 of the 101 ai/lib modules
     were renamed, not merely relocated, when they moved into packages, so a
     module's package-relative file path can differ from the bare name a call
     site still writes under the R41 alias rule.  `review_budget` is one —

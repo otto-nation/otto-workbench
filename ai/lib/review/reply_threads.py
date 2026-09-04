@@ -2,7 +2,7 @@
 
 Every finding posted inline opened a review thread, and what the author did
 with that thread — answered it, argued with it, resolved it — is an account of
-the finding independent of the `## Prior findings` ledger `review_reconcile`
+the finding independent of the `## Prior findings` ledger `review.reconcile`
 reads. `fetch_reply_threads` classifies each thread into a `ReplyState` and
 matches it back to the finding its root comment declared, so a re-review can
 read the thread's account of a finding beside the ledger's. That match is a
@@ -14,8 +14,8 @@ Only a thread whose first comment is the reviewing bot's own counts. A thread
 the author opened is a comment on the PR rather than a reply to a finding, and
 there is no finding for it to be an account of.
 
-Fetching is `pr_comments`'s; what a re-review is shown of the result is
-`review_prompt_sections`' and `review_prompt_prior`'s.
+Fetching is `pr.comments`'s; what a re-review is shown of the result is
+`review.prompt_sections`' and `review.prompt_prior`'s.
 """
 
 # doc-group: findings

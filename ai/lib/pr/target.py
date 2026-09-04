@@ -97,7 +97,7 @@ instead of being stranded at the old location.
 That both components are derivable offline is a convenience for this repo's own
 code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
-``review_listing``) rather than deriving where a review would sit.
+``review.listing``) rather than deriving where a review would sit.
 """
 
 # doc-group: pr-state
@@ -322,7 +322,7 @@ def targets_root() -> Path:
     A function, not a module constant: ``state_dir()`` resolves per call, and
     caching this at import time is what would break ``WORKBENCH_STATE_DIR``
     monkeypatching in tests. The sole owner of the join, so a second copy of
-    it (e.g. in review_gc's gc sweep) cannot drift from this one.
+    it (e.g. in review.gc's gc sweep) cannot drift from this one.
     """
     return workbench_paths.state_dir() / TARGETS_DIR
 

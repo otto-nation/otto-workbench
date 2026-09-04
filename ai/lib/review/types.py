@@ -12,9 +12,9 @@ lets a consumer depend on what a review *is* without depending on what the
 review pipeline *does*.
 
 Nothing in the review layer is imported here, and nothing should be: this is the
-layer everything else in it sits on. The heavier imports — `agent_types`,
-`gh_types`, `serde`, `workbench_config` and `pr_state.now_iso` — are all below
-the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh_types`
+layer everything else in it sits on. The heavier imports — `agent.types`,
+`gh.types`, `serde`, `workbench_config` and `pr.state.now_iso` — are all below
+the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh.types`
 and the rest.
 """
 
@@ -191,7 +191,7 @@ class ReplyState(StrEnum):
     ends — nothing said, and closed on GitHub — and the three between them are
     read off the last non-bot reply.
 
-    `pr_comments_state.ThreadState` is a second vocabulary for where a thread
+    `pr.comments_state.ThreadState` is a second vocabulary for where a thread
     stands, and the two are not interchangeable: that one answers the question
     from the author's side, for threads a human opened on the author's own PR.
     They share `contested` and `resolved` and agree on neither of the rest.

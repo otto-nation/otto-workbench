@@ -1,6 +1,6 @@
 """What a phase resolves to here: the spec, the config file, the environment.
 
-``agent_registry`` says what a phase's built-in defaults are. This module answers
+``agent.registry`` says what a phase's built-in defaults are. This module answers
 the question a caller actually has — which model, thinking level, provider and
 turn budget *this* invocation runs with — by layering the config file and the
 environment over that spec.

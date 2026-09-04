@@ -5,10 +5,10 @@ PR comments, review artifacts). Each ``pr`` subcommand updates its own
 section; ``pr status`` reads the whole thing without network calls.
 
 State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
-run's target — see ``pr_target.target_dir``, which owns that path.
+run's target — see ``pr.target.target_dir``, which owns that path.
 
-The domains this is an envelope over live in ``pr_domains`` — and one of them,
-the comment pass's, in ``pr_comments_fix``. This module imports both; neither
+The domains this is an envelope over live in ``pr.domains`` — and one of them,
+the comment pass's, in ``pr.comments_fix``. This module imports both; neither
 imports it.
 """
 
@@ -219,8 +219,8 @@ class PRClosure:
     ended_at: str = ""
 
 
-# The action on the trail's terminal event. `pr_state` owns it because it owns
-# the payload's shape; `review_gc` owns the emit.
+# The action on the trail's terminal event. `pr.state` owns it because it owns
+# the payload's shape; `review.gc` owns the emit.
 TERMINAL_SUMMARY_ACTION = "pr_outcome"
 
 

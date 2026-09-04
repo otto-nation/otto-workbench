@@ -1,4 +1,4 @@
-"""Claude Code CLI backend for ai_backend.
+"""Claude Code CLI backend for agent.backend.
 
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `claude -p` commands and running them as subprocesses.

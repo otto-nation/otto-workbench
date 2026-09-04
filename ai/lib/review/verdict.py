@@ -1,6 +1,6 @@
 """What a set of counts means, and the review a run without an agent writes.
 
-The policy layer over `review_document`: how many open findings of each
+The policy layer over `review.document`: how many open findings of each
 severity add up to an approve or a request-for-changes, how that reads in
 prose, whether the run states a verdict at all, and the body a mechanically
 merged review carries when no synthesis agent produced one.

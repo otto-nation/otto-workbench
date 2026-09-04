@@ -7,15 +7,15 @@ path and description that decide whether two findings are duplicates are the
 pair that hashes to a stable ID, and a stable ID is how a later reconciliation
 recognises a finding a review restates.
 
-Reading that identity off a finding line is `review_grammar`'s job, not this
+Reading that identity off a finding line is `review.grammar`'s job, not this
 module's: `FindingIdentity` answers both questions, so deduplication and
 carry-forward cannot come to different conclusions about one line. Reading a
-review is `review_document`'s job, checking findings against the tree is
-`review_verify`'s, and the `Finding` every side holds is `review_types`' — a
+review is `review.document`'s job, checking findings against the tree is
+`review.verify`'s, and the `Finding` every side holds is `review.types`' — a
 consumer that only holds findings needs none of this. Deciding what became of
-a finding the prior review reported is `review_reconcile`'s.
+a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review_spans`'s. Deduplication and the
+Where a finding's body ends is `review.spans`'s. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
 that a falsified finding does. Neither says where one stops.
@@ -107,7 +107,7 @@ _REFERENCE_CUES = (
 # reference from one severity to another — a duplicate filed under the wrong one
 # is merged into a survivor that carries the right one — and a pass per prefix
 # would then hand what it just wrote to the next pass. Which prefixes those are
-# is `review_grammar`'s `SEVERITY_KEY`, the same class every reader of a finding
+# is `review.grammar`'s `SEVERITY_KEY`, the same class every reader of a finding
 # ID goes through.
 _ID_REFERENCE_RE = re.compile(
     rf"\[({SEVERITY_KEY})(\d+)\]"

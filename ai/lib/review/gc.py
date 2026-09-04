@@ -7,7 +7,7 @@ of reviews whose PR has been merged or closed.
 
 They differ only in what makes a file collectable — the run being over, age, or
 the PR being gone — and all of them read what a review directory holds from
-`review_paths.phase_artifacts` rather than naming files themselves.
+`review.paths.phase_artifacts` rather than naming files themselves.
 
 `pr gc` collects loose files at the reviews root once they are a week old, prunes
 review directories and run-target directories for merged and closed PRs (skipping

@@ -18,12 +18,12 @@ Retry is a property of talking to the API, so it lives with the calls that do:
 against a local checkout. A caller driving an artifact download or reading
 gh's own configuration gets no ladder, and should not.
 
-The publishing gate is deliberately not here. `pr_comments` gates its writes on
+The publishing gate is deliberately not here. `pr.comments` gates its writes on
 `publishing.enabled()` at the call site and keeps doing so — a second implicit
 gate inside the transport would make a policy decision invisible to the code
 that owns it.
 
-Like `git_client`, this depends on `log` as well as `proc`, and for more of its
+Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
 silence reads as a hang, so the waiting is announced. Whether a *failed* call is
 worth logging remains the caller's decision, as it is there.
@@ -96,7 +96,7 @@ class _Ladder:
 
 # A secondary rate limit is GitHub telling us to come back later, and its own
 # guidance is to wait minutes rather than seconds. Unchanged from the ladder in
-# `review_github` that this replaces — the numbers were already right for the
+# `gh.pr_reads` that this replaces — the numbers were already right for the
 # one case that had them.
 RATE_LIMIT_LADDER = _Ladder(attempts=5, first_wait=60.0, factor=1.5, max_wait=300.0)
 
@@ -201,7 +201,7 @@ def _timeout_for(args: tuple[str, ...]) -> float | None:
 
     Keyed on the argv rather than left to the caller, for the reason
     `timeouts` gives: one `gh api` round trip used to be 30s in
-    `review_github`, 10s in `pr-rebase` and 10s in `retro-scan`, and no
+    `gh.pr_reads`, 10s in `pr-rebase` and 10s in `retro-scan`, and no
     principle separated those numbers.
     """
     if _TRANSFER_FLAGS.intersection(args):
@@ -439,7 +439,7 @@ def login() -> str:
 def repo_slug(cwd: str | Path | None = None) -> str:
     """``owner/repo`` for the repository at *cwd*, or "" when gh cannot say.
 
-    The failure is the caller's to report: `pr_context.detect_repo` exits on it
+    The failure is the caller's to report: `pr.context.detect_repo` exits on it
     with the command quoted, while the review scripts fall back to a flag. It
     is worth retrying first, though — this resolves against the API like `api`
     does, and reporting "not a GitHub repository" because of a throttle sends

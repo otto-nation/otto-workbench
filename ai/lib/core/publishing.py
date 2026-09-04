@@ -6,7 +6,7 @@ reviewer. So the default is to draft: callers print what they would have sent an
 report failure, and nothing leaves the machine until the entrypoint opts in.
 
 One flag owns this for the whole process. Modules that write externally
-(`pr_comments`, `review_issue`) ask here rather than carrying their own switch.
+(`pr.comments`, `review.issue`) ask here rather than carrying their own switch.
 
 A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the

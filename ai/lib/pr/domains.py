@@ -2,7 +2,7 @@
 
 Each ``pr`` subcommand owns one domain and writes it as a unit. A domain is a
 dataclass subclassing :class:`Domain`; subclassing is the registration, and
-``pr_state`` derives its registry from ``PRState``'s own annotations, so a new
+``pr.state`` derives its registry from ``PRState``'s own annotations, so a new
 domain is added here and named there and nowhere else.
 
 This module holds the domain types, the vocabulary they are written in, and the
@@ -13,14 +13,14 @@ report is silent by declaring nothing rather than by being left off a list.
 ``pr status`` folds over the registry for both, which is what stops the
 dashboard and the registry from disagreeing.
 
-Every domain also carries a :class:`~pr_fix.FixRecord`, declared on the base
+Every domain also carries a :class:`~pr.fix.FixRecord`, declared on the base
 class for the same reason: a domain that gains a fix pass gains somewhere to
-record it without a field being added anywhere. ``pr_fix`` holds that record and
+record it without a field being added anywhere. ``pr.fix`` holds that record and
 the vocabulary it is written in, and imports nothing back.
 
-``pr_state`` holds the envelope over these, the registry and the state file
+``pr.state`` holds the envelope over these, the registry and the state file
 I/O, and imports this module — never the other way round. So does
-``pr_comments_fix``, which holds the comment pass's domain: the closeout only
+``pr.comments_fix``, which holds the comment pass's domain: the closeout only
 that pass owes, over the same record every domain here carries.
 
 #### Rebase refusals
@@ -81,7 +81,7 @@ from pathlib import Path
 
 # get_type_hints(CIDomain) resolves its `runs` annotation against the namespace
 # of the module CIDomain is defined in, so RunState must be bound here;
-# ci_failures keeps its own pr_state import under TYPE_CHECKING, which is what
+# ci_failures keeps its own pr.state import under TYPE_CHECKING, which is what
 # keeps this acyclic.
 from pr.ci_failures import RunState
 
@@ -215,7 +215,7 @@ class ReviewVerdict(Enum):
     overall approach is wrong and the PR should not land in any form — a
     holistic judgment no count implies and none refutes.
 
-    Declaration order is significant: `VERDICT_OPTIONS` in `review_prompt.py`
+    Declaration order is significant: `VERDICT_OPTIONS` in `review.prompt`
     renders the options the synthesis prompt offers by iterating this enum, so
     reordering these members reorders what agents are asked to choose from.
     """

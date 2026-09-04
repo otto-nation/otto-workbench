@@ -1,7 +1,7 @@
 """The review eval task: run review-orchestrate, score findings against a manifest.
 
 Everything here is specific to reviewing code. The runner, the fixture repo, and
-the aggregation over runs live in `eval_task` and `eval_scoring` and know nothing
+the aggregation over runs live in `eval.task` and `eval.scoring` and know nothing
 about findings.
 
 A finding counts as matched when its path, severity, and description all line up

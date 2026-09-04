@@ -33,15 +33,15 @@ different things about it.
 
 A finding declaration is part of that format, but not part of this module: the
 grammar of one — the ID at the head of a list item, the location after it, the
-body after that — is `review_grammar`'s, and this module reads a document
+body after that — is `review.grammar`'s, and this module reads a document
 through it. `parse_finding_line` is for a caller holding a single line that is
 not in a findings section — the prior-findings ledger is the one — and every
 other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
 onto a finding it left alone is the exception that stays: `is_skipped` is a
 question about a `Finding` this module has already parsed rather than about
 the line that declared it. Where a finding's body starts and stops is
-`review_spans`'s, and this module reads through `finding_spans` the same way
-it reads a single line through `review_grammar`.
+`review.spans`'s, and this module reads through `finding_spans` the same way
+it reads a single line through `review.grammar`.
 
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
@@ -50,7 +50,7 @@ its own regex is how a review came to report four findings it had none of —
 the ledger's lines look like declarations from anywhere but inside the parse.
 
 What a tally of them means — the verdict it supports, and the body a review
-carries when no synthesis agent wrote one — is `review_verdict`'s: a judgement
+carries when no synthesis agent wrote one — is `review.verdict`'s: a judgement
 over this module's shape rather than part of the shape itself.
 """
 
@@ -355,7 +355,7 @@ def review_title(meta: ReviewMeta) -> str:
 # ── Finding lines ────────────────────────────────────────────────────────────
 
 # The fix pass's record of a finding it read and left alone, in the same grammar
-# as `review_grammar`'s decline annotation and optional in the same way — a skip
+# as `review.grammar`'s decline annotation and optional in the same way — a skip
 # written without a reason is still a skip, and reading it as an ordinary open
 # finding is what lets a sibling finding's edit report it as fixed.
 #

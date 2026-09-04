@@ -1,6 +1,6 @@
 """Typed domain objects for PR review thread processing.
 
-Persistence-oriented structures live in pr_domains.py and pr_comments_fix.py;
+Persistence-oriented structures live in pr.domains and pr.comments_fix;
 these model the runtime pipeline: triage, classification, tracking, and
 fix-pass results.
 """
@@ -185,7 +185,7 @@ class ClassificationResult:
 class TrackingResult:
     """What the fix agent recorded, sorted back onto the entries it was handed.
 
-    Keyed by :class:`~pr_fix.FixOutcome` rather than held in a field per verdict:
+    Keyed by :class:`~pr.fix.FixOutcome` rather than held in a field per verdict:
     the vocabulary belongs to the tracking file, and a named field for each of
     its members would have to grow here every time that file learns to say
     something new. Two dicts rather than one because only an inline thread has

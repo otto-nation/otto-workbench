@@ -6,16 +6,16 @@ with what the author said in reply to each finding, and followed by the
 instruction that asks for a disposition for every finding it carries.
 
 Scoping the prior review to a group's files cuts it a finding at a time, and
-where a finding stops is `review_spans`'s `finding_spans` — the same measure
+where a finding stops is `review.spans`'s `finding_spans` — the same measure
 the gates that trim a finished review use. A section that measured it here
 would quote evidence belonging to a finding the agent was never shown.
 
 `_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
 an agent; both sections here interpolate it rather than restating it, and
-`review_reconcile` is what reads the ledger back afterwards.
+`review.reconcile` is what reads the ledger back afterwards.
 
-Everything else a prompt says about the PR is `review_prompt_sections`'s, and
-which sections a phase asks for is `review_prompt`'s.
+Everything else a prompt says about the PR is `review.prompt_sections`'s, and
+which sections a phase asks for is `review.prompt`'s.
 """
 
 # doc-group: pipeline
@@ -159,7 +159,7 @@ def _annotate_with_thread_state(review_text: str, reply_threads: ReplyThreads | 
 # rejects is expressible, and stays invisible until a re-review's bookkeeping
 # is lost. So the instruction says where the verdict goes as well as what it
 # is, and `TestLedgerInstructionParses` reads every example back through
-# `review_grammar.parse_ledger_line` to hold the two together.
+# `review.grammar.parse_ledger_line` to hold the two together.
 _LEDGER_INSTRUCTION = f"""
 End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
 finding above, one line each, copying its ID and path exactly as written there:

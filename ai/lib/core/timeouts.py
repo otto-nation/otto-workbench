@@ -4,7 +4,7 @@
 module, bare literals at the call site, a caller-supplied argument, and — for
 most of the git client — nothing at all. The same operation got a different
 bound depending on which file it was called from; a single `gh api` round trip
-was 30s in `review_github`, 10s in `pr-rebase`, and 10s in `retro-scan`. No
+was 30s in `gh.pr_reads`, 10s in `pr-rebase`, and 10s in `retro-scan`. No
 principle separated those numbers. They were what whoever wrote each site
 happened to pick.
 
@@ -44,12 +44,12 @@ on `sys.path` itself, which is how it imports `tool_registry`, so `timeouts`
 came along with it and the exemption only meant the file went unchecked.
 
 Three numbers deliberately stay outside it. `ci-check --wait-timeout`,
-`eval_task.EVAL_CASE_BUDGET` and the MCP server's `TOOL_CALL_BUDGET` are
+`eval.task.EVAL_CASE_BUDGET` and the MCP server's `TOOL_CALL_BUDGET` are
 deadlines for work that could reasonably keep going, not bounds on a subprocess
 that should already have answered; they say how long something is *worth*, which
 is a different question.
 
-Stdlib-only and importing nothing, so that `proc`, `git_client`, and everything
+Stdlib-only and importing nothing, so that `proc`, `git.client`, and everything
 built on them can depend on it without a cycle.
 """
 

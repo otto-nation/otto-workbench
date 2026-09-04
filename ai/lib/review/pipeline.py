@@ -1,12 +1,12 @@
 """Pipeline orchestration for claude-review.
 
 Drives the single-agent and multi-phase runs end to end: sequencing the phases
-review_steps defines, deciding what a resumed run may skip, consolidating the
+review.steps defines, deciding what a resumed run may skip, consolidating the
 session logs, and fetching the PR metadata a run starts from.
 
 The run ends when the review file is written — what happens to the findings
-afterwards belongs to review_fix, and removing what the run left behind belongs
-to review_gc, which the orchestrator runs once every phase is done.
+afterwards belongs to review.fix, and removing what the run left behind belongs
+to review.gc, which the orchestrator runs once every phase is done.
 """
 
 # doc-group: pipeline
@@ -260,7 +260,7 @@ def run_multi_phase(
     # ── Consolidate logs ─────────────────────────────────────────────────────
     # Removing what this run leaves behind is the orchestrator's, not the
     # pipeline's: phases run after this function returns. See
-    # `review_gc.cleaned_on_success`.
+    # `review.gc.cleaned_on_success`.
     _consolidate_logs(
         job, holistic.log, group_count, synthesis.log,
         disprove_log=disprove_result.log,

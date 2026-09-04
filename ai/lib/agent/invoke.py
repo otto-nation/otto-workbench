@@ -1,7 +1,7 @@
 """The one owner of an agent invocation: resolve the phase, run it, guard it.
 
-``phases`` says what a phase is named, ``agent_types`` says what a phase's
-shape is, ``agent_registry`` says which phases there are, ``agent_phases``
+``phases`` says what a phase is named, ``agent.types`` says what a phase's
+shape is, ``agent.registry`` says which phases there are, ``agent_phases``
 says what one resolves to here, and ``ai_backend`` knows how to talk to a
 CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
@@ -193,7 +193,7 @@ def run_agent(
 
     Unlike the other two runners this takes an invocation already built rather
     than a phase, because the caller that builds it —
-    ``review_phases.PhaseRunner`` — needs values no phase can supply on its own:
+    ``review.phases.PhaseRunner`` — needs values no phase can supply on its own:
     the group index its session log is named for, the artifact directory it may
     read, and a per-attempt turn budget a retry has just raised. Resolving the
     phase is that runner's job; reaching the backend is this one's.
@@ -272,7 +272,7 @@ def run_fix(
 
     Only phases shaped ``FIX`` may come through here: the retry hints and the
     ``produced()`` contract are both about work landing in the worktree, and a
-    read-only review phase belongs to ``review_phases.PhaseRunner``.
+    read-only review phase belongs to ``review.phases.PhaseRunner``.
     """
     spec = _require_shape(phase, PhaseShape.FIX, "run_fix")
 

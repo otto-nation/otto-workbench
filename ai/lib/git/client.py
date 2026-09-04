@@ -87,7 +87,7 @@ from core.proc import CmdResult
 # Subcommands whose output is a list of paths. git escapes a non-ASCII name in
 # that output unless told otherwise, and an escaped name is not a pathspec a
 # later `git add` can resolve — so a fix touching such a file is staged as
-# nothing and reported as done. `review_fix` passed this flag by hand at one of
+# nothing and reported as done. `review.fix` passed this flag by hand at one of
 # the sites that needed it; applying it to the subcommand rather than to the
 # caller is what stops the next one from forgetting.
 _PATH_LISTING = frozenset({"diff", "ls-files", "status"})

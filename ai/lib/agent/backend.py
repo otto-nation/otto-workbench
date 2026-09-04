@@ -112,10 +112,10 @@ def _require_cwd(cwd: str, entry_point: str) -> None:
     set and has no way to narrow it.
     """
     if not cwd:
-        raise ValueError(f"ai_backend.{entry_point}() requires a non-empty cwd")
+        raise ValueError(f"agent.backend.{entry_point}() requires a non-empty cwd")
     if not Path(cwd).is_dir():
         raise ValueError(
-            f"ai_backend.{entry_point}() cwd is not a directory: {cwd}"
+            f"agent.backend.{entry_point}() cwd is not a directory: {cwd}"
         )
 
 

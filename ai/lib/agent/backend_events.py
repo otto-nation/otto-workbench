@@ -35,7 +35,7 @@ class StreamEvent:
 #
 # Owned here rather than in each backend: an agent that never calls one of
 # these produced nothing, and both the Pi steer and the post-hoc diagnosis in
-# review_agent need to ask the same question.
+# agent.session need to ask the same question.
 
 WRITE_TOOL_NAMES = frozenset({"edit", "multiedit", "notebookedit", "write"})
 

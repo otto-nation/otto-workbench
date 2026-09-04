@@ -1,7 +1,7 @@
 """Evaluation scoring, aggregation, and baseline comparison.
 
 Task-agnostic: what a run *is* and how it is scored belongs to the task
-(`eval_scoring_review`, `eval_scoring_cifix`, ...). What lives here is the shape
+(`eval.scoring_review`, `eval.scoring_cifix`, ...). What lives here is the shape
 of a score, the statistics over repeated runs, and the baseline diff — the parts
 every task shares.
 

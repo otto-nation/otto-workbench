@@ -95,7 +95,7 @@ def cache_dir(consumer: str | None = None) -> Path:
 def trail_dir() -> Path:
     """Every trail, one root: ``<state>/trail/YYYY-MM.jsonl``.
 
-    Mirrors ``ai_usage.ledger_dir`` and for the same reasons — rotation falls
+    Mirrors ``agent.usage.ledger_dir`` and for the same reasons — rotation falls
     out of the filename and nothing needs a pruning job. The monthly naming
     also lets ``otto-log --since`` skip whole files by name instead of
     opening every one of them.

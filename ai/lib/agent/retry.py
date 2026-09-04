@@ -4,7 +4,7 @@ An agent that runs to its own conclusion having never called a write tool was
 thrashing, not working.  The review pipeline learned to diagnose that and give
 it one more attempt with a hint naming the write mechanism; every `pr` script
 that drives an agent needs the same guard, so it lives here rather than inside
-review_retry.
+review.retry.
 
 Two shapes are supported, matching the two ways the `pr` scripts call an agent:
 

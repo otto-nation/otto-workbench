@@ -3,7 +3,7 @@
 Loads each rule file under `ai/guidelines/rules/` into a keyword set and finds
 the rule nearest a piece of comment text by keyword overlap. `extract_keywords`
 is the vocabulary primitive both rule loading and bullet matching are built
-on — `retro_report` reuses it to find which bullet inside a matched rule is
+on — `retro.report` reuses it to find which bullet inside a matched rule is
 closest to the comment being annotated.
 """
 

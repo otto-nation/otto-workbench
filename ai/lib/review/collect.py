@@ -8,14 +8,14 @@ pre-collected data block a phase sends.
 `fetch_branch_metadata` is here for the same reason: a self-review with no PR
 behind it describes itself out of the worktree, off the same fork point and the
 same `worktree_diff` the collection uses. Its counterpart for a branch that does
-have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
+have a PR is `gh.pr_reads.fetch_pr_metadata`, and both fill in `PRMetadata`.
 
-The bounds on what a prompt may carry are `review_budget`'s, not this module's —
+The bounds on what a prompt may carry are `review.budget`'s, not this module's —
 `_fit_to_budget` is still here, and is the one place that decides which files a
-review can afford to inline, reading the same numbers `review_prompt` budgets
-against. How the collected files are ranked and divided is `review_grouping`'s,
-what a phase does with the block is `review_prompt`'s, and the records this
-fills in are `review_types`' and `gh_types`'.
+review can afford to inline, reading the same numbers `review.prompt` budgets
+against. How the collected files are ranked and divided is `review.grouping`'s,
+what a phase does with the block is `review.prompt`'s, and the records this
+fills in are `review.types`' and `gh.types`'.
 """
 
 # doc-group: pipeline
@@ -121,7 +121,7 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
 
     ``base`` is the branch to measure against; it is resolved from the
     repository's default when the caller has none. This is the no-PR
-    self-review's route to the same `PRMetadata` `review_github` fetches, so a
+    self-review's route to the same `PRMetadata` `gh.pr_reads` fetches, so a
     phase downstream cannot tell which one filled it in.
     """
     # Resolved rather than defaulted to "main" in the signature: this is the

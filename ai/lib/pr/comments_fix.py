@@ -1,7 +1,7 @@
 """The comment fix pass's domain, and the closeout it owes the PR.
 
-What the pass did about each thread is a :class:`~pr_fix.FixRecord` on this
-domain, in the :class:`~pr_fix.ItemOutcome` vocabulary all three fix passes
+What the pass did about each thread is a :class:`~pr.fix.FixRecord` on this
+domain, in the :class:`~pr.fix.ItemOutcome` vocabulary all three fix passes
 write — so a consumer asking "what became of this item" reads one shape
 whichever pass produced it. What is left here is what only this pass has: a
 reply queue, a summary comment, a PR description draft and a deferred-issue
@@ -10,11 +10,11 @@ trio, none of which the other domains have anything to say about.
 ``reviewers`` is here for the same reason. Which login opened a thread is the
 item as GitHub handed it over, not a fact about what the pass did with it, so
 it stays on the domain rather than widening the record every pass shares — the
-line :class:`~pr_fix.ItemOutcome` draws for a CI job name and a finding's
+line :class:`~pr.fix.ItemOutcome` draws for a CI job name and a finding's
 severity too. It is keyed by outcome id, so the two accumulate together.
 
-The module is above ``pr_domains`` rather than inside it: ``FixSummary`` is a
-:class:`~pr_domains.Domain` and needs the base class, while the generic record
+The module is above ``pr.domains`` rather than inside it: ``FixSummary`` is a
+:class:`~pr.domains.Domain` and needs the base class, while the generic record
 that base class carries has to be declared below it. Splitting on that line
 keeps the imports one-way.
 

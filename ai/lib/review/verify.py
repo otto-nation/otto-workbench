@@ -21,7 +21,7 @@ the quote no longer has, which makes a verbatim quote fail to match itself.
 The disprove gate is adversarial. Each must-fix and should-fix finding is
 challenged by an agent, and one that cannot survive the challenge is dropped
 before the review is posted. Reading that agent's verdicts back and applying
-them is here; whether the gate runs at all is `review_phases`'.
+them is here; whether the gate runs at all is `review.phases`'.
 
 The synthesis agent wrote the ``## Summary`` and the ``## Verdict`` before
 either gate ran, so both can describe findings that are no longer in the file.
@@ -42,13 +42,13 @@ and the review says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review_verdict`'s. The
-finding-line grammar read here is `review_grammar`'s: `VERIFY_FINDING_RE` is a
+Which verdict a tally supports in the first place is `review.verdict`'s. The
+finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same location vocabulary, and the two have to agree or
 a finding parses one way and verifies against the other — which is why they
 live next to each other rather than here.
 
-Where a finding's body ends is `review_spans`'s. Both gates walk the review
+Where a finding's body ends is `review.spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and

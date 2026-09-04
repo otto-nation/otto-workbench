@@ -1,10 +1,10 @@
 """Turning locally-saved reviews into the same comment shape GitHub PRs produce.
 
-Walks the reviews root `review_paths` already tracks and reads each review's
-findings into the retro's per-repo, per-PR comment structure, so `retro_report`
+Walks the reviews root `review.paths` already tracks and reads each review's
+findings into the retro's per-repo, per-PR comment structure, so `retro.report`
 renders a local self-review indistinguishably from a GitHub one. Deciding
-which rule a finding is nearest to is `retro_rules`'; matching the comment to
-the exact bullet on the page is `retro_report`'s.
+which rule a finding is nearest to is `retro.rules`'; matching the comment to
+the exact bullet on the page is `retro.report`'s.
 """
 
 # doc-group: platform

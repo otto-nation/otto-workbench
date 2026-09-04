@@ -1,7 +1,7 @@
 """What a GitHub PR read returns: the PR's own metadata, and its conversation.
 
 Below the `gh`-layer module that fetches both, so the shapes a read answers
-with sit at or beneath the layer that answers. `review_collect` builds
+with sit at or beneath the layer that answers. `review.collect` builds
 the same `PRMetadata` from local git for a branch with no PR behind it, which is
 why the type is not spelled in terms of the API's field names.
 """

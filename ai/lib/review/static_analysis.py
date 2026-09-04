@@ -150,7 +150,7 @@ def format_static_analysis(results: list[CheckerResult]) -> str:
 
     Empty when no checker ran at all — there is nothing to report, rather than
     nothing to report *yet*. The heading and where the section sits belong to
-    `review_document.set_section`.
+    `review.document.set_section`.
     """
     if not results:
         return ""

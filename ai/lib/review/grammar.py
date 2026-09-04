@@ -28,11 +28,11 @@ position.
 
 Exact, and deliberately so: a carry-forward asks whether this is the same
 finding as one in the prior review, and a fuzzy answer there silently merges two
-findings about two lines of one file. `review_dedup` is the fuzzy answer, for
+findings about two lines of one file. `review.dedup` is the fuzzy answer, for
 the different question of whether a finding is about to be posted twice.
 
-What a document is assembled from is `review_document`'s; what a finding means
-once parsed is `review_types`'.
+What a document is assembled from is `review.document`'s; what a finding means
+once parsed is `review.types`'.
 """
 
 # doc-group: findings
@@ -51,7 +51,7 @@ from review.types import (
 # ── What a declaration is spelled with ───────────────────────────────────────
 
 # The one character class a finding ID's severity key is read through, derived
-# from the severities `review_types` declares rather than spelled out beside
+# from the severities `review.types` declares rather than spelled out beside
 # them. Every reader here matched a key its own way — `[MSNI]` in four,
 # `[A-Z]` in two, `\w+` in one — so a key outside the set was a finding ID to
 # three of them and not to the rest.
@@ -63,7 +63,7 @@ SEVERITY_KEY = f"[{''.join(severity.key for severity in SEVERITIES)}]"
 # The severity's human label, as a posted comment carries it after the ID. Read
 # off `SEVERITIES` for the same reason `SEVERITY_KEY` is: this is the half of
 # the posted spelling the readers below have to recognise, and a label added to
-# `review_types` that they do not know is a comment none of them match.
+# `review.types` that they do not know is a comment none of them match.
 _SEVERITY_LABEL = "|".join(re.escape(severity.label) for severity in SEVERITIES)
 
 # The label as the readers see it, between the ID's `]` and the closing `**`.
@@ -121,7 +121,7 @@ def strip_sid_markers(text: str) -> str:
     says, so a document on its way to a reader loses them. The one exception is
     a posted inline comment, which keeps its marker so a later round can find
     the thread again — GitHub renders an HTML comment as nothing, and the reader
-    sees the same words either way. `review_dedup` strips it back off before
+    sees the same words either way. `review.dedup` strips it back off before
     scoring, since the fresh finding it is compared against carries none.
     """
     return _SID_SPACED_RE.sub("", text)
@@ -173,7 +173,7 @@ def posted_finding_tag(posted_id: str, severity: str) -> str:
     """The bold tag a posted comment's finding opens with, severity label included.
 
     The other spelling, and the reason it is written here rather than where it
-    is posted from: it was spelled at two sites in `review_format` and read by
+    is posted from: it was spelled at two sites in `review.format` and read by
     nothing that understood it, so the label the writer added was the label
     every reader tripped over. `BOLD_FINDING_ID_RE` and `BODY_FINDING_RE` accept
     what this emits, and the label comes from the same `SEVERITIES` those

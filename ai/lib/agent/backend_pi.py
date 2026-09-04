@@ -1,4 +1,4 @@
-"""Pi CLI backend for ai_backend.
+"""Pi CLI backend for agent.backend.
 
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `pi` commands and running them as subprocesses.

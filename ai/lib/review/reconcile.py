@@ -4,8 +4,8 @@ Given a prior review and this round's merged output, works out for every prior
 finding whether it was fixed, still stands, was declined, or was passed over
 with nobody accounting for it — and where that answer came from.
 
-The merge that produces this round's output is `review_merge`'s; the identity
-two findings are matched on is `review_grammar`'s. This module only decides.
+The merge that produces this round's output is `review.merge`'s; the identity
+two findings are matched on is `review.grammar`'s. This module only decides.
 
 A re-review ends with a `## Prior findings` ledger: one line per finding the
 previous review reported, saying whether the change fixed it, left it open, or
@@ -36,7 +36,7 @@ looking like a fresh set of prior findings.
 The ledger this module reads is not the only account of what became of a
 prior finding. Every finding posted inline opened a review thread,
 independent of that ledger, and what the author did with that thread is the
-other one — `review_reply_threads` reads it.
+other one — `review.reply_threads` reads it.
 """
 
 # doc-group: findings

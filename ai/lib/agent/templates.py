@@ -2,7 +2,7 @@
 
 Every agent invocation in the workbench is prompted from a file in the same
 directory, and each caller used to find and render it for itself: the review
-pipeline through ``review_prompt``, the comments fix pass and the CI fix pass
+pipeline through ``review.prompt``, the comments fix pass and the CI fix pass
 through a ``TEMPLATE_DIR`` and a ``Template(...).safe_substitute`` of their own.
 Three spellings of one path is three chances for a moved template to break one
 caller and not the others.

@@ -6,7 +6,7 @@ template and the PR header cost. This module owns each of those numbers, so a
 collector deciding what to gather and a phase deciding what to send read the
 same figure rather than two that drifted apart.
 
-`agent_types.RetryBudget` is a different thing that shares the word — it
+`agent.types.RetryBudget` is a different thing that shares the word — it
 budgets retries, not bytes.
 """
 
@@ -30,7 +30,7 @@ MAX_DELTA_DIFF_BYTES = 80_000
 MAX_DELTA_LOG_BYTES = 20_000
 
 # ceiling: a flat reserve for everything in a prompt that is not preflight data —
-# the template, the PR header, prior reviews, reply threads. `review_prompt` now
+# the template, the PR header, prior reviews, reply threads. `review.prompt` now
 # measures those sections exactly before it budgets, so this double-counts them:
 # on a typical prompt it holds back ~116KB nothing spends, and the review is
 # smaller than it had room to be. Shrinking it is not free — every byte returned
@@ -56,7 +56,7 @@ MAX_REVIEW_BODY_LEN = 200
 # what the agent reviews — so the tail costs bytes no reader spends. Both lists
 # were uncapped until a rebased branch produced 4,974 delta files for a 107-file
 # PR and 260KB of `- \`path\`` lines pushed the synthesis prompt 75% past its
-# budget. `review_collect` bounds the count itself now, by narrowing the delta to
+# budget. `review.collect` bounds the count itself now, by narrowing the delta to
 # the review's surface; this bounds the rendering, so no future way of
 # over-counting can spend the whole budget on it.
 MAX_DELTA_LIST_ENTRIES = 200

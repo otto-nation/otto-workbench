@@ -3,7 +3,7 @@
 Takes the scan's collected repos, per-rule match counts and cross-PR themes
 and lays them out as headed sections — comments by repo, a rules-coverage
 table, and repeated themes. Deciding which rule a comment is nearest to is
-`retro_rules`'; this module only renders what was already decided.
+`retro.rules`'; this module only renders what was already decided.
 """
 
 # doc-group: platform
@@ -145,7 +145,7 @@ def format_report(scan_data: dict, version: str) -> str:
 def best_matching_bullet(comment_body: str, rule: dict) -> str:
     """The bullet in `rule` closest to `comment_body`, or the rule's filename.
 
-    Called by both retro-scan's GitHub-comment path and `retro_reviews`'
+    Called by both retro-scan's GitHub-comment path and `retro.reviews`'
     local-finding path, so it is published rather than kept private to either.
     """
     comment_kw = extract_keywords(comment_body)

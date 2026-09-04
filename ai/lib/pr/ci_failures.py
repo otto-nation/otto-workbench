@@ -2,7 +2,7 @@
 """CI failure lifecycle tracking.
 
 Handles failure classification, progression tracking, and rendering for the
-ci-failures skill. State persistence is delegated to pr_domains.CIDomain.
+ci-failures skill. State persistence is delegated to pr.domains.CIDomain.
 """
 
 # doc-group: pr-state
@@ -551,7 +551,7 @@ def _carry_forward_item(
 def sync_ci_domain(domain, run: RunState):
     """Merge a new run into a CIDomain, preserving prior diagnosis and fix history.
 
-    Accepts a pr_domains.CIDomain and returns the updated CIDomain.
+    Accepts a pr.domains.CIDomain and returns the updated CIDomain.
     If a failure item existed in the prior run with a diagnosis or fix_sha,
     those values carry forward to the new run's matching item.
     """

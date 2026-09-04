@@ -1,8 +1,8 @@
 """Which directory holds which branch, and creating one when there is none.
 
-Worktree and bare-repo topology, split out of `pr_context` because the resolver
+Worktree and bare-repo topology, split out of `pr.context` because the resolver
 needs it rather than because it is part of resolving: nothing here reads a
-`ResolvedContext`, and every read goes to git or to worktrunk. `pr_sync` is the
+`ResolvedContext`, and every read goes to git or to worktrunk. `pr.sync` is the
 other half of that split and points the other way — it takes a resolved context
 and acts on it.
 

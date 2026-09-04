@@ -2,15 +2,15 @@
 
 Each takes the job and the run's state, does that phase's work, and reports
 what it spent. They are ordered here as the run orders them, but none of them
-calls the next: sequencing is `review_pipeline`'s, so a phase can be skipped,
+calls the next: sequencing is `review.pipeline`'s, so a phase can be skipped,
 resumed, or budgeted out without any other phase knowing.
 
-`review_phases` owns the phase runner, the group fan-out, and the disprove and
+`review.phases` owns the phase runner, the group fan-out, and the disprove and
 synthesis rules this module drives without reimplementing: invoking an agent,
 running the group phase (`_phase_group_reviews`), deciding whether the
 disprove gate runs (`_should_disprove`), and sizing the synthesis turn budget
 (`_synthesis_max_turns`) all read from there. Writing the result to the review
-file is `review_outcome`'s.
+file is `review.outcome`'s.
 """
 
 # doc-group: pipeline

@@ -3,8 +3,8 @@
 A fix pass cannot watch an agent work, so it gives it a checklist and reads the
 checklist afterwards to find out what happened. That file is the interface
 between the two, and this module is both halves of it: :func:`render` writes
-one from :class:`~fix_types.FixItem`s, :func:`parse` reads one back as
-:class:`~pr_fix.ItemOutcome`s, and the format itself is stated once, here.
+one from :class:`~fix.types.FixItem`s, :func:`parse` reads one back as
+:class:`~pr.fix.ItemOutcome`s, and the format itself is stated once, here.
 
 Three properties the formats this replaces did not have:
 
@@ -13,7 +13,7 @@ touch. A parse therefore returns outcomes keyed by item rather than a count of
 ticked boxes, which is what lets a pass say *which* work it did and lets a later
 round reconcile against it.
 
-**The vocabulary is** :class:`~pr_fix.FixOutcome`. A single checkbox is a
+**The vocabulary is** :class:`~pr.fix.FixOutcome`. A single checkbox is a
 boolean, and a boolean cannot tell an agent that ran out of turns from one that
 read the item and disagreed with it. Three boxes can, and every domain gets the
 distinction rather than only the one whose format happened to encode it.

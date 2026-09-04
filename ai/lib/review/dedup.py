@@ -5,7 +5,7 @@ Jaccard similarity, and filters out duplicates before posting.
 
 Fuzzy, and deliberately so: this is the read that decides whether a finding
 about to be posted is one a reviewer already made in different words, so it
-compares word sets rather than identities. `review_grammar.FindingIdentity` is
+compares word sets rather than identities. `review.grammar.FindingIdentity` is
 the exact answer, for carrying a finding forward across reviews of the same
 branch — two findings that are the same finding hash the same there, and a
 near-duplicate does not.

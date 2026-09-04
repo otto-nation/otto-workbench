@@ -6,10 +6,10 @@ typed thread outcomes into state, one wrote checkbox counts, one rewrote
 checkboxes inside the review markdown. The types here are the shape all three
 settle on. A pass records one :class:`ItemOutcome` per item it was handed and
 one :class:`FixRecord` per run, and every domain carries a record because
-:class:`~pr_domains.Domain` declares the field — so a domain that gains a fix
+:class:`~pr.domains.Domain` declares the field — so a domain that gains a fix
 pass gains somewhere to record it by declaring nothing.
 
-This module is below the domains rather than beside them: ``pr_domains`` imports
+This module is below the domains rather than beside them: ``pr.domains`` imports
 it, and what it imports back — :class:`~land.CommitStatus`, the vocabulary a
 landing reports in — comes from ``land``, which sits below both. That is what
 lets the record hang off the base class without the domains and the vocabulary
@@ -27,7 +27,7 @@ instead of each re-listing the members it should believe.
 :class:`SettledBy` records the other half — who reached the outcome, which is
 what tells the pass's own work from a reconciliation or an operator's say-so.
 
-The CI and comment passes both write one, through :mod:`fix_engine` — the
+The CI and comment passes both write one, through :mod:`fix.engine` — the
 shared pipeline all three now run on, and the thing that produces the
 :class:`ItemOutcome` list a record is assembled from. Running on the engine is
 not the same as recording through these types: the review-findings pass

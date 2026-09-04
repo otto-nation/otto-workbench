@@ -2,7 +2,7 @@
 
 Handles thread lifecycle state computation and GitHub data fetching for the
 pr-comments skill. The ledger those threads are recorded in, and the file it
-lives in, belong to `pr_comments_state`.
+lives in, belong to `pr.comments_state`.
 
 A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to

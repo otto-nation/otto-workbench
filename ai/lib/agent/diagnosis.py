@@ -41,7 +41,7 @@ class DiagnosisKind(StrEnum):
     BUDGET_EXCEEDED = "budget_exceeded"
     OUTPUT_MISSING = "output_missing"
     # Reached before any agent starts: the phase's prompt is over the token
-    # budget with every lever in `review_prompt` already pulled. Its own kind
+    # budget with every lever in `review.prompt` already pulled. Its own kind
     # because nothing an agent does changes it — the retry paths would re-render
     # the same bytes, so the phase is failed rather than attempted.
     PROMPT_TOO_LARGE = "prompt_too_large"

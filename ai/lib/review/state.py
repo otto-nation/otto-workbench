@@ -286,7 +286,7 @@ def build_failures_body(state: "PipelineState") -> str:
 
     Empty when nothing failed, which is what removes the section from a review
     whose rerun fixed it. The heading and where the section sits belong to
-    `review_document.set_section` — see `set_failures_section`.
+    `review.document.set_section` — see `set_failures_section`.
     """
     rows: list[tuple[str, str, str]] = []
 

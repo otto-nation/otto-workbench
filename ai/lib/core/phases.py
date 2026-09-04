@@ -18,7 +18,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 # Prefix on every per-phase override env key. Read by `Phase`'s two derived
-# keys and by `agent_phases`' three global ones.
+# keys and by `agent.phases`' three global ones.
 #
 # ``WORKBENCH_AI_`` rather than the old ``CLAUDE_REVIEW_``: these keys size
 # agent invocations across the whole workbench, not just reviews, and the
@@ -46,8 +46,8 @@ class PhaseDomain(StrEnum):
 class PhaseShape(StrEnum):
     """Which backend entry point a phase is run through.
 
-    The three shapes are the three things ``ai_backend`` can do, so a phase's
-    shape decides which ``agent_invoke`` function will accept it. A read-only
+    The three shapes are the three things ``agent.backend`` can do, so a phase's
+    shape decides which ``agent.invoke`` function will accept it. A read-only
     reviewer handed to the fix runner, or a stateless prompt handed a session
     log it will never write, is a mistake the shape catches at the owner rather
     than in a backend argument that is silently ignored.
@@ -62,7 +62,7 @@ class Phase(StrEnum):
     """One agent invocation the workbench sizes from a registry entry.
 
     Both the config key and the override env keys are derived from the member's
-    value, so adding a phase means one member here plus one ``agent_registry``
+    value, so adding a phase means one member here plus one ``agent.registry``
     entry — callers, preflight checks, and failure hints all read the derived
     keys rather than spelling them out. Deriving both from one place is what
     keeps ``agent.phases.<phase>`` and ``WORKBENCH_AI_<PHASE>_*`` naming the
@@ -132,7 +132,7 @@ class AgentKind(StrEnum):
 
     Every member here is a review persona forbidden from editing the workspace.
     Phases that write to the branch pass ``None`` instead of an ``AgentKind`` —
-    see ``agent_invoke.run_fix``.
+    see ``agent.invoke.run_fix``.
     """
 
     REVIEWER = "reviewer"

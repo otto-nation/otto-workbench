@@ -117,7 +117,7 @@ def _git_step(git: list[str], step: list[str], env: dict[str, str]) -> None:
     instead, so a fixture that could not be built is not read as a repo git
     objected to.
 
-    `proc.run` rather than `git_client`: the client has no `env` parameter, and
+    `proc.run` rather than `git.client`: the client has no `env` parameter, and
     the whole point here is running with the inherited `GIT_DIR` and friends
     stripped. It also derives its bound from the subcommand, which would put
     `init` and `remote add` on `LOCAL`.

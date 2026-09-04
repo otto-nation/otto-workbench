@@ -11,10 +11,10 @@ prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
 costs nothing.
 
-One builder per phase assembles the sections `review_prompt_sections` and
-`review_prompt_prior` render into a `PromptBuilder`. Which phase reaches which
+One builder per phase assembles the sections `review.prompt_sections` and
+`review.prompt_prior` render into a `PromptBuilder`. Which phase reaches which
 builder, which template it renders, and which file the agent is told to write
-are `review_registry`'s: it holds the phase-to-builder table and
+are `review.registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
 """
 
@@ -456,9 +456,9 @@ def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
 
 # ── Per-phase prompt builders ────────────────────────────────────────────────
 #
-# One builder per phase, registered in `review_registry`'s table. Each is
+# One builder per phase, registered in `review.registry`'s table. Each is
 # handed the job, the sections every prompt shares, the phase's own extras, and
-# the path its agent writes to — which `review_registry.build_prompt` derives
+# the path its agent writes to — which `review.registry.build_prompt` derives
 # from the phase spec, so no caller passes an output path in. Two of them serve
 # both review modes; `job.mode` is what they read to tell the modes apart.
 
@@ -648,7 +648,7 @@ def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
 class PromptTooLarge(RuntimeError):
     """A rendered prompt that exceeds the budget with every lever already pulled.
 
-    Raised by `review_registry.build_prompt` after the prompt and its stats are
+    Raised by `review.registry.build_prompt` after the prompt and its stats are
     written, so the oversized prompt is on disk to look at. The alternative —
     logging "EXCEEDS budget" and sending it anyway — spends a phase's cost on a
     request the model truncates or rejects, and reports whatever comes back as

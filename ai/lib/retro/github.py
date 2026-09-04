@@ -2,8 +2,8 @@
 
 One GraphQL round trip per repo where the API allows it, falling back to REST
 when it does not, flattened into the plain comment dicts the rest of the retro
-reads. Deciding which comments matter is `retro_rules`'; rendering them is
-`retro_report`'s.
+reads. Deciding which comments matter is `retro.rules`'; rendering them is
+`retro.report`'s.
 
 Normalising a raw comment's shape and dropping the noise (approvals,
 thumbs-up, a bare "nit") is part of producing that plain comment dict, so it

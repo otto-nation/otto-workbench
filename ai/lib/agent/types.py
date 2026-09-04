@@ -8,7 +8,7 @@ in — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
 ``PhaseSpec``, the shape a phase's built-in defaults take, and the presets and
 budgets built from it.
 
-Which phases exist, and what each one's defaults are, is ``agent_registry``'s
+Which phases exist, and what each one's defaults are, is ``agent.registry``'s
 job. The vocabulary is a closed set of names that grows only when a new kind of
 knob appears; the registry is an inventory that grows with the workbench.
 Keeping them apart is also what stops the enum reaching back into the registry
@@ -16,13 +16,13 @@ to answer questions about itself — a ``PhaseSpec`` answers those now.
 
 It imports nothing but ``phases`` and the standard library. The vocabulary used
 to sit here too, alongside the review pipeline's shared-helper module's reach
-into the PR state machine, the usage ledger and the git client; ``ai_backend``
+into the PR state machine, the usage ledger and the git client; ``agent.backend``
 needed one enum and took all of that with it, and ``workbench_config`` needed
 three. Splitting the vocabulary into its own module below both let each import
 only the names, not the shapes built from them.
 
 Resolving a spec against the config file and the environment is
-``agent_phases``'s job — that layer needs ``workbench_config``, which needs
+``agent.phases``'s job — that layer needs ``workbench_config``, which needs
 this one.
 """
 
@@ -188,7 +188,7 @@ class PhaseSpec:
     gathering, so a higher effort has nothing to buy them.
 
     ``shape`` names the backend entry point the phase runs through, and so
-    which ``agent_invoke`` function will accept it. ``FIX`` is the shape that
+    which ``agent.invoke`` function will accept it. ``FIX`` is the shape that
     writes to the branch; every ``AgentKind`` is a reviewer persona instructed
     never to modify source files, so such a phase runs with no agent at all —
     the default agent, which can edit.
@@ -251,7 +251,7 @@ class PhaseSpec:
         outside a review (a fix pass, a triage) ask without inventing a mode it
         has no notion of. Raises for a phase that declares no template at all,
         the way ``_stem`` does for a domain with no review artifacts: a silent
-        empty string reaches ``agent_templates.render`` as a missing file, one
+        empty string reaches ``agent.templates.render`` as a missing file, one
         layer further from the declaration that is actually wrong. A mapping
         missing the mode asked for raises the same way rather than as a bare
         ``KeyError``, which names the mode but not the phase that owes it one.

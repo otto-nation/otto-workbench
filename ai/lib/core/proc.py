@@ -85,7 +85,7 @@ standard library, and a module called `cmd` there would shadow the stdlib
 `cmd` that `pdb` imports.
 
 Stdlib only, deliberately. This is the module everything else in `ai/lib`
-should be free to depend on, and pulling in `log`, `ai_usage`, or
+should be free to depend on, and pulling in `log`, `agent.usage`, or
 `workbench_paths` from here would make that impossible.
 """
 
@@ -424,7 +424,7 @@ def run(
     answer for the same reason: the command produced no usable output, which is
     what a non-zero exit already means to every caller here. It comes back as
     `TIMEOUT_RETURNCODE` with the bound and the command quoted on stderr, so
-    `git_client.out`/`ok`/`lines` degrade to their defaults exactly as they do
+    `git.client.out`/`ok`/`lines` degrade to their defaults exactly as they do
     for any other failure and no call site needs a handler it does not have.
 
     Whatever the process managed to write before it was killed is preserved —
@@ -443,7 +443,7 @@ def run(
 
     `env` replaces the child's environment outright rather than extending the
     parent's — `subprocess.run`'s own contract, and the only shape that lets a
-    caller *remove* a variable. `eval_task` builds its fixture repo with the
+    caller *remove* a variable. `eval.task` builds its fixture repo with the
     inherited `GIT_DIR` and friends stripped, and merging over `os.environ`
     here would put them back and quietly make the fixture a worktree of this
     checkout. A caller that wants to add rather than replace passes

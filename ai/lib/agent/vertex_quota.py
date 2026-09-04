@@ -5,7 +5,7 @@ configured Vertex AI project/region before any agent is spawned.  Catches
 misconfigured model ids (nothing the project can serve, not even the model's
 family) within ~1s instead of burning ~6 minutes on retries.
 
-Reached through ``ai_backend.preflight()`` — nothing outside the Claude
+Reached through ``agent.backend.preflight()`` — nothing outside the Claude
 backend should import this module.
 """
 

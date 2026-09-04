@@ -4,13 +4,13 @@ Parses cost and token usage out of backend session logs. Backend-neutral: the
 Claude Code CLI and the Pi CLI both emit `result` records, in slightly different
 spellings, and this module is the single place that reconciles them.
 
-Lives below the review layer so ai_backend can depend on it without inverting
+Lives below the review layer so agent.backend can depend on it without inverting
 the dependency.
 
 Every AI call made through the workbench appends one record to a monthly JSONL
 file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
 the task that made the call. Python entry points record automatically through
-`ai_backend`; the two shell paths that cannot use it — `run-auto-task`, which
+`agent.backend`; the two shell paths that cannot use it — `run-auto-task`, which
 needs slash commands, and `AI_COMMAND`, which is pluggable — go through
 `ai-usage-log`.
 

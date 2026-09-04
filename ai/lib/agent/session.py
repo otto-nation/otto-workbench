@@ -1,13 +1,13 @@
 """What an agent run left behind: its cost, its diagnosis, its salvage.
 
 Everything here reads a session log after the fact. Running the agent is
-``agent_invoke``'s job and resolving which model it ran with is
-``agent_phases``'s; this module is what the pipeline asks once the log exists —
+``agent.invoke``'s job and resolving which model it ran with is
+``agent.phases``'s; this module is what the pipeline asks once the log exists —
 what the run cost, why it produced nothing, whether the document it was denied
 permission to save can still be recovered.
 
 The split matters for the quota retry, whose two halves live apart: this module
-reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
+reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
 """
 
 # doc-group: pipeline
@@ -119,7 +119,7 @@ def _tool_use_is_observable(records: list[dict]) -> bool:
 def diagnose_missing_output(log_path: str) -> Diagnosis:
     """Why an agent run left no output, read from its session log.
 
-    Public because `agent_retry` decides retryability from the returned kind.
+    Public because `agent.retry` decides retryability from the returned kind.
     """
     if not Path(log_path).exists():
         return Diagnosis(DiagnosisKind.NO_SESSION_LOG)
@@ -201,7 +201,7 @@ def _collect_denied_contents(log_path: str) -> list[str]:
 def try_recover_output(log_path: str, output_path: str) -> bool:
     """Salvage a document the agent wrote but was denied permission to save.
 
-    Public because `agent_retry` runs this before writing a run off as
+    Public because `agent.retry` runs this before writing a run off as
     unproductive — the content is in the denial record either way.
     """
     if not Path(log_path).exists():
@@ -227,7 +227,7 @@ def _has_quota_retry(records: list[dict]) -> bool:
 def is_quota_error(log_path: str) -> bool:
     """Whether this session log shows the API turning the agent away on quota.
 
-    Public because ``agent_invoke`` decides the backoff and this module owns
+    Public because ``agent.invoke`` decides the backoff and this module owns
     reading a session log — the two halves of the same retry.
     """
     if not Path(log_path).exists():

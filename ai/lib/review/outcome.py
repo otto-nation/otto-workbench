@@ -7,8 +7,8 @@ reached, and getting those to agree is this module's whole job — a header that
 says the run completed while the sidecar beside it says otherwise is a document
 nobody can act on.
 
-Deciding which of those paths a run takes is `review_steps`'; sequencing the
-phases that lead there is `review_pipeline`'s.
+Deciding which of those paths a run takes is `review.steps`'; sequencing the
+phases that lead there is `review.pipeline`'s.
 """
 
 # doc-group: pipeline
@@ -73,7 +73,7 @@ def _write_review_sidecar(job: ReviewJob):
     Called from every branch that reaches a review file, so the only timestamp
     it can honestly stamp is the run's own start, which it carries rather than
     takes. That a review came of the run is a separate claim, made once at the
-    end by `review_paths.stamp_reviewed` and only when the run got there.
+    end by `review.paths.stamp_reviewed` and only when the run got there.
     """
     write_review_meta(Path(job.artifact_dir), _job_meta(job))
 

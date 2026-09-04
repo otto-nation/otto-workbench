@@ -5,12 +5,12 @@ composes the sections it wants without knowing how any of them is built —
 nothing in this module decides which sections a phase asks for or what order
 they run in.
 
-Which sections a phase asks for is `review_prompt`'s, and how much room they
-get is `review_budget`'s. What a prompt says about the *prior* review — the
+Which sections a phase asks for is `review.prompt`'s, and how much room they
+get is `review.budget`'s. What a prompt says about the *prior* review — the
 scoped findings, the ledger instruction, the thread annotations — is
-`review_prompt_prior`'s.
+`review.prompt_prior`'s.
 
-Not to be confused with `review_sections`, which is the posting pipeline's
+Not to be confused with `review.sections`, which is the posting pipeline's
 config-driven registry of sections already written to a review document —
 that module reads what an agent wrote, this one decides what an agent is
 shown before it writes anything.

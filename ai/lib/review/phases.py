@@ -2,14 +2,14 @@
 
 A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
-`agent_registry` and `agent_phases`, which the whole workbench shares. This module
+`agent.registry` and `agent_phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
 one review's worktree, session log and throttle, and `run_phase`, which drives
 one of them end to end.
 
 Running an agent phase is the same nine steps whichever phase it is, so there is
 one function rather than one per phase. What differs is what its artifact means
-afterwards, and that is `review_registry`'s table, read through `read_scan` so
+afterwards, and that is `review.registry`'s table, read through `read_scan` so
 the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
@@ -17,9 +17,9 @@ previously-skipped sweep are all ways of running the group phase, and they
 share the executor and its budget rules.
 
 What a phase *produces* is somebody else's problem: sequencing the phases into
-a run is `review_pipeline`'s, deciding what each phase's output means for the
-run is `review_steps`', and writing the result to the review file is
-`review_outcome`'s.
+a run is `review.pipeline`'s, deciding what each phase's output means for the
+run is `review.steps`', and writing the result to the review file is
+`review.outcome`'s.
 """
 
 # doc-group: pipeline
@@ -215,7 +215,7 @@ def _scan(phase: Phase) -> PhaseScan:
 
     Raises the way `build_prompt` and `PhaseSpec.template_for` do rather than
     letting a bare `None` through: a phase added to the registry but not to
-    `review_registry` is a missing declaration, and the message should say so
+    `review.registry` is a missing declaration, and the message should say so
     at the table rather than at whichever line first dereferenced it.
     """
     entry = for_phase(phase)
@@ -252,7 +252,7 @@ def run_phase(
     what landed — comes off the phase's registry entry.
 
     Only for a phase that writes an artifact of its own. `single` and
-    `synthesis` write the review document instead, and `review_pipeline` drives
+    `synthesis` write the review document instead, and `review.pipeline` drives
     those, because deciding what the document says when an agent falls short is
     that module's job rather than this one's.
 

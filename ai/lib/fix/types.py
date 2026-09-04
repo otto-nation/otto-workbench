@@ -1,10 +1,10 @@
 """What a fix pass is handed, in terms no one domain owns.
 
-`pr_fix` says what became of an item; this says what the item was. The two sit
+`pr.fix` says what became of an item; this says what the item was. The two sit
 either side of the agent: a domain fetches its own work — reviewer threads, CI
 failures, review findings — and turns each unit of it into a
 :class:`FixItem`, the agent is handed those, and what comes back is an
-:class:`~pr_fix.ItemOutcome` per id.
+:class:`~pr.fix.ItemOutcome` per id.
 
 A `FixItem` carries only what the tracking file needs to render a section and
 key it back: an id, where the work is, a one-line label, and the body the
@@ -13,7 +13,7 @@ the domain's own, and stay on the domain's own item type — the same argument
 `ItemOutcome` already makes for the outcome side. What crosses this boundary is
 what every domain can answer.
 
-Like `pr_fix`, this sits below the domains: it imports the standard library and
+Like `pr.fix`, this sits below the domains: it imports the standard library and
 nothing else from ``ai/lib``, so the shared fix machinery can depend on it
 without pulling a review or comments layer in behind it.
 """

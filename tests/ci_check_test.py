@@ -901,7 +901,7 @@ def test_fetch_job_failure_no_artifact_for_lint(mock_ann, mock_log, mock_artifac
     mock_artifact.assert_not_called()
 
 
-# ── TAP failures ───────────────────────────────────────────────────────────
+# ── Test failures ──────────────────────────────────────────────────────────
 
 # Trimmed from run #2893: the failure near the top, and at the bottom the
 # warning traces and runner exit message the old extraction anchored on.
@@ -975,6 +975,60 @@ def test_job_logs_allow_escape_sequences():
     with patch("gh_client.api", return_value=CmdResult(0, "logs")) as mock_api:
         ci_check._fetch_job_logs("owner/repo", 10)
     assert mock_api.call_args.kwargs["allow_escape_sequences"] is True
+
+
+# Trimmed from run 32793239084: one failure raised inside a helper, so pytest
+# prints the caller's frame at 954 above the `_ _ _ _` rule and the raise site
+# at 937 below it, then the summary and the same generic runner message.
+_PYTEST_LOG = "\n".join([
+    "2026-08-25T00:21:37.7671403Z _____ TestRetry.test_retries_on_zero_progress _____",
+    "2026-08-25T00:21:37.7679183Z >       job = self._make_job(tmp_path)",
+    "2026-08-25T00:21:37.7679478Z tests/test_review_fix_pass.py:954:",
+    "2026-08-25T00:21:37.7679799Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _",
+    "2026-08-25T00:21:37.7705587Z E       NameError: name '_git' is not defined",
+    "2026-08-25T00:21:37.7706200Z tests/test_review_fix_pass.py:937: NameError",
+    "2026-08-25T00:21:37.7819142Z =========================== short test summary info ============================",
+    "2026-08-25T00:21:37.7822162Z FAILED tests/test_review_fix_pass.py::TestRetry::test_retries_on_zero_progress - NameError",
+    "2026-08-25T00:21:37.8604173Z ##[error]Process completed with exit code 1.",
+])
+
+_PYTEST_JOB = {"name": "Tests (pytest)", "conclusion": "failure", "databaseId": 11,
+               "_source_run_id": 100}
+
+
+def _pytest_items(log=_PYTEST_LOG):
+    """`_fetch_job_failure` for a pytest job whose only annotation is generic."""
+    with patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
+         patch("ci_check._fetch_job_logs", return_value=log):
+        return ci_check._fetch_job_failure("owner/repo", _PYTEST_JOB, {"databaseId": 100})["items"]
+
+
+def test_pytest_failure_reports_the_frame_that_raised():
+    item = _pytest_items()[0]
+    assert (item.file, item.line) == ("tests/test_review_fix_pass.py", 937)
+
+
+def test_pytest_failure_does_not_inherit_the_generic_annotation_location():
+    item = _pytest_items()[0]
+    assert item.file != _UNINFORMATIVE_ANNOTATIONS[0]["path"]
+    assert item.line != _UNINFORMATIVE_ANNOTATIONS[0]["start_line"]
+
+
+def test_pytest_failure_id_is_stable_across_runs():
+    assert _pytest_items()[0].id == _pytest_items()[0].id == "err-tests/test_review_fix_pass.py-937"
+
+
+def test_pytest_failure_headline_names_the_failing_test():
+    assert _pytest_items()[0].headline.startswith(
+        "FAILED tests/test_review_fix_pass.py::TestRetry::test_retries_on_zero_progress")
+
+
+def test_an_unlocated_pytest_failure_keys_on_its_test_name():
+    log = "\n".join([
+        "2026-08-25T00:21:37.7819142Z ====================== short test summary info =======================",
+        "2026-08-25T00:21:37.7822162Z FAILED tests/a_test.py::TestRetry::test_collected - RuntimeError",
+    ])
+    assert _pytest_items(log)[0].id == "Tests (pytest)-testretry-test-collected"
 
 
 def test_a_non_tap_log_still_keeps_the_original_annotations():

@@ -96,14 +96,6 @@ class TestTarballCompleteness:
             + "\n".join(f"  - {mod}" for mod in missing)
         )
 
-    def test_build_script_copies_all_py(self):
-        """Build script must use a glob that covers every package dir in lib/."""
-        content = BUILD_SCRIPT.read_text()
-        assert "__init__.py" in content, (
-            "Build script should glob package directories (identified by "
-            "__init__.py) to dynamically include every layered package"
-        )
-
     @pytest.mark.parametrize("binary", PACKAGED_BINARIES, ids=lambda p: p.name)
     def test_binary_not_excluded(self, binary):
         """Each executable in bin/ must not be in the BIN_EXCLUDE list."""

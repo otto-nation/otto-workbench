@@ -1,20 +1,34 @@
 """The sandboxes prove themselves: no test writes to the real state root, and
 no git command a test runs fires the machine's hooks. The shared subprocess
-runner every fixture goes through is pinned here too."""
+runner every fixture goes through is pinned here too.
+
+Contention is the other half. `run_checked` covers the git a *fixture* runs and
+raises where nobody can miss it; the hooks below cover the git the *code under
+test* runs, which `proc.run` hands back as an ordinary failure result and which
+therefore reaches the reader as whatever assertion trips next. Those tests drive
+the hook functions directly, and one of them checks that pytest has actually
+registered them — a misnamed hook is a function the suite still tests and the
+runner never calls."""
 
 import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
+import proc
 import workbench_paths
 
-from conftest import MachineContention, git_in, git_out, init_worktree, run_checked
+import conftest
+from conftest import (
+    MachineContention, git_in, git_out, init_worktree,
+    pytest_runtest_makereport, pytest_runtest_setup, run_checked,
+)
 
 
 def test_state_root_is_sandboxed_per_test(tmp_path):
@@ -134,3 +148,71 @@ def test_contention_reads_as_a_failure_rather_than_an_error():
     """An AssertionError subclass, so pytest reports it beside the other
     failures instead of as a collection-time explosion nobody attributes."""
     assert issubclass(MachineContention, AssertionError)
+
+
+def _reported(*, failed: bool):
+    """Drive conftest's makereport wrapper over a report and return the report.
+
+    A hookwrapper is a generator: pluggy runs it to the yield, hands back the
+    outcome and lets it finish. Standing in for pluggy is what lets these tests
+    say what the hook does to a failing report without arranging a failing test
+    to carry it.
+    """
+    report = SimpleNamespace(failed=failed, sections=[])
+    wrapper = pytest_runtest_makereport(item=None, call=None)
+    next(wrapper)
+    with pytest.raises(StopIteration):
+        wrapper.send(SimpleNamespace(get_result=lambda: report))
+    return report
+
+
+def _starve():
+    """A production `proc.run` the machine ends, as the code under test would."""
+    proc.run(["sleep", "5"], timeout=0.1)
+
+
+def test_a_starved_production_command_is_named_on_the_failure():
+    """The gap #1124 opened on: `land` ran its own `git commit`, the commit lost
+    its slot, and the mock assertion that tripped afterwards read as real."""
+    pytest_runtest_setup(item=None)
+    _starve()
+
+    (name, content), = _reported(failed=True).sections
+
+    assert MachineContention.__name__ in name
+    assert "sleep 5 — timed out after 0.1s" in content
+    assert "machine problem, not a test defect" in content
+
+
+def test_a_passing_test_is_not_annotated():
+    """A production command can be starved in a test that still passes, and
+    saying so there is noise attached to nothing."""
+    pytest_runtest_setup(item=None)
+    _starve()
+
+    assert _reported(failed=False).sections == []
+
+
+def test_a_failure_with_nothing_killed_is_not_annotated():
+    """Otherwise every real failure carries the note and it stops meaning anything."""
+    pytest_runtest_setup(item=None)
+
+    assert _reported(failed=True).sections == []
+
+
+def test_each_test_starts_with_an_empty_record():
+    """A kill left over from the previous test points the reader at contention
+    that had nothing to do with the failure in front of them."""
+    _starve()
+
+    pytest_runtest_setup(item=None)
+
+    assert _reported(failed=True).sections == []
+
+
+def test_the_hooks_are_registered_with_pytest(pytestconfig):
+    """A hook spelled wrong is a function these tests exercise and pytest never
+    calls, which is the one failure the tests above cannot see."""
+    hooks = pytestconfig.pluginmanager.hook
+    for hook in (hooks.pytest_runtest_setup, hooks.pytest_runtest_makereport):
+        assert any(impl.plugin is conftest for impl in hook.get_hookimpls())

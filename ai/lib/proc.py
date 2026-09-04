@@ -52,6 +52,17 @@ the call sites that has none; as a result code it degrades through
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
 
+Both of those are also *recorded*, in `MACHINE_KILLS`. Returning them as
+ordinary results is right for the caller and is exactly what makes them
+invisible to anyone watching from outside: a starved `git commit` comes back as
+`COMMIT_FAILED`, the caller handles it as designed, and whatever goes wrong
+afterwards carries no sign that the machine was the cause. So `run` appends a
+`MachineKill` on its way past, and a reader that wants to know can ask — which
+is what `tests/conftest.py` does when a test fails, so a contention casualty
+arriving through the code under test is as recognisable as one arriving through
+a fixture. Nothing about the result the caller gets changes, and no branch here
+knows it is being observed.
+
 The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
 `bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a
 literal 124, 127 or 130 written where something exits with it or reads it back
@@ -76,6 +87,7 @@ from __future__ import annotations
 import re
 import signal
 import subprocess
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,9 +133,9 @@ MISSING_RETURNCODE = 127
 # to prevent.
 #
 # Public (no leading underscore) so a caller with its own signal-death
-# reporting — `tests/conftest.py`'s `run_checked`, which cannot import a test
-# fixture's stdlib-only helper from anywhere else — classifies from this set
-# rather than hand-copying it and drifting from a future addition here.
+# reporting can name the set it is classifying against; `externally_killed`
+# below is the predicate to reach for, and what `tests/conftest.py`'s
+# `run_checked` asks rather than hand-copying the membership test.
 EXTERNAL_SIGNALS = frozenset({
     signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGPIPE,
     signal.SIGTERM, signal.SIGKILL, signal.SIGXCPU,
@@ -133,6 +145,18 @@ EXTERNAL_SIGNALS = frozenset({
 # cause on a loaded machine — an oversubscribed box kills what it cannot
 # schedule — and the reader's next move is to re-run rather than to bisect.
 _EXTERNAL_KILL_NOTE = "the machine ended it, not the command — re-run rather than bisect"
+
+
+def externally_killed(returncode: int) -> bool:
+    """The process was ended from outside rather than by a fault of its own.
+
+    The one place the `EXTERNAL_SIGNALS` split is spelled. `_killed_message`,
+    `run`'s record below and `tests/conftest.py`'s `run_checked` all ask the
+    same question, and a fourth signal added to the set has to reach every one
+    of them at once or they start disagreeing about whether the machine or the
+    command is the suspect.
+    """
+    return returncode < 0 and -returncode in EXTERNAL_SIGNALS
 
 
 def signal_description(returncode: int) -> str:
@@ -148,6 +172,38 @@ def signal_description(returncode: int) -> str:
         return f"{signal.Signals(number).name} (signal {number})"
     except ValueError:
         return f"signal {number}"
+
+
+@dataclass(frozen=True)
+class MachineKill:
+    """A command `run` watched the machine end, rather than the command end itself.
+
+    Both halves are needed to act on it: the command says which part of the
+    work was lost, and the cause says whether the bound expired or a signal
+    arrived. Neither is recoverable from the `CmdResult` a moment later — a
+    killed process writes nothing, and `TIMEOUT_RETURNCODE` on its own does not
+    say what timed out.
+    """
+
+    cmd: str
+    cause: str
+
+    def __str__(self) -> str:
+        return f"{self.cmd} — {self.cause}"
+
+
+# How many kills to keep. A bound rather than a list because `run` is called by
+# long-lived things — an MCP server, a review pass over dozens of files — and an
+# unbounded record of a failure mode nobody drains is a leak. The oldest go
+# first: a reader asking about a failure wants the kills nearest to it.
+MACHINE_KILL_LIMIT = 32
+
+# Every command `run` saw the machine end, most recent last. Written on the way
+# past and never read here — `run`'s contract is unchanged and no caller has to
+# know this exists. `tests/conftest.py` clears it before each test and reports
+# whatever it holds when one fails, which is how a starved subprocess inside the
+# code under test stops being indistinguishable from a real assertion failure.
+MACHINE_KILLS: deque[MachineKill] = deque(maxlen=MACHINE_KILL_LIMIT)
 
 
 @dataclass(frozen=True)
@@ -254,11 +310,16 @@ def _killed_message(action: str, r: CmdResult) -> str:
     leads, because it is what the exit code cannot say.
     """
     killed = f"{action} — killed by {signal_description(r.returncode)}"
-    if -r.returncode in EXTERNAL_SIGNALS:
+    if externally_killed(r.returncode):
         killed = f"{killed}; {_EXTERNAL_KILL_NOTE}"
     if not r.detail:
         return killed
     return f"{killed}: {r.detail}"
+
+
+def _record_kill(cmd: list[str], cause: str) -> None:
+    """Note that the machine ended *cmd*, for whoever asks about it later."""
+    MACHINE_KILLS.append(MachineKill(" ".join(str(part) for part in cmd), cause))
 
 
 def _text(value: str | bytes | None) -> str:
@@ -290,6 +351,11 @@ def run(
     a command that timed out mid-answer often explains itself in the part that
     arrived.
 
+    An expired bound and a death on an external signal are both appended to
+    `MACHINE_KILLS` as they pass. That is the only trace either leaves: handing
+    them back as ordinary results is what the callers need and is also what
+    makes them unattributable afterwards.
+
     `timeout` is a tier from `timeouts`, not a number, and it has no default:
     an omitted bound is indistinguishable from nobody having thought about one,
     so opting out is spelled `timeouts.UNBOUNDED` and shows up in review. See
@@ -309,11 +375,15 @@ def run(
             input=input_text, env=env,
         )
     except subprocess.TimeoutExpired as exc:
-        detail = f"timed out after {timeout:g}s: {' '.join(cmd)}"
+        cause = f"timed out after {timeout:g}s"
+        _record_kill(cmd, cause)
+        detail = f"{cause}: {' '.join(cmd)}"
         partial = _text(exc.stderr)
         return CmdResult(
             returncode=TIMEOUT_RETURNCODE,
             stdout=_text(exc.stdout),
             stderr=f"{detail}\n{partial}" if partial else detail,
         )
+    if externally_killed(r.returncode):
+        _record_kill(cmd, f"killed by {signal_description(r.returncode)}")
     return CmdResult(returncode=r.returncode, stdout=r.stdout or "", stderr=r.stderr or "")

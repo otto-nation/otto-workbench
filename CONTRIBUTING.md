@@ -48,6 +48,14 @@ machine as the cause. When one does slip through, the shared runner in `tests/co
 raises `MachineContention` rather than a plain assertion and says so in the message — a
 failure carrying that text is a machine to re-run on, not a defect to bisect.
 
+That guard reaches the subprocesses the fixtures run. The ones the *code under test* runs
+are outside it: `proc.run` returns a starved command as an ordinary failure result, so the
+code handles it as designed and the assertion that trips next looks real. `proc.run`
+records those kills, and `tests/conftest.py` attaches the record to a failing test as a
+`MachineContention — the code under test lost a subprocess` section under the traceback.
+Read it the same way. A failure with no such section had an empty record, which is
+positive evidence rather than a missing marker.
+
 Tests live in `tests/`. Each file targets a single library function or script behaviour. The shared helper `tests/test_helper.bash` provides `source_lib`, `make_ai_config`, `make_fake_binary`, and `make_git_remote`.
 
 ## Writing Tests

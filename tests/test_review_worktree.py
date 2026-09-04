@@ -482,6 +482,7 @@ def test_switch_to_pr_branch_returns_none_when_pr_head_unknown(mock_run, mock_sw
 
 @patch("proc.subprocess.run")
 def test_cleanup_worktree_fallback_uses_git_remove(mock_run):
+    mock_run.return_value.returncode = 0
     result = WorktreeResult(
         path="/repos/repo/.worktrees/pr-42-review",
         cleanup_ref="/repos/repo/.worktrees/pr-42-review",

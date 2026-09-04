@@ -13,7 +13,6 @@ file is absent, which is a claim about a call that must not happen.
 """
 
 import io
-import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -31,7 +30,7 @@ import push  # noqa: E402
 import push_intent  # noqa: E402
 import serde  # noqa: E402
 
-from conftest import GIT_TIMEOUT, git_in, git_out, seed_repo  # noqa: E402
+from conftest import git_in, git_out, run_checked, seed_repo  # noqa: E402
 
 _ZERO = "0" * 40
 
@@ -73,8 +72,7 @@ def _commit_file(wt: Path, name: str, content: str = "work") -> str:
 def pushable(tmp_path) -> tuple[Path, Path]:
     """A one-commit repo on `main`, with `origin` a bare repo alongside it."""
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)],
-                   check=True, capture_output=True, timeout=GIT_TIMEOUT)
+    run_checked(["git", "init", "-q", "--bare", "-b", "main", str(remote)])
     wt = seed_repo(tmp_path / "wt")
     git_in(wt, "remote", "add", "origin", str(remote))
     git_in(wt, "push", "-q", "-u", "origin", "main")

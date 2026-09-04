@@ -12,7 +12,6 @@ remote ends up holding what it held before. That is the failure #962 describes,
 reproduced rather than simulated.
 """
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -28,7 +27,7 @@ import proc  # noqa: E402
 import push  # noqa: E402
 import timeouts  # noqa: E402
 
-from conftest import GIT_TIMEOUT, git_in, seed_repo  # noqa: E402
+from conftest import git_in, run_checked, seed_repo  # noqa: E402
 
 _LOSING_HOOK = """#!/usr/bin/env bash
 while read -r old new ref; do
@@ -66,8 +65,7 @@ def pushable(tmp_path, live_git_hooks) -> tuple[Path, Path]:
     both and quietly turn every lost-push test into a passing one.
     """
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)],
-                   check=True, capture_output=True, timeout=GIT_TIMEOUT)
+    run_checked(["git", "init", "-q", "--bare", "-b", "main", str(remote)])
     wt = seed_repo(tmp_path / "wt")
     git_in(wt, "remote", "add", "origin", str(remote))
     git_in(wt, "push", "-q", "-u", "origin", "main")

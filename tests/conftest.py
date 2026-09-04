@@ -552,6 +552,60 @@ _CONTENTION_HINT = (
 )
 
 
+def _proc():
+    """`ai/lib/proc.py`, imported the way the code under test imports it.
+
+    Through `sys.path` rather than `_load_lib`, so this file and every script
+    under test share one module object — the record `proc.run` appends to has
+    to be the one read below, or a kill lands in a copy nobody looks at.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import proc
+
+    return proc
+
+
+def pytest_runtest_setup(item):
+    """Start each test with an empty record of what the machine has killed.
+
+    Without this the note below names a command the *previous* test drove,
+    which is worse than saying nothing: it points a reader at contention that
+    had nothing to do with the failure in front of them.
+    """
+    _proc().MACHINE_KILLS.clear()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Name the machine on a failure whose *production* subprocess it ended.
+
+    `run_checked` guards the git a fixture runs and raises `MachineContention`
+    where the reader cannot miss it. Git that the code under test runs is
+    outside that guard by design: `proc.run` turns a starved command into an
+    ordinary failure result, the code handles it exactly as it was written to,
+    and the assertion that trips two frames later is indistinguishable from a
+    real one — a `NoneType has no attribute 'kwargs'` from a mock that was
+    never called, because the commit it was waiting on lost its scheduling
+    slot. Attaching what the machine killed gives that failure the one thing
+    the fixture path already has: a name.
+
+    Attached rather than raised. The failure the reader sees is still the real
+    one, at the line that produced it; the machine is offered as context, and
+    an unrelated kill during a genuine failure costs a paragraph rather than a
+    misdiagnosis.
+    """
+    report = (yield).get_result()
+    kills = list(_proc().MACHINE_KILLS)
+    if not report.failed or not kills:
+        return
+    killed = "\n".join(f"  {kill}" for kill in kills)
+    report.sections.append((
+        f"{MachineContention.__name__} — the code under test lost a subprocess",
+        f"{killed}\n\n{_CONTENTION_HINT}",
+    ))
+
+
 def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
     """Run *argv* to completion and return it, failing the test unless it exits 0.
 
@@ -566,13 +620,11 @@ def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
     names the signal and says plainly that the machine, not the test, is the
     thing that failed. A fault signal (SIGSEGV, SIGABRT, ...) still raises
     ``AssertionError`` — that kind of death does point at the command, and
-    ``ai/lib/proc.py``'s ``EXTERNAL_SIGNALS`` is the shared list of which
-    signals get which treatment, so this stays in step with ``failure_message``
-    without a second copy of the split.
+    ``ai/lib/proc.py``'s ``externally_killed`` is where which signals get which
+    treatment is decided, so this stays in step with ``failure_message`` without
+    a second copy of the split.
     """
-    if LIB_DIR not in sys.path:
-        sys.path.insert(0, LIB_DIR)
-    import proc
+    proc = _proc()
 
     shown = " ".join(str(a) for a in argv)
     where = f" in {cwd}" if cwd else ""
@@ -585,7 +637,7 @@ def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
         raise MachineContention(
             f"{shown} timed out after {timeout}s{where}\n{_CONTENTION_HINT}"
         ) from exc
-    if result.returncode < 0 and -result.returncode in proc.EXTERNAL_SIGNALS:
+    if proc.externally_killed(result.returncode):
         raise MachineContention(
             f"{shown} was killed by {proc.signal_description(result.returncode)}{where}\n"
             f"{_CONTENTION_HINT}"

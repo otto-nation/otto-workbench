@@ -53,6 +53,17 @@ repeat. `TEST_JOBS` overrides the sizing outright, and `TEST_JOBS=1` restores th
 ordering. When contention does get through, `tests/conftest.py` raises `MachineContention`
 and names it in the message: re-run it, do not bisect it.
 
+It arrives in two shapes, and only the first is an exception. A subprocess a *fixture* ran
+raises `MachineContention` at the line that ran it. A subprocess the *code under test* ran
+does not: `proc.run` hands a timeout or an external-signal death back as an ordinary
+failure result — which is what its callers need — so the code handles it as designed and
+the assertion that trips afterwards looks like any other. For those, conftest attaches a
+`MachineContention — the code under test lost a subprocess` section to the failure report,
+listing what `proc.run` saw the machine end during that test. A failure carrying one is
+read the same way as the exception: re-run it before believing the assertion. A failure
+carrying no section is a failure with nothing in the record — which is evidence, not
+merely the absence of a marker.
+
 ## Conventions
 
 - **Single source of truth** — every piece of data or config has exactly one authoritative owner. Display logic reads from the owner; it does not duplicate or re-derive the data. Runtime choices (e.g. Docker runtime) are recorded in state files (`~/.local/state/workbench/`); checks should read state, not infer from binary presence. When defaults must appear in multiple formats (YAML + shell), add a cross-validation test. Registry `*.registry.yml` files own tool documentation (`tools[]`). Registry `*.env.yml` files own env var declarations (`env[]`, `auth`), colocated with the consumer code that reads them. Env vars set programmatically at runtime (e.g. DOCKER_HOST) are NOT declared in registries.

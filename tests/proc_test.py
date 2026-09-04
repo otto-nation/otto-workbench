@@ -242,3 +242,81 @@ class TestRunTimeout:
     def test_a_timeout_is_distinguishable_from_an_ordinary_failure(self):
         """The eval scorers separate the two by this code."""
         assert proc.run(["false"], timeout=timeouts.QUICK).returncode != proc.TIMEOUT_RETURNCODE
+
+
+class TestExternallyKilled:
+    """One predicate for the machine-or-command split, asked from three places."""
+
+    def test_a_signal_from_outside_is_the_machine(self):
+        assert proc.externally_killed(-signal.SIGKILL)
+        assert proc.externally_killed(-signal.SIGPIPE)
+
+    def test_a_fault_signal_still_points_at_the_command(self):
+        assert not proc.externally_killed(-signal.SIGSEGV)
+        assert not proc.externally_killed(-signal.SIGABRT)
+
+    def test_an_ordinary_exit_is_not_a_kill(self):
+        assert not proc.externally_killed(0)
+        assert not proc.externally_killed(1)
+        assert not proc.externally_killed(proc.TIMEOUT_RETURNCODE)
+
+
+class TestMachineKills:
+    """What `run` records on its way past a command the machine ended.
+
+    The result the caller gets is deliberately ordinary, which is what leaves a
+    starved subprocess unattributable. The record is the only trace, so a
+    reader — `tests/conftest.py` first — can say the machine was involved
+    instead of inferring it from a downstream failure that looks real.
+    """
+
+    def test_an_expired_bound_is_recorded(self):
+        proc.MACHINE_KILLS.clear()
+
+        proc.run(["sleep", "5"], timeout=0.1)
+
+        assert [str(kill) for kill in proc.MACHINE_KILLS] == [
+            "sleep 5 — timed out after 0.1s"
+        ]
+
+    def test_an_external_signal_is_recorded(self):
+        proc.MACHINE_KILLS.clear()
+
+        proc.run(["bash", "-c", "kill -PIPE $$"], timeout=timeouts.QUICK)
+
+        assert str(proc.MACHINE_KILLS[-1]).endswith("— killed by SIGPIPE (signal 13)")
+
+    def test_a_fault_signal_is_not_recorded(self):
+        """SIGABRT is the command's own doing, and naming the machine for it is
+        the misdirection `externally_killed` exists to prevent."""
+        proc.MACHINE_KILLS.clear()
+
+        r = proc.run(["bash", "-c", "kill -ABRT $$"], timeout=timeouts.QUICK)
+
+        assert r.signalled
+        assert not proc.MACHINE_KILLS
+
+    def test_an_ordinary_failure_is_not_recorded(self):
+        proc.MACHINE_KILLS.clear()
+
+        proc.run(["false"], timeout=timeouts.QUICK)
+
+        assert not proc.MACHINE_KILLS
+
+    def test_the_result_the_caller_gets_is_unchanged(self):
+        """Nothing here is allowed to become a second way for `run` to answer."""
+        proc.MACHINE_KILLS.clear()
+
+        r = proc.run(["sleep", "5"], timeout=0.1)
+
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert "timed out after 0.1s: sleep 5" in r.stderr
+
+    def test_the_record_is_bounded(self):
+        """`run` is called by long-lived things, and nothing here drains it."""
+        proc.MACHINE_KILLS.clear()
+
+        for _ in range(proc.MACHINE_KILL_LIMIT + 3):
+            proc.MACHINE_KILLS.append(proc.MachineKill("git status", "timed out"))
+
+        assert len(proc.MACHINE_KILLS) == proc.MACHINE_KILL_LIMIT

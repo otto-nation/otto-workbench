@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -2266,10 +2265,7 @@ class TestPushHeldCommit:
 
 def _short_sha(path, rev="HEAD") -> str:
     """The short SHA of *rev* in the repo at *path*."""
-    return subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "--short", rev],
-        check=True, capture_output=True, text=True, timeout=10,
-    ).stdout.strip()
+    return run_checked(["git", "-C", str(path), "rev-parse", "--short", rev]).stdout.strip()
 
 
 # What every fix pass commits under (`_commit_fixes`), so two rounds on one
@@ -2291,11 +2287,9 @@ def _feature_off_origin(tmp_path) -> Path:
     it. Nothing short of an actual rebase produces that pair.
     """
     origin = tmp_path / "origin"
-    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(origin)],
-                   check=True, capture_output=True, timeout=10)
+    run_checked(["git", "init", "--bare", "-q", "-b", "main", str(origin)])
     work = tmp_path / "work"
-    subprocess.run(["git", "clone", "-q", str(origin), str(work)],
-                   check=True, capture_output=True, timeout=10)
+    run_checked(["git", "clone", "-q", str(origin), str(work)])
     git_in(work, "config", "user.email", "t@example.com")
     git_in(work, "config", "user.name", "Test")
 
@@ -4191,11 +4185,9 @@ def _hand_fixed(tmp_path, *, pushed=True):
     is a remote to ask, which is why the origin is a real bare repo.
     """
     origin = tmp_path / "origin"
-    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(origin)],
-                   check=True, capture_output=True, timeout=10)
+    run_checked(["git", "init", "--bare", "-q", "-b", "main", str(origin)])
     work = tmp_path / "work"
-    subprocess.run(["git", "clone", "-q", str(origin), str(work)],
-                   check=True, capture_output=True, timeout=10)
+    run_checked(["git", "clone", "-q", str(origin), str(work)])
     git_in(work, "config", "user.email", "t@example.com")
     git_in(work, "config", "user.name", "Test")
     (work / "a.py").write_text("one\ntwo\n")

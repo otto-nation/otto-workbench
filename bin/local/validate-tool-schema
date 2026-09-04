@@ -33,7 +33,7 @@ directory order, and this is the only place that can be made an error.
 Every rule here is the server's own: `ai/claude/mcps/server.py` owns what a tool
 directory is (`discover_tool_dirs`), which scripts get probed (`tool_candidates`)
 and what counts as an answer (`probe_tools`, which also owns how the round is run
-and how many attempts a probe gets), and `ai/lib/tool_registry.py` owns
+and how many attempts a probe gets), and `ai/lib/config/tool_registry.py` owns
 which registries name scripts (`load_registry_entries`).  This script only walks
 the result and prints it, so the two cannot drift.
 

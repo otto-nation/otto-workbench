@@ -34,8 +34,9 @@ def test_the_watched_values_come_from_the_owning_modules():
 
 def test_a_renamed_owner_fails_the_check_itself():
     """A watched constant that is gone must not quietly stop being watched."""
+    owner = vm.Owner("core", "proc", "proc")
     with pytest.raises(SystemExit) as exc:
-        vm.resolve_owners(str(REPO_ROOT), (("proc", "GONE_RETURNCODE"),))
+        vm.resolve_owners(str(REPO_ROOT), ((owner, "GONE_RETURNCODE"),))
     assert "proc.GONE_RETURNCODE is gone" in str(exc.value)
 
 

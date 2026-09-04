@@ -269,4 +269,4 @@ def test_main_exits_1_on_a_violation(tmp_path, monkeypatch, capsys):
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "not taken from `timeouts`" in err
-    assert "ai/lib/timeouts.py" in err
+    assert "ai/lib/core/timeouts.py" in err

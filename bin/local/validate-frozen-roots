@@ -3,7 +3,7 @@
 
 Usage: bin/local/validate-frozen-roots [--quiet] [file...]
 
-`ai/lib/workbench_paths.py` resolves every root per call, and says in its own
+`ai/lib/core/workbench_paths.py` resolves every root per call, and says in its own
 header why: the environment is routinely re-pointed after import — by tests, and
 by callers that move a root before invoking a subprocess — so a module-level
 
@@ -84,17 +84,22 @@ def _imported_roots(tree) -> set[str]:
 
 
 def _module_names(tree) -> set[str]:
-    """Local names bound to the module by a plain `import`, aliases included.
+    """Local names bound to the module itself, aliases included.
 
     `import workbench_paths as wp` writes `wp.state_dir()` at the call site, so
     matching the module's own name would miss it — and an alias freezes a root
-    exactly as hard as the spelled-out name does.
+    exactly as hard as the spelled-out name does. `from core import
+    workbench_paths` binds the same name through a package import rather than a
+    plain one, and is the shape every caller now uses — `node.module != MODULE`
+    keeps this from double-counting the `from workbench_paths import state_dir`
+    shape `_imported_roots` already owns.
     """
     names = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Import):
-            continue
-        names |= {a.asname or a.name for a in node.names if a.name == MODULE}
+        if isinstance(node, ast.Import):
+            names |= {a.asname or a.name for a in node.names if a.name == MODULE}
+        elif isinstance(node, ast.ImportFrom) and node.module != MODULE:
+            names |= {a.asname or a.name for a in node.names if a.name == MODULE}
     return names
 
 
@@ -234,7 +239,7 @@ def _report_violations(relpath: str, violations: list[Violation]) -> None:
         print(f'    line {v.line}: {v.name} = {v.root}(...) '
               f'{DIM}— move the call into a function{NC}', file=sys.stderr)
     print(f'    {DIM}why the roots resolve per call is in '
-          f'ai/lib/{MODULE}.py{NC}', file=sys.stderr)
+          f'ai/lib/core/{MODULE}.py{NC}', file=sys.stderr)
 
 
 def _print_summary(files_checked: int, errors: int) -> None:

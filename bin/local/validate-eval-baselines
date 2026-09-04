@@ -66,7 +66,8 @@ _validate_baseline_file() {
   schema_output=$(python3 -c "
 import json, sys
 sys.path.insert(0, '$_SCRIPT_ROOT/ai/lib')
-from eval_scoring import validate_baseline_schema
+from eval import scoring
+validate_baseline_schema = scoring.validate_baseline_schema
 errors = validate_baseline_schema(json.load(open(sys.argv[1])))
 for e in errors:
     print(e)

@@ -113,6 +113,18 @@ TRAIL = workbench_paths.trail_dir()
     assert [v.root for v in violations] == ["workbench_paths.trail_dir"]
 
 
+def test_a_package_imported_module_call_is_flagged(tmp_path):
+    """`from core import workbench_paths` is the shape every caller now uses —
+    it binds the module name through the layer package rather than plainly, and
+    must freeze exactly as hard as a bare `import workbench_paths` does."""
+    violations = _check(tmp_path, """
+from core import workbench_paths
+
+TRAIL = workbench_paths.trail_dir()
+""")
+    assert [v.root for v in violations] == ["workbench_paths.trail_dir"]
+
+
 def test_an_imported_resolver_is_flagged(tmp_path):
     """`from ... import state_dir` drops the module name, not the freeze."""
     violations = _check(tmp_path, """
@@ -219,4 +231,4 @@ def test_main_exits_1_on_a_violation(tmp_path, monkeypatch, capsys):
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "frozen at import" in err
-    assert "ai/lib/workbench_paths.py" in err
+    assert "ai/lib/core/workbench_paths.py" in err

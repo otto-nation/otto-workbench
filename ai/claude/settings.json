@@ -2,6 +2,10 @@
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true
   },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "statusLine": {
     "type": "command",
     "command": "$HOME/.local/bin/workbench-statusline",

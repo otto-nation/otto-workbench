@@ -177,11 +177,11 @@ messages on stderr.
 - State file: `<state_dir()>/pr/<repo-key>-<branch-slug>/state.json` — keyed on
   the run's target, not on the checkout it was invoked from. Resolve it once via
   `pr_context.resolve()` and read `ctx.target_dir`; never rebuild the path
-- Lib modules stack in one direction: `ai/lib/pr_fix.py` holds the fix vocabulary
+- Lib modules stack in one direction: `ai/lib/pr/fix.py` holds the fix vocabulary
   (`FixOutcome`, `ItemOutcome`, `FixRecord`, `CommitStatus`) and imports none of the
-  others; `ai/lib/pr_domains.py` holds the domains and imports it;
-  `ai/lib/pr_comments_fix.py` holds the comment domain and imports
-  the domains; `ai/lib/pr_state.py` holds the envelope over them, the registry and
+  others; `ai/lib/pr/domains.py` holds the domains and imports it;
+  `ai/lib/pr/comments_fix.py` holds the comment domain and imports
+  the domains; `ai/lib/pr/state.py` holds the envelope over them, the registry and
   the state file I/O, and imports both — never the other way round
 - Each domain is a `pr_domains.Domain` subclass (e.g., `CIDomain`, `RebaseSummary`)
   serialized via generic `serde.to_dict()`/`serde.from_dict()`

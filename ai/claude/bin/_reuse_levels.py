@@ -1,7 +1,7 @@
 """Shared reuse-level constants for the mode tracker and session-start hooks.
 
 The level and its default live in the workbench config
-(``ai/lib/workbench_config.py``), which is what makes them editable in the same
+(``ai/lib/config/workbench_config.py``), which is what makes them editable in the same
 file as everything else the user configures. These readers exist so the hooks
 do not each spell out the fallback chain.
 """

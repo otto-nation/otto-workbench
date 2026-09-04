@@ -552,7 +552,7 @@ def _review_list(argv: list[str], _ctx: pr_context.ResolvedContext, *,
     """List every review in the user's state root.
 
     The contract other repos read review state through — see
-    `ai/lib/review_listing.py` for what a row carries and why it is a query
+    `ai/lib/review/listing.py` for what a row carries and why it is a query
     rather than a path they derive.
 
     Two audiences, told apart by the handshake. With `--schema-version` this is

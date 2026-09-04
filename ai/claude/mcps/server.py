@@ -11,7 +11,7 @@ configuration file: the server exposes the workbench's own tools, so what to
 scan is a fact about the checkout rather than a question to ask the user.
 
 Which of them a client is offered comes from the registries — see
-``ai/lib/tool_registry.py``. Carrying the marker makes a script probeable, not
+``ai/lib/config/tool_registry.py``. Carrying the marker makes a script probeable, not
 public: a hidden or unregistered one is skipped before it is ever run.
 
 The client owns this process, spawning it over stdio, so nothing outside can
@@ -90,7 +90,7 @@ PROBE_ATTEMPTS = 2
 REQUIRED_SCHEMA_KEYS = ("name", "input_schema")
 
 # The two ways a script can implement the protocol: parse the flag itself, or
-# inherit it from ai/lib/tool_parser.py's ToolParser. A prose mention of the flag
+# inherit it from ai/lib/core/tool_parser.py's ToolParser. A prose mention of the flag
 # also matches — the scan is a cheap filter, not a guarantee, which is why tools
 # that take positional arguments must reject unknown flags on their own.
 DECLARATION_MARKERS = (TOOL_SCHEMA_FLAG.encode(), b"ToolParser")

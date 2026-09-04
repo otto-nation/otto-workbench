@@ -2,7 +2,7 @@ name: Eval
 
 # Not a pull-request gate: every run spends real money on real model calls.
 # It runs on a schedule and on demand, and fails when a model's token spend or
-# finding quality regresses past the ratchet in ai/lib/eval_scoring.py.
+# finding quality regresses past the ratchet in ai/lib/eval/scoring.py.
 on:
   schedule:
     - cron: '41 6 * * 1'

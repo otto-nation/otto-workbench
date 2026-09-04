@@ -71,7 +71,7 @@ launcher on `PATH` is a symlink into the checkout that installed it — so the
 key surface it validates against is the current one no matter which worktree
 the caller is standing in.  Run out of a stale checkout instead, it still
 refuses: `workbench_config_write.check_key` asks the installed schema as well as
-its own.  See `ai/lib/workbench_config_write.py`.
+its own.  See `ai/lib/config/workbench_config_write.py`.
 
 Exit codes: 0 on a completed write, a report that read every scope, or a `get`
 that answered for every DIR; 1 on a refused key, a failed write, or a scope

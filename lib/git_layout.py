@@ -10,8 +10,8 @@ was written into it along.
 `container_dir` is the one answer to "where is that directory", shared so the
 two subsystems that need it cannot disagree:
 
-    lib/permissions.py          the grants mirrored into the container
-    ai/lib/workbench_config.py  the container's config scope
+    lib/permissions.py                 the grants mirrored into the container
+    ai/lib/config/workbench_config.py  the container's config scope
 
 It is deliberately a question git answers rather than a walk up the
 filesystem.  A walk would let a `.workbench.yml` dropped in a grouping

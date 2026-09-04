@@ -31,8 +31,8 @@ running is not part of the reason it failed.
 
 The one owner of an agent invocation: resolve the phase, run it, guard it.
 
-``phases`` says what a phase is named, ``agent_types`` says what a phase's
-shape is, ``agent_registry`` says which phases there are, ``agent_phases``
+``phases`` says what a phase is named, ``agent.types`` says what a phase's
+shape is, ``agent.registry`` says which phases there are, ``agent_phases``
 says what one resolves to here, and ``ai_backend`` knows how to talk to a
 CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
@@ -52,7 +52,7 @@ those differ; going through here is what stops them, and
 
 What a phase resolves to here: the spec, the config file, the environment.
 
-``agent_registry`` says what a phase's built-in defaults are. This module answers
+``agent.registry`` says what a phase's built-in defaults are. This module answers
 the question a caller actually has — which model, thinking level, provider and
 turn budget *this* invocation runs with — by layering the config file and the
 environment over that spec.
@@ -78,7 +78,7 @@ land on the same model.
 
 Every phase the workbench knows how to run, and what each one defaults to.
 
-``phases`` says what a phase is *named*; ``agent_types`` says what a phase's
+``phases`` says what a phase is *named*; ``agent.types`` says what a phase's
 *shape* is; this module says which ones there are.
 One entry per phase, and the entry is the whole declaration — the config key,
 the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
@@ -109,7 +109,7 @@ An agent that runs to its own conclusion having never called a write tool was
 thrashing, not working.  The review pipeline learned to diagnose that and give
 it one more attempt with a hint naming the write mechanism; every `pr` script
 that drives an agent needs the same guard, so it lives here rather than inside
-review_retry.
+review.retry.
 
 Two shapes are supported, matching the two ways the `pr` scripts call an agent:
 
@@ -127,13 +127,13 @@ log, and the pair exists so both attempts' result records survive it.
 What an agent run left behind: its cost, its diagnosis, its salvage.
 
 Everything here reads a session log after the fact. Running the agent is
-``agent_invoke``'s job and resolving which model it ran with is
-``agent_phases``'s; this module is what the pipeline asks once the log exists —
+``agent.invoke``'s job and resolving which model it ran with is
+``agent.phases``'s; this module is what the pipeline asks once the log exists —
 what the run cost, why it produced nothing, whether the document it was denied
 permission to save can still be recovered.
 
 The split matters for the quota retry, whose two halves live apart: this module
-reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
+reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
 
 ### agent/templates.py
 
@@ -141,7 +141,7 @@ Where prompt templates live, and the one way to render one.
 
 Every agent invocation in the workbench is prompted from a file in the same
 directory, and each caller used to find and render it for itself: the review
-pipeline through ``review_prompt``, the comments fix pass and the CI fix pass
+pipeline through ``review.prompt``, the comments fix pass and the CI fix pass
 through a ``TEMPLATE_DIR`` and a ``Template(...).safe_substitute`` of their own.
 Three spellings of one path is three chances for a moved template to break one
 caller and not the others.
@@ -166,7 +166,7 @@ in — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
 ``PhaseSpec``, the shape a phase's built-in defaults take, and the presets and
 budgets built from it.
 
-Which phases exist, and what each one's defaults are, is ``agent_registry``'s
+Which phases exist, and what each one's defaults are, is ``agent.registry``'s
 job. The vocabulary is a closed set of names that grows only when a new kind of
 knob appears; the registry is an inventory that grows with the workbench.
 Keeping them apart is also what stops the enum reaching back into the registry
@@ -174,13 +174,13 @@ to answer questions about itself — a ``PhaseSpec`` answers those now.
 
 It imports nothing but ``phases`` and the standard library. The vocabulary used
 to sit here too, alongside the review pipeline's shared-helper module's reach
-into the PR state machine, the usage ledger and the git client; ``ai_backend``
+into the PR state machine, the usage ledger and the git client; ``agent.backend``
 needed one enum and took all of that with it, and ``workbench_config`` needed
 three. Splitting the vocabulary into its own module below both let each import
 only the names, not the shapes built from them.
 
 Resolving a spec against the config file and the environment is
-``agent_phases``'s job — that layer needs ``workbench_config``, which needs
+``agent.phases``'s job — that layer needs ``workbench_config``, which needs
 this one.
 
 ### core/phases.py
@@ -214,7 +214,7 @@ exception. No answer is never consent.
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.
 
-`fix_types` says what an item is, `fix_tracking` says how the agent is asked
+`fix.types` says what an item is, `fix_tracking` says how the agent is asked
 about it, `agent_invoke` runs the agent and `land` commits what it produced.
 This is the order those happen in, written once. Three passes sequenced them
 themselves and the sequences disagreed — one batched its checklist and two
@@ -253,7 +253,7 @@ template and the PR header cost. This module owns each of those numbers, so a
 collector deciding what to gather and a phase deciding what to send read the
 same figure rather than two that drifted apart.
 
-`agent_types.RetryBudget` is a different thing that shares the word — it
+`agent.types.RetryBudget` is a different thing that shares the word — it
 budgets retries, not bytes.
 
 ### review/collect.py
@@ -268,14 +268,14 @@ pre-collected data block a phase sends.
 `fetch_branch_metadata` is here for the same reason: a self-review with no PR
 behind it describes itself out of the worktree, off the same fork point and the
 same `worktree_diff` the collection uses. Its counterpart for a branch that does
-have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
+have a PR is `gh.pr_reads.fetch_pr_metadata`, and both fill in `PRMetadata`.
 
-The bounds on what a prompt may carry are `review_budget`'s, not this module's —
+The bounds on what a prompt may carry are `review.budget`'s, not this module's —
 `_fit_to_budget` is still here, and is the one place that decides which files a
-review can afford to inline, reading the same numbers `review_prompt` budgets
-against. How the collected files are ranked and divided is `review_grouping`'s,
-what a phase does with the block is `review_prompt`'s, and the records this
-fills in are `review_types`' and `gh_types`'.
+review can afford to inline, reading the same numbers `review.prompt` budgets
+against. How the collected files are ranked and divided is `review.grouping`'s,
+what a phase does with the block is `review.prompt`'s, and the records this
+fills in are `review.types`' and `gh.types`'.
 
 ### review/document.py
 
@@ -314,15 +314,15 @@ different things about it.
 
 A finding declaration is part of that format, but not part of this module: the
 grammar of one — the ID at the head of a list item, the location after it, the
-body after that — is `review_grammar`'s, and this module reads a document
+body after that — is `review.grammar`'s, and this module reads a document
 through it. `parse_finding_line` is for a caller holding a single line that is
 not in a findings section — the prior-findings ledger is the one — and every
 other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
 onto a finding it left alone is the exception that stays: `is_skipped` is a
 question about a `Finding` this module has already parsed rather than about
 the line that declared it. Where a finding's body starts and stops is
-`review_spans`'s, and this module reads through `finding_spans` the same way
-it reads a single line through `review_grammar`.
+`review.spans`'s, and this module reads through `finding_spans` the same way
+it reads a single line through `review.grammar`.
 
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
@@ -331,7 +331,7 @@ its own regex is how a review came to report four findings it had none of —
 the ledger's lines look like declarations from anywhere but inside the parse.
 
 What a tally of them means — the verdict it supports, and the body a review
-carries when no synthesis agent wrote one — is `review_verdict`'s: a judgement
+carries when no synthesis agent wrote one — is `review.verdict`'s: a judgement
 over this module's shape rather than part of the shape itself.
 
 ### review/gc.py
@@ -345,7 +345,7 @@ of reviews whose PR has been merged or closed.
 
 They differ only in what makes a file collectable — the run being over, age, or
 the PR being gone — and all of them read what a review directory holds from
-`review_paths.phase_artifacts` rather than naming files themselves.
+`review.paths.phase_artifacts` rather than naming files themselves.
 
 `pr gc` collects loose files at the reviews root once they are a week old, prunes
 review directories and run-target directories for merged and closed PRs (skipping
@@ -385,8 +385,8 @@ reached, and getting those to agree is this module's whole job — a header that
 says the run completed while the sidecar beside it says otherwise is a document
 nobody can act on.
 
-Deciding which of those paths a run takes is `review_steps`'; sequencing the
-phases that lead there is `review_pipeline`'s.
+Deciding which of those paths a run takes is `review.steps`'; sequencing the
+phases that lead there is `review.pipeline`'s.
 
 ### review/paths.py
 
@@ -432,14 +432,14 @@ Phase executors for the review pipeline.
 
 A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
-`agent_registry` and `agent_phases`, which the whole workbench shares. This module
+`agent.registry` and `agent_phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
 one review's worktree, session log and throttle, and `run_phase`, which drives
 one of them end to end.
 
 Running an agent phase is the same nine steps whichever phase it is, so there is
 one function rather than one per phase. What differs is what its artifact means
-afterwards, and that is `review_registry`'s table, read through `read_scan` so
+afterwards, and that is `review.registry`'s table, read through `read_scan` so
 the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
@@ -447,21 +447,21 @@ previously-skipped sweep are all ways of running the group phase, and they
 share the executor and its budget rules.
 
 What a phase *produces* is somebody else's problem: sequencing the phases into
-a run is `review_pipeline`'s, deciding what each phase's output means for the
-run is `review_steps`', and writing the result to the review file is
-`review_outcome`'s.
+a run is `review.pipeline`'s, deciding what each phase's output means for the
+run is `review.steps`', and writing the result to the review file is
+`review.outcome`'s.
 
 ### review/pipeline.py
 
 Pipeline orchestration for claude-review.
 
 Drives the single-agent and multi-phase runs end to end: sequencing the phases
-review_steps defines, deciding what a resumed run may skip, consolidating the
+review.steps defines, deciding what a resumed run may skip, consolidating the
 session logs, and fetching the PR metadata a run starts from.
 
 The run ends when the review file is written — what happens to the findings
-afterwards belongs to review_fix, and removing what the run left behind belongs
-to review_gc, which the orchestrator runs once every phase is done.
+afterwards belongs to review.fix, and removing what the run left behind belongs
+to review.gc, which the orchestrator runs once every phase is done.
 
 ### review/prompt.py
 
@@ -478,10 +478,10 @@ prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
 costs nothing.
 
-One builder per phase assembles the sections `review_prompt_sections` and
-`review_prompt_prior` render into a `PromptBuilder`. Which phase reaches which
+One builder per phase assembles the sections `review.prompt_sections` and
+`review.prompt_prior` render into a `PromptBuilder`. Which phase reaches which
 builder, which template it renders, and which file the agent is told to write
-are `review_registry`'s: it holds the phase-to-builder table and
+are `review.registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
 
 ### review/prompt_prior.py
@@ -494,16 +494,16 @@ with what the author said in reply to each finding, and followed by the
 instruction that asks for a disposition for every finding it carries.
 
 Scoping the prior review to a group's files cuts it a finding at a time, and
-where a finding stops is `review_spans`'s `finding_spans` — the same measure
+where a finding stops is `review.spans`'s `finding_spans` — the same measure
 the gates that trim a finished review use. A section that measured it here
 would quote evidence belonging to a finding the agent was never shown.
 
 `_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
 an agent; both sections here interpolate it rather than restating it, and
-`review_reconcile` is what reads the ledger back afterwards.
+`review.reconcile` is what reads the ledger back afterwards.
 
-Everything else a prompt says about the PR is `review_prompt_sections`'s, and
-which sections a phase asks for is `review_prompt`'s.
+Everything else a prompt says about the PR is `review.prompt_sections`'s, and
+which sections a phase asks for is `review.prompt`'s.
 
 ### review/prompt_sections.py
 
@@ -514,12 +514,12 @@ composes the sections it wants without knowing how any of them is built —
 nothing in this module decides which sections a phase asks for or what order
 they run in.
 
-Which sections a phase asks for is `review_prompt`'s, and how much room they
-get is `review_budget`'s. What a prompt says about the *prior* review — the
+Which sections a phase asks for is `review.prompt`'s, and how much room they
+get is `review.budget`'s. What a prompt says about the *prior* review — the
 scoped findings, the ledger instruction, the thread annotations — is
-`review_prompt_prior`'s.
+`review.prompt_prior`'s.
 
-Not to be confused with `review_sections`, which is the posting pipeline's
+Not to be confused with `review.sections`, which is the posting pipeline's
 config-driven registry of sections already written to a review document —
 that module reads what an agent wrote, this one decides what an agent is
 shown before it writes anything.
@@ -531,9 +531,9 @@ Which prompt each phase builds, and which scan reads its output.
 One table. A phase that prompts names its builder here and nowhere else, and a
 phase whose output is read before the next one starts names its scan here too.
 
-It cannot live on `PhaseSpec`: `agent_types` imports nothing but `phases` and
-the standard library, and the builders live in `review_prompt`, which imports
-`agent_registry` — putting them on the spec is a cycle as well as a layering
+It cannot live on `PhaseSpec`: `agent.types` imports nothing but `phases` and
+the standard library, and the builders live in `review.prompt`, which imports
+`agent.registry` — putting them on the spec is a cycle as well as a layering
 break. A table one layer down is the same declaration made once, and this is
 that layer.
 
@@ -595,21 +595,21 @@ One function per phase of a multi-phase review.
 
 Each takes the job and the run's state, does that phase's work, and reports
 what it spent. They are ordered here as the run orders them, but none of them
-calls the next: sequencing is `review_pipeline`'s, so a phase can be skipped,
+calls the next: sequencing is `review.pipeline`'s, so a phase can be skipped,
 resumed, or budgeted out without any other phase knowing.
 
-`review_phases` owns the phase runner, the group fan-out, and the disprove and
+`review.phases` owns the phase runner, the group fan-out, and the disprove and
 synthesis rules this module drives without reimplementing: invoking an agent,
 running the group phase (`_phase_group_reviews`), deciding whether the
 disprove gate runs (`_should_disprove`), and sizing the synthesis turn budget
 (`_synthesis_max_turns`) all read from there. Writing the result to the review
-file is `review_outcome`'s.
+file is `review.outcome`'s.
 
 ### review/verdict.py
 
 What a set of counts means, and the review a run without an agent writes.
 
-The policy layer over `review_document`: how many open findings of each
+The policy layer over `review.document`: how many open findings of each
 severity add up to an approve or a request-for-changes, how that reads in
 prose, whether the run states a verdict at all, and the body a mechanically
 merged review carries when no synthesis agent produced one.
@@ -634,7 +634,7 @@ Jaccard similarity, and filters out duplicates before posting.
 
 Fuzzy, and deliberately so: this is the read that decides whether a finding
 about to be posted is one a reviewer already made in different words, so it
-compares word sets rather than identities. `review_grammar.FindingIdentity` is
+compares word sets rather than identities. `review.grammar.FindingIdentity` is
 the exact answer, for carrying a finding forward across reviews of the same
 branch — two findings that are the same finding hash the same there, and a
 near-duplicate does not.
@@ -719,11 +719,11 @@ position.
 
 Exact, and deliberately so: a carry-forward asks whether this is the same
 finding as one in the prior review, and a fuzzy answer there silently merges two
-findings about two lines of one file. `review_dedup` is the fuzzy answer, for
+findings about two lines of one file. `review.dedup` is the fuzzy answer, for
 the different question of whether a finding is about to be posted twice.
 
-What a document is assembled from is `review_document`'s; what a finding means
-once parsed is `review_types`'.
+What a document is assembled from is `review.document`'s; what a finding means
+once parsed is `review.types`'.
 
 ### review/merge.py
 
@@ -736,15 +736,15 @@ path and description that decide whether two findings are duplicates are the
 pair that hashes to a stable ID, and a stable ID is how a later reconciliation
 recognises a finding a review restates.
 
-Reading that identity off a finding line is `review_grammar`'s job, not this
+Reading that identity off a finding line is `review.grammar`'s job, not this
 module's: `FindingIdentity` answers both questions, so deduplication and
 carry-forward cannot come to different conclusions about one line. Reading a
-review is `review_document`'s job, checking findings against the tree is
-`review_verify`'s, and the `Finding` every side holds is `review_types`' — a
+review is `review.document`'s job, checking findings against the tree is
+`review.verify`'s, and the `Finding` every side holds is `review.types`' — a
 consumer that only holds findings needs none of this. Deciding what became of
-a finding the prior review reported is `review_reconcile`'s.
+a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review_spans`'s. Deduplication and the
+Where a finding's body ends is `review.spans`'s. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
 that a falsified finding does. Neither says where one stops.
@@ -798,8 +798,8 @@ Given a prior review and this round's merged output, works out for every prior
 finding whether it was fixed, still stands, was declined, or was passed over
 with nobody accounting for it — and where that answer came from.
 
-The merge that produces this round's output is `review_merge`'s; the identity
-two findings are matched on is `review_grammar`'s. This module only decides.
+The merge that produces this round's output is `review.merge`'s; the identity
+two findings are matched on is `review.grammar`'s. This module only decides.
 
 A re-review ends with a `## Prior findings` ledger: one line per finding the
 previous review reported, saying whether the change fixed it, left it open, or
@@ -830,7 +830,7 @@ looking like a fresh set of prior findings.
 The ledger this module reads is not the only account of what became of a
 prior finding. Every finding posted inline opened a review thread,
 independent of that ledger, and what the author did with that thread is the
-other one — `review_reply_threads` reads it.
+other one — `review.reply_threads` reads it.
 
 ### review/reply_threads.py
 
@@ -838,7 +838,7 @@ What the author did with the threads the prior review's findings opened.
 
 Every finding posted inline opened a review thread, and what the author did
 with that thread — answered it, argued with it, resolved it — is an account of
-the finding independent of the `## Prior findings` ledger `review_reconcile`
+the finding independent of the `## Prior findings` ledger `review.reconcile`
 reads. `fetch_reply_threads` classifies each thread into a `ReplyState` and
 matches it back to the finding its root comment declared, so a re-review can
 read the thread's account of a finding beside the ledger's. That match is a
@@ -850,8 +850,8 @@ Only a thread whose first comment is the reviewing bot's own counts. A thread
 the author opened is a comment on the PR rather than a reply to a finding, and
 there is no finding for it to be an account of.
 
-Fetching is `pr_comments`'s; what a re-review is shown of the result is
-`review_prompt_sections`' and `review_prompt_prior`'s.
+Fetching is `pr.comments`'s; what a re-review is shown of the result is
+`review.prompt_sections`' and `review.prompt_prior`'s.
 
 ### review/spans.py
 
@@ -897,9 +897,9 @@ lets a consumer depend on what a review *is* without depending on what the
 review pipeline *does*.
 
 Nothing in the review layer is imported here, and nothing should be: this is the
-layer everything else in it sits on. The heavier imports — `agent_types`,
-`gh_types`, `serde`, `workbench_config` and `pr_state.now_iso` — are all below
-the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh_types`
+layer everything else in it sits on. The heavier imports — `agent.types`,
+`gh.types`, `serde`, `workbench_config` and `pr.state.now_iso` — are all below
+the review layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for `gh.types`
 and the rest.
 
 ### review/verify.py
@@ -927,7 +927,7 @@ the quote no longer has, which makes a verbatim quote fail to match itself.
 The disprove gate is adversarial. Each must-fix and should-fix finding is
 challenged by an agent, and one that cannot survive the challenge is dropped
 before the review is posted. Reading that agent's verdicts back and applying
-them is here; whether the gate runs at all is `review_phases`'.
+them is here; whether the gate runs at all is `review.phases`'.
 
 The synthesis agent wrote the ``## Summary`` and the ``## Verdict`` before
 either gate ran, so both can describe findings that are no longer in the file.
@@ -948,13 +948,13 @@ and the review says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review_verdict`'s. The
-finding-line grammar read here is `review_grammar`'s: `VERIFY_FINDING_RE` is a
+Which verdict a tally supports in the first place is `review.verdict`'s. The
+finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same location vocabulary, and the two have to agree or
 a finding parses one way and verifies against the other — which is why they
 live next to each other rather than here.
 
-Where a finding's body ends is `review_spans`'s. Both gates walk the review
+Where a finding's body ends is `review.spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and
@@ -976,7 +976,7 @@ reviewer. So the default is to draft: callers print what they would have sent an
 report failure, and nothing leaves the machine until the entrypoint opts in.
 
 One flag owns this for the whole process. Modules that write externally
-(`pr_comments`, `review_issue`) ask here rather than carrying their own switch.
+(`pr.comments`, `review.issue`) ask here rather than carrying their own switch.
 
 A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the
@@ -1045,7 +1045,7 @@ The review system's reads of a PR, and the GraphQL queries behind them.
 
 The PR's own metadata, its surrounding conversation, the diff, the
 pending-review check, and the consolidated review-thread query. Used by the
-pipeline before any agent runs, and by review_posting and review_dedup after.
+pipeline before any agent runs, and by review.posting and review.dedup after.
 
 The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
@@ -1053,7 +1053,7 @@ it reads the answer. Nothing here decides how a call is made, so a change to
 retry or to a bound is made once, in the client, for every caller.
 
 Nor is the worktree. A branch with no PR behind it is described from local git
-by `review_collect.fetch_branch_metadata`, which reaches the same `PRMetadata`
+by `review.collect.fetch_branch_metadata`, which reaches the same `PRMetadata`
 this fetches — every read here goes to GitHub.
 
 ### gh/types.py
@@ -1061,7 +1061,7 @@ this fetches — every read here goes to GitHub.
 What a GitHub PR read returns: the PR's own metadata, and its conversation.
 
 Below the `gh`-layer module that fetches both, so the shapes a read answers
-with sit at or beneath the layer that answers. `review_collect` builds
+with sit at or beneath the layer that answers. `review.collect` builds
 the same `PRMetadata` from local git for a branch with no PR behind it, which is
 why the type is not spelled in terms of the API's field names.
 
@@ -1071,7 +1071,7 @@ PR comments lifecycle tracking.
 
 Handles thread lifecycle state computation and GitHub data fetching for the
 pr-comments skill. The ledger those threads are recorded in, and the file it
-lives in, belong to `pr_comments_state`.
+lives in, belong to `pr.comments_state`.
 
 A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to
@@ -1113,7 +1113,7 @@ is still open at both points, so the hold applies to both.
 
 Typed domain objects for PR review thread processing.
 
-Persistence-oriented structures live in pr_domains.py and pr_comments_fix.py;
+Persistence-oriented structures live in pr.domains and pr.comments_fix;
 these model the runtime pipeline: triage, classification, tracking, and
 fix-pass results.
 
@@ -1217,8 +1217,8 @@ The tracking file a fix pass hands its agent, rendered and read back.
 A fix pass cannot watch an agent work, so it gives it a checklist and reads the
 checklist afterwards to find out what happened. That file is the interface
 between the two, and this module is both halves of it: :func:`render` writes
-one from :class:`~fix_types.FixItem`s, :func:`parse` reads one back as
-:class:`~pr_fix.ItemOutcome`s, and the format itself is stated once, here.
+one from :class:`~fix.types.FixItem`s, :func:`parse` reads one back as
+:class:`~pr.fix.ItemOutcome`s, and the format itself is stated once, here.
 
 Three properties the formats this replaces did not have:
 
@@ -1227,7 +1227,7 @@ touch. A parse therefore returns outcomes keyed by item rather than a count of
 ticked boxes, which is what lets a pass say *which* work it did and lets a later
 round reconcile against it.
 
-**The vocabulary is** :class:`~pr_fix.FixOutcome`. A single checkbox is a
+**The vocabulary is** :class:`~pr.fix.FixOutcome`. A single checkbox is a
 boolean, and a boolean cannot tell an agent that ran out of turns from one that
 read the item and disagreed with it. Three boxes can, and every domain gets the
 distinction rather than only the one whose format happened to encode it.
@@ -1244,11 +1244,11 @@ what the agent saw.
 
 What a fix pass is handed, in terms no one domain owns.
 
-`pr_fix` says what became of an item; this says what the item was. The two sit
+`pr.fix` says what became of an item; this says what the item was. The two sit
 either side of the agent: a domain fetches its own work — reviewer threads, CI
 failures, review findings — and turns each unit of it into a
 :class:`FixItem`, the agent is handed those, and what comes back is an
-:class:`~pr_fix.ItemOutcome` per id.
+:class:`~pr.fix.ItemOutcome` per id.
 
 A `FixItem` carries only what the tracking file needs to render a section and
 key it back: an id, where the work is, a one-line label, and the body the
@@ -1257,7 +1257,7 @@ the domain's own, and stay on the domain's own item type — the same argument
 `ItemOutcome` already makes for the outcome side. What crosses this boundary is
 what every domain can answer.
 
-Like `pr_fix`, this sits below the domains: it imports the standard library and
+Like `pr.fix`, this sits below the domains: it imports the standard library and
 nothing else from ``ai/lib``, so the shared fix machinery can depend on it
 without pulling a review or comments layer in behind it.
 
@@ -1266,14 +1266,14 @@ without pulling a review or comments layer in behind it.
 CI failure lifecycle tracking.
 
 Handles failure classification, progression tracking, and rendering for the
-ci-failures skill. State persistence is delegated to pr_domains.CIDomain.
+ci-failures skill. State persistence is delegated to pr.domains.CIDomain.
 
 ### pr/comments_fix.py
 
 The comment fix pass's domain, and the closeout it owes the PR.
 
-What the pass did about each thread is a :class:`~pr_fix.FixRecord` on this
-domain, in the :class:`~pr_fix.ItemOutcome` vocabulary all three fix passes
+What the pass did about each thread is a :class:`~pr.fix.FixRecord` on this
+domain, in the :class:`~pr.fix.ItemOutcome` vocabulary all three fix passes
 write — so a consumer asking "what became of this item" reads one shape
 whichever pass produced it. What is left here is what only this pass has: a
 reply queue, a summary comment, a PR description draft and a deferred-issue
@@ -1282,11 +1282,11 @@ trio, none of which the other domains have anything to say about.
 ``reviewers`` is here for the same reason. Which login opened a thread is the
 item as GitHub handed it over, not a fact about what the pass did with it, so
 it stays on the domain rather than widening the record every pass shares — the
-line :class:`~pr_fix.ItemOutcome` draws for a CI job name and a finding's
+line :class:`~pr.fix.ItemOutcome` draws for a CI job name and a finding's
 severity too. It is keyed by outcome id, so the two accumulate together.
 
-The module is above ``pr_domains`` rather than inside it: ``FixSummary`` is a
-:class:`~pr_domains.Domain` and needs the base class, while the generic record
+The module is above ``pr.domains`` rather than inside it: ``FixSummary`` is a
+:class:`~pr.domains.Domain` and needs the base class, while the generic record
 that base class carries has to be declared below it. Splitting on that line
 keeps the imports one-way.
 
@@ -1395,7 +1395,7 @@ The domains a PR's state is made of.
 
 Each ``pr`` subcommand owns one domain and writes it as a unit. A domain is a
 dataclass subclassing :class:`Domain`; subclassing is the registration, and
-``pr_state`` derives its registry from ``PRState``'s own annotations, so a new
+``pr.state`` derives its registry from ``PRState``'s own annotations, so a new
 domain is added here and named there and nowhere else.
 
 This module holds the domain types, the vocabulary they are written in, and the
@@ -1406,14 +1406,14 @@ report is silent by declaring nothing rather than by being left off a list.
 ``pr status`` folds over the registry for both, which is what stops the
 dashboard and the registry from disagreeing.
 
-Every domain also carries a :class:`~pr_fix.FixRecord`, declared on the base
+Every domain also carries a :class:`~pr.fix.FixRecord`, declared on the base
 class for the same reason: a domain that gains a fix pass gains somewhere to
-record it without a field being added anywhere. ``pr_fix`` holds that record and
+record it without a field being added anywhere. ``pr.fix`` holds that record and
 the vocabulary it is written in, and imports nothing back.
 
-``pr_state`` holds the envelope over these, the registry and the state file
+``pr.state`` holds the envelope over these, the registry and the state file
 I/O, and imports this module — never the other way round. So does
-``pr_comments_fix``, which holds the comment pass's domain: the closeout only
+``pr.comments_fix``, which holds the comment pass's domain: the closeout only
 that pass owes, over the same record every domain here carries.
 
 #### Rebase refusals
@@ -1472,10 +1472,10 @@ typed thread outcomes into state, one wrote checkbox counts, one rewrote
 checkboxes inside the review markdown. The types here are the shape all three
 settle on. A pass records one :class:`ItemOutcome` per item it was handed and
 one :class:`FixRecord` per run, and every domain carries a record because
-:class:`~pr_domains.Domain` declares the field — so a domain that gains a fix
+:class:`~pr.domains.Domain` declares the field — so a domain that gains a fix
 pass gains somewhere to record it by declaring nothing.
 
-This module is below the domains rather than beside them: ``pr_domains`` imports
+This module is below the domains rather than beside them: ``pr.domains`` imports
 it, and what it imports back — :class:`~land.CommitStatus`, the vocabulary a
 landing reports in — comes from ``land``, which sits below both. That is what
 lets the record hang off the base class without the domains and the vocabulary
@@ -1493,7 +1493,7 @@ instead of each re-listing the members it should believe.
 :class:`SettledBy` records the other half — who reached the outcome, which is
 what tells the pass's own work from a reconciliation or an operator's say-so.
 
-The CI and comment passes both write one, through :mod:`fix_engine` — the
+The CI and comment passes both write one, through :mod:`fix.engine` — the
 shared pipeline all three now run on, and the thing that produces the
 :class:`ItemOutcome` list a record is assembled from. Running on the engine is
 not the same as recording through these types: the review-findings pass
@@ -1509,10 +1509,10 @@ PR comments, review artifacts). Each ``pr`` subcommand updates its own
 section; ``pr status`` reads the whole thing without network calls.
 
 State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
-run's target — see ``pr_target.target_dir``, which owns that path.
+run's target — see ``pr.target.target_dir``, which owns that path.
 
-The domains this is an envelope over live in ``pr_domains`` — and one of them,
-the comment pass's, in ``pr_comments_fix``. This module imports both; neither
+The domains this is an envelope over live in ``pr.domains`` — and one of them,
+the comment pass's, in ``pr.comments_fix``. This module imports both; neither
 imports it.
 
 ### pr/supersession.py
@@ -1709,7 +1709,7 @@ instead of being stranded at the old location.
 That both components are derivable offline is a convenience for this repo's own
 code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
-``review_listing``) rather than deriving where a review would sit.
+``review.listing``) rather than deriving where a review would sit.
 
 ## AI backends
 
@@ -1736,7 +1736,7 @@ run cost is answerable without instrumenting the call site — see `ai_usage`.
 
 ### agent/backend_claude.py
 
-Claude Code CLI backend for ai_backend.
+Claude Code CLI backend for agent.backend.
 
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `claude -p` commands and running them as subprocesses.
@@ -1757,7 +1757,7 @@ works identically regardless of backend.
 
 ### agent/backend_pi.py
 
-Pi CLI backend for ai_backend.
+Pi CLI backend for agent.backend.
 
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `pi` commands and running them as subprocesses.
@@ -1805,13 +1805,13 @@ Parses cost and token usage out of backend session logs. Backend-neutral: the
 Claude Code CLI and the Pi CLI both emit `result` records, in slightly different
 spellings, and this module is the single place that reconciles them.
 
-Lives below the review layer so ai_backend can depend on it without inverting
+Lives below the review layer so agent.backend can depend on it without inverting
 the dependency.
 
 Every AI call made through the workbench appends one record to a monthly JSONL
 file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
 the task that made the call. Python entry points record automatically through
-`ai_backend`; the two shell paths that cannot use it — `run-auto-task`, which
+`agent.backend`; the two shell paths that cannot use it — `run-auto-task`, which
 needs slash commands, and `AI_COMMAND`, which is pluggable — go through
 `ai-usage-log`.
 
@@ -1833,7 +1833,7 @@ configured Vertex AI project/region before any agent is spawned.  Catches
 misconfigured model ids (nothing the project can serve, not even the model's
 family) within ~1s instead of burning ~6 minutes on retries.
 
-Reached through ``ai_backend.preflight()`` — nothing outside the Claude
+Reached through ``agent.backend.preflight()`` — nothing outside the Claude
 backend should import this module.
 
 ## Evaluation
@@ -1845,7 +1845,7 @@ The eval harness: fixture tasks, the scorers that grade each task's output, and 
 Evaluation scoring, aggregation, and baseline comparison.
 
 Task-agnostic: what a run *is* and how it is scored belongs to the task
-(`eval_scoring_review`, `eval_scoring_cifix`, ...). What lives here is the shape
+(`eval.scoring_review`, `eval.scoring_cifix`, ...). What lives here is the shape
 of a score, the statistics over repeated runs, and the baseline diff — the parts
 every task shares.
 
@@ -1887,7 +1887,7 @@ installed, so they fail the same way everywhere.
 The review eval task: run review-orchestrate, score findings against a manifest.
 
 Everything here is specific to reviewing code. The runner, the fixture repo, and
-the aggregation over runs live in `eval_task` and `eval_scoring` and know nothing
+the aggregation over runs live in `eval.task` and `eval.scoring` and know nothing
 about findings.
 
 A finding counts as matched when its path, severity, and description all line up
@@ -2219,7 +2219,7 @@ standard library, and a module called `cmd` there would shadow the stdlib
 `cmd` that `pdb` imports.
 
 Stdlib only, deliberately. This is the module everything else in `ai/lib`
-should be free to depend on, and pulling in `log`, `ai_usage`, or
+should be free to depend on, and pulling in `log`, `agent.usage`, or
 `workbench_paths` from here would make that impossible.
 
 ### core/run_lock.py
@@ -2299,7 +2299,7 @@ How long a subprocess may run, decided once instead of at every call site.
 module, bare literals at the call site, a caller-supplied argument, and — for
 most of the git client — nothing at all. The same operation got a different
 bound depending on which file it was called from; a single `gh api` round trip
-was 30s in `review_github`, 10s in `pr-rebase`, and 10s in `retro-scan`. No
+was 30s in `gh.pr_reads`, 10s in `pr-rebase`, and 10s in `retro-scan`. No
 principle separated those numbers. They were what whoever wrote each site
 happened to pick.
 
@@ -2339,12 +2339,12 @@ on `sys.path` itself, which is how it imports `tool_registry`, so `timeouts`
 came along with it and the exemption only meant the file went unchecked.
 
 Three numbers deliberately stay outside it. `ci-check --wait-timeout`,
-`eval_task.EVAL_CASE_BUDGET` and the MCP server's `TOOL_CALL_BUDGET` are
+`eval.task.EVAL_CASE_BUDGET` and the MCP server's `TOOL_CALL_BUDGET` are
 deadlines for work that could reasonably keep going, not bounds on a subprocess
 that should already have answered; they say how long something is *worth*, which
 is a different question.
 
-Stdlib-only and importing nothing, so that `proc`, `git_client`, and everything
+Stdlib-only and importing nothing, so that `proc`, `git.client`, and everything
 built on them can depend on it without a cycle.
 
 ### core/tool_parser.py
@@ -2473,12 +2473,12 @@ Retry is a property of talking to the API, so it lives with the calls that do:
 against a local checkout. A caller driving an artifact download or reading
 gh's own configuration gets no ladder, and should not.
 
-The publishing gate is deliberately not here. `pr_comments` gates its writes on
+The publishing gate is deliberately not here. `pr.comments` gates its writes on
 `publishing.enabled()` at the call site and keeps doing so — a second implicit
 gate inside the transport would make a policy decision invisible to the code
 that owns it.
 
-Like `git_client`, this depends on `log` as well as `proc`, and for more of its
+Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
 silence reads as a hang, so the waiting is announced. Whether a *failed* call is
 worth logging remains the caller's decision, as it is there.
@@ -2759,9 +2759,9 @@ in exit codes — `0` pushed, `1` refused, `2` lost, `3` unverified.
 
 Which directory holds which branch, and creating one when there is none.
 
-Worktree and bare-repo topology, split out of `pr_context` because the resolver
+Worktree and bare-repo topology, split out of `pr.context` because the resolver
 needs it rather than because it is part of resolving: nothing here reads a
-`ResolvedContext`, and every read goes to git or to worktrunk. `pr_sync` is the
+`ResolvedContext`, and every read goes to git or to worktrunk. `pr.sync` is the
 other half of that split and points the other way — it takes a resolved context
 and acts on it.
 
@@ -2836,8 +2836,8 @@ Fetching a repo's recent review activity from GitHub.
 
 One GraphQL round trip per repo where the API allows it, falling back to REST
 when it does not, flattened into the plain comment dicts the rest of the retro
-reads. Deciding which comments matter is `retro_rules`'; rendering them is
-`retro_report`'s.
+reads. Deciding which comments matter is `retro.rules`'; rendering them is
+`retro.report`'s.
 
 Normalising a raw comment's shape and dropping the noise (approvals,
 thumbs-up, a bare "nit") is part of producing that plain comment dict, so it
@@ -2851,17 +2851,17 @@ Rendering a retro scan's findings into the markdown report retro-scan prints.
 Takes the scan's collected repos, per-rule match counts and cross-PR themes
 and lays them out as headed sections — comments by repo, a rules-coverage
 table, and repeated themes. Deciding which rule a comment is nearest to is
-`retro_rules`'; this module only renders what was already decided.
+`retro.rules`'; this module only renders what was already decided.
 
 ### retro/reviews.py
 
 Turning locally-saved reviews into the same comment shape GitHub PRs produce.
 
-Walks the reviews root `review_paths` already tracks and reads each review's
-findings into the retro's per-repo, per-PR comment structure, so `retro_report`
+Walks the reviews root `review.paths` already tracks and reads each review's
+findings into the retro's per-repo, per-PR comment structure, so `retro.report`
 renders a local self-review indistinguishably from a GitHub one. Deciding
-which rule a finding is nearest to is `retro_rules`'; matching the comment to
-the exact bullet on the page is `retro_report`'s.
+which rule a finding is nearest to is `retro.rules`'; matching the comment to
+the exact bullet on the page is `retro.report`'s.
 
 ### retro/rules.py
 
@@ -2870,5 +2870,5 @@ Matching review-comment text against the workbench's coding rules.
 Loads each rule file under `ai/guidelines/rules/` into a keyword set and finds
 the rule nearest a piece of comment text by keyword overlap. `extract_keywords`
 is the vocabulary primitive both rule loading and bullet matching are built
-on — `retro_report` reuses it to find which bullet inside a matched rule is
+on — `retro.report` reuses it to find which bullet inside a matched rule is
 closest to the comment being annotated.

@@ -73,7 +73,7 @@ SOURCE_ROOT="${SOURCE_ROOT:-$REPO_ROOT}"
 #                named by the note its members carry. Empty when the set has none.
 declare -gA SET_SOURCES=(
   [lib]="lib/*.sh:core lib/ai/*.sh:ai"
-  [ai-lib]="ai/lib/*.py:"
+  [ai-lib]="ai/lib/*/*.py:"
 )
 declare -gA SET_BASE=(
   [lib]="lib"
@@ -138,6 +138,10 @@ _set_entries() {
     for file in "$SOURCE_ROOT"/$glob; do
       if [[ ! -f "$file" ]]; then continue; fi
       if [[ -n "$facade" && "${file##*/}" == "$facade" ]]; then continue; fi
+      # A package's __init__.py carries no doc-group marker — it declares the
+      # layer's import boundary, not a documented module — so it is excluded
+      # here rather than given a marker just to satisfy the group requirement.
+      if [[ "${file##*/}" == "__init__.py" ]]; then continue; fi
       __out+=("$file"$'\t'"$default")
     done
   done

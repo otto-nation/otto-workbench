@@ -349,7 +349,8 @@ EOF
 }
 
 @test "the ai-lib set renders module docstrings under their own heading" {
-  cat > "$AI_LIB_DIR/publishing.py" << 'EOF'
+  mkdir -p "$AI_LIB_DIR/core" "$AI_LIB_DIR/pr"
+  cat > "$AI_LIB_DIR/core/publishing.py" << 'EOF'
 """The gate every outward-facing write passes through.
 
 Callers print what they would have sent.
@@ -357,19 +358,29 @@ Callers print what they would have sent.
 
 # doc-group: publishing
 EOF
-  printf '"""Reply threads."""\n\n# doc-group: publishing\n' > "$AI_LIB_DIR/pr_comments.py"
+  printf '"""Reply threads."""\n\n# doc-group: publishing\n' > "$AI_LIB_DIR/pr/comments.py"
   run main --set ai-lib --group publishing
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf '### pr_comments.py\n\nReply threads.\n\n### publishing.py\n\nThe gate every outward-facing write passes through.\n\nCallers print what they would have sent.')" ]
+  [ "$output" = "$(printf '### core/publishing.py\n\nThe gate every outward-facing write passes through.\n\nCallers print what they would have sent.\n\n### pr/comments.py\n\nReply threads.')" ]
 }
 
 @test "the two sets do not see each other's modules" {
+  mkdir -p "$AI_LIB_DIR/core"
   printf '#!/usr/bin/env bash\n# Output helpers.\n' > "$LIB_DIR/output.sh"
-  printf '"""Subprocess helpers."""\n\n# doc-group: platform\n' > "$AI_LIB_DIR/proc.py"
+  printf '"""Subprocess helpers."""\n\n# doc-group: platform\n' > "$AI_LIB_DIR/core/proc.py"
   run main --set lib --group core
   [[ "$output" != *"proc.py"* ]]
   run main --set ai-lib --group platform
   [[ "$output" != *"output.sh"* ]]
+}
+
+@test "a package's __init__.py is excluded rather than required to declare a group" {
+  mkdir -p "$AI_LIB_DIR/core"
+  printf '"""Layer 1 — foundation primitives."""\n' > "$AI_LIB_DIR/core/__init__.py"
+  printf '"""Subprocess helpers."""\n\n# doc-group: platform\n' > "$AI_LIB_DIR/core/proc.py"
+  run main --set ai-lib --groups
+  [ "$status" -eq 0 ]
+  [ "$output" = "platform" ]
 }
 
 @test "an unknown set fails instead of rendering nothing" {
@@ -475,14 +486,16 @@ EOF
 }
 
 @test "a module in a set with no default group must declare one" {
-  printf '"""Serialization helpers."""\n' > "$AI_LIB_DIR/serde.py"
+  mkdir -p "$AI_LIB_DIR/core"
+  printf '"""Serialization helpers."""\n' > "$AI_LIB_DIR/core/serde.py"
   run main --set ai-lib --groups
   [ "$status" -ne 0 ]
   [[ "$output" == *"ai/lib/serde.py declares no group"* ]]
 }
 
 @test "a module with no docstring cannot declare a group above it" {
-  printf '# doc-group: platform\n\nfrom __future__ import annotations\n' > "$AI_LIB_DIR/serde.py"
+  mkdir -p "$AI_LIB_DIR/core"
+  printf '# doc-group: platform\n\nfrom __future__ import annotations\n' > "$AI_LIB_DIR/core/serde.py"
   run main --set ai-lib --groups
   [ "$status" -ne 0 ]
   [[ "$output" == *"ai/lib/serde.py declares no group"* ]]

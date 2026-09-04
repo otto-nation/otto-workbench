@@ -63,7 +63,7 @@ DISCOVERY_TIMEOUT = timeouts.QUICK
 # Seconds a tool call gets before the client is told it timed out. Not a tier
 # from `timeouts`: those bound a subprocess that should already have answered,
 # while this is a budget for whichever tool the client asked for — `pr review`
-# drives agents for minutes. Same carve-out as `eval_task.EVAL_CASE_BUDGET`.
+# drives agents for minutes. Same carve-out as `eval.task.EVAL_CASE_BUDGET`.
 TOOL_CALL_BUDGET = 300
 
 TOOL_SCHEMA_FLAG = "--tool-schema"

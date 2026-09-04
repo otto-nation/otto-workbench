@@ -40,6 +40,7 @@
     "command:workbench-export",
     "command:workbench-reference",
     "command:workbench-statusline",
+    "setting:attribution",
     "setting:enabledPlugins",
     "setting:hooks",
     "setting:permissions",

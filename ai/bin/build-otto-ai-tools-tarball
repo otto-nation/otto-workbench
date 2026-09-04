@@ -118,10 +118,13 @@ fi
 # layouts — ai/bin/ beside ai/lib/ in the repo, bin/ beside lib/ in the tarball
 # — so a script's own `.parent.parent / "lib"` resolves correctly in each.
 
-# Library files — the layered packages, directories and all
+# Library files — the layered packages, directories and all. Excluded at the
+# copy rather than deleted after: `cp -R` on a package directory brings along
+# whatever `__pycache__` a prior interpreter run left beside the source, and a
+# delete pass that misses a path (or is itself dropped later) ships it anyway.
 for pkg in "$_AI_LIB_DIR"/*/; do
   [[ -f "$pkg/__init__.py" ]] || continue
-  cp -R "${pkg%/}" "$DEST/lib/"
+  rsync -a --exclude='__pycache__' --exclude='*.pyc' "${pkg%/}" "$DEST/lib/"
 done
 
 # Library files — bash modules required at runtime

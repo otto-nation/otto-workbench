@@ -44,6 +44,12 @@ teardown() {
   [ -f "$TARBALL_ROOT/VERSION" ]
 }
 
+@test "tarball carries no __pycache__ or .pyc — the artifact hash must not depend on the build host" {
+  local count
+  count=$(find "$TARBALL_ROOT/lib" -name '__pycache__' -o -name '*.pyc' | wc -l | tr -d ' ')
+  [ "$count" -eq 0 ]
+}
+
 # ── 2. VERSION file ────────────────────────────────────────────────────────
 
 @test "VERSION file contains the build version" {

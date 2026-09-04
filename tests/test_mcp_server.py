@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import queue
 import re
 import shutil
@@ -140,6 +141,133 @@ class TestArgsToCLI:
         assert args == []
 
 
+# ── Spawning ──────────────────────────────────────────────────────────────
+
+
+def _write_executable(path: Path, body: str) -> Path:
+    path.write_text(textwrap.dedent(body))
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+# Long enough that a fixture still holding the pid is a fixture the kill
+# missed, rather than one that was about to exit anyway.
+GRANDCHILD_LIFETIME = 20
+
+
+def _alive(pid: int) -> bool:
+    """Whether *pid* names a live process, without signalling it."""
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _wait_until_gone(pid: int, timeout: float = 5.0) -> bool:
+    """Poll for *pid* to disappear; the kill is a signal, not a synchronous death."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+class TestSpawnIsolation:
+    """What `_run_script` guarantees that `subprocess.run` does not.
+
+    Both spawn sites go through it, so these hold for a discovery probe and a
+    tool call alike.
+    """
+
+    def test_a_script_that_reads_stdin_gets_eof(self, tmp_path):
+        """The server's stdin is the JSON-RPC transport; a script must not reach it.
+
+        A byte taken out of the stream kills the session on a parse error that
+        names no tool, so the assertion is that the read returned nothing at
+        all rather than that it returned something harmless.
+        """
+        script = _write_executable(tmp_path / "reader", """\
+            #!/usr/bin/env python3
+            import sys
+            sys.stdout.write("READ:" + repr(sys.stdin.read()))
+        """)
+
+        result = server._run_script([str(script)], 30)
+
+        assert result.stdout == "READ:''"
+
+    def test_a_timed_out_script_takes_its_grandchildren_with_it(self, tmp_path):
+        """`subprocess.run`'s timeout signals one process; a tool spawns agents.
+
+        The fixture stands in for `pr review`: it backgrounds a process that
+        outlives it and then hangs, so an implementation that killed only the
+        direct child would leave the background one running with nothing
+        holding a handle to it.
+        """
+        pidfile = tmp_path / "grandchild.pid"
+        script = _write_executable(tmp_path / "spawner", f"""\
+            #!/usr/bin/env bash
+            sleep {GRANDCHILD_LIFETIME} &
+            echo "$!" > {str(pidfile)!r}
+            sleep {GRANDCHILD_LIFETIME}
+        """)
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            server._run_script([str(script)], 1.0)
+
+        grandchild = int(pidfile.read_text())
+        assert _wait_until_gone(grandchild), (
+            f"pid {grandchild} outlived the tool call that spawned it")
+
+    def test_the_direct_child_dies_too(self, tmp_path):
+        script = _write_executable(tmp_path / "sleeper", f"""\
+            #!/usr/bin/env bash
+            echo "$$" > {str(tmp_path / 'child.pid')!r}
+            sleep {GRANDCHILD_LIFETIME}
+        """)
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            server._run_script([str(script)], 1.0)
+
+        assert _wait_until_gone(int((tmp_path / "child.pid").read_text()))
+
+    def test_it_answers_with_what_the_script_printed(self, tmp_path):
+        """The callers read `.returncode`, `.stdout` and `.stderr` off the result."""
+        script = _write_executable(tmp_path / "talker", """\
+            #!/usr/bin/env bash
+            echo out
+            echo err >&2
+            exit 3
+        """)
+
+        result = server._run_script([str(script)], 30)
+
+        assert (result.returncode, result.stdout, result.stderr) == (3, "out\n", "err\n")
+
+    def test_a_probe_of_a_script_that_reads_stdin_still_answers(self, tmp_path):
+        """The probe is the likeliest reader of all.
+
+        A script that does not recognise `--tool-schema` falls through to its
+        real work, and that work may read stdin — so this is the path where an
+        inherited transport is most likely to be consumed.
+        """
+        script = _write_executable(tmp_path / "hungry-tool", """\
+            #!/usr/bin/env python3
+            import json, sys
+            data = sys.stdin.read()
+            if "--tool-schema" in sys.argv:
+                json.dump({"name": "hungry-tool", "input_schema": {}, "read": data},
+                          sys.stdout)
+        """)
+
+        result = server.probe_tool(script)
+
+        assert result.ok, result.reason
+        assert result.schema["read"] == ""
+
+
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
 
@@ -179,10 +307,17 @@ def _write_destructive_script(directory: Path) -> Path:
     return script
 
 
-def _write_marked_script(directory: Path, name: str) -> Path:
-    """An executable answering the probe with a minimal schema for *name*."""
-    document = {"name": name, "description": f"{name}, as the script tells it",
+def _write_marked_script(directory: Path, name: str, tool_name: str = "") -> Path:
+    """An executable at *name* answering the probe with a minimal schema.
+
+    The schema names *tool_name* when given, which is how two scripts are made
+    to claim one tool — the filename and the name a script answers with are
+    independent, and discovery keys on the latter.
+    """
+    tool_name = tool_name or name
+    document = {"name": tool_name, "description": f"{tool_name}, as the script tells it",
                 "input_schema": {"type": "object", "properties": {}}}
+    directory.mkdir(parents=True, exist_ok=True)
     script = directory / name
     script.write_text(textwrap.dedent(f"""\
         #!/usr/bin/env python3
@@ -377,7 +512,54 @@ class TestDiscovery:
 
         assert "pr" in tools
         assert "input_schema" in tools["pr"]
-        assert tools["pr"]["output_schema"]["type"] == "object"
+
+    def test_pr_declares_no_output_schema(self):
+        """Declaring one made eight of nine subcommands come back `isError`.
+
+        A tool that advertises an output schema has to answer with a JSON
+        object every time, and only `pr status` prints one — not even that one
+        before a state file exists. The honest contract is none until the
+        schema is per-subcommand.
+        """
+        bin_dir = WORKBENCH_DIR / "ai" / "bin"
+        if not (bin_dir / "pr").exists():
+            pytest.skip("scripts not found")
+
+        assert discover_tools([bin_dir])["pr"].get("output_schema") is None
+
+
+class TestDuplicateNames:
+    """Two scripts answering to one name.
+
+    Runtime keeps the first the scan reached, because raising in discovery
+    would run in the watcher thread as well as at startup — one ambiguity
+    would either take the server down or stop re-discovery for the session.
+    What it must not do is stay quiet: which of the two a client reaches is
+    decided by directory order. `bin/local/validate-tool-schema` is where the
+    collision fails.
+    """
+
+    def test_the_first_script_scanned_wins(self, tmp_path):
+        first = _write_marked_script(tmp_path / "a", "alpha", tool_name="shared")
+        second = _write_marked_script(tmp_path / "b", "beta", tool_name="shared")
+
+        tools = discover_tools([tmp_path / "a", tmp_path / "b"],
+                               _registered(first, second))
+
+        assert list(tools) == ["shared"]
+        assert tools["shared"]["_script"] == str(first)
+
+    def test_the_loser_is_logged_at_error_naming_both(self, tmp_path, caplog):
+        first = _write_marked_script(tmp_path / "a", "alpha", tool_name="shared")
+        second = _write_marked_script(tmp_path / "b", "beta", tool_name="shared")
+
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            discover_tools([tmp_path / "a", tmp_path / "b"], _registered(first, second))
+
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert str(first) in errors[0].getMessage()
+        assert str(second) in errors[0].getMessage()
 
 
 # ── Probing ───────────────────────────────────────────────────────────────

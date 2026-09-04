@@ -245,6 +245,60 @@ def test_an_unmarked_script_needs_no_entry(tmp_path):
     assert vts.unregistered(str(tmp_path)) == []
 
 
+# ── colliding names ──────────────────────────────────────────────────────
+
+
+SHARES_A_NAME = _answers('"name": "shared", "input_schema": {"type": "object"}')
+
+
+def _colliding_tree(root: Path) -> None:
+    """Two registered scripts in two tool dirs, both answering to `shared`."""
+    _write_script(root, "bin/alpha", SHARES_A_NAME)
+    _write_registry(root, "bin", "alpha")
+    _write_script(root, "sub/bin/beta", SHARES_A_NAME)
+    _write_registry(root, "sub/bin", "beta")
+
+
+def test_two_scripts_answering_to_one_name_are_a_collision(tmp_path):
+    _colliding_tree(tmp_path)
+
+    dupes = vts.duplicate_names(vts.check_root(str(tmp_path)))
+
+    assert sorted(p.name for p in dupes["shared"]) == ["alpha", "beta"]
+
+
+def test_one_script_per_name_is_not_a_collision(tmp_path):
+    """A check that called everything a collision would also be green here."""
+    _write_script(tmp_path, "bin/good-tool", GOOD)
+    _write_registry(tmp_path, "bin", "good-tool")
+
+    assert vts.duplicate_names(vts.check_root(str(tmp_path))) == {}
+
+
+def test_a_script_that_never_answered_cannot_collide(tmp_path):
+    """A broken script has no name to claim — it is already counted as broken."""
+    _write_script(tmp_path, "bin/broken-tool",
+                  '#!/bin/bash\n# answers --tool-schema\nexit 3\n')
+    _write_registry(tmp_path, "bin", "broken-tool")
+
+    assert vts.duplicate_names(vts.check_root(str(tmp_path))) == {}
+
+
+def test_main_exits_1_and_names_both_colliding_scripts(tmp_path, monkeypatch, capsys):
+    _colliding_tree(tmp_path)
+    monkeypatch.setenv("VALIDATOR_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["validate-tool-schema", "--quiet"])
+
+    with pytest.raises(SystemExit) as exc:
+        vts.main()
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "bin/alpha" in err
+    assert "sub/bin/beta" in err
+    assert "claimed by more than one script" in err
+
+
 # ── the rules come from the server ───────────────────────────────────────
 
 

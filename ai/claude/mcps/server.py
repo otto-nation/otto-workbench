@@ -27,6 +27,7 @@ import contextlib
 import json
 import logging
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -110,6 +111,64 @@ ERROR_EXCERPT_CHARS = 500
 # so this is a bound on how stale a client's tool list gets rather than a cost
 # to trade against. Re-discovery only runs when the fingerprint moves.
 POLL_INTERVAL = 2.0
+
+
+# ── Spawning ──────────────────────────────────────────────────────────────
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    """SIGKILL every process in *process*'s group.
+
+    ``start_new_session`` makes the child a group leader, so its pid is also
+    the group id. ``ProcessLookupError`` means the last member exited between
+    the bound expiring and this call — the race, not a failure.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _run_script(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """Run *argv* to completion under *timeout*, isolated from this process.
+
+    Every script this server executes goes through here — the discovery probe
+    and the tool call alike — because both need two guarantees
+    ``subprocess.run`` does not give.
+
+    ``stdin`` is closed rather than inherited. This server's stdin *is* the
+    stdio JSON-RPC stream the client writes requests into, so a script that
+    reads a single byte takes that byte out of the transport and the session
+    dies on a parse error naming no tool. The probe is the likeliest reader: a
+    script that does not recognise ``--tool-schema`` falls through to its real
+    work.
+
+    The child also gets a session of its own, so an expired bound kills the
+    whole process group rather than the one process it started. A tool spawns
+    agents — ``pr review`` is the case — and signalling only the direct child
+    leaves them running against the account with nothing holding a handle to
+    them. ``SIGKILL`` with no grace window: the budget has already expired, and
+    a TERM-then-KILL ladder would double the worst case on a call that is
+    already late.
+
+    Raises ``subprocess.TimeoutExpired`` once the group is dead, so a caller's
+    existing handler reads exactly as it did under ``subprocess.run``.
+    """
+    with subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_group(process)
+            raise
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
 
 # ── Tool Discovery ────────────────────────────────────────────────────────
@@ -225,13 +284,7 @@ def probe_tool(script: Path) -> ProbeResult:
         return ProbeResult(script, reason="no protocol marker in its source",
                            failure=ProbeFailure.UNMARKED)
     try:
-        result = subprocess.run(
-            [str(script), TOOL_SCHEMA_FLAG],
-            capture_output=True,
-            text=True,
-            timeout=DISCOVERY_TIMEOUT,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        result = _run_script([str(script), TOOL_SCHEMA_FLAG], DISCOVERY_TIMEOUT)
         if result.returncode != 0:
             return ProbeResult(script, failure=ProbeFailure.BROKEN, reason=(
                 f"{TOOL_SCHEMA_FLAG} exited {result.returncode}: "
@@ -404,6 +457,13 @@ def discover_tools(dirs: list[Path] | None = None,
     entries. Passing them is how a test points the scan at a fixture directory
     without writing scripts into the checkout; an empty *registry* offers
     nothing, which is what an unregistered tree amounts to.
+
+    A name two scripts both answer with keeps the first the scan reached and
+    logs the other at ERROR. Raising instead would run in the watcher thread as
+    well as at startup, so one ambiguity would either take the server down or
+    stop re-discovery for the session; first-wins leaves a working tool
+    working. The build is where a collision is meant to be caught —
+    ``bin/local/validate-tool-schema`` fails on it.
     """
     if dirs is None:
         dirs = discover_tool_dirs()
@@ -412,9 +472,15 @@ def discover_tools(dirs: list[Path] | None = None,
     tools: dict[str, dict] = {}
 
     for schema in _scan_offered(dirs, registry):
-        if schema["name"] not in tools:
-            tools[schema["name"]] = schema
-            logger.info("Discovered tool: %s (%s)", schema["name"], schema["_script"])
+        name = schema["name"]
+        if name in tools:
+            logger.error(
+                "Duplicate tool name %s: keeping %s, ignoring %s — which one a "
+                "client reaches is decided by scan order, so rename one",
+                name, tools[name]["_script"], schema["_script"])
+            continue
+        tools[name] = schema
+        logger.info("Discovered tool: %s (%s)", name, schema["_script"])
 
     return tools
 
@@ -697,12 +763,7 @@ def create_server() -> RunningServer:
 
         try:
             result = await asyncio.to_thread(
-                subprocess.run,
-                [script] + cli_args,
-                capture_output=True,
-                text=True,
-                timeout=TOOL_CALL_BUDGET,
-                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                _run_script, [script] + cli_args, TOOL_CALL_BUDGET,
             )
         except subprocess.TimeoutExpired:
             return CallToolResult(

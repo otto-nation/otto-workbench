@@ -835,24 +835,53 @@ def _isolate_state_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _disown_git_hooks(monkeypatch):
-    """Detach every git command in every test from the machine's hooks.
+def _disown_git_hooks(monkeypatch, tmp_path_factory):
+    """Detach every git command in every test from the machine's git config.
 
-    `core.hooksPath` is global on a workbench machine, so a repo created under
-    `tmp_path` inherits the developer's real `pre-commit` — an identity
-    assertion plus a `gitleaks` subprocess on each commit. The suite would then
-    depend on machine state it does not own: the hook is free to change under
-    it, a machine without gitleaks fails every commit in a temp repo, and under
-    `pytest-xdist` each worker pays for its own scan.
+    A workbench machine turns on `core.hooksPath`, `core.fsmonitor` and
+    `core.untrackedCache` globally, and a repo created under `tmp_path` inherits
+    all three. Each costs a test something it never asked for. The global
+    `pre-commit` is an identity assertion plus a `gitleaks` subprocess on every
+    commit, so the suite depends on machine state it does not own: the hook is
+    free to change under it, a machine without gitleaks fails every commit in a
+    temp repo, and under `pytest-xdist` each worker pays for its own scan.
+    `core.fsmonitor` is worse, because its cost is not paid by the test that
+    incurs it — the first commit in a temp repo starts a `git fsmonitor--daemon`
+    that outlives the repo, so a suite run leaves hundreds of them behind
+    holding FSEvents subscriptions. Past some number of those, `fseventsd`
+    saturates and every git call on the machine slows down; the suite then fails
+    in arbitrary places with `MachineContention`, which reads as an
+    oversubscribed box and is not one.
 
-    Set through git's own environment config rather than written into each repo,
-    for the reason `_isolate_state_root` above sets an env var: a subprocess
-    inherits it, so a repo built by a tool under test is covered too, and no new
-    test has to remember to opt in. Git reads these as if they were `-c`, which
-    outranks the repo-local `core.hooksPath` a few suites set for themselves —
-    those point at empty directories to disable hooks, so /dev/null is what they
-    were asking for anyway. A test that needs a hook to fire drops these keys.
+    Emptying the config files beats naming each setting through
+    `GIT_CONFIG_COUNT`, for the reason `tests/test_helper.bash` gives on the bats
+    side: no list has to be kept current, so a key added to `gitconfig.shared`
+    tomorrow is excluded already. The global one is a writable path rather than
+    /dev/null because git cannot lock /dev/null and `sync_git` calls `git config
+    --global`; nothing writes the system config, so /dev/null is enough there.
+
+    The `-c core.hooksPath` override stays on top of that, because it does a
+    second thing emptying the files does not: it outranks the repo-local
+    `core.hooksPath` a few suites set for themselves. Those point at empty
+    directories to disable hooks, so /dev/null is what they were asking for
+    anyway. A test that needs a hook to fire drops these keys.
+
+    Set through git's own environment rather than written into each repo, for
+    the reason `_isolate_state_root` above sets an env var: a subprocess inherits
+    it, so a repo built by a tool under test is covered too, and no new test has
+    to remember to opt in.
+
+    The sandbox file gets a directory of its own rather than a place in
+    `tmp_path`, because a good many tests assert on what `tmp_path` contains —
+    that a write left no temp file behind, that a repo is clean, that a listing
+    holds one entry. A config file sitting there is an extra name in every one of
+    those, and the failures name the file rather than the fixture that put it
+    there.
     """
+    sandbox = tmp_path_factory.mktemp("gitconfig") / "global"
+    sandbox.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(sandbox))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", os.devnull)
@@ -864,12 +893,11 @@ def live_git_hooks(monkeypatch):
 
     An opt-out has to remove the keys rather than write a louder value, since
     git reads them as `-c` and nothing a repo config says outranks that. The
-    machine's global config goes with them, so what runs is the hook the test
-    installed and never the developer's.
+    machine's global config stays sandboxed by the autouse fixture above, so
+    what runs is the hook the test installed and never the developer's.
     """
     for key in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
 
 
 @pytest.fixture(autouse=True)

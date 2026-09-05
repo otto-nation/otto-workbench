@@ -958,6 +958,42 @@ class TestWorkbenchToolDirs:
         assert discover_tools() == discover_tools(discover_tool_dirs())
 
 
+# ── The served set ────────────────────────────────────────────────────────
+
+
+GOLDEN_TOOLS = Path(__file__).resolve().parent / "fixtures" / "mcp_tools.json"
+
+
+def _served_tools() -> dict:
+    """`discover_tools()` with each absolute script path made repo-relative."""
+    return {
+        name: {**schema,
+               "_script": str(Path(schema["_script"]).relative_to(WORKBENCH_DIR))}
+        for name, schema in discover_tools().items()
+    }
+
+
+class TestServedSchemas:
+    """What the server offers, recorded so a rewrite of discovery can be checked.
+
+    Discovery executes every candidate script with ``--tool-schema`` and keeps
+    what answers. Phase 7 replaces that probe with a read of the tool registry,
+    which is a change of mechanism that must not be a change of output — and
+    nothing else in this file compares the *whole* served set, so a schema
+    silently gained or lost would pass every case above.
+
+    Regenerate the fixture by writing ``json.dumps(_served_tools(), indent=2,
+    sort_keys=True)`` to it. A diff here is a change to the MCP surface and is
+    read as one.
+    """
+
+    def test_the_served_set_matches_the_golden(self):
+        if not (WORKBENCH_DIR / "ai" / "bin" / "pr").exists():
+            pytest.skip("scripts not found")
+
+        assert _served_tools() == json.loads(GOLDEN_TOOLS.read_text())
+
+
 # ── Re-discovery ──────────────────────────────────────────────────────────
 
 

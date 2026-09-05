@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""Validate that every ai/lib package imports only what its layer declaration permits.
+
+Usage: bin/local/validate-ai-layers [--quiet] [file...]
+
+`ai/lib/` is a stack of layered packages, and each one states its own place in
+the stack on the first line of its `__init__.py`:
+
+    \"\"\"Layer 4 — PR state and lifecycle. May import: core, config, git, gh, agent.\"\"\"
+
+That sentence is the whole rule. It names the layer the package sits at and the
+exact set of sibling packages it may reach, which is narrower than the layer
+number alone: `gh` and `agent` are both layer 3 and neither may import the other,
+so a check that only compared numbers would let a peer edge through.
+
+The declaration is the single source of truth — this validator parses it rather
+than carrying its own copy of the table, so a package's layer is stated once, in
+the file whose contents it governs. A package with no parseable declaration is a
+failure, which is what keeps a new package from joining the tree unplaced.
+
+Three things are checked:
+
+  1. Every package under `ai/lib/` declares a layer, and every `.py` file lives
+     inside one.
+  2. Every package a declaration permits exists and sits at a strictly lower
+     layer — a declaration cannot grant itself an upward edge by naming one.
+  3. Every cross-package import, however it is spelled, is in the importing
+     package's permitted set.
+
+What the rule buys is that the stack can be read off the imports: `core` cannot
+be made to depend on `review` by an accident in a merge, so anything at layer 1
+stays testable without the packages above it, and the import cost of a low-layer
+module stays proportional to its own job.
+
+Only static imports are seen — `ai/lib/` contains no `importlib` call today, and
+one added later would route around this check. A relative import cannot reach a
+sibling package by construction, so the only relative edge here is one that
+climbs out of its own package, which is reported on its own terms.
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+import argparse
+import ast
+import os
+import re
+import sys
+from dataclasses import dataclass
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+LIB_DIR = os.path.join('ai', 'lib')
+
+# The first line of a package's `__init__.py`, and the only place its layer is
+# written down. The em dash and the two full stops are part of the form: every
+# package already spells it this way, and a validator that accepted variants
+# would be reading a format nobody maintains.
+DECLARATION = re.compile(
+    r'^Layer (?P<number>\d+) — (?P<purpose>[^.]+)\. May import: (?P<allowed>[^.]+)\.$')
+
+# What layer 1 writes where the others write a package list.
+NOTHING = 'nothing in ai/lib'
+
+SKIP_DIRS = {'__pycache__', '.git'}
+
+
+@dataclass(frozen=True)
+class Layer:
+    """One package's declared place in the stack."""
+
+    package: str
+    number: int
+    purpose: str
+    allowed: frozenset[str]
+
+
+@dataclass(frozen=True)
+class Edge:
+    """One import statement, reduced to the package it reaches.
+
+    *head* is the top-level name the import names — the package, for anything
+    inside `ai/lib`, and a stdlib or third-party distribution otherwise.
+    *escaped* marks a relative import that climbed out of the package it was
+    written in, where there is no head to name.
+    """
+
+    line: int
+    head: str
+    escaped: bool = False
+
+
+@dataclass(frozen=True)
+class Violation:
+    line: int
+    target: str
+    reason: str
+
+
+# ── The declarations ─────────────────────────────────────────────────────────
+
+
+def parse_declaration(package: str, source: str) -> Layer | None:
+    """The layer *package* declares in the docstring of its `__init__.py` source.
+
+    None when the file has no docstring or its first line is not the declared
+    form — both of which the caller reports as the package being unplaced.
+    """
+    try:
+        docstring = ast.get_docstring(ast.parse(source))
+    except SyntaxError:
+        return None
+    if not docstring:
+        return None
+    match = DECLARATION.match(docstring.strip().splitlines()[0])
+    if match is None:
+        return None
+    listed = match['allowed'].strip()
+    allowed = () if listed == NOTHING else (n.strip() for n in listed.split(','))
+    return Layer(package=package, number=int(match['number']),
+                 purpose=match['purpose'], allowed=frozenset(allowed))
+
+
+def read_layers(repo_root: str) -> dict[str, Layer]:
+    """Every declared package under `ai/lib/`, keyed by package name.
+
+    A directory holding an `__init__.py` is a package whether or not it parses;
+    one that fails to declare a layer is absent from this mapping, and
+    `undeclared_packages` is what reports it.
+    """
+    lib_root = os.path.join(repo_root, LIB_DIR)
+    found = {}
+    for name in sorted(os.listdir(lib_root)):
+        init = os.path.join(lib_root, name, '__init__.py')
+        if not os.path.isfile(init):
+            continue
+        with open(init, encoding='utf-8') as f:
+            layer = parse_declaration(name, f.read())
+        if layer is not None:
+            found[name] = layer
+    return found
+
+
+def undeclared_packages(repo_root: str, layers: dict[str, Layer]) -> list[str]:
+    """Package directories under `ai/lib/` that declared no layer."""
+    lib_root = os.path.join(repo_root, LIB_DIR)
+    names = [n for n in sorted(os.listdir(lib_root))
+             if os.path.isfile(os.path.join(lib_root, n, '__init__.py'))]
+    return [n for n in names if n not in layers]
+
+
+def check_declarations(layers: dict[str, Layer]) -> dict[str, list[Violation]]:
+    """Every declaration that permits a package it should not, keyed by package.
+
+    A name that no package answers to is a typo the import check would never
+    notice, since no edge can match it. A name at the same layer or above is the
+    more interesting case: it is a declaration granting an edge the stack does
+    not allow, and taking it at face value would let the layering be widened by
+    editing the sentence that describes it.
+    """
+    found = {}
+    for name, layer in sorted(layers.items()):
+        problems = [_declaration_problem(layers, layer, target)
+                    for target in sorted(layer.allowed)]
+        real = [p for p in problems if p is not None]
+        if real:
+            found[name] = real
+    return found
+
+
+def _declaration_problem(layers: dict[str, Layer], layer: Layer,
+                         target: str) -> Violation | None:
+    """What is wrong with *layer* naming *target* in its permitted set, if anything."""
+    if target not in layers:
+        return Violation(line=1, target=target, reason='no such package under ai/lib')
+    if layers[target].number >= layer.number:
+        return Violation(
+            line=1, target=target,
+            reason=f'layer {layers[target].number} is not below layer {layer.number}')
+    return None
+
+
+# ── The imports ──────────────────────────────────────────────────────────────
+
+
+def _package_parts(relpath: str) -> tuple[str, ...]:
+    """The dotted package a module at *relpath* (relative to `ai/lib/`) lives in.
+
+    `pr/ci_failures.py` and `pr/__init__.py` both answer `('pr',)` — the
+    directory is the package either way, which is what a relative import
+    resolves against.
+    """
+    return tuple(relpath.split(os.sep)[:-1])
+
+
+def _escapes_lib(node: ast.ImportFrom, parts: tuple[str, ...]) -> bool:
+    """Whether a relative import climbs out of the package it is written in.
+
+    A relative import can only ever reach its own package's subtree — `from ..gh
+    import client` inside `pr.sub` resolves to `pr.gh`, not to the `gh` package —
+    so the only relative edge the layering has anything to say about is one that
+    climbs past the top-level package altogether. `ai/lib` itself is no package,
+    so such an import resolves against nothing and is a defect on its own terms.
+    """
+    return node.level - 1 >= len(parts)
+
+
+def _import_edges(tree: ast.AST, parts: tuple[str, ...]):
+    """Yield an `Edge` for every import statement in *tree*."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            yield from (Edge(node.lineno, a.name.split('.')[0]) for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            yield Edge(node.lineno, (node.module or '').split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            escaped = _escapes_lib(node, parts)
+            yield Edge(node.lineno, '' if escaped else parts[0], escaped)
+
+
+def check_source(source: str, relpath: str, layers: dict[str, Layer]) -> list[Violation]:
+    """Every import in *source* that its package's declaration does not permit.
+
+    *relpath* is the module's path relative to `ai/lib/`, which is what names the
+    importing package and resolves its relative imports.
+    """
+    try:
+        tree = ast.parse(source, filename=relpath)
+    except SyntaxError as exc:
+        # Silence here would read as "clean" for a file this check never saw.
+        print(f'{RED}!{NC} {relpath}: unparseable, not checked ({exc})', file=sys.stderr)
+        return []
+
+    parts = _package_parts(relpath)
+    package = parts[0] if parts else ''
+    if package not in layers:
+        return [Violation(line=1, target=package or relpath,
+                          reason='not inside a package that declares a layer')]
+
+    layer = layers[package]
+    found = [_edge_problem(layers, layer, edge) for edge in _import_edges(tree, parts)]
+    return sorted({v for v in found if v is not None}, key=lambda v: (v.line, v.target))
+
+
+def _edge_problem(layers: dict[str, Layer], layer: Layer, edge: Edge) -> Violation | None:
+    """What is wrong with one import, if anything."""
+    if edge.escaped:
+        return Violation(line=edge.line, target='..',
+                         reason='relative import escapes ai/lib')
+    if edge.head == layer.package or edge.head not in layers:
+        return None
+    if edge.head in layer.allowed:
+        return None
+    return Violation(line=edge.line, target=edge.head,
+                     reason=f'layer {layers[edge.head].number}, and layer {layer.number} '
+                            f'{layer.package} may import: {_spell(layer.allowed)}')
+
+
+def _spell(allowed: frozenset[str]) -> str:
+    return ', '.join(sorted(allowed)) if allowed else NOTHING
+
+
+def check_file(filepath: str, layers: dict[str, Layer], repo_root: str) -> list[Violation]:
+    relpath = os.path.relpath(filepath, os.path.join(repo_root, LIB_DIR))
+    with open(filepath, encoding='utf-8') as f:
+        return check_source(f.read(), relpath, layers)
+
+
+# ── Discovery ────────────────────────────────────────────────────────────────
+
+
+def discover_files(repo_root: str) -> list[str]:
+    """Every Python module under `ai/lib/`, package or not.
+
+    A `.py` file outside a declared package is walked deliberately: it is a
+    module the layering does not cover, and `check_source` reports it rather
+    than skipping past it.
+    """
+    lib_root = os.path.join(repo_root, LIB_DIR)
+    found = []
+    for dirpath, dirnames, filenames in os.walk(lib_root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        found += [os.path.join(dirpath, f) for f in filenames if f.endswith('.py')]
+    return sorted(found)
+
+
+# ── Reporting ────────────────────────────────────────────────────────────────
+
+
+def _report_violations(label: str, headline: str, violations: list[Violation]) -> None:
+    print(f'{RED}✗{NC} {label}: {headline}', file=sys.stderr)
+    for v in violations:
+        print(f'    line {v.line}: {v.target} {DIM}— {v.reason}{NC}', file=sys.stderr)
+
+
+def _report_layers(layers: dict[str, Layer]) -> None:
+    for layer in sorted(layers.values(), key=lambda x: (x.number, x.package)):
+        print(f'  {DIM}layer {layer.number}{NC}  {layer.package:8} '
+              f'{DIM}may import: {_spell(layer.allowed)}{NC}')
+
+
+def _print_summary(files_checked: int, packages: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} modules in {packages} packages checked, '
+              'every import stays within its declared layer')
+    else:
+        print(f'{RED}✗{NC} {errors} layering problems across {files_checked} modules',
+              file=sys.stderr)
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate that every ai/lib package imports only what its layer permits.')
+    parser.add_argument('--quiet', action='store_true',
+                        help='Only show failures and summary')
+    parser.add_argument('files', nargs='*',
+                        help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = _WORKBENCH_DIR
+    layers = read_layers(repo_root)
+    errors = 0
+
+    for package in undeclared_packages(repo_root, layers):
+        errors += 1
+        _report_violations(f'{LIB_DIR}/{package}', 'declares no layer', [
+            Violation(line=1, target='__init__.py',
+                      reason='first docstring line must read '
+                             '"Layer N — purpose. May import: ...."')])
+
+    for package, problems in check_declarations(layers).items():
+        errors += 1
+        _report_violations(f'{LIB_DIR}/{package}/__init__.py',
+                           'permits a package it cannot', problems)
+
+    if not args.quiet:
+        _report_layers(layers)
+
+    files = args.files or discover_files(repo_root)
+    for filepath in files:
+        violations = check_file(filepath, layers, repo_root)
+        relpath = os.path.relpath(filepath, repo_root)
+        errors += 1 if violations else 0
+        if violations:
+            _report_violations(relpath, 'imports outside its layer', violations)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    _print_summary(len(files), len(layers), errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

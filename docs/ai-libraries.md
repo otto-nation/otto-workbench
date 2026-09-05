@@ -10,6 +10,18 @@ Every module in `ai/lib/`, grouped by what it is for. This is the reference; [AI
 
 Each section below is the module's own docstring, rendered from `ai/lib/` by [`generate-doc-reference`](../bin/local/generate-doc-reference) — so the prose describing a module lives beside the code it describes, and a module that moves takes its documentation with it. A module declares which group it belongs to with a `# doc-group: <key>` comment under its docstring; nothing here lists module names, so adding a module changes only the module.
 
+## Layers
+
+The groups below say what a module is *for*. What it may *depend on* is a separate question, and each package answers it on the first line of its own `__init__.py`:
+
+```python
+"""Layer 4 — PR state and lifecycle. May import: core, config, git, gh, agent."""
+```
+
+That sentence is the only place a package's layer is written down. [`validate-ai-layers`](../bin/local/validate-ai-layers) parses it rather than carrying a table of its own, and fails any cross-package import the declaration does not permit — so the stack can be read off the imports, and `core` cannot be made to depend on `review` by an accident in a merge. Run it with no arguments to print the current stack.
+
+The permitted set is narrower than the layer number alone: `gh` and `agent` both sit at layer 3 and neither may import the other. A package that declares no layer is itself a failure, which is what keeps a new one from joining the tree unplaced.
+
 ## Running a review
 
 The orchestration of a review run: what it checks before spending anything, how the work is split into phases, what each agent is asked, and where the run's artifacts live.

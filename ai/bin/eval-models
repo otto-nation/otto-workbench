@@ -30,7 +30,7 @@ from eval.scoring import (  # noqa: E402
     compare_baselines,
     format_comparison_table,
     format_summary_table,
-    unmeasured_entries,
+    incomplete_entries,
 )
 from eval.task import EVAL_CASE_BUDGET, RunOptions, get_task, task_name  # noqa: E402
 
@@ -304,6 +304,11 @@ def _resolve_results_dir(args: argparse.Namespace, repo_root: Path) -> str:
     return results_dir
 
 
+def _pluralize(word: str, count: int) -> str:
+    """Pluralize an English noun ending in a consonant + "y" (e.g. "entry")."""
+    return word if count == 1 else word[:-1] + "ies"
+
+
 def _run_post_eval(
     args: argparse.Namespace, output: dict, repo_root: Path,
 ) -> int:
@@ -327,17 +332,21 @@ def _run_post_eval(
     # downstream would catch it: validate-eval-baselines checks coverage, not
     # plausibility. Refuse rather than record — the runs can be re-attempted,
     # the overwritten baseline cannot.
-    incomplete = unmeasured_entries(output)
+    incomplete = incomplete_entries(output)
     if incomplete:
         print(
-            f"error: refusing to save baselines — {len(incomplete)} entr"
-            f"{'y' if len(incomplete) == 1 else 'ies'} had runs that never executed:",
+            f"error: refusing to save baselines — {len(incomplete)} "
+            f"{_pluralize('entry', len(incomplete))} had runs that never executed:",
             file=sys.stderr,
         )
         for entry, model, measured, attempted in incomplete:
             print(f"  {entry} / {model}: {measured}/{attempted} runs measured", file=sys.stderr)
-        print("  re-run the affected entries with --entry before saving", file=sys.stderr)
-        return exit_code or 3
+        print(
+            "  re-run the full corpus before saving — --save-baselines rebuilds each "
+            "model's file wholesale, so a --entry re-run would drop every other entry",
+            file=sys.stderr,
+        )
+        return 3
 
     results_dir = _resolve_results_dir(args, repo_root)
     written = _save_baselines(output, results_dir)
@@ -363,9 +372,8 @@ def _run_comparison(
     unmeasured = comparison["unmeasured_entries"]
     if unmeasured:
         print(
-            f"\n{len(unmeasured)} entr"
-            f"{'y' if len(unmeasured) == 1 else 'ies'} produced no measurement "
-            "and were not compared:",
+            f"\n{len(unmeasured)} {_pluralize('entry', len(unmeasured))} produced no "
+            "measurement and were not compared:",
             file=sys.stderr,
         )
         for entry, model in unmeasured:

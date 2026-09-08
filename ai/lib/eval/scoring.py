@@ -153,7 +153,7 @@ def _entry_models(output: dict):
             yield entry_name, model_label, data
 
 
-def unmeasured_entries(output: dict) -> list[tuple[str, str, int, int]]:
+def incomplete_entries(output: dict) -> list[tuple[str, str, int, int]]:
     """Every (entry, model, measured, attempted) whose runs did not all execute.
 
     Read off the census the aggregate recorded rather than recomputed, so what

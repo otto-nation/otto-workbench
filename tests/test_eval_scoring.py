@@ -508,14 +508,14 @@ class TestUnmeasuredEntries:
         }}}}
 
     def test_a_complete_pass_reports_nothing(self):
-        assert eval_scoring.unmeasured_entries(self._output(3, 3)) == []
+        assert eval_scoring.incomplete_entries(self._output(3, 3)) == []
 
     def test_a_short_pass_is_named_with_its_counts(self):
-        assert eval_scoring.unmeasured_entries(self._output(1, 3)) == [("e", "m", 1, 3)]
+        assert eval_scoring.incomplete_entries(self._output(1, 3)) == [("e", "m", 1, 3)]
 
     def test_an_entry_with_no_census_is_taken_at_face_value(self):
         """A results file written before the census still compares."""
-        assert eval_scoring.unmeasured_entries(
+        assert eval_scoring.incomplete_entries(
             {"entries": {"e": {"m": {"recall_mean": 1.0}}}}) == []
 
 

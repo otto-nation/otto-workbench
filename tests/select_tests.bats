@@ -3,7 +3,12 @@
 #
 # The script is sourced so its internal functions can be tested directly.
 # The dependency graph is exercised against the real codebase to verify
-# the transitive closure catches indirect dependencies.
+# the transitive closure catches indirect dependencies. Because these
+# assertions rely on how real files currently source each other, a
+# refactor of one of those sourcing relationships (e.g. lib/conventions.sh
+# -> bin/local/check-surface-compat) can fail a test here for a reason
+# unrelated to the change under review — check the sourcing chain before
+# assuming the dependency-graph logic itself regressed.
 
 setup() {
   load 'test_helper'

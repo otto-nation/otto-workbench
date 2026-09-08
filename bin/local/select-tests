@@ -84,10 +84,17 @@ FULL_SUITE_TRIGGERS=(
 # this file changes" via reverse-transitive closure.
 
 # _source_edges_for REL_PATH — emit the repo-relative paths a script directly sources.
-# REL_PATH is relative to WORKBENCH_DIR. Handles three forms:
-#   1. $WORKBENCH_DIR/lib/X.sh  (absolute via variable)
-#   2. $_*_lib_dir/X.sh         (sibling in the same directory)
-#   3. $(dirname ...)/X.sh      (sibling or parent-relative)
+# REL_PATH is relative to WORKBENCH_DIR. Handles five forms:
+#   1a. $WORKBENCH_DIR/lib/X.sh   (absolute via variable)
+#   1b. $LIB_SRC_DIR/X.sh         (absolute via variable, always resolves to lib/)
+#   2.  $_*_lib_dir/X.sh          (sibling in the same directory)
+#   3.  $(dirname ...)/X.sh       (sibling or parent-relative, any number of
+#                                  ../ hops climbing from the sourcing file's
+#                                  own directory or a directory variable)
+#   4.  $(git -C ... rev-parse --show-toplevel)/X.sh  (absolute via inline
+#                                  git call, no intermediate variable)
+# Not every sourcing pattern in the repo is covered — see the ceiling note on
+# _build_dep_graph for the coverage boundary and its upgrade trigger.
 _source_edges_for() {
   local rel_path="$1"
   local file="$WORKBENCH_DIR/$rel_path"
@@ -116,20 +123,41 @@ _source_edges_for() {
     | while IFS= read -r sibling; do echo "${file_dir}/${sibling}"; done \
     || true
 
-  # Form 3: $(dirname "$_*_dir")/X.sh or $(dirname "${BASH_SOURCE...")/X.sh
-  # dirname of $BASH_SOURCE is the file's own dir → sibling;
-  # dirname of $_ai_core_dir (= lib/ai) → lib/ (parent)
-  grep -oE '"\$\(dirname [^)]+\)/[a-z_]+\.sh"' "$file" 2>/dev/null \
+  # Form 3: $(dirname "$_*_dir")/X.sh, $(dirname "${BASH_SOURCE...")/X.sh, or
+  # $(dirname "$_SELF")/../../X.sh — dirname of $BASH_SOURCE/$_SELF is the
+  # file's own dir → sibling; dirname of $_ai_core_dir (= lib/ai) → lib/
+  # (parent). Any ../ hops after the dirname(...) call climb further still.
+  grep -oE '"\$\(dirname [^)]+\)[a-z_./]*\.sh"' "$file" 2>/dev/null \
     | sed 's/^"//; s/"$//' \
     | while IFS= read -r expr; do
-        local basename
-        basename="${expr##*/}"
-        if [[ "$expr" == *'BASH_SOURCE'* ]]; then
-          echo "${file_dir}/${basename}"
-        elif [[ "$expr" == *'_dir'* ]]; then
-          echo "$(dirname "$file_dir")/${basename}"
+        local arg suffix base_dir
+        arg="${expr#*dirname }"
+        arg="${arg%%\)*}"
+        suffix="${expr#*\)}"
+        if [[ "$arg" == *'BASH_SOURCE'* || "$arg" == *'_SELF'* ]]; then
+          base_dir="$file_dir"
+        elif [[ "$arg" == *'_dir'* ]]; then
+          base_dir="$(dirname "$file_dir")"
+        else
+          continue
+        fi
+        while [[ "$suffix" == /..* ]]; do
+          suffix="${suffix#/..}"
+          base_dir="$(dirname "$base_dir")"
+        done
+        if [[ "$base_dir" == "." ]]; then
+          echo "${suffix#/}"
+        else
+          echo "${base_dir}${suffix}"
         fi
       done \
+    || true
+
+  # Form 4: $(git -C ... rev-parse --show-toplevel)/X.sh — resolves inline to
+  # the repo root without an intermediate WORKBENCH_DIR-style variable.
+  grep -oE '"\$\(git -C .* rev-parse --show-toplevel\)/[a-z_/]+\.sh"' "$file" 2>/dev/null \
+    | sed -E 's/.*rev-parse --show-toplevel\)\///' \
+    | sed 's/"$//' \
     || true
 }
 
@@ -138,6 +166,17 @@ _DEP_GRAPH_BUILT=0
 
 # _build_dep_graph — scan every bash script under lib/, bin/, ai/, git/, zsh/,
 # docker/ and build the reverse dependency map. Called once, cached.
+#
+# ceiling: _source_edges_for only recognizes the four literal forms
+# documented above it. A script that sources through an arbitrary
+# intermediate variable — e.g. git/bin/local/generate-git-rules assigning
+# CONVENTIONS_SH="${CONVENTIONS_SH:-"$REPO_ROOT/lib/conventions.sh"}" and
+# then sourcing "$CONVENTIONS_SH" — resolves to a real dependency this
+# graph never records, so a change to that file will not select tests
+# reachable only through such a script. Upgrade trigger: a second
+# custom-variable sourcing indirection shows up elsewhere in the repo,
+# at which point add a form for a `. "$VAR"` where VAR's own definition
+# line contains a WORKBENCH_DIR/REPO_ROOT-rooted default.
 _build_dep_graph() {
   [[ $_DEP_GRAPH_BUILT -eq 1 ]] && return 0
 
@@ -163,8 +202,12 @@ _build_dep_graph() {
          "$WORKBENCH_DIR/zsh" "$WORKBENCH_DIR/docker" \
          -type f \( -name '*.sh' -o -name '*.bash' \) \
          ! -path '*/.git/*' ! -path '*/node_modules/*' 2>/dev/null
-    # Also include extensionless bin scripts with bash shebangs
-    find "$WORKBENCH_DIR/bin" -type f ! -name '*.*' 2>/dev/null
+    # Also include extensionless scripts (e.g. bin/otto-workbench,
+    # ai/bin/workbench-rules, git/bin/generate-changelog)
+    find "$WORKBENCH_DIR/bin" "$WORKBENCH_DIR/ai" "$WORKBENCH_DIR/git" \
+         "$WORKBENCH_DIR/zsh" "$WORKBENCH_DIR/docker" \
+         -type f ! -name '*.*' \
+         ! -path '*/.git/*' ! -path '*/node_modules/*' 2>/dev/null
   )
 
   # Invert: for each edge A→B, record B has dependent A.
@@ -186,11 +229,12 @@ _reverse_closure() {
   local start="$1"
   local -A visited=()
   local -a queue=("$start")
+  local head=0
   visited["$start"]=1
 
-  while [[ ${#queue[@]} -gt 0 ]]; do
-    local current="${queue[0]}"
-    queue=("${queue[@]:1}")
+  while [[ $head -lt ${#queue[@]} ]]; do
+    local current="${queue[$head]}"
+    head=$((head + 1))
     local dependents="${_REVERSE_DEPS[$current]:-}"
     for dep in $dependents; do
       [[ -n "${visited[$dep]:-}" ]] && continue

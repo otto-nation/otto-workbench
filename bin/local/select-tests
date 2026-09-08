@@ -2,9 +2,13 @@
 # select-tests — emit the bats test files affected by a set of changed paths.
 #
 # Derives dependencies by grepping path literals ($REPO_ROOT/...) from each
-# test file and matching them against the changed paths. Tests that depend on
-# directory listings (find/glob on $REPO_ROOT) are always included — they can
-# break on file addition, which is invisible to a path-literal map.
+# test file and matching them against the changed paths. When a library file
+# changes, its reverse-transitive closure is computed — every script that
+# sources it (directly or through a chain) is treated as also changed, so a
+# test referencing a bin/ script is selected when one of that script's
+# transitive lib/ deps changes. Tests that depend on directory listings
+# (find/glob on $REPO_ROOT) are always included — they can break on file
+# addition, which is invisible to a path-literal map.
 #
 # Usage: select-tests [--base REF] [--validate]
 #   --base REF     Diff against REF (default: origin/main)
@@ -73,6 +77,151 @@ FULL_SUITE_TRIGGERS=(
   bin/local/run-tests
   bin/local/select-tests
 )
+
+# ── Transitive dependency graph ────────────────────────────────────────────────
+# Build a forward-edge map (file → files it sources) from every bash script
+# under lib/ and bin/, then invert it to answer "what scripts are affected when
+# this file changes" via reverse-transitive closure.
+
+# _source_edges_for REL_PATH — emit the repo-relative paths a script directly sources.
+# REL_PATH is relative to WORKBENCH_DIR. Handles three forms:
+#   1. $WORKBENCH_DIR/lib/X.sh  (absolute via variable)
+#   2. $_*_lib_dir/X.sh         (sibling in the same directory)
+#   3. $(dirname ...)/X.sh      (sibling or parent-relative)
+_source_edges_for() {
+  local rel_path="$1"
+  local file="$WORKBENCH_DIR/$rel_path"
+  local file_dir
+  file_dir="$(dirname "$rel_path")"
+
+  # Form 1a: absolute via $WORKBENCH_DIR / $REPO_ROOT / $_SCRIPT_ROOT
+  grep -nE '(source|\.)\s+"\$\{?(WORKBENCH_DIR|REPO_ROOT|_SCRIPT_ROOT)\}?/' "$file" 2>/dev/null \
+    | grep -v '^[0-9]*:\s*#' \
+    | grep -oE '\$\{?(WORKBENCH_DIR|REPO_ROOT|_SCRIPT_ROOT)\}?/[^"]+' \
+    | sed -E 's/^\$\{?(WORKBENCH_DIR|REPO_ROOT|_SCRIPT_ROOT)\}?\///' \
+    || true
+
+  # Form 1b: $LIB_SRC_DIR/X.sh — always resolves to lib/X.sh
+  grep -nE '(source|\.)\s+"\$LIB_SRC_DIR/' "$file" 2>/dev/null \
+    | grep -v '^[0-9]*:\s*#' \
+    | grep -oE '\$LIB_SRC_DIR/[^"]+' \
+    | sed 's/^\$LIB_SRC_DIR/lib/' \
+    || true
+
+  # Form 2: $_*_lib_dir/X.sh — these vars always resolve to the sourcing
+  # file's own directory, so the dep is a sibling.
+  grep -oE '\$_[a-z_]*_lib_dir/[^"]+' "$file" 2>/dev/null \
+    | sed -E 's/^\$_[a-z_]*_lib_dir\///' \
+    | grep -E '\.(sh|bash)$' \
+    | while IFS= read -r sibling; do echo "${file_dir}/${sibling}"; done \
+    || true
+
+  # Form 3: $(dirname "$_*_dir")/X.sh or $(dirname "${BASH_SOURCE...")/X.sh
+  # dirname of $BASH_SOURCE is the file's own dir → sibling;
+  # dirname of $_ai_core_dir (= lib/ai) → lib/ (parent)
+  grep -oE '"\$\(dirname [^)]+\)/[a-z_]+\.sh"' "$file" 2>/dev/null \
+    | sed 's/^"//; s/"$//' \
+    | while IFS= read -r expr; do
+        local basename
+        basename="${expr##*/}"
+        if [[ "$expr" == *'BASH_SOURCE'* ]]; then
+          echo "${file_dir}/${basename}"
+        elif [[ "$expr" == *'_dir'* ]]; then
+          echo "$(dirname "$file_dir")/${basename}"
+        fi
+      done \
+    || true
+}
+
+# _DEP_GRAPH_BUILT — set to 1 after _build_dep_graph runs.
+_DEP_GRAPH_BUILT=0
+
+# _build_dep_graph — scan every bash script under lib/, bin/, ai/, git/, zsh/,
+# docker/ and build the reverse dependency map. Called once, cached.
+_build_dep_graph() {
+  [[ $_DEP_GRAPH_BUILT -eq 1 ]] && return 0
+
+  # _REVERSE_DEPS must be declared here rather than at file scope: when this
+  # file is sourced inside a function (e.g. bats setup()), a file-scope
+  # `declare -A` creates a local that vanishes when the sourcing function
+  # returns, leaving an untyped global that treats ["lib/ui.sh"] as arithmetic.
+  declare -gA _REVERSE_DEPS 2>/dev/null || declare -A _REVERSE_DEPS
+  _REVERSE_DEPS=()
+
+  # Forward edges: file → files it sources
+  local -A forward=()
+  local script dep rel
+  while IFS= read -r script; do
+    rel="${script#"$WORKBENCH_DIR"/}"
+    while IFS= read -r dep; do
+      [[ -z "$dep" ]] && continue
+      forward["$rel"]+="$dep "
+    done < <(_source_edges_for "$rel")
+  done < <(
+    find "$WORKBENCH_DIR/lib" "$WORKBENCH_DIR/bin" \
+         "$WORKBENCH_DIR/ai" "$WORKBENCH_DIR/git" \
+         "$WORKBENCH_DIR/zsh" "$WORKBENCH_DIR/docker" \
+         -type f \( -name '*.sh' -o -name '*.bash' \) \
+         ! -path '*/.git/*' ! -path '*/node_modules/*' 2>/dev/null
+    # Also include extensionless bin scripts with bash shebangs
+    find "$WORKBENCH_DIR/bin" -type f ! -name '*.*' 2>/dev/null
+  )
+
+  # Invert: for each edge A→B, record B has dependent A.
+  local source_file
+  for source_file in "${!forward[@]}"; do
+    local deps="${forward[$source_file]}"
+    for dep in $deps; do
+      _REVERSE_DEPS["$dep"]+="$source_file "
+    done
+  done
+
+  _DEP_GRAPH_BUILT=1
+  return 0
+}
+
+# _reverse_closure FILE — emit every script that transitively depends on FILE.
+# Uses BFS over _REVERSE_DEPS. Includes FILE itself.
+_reverse_closure() {
+  local start="$1"
+  local -A visited=()
+  local -a queue=("$start")
+  visited["$start"]=1
+
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    local current="${queue[0]}"
+    queue=("${queue[@]:1}")
+    local dependents="${_REVERSE_DEPS[$current]:-}"
+    for dep in $dependents; do
+      [[ -n "${visited[$dep]:-}" ]] && continue
+      visited["$dep"]=1
+      queue+=("$dep")
+    done
+  done
+
+  printf '%s\n' "${!visited[@]}"
+}
+
+# _expand_changed_files CHANGED_FILES... — expand the list to include scripts
+# that transitively depend on any changed file. Prints the expanded list.
+_expand_changed_files() {
+  _build_dep_graph
+
+  local -A expanded=()
+  local f
+  for f in "$@"; do
+    expanded["$f"]=1
+    # Only compute reverse closure for files that exist as dep-graph nodes
+    [[ -n "${_REVERSE_DEPS[$f]:-}" ]] || continue
+    while IFS= read -r dep; do
+      expanded["$dep"]=1
+    done < <(_reverse_closure "$f")
+  done
+
+  printf '%s\n' "${!expanded[@]}" | LC_ALL=C sort
+}
+
+# ── Helpers ─────────────────────────────────────────────────────────────
 
 # _is_in_array VALUE ARRAY... — returns 0 if VALUE is in the remaining args.
 _is_in_array() {
@@ -232,6 +381,16 @@ main() {
       return 0
     fi
   done
+
+  # Expand changed files through the reverse-transitive dependency graph.
+  # If lib/roots.sh changed, every script that sources it (directly or through
+  # a chain like lib/constants.sh → lib/ui.sh → bin/otto-workbench) is also
+  # treated as changed.
+  local -a expanded_files=()
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && expanded_files+=("$f")
+  done < <(_expand_changed_files "${changed_files[@]}")
+  changed_files=("${expanded_files[@]}")
 
   # Build the selected set
   local -a selected=()

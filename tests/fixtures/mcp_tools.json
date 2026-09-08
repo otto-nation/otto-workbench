@@ -1,0 +1,45 @@
+{
+  "pr": {
+    "_script": "ai/bin/pr",
+    "description": "Unified PR lifecycle CLI — CI failures, code review, and review comments\n\nWhen to use: Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status\n\nUsage: pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto <ref>]  |  pr gc",
+    "input_schema": {
+      "properties": {
+        "branch": {
+          "description": "Branch name",
+          "type": "string",
+          "x-context": true
+        },
+        "command": {
+          "description": "Subcommand to run",
+          "enum": [
+            "create",
+            "status",
+            "ci",
+            "review",
+            "comments",
+            "fix",
+            "rebase",
+            "describe",
+            "gc"
+          ],
+          "type": "string"
+        },
+        "pr": {
+          "description": "PR number or URL",
+          "type": "string",
+          "x-context": true
+        },
+        "repo_dir": {
+          "description": "Git worktree directory",
+          "type": "string",
+          "x-context": true
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "name": "pr"
+  }
+}

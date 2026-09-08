@@ -69,6 +69,11 @@ tools:
     visibility: brief
     description: "Validates that no module freezes a workbench root into an import-time constant"
 
+  - name: validate-ai-layers
+    permission: false
+    visibility: brief
+    description: "Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits"
+
   - name: validate-stat-portability
     permission: false
     visibility: brief

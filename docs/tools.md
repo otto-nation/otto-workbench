@@ -67,6 +67,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-timeouts` | Validates that every subprocess timeout comes from the ai/lib/core/timeouts.py tiers |
 | `validate-magic-values` | Validates that an abbreviated sha, an exit code, and a truncation cap are spelled by the module that owns them |
 | `validate-frozen-roots` | Validates that no module freezes a workbench root into an import-time constant |
+| `validate-ai-layers` | Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-script-loading` | Validates that only tests/conftest.py executes a module out of a file, so one script never has two module objects |
 | `validate-permissions` | Validates that every Bash permission rule can match a command, that no untracked settings file duplicates a tracked grant or re-grants a gated one, and that a tracked allow bucket is in the codepoint order both ai sync and Claude Code write it back in — --fix prunes the duplicates and sorts the bucket |

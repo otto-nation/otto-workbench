@@ -79,7 +79,9 @@ _is_in_array() {
   local needle="$1"; shift
   local item
   for item in "$@"; do
-    [[ "$item" == "$needle" ]] && return 0
+    if [[ "$item" == "$needle" ]]; then
+      return 0
+    fi
   done
   return 1
 }
@@ -89,6 +91,18 @@ _is_full_suite_trigger() {
   local changed="$1"
   [[ "$changed" == .github/workflows/* ]] && return 0
   _is_in_array "$changed" "${FULL_SUITE_TRIGGERS[@]}"
+}
+
+# _ref_matches_any REF CHANGED_FILES... — returns 0 if any changed file matches REF.
+_ref_matches_any() {
+  local ref="$1"; shift
+  local changed
+  for changed in "$@"; do
+    if _path_matches "$changed" "$ref"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # _test_matches_changes TEST_FILE CHANGED_FILES... — returns 0 if any changed
@@ -101,16 +115,18 @@ _test_matches_changes() {
 
   # A changed .bats file always selects itself
   for changed in "${changed_files[@]}"; do
-    [[ "$changed" == "tests/${test_name}.bats" ]] && return 0
+    if [[ "$changed" == "tests/${test_name}.bats" ]]; then
+      return 0
+    fi
   done
 
   # Extract refs and check against changed files
   local ref
   while IFS= read -r ref; do
     [[ -z "$ref" ]] && continue
-    for changed in "${changed_files[@]}"; do
-      _path_matches "$changed" "$ref" && return 0
-    done
+    if _ref_matches_any "$ref" "${changed_files[@]}"; then
+      return 0
+    fi
   done < <(_extract_refs "$test_file")
   return 1
 }
@@ -223,7 +239,9 @@ main() {
   # Always-run tests
   for name in "${ALWAYS_RUN_TESTS[@]}" "${NO_REFS_TESTS[@]}"; do
     local path="$TESTS_DIR/${name}.bats"
-    [[ -f "$path" ]] && selected+=("$path")
+    if [[ -f "$path" ]]; then
+      selected+=("$path")
+    fi
   done
 
   # For each test file not already selected, check if any changed file

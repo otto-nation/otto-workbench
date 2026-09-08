@@ -74,6 +74,11 @@ class TestRefDivergence:
         assert div.diverged is False
         assert div.local_only_work is False
 
+    def test_neither_ahead_nor_behind(self):
+        div = rebase_types.RefDivergence(ahead=0, behind=0, comparable=True)
+        assert div.diverged is False
+        assert div.local_only_work is False
+
 
 class TestConflictBlock:
     """ConflictBlock.line_count is computed."""
@@ -83,3 +88,9 @@ class TestConflictBlock:
             index=0, start=10, end=20, conflict="...", context_before="", context_after="",
         )
         assert block.line_count == 11
+
+    def test_line_count_single_line(self):
+        block = rebase_types.ConflictBlock(
+            index=0, start=10, end=10, conflict="...", context_before="", context_after="",
+        )
+        assert block.line_count == 1

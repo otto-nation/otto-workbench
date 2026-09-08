@@ -41,6 +41,8 @@ class TestValidCommitHeader:
         ("fix: ends with a period.", False),
         ("fix: " + "x" * 80, False),
         ("", False),
+        ("feat!: remove deprecated flag", True),
+        ("feat(auth)!: remove legacy token support", True),
     ])
     def test_valid_commit_header(self, subject, expected):
         assert conventions.valid_commit_header(subject) is expected

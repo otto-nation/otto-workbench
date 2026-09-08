@@ -125,7 +125,6 @@ RegenJob = regen.RegenJob
 RegenQueue = regen.RegenQueue
 
 
-
 # ── Git helpers (delegated to rebase.inspect) ───────────────────────────────
 
 _detect_rebase_in_progress = rebase_inspect.rebase_in_progress
@@ -133,7 +132,6 @@ _status_lines = rebase_inspect.status_lines
 _detect_conflicts = rebase_inspect.detect_conflicts
 _rebase_head_info = rebase_inspect.rebase_head_info
 _remaining_rebase_commits = rebase_inspect.remaining_rebase_commits
-
 
 
 ConflictReport = rebase_types.ConflictReport
@@ -235,28 +233,10 @@ def _run_regeneration(job: regen.RegenJob, *, cwd: str) -> bool:
 _RESOLVE_BEGIN = rebase_conflicts.RESOLVE_BEGIN
 _RESOLVE_END = rebase_conflicts.RESOLVE_END
 _is_generated_file = rebase_conflicts.is_generated_file
-_detect_delete_conflict = rebase_conflicts.detect_delete_conflict
-_get_ours_content = rebase_conflicts.get_ours_content
-_get_commit_diff = rebase_conflicts.get_commit_diff
 _is_binary = rebase_conflicts.is_binary
-_has_conflict_markers = rebase_conflicts.has_conflict_markers
 _resolution_parses = rebase_conflicts.resolution_parses
 _parse_resolved_content = rebase_conflicts.parse_resolved_content
-_extract_conflict_blocks = rebase_conflicts.extract_conflict_blocks
-_should_chunk = rebase_conflicts.should_chunk
-_parse_chunked_resolutions = rebase_conflicts.parse_chunked_resolutions
-_splice_resolutions = rebase_conflicts.splice_resolutions
 _git_add = rebase_conflicts.git_add
-_accept_theirs_and_stage = rebase_conflicts.accept_theirs_and_stage
-_classify_conflict = rebase_conflicts.classify_conflict
-_build_resolve_prompt = rebase_resolve.build_resolve_prompt
-_build_chunked_prompt = rebase_resolve.build_chunked_prompt
-_resolve_full_file = rebase_resolve.resolve_full_file
-_resolve_chunked = rebase_resolve.resolve_chunked
-_resolve_single_file = rebase_resolve.resolve_single_file
-_dispatch_regenerate = rebase_resolve.dispatch_regenerate
-_dispatch_accept_theirs = rebase_resolve.dispatch_accept_theirs
-_dispatch_conflict = rebase_resolve.dispatch_conflict
 
 
 # One budget for every chunk of context pasted into a fix prompt — check output

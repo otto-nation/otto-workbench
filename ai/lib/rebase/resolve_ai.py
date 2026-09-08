@@ -8,8 +8,8 @@ accepts a ``trail`` parameter for audit logging.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from agent import invoke as agent_invoke
 from core import log
@@ -306,7 +306,7 @@ def dispatch_regenerate(
             "regenerate", f"accepting theirs for {filepath}",
             reason=f"lockfile with known regenerator: {' '.join(regenerator.cmd)}",
         )
-    if not conflicts.accept_theirs_and_stage(filepath, full_path.parent, cwd):
+    if not conflicts.accept_theirs_and_stage(filepath, cwd):
         return False
     queue.add(full_path.parent, filepath, regenerator.cmd, regenerator.stage_dir)
     return True
@@ -334,7 +334,7 @@ def dispatch_accept_theirs(
             "generated_file", f"accepting theirs for {filepath}",
             reason=f"generated file detected via {signal}",
         )
-    if not conflicts.accept_theirs_and_stage(filepath, full_path.parent, cwd):
+    if not conflicts.accept_theirs_and_stage(filepath, cwd):
         return False
     if queue_repo_regeneration is None or not queue_repo_regeneration(filepath, cwd, queue):
         queue.mark_unrebuildable(filepath)
@@ -372,6 +372,8 @@ def dispatch_conflict(
               data={"filepath": filepath})
         log.error(f"Cannot resolve binary file: {filepath}")
         return False
+    if plan.strategy is not ConflictStrategy.AI_MERGE:
+        raise ValueError(f"unhandled conflict strategy: {plan.strategy}")
     resolved = resolve_single_file(
         filepath, full_path, sha, subject, cwd,
         target_ref=target_ref, trail=trail,

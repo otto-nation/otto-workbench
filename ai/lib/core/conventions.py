@@ -45,4 +45,5 @@ def valid_commit_header(subject: str) -> bool:
     if not sep or not rest.strip():
         return False
     types = commit_types()
-    return not types or head.split("(", 1)[0] in types
+    commit_type = head.split("(", 1)[0].removesuffix("!")
+    return not types or commit_type in types

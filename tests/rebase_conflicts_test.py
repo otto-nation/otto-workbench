@@ -9,7 +9,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from git import client as git_client
 from git import regenerate as regen
 from rebase import conflicts
 from rebase import types as rebase_types
@@ -27,17 +26,17 @@ class TestParseResolvedContent:
     def test_missing_both_markers(self):
         content, reason = conflicts.parse_resolved_content("just text")
         assert content is None
-        assert reason == rebase_types.ParseFailure.MISSING_BOTH_MARKERS
+        assert reason is rebase_types.ParseFailure.MISSING_BOTH_MARKERS
 
     def test_missing_begin(self):
         content, reason = conflicts.parse_resolved_content(f"text\n{conflicts.RESOLVE_END}")
         assert content is None
-        assert reason == rebase_types.ParseFailure.MISSING_BEGIN_MARKER
+        assert reason is rebase_types.ParseFailure.MISSING_BEGIN_MARKER
 
     def test_missing_end(self):
         content, reason = conflicts.parse_resolved_content(f"{conflicts.RESOLVE_BEGIN}\ntext")
         assert content is None
-        assert reason == rebase_types.ParseFailure.MISSING_END_MARKER
+        assert reason is rebase_types.ParseFailure.MISSING_END_MARKER
 
     def test_surviving_conflict_markers(self):
         stdout = f"{conflicts.RESOLVE_BEGIN}\n<<<<<<< HEAD\n{conflicts.RESOLVE_END}"

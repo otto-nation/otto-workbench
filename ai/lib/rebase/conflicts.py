@@ -55,7 +55,7 @@ def is_generated_file(
             header = "".join(f.readline() for _ in range(5))
         if any(p in header for p in GENERATED_HEADER_PATTERNS):
             return GeneratedSignal.HEADER
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         pass
 
     return None
@@ -213,7 +213,8 @@ def extract_conflict_blocks(
         while j < len(lines) and not lines[j].startswith(">>>>>>> "):
             j += 1
         if j >= len(lines):
-            break
+            i += 1
+            continue
         end = j
         ctx_start = max(0, start - context_lines)
         ctx_end = min(len(lines), end + 1 + context_lines)
@@ -288,7 +289,7 @@ def git_add(filepath: str, cwd: str) -> bool:
     return False
 
 
-def accept_theirs_and_stage(filepath: str, parent: Path, cwd: str) -> bool:
+def accept_theirs_and_stage(filepath: str, cwd: str) -> bool:
     """Accept theirs for a generated file and stage it."""
     if not git_client.ok("checkout", "--theirs", filepath, cwd=cwd):
         log.error(f"git checkout --theirs failed for {filepath}")

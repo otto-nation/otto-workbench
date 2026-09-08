@@ -11,6 +11,10 @@ Two submodules can also define a name each, meaning different things by it —
 `gh.client` and `git.client` both have a `run`. A read resolves that to the
 first of them, so a write follows the read: it reaches the bindings holding the
 object the read returned, and leaves the other definition alone.
+
+A caller passes every `ai/lib` module it imports, this one included — the set is
+checked against the module's imports rather than curated, so a proxy listing
+itself is the rule holding rather than a module patching its own attributes.
 """
 
 # doc-group: platform
@@ -59,6 +63,9 @@ def install(module_name: str, submodules: tuple[ModuleType, ...]) -> None:
                 owners.append(mod)
         return found, owners
 
+    # One class per call rather than one for the module: it closes over this
+    # install's submodules and pre-patch values, so two proxied scripts in a
+    # process keep their patches apart.
     class _ProxyModule(type(module)):
 
         def __getattr__(self, name):

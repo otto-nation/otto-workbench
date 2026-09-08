@@ -2158,6 +2158,10 @@ Two submodules can also define a name each, meaning different things by it —
 first of them, so a write follows the read: it reaches the bindings holding the
 object the read returned, and leaves the other definition alone.
 
+A caller passes every `ai/lib` module it imports, this one included — the set is
+checked against the module's imports rather than curated, so a proxy listing
+itself is the rule holding rather than a module patching its own attributes.
+
 ### core/proc.py
 
 One type for what a subprocess said, and one helper for running it.

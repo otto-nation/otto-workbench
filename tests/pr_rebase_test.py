@@ -26,6 +26,13 @@ pr_rebase_cli = load_script("pr_rebase_cli", BIN_DIR / "pr-rebase")
 from gh import landed as branch_landed  # noqa: E402
 from git import client as git_client  # noqa: E402
 from git import land  # noqa: E402
+from git import regenerate as regen  # noqa: E402
+from core import conventions  # noqa: E402
+from core import report as core_report  # noqa: E402
+from rebase import inspect as rebase_inspect  # noqa: E402
+from rebase import conflicts as rebase_conflicts  # noqa: E402
+from rebase import resolve_ai as rebase_resolve  # noqa: E402
+from agent import invoke as agent_invoke  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
@@ -105,7 +112,7 @@ def test_detect_rebase_not_in_progress():
     with tempfile.TemporaryDirectory() as tmpdir:
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is False
 
 
@@ -114,7 +121,7 @@ def test_detect_rebase_merge_in_progress():
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
         (git_dir / "rebase-merge").mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
 
 
@@ -123,7 +130,7 @@ def test_detect_rebase_apply_in_progress():
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
         (git_dir / "rebase-apply").mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
 
 
@@ -151,7 +158,7 @@ def test_remaining_rebase_commits_no_rebase():
     with tempfile.TemporaryDirectory() as tmpdir:
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 0
 
 
@@ -167,7 +174,7 @@ def test_remaining_rebase_commits_from_todo():
             "# this is a comment\n"
             "fixup ghi789 squash me\n"
         )
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 3
 
 
@@ -179,16 +186,16 @@ def test_remaining_rebase_commits_from_apply():
         apply_dir.mkdir()
         (apply_dir / "next").write_text("3\n")
         (apply_dir / "last").write_text("7\n")
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 4
 
 
 # ── ConflictReport ─────────────────────────────────────────────────────────
 
 
-@mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2)
-@mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc1234", "fix: thing"))
-@mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["a.py"])
+@mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2)
+@mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc1234", "fix: thing"))
+@mock.patch.object(rebase_inspect, "detect_conflicts", return_value=["a.py"])
 def test_conflict_report_structure(_m1, _m2, _m3):
     report = pr_rebase_cli.ConflictReport.from_repo("/fake")
     assert report.status == "conflicts"
@@ -198,9 +205,9 @@ def test_conflict_report_structure(_m1, _m2, _m3):
     assert report.remaining_commits == 2
 
 
-@mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0)
-@mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("def5678", "feat: other"))
-@mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["b.py"])
+@mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0)
+@mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("def5678", "feat: other"))
+@mock.patch.object(rebase_inspect, "detect_conflicts", return_value=["b.py"])
 def test_conflict_report_custom_status(_m1, _m2, _m3):
     report = pr_rebase_cli.ConflictReport.from_repo("/fake", status="conflicts_resuming")
     assert report.status == "conflicts_resuming"
@@ -236,13 +243,13 @@ def test_find_regenerator_unknown_file():
 
 def test_find_regenerator_all_entries_have_cmd():
     """Every registry entry must carry a non-empty command tuple."""
-    for name, entry in pr_rebase_cli._LOCKFILE_REGENERATORS.items():
+    for name, entry in regen.LOCKFILE_REGENERATORS.items():
         assert isinstance(entry.cmd, tuple) and len(entry.cmd) > 0, f"{name} has invalid cmd"
 
 
 def test_find_regenerator_all_keys_are_basenames():
     """Lookup is by basename — a key with a path separator could never match."""
-    for name in pr_rebase_cli._LOCKFILE_REGENERATORS:
+    for name in regen.LOCKFILE_REGENERATORS:
         assert os.path.basename(name) == name, f"{name} is not a bare basename"
 
 
@@ -252,20 +259,20 @@ def test_find_regenerator_all_keys_are_basenames():
 def test_detect_mise_found(tmp_path):
     (tmp_path / "mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 def test_detect_mise_tool_versions(tmp_path):
     (tmp_path / ".tool-versions").write_text("nodejs 20\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 def test_detect_mise_dotted_toml(tmp_path):
     """.mise.toml is as common as mise.toml and must be detected."""
     (tmp_path / ".mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 @pytest.mark.parametrize("rel", [
@@ -281,7 +288,7 @@ def test_detect_mise_nested_config_layouts(tmp_path, rel):
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 def test_detect_mise_dotted_toml_in_ancestor(tmp_path):
@@ -289,7 +296,7 @@ def test_detect_mise_dotted_toml_in_ancestor(tmp_path):
     subdir.mkdir(parents=True)
     (tmp_path / ".mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(subdir), str(tmp_path)) is True
+        assert regen.detect_mise(str(subdir), str(tmp_path)) is True
 
 
 def test_detect_mise_in_ancestor(tmp_path):
@@ -297,18 +304,18 @@ def test_detect_mise_in_ancestor(tmp_path):
     subdir.mkdir(parents=True)
     (tmp_path / "mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(subdir), str(tmp_path)) is True
+        assert regen.detect_mise(str(subdir), str(tmp_path)) is True
 
 
 def test_detect_mise_not_installed(tmp_path):
     (tmp_path / "mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value=None):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
 
 
 def test_detect_mise_no_config(tmp_path):
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
 
 
 def test_detect_mise_stops_at_repo_root(tmp_path):
@@ -318,7 +325,7 @@ def test_detect_mise_stops_at_repo_root(tmp_path):
     subdir.mkdir(parents=True)
     (tmp_path / "mise.toml").write_text("[tools]\n")  # above repo root
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(subdir), str(repo)) is False
+        assert regen.detect_mise(str(subdir), str(repo)) is False
 
 
 # ── _run_regeneration ──────────────────────────────────────────────────────
@@ -334,7 +341,7 @@ def test_run_regeneration_bare_command(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+         mock.patch.object(regen, "detect_mise", return_value=False):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
                 regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
@@ -358,7 +365,7 @@ def test_run_regeneration_with_mise(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True):
+         mock.patch.object(regen, "detect_mise", return_value=True):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
                 regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
@@ -385,7 +392,7 @@ def test_run_regeneration_bare_fails_retries_mise(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -411,7 +418,7 @@ def test_run_regeneration_missing_binary_retries_mise(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -435,7 +442,7 @@ def test_run_regeneration_missing_binary_without_mise_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value=None):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -457,7 +464,7 @@ def test_run_regeneration_not_executable_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value=None):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -483,7 +490,7 @@ def test_run_regeneration_missing_binary_under_mise_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True), \
+         mock.patch.object(regen, "detect_mise", return_value=True), \
          mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -503,7 +510,7 @@ def test_run_regeneration_stage_dir(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+         mock.patch.object(regen, "detect_mise", return_value=False):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
                 regen_dir=str(tmp_path), cmd=("go", "mod", "tidy"),
@@ -524,7 +531,7 @@ def test_run_regeneration_failure_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value=None):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -542,17 +549,17 @@ def test_run_regeneration_failure_returns_false(tmp_path):
 def test_is_binary_detects_null_bytes(tmp_path):
     binary_file = tmp_path / "file.bin"
     binary_file.write_bytes(b"hello\x00world")
-    assert pr_rebase_cli._is_binary(binary_file) is True
+    assert rebase_conflicts.is_binary(binary_file) is True
 
 
 def test_is_binary_text_file(tmp_path):
     text_file = tmp_path / "file.txt"
     text_file.write_text("hello world\n")
-    assert pr_rebase_cli._is_binary(text_file) is False
+    assert rebase_conflicts.is_binary(text_file) is False
 
 
 def test_is_binary_missing_file():
-    assert pr_rebase_cli._is_binary(Path("/nonexistent/file.bin")) is False
+    assert rebase_conflicts.is_binary(Path("/nonexistent/file.bin")) is False
 
 
 # ── _is_generated_file ────────────────────────────────────────────────────
@@ -566,7 +573,7 @@ def test_is_generated_file_gitattributes(tmp_path):
         stdout="models.go: linguist-generated: true\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        signal = pr_rebase_cli._is_generated_file("models.go", f, str(tmp_path))
+        signal = rebase_conflicts.is_generated_file("models.go", f, str(tmp_path))
     assert signal is pr_rebase_cli.GeneratedSignal.GITATTRIBUTES
 
 
@@ -578,7 +585,7 @@ def test_is_generated_file_header_do_not_edit(tmp_path):
         stdout="service.pb.go: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        signal = pr_rebase_cli._is_generated_file("service.pb.go", f, str(tmp_path))
+        signal = rebase_conflicts.is_generated_file("service.pb.go", f, str(tmp_path))
     assert signal is pr_rebase_cli.GeneratedSignal.HEADER
 
 
@@ -590,7 +597,7 @@ def test_is_generated_file_header_at_generated(tmp_path):
         stdout="types_pb.ts: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        signal = pr_rebase_cli._is_generated_file("types_pb.ts", f, str(tmp_path))
+        signal = rebase_conflicts.is_generated_file("types_pb.ts", f, str(tmp_path))
     assert signal is pr_rebase_cli.GeneratedSignal.HEADER
 
 
@@ -602,7 +609,7 @@ def test_is_generated_file_not_generated(tmp_path):
         stdout="handler.go: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        signal = pr_rebase_cli._is_generated_file("handler.go", f, str(tmp_path))
+        signal = rebase_conflicts.is_generated_file("handler.go", f, str(tmp_path))
     assert signal is None
 
 
@@ -612,7 +619,7 @@ def test_is_generated_file_missing_file(tmp_path):
         stdout="missing.go: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        signal = pr_rebase_cli._is_generated_file(
+        signal = rebase_conflicts.is_generated_file(
             "missing.go", tmp_path / "missing.go", str(tmp_path),
         )
     assert signal is None
@@ -626,7 +633,7 @@ def test_get_ours_content_returns_stage2():
         args=[], returncode=0, stdout="base version content\n",
     )
     with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
-        result = pr_rebase_cli._get_ours_content("src/file.py", "/fake")
+        result = rebase_conflicts.get_ours_content("src/file.py", "/fake")
     assert result == "base version content\n"
     assert _unconfigured(mock_run.call_args[0][0]) == ["git", "show", ":2:src/file.py"]
     assert mock_run.call_args.kwargs["cwd"] == "/fake"
@@ -635,7 +642,7 @@ def test_get_ours_content_returns_stage2():
 def test_get_ours_content_returns_none_on_failure():
     fake_result = subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="not found")
     with mock.patch("subprocess.run", return_value=fake_result):
-        result = pr_rebase_cli._get_ours_content("new_file.py", "/fake")
+        result = rebase_conflicts.get_ours_content("new_file.py", "/fake")
     assert result is None
 
 
@@ -646,7 +653,7 @@ def test_get_commit_diff_returns_diff():
     diff_text = "diff --git a/file.py b/file.py\n--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n"
     fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=diff_text)
     with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
-        result = pr_rebase_cli._get_commit_diff("file.py", "/fake")
+        result = rebase_conflicts.get_commit_diff("file.py", "/fake")
     assert result == diff_text.strip()
     assert _unconfigured(mock_run.call_args[0][0]) == [
         "git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", "file.py",
@@ -657,14 +664,14 @@ def test_get_commit_diff_returns_diff():
 def test_get_commit_diff_returns_none_on_failure():
     fake_result = subprocess.CompletedProcess(args=[], returncode=128, stdout="")
     with mock.patch("subprocess.run", return_value=fake_result):
-        result = pr_rebase_cli._get_commit_diff("file.py", "/fake")
+        result = rebase_conflicts.get_commit_diff("file.py", "/fake")
     assert result is None
 
 
 def test_get_commit_diff_returns_none_on_empty_output():
     fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="  \n")
     with mock.patch("subprocess.run", return_value=fake_result):
-        result = pr_rebase_cli._get_commit_diff("file.py", "/fake")
+        result = rebase_conflicts.get_commit_diff("file.py", "/fake")
     assert result is None
 
 
@@ -672,7 +679,7 @@ def test_get_commit_diff_returns_none_on_empty_output():
 
 
 def test_build_resolve_prompt_includes_context():
-    prompt = pr_rebase_cli._build_resolve_prompt(
+    prompt = rebase_resolve.build_resolve_prompt(
         "src/auth.py", "<<<<<<< HEAD\nbase\n=======\nbranch\n>>>>>>> abc123\n",
         "abc123", "fix: auth refresh", target_ref=_TARGET,
     )
@@ -687,7 +694,7 @@ def test_build_resolve_prompt_includes_context():
 
 
 def test_build_resolve_prompt_includes_ours_content():
-    prompt = pr_rebase_cli._build_resolve_prompt(
+    prompt = rebase_resolve.build_resolve_prompt(
         "src/auth.py", "conflict content",
         "abc123", "fix: auth refresh", target_ref=_TARGET,
         ours_content="base side content\n",
@@ -700,7 +707,7 @@ def test_build_resolve_prompt_includes_ours_content():
 
 def test_build_resolve_prompt_includes_commit_diff():
     diff = "--- a/src/auth.py\n+++ b/src/auth.py\n@@ -1 +1 @@\n-old\n+new"
-    prompt = pr_rebase_cli._build_resolve_prompt(
+    prompt = rebase_resolve.build_resolve_prompt(
         "src/auth.py", "conflict content",
         "abc123", "fix: auth refresh", target_ref=_TARGET,
         commit_diff=diff,
@@ -711,7 +718,7 @@ def test_build_resolve_prompt_includes_commit_diff():
 
 
 def test_build_resolve_prompt_includes_both_contexts():
-    prompt = pr_rebase_cli._build_resolve_prompt(
+    prompt = rebase_resolve.build_resolve_prompt(
         "src/auth.py", "conflict content",
         "abc123", "fix: auth refresh", target_ref=_TARGET,
         ours_content="base content\n",
@@ -724,7 +731,7 @@ def test_build_resolve_prompt_includes_both_contexts():
 
 def test_build_resolve_prompt_names_the_resolved_ref():
     """The prompt tells the model which branch the commit is being replayed onto."""
-    prompt = pr_rebase_cli._build_resolve_prompt(
+    prompt = rebase_resolve.build_resolve_prompt(
         "src/auth.py", "conflict content",
         "abc123", "fix: auth refresh", target_ref=_OTHER_TARGET,
     )
@@ -737,47 +744,47 @@ def test_build_resolve_prompt_names_the_resolved_ref():
 
 def test_parse_resolved_content_with_markers():
     stdout = "Some preamble\n<<<RESOLVED>>>\nline1\nline2\n<<<END_RESOLVED>>>\nSome epilogue"
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content == "line1\nline2\n"
     assert reason == ""
 
 
 def test_parse_resolved_content_preserves_internal_blank_lines():
     stdout = "<<<RESOLVED>>>\nline1\n\nline3\n<<<END_RESOLVED>>>"
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content == "line1\n\nline3\n"
     assert reason == ""
 
 
 def test_parse_resolved_content_no_markers_returns_none():
     stdout = "resolved content without markers\n"
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content is None
     assert reason == "missing_both_markers"
 
 
 def test_parse_resolved_content_rejects_unresolved():
     stdout = "<<<RESOLVED>>>\n<<<<<<< HEAD\nbase\n=======\nbranch\n>>>>>>> abc123\n<<<END_RESOLVED>>>\n"
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content is None
     assert "surviving_conflict_marker" in reason
 
 
 def test_parse_resolved_content_empty_stdout():
-    content, reason = pr_rebase_cli._parse_resolved_content("")
+    content, reason = rebase_conflicts.parse_resolved_content("")
     assert content is None
     assert reason == "missing_both_markers"
 
 
 def test_parse_resolved_content_whitespace_only():
-    content, reason = pr_rebase_cli._parse_resolved_content("   \n  \n")
+    content, reason = rebase_conflicts.parse_resolved_content("   \n  \n")
     assert content is None
     assert reason == "missing_both_markers"
 
 
 def test_parse_resolved_content_missing_end_marker():
     stdout = "<<<RESOLVED>>>\npartial content that got truncated..."
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content is None
     assert reason == "missing_end_marker"
 
@@ -785,7 +792,7 @@ def test_parse_resolved_content_missing_end_marker():
 def test_parse_resolved_content_allows_comment_dividers():
     """Comment dividers with many equals signs should pass (don't start with =======)."""
     stdout = "<<<RESOLVED>>>\n// ========================================\ncode\n<<<END_RESOLVED>>>"
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content == "// ========================================\ncode\n"
     assert reason == ""
 
@@ -793,7 +800,7 @@ def test_parse_resolved_content_allows_comment_dividers():
 def test_parse_resolved_content_rejects_bare_equals_line():
     """A bare ======= line (git conflict marker) should be rejected."""
     stdout = "<<<RESOLVED>>>\ncode above\n=======\ncode below\n<<<END_RESOLVED>>>"
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content is None
     assert "surviving_conflict_marker" in reason
 
@@ -801,7 +808,7 @@ def test_parse_resolved_content_rejects_bare_equals_line():
 def test_parse_resolved_content_allows_equals_mid_line():
     """Equals signs mid-line (e.g. in assertions) should pass."""
     stdout = "<<<RESOLVED>>>\nassert x == \"=======\"\ncode\n<<<END_RESOLVED>>>"
-    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content == "assert x == \"=======\"\ncode\n"
     assert reason == ""
 
@@ -960,14 +967,13 @@ class TestFailureRecording:
         """The old record kept 500 characters of a tail and no way to the rest."""
         fake_trail = mock.MagicMock()
         answer = mock.Mock(exit_code=0, text="the model explained itself at length")
-        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
-             mock.patch.object(pr_rebase_cli, "_get_ours_content", return_value=""), \
-             mock.patch.object(pr_rebase_cli, "_get_commit_diff", return_value=""), \
-             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+        with mock.patch.object(rebase_conflicts, "get_ours_content", return_value=""), \
+             mock.patch.object(rebase_conflicts, "get_commit_diff", return_value=""), \
+             mock.patch.object(agent_invoke, "run_prompt",
                                return_value=answer):
-            resolved = pr_rebase_cli._resolve_full_file(
+            resolved = rebase_resolve.resolve_full_file(
                 "a.py", Path("/tmp/a.py"), "<<<<<<< ours\n", "1a2b3c4d", "subject",
-                "/tmp/wt", target_ref="origin/main",
+                "/tmp/wt", target_ref="origin/main", trail=fake_trail,
             )
 
         assert resolved is None
@@ -984,13 +990,12 @@ class TestFailureRecording:
             index=1, start=0, end=0, conflict="<<<<<<< ours\n",
             context_before="", context_after="",
         )
-        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
-             mock.patch.object(pr_rebase_cli, "_get_commit_diff", return_value=""), \
-             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+        with mock.patch.object(rebase_conflicts, "get_commit_diff", return_value=""), \
+             mock.patch.object(agent_invoke, "run_prompt",
                                return_value=answer):
-            resolved = pr_rebase_cli._resolve_chunked(
+            resolved = rebase_resolve.resolve_chunked(
                 "a.py", Path("/tmp/a.py"), "<<<<<<< ours\n", [block], "1a2b3c4d",
-                "subject", "/tmp/wt", target_ref="origin/main",
+                "subject", "/tmp/wt", target_ref="origin/main", trail=fake_trail,
             )
 
         assert resolved is None
@@ -1027,7 +1032,7 @@ def test_detect_delete_conflict_normal_conflict():
     )
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
     with mock.patch("subprocess.run", return_value=fake):
-        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is None
+        assert rebase_conflicts.detect_delete_conflict("file.tsx", "/fake") is None
 
 
 def test_detect_delete_conflict_theirs_deleted():
@@ -1038,7 +1043,7 @@ def test_detect_delete_conflict_theirs_deleted():
     )
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
     with mock.patch("subprocess.run", return_value=fake):
-        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is pr_rebase_cli.DeleteSide.THEIRS_DELETED
+        assert rebase_conflicts.detect_delete_conflict("file.tsx", "/fake") is pr_rebase_cli.DeleteSide.THEIRS_DELETED
 
 
 def test_detect_delete_conflict_ours_deleted():
@@ -1049,21 +1054,21 @@ def test_detect_delete_conflict_ours_deleted():
     )
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
     with mock.patch("subprocess.run", return_value=fake):
-        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is pr_rebase_cli.DeleteSide.OURS_DELETED
+        assert rebase_conflicts.detect_delete_conflict("file.tsx", "/fake") is pr_rebase_cli.DeleteSide.OURS_DELETED
 
 
 def test_detect_delete_conflict_empty_output():
     """No unmerged entries — returns None."""
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
     with mock.patch("subprocess.run", return_value=fake):
-        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is None
+        assert rebase_conflicts.detect_delete_conflict("file.tsx", "/fake") is None
 
 
 def test_detect_delete_conflict_git_failure():
     """Git command fails — returns None."""
     fake = subprocess.CompletedProcess(args=[], returncode=128, stdout="")
     with mock.patch("subprocess.run", return_value=fake):
-        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is None
+        assert rebase_conflicts.detect_delete_conflict("file.tsx", "/fake") is None
 
 
 # ── _resolve_delete_conflict ──────────────────────────────────────────────
@@ -1078,7 +1083,7 @@ def test_resolve_delete_conflict_theirs_deleted():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_delete_conflict(
+        result = rebase_conflicts.resolve_delete_conflict(
             "file.tsx", "abc123", "/fake", pr_rebase_cli.DeleteSide.THEIRS_DELETED,
         )
 
@@ -1095,7 +1100,7 @@ def test_resolve_delete_conflict_ours_deleted():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_delete_conflict(
+        result = rebase_conflicts.resolve_delete_conflict(
             "file.tsx", "abc123", "/fake", pr_rebase_cli.DeleteSide.OURS_DELETED,
         )
 
@@ -1111,7 +1116,7 @@ def test_resolve_delete_conflict_git_rm_fails():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_delete_conflict(
+        result = rebase_conflicts.resolve_delete_conflict(
             "file.tsx", "abc123", "/fake", pr_rebase_cli.DeleteSide.THEIRS_DELETED,
         )
 
@@ -1124,8 +1129,8 @@ def test_resolve_delete_conflict_git_rm_fails():
 def test_classify_conflict_known_lockfile(tmp_path):
     f = tmp_path / "pnpm-lock.yaml"
     f.write_text("content")
-    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
-        plan = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
+    with mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
+        plan = rebase_conflicts.classify_conflict("pnpm-lock.yaml", f, str(tmp_path), find_regenerator=regen.find_regenerator)
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
     assert plan.regenerator.cmd == ("pnpm", "install", "--lockfile-only")
 
@@ -1133,8 +1138,8 @@ def test_classify_conflict_known_lockfile(tmp_path):
 def test_classify_conflict_go_sum(tmp_path):
     f = tmp_path / "go.sum"
     f.write_text("content")
-    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
-        plan = pr_rebase_cli._classify_conflict("go.sum", f, str(tmp_path))
+    with mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
+        plan = rebase_conflicts.classify_conflict("go.sum", f, str(tmp_path), find_regenerator=regen.find_regenerator)
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
     assert plan.regenerator.cmd == ("go", "mod", "tidy")
 
@@ -1142,12 +1147,12 @@ def test_classify_conflict_go_sum(tmp_path):
 def test_classify_conflict_generated_file(tmp_path):
     f = tmp_path / "service.pb.go"
     f.write_text("// Code generated. DO NOT EDIT.\npackage v1\n")
-    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None), \
+    with mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None), \
          mock.patch.object(
-             pr_rebase_cli, "_is_generated_file",
+             rebase_conflicts, "is_generated_file",
              return_value=pr_rebase_cli.GeneratedSignal.HEADER,
          ):
-        plan = pr_rebase_cli._classify_conflict("service.pb.go", f, str(tmp_path))
+        plan = rebase_conflicts.classify_conflict("service.pb.go", f, str(tmp_path), find_regenerator=regen.find_regenerator)
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.ACCEPT_THEIRS
     assert plan.signal is pr_rebase_cli.GeneratedSignal.HEADER
 
@@ -1156,10 +1161,10 @@ def test_classify_conflict_delete_conflict(tmp_path):
     f = tmp_path / "old.go"
     f.write_text("content")
     with mock.patch.object(
-        pr_rebase_cli, "_detect_delete_conflict",
+        rebase_conflicts, "detect_delete_conflict",
         return_value=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
     ):
-        plan = pr_rebase_cli._classify_conflict("old.go", f, str(tmp_path))
+        plan = rebase_conflicts.classify_conflict("old.go", f, str(tmp_path), find_regenerator=regen.find_regenerator)
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.DELETE
     assert plan.delete_side is pr_rebase_cli.DeleteSide.THEIRS_DELETED
 
@@ -1167,18 +1172,18 @@ def test_classify_conflict_delete_conflict(tmp_path):
 def test_classify_conflict_binary_file(tmp_path):
     f = tmp_path / "image.png"
     f.write_bytes(b"\x89PNG\x00\x00")
-    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
-         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
-        plan = pr_rebase_cli._classify_conflict("image.png", f, str(tmp_path))
+    with mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
+         mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
+        plan = rebase_conflicts.classify_conflict("image.png", f, str(tmp_path), find_regenerator=regen.find_regenerator)
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.BINARY_ERROR
 
 
 def test_classify_conflict_text_file(tmp_path):
     f = tmp_path / "main.go"
     f.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
-    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
-         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
-        plan = pr_rebase_cli._classify_conflict("main.go", f, str(tmp_path))
+    with mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
+         mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
+        plan = rebase_conflicts.classify_conflict("main.go", f, str(tmp_path), find_regenerator=regen.find_regenerator)
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.AI_MERGE
 
 
@@ -1186,12 +1191,12 @@ def test_classify_conflict_lockfile_takes_priority_over_generated(tmp_path):
     """Registry match wins even if the file is also detected as generated."""
     f = tmp_path / "pnpm-lock.yaml"
     f.write_text("content")
-    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None), \
+    with mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None), \
          mock.patch.object(
-             pr_rebase_cli, "_is_generated_file",
+             rebase_conflicts, "is_generated_file",
              return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
          ):
-        plan = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
+        plan = rebase_conflicts.classify_conflict("pnpm-lock.yaml", f, str(tmp_path), find_regenerator=regen.find_regenerator)
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
 
 
@@ -1202,12 +1207,12 @@ def test_classify_delete_conflict_carries_side():
         full_path = Path(tmpdir) / filepath
         full_path.write_text("some content\n")
 
-        with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
+        with mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
              mock.patch.object(
-                 pr_rebase_cli, "_detect_delete_conflict",
+                 rebase_conflicts, "detect_delete_conflict",
                  return_value=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
              ):
-            plan = pr_rebase_cli._classify_conflict(filepath, full_path, tmpdir)
+            plan = rebase_conflicts.classify_conflict(filepath, full_path, tmpdir, find_regenerator=regen.find_regenerator)
 
         assert plan.strategy is pr_rebase_cli.ConflictStrategy.DELETE
         assert plan.delete_side is pr_rebase_cli.DeleteSide.THEIRS_DELETED
@@ -1220,9 +1225,9 @@ def test_classify_normal_conflict_as_ai_merge():
         full_path = Path(tmpdir) / filepath
         full_path.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
 
-        with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
-             mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
-            plan = pr_rebase_cli._classify_conflict(filepath, full_path, tmpdir)
+        with mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
+             mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
+            plan = rebase_conflicts.classify_conflict(filepath, full_path, tmpdir, find_regenerator=regen.find_regenerator)
 
         assert plan.strategy is pr_rebase_cli.ConflictStrategy.AI_MERGE
 
@@ -1260,7 +1265,7 @@ def _block(index=1, start=0, end=0, conflict="", context_before="", context_afte
 
 def test_extract_conflict_blocks_single():
     content = _make_large_file(300, [(50, "old", "new")])
-    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    blocks = rebase_conflicts.extract_conflict_blocks(content)
     assert len(blocks) == 1
     assert blocks[0].index == 1
     assert blocks[0].start == 50
@@ -1273,7 +1278,7 @@ def test_extract_conflict_blocks_single():
 
 def test_extract_conflict_blocks_multiple():
     content = _make_large_file(500, [(50, "a", "b"), (200, "c", "d")])
-    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    blocks = rebase_conflicts.extract_conflict_blocks(content)
     assert len(blocks) == 2
     assert blocks[0].index == 1
     assert blocks[1].index == 2
@@ -1283,7 +1288,7 @@ def test_extract_conflict_blocks_multiple():
 
 def test_extract_conflict_blocks_at_file_start():
     content = "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\nrest\n"
-    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    blocks = rebase_conflicts.extract_conflict_blocks(content)
     assert len(blocks) == 1
     assert blocks[0].start == 0
     assert blocks[0].context_before == ""
@@ -1291,24 +1296,24 @@ def test_extract_conflict_blocks_at_file_start():
 
 def test_extract_conflict_blocks_at_file_end():
     content = "line 1\n<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n"
-    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    blocks = rebase_conflicts.extract_conflict_blocks(content)
     assert len(blocks) == 1
     assert blocks[0].context_after == ""
 
 
 def test_should_chunk_small_file():
     content = "x\n" * 100
-    assert pr_rebase_cli._should_chunk(content, [_block(start=10, end=15)]) is False
+    assert rebase_conflicts.should_chunk(content, [_block(start=10, end=15)]) is False
 
 
 def test_should_chunk_large_file_small_conflict():
     content = "x\n" * 500
-    assert pr_rebase_cli._should_chunk(content, [_block(start=100, end=105)]) is True
+    assert rebase_conflicts.should_chunk(content, [_block(start=100, end=105)]) is True
 
 
 def test_should_chunk_large_file_mostly_conflicts():
     content = "x\n" * 500
-    assert pr_rebase_cli._should_chunk(content, [_block(start=0, end=300)]) is False
+    assert rebase_conflicts.should_chunk(content, [_block(start=0, end=300)]) is False
 
 
 def test_build_chunked_prompt_structure():
@@ -1318,7 +1323,7 @@ def test_build_chunked_prompt_structure():
         context_before="before line\n",
         context_after="after line\n",
     )]
-    prompt = pr_rebase_cli._build_chunked_prompt(
+    prompt = rebase_resolve.build_chunked_prompt(
         "main.go", blocks, "abc123", "feat: change",
         commit_diff="diff content", target_ref=_TARGET,
     )
@@ -1338,7 +1343,7 @@ def test_build_chunked_prompt_instructs_base_side_names():
     Any file over _CHUNKED_MIN_LINES with a small conflict takes this path, so
     dropping the instruction here disarmed it for the common case.
     """
-    prompt = pr_rebase_cli._build_chunked_prompt(
+    prompt = rebase_resolve.build_chunked_prompt(
         "main.go", [_block(index=1, start=0, end=4)], "abc123", "feat: change",
         target_ref=_TARGET,
     )
@@ -1346,7 +1351,7 @@ def test_build_chunked_prompt_instructs_base_side_names():
 
 
 def test_build_chunked_prompt_names_the_resolved_ref():
-    prompt = pr_rebase_cli._build_chunked_prompt(
+    prompt = rebase_resolve.build_chunked_prompt(
         "main.go", [_block(index=1, start=0, end=4)], "abc123", "feat: change",
         target_ref=_OTHER_TARGET,
     )
@@ -1356,7 +1361,7 @@ def test_build_chunked_prompt_names_the_resolved_ref():
 
 def test_parse_chunked_resolutions_single():
     stdout = "<<<RESOLVED>>>_1\nresolved line\n<<<END_RESOLVED>>>_1\n"
-    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 1)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 1)
     assert reason == ""
     assert result == ["resolved line\n"]
 
@@ -1366,21 +1371,21 @@ def test_parse_chunked_resolutions_multiple():
         "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
         "<<<RESOLVED>>>_2\nsecond\n<<<END_RESOLVED>>>_2\n"
     )
-    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 2)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 2)
     assert reason == ""
     assert result == ["first\n", "second\n"]
 
 
 def test_parse_chunked_resolutions_missing_marker():
     stdout = "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
-    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 2)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 2)
     assert result is None
     assert "block_2" in reason
 
 
 def test_parse_chunked_resolutions_surviving_markers():
     stdout = "<<<RESOLVED>>>_1\n<<<<<<< HEAD\nstill broken\n<<<END_RESOLVED>>>_1\n"
-    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 1)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 1)
     assert result is None
     assert "surviving_conflict_marker" in reason
 
@@ -1389,7 +1394,7 @@ def test_splice_resolutions_single():
     content = "line 0\nline 1\n<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\nline 7\n"
     blocks = [_block(start=2, end=6)]
     resolutions = ["merged\n"]
-    result = pr_rebase_cli._splice_resolutions(content, blocks, resolutions)
+    result = rebase_conflicts.splice_resolutions(content, blocks, resolutions)
     assert result == "line 0\nline 1\nmerged\nline 7\n"
 
 
@@ -1398,9 +1403,9 @@ def test_splice_resolutions_multiple():
     lines[5:6] = ["<<<<<<< HEAD\na\n=======\nb\n>>>>>>> abc\n"]
     lines[14:15] = ["<<<<<<< HEAD\nc\n=======\nd\n>>>>>>> abc\n"]
     content = "".join(lines)
-    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    blocks = rebase_conflicts.extract_conflict_blocks(content)
     resolutions = ["merged_1\n", "merged_2\n"]
-    result = pr_rebase_cli._splice_resolutions(content, blocks, resolutions)
+    result = rebase_conflicts.splice_resolutions(content, blocks, resolutions)
     assert "<<<<<<< " not in result
     assert "merged_1" in result
     assert "merged_2" in result
@@ -1421,7 +1426,7 @@ def test_resolve_single_file_uses_chunked_for_large_file(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_single_file(
+        result = rebase_resolve.resolve_single_file(
             "big.go", f, "abc123", "feat: update", str(tmp_path),
             target_ref=_TARGET,
         )
@@ -1447,7 +1452,7 @@ def test_resolve_single_file_uses_full_for_small_file(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_single_file(
+        result = rebase_resolve.resolve_single_file(
             "small.go", f, "abc123", "feat: update", str(tmp_path),
             target_ref=_TARGET,
         )
@@ -1464,7 +1469,7 @@ def test_resolve_file_conflicts_skips_binary():
         binary_file = Path(tmpdir) / "image.png"
         binary_file.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
         with mock.patch.object(
-            pr_rebase_cli, "_is_generated_file", return_value=None,
+            rebase_conflicts, "is_generated_file", return_value=None,
         ):
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["image.png"], tmpdir, "abc123", "feat: add image",
@@ -1485,7 +1490,7 @@ def test_resolve_file_conflicts_accepts_theirs_for_generated():
 
         with (
             mock.patch.object(
-                pr_rebase_cli, "_is_generated_file",
+                rebase_conflicts, "is_generated_file",
                 return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
             mock.patch("subprocess.run", side_effect=fake_run),
@@ -1513,7 +1518,7 @@ def test_resolve_file_conflicts_generated_before_binary():
 
         with (
             mock.patch.object(
-                pr_rebase_cli, "_is_generated_file",
+                rebase_conflicts, "is_generated_file",
                 return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
             mock.patch("subprocess.run", side_effect=fake_run),
@@ -1695,7 +1700,7 @@ def test_resolve_file_conflicts_go_mod_uses_ai_merge():
         go_mod.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
 
         with mock.patch.object(
-            pr_rebase_cli, "_resolve_single_file", return_value="go.mod",
+            rebase_resolve, "resolve_single_file", return_value="go.mod",
         ) as mock_ai, \
              mock.patch.object(pr_rebase_cli, "_run_regeneration") as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
@@ -1747,9 +1752,9 @@ def test_resolve_file_conflicts_handles_delete_conflict():
             delete_side=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
         )
         with mock.patch.object(
-            pr_rebase_cli, "_classify_conflict", return_value=plan,
+            rebase_conflicts, "classify_conflict", return_value=plan,
         ), mock.patch.object(
-            pr_rebase_cli, "_resolve_delete_conflict", return_value=True,
+            rebase_conflicts, "resolve_delete_conflict", return_value=True,
         ) as mock_delete:
             result = pr_rebase_cli._resolve_file_conflicts(
                 [filepath], tmpdir, "abc123", "feat: cleanup",
@@ -1759,6 +1764,7 @@ def test_resolve_file_conflicts_handles_delete_conflict():
         assert result.files == [filepath]
         mock_delete.assert_called_once_with(
             filepath, "abc123", tmpdir, pr_rebase_cli.DeleteSide.THEIRS_DELETED,
+            trail=None,
         )
 
 
@@ -1800,7 +1806,7 @@ def test_resolve_file_conflicts_generated_without_regenerator_is_stale():
 
         with (
             mock.patch.object(
-                pr_rebase_cli, "_is_generated_file",
+                rebase_conflicts, "is_generated_file",
                 return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
             mock.patch.object(pr_rebase_cli, "_repo_regenerators", return_value=()),
@@ -1827,7 +1833,7 @@ def test_resolve_file_conflicts_generated_with_regenerator_is_not_stale():
 
         with (
             mock.patch.object(
-                pr_rebase_cli, "_is_generated_file",
+                rebase_conflicts, "is_generated_file",
                 return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
             mock.patch.object(pr_rebase_cli, "_repo_regenerators", return_value=(regen,)),
@@ -2024,8 +2030,8 @@ def test_step_conflicts_fix_resolves():
     ctx = mock.MagicMock()
     tally = pr_rebase_cli.ResolutionTally()
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",
@@ -2050,8 +2056,8 @@ def test_step_conflicts_records_stale_files():
         files=["pnpm-lock.yaml"], stale=["pnpm-lock.yaml"],
     )
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=resolution), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
@@ -2078,8 +2084,8 @@ def _run_step_over_budget(*, force=False, already=None, conflicts=None):
              pr_rebase_cli, "_resolve_file_conflicts",
              return_value=pr_rebase_cli.Resolution(files=["late.py"]),
          ) as resolve, \
-         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc", "s")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=1), \
+         mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc", "s")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=1), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
              args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
@@ -2144,7 +2150,7 @@ def test_rebase_success_emits_stale_files():
              pr_rebase_cli.RebaseOutcome, "save",
              lambda self, c: saved.append(self),
          ), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         rc = pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.PUSH, tally, target_ref=_TARGET,
         )
@@ -2167,7 +2173,7 @@ def test_rebase_success_counts_commits_before_push():
     with mock.patch.object(git_client, "commits_ahead", lambda _, **kw: next(ahead)), \
          _lands(_pushed()), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.FIX, tally, target_ref=_TARGET,
         )
@@ -2182,7 +2188,7 @@ def test_rebase_success_conflicts_resolved_counts_files():
 
     with mock.patch.object(git_client, "commits_ahead", return_value=5), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.PUSH, tally, target_ref=_TARGET,
         )
@@ -2193,8 +2199,8 @@ def test_rebase_success_conflicts_resolved_counts_files():
 def test_step_conflicts_fix_resolution_fails_aborts():
     """AI resolution failure aborts rebase and returns 1."""
     ctx = mock.MagicMock()
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=None), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
@@ -2233,8 +2239,8 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
             r.stderr = "error: could not apply abc123... next commit"
         return r
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",
@@ -2264,8 +2270,8 @@ def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="fatal: error")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",
@@ -2296,7 +2302,7 @@ def test_step_advance_empty_patch_skips():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=True), \
-         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch("subprocess.run", side_effect=fake_run):
         rc = pr_rebase_cli._step_advance("/fake")
 
@@ -3058,7 +3064,7 @@ def test_refuse_landed_records_the_status_for_the_dashboard():
         branch=_LANDED_BRANCH, signal="empty_diff", detail="no diff", commits_ahead=2,
     )
 
-    with mock.patch.object(pr_rebase_cli, "_emit_json"):
+    with mock.patch.object(core_report, "emit_json"):
         pr_rebase_cli._refuse(ctx, report, target_ref=_OTHER_TARGET)
 
     state = pr_state.load_state(ctx.target_dir)
@@ -3237,7 +3243,7 @@ def test_fresh_falls_back_to_the_git_signals_when_the_tracker_is_unreachable():
     seen = []
 
     with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
-         mock.patch.object(pr_rebase_cli, "_try_run", return_value=None), \
+         mock.patch.object(regen, "try_run", return_value=None), \
          mock.patch.object(git_client, "commits_ahead", return_value=2), \
          mock.patch.object(branch_landed, "diff_is_empty", return_value=True), \
          mock.patch.object(pr_rebase_cli, "_refuse",
@@ -3495,7 +3501,7 @@ def _diff_only(diff: str):
 
 def test_commit_types_read_from_conventions():
     """The type list comes from lib/conventions.sh, not a copy in the script."""
-    types = pr_rebase_cli._commit_types()
+    types = conventions.commit_types()
     assert "fix" in types and "test" in types and "refactor" in types
 
 
@@ -3510,7 +3516,7 @@ def test_commit_types_read_from_conventions():
     ("", False),
 ])
 def test_valid_commit_header(subject, valid):
-    assert pr_rebase_cli._valid_commit_header(subject) is valid
+    assert conventions.valid_commit_header(subject) is valid
 
 
 def test_fix_commit_message_uses_ai_subject():
@@ -3657,7 +3663,7 @@ def test_fix_push_failures_ai_unavailable(tmp_path):
     (tmp_path / "file.go").write_text("package main\n")
 
     with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
-         mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None):
+         mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None):
         mock_ai.is_available.return_value = False
         result = pr_rebase_cli._fix_push_failures(str(tmp_path), "errors", ["file.go"])
 
@@ -3696,7 +3702,7 @@ def test_fix_push_failures_still_prompts_for_hand_written_files(tmp_path):
     prompted = []
 
     with mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
-         mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
+         mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
          mock.patch.object(pr_rebase_cli, "_fix_one_file",
                            side_effect=lambda f, *a: prompted.append(f)), \
          mock.patch.object(pr_rebase_cli, "_stage_worktree", return_value=[]):
@@ -4173,7 +4179,7 @@ def test_rebase_success_in_fix_only_prints_the_push_command(capsys):
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
          _lands(_held()), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         rc = pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.FIX_ONLY, target_ref=_TARGET,
         )
@@ -4204,7 +4210,7 @@ def test_manual_push_hint_only_when_the_run_never_pushes(mode, hinted, capsys):
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
          _lands(landed), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json"):
+         mock.patch.object(core_report, "emit_json"):
         rc = pr_rebase_cli._rebase_success("/fake", ctx, mode, target_ref=_TARGET)
 
     assert rc == 0
@@ -4219,8 +4225,8 @@ def test_fix_only_still_resolves_conflicts():
     ctx = mock.MagicMock()
     tally = pr_rebase_cli.ResolutionTally()
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",

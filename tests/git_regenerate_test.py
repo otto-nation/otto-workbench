@@ -1,6 +1,5 @@
 """Tests for the git.regenerate lockfile regeneration library."""
 
-import os
 import sys
 from pathlib import Path
 from unittest import mock

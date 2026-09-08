@@ -216,8 +216,13 @@ def run_regeneration(
                 trail.error("regeneration", f"git add -u failed in {job.regen_dir}")
             log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
             return False
-    elif not all(git_client.ok("add", f, cwd=cwd) for f in job.files):
-        return False
+    else:
+        ok = True
+        for f in job.files:
+            if not git_client.ok("add", f, cwd=cwd):
+                ok = False
+        if not ok:
+            return False
 
     if trail:
         trail.info("regeneration", f"regenerated {', '.join(job.files)}",

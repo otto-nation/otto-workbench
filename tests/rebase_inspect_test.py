@@ -4,8 +4,6 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:

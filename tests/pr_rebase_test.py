@@ -29,7 +29,6 @@ from git import land  # noqa: E402
 from git import regenerate as regen  # noqa: E402
 from core import conventions  # noqa: E402
 from core import report as core_report  # noqa: E402
-from rebase import types as rebase_types  # noqa: E402
 from rebase import inspect as rebase_inspect  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
@@ -241,13 +240,13 @@ def test_find_regenerator_unknown_file():
 
 def test_find_regenerator_all_entries_have_cmd():
     """Every registry entry must carry a non-empty command tuple."""
-    for name, entry in pr_rebase_cli._LOCKFILE_REGENERATORS.items():
+    for name, entry in regen.LOCKFILE_REGENERATORS.items():
         assert isinstance(entry.cmd, tuple) and len(entry.cmd) > 0, f"{name} has invalid cmd"
 
 
 def test_find_regenerator_all_keys_are_basenames():
     """Lookup is by basename — a key with a path separator could never match."""
-    for name in pr_rebase_cli._LOCKFILE_REGENERATORS:
+    for name in regen.LOCKFILE_REGENERATORS:
         assert os.path.basename(name) == name, f"{name} is not a bare basename"
 
 
@@ -257,20 +256,20 @@ def test_find_regenerator_all_keys_are_basenames():
 def test_detect_mise_found(tmp_path):
     (tmp_path / "mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 def test_detect_mise_tool_versions(tmp_path):
     (tmp_path / ".tool-versions").write_text("nodejs 20\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 def test_detect_mise_dotted_toml(tmp_path):
     """.mise.toml is as common as mise.toml and must be detected."""
     (tmp_path / ".mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 @pytest.mark.parametrize("rel", [
@@ -286,7 +285,7 @@ def test_detect_mise_nested_config_layouts(tmp_path, rel):
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
 def test_detect_mise_dotted_toml_in_ancestor(tmp_path):
@@ -294,7 +293,7 @@ def test_detect_mise_dotted_toml_in_ancestor(tmp_path):
     subdir.mkdir(parents=True)
     (tmp_path / ".mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(subdir), str(tmp_path)) is True
+        assert regen.detect_mise(str(subdir), str(tmp_path)) is True
 
 
 def test_detect_mise_in_ancestor(tmp_path):
@@ -302,18 +301,18 @@ def test_detect_mise_in_ancestor(tmp_path):
     subdir.mkdir(parents=True)
     (tmp_path / "mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(subdir), str(tmp_path)) is True
+        assert regen.detect_mise(str(subdir), str(tmp_path)) is True
 
 
 def test_detect_mise_not_installed(tmp_path):
     (tmp_path / "mise.toml").write_text("[tools]\n")
     with mock.patch("shutil.which", return_value=None):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
 
 
 def test_detect_mise_no_config(tmp_path):
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
 
 
 def test_detect_mise_stops_at_repo_root(tmp_path):
@@ -323,7 +322,7 @@ def test_detect_mise_stops_at_repo_root(tmp_path):
     subdir.mkdir(parents=True)
     (tmp_path / "mise.toml").write_text("[tools]\n")  # above repo root
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert pr_rebase_cli._detect_mise(str(subdir), str(repo)) is False
+        assert regen.detect_mise(str(subdir), str(repo)) is False
 
 
 # ── _run_regeneration ──────────────────────────────────────────────────────

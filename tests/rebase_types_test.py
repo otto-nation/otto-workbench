@@ -3,8 +3,6 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -61,6 +59,10 @@ class TestRefDivergence:
 
     def test_not_diverged_when_only_ahead(self):
         div = rebase_types.RefDivergence(ahead=3, behind=0, comparable=True)
+        assert div.diverged is False
+
+    def test_not_diverged_when_only_behind(self):
+        div = rebase_types.RefDivergence(ahead=0, behind=5, comparable=True)
         assert div.diverged is False
 
     def test_local_only_work(self):

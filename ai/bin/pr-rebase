@@ -52,10 +52,7 @@ from rebase import types as rebase_types
 from rebase import inspect as rebase_inspect
 from core import conventions
 from core import log
-from core import report as core_report
 from pr import context as pr_context
-from pr import domains as pr_domains
-from pr import state as pr_state
 from core import proc
 from core import publishing
 from git import push
@@ -129,7 +126,6 @@ RegenQueue = regen.RegenQueue
 
 # ── Git helpers (delegated to rebase.inspect) ───────────────────────────────
 
-_git_dir = rebase_inspect.git_dir
 _detect_rebase_in_progress = rebase_inspect.rebase_in_progress
 _status_lines = rebase_inspect.status_lines
 _detect_conflicts = rebase_inspect.detect_conflicts
@@ -146,11 +142,8 @@ GeneratedFix = rebase_types.GeneratedFix
 _is_empty_patch = rebase_inspect.is_empty_patch
 
 
-# The lockfile registry and mise detection live in git.regenerate.
-_LOCKFILE_REGENERATORS = regen.LOCKFILE_REGENERATORS
+# The lockfile regenerator lookup lives in git.regenerate.
 _find_regenerator = regen.find_regenerator
-_MISE_CONFIG_NAMES = regen.MISE_CONFIG_NAMES
-_detect_mise = regen.detect_mise
 
 
 # ── Repo-level regeneration ────────────────────────────────────────────────
@@ -225,8 +218,8 @@ def _queue_repo_regeneration(filepath: str, cwd: str, queue: RegenQueue) -> bool
     regenerators = _repo_regenerators(cwd)
     if not regenerators:
         return False
-    for regen in regenerators:
-        queue.add(Path(_repo_root(cwd)), filepath, regen.cmd, stage_dir=True)
+    for regenerator in regenerators:
+        queue.add(Path(_repo_root(cwd)), filepath, regenerator.cmd, stage_dir=True)
     return True
 
 
@@ -989,9 +982,9 @@ def _classify_conflict(
     if delete_side is not None:
         return ConflictPlan(ConflictStrategy.DELETE, delete_side=delete_side)
 
-    regen = _find_regenerator(filepath)
-    if regen is not None:
-        return ConflictPlan(ConflictStrategy.REGENERATE, regenerator=regen)
+    regenerator = _find_regenerator(filepath)
+    if regenerator is not None:
+        return ConflictPlan(ConflictStrategy.REGENERATE, regenerator=regenerator)
 
     signal = _is_generated_file(filepath, full_path, cwd)
     if signal is not None:
@@ -1171,11 +1164,6 @@ def _drive_one_step(
     return None, True
 
 
-# How many distinct files a rebase may conflict in before automatic resolution
-# stops being the right answer. Counted in files rather than conflicts: a file
-# that conflicts in several replayed commits is still one file the resolutions
-# have to keep coherent with each other, and a branch conflicting this widely
-# with its base is usually one whose work already landed in another shape.
 def _report_conflicts_and_stop(
     cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
 ) -> int:

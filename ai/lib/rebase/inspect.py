@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from core import log, proc
 from git import client as git_client
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -100,8 +101,6 @@ def status_lines(cwd: str) -> list[str] | None:
     the rebase.  A ``status`` killed by a timeout or a locked index must not be
     spelled the same way as a tree with nothing in it.
     """
-    from core import log, proc  # deferred to avoid circular at import time
-
     status = git_client.run("status", "--porcelain", cwd=cwd)
     if not status.ok:
         log.warn(proc.failure_message(f"git status failed in {cwd}", status))

@@ -322,10 +322,17 @@ def _retry_after_regen(
     if trail:
         trail.info("push", "committing regenerated files before retry",
                    data={"files": modified})
-    if not git_client.ok("add", "-u", cwd=wt_path):
+    # Stage only the files the hook regenerated, not everything `add -u`
+    # would sweep up.  The commit is hook-authored content exclusively.
+    if not git_client.ok("add", "--", *modified, cwd=wt_path):
         log.error("Failed to stage regenerated files.")
         return None
-    if not git_client.run("commit", "-m", message, cwd=wt_path).ok:
+    # --no-verify: the only content in this commit is what a pre-push hook
+    # just produced.  Re-running the pre-commit chain re-checks work that
+    # has already been checked, on the recovery path where a failure is
+    # most expensive (the 2026-09-04 incident: 5m25s then a stranded
+    # rebase).  The narrowed staging above ensures nothing else rides in.
+    if not git_client.run("commit", "--no-verify", "-m", message, cwd=wt_path).ok:
         return None
     if not _validated(wt_path, trail):
         return None

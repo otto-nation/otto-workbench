@@ -45,7 +45,8 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 
 ## PR Creation
 
-- Always use `task --global pr:create -- --no-issue --draft` to create a PR — `task pr:create` does not exist (no local target), omitting `-- --no-issue` blocks on an interactive issue-number prompt, and `--draft` ensures PRs go through review before being marked ready
+- Always use `task --global pr:create -- --no-issue --draft` to create a PR — `task pr:create` does not exist (no local target), omitting `-- --no-issue` (or `--issue <ID>`) blocks on an interactive issue-number prompt, and `--draft` ensures PRs go through review before being marked ready
+- To link an issue: `task --global pr:create -- --issue ENG-123 --draft` — the issue ID is used for the PR description and issue linking instead of extracting from the branch name or prompting interactively
 - To supply a custom title and/or body: `task --global pr:create -- --no-issue --draft --title "feat: title" --body "description"` — when both are provided, AI generation is skipped entirely; when only one is provided, the other is still AI-generated. Use `--body-file /path/to/file` instead of `--body` for multi-line or complex content
 - When the current working directory is not the target repo (e.g., running from a different worktree), pass `REPO_DIR`: `task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue --draft` — without this, git commands run against the CWD repo instead of the intended one
 

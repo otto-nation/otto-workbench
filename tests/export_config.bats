@@ -1,6 +1,8 @@
 #!/usr/bin/env bats
 # Tests for _export_claude_config(), _profile_excludes_skill(), and workbench-export.
 
+bats_require_minimum_version 1.5.0
+
 setup_file() {
   load 'test_helper'
   export BATS_NO_PARALLELIZE_WITHIN_FILE=true

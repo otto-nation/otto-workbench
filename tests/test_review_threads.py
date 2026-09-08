@@ -2225,13 +2225,14 @@ class TestPushHeldCommit:
     def test_a_failed_push_reaches_the_trail(self, rt, publishing_on):
         """Same as the two sibling push paths — a failure here is not silent."""
         trail = MagicMock()
+        trail.failure.return_value = Path("/trail/push.log")
         state = self._state()
         with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run",
                           return_value=_git_ran(1, stderr="rejected\n")):
             rt._push_held_commit(state, Path("/fake"), trail)
-        trail.error.assert_called_once()
-        assert "rejected" in trail.error.call_args.kwargs["data"]["error"]
+        trail.failure.assert_called_once()
+        assert trail.failure.call_args.kwargs["output"] == "rejected\n"
 
     def test_a_commit_already_on_the_remote_is_just_marked(self, rt, publishing_on):
         """Someone pushed by hand between the two runs."""

@@ -346,7 +346,7 @@ def test_every_from_raw_type_in_the_tree_publishes_a_raw_schema():
     """
     lib = Path(__file__).resolve().parent.parent / "ai" / "lib"
     classes = [
-        (source.name, node)
+        (f"{source.parent.name}/{source.name}", node)
         for source in sorted(lib.glob("*/*.py"))
         if source.stem != "__init__"
         for node in ast.walk(ast.parse(source.read_text()))

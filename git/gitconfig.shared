@@ -62,6 +62,10 @@
 
 [core]
 	excludesFile = ~/.config/git/ignore
-	fsmonitor = true
+	# fsmonitor: opt-in via ~/.gitconfig rather than tracked shared config.
+	# The daemon intermittently wedges, causing `git status` to hang with no
+	# error — and the hang is most likely after a large tree operation, which
+	# is exactly when it reads as catastrophe rather than a known daemon fault.
+	# See #1140 for the full write-up.
 	untrackedCache = true
 	pager = delta

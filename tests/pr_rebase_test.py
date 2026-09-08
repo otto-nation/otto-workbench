@@ -975,6 +975,46 @@ class TestFailureRecording:
         assert kwargs["output"] == answer.text
         assert "stdout_tail" not in kwargs["data"]
         assert "stdout_len" not in kwargs["data"]
+
+    def test_an_unparseable_chunked_resolution_hands_over_the_whole_answer(self):
+        """Same guard as the full-file path, exercised through the chunked one."""
+        fake_trail = mock.MagicMock()
+        answer = mock.Mock(exit_code=0, text="the model explained itself at length")
+        block = pr_rebase_cli.ConflictBlock(
+            index=1, start=0, end=0, conflict="<<<<<<< ours\n",
+            context_before="", context_after="",
+        )
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+             mock.patch.object(pr_rebase_cli, "_get_commit_diff", return_value=""), \
+             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+                               return_value=answer):
+            resolved = pr_rebase_cli._resolve_chunked(
+                "a.py", Path("/tmp/a.py"), "<<<<<<< ours\n", [block], "1a2b3c4d",
+                "subject", "/tmp/wt", target_ref="origin/main",
+            )
+
+        assert resolved is None
+        kwargs = fake_trail.failure.call_args.kwargs
+        assert kwargs["output"] == answer.text
+        assert kwargs["data"] == {
+            "filepath": "a.py",
+            "reason": f"{pr_rebase_cli.ParseFailure.MISSING_BLOCK_MARKERS}_1",
+        }
+
+    def test_an_unparseable_push_fix_hands_over_the_whole_answer(self, tmp_path):
+        """`_fix_one_file` discarded the answer the same way before this migration."""
+        fake_trail = mock.MagicMock()
+        (tmp_path / "a.py").write_text("original\n")
+        answer = mock.Mock(exit_code=0, text="the model explained itself at length")
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+                               return_value=answer):
+            pr_rebase_cli._fix_one_file("a.py", str(tmp_path), "check output")
+
+        kwargs = fake_trail.failure.call_args.kwargs
+        assert kwargs["output"] == answer.text
+        assert kwargs["data"]["filepath"] == "a.py"
+
 # ── _detect_delete_conflict ───────────────────────────────────────────────
 
 

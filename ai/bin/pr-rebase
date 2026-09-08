@@ -543,7 +543,7 @@ def _queue_repo_regeneration(filepath: str, cwd: str, queue: RegenQueue) -> bool
 
 def _try_run(
     cmd: list[str], *, cwd: str, timeout: float | None = timeouts.UNBOUNDED,
-) -> subprocess.CompletedProcess | None:
+) -> CmdResult | None:
     """Run a command, returning None if it could not be launched or finished.
 
     subprocess.run raises instead of exiting 127 when the executable is absent,
@@ -557,9 +557,10 @@ def _try_run(
     ``timeouts``; see that module for why the number is not theirs to pick.
     """
     try:
-        return subprocess.run(
+        p = subprocess.run(
             cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
         )
+        return CmdResult(p.returncode, p.stdout or "", p.stderr or "")
     except OSError as exc:
         log.dim(f"Could not launch {' '.join(cmd)}: {exc}")
         return None
@@ -596,11 +597,8 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
         return False
 
     if r.returncode != 0:
-        # `_try_run` hands back a raw `subprocess.CompletedProcess`, which has
-        # no `combined_output` — wrap it in `CmdResult` to reuse that owner.
-        combined = CmdResult(r.returncode, r.stdout or "", r.stderr or "").combined_output
         _tfail("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",
-               output=combined,
+               output=r.combined_output,
                data={"cmd": cmd, "exit_code": r.returncode})
         log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
         if r.stderr.strip():
@@ -1119,8 +1117,9 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
 
     fixed_content, failure_reason = _parse_resolved_content(answer.text)
     if fixed_content is None:
-        _terr(
+        _tfail(
             "fix_push_failures", f"failed to parse fix for {filepath}",
+            output=answer.text,
             data={"filepath": filepath, "reason": failure_reason},
         )
         return
@@ -1387,9 +1386,10 @@ def _resolve_chunked(
 
     resolutions, failure_reason = _parse_chunked_resolutions(answer.text, len(blocks))
     if resolutions is None:
-        _terr(
+        _tfail(
             "resolve_conflicts",
             f"failed to parse chunked resolution for {filepath}",
+            output=answer.text,
             data={"filepath": filepath, "reason": failure_reason},
         )
         log.error(f"Failed to parse chunked resolution for {filepath} ({failure_reason})")

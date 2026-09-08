@@ -29,6 +29,8 @@ from git import land  # noqa: E402
 from git import regenerate as regen  # noqa: E402
 from core import conventions  # noqa: E402
 from core import report as core_report  # noqa: E402
+from rebase import types as rebase_types  # noqa: E402
+from rebase import inspect as rebase_inspect  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
@@ -108,7 +110,7 @@ def test_detect_rebase_not_in_progress():
     with tempfile.TemporaryDirectory() as tmpdir:
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is False
 
 
@@ -117,7 +119,7 @@ def test_detect_rebase_merge_in_progress():
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
         (git_dir / "rebase-merge").mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
 
 
@@ -126,7 +128,7 @@ def test_detect_rebase_apply_in_progress():
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
         (git_dir / "rebase-apply").mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
 
 
@@ -154,7 +156,7 @@ def test_remaining_rebase_commits_no_rebase():
     with tempfile.TemporaryDirectory() as tmpdir:
         git_dir = Path(tmpdir) / ".git"
         git_dir.mkdir()
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 0
 
 
@@ -170,7 +172,7 @@ def test_remaining_rebase_commits_from_todo():
             "# this is a comment\n"
             "fixup ghi789 squash me\n"
         )
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 3
 
 
@@ -182,16 +184,16 @@ def test_remaining_rebase_commits_from_apply():
         apply_dir.mkdir()
         (apply_dir / "next").write_text("3\n")
         (apply_dir / "last").write_text("7\n")
-        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+        with mock.patch.object(rebase_inspect, "git_dir", return_value=git_dir):
             assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 4
 
 
 # ── ConflictReport ─────────────────────────────────────────────────────────
 
 
-@mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2)
-@mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc1234", "fix: thing"))
-@mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["a.py"])
+@mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2)
+@mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc1234", "fix: thing"))
+@mock.patch.object(rebase_inspect, "detect_conflicts", return_value=["a.py"])
 def test_conflict_report_structure(_m1, _m2, _m3):
     report = pr_rebase_cli.ConflictReport.from_repo("/fake")
     assert report.status == "conflicts"
@@ -201,9 +203,9 @@ def test_conflict_report_structure(_m1, _m2, _m3):
     assert report.remaining_commits == 2
 
 
-@mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0)
-@mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("def5678", "feat: other"))
-@mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["b.py"])
+@mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0)
+@mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("def5678", "feat: other"))
+@mock.patch.object(rebase_inspect, "detect_conflicts", return_value=["b.py"])
 def test_conflict_report_custom_status(_m1, _m2, _m3):
     report = pr_rebase_cli.ConflictReport.from_repo("/fake", status="conflicts_resuming")
     assert report.status == "conflicts_resuming"
@@ -2027,8 +2029,8 @@ def test_step_conflicts_fix_resolves():
     ctx = mock.MagicMock()
     tally = pr_rebase_cli.ResolutionTally()
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",
@@ -2053,8 +2055,8 @@ def test_step_conflicts_records_stale_files():
         files=["pnpm-lock.yaml"], stale=["pnpm-lock.yaml"],
     )
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=resolution), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
@@ -2081,8 +2083,8 @@ def _run_step_over_budget(*, force=False, already=None, conflicts=None):
              pr_rebase_cli, "_resolve_file_conflicts",
              return_value=pr_rebase_cli.Resolution(files=["late.py"]),
          ) as resolve, \
-         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc", "s")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=1), \
+         mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc", "s")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=1), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
              args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
@@ -2196,8 +2198,8 @@ def test_rebase_success_conflicts_resolved_counts_files():
 def test_step_conflicts_fix_resolution_fails_aborts():
     """AI resolution failure aborts rebase and returns 1."""
     ctx = mock.MagicMock()
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=None), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
@@ -2236,8 +2238,8 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
             r.stderr = "error: could not apply abc123... next commit"
         return r
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",
@@ -2267,8 +2269,8 @@ def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="fatal: error")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",
@@ -2299,7 +2301,7 @@ def test_step_advance_empty_patch_skips():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=True), \
-         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch("subprocess.run", side_effect=fake_run):
         rc = pr_rebase_cli._step_advance("/fake")
 
@@ -4222,8 +4224,8 @@ def test_fix_only_still_resolves_conflicts():
     ctx = mock.MagicMock()
     tally = pr_rebase_cli.ResolutionTally()
 
-    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(
              pr_rebase_cli, "_resolve_file_conflicts",

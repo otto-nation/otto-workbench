@@ -170,6 +170,22 @@ def try_run(
 # ── Regeneration runner ─────────────────────────────────────────────────────
 
 
+def _stage_regenerated(
+    job: RegenJob, *, cwd: str, trail: Trail | None,
+) -> bool:
+    """Stage the files a regeneration produced. Returns True on success."""
+    if not job.stage_dir:
+        # Stage every file even if one fails — don't short-circuit.
+        results = [git_client.ok("add", f, cwd=cwd) for f in job.files]
+        return all(results)
+    if git_client.ok("add", "-u", ".", cwd=job.regen_dir):
+        return True
+    if trail:
+        trail.error("regeneration", f"git add -u failed in {job.regen_dir}")
+    log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
+    return False
+
+
 def run_regeneration(
     job: RegenJob, *, cwd: str, trail: Trail | None = None,
 ) -> bool:
@@ -210,19 +226,8 @@ def run_regeneration(
             log.dim(r.stderr.strip()[:proc.DETAIL_LIMIT])
         return False
 
-    if job.stage_dir:
-        if not git_client.ok("add", "-u", ".", cwd=job.regen_dir):
-            if trail:
-                trail.error("regeneration", f"git add -u failed in {job.regen_dir}")
-            log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
-            return False
-    else:
-        ok = True
-        for f in job.files:
-            if not git_client.ok("add", f, cwd=cwd):
-                ok = False
-        if not ok:
-            return False
+    if not _stage_regenerated(job, cwd=cwd, trail=trail):
+        return False
 
     if trail:
         trail.info("regeneration", f"regenerated {', '.join(job.files)}",

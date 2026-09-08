@@ -1,5 +1,7 @@
 """Which source `pr.ci_annotations` believes about a failed job, and what it makes of it."""
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -259,6 +261,43 @@ def test_fetch_test_artifact_is_empty_when_the_job_uploaded_none():
     with patch("gh.run_reads.download_artifact") as mock_download:
         mock_download.return_value.__enter__.return_value = None
         assert ci_annotations.fetch_test_artifact("owner/repo", 100, "Test: svc-payment") == ""
+
+
+# ── failure ids and the text behind them ───────────────────────────────
+
+
+def _id_under_hash_seed(message: str, seed: str) -> str:
+    """`build_failure_id` for a pathless, untitled annotation, in its own process."""
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, sys.argv[1]);"
+         "from pr import ci_annotations;"
+         "print(ci_annotations.build_failure_id({'message': sys.argv[2]}, 'Build'))",
+         str(LIB_DIR), message],
+        capture_output=True, text=True, check=True,
+        env={**os.environ, "PYTHONHASHSEED": seed},
+    )
+    return result.stdout.strip()
+
+
+def test_a_pathless_untitled_failure_keeps_one_id_across_processes():
+    """Progression matches a failure against the prior run by id, so an id built
+    from the builtin `hash` — whose string seed is fresh per process — reports
+    every such failure as new. Two seeds have to produce the one id."""
+    assert (_id_under_hash_seed("segfault in worker", "1")
+            == _id_under_hash_seed("segfault in worker", "2"))
+
+
+def test_an_annotation_with_an_empty_message_reports_its_title():
+    """`build_failure_id` already reads an empty message as no message; the text
+    the item carries reads it the same way rather than surfacing blank."""
+    annotations = [
+        {"annotation_level": "failure", "message": "", "title": "shellcheck SC2086"},
+    ]
+
+    items = ci_annotations.annotations_to_items(annotations, "Lint")
+
+    assert items[0].annotation == "shellcheck SC2086"
 
 
 # ── annotations_to_items headline from context ─────────────────────────

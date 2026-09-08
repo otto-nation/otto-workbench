@@ -21,6 +21,7 @@ from core import publishing  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr import ci_annotations  # noqa: E402
 from pr import ci_failures as ci  # noqa: E402
+from pr import ci_runs  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 
 
@@ -132,13 +133,30 @@ def test_run_ci_wait_emits_the_final_report(capsys):
     assert report.conclusion == "failure"
 
 
-def test_run_ci_wait_exits_when_there_is_nothing_to_poll(capsys):
-    """`RunUnavailable` is the poll saying it never saw a run — report and stop."""
+def test_run_ci_wait_leaves_nothing_to_poll_to_the_entry_point():
+    """`RunUnavailable` travels to `main`, which owns the exit code."""
     with patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
-        with pytest.raises(SystemExit) as exc:
+        with pytest.raises(ci_runs.RunUnavailable, match="No workflow runs found"):
             ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
 
-    assert exc.value.code == 1
+
+def test_run_ci_leaves_nothing_to_report_on_to_the_entry_point():
+    """The single-shot path raises the same thing rather than exiting itself."""
+    args = _wait_args()
+    with patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
+        with pytest.raises(ci_runs.RunUnavailable, match="No workflow runs found"):
+            ci_check._run_ci(MagicMock(), args, make_ctx())
+
+
+def test_main_reports_a_missing_run_and_exits_one(capsys):
+    """The library raises; the entry point is what a shell sees a status from."""
+    with patch.object(sys, "argv", ["ci-check"]), \
+         patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
+         patch.object(ci_check.run_lock, "claim_for_process"), \
+         patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
+        assert ci_check.main([]) == 1
+
     assert "No workflow runs found" in capsys.readouterr().err
 
 

@@ -14,6 +14,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr import ci_annotations  # noqa: E402
 from pr import ci_failures as ci  # noqa: E402
+from pr import ci_runs  # noqa: E402
 from pr import ci_wait  # noqa: E402
 
 
@@ -125,7 +126,7 @@ def test_poll_returns_what_it_has_when_it_times_out(capsys):
 def test_poll_raises_when_the_branch_has_no_runs():
     trail = MagicMock()
     with patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
-        with pytest.raises(ci_wait.RunUnavailable, match="feat/test"):
+        with pytest.raises(ci_runs.RunUnavailable, match="feat/test"):
             _poll(trail=trail)
     trail.warn.assert_called_once()
     assert trail.warn.call_args[0][0] == "no_runs"
@@ -135,7 +136,7 @@ def test_poll_raises_when_no_run_data_comes_back():
     trail = MagicMock()
     with patch("gh.run_reads.fetch_latest_run_ids", return_value=[100]), \
          patch("gh.run_reads.fetch_run_data", return_value=None):
-        with pytest.raises(ci_wait.RunUnavailable, match="Failed to fetch"):
+        with pytest.raises(ci_runs.RunUnavailable, match="Failed to fetch"):
             _poll(trail=trail)
     trail.error.assert_called_once()
     assert trail.error.call_args[0][0] == "fetch_run_data"

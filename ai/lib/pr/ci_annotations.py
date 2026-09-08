@@ -16,6 +16,7 @@ source to believe.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,10 +40,11 @@ _GENERIC_MESSAGES = (
 def build_failure_id(annotation: dict, job_name: str) -> str:
     """A failure's identity, stable across runs so progression can track it.
 
-    A title is preferred over the message hash for a pathless annotation
-    because Python randomises string hashing per process: an id built that way
-    never matches the same failure in the next run, so progression reports it
-    as new every time.
+    A title is preferred over the message digest for a pathless annotation
+    because a title reads as something in the report. The digest behind it is
+    `hashlib`'s rather than the builtin `hash`, whose string seed is randomised
+    per process: an id built that way never matches the same failure in the next
+    run, so progression would report it as new every time.
     """
     path = annotation.get("path", "")
     line = annotation.get("start_line", 0)
@@ -53,7 +55,8 @@ def build_failure_id(annotation: dict, job_name: str) -> str:
     if title:
         return f"{job_name}-{slugify(title)}"
     message = annotation.get("message", "")
-    return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
+    digest = hashlib.sha256(message.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{job_name}-{digest}"
 
 
 def annotations_to_items(
@@ -66,7 +69,9 @@ def annotations_to_items(
         if ann.get("annotation_level") == "notice":
             continue
         item_id = build_failure_id(ann, job_name)
-        text = ann.get("message", ann.get("title", ""))
+        # An empty message is no message, the same reading build_failure_id
+        # takes of it — an annotation carrying only a title reports the title.
+        text = ann.get("message") or ann.get("title", "")
         items.append(ci.FailureItem(
             id=item_id,
             annotation=text,

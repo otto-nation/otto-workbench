@@ -24,6 +24,16 @@ from pr import ci_annotations
 from pr import ci_failures as ci
 
 
+class RunUnavailable(Exception):
+    """There was nothing to report on — no run on the branch, or no data for it.
+
+    Raised where the run is resolved or fetched, by the single-shot path and the
+    wait loop alike, and carries the message the caller prints. A timeout is not
+    this: a poll that ran out of time still saw a run, and the caller reports on
+    whatever of it had finished.
+    """
+
+
 def parse_run(repo: str, run_data: dict) -> ci.RunState:
     """Parse gh run data into a RunState with classified failures."""
     failed_jobs = [j for j in run_data.get("jobs", []) if j.get("conclusion") in FAILURE_CONCLUSIONS]
@@ -89,7 +99,9 @@ class MergedRun:
     """The workflow runs behind one push, and the single payload they fold into.
 
     A caller that wants the branch's state reads `merged`; one that reports on
-    each run it fetched reads `payloads`, which are as GitHub served them.
+    each run it fetched reads `payloads`, whose top-level keys are as GitHub
+    served them. The job dicts underneath are shared with `merged` and carry the
+    `_source_run_id` the merge tags them with.
     """
 
     payloads: list[dict]
@@ -109,8 +121,8 @@ def fetch_merged(repo: str, run_ids: list[int]) -> MergedRun | None:
         return None
 
     # merge_runs writes the combined conclusion, status and job list onto the
-    # first payload it is given, so it gets a copy of that one: `payloads` is
-    # what was fetched, not what the merge made of it.
+    # first payload it is given, so it gets a copy of that one: each payload's
+    # own conclusion and status stay as they were fetched.
     merged = merge_runs([dict(payloads[0]), *payloads[1:]])
     return MergedRun(payloads=payloads, merged=merged)
 

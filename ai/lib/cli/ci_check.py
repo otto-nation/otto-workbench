@@ -1,6 +1,10 @@
 """Fetch CI run data, classify failures, and output status.
 
-Renders a human-readable dashboard to stderr and structured JSON to stdout.
+Renders a human-readable dashboard to stderr. A single-shot run writes the
+structured JSON report to stdout only when there is a failure in it; `--wait`
+writes one on every poll that finds something new and a final one when the run
+finishes, whether it failed or not.
+
 Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.
 
@@ -127,16 +131,14 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
         run_ids = run_reads.fetch_latest_run_ids(repo, branch)
         if not run_ids:
             trail.warn("no_runs", "no workflow runs found")
-            log.error(f"No workflow runs found for branch '{branch}'")
-            sys.exit(1)
+            raise ci_runs.RunUnavailable(f"No workflow runs found for branch '{branch}'")
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
 
     fetched = ci_runs.fetch_merged(repo, run_ids)
     if fetched is None:
         trail.error("fetch_run_data", "failed to fetch run data")
-        log.error("Failed to fetch run data")
-        sys.exit(1)
+        raise ci_runs.RunUnavailable("Failed to fetch run data")
 
     for payload in fetched.payloads:
         trail.info(
@@ -154,14 +156,10 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
 
 def _run_ci_wait(trail, args, ctx) -> ci_report.CIReport:
     """Poll CI until all jobs complete, emitting partial reports as failures arrive."""
-    try:
-        poll = ci_wait.poll_until_complete(
-            ctx.repo, ctx.branch, run_id=args.run,
-            timeout=args.wait_timeout, interval=args.wait_interval, trail=trail,
-        )
-    except ci_wait.RunUnavailable as exc:
-        log.error(str(exc))
-        sys.exit(1)
+    poll = ci_wait.poll_until_complete(
+        ctx.repo, ctx.branch, run_id=args.run,
+        timeout=args.wait_timeout, interval=args.wait_interval, trail=trail,
+    )
 
     report = _report_run(
         trail, ctx, poll.merged, poll.run_ids, counts=poll.counts, show_status=True,
@@ -316,6 +314,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = _run_ci_wait(trail, args, ctx) if args.wait else _run_ci(trail, args, ctx)
         return _run_fix(trail, report, ctx) if args.fix else 0
+    except ci_runs.RunUnavailable as exc:
+        # Expected: there is no run to report on. Trailed where it was raised,
+        # so it is the exit code that is left to decide.
+        log.error(str(exc))
+        return 1
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

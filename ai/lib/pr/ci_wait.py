@@ -21,14 +21,6 @@ from pr import ci_report
 from pr import ci_runs
 
 
-class RunUnavailable(Exception):
-    """There was never anything to poll — no run on the branch, or no data for it.
-
-    A timeout is not this: a poll that ran out of time still saw a run, and the
-    caller reports on whatever of it had finished.
-    """
-
-
 @dataclass(frozen=True)
 class PollResult:
     """What a finished or timed-out poll leaves for the final report."""
@@ -86,8 +78,8 @@ def poll_until_complete(
     """Poll until every job has finished, or until `timeout` seconds have passed.
 
     The run ids are re-resolved on every pass unless `run_id` pins one: a push
-    can set off a workflow the first poll did not see. Raises `RunUnavailable`
-    when there is nothing to poll at all.
+    can set off a workflow the first poll did not see. Raises
+    `ci_runs.RunUnavailable` when there is nothing to poll at all.
     """
     reported_job_ids: set[int] = set()
     start_time = time.monotonic()
@@ -98,12 +90,12 @@ def poll_until_complete(
         run_ids = [run_id] if run_id else run_reads.fetch_latest_run_ids(repo, branch)
         if not run_ids:
             trail.warn("no_runs", "no workflow runs found")
-            raise RunUnavailable(f"No workflow runs found for branch '{branch}'")
+            raise ci_runs.RunUnavailable(f"No workflow runs found for branch '{branch}'")
 
         fetched = ci_runs.fetch_merged(repo, run_ids)
         if fetched is None:
             trail.error("fetch_run_data", "failed to fetch run data")
-            raise RunUnavailable("Failed to fetch run data")
+            raise ci_runs.RunUnavailable("Failed to fetch run data")
 
         merged = fetched.merged
         new_failed_jobs = [

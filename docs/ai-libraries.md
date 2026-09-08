@@ -2990,7 +2990,11 @@ The top of the stack. A binary under `ai/bin/` is a shim over one module here: t
 
 Fetch CI run data, classify failures, and output status.
 
-Renders a human-readable dashboard to stderr and structured JSON to stdout.
+Renders a human-readable dashboard to stderr. A single-shot run writes the
+structured JSON report to stdout only when there is a failure in it; `--wait`
+writes one on every poll that finds something new and a final one when the run
+finishes, whether it failed or not.
+
 Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.
 

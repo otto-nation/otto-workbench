@@ -2884,3 +2884,20 @@ the rule nearest a piece of comment text by keyword overlap. `extract_keywords`
 is the vocabulary primitive both rule loading and bullet matching are built
 on — `retro.report` reuses it to find which bullet inside a matched rule is
 closest to the comment being annotated.
+
+## Command entry points
+
+The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
+
+### cli/needs.py
+
+What a `pr` subcommand needs of dispatch before its handler runs.
+
+`Need` is the declaration; `review_need` is the one resolver that reads a mode
+flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
+import them and no test could reach them without executing the binary.
+
+The mode table itself stays with the handlers it names — a mode is a need and a
+callable, and only the need half has a home below the entry point. The
+resolvers therefore take the table rather than reaching for one, which is also
+what lets a test declare a table of its own.

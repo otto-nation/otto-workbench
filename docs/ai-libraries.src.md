@@ -62,3 +62,9 @@ The eval harness: fixture tasks, the scorers that grade each task's output, and 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
 
 <!-- include: bin/local/generate-doc-reference --set ai-lib --group platform -->
+
+## Command entry points
+
+The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
+
+<!-- include: bin/local/generate-doc-reference --set ai-lib --group cli -->

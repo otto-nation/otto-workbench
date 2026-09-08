@@ -1146,6 +1146,16 @@ pass all read.
 Deciding what a failed job was complaining about is `pr.ci_annotations`'s job,
 called from here once per failed job and in parallel.
 
+### pr/ci_wait.py
+
+Polling a run that is still going, and reporting failures as they land.
+
+`--wait` exists so a fix pass can start on the first failure rather than on the
+last one: the loop below emits a partial report the moment a job fails, and
+keeps going until every job has finished or the caller's timeout runs out.
+What it hands back is the last poll's merged payload, which the caller turns
+into the same report a single-shot run produces.
+
 ### pr/comments.py
 
 PR comments lifecycle tracking.

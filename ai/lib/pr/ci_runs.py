@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from gh import run_reads
 from gh.run_reads import FAILURE_CONCLUSIONS
 from pr import ci_annotations
 from pr import ci_failures as ci
@@ -81,6 +82,37 @@ def merge_runs(run_data_list: list[dict]) -> dict | None:
         if primary.get("conclusion") not in FAILURE_CONCLUSIONS:
             primary["conclusion"] = ""
     return primary
+
+
+@dataclass(frozen=True)
+class MergedRun:
+    """The workflow runs behind one push, and the single payload they fold into.
+
+    A caller that wants the branch's state reads `merged`; one that reports on
+    each run it fetched reads `payloads`, which are as GitHub served them.
+    """
+
+    payloads: list[dict]
+    merged: dict
+
+
+def fetch_merged(repo: str, run_ids: list[int]) -> MergedRun | None:
+    """Fetch each run's payload in parallel and fold them into one.
+
+    `None` when GitHub served none of them — there is nothing to merge and
+    nothing to report on.
+    """
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        fetched = list(pool.map(lambda rid: (rid, run_reads.fetch_run_data(repo, rid)), run_ids))
+    payloads = [{**data, "_run_id": rid} for rid, data in fetched if data is not None]
+    if not payloads:
+        return None
+
+    # merge_runs writes the combined conclusion, status and job list onto the
+    # first payload it is given, so it gets a copy of that one: `payloads` is
+    # what was fetched, not what the merge made of it.
+    merged = merge_runs([dict(payloads[0]), *payloads[1:]])
+    return MergedRun(payloads=payloads, merged=merged)
 
 
 @dataclass(frozen=True)

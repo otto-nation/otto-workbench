@@ -224,9 +224,9 @@ class TestSinglePassRead:
             tmp_path, _tool_use("Read", file_path="/tmp/a"), _result(),
         )
         reads = []
-        real = review_agent._read_jsonl
+        real = review_agent.read_jsonl
         monkeypatch.setattr(
-            review_agent, "_read_jsonl",
+            review_agent, "read_jsonl",
             lambda p: (reads.append(p), real(p))[1],
         )
         review_agent.diagnose_missing_output(log_path)

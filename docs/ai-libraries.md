@@ -222,6 +222,15 @@ Every function has a no-answer value — ``False`` and ``""`` — so a caller
 in a hook, a CI job, or a subprocess gets a usable result instead of an
 exception. No answer is never consent.
 
+### fix/ci.py
+
+CI's half of a fix pass: the failures, the commit, and the state write.
+
+`fix.engine` runs the pass; this says what CI hands it. The other side of that
+boundary is `fix.types.FixItem`, and the translation into one happens here so
+that what the engine sees is the same for every domain and what CI reasons
+about stays `pr.ci_failures`' own types.
+
 ### fix/engine.py
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.
@@ -1068,6 +1077,25 @@ Nor is the worktree. A branch with no PR behind it is described from local git
 by `review.collect.fetch_branch_metadata`, which reaches the same `PRMetadata`
 this fetches — every read here goes to GitHub.
 
+### gh/run_reads.py
+
+What GitHub says about a workflow run, before anything interprets it.
+
+Every read here returns the payload `gh` handed back — a run dict, a list of
+annotation dicts, log text — with no failure classification and no `RunState`.
+Turning those into something a fix pass can act on belongs to `pr.ci_annotations`
+and `pr.ci_runs`, which sit a layer up and call through here for their inputs.
+
+The transport is not here either: `gh.client` owns running gh, its timeout tiers
+and its rate-limit ladder. This module owns which questions CI asks about a run
+and nothing about how the asking is done, the same division `gh.pr_reads` keeps
+for a PR.
+
+`SKIP_CONCLUSIONS` and `FAILURE_CONCLUSIONS` live here because they are the
+vocabulary of the payload rather than of any one reading of it — both layer-4
+modules classify against the same words, and a run GitHub calls `stale` is a
+failure to each of them or to neither.
+
 ### gh/types.py
 
 What a GitHub PR read returns: the PR's own metadata, and its conversation.
@@ -1076,6 +1104,57 @@ Below the `gh`-layer module that fetches both, so the shapes a read answers
 with sit at or beneath the layer that answers. `review.collect` builds
 the same `PRMetadata` from local git for a branch with no PR behind it, which is
 why the type is not spelled in terms of the API's field names.
+
+### pr/ci_annotations.py
+
+What a failed CI job was actually complaining about, as `FailureItem`s.
+
+GitHub's own account of a failure is an annotation, and an annotation is often
+useless: "Process completed with exit code 1" pinned to a line of the workflow
+file. This module is the ladder down from that — annotations first, then the
+job's logs, then the test-results artifact — stopping at the first source that
+says something a fix pass could act on. `fetch_job_failure` is the whole ladder
+for one job and is the only thing outside here that needs calling.
+
+Classifying the text once it has been found belongs to `pr.ci_failures`, and
+getting it belongs to `gh.run_reads`. What is here is the decision of which
+source to believe.
+
+### pr/ci_report.py
+
+What a reader is told about a CI run — the JSON on stdout, the dashboard on stderr.
+
+`pr.ci_runs` says what a run is; this module says how it is reported. A person
+reads the dashboard, and a skill or a fix pass reads `CIReport`, whose fields
+are the published shape of `ci-check`'s stdout — adding one adds a key every
+consumer sees, and dropping one takes a key away from all of them.
+
+A `--wait` run reports the same run twice, once while it is still going and
+once when it is done, so `completed` and `total` are present on that path and
+absent on the single-shot one rather than being reported as zero.
+
+### pr/ci_runs.py
+
+One `RunState` out of however many workflow runs a commit set off.
+
+GitHub reports a push as several independent runs, each with its own id,
+conclusion and job list, and nothing downstream of here wants to know that: a
+branch is passing or it is not. `merge_runs` folds them into one payload and
+`parse_run` turns that into the `RunState` the report, the dashboard and the fix
+pass all read.
+
+Deciding what a failed job was complaining about is `pr.ci_annotations`'s job,
+called from here once per failed job and in parallel.
+
+### pr/ci_wait.py
+
+Polling a run that is still going, and reporting failures as they land.
+
+`--wait` exists so a fix pass can start on the first failure rather than on the
+last one: the loop below emits a partial report the moment a job fails, and
+keeps going until every job has finished or the caller's timeout runs out.
+What it hands back is the last poll's merged payload, which the caller turns
+into the same report a single-shot run produces.
 
 ### pr/comments.py
 
@@ -1277,8 +1356,9 @@ without pulling a review or comments layer in behind it.
 
 CI failure lifecycle tracking.
 
-Handles failure classification, progression tracking, and rendering for the
-ci-failures skill. State persistence is delegated to pr.domains.CIDomain.
+Handles failure classification and progression tracking for the ci-failures
+skill. State persistence is delegated to pr.domains.CIDomain, and how a run is
+reported to a person or a machine is `pr.ci_report`'s.
 
 ### pr/comments_fix.py
 
@@ -2234,6 +2314,15 @@ Stdlib only, deliberately. This is the module everything else in `ai/lib`
 should be free to depend on, and pulling in `log`, `agent.usage`, or
 `workbench_paths` from here would make that impossible.
 
+### core/report.py
+
+How a tool writes a machine-readable report to stdout.
+
+A tool's stdout is its contract with whatever launched it, and the shape of
+that contract is the same everywhere: one indented JSON object, or a stream of
+them a reader can tell apart. Neither is domain vocabulary, so it lives here
+rather than being spelled out again in each binary that reports.
+
 ### core/run_lock.py
 
 Advisory whole-run lock, scoped to what a run targets.
@@ -2896,6 +2985,26 @@ closest to the comment being annotated.
 ## Command entry points
 
 The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
+
+### cli/ci_check.py
+
+Fetch CI run data, classify failures, and output status.
+
+Renders a human-readable dashboard to stderr. A single-shot run writes the
+structured JSON report to stdout only when there is a failure in it; `--wait`
+writes one on every poll that finds something new and a final one when the run
+finishes, whether it failed or not.
+
+Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
+on the run's target rather than on the checkout it was invoked from.
+
+Usage:
+  ci-check                      # latest run for current branch
+  ci-check --branch <name>      # specific branch (works from bare repos)
+  ci-check --run <run_id>       # specific run
+  ci-check --pr <number_or_url> # discover branch from PR
+  ci-check --repo-dir <path>    # specify worktree directory
+  ci-check --fix                # diagnose then invoke AI to fix failures
 
 ### cli/needs.py
 

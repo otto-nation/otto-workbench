@@ -32,6 +32,7 @@ from conftest import make_ctx  # noqa: E402
 
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
+from fix import ci as fix_ci  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
@@ -43,6 +44,8 @@ from review import registry as review_registry  # noqa: E402
 from review import spans as review_spans  # noqa: E402
 from review import types as review_types  # noqa: E402
 from gh.types import PRContext, PRMetadata  # noqa: E402
+from pr import ci_failures  # noqa: E402
+from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from review.budget import MAX_PROMPT_BYTES  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
@@ -566,13 +569,23 @@ def _render_adapter(adapter) -> str:
     return fix_engine._prompt(adapter, 15)
 
 
-def _render_fix_ci(cc, wt_path) -> str:
+def _render_fix_ci(wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    worktree_root=wt_path, target_dir=wt_path)
-    return _render_adapter(cc.CIFixAdapter(
-        [{"id": "build-1", "job": "build", "kind": "build",
-          "annotation": "test failed", "headline": "test failed"}],
-        {"run_number": 1}, ctx,
+    failure = ci_failures.FailureItem(
+        id="build-1", annotation="test failed", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None, headline="test failed",
+    )
+    return _render_adapter(fix_ci.CIFixAdapter(
+        CIReport(
+            repo="owner/repo", branch="user/feat/thing", pr_number=42,
+            run_id=100, run_ids=[100], run_number=1, head_sha="abc123",
+            conclusion="failure", behind_main=0,
+            failures={"build": ci_failures.FailureGroup(
+                job="build", kind=ci_failures.FailureKind.BUILD, items=(failure,),
+            )},
+            progression={}, resolved_since_prior=[],
+        ), ctx,
         PRState(identity=PRIdentity(
             repo="owner/repo", branch="user/feat/thing", pr_number=42,
             head_sha="abc123", worktree_root=str(wt_path),
@@ -611,9 +624,9 @@ def _render_fix_findings(wt_path) -> str:
 # One list, so a fourth domain adopting the engine is added to the contracts by
 # adding its renderer here rather than to each test in turn.
 _FIX_RENDERERS = {
-    "ci": lambda cc, rt, wt: _render_fix_ci(cc, wt),
-    "comments": lambda cc, rt, wt: _render_fix_comments(rt, wt),
-    "findings": lambda cc, rt, wt: _render_fix_findings(wt),
+    "ci": lambda rt, wt: _render_fix_ci(wt),
+    "comments": lambda rt, wt: _render_fix_comments(rt, wt),
+    "findings": lambda rt, wt: _render_fix_findings(wt),
 }
 
 
@@ -669,8 +682,8 @@ class TestTemplateRendering:
             + ", ".join(f"${{{v}}}" for v in left)
         )
 
-    def test_fix_ci_template_fully_substituted(self, cc, tmp_path):
-        left = _unsubstituted(_render_fix_ci(cc, tmp_path))
+    def test_fix_ci_template_fully_substituted(self, tmp_path):
+        left = _unsubstituted(_render_fix_ci(tmp_path))
         assert not left, f"fix-ci.md left: {left}"
 
     def test_fix_comments_template_fully_substituted(self, rt, tmp_path):
@@ -714,8 +727,8 @@ class TestOutputBlockContract:
         self._assert_no_mandate(_template_of(key), _render_via_build_prompt(key))
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
-    def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt, tmp_path):
-        self._assert_no_mandate(render, _FIX_RENDERERS[render](cc, rt, tmp_path))
+    def test_fix_templates_have_no_write_tool_mandate(self, render, rt, tmp_path):
+        self._assert_no_mandate(render, _FIX_RENDERERS[render](rt, tmp_path))
 
     def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
@@ -761,24 +774,24 @@ class TestOutputBlockContract:
         assert expected == checked
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
-    def test_fix_templates_share_the_worktree_block(self, render, cc, rt, tmp_path):
-        rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
+    def test_fix_templates_share_the_worktree_block(self, render, rt, tmp_path):
+        rendered = _FIX_RENDERERS[render](rt, tmp_path)
         assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
-    def test_fix_templates_share_the_generated_block(self, render, cc, rt, tmp_path):
+    def test_fix_templates_share_the_generated_block(self, render, rt, tmp_path):
         """Any fix pass can edit a source whose artifact then needs rebuilding.
 
         Not a property of the domain — a CI fix, a comment fix and a finding fix
         all reach `lib/` docstrings and `.src` documents — so every template
         carries it and none of them words it for itself.
         """
-        rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
+        rendered = _FIX_RENDERERS[render](rt, tmp_path)
         assert agent_templates.GENERATED_BLOCK in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(
-        self, render, cc, rt, tmp_path,
+        self, render, rt, tmp_path,
     ):
         """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
 
@@ -787,7 +800,7 @@ class TestOutputBlockContract:
         a checklist the agent is not looking at. No template has to say it the
         same way — each only has to still be talking about all of them.
         """
-        task = _FIX_RENDERERS[render](cc, rt, tmp_path).split("## Task", 1)[1]
+        task = _FIX_RENDERERS[render](rt, tmp_path).split("## Task", 1)[1]
         for box in fix_tracking._BOXES:
             why = (
                 f" — {fix_tracking._WHY}"

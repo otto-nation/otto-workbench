@@ -357,6 +357,37 @@ class TestDiscovery:
 
         assert declares_tool_schema(script) is True
 
+    def test_a_shim_declares_through_the_cli_module_it_imports(self, tmp_path):
+        """A shim's twelve lines carry no marker; the parser it runs is a file away.
+
+        Without this the D4 shims drop out of discovery one at a time as each
+        binary is reduced, and the only symptom is a tool the client stops
+        being offered.
+        """
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        cli_dir = tmp_path / "lib" / "cli"
+        cli_dir.mkdir(parents=True)
+        (cli_dir / "widget.py").write_text("from core.tool_parser import ToolParser\n")
+        shim = bin_dir / "widget"
+        # With the linter directive every real shim carries, so the scan is not
+        # matching a line no checkout contains.
+        shim.write_text("#!/usr/bin/env python3\nfrom cli.widget import main  # noqa: E402\n")
+
+        assert declares_tool_schema(shim) is True
+
+    def test_a_shim_over_an_unparsing_module_is_not_a_candidate(self, tmp_path):
+        """Delegation is not the declaration — the module still has to carry one."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        cli_dir = tmp_path / "lib" / "cli"
+        cli_dir.mkdir(parents=True)
+        (cli_dir / "widget.py").write_text("import argparse\n")
+        shim = bin_dir / "widget"
+        shim.write_text("#!/usr/bin/env python3\nfrom cli.widget import main\n")
+
+        assert declares_tool_schema(shim) is False
+
     def test_tarball_builder_is_not_a_probe_candidate(self):
         """The script that motivated the guard must stay out of the probe path.
 

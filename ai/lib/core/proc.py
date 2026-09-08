@@ -118,6 +118,14 @@ _SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 # reading it later has the terminal.
 DETAIL_LIMIT = 200
 
+# How many lines of a command's output are worth showing when the output is
+# itself the failure. A pre-push hook that fails is often a whole test suite and
+# the line naming which gate failed is the last one, so the head is the wrong
+# end: it keeps the banner and loses the verdict. This is the bound both readers
+# take — the console line `push.report` prints and the excerpt a trail record
+# carries — because they are answering the same question at different widths.
+TAIL_LINES = 20
+
 # What `run` reports when a command outlived its timeout. 124 is the shell
 # convention for a timeout kill, and it is contract rather than an
 # implementation detail: the eval scorers distinguish a timed-out case from a
@@ -310,6 +318,46 @@ def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> 
     if not r.detail:
         return f"{action} (exit {r.returncode})"
     return f"{action}: {r.detail}"
+
+
+def tail(text: str, *, lines: int = TAIL_LINES, limit: int | None = None,
+         indent: str = "") -> str:
+    """The last few meaningful lines of what a command printed.
+
+    At most *lines* of them, each prefixed with *indent*, and no more than
+    *limit* characters in total when one is given — whole lines are dropped from
+    the front until what is left fits, and a single line longer than the cap
+    keeps its own last *limit* characters rather than being dropped to nothing.
+    The indent is not counted against the cap; it is the reader's margin, not
+    the command's output.
+
+    Blank lines go because a command splits itself across both streams and
+    `combined_output` joins them — an empty stream would otherwise contribute a
+    gap that reads as missing output.
+    """
+    kept = [line.rstrip() for line in text.splitlines() if line.strip()][-lines:]
+    if limit is not None:
+        kept = _within(kept, limit)
+    return "\n".join(f"{indent}{line}" for line in kept)
+
+
+def _within(lines: list[str], limit: int) -> list[str]:
+    """The last of *lines* that fit in *limit* characters once joined."""
+    kept: list[str] = []
+    used = 0
+    for line in reversed(lines):
+        # The newline every line but the first contributes to the join.
+        cost = len(line) + (1 if kept else 0)
+        if used + cost > limit:
+            break
+        kept.insert(0, line)
+        used += cost
+    if kept:
+        return kept
+    # Nothing fit, so the last line is longer than the whole cap. Its own tail
+    # is still the most useful thing to keep — an empty excerpt would say
+    # nothing at all about a failure that printed one very long line.
+    return [lines[-1][-limit:]] if lines else []
 
 
 def _killed_message(action: str, r: CmdResult) -> str:

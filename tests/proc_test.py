@@ -483,3 +483,32 @@ class TestRunKillProcessGroup:
 
         assert r.returncode == proc.TIMEOUT_RETURNCODE
         assert "could not be signalled" not in r.stderr
+
+
+class TestTail:
+    def test_keeps_only_the_tail_of_a_long_gate_dump(self):
+        lines = proc.tail("\n".join(str(n) for n in range(50))).splitlines()
+        assert len(lines) == proc.TAIL_LINES
+        assert lines[-1] == "49"
+
+    def test_indents_every_line_when_asked(self):
+        assert proc.tail("a\nb", indent="  ") == "  a\n  b"
+
+    def test_drops_the_blank_a_missing_stream_leaves(self):
+        """`combined_output` joins two streams; an empty one must not print."""
+        assert proc.tail("\n✗ Pytest failed\n\n") == "✗ Pytest failed"
+
+    def test_a_character_limit_drops_whole_lines_from_the_front(self):
+        text = "\n".join(["aaaa", "bbbb", "cccc"])
+        assert proc.tail(text, limit=9) == "bbbb\ncccc"
+
+    def test_a_single_line_over_the_limit_keeps_its_own_tail(self):
+        """Dropping it would leave the record with nothing at all."""
+        assert proc.tail("x" * 10 + "END", limit=5) == "xxEND"[-5:]
+
+    def test_the_limit_counts_the_newlines_between_lines(self):
+        assert proc.tail("aa\nbb", limit=4) == "bb"
+
+    def test_no_output_renders_as_nothing(self):
+        assert proc.tail("") == ""
+        assert proc.tail("", limit=10) == ""

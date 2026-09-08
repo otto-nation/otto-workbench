@@ -83,6 +83,7 @@ from pathlib import Path
 
 from git import client as git_client
 from core import log
+from core import proc
 from core import publishing
 from core.trail import EXCERPT_LIMIT, Trail
 
@@ -369,24 +370,6 @@ def push(
     return _retry_lost(wt_path, result, remote, argv, trail)
 
 
-_HOOK_OUTPUT_LINES = 20
-
-
-def output_tail(output: str, *, indent: str = "") -> str:
-    """The last few meaningful lines of what git and its hooks printed.
-
-    A pre-push hook that fails is often a whole test suite, and the line naming
-    which gate failed is at the end of it. Printing all of it buries the report
-    that follows; printing the tail keeps the part that identifies the failure.
-
-    Blank lines go because a hook splits itself across both streams and
-    `combined_output` joins them — an empty stream would otherwise contribute a
-    gap that reads as missing output.
-    """
-    lines = [line.rstrip() for line in output.splitlines() if line.strip()]
-    return "\n".join(f"{indent}{line}" for line in lines[-_HOOK_OUTPUT_LINES:])
-
-
 def _push_command(wt_path: str | Path, args: Sequence[str]) -> str:
     """The `git push` the caller asked for, spelled out for a human to re-run."""
     return " ".join(["git", "-C", f"'{wt_path}'", "push", *args])
@@ -447,7 +430,7 @@ def report(result: PushResult, wt_path: str | Path) -> None:
 
     if result.status is PushStatus.REFUSED:
         log.error(f"push refused ({result.refusal}) — nothing reached the remote")
-        for line in output_tail(result.output).splitlines():
+        for line in proc.tail(result.output).splitlines():
             log.dim(line)
         log.dim(f"Resume: {resume}")
         return

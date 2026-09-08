@@ -471,21 +471,6 @@ def test_the_resume_command_quotes_a_worktree_with_a_space():
 # ── the report ──────────────────────────────────────────────────────────────
 
 
-def test_output_tail_keeps_only_the_tail_of_a_long_gate_dump():
-    tail = push.output_tail("\n".join(str(n) for n in range(50))).splitlines()
-    assert len(tail) == push._HOOK_OUTPUT_LINES
-    assert tail[-1] == "49"
-
-
-def test_output_tail_indents_every_line_when_asked():
-    assert push.output_tail("a\nb", indent="  ") == "  a\n  b"
-
-
-def test_output_tail_drops_the_blank_a_missing_stream_leaves():
-    """`combined_output` joins two streams; an empty one must not print."""
-    assert push.output_tail("\n✗ Pytest failed\n\n") == "✗ Pytest failed"
-
-
 def test_refused_report_trims_a_whole_test_suite_to_its_tail(capsys):
     """A failing pre-push prints its entire suite; the tail is what named it."""
     output = "\n".join(f"line {n}" for n in range(200))
@@ -498,7 +483,7 @@ def test_refused_report_trims_a_whole_test_suite_to_its_tail(capsys):
     printed = capsys.readouterr().err
     assert "line 199" in printed
     assert "line 0" not in printed
-    assert printed.count("line ") == push._HOOK_OUTPUT_LINES
+    assert printed.count("line ") == proc.TAIL_LINES
 
 
 def test_lost_report_names_the_branch_the_commit_and_the_remote(capsys):

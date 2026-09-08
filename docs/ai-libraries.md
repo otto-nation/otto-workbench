@@ -2443,6 +2443,14 @@ cutover migration parked the pre-cutover history — is never dropped: its name
 cannot place it in time, and nothing appends to it, so it is a fixed size
 rather than a source of growth.
 
+Beside the month files, ``trail/artifacts/<YYYY-MM>/`` holds the whole of what a
+failing command printed: a record written by ``Trail.failure`` carries only the
+tail under ``error`` and points at the artifact under ``log``, so the JSONL stays
+readable while nothing is lost. One artifact keeps at most ``ARTIFACT_LIMIT``
+bytes (2 MiB) of its command's tail under a line saying what was dropped, and an
+artifact month ages out on the same six-month cutoff the JSONL files take — a
+record and the output it names go together.
+
 ### core/workbench_paths.py
 
 Where the workbench keeps things.

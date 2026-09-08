@@ -1708,12 +1708,9 @@ def _step_advance(cwd: str) -> int | None:
     if _detect_rebase_in_progress(cwd):
         return None
 
-    log.warn("rebase --continue failed without conflicts — aborting")
-    if _trail:
-        _trail.warn(
-            "step", "aborting after --continue failure",
-            data={"stderr": r.stderr.strip(), "exit_code": r.returncode},
-        )
+    _tfail("step_advance", "rebase --continue failed without conflicts",
+           output=r.combined_output, data={"exit_code": r.returncode})
+    log.error("rebase --continue failed without conflicts — aborting.")
     git_client.run("rebase", "--abort", cwd=cwd)
     return 1
 

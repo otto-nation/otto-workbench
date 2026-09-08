@@ -19,6 +19,14 @@ short of space. A file whose stem is not a month — ``legacy.jsonl``, where the
 cutover migration parked the pre-cutover history — is never dropped: its name
 cannot place it in time, and nothing appends to it, so it is a fixed size
 rather than a source of growth.
+
+Beside the month files, ``trail/artifacts/<YYYY-MM>/`` holds the whole of what a
+failing command printed: a record written by ``Trail.failure`` carries only the
+tail under ``error`` and points at the artifact under ``log``, so the JSONL stays
+readable while nothing is lost. One artifact keeps at most ``ARTIFACT_LIMIT``
+bytes (2 MiB) of its command's tail under a line saying what was dropped, and an
+artifact month ages out on the same six-month cutoff the JSONL files take — a
+record and the output it names go together.
 """
 
 # doc-group: platform
@@ -136,7 +144,10 @@ ARTIFACT_LIMIT = 2 * 1024 * 1024
 # ASCII only: the banner's own bytes are what a caller doing byte-budget math
 # against the file has to add back on top of `ARTIFACT_LIMIT`, and a
 # multi-byte ellipsis would make that arithmetic depend on the character set
-# rather than the count `len()` gives you.
+# rather than the count `len()` gives you. The resulting ceiling is
+# approximate, not exact — the tail is cut on a byte boundary and decoded with
+# `errors="replace"`, so a cut landing inside a multi-byte sequence re-encodes
+# a couple of bytes larger than the limit it was cut to.
 _ARTIFACT_TRUNCATED = "... {dropped} earlier bytes dropped; the last {kept} follow ..."
 
 # What an action may contribute to a filename. An action is free-form — `pr
@@ -419,10 +430,14 @@ class Trail:
                 data: dict | None = None) -> Path | None:
         """Record a failure, keeping the whole of what the command printed.
 
-        The event carries the tail of *output* under `error` and the path to all
-        of it under `log`, relative to the trail root. Returns that path so the
-        caller can name it on the console, or None when nothing was written —
-        an unrecorded trail, or a root that could not be written to.
+        The event carries the tail of *output* under `error`, its line count
+        under `output_lines`, and the path to all of it under `log`, relative to
+        the trail root. Those three keys are reserved: they are merged over
+        *data*, so a caller passing one of them loses it. Returns the artifact
+        path so the caller can name it on the console, or None when nothing was
+        written — an unrecorded trail, a root that could not be written to, or
+        an *output* that is empty or whitespace only, which has no `log` key
+        either.
 
         This is the one owner of the excerpt: a call site that slices the output
         itself picks its own end and its own bound, which is how a refused push
@@ -440,6 +455,12 @@ class Trail:
 
     def _write_artifact(self, action: str, output: str) -> Path | None:
         """Write *output* whole under the artifacts root; None if nothing was."""
+        if not output.strip():
+            # A blank AI response reaches here often enough to carry its own
+            # retry hint. A recorded path to an empty file reads as output that
+            # was kept, and both `otto-log show` and the console advertise it as
+            # the whole of what the command said.
+            return None
         if not self._record:
             # `start` promises an unrecorded run leaves the root exactly as it
             # found it, which has to include the artifacts under it.

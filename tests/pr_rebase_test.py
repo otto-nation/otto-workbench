@@ -2347,6 +2347,35 @@ def test_step_advance_continue_fails_aborts():
     assert abort_called
 
 
+def test_step_advance_continue_failure_records_the_whole_output():
+    """The abort path recorded a warn carrying a bare `stderr` key before this.
+
+    Its sibling `_step_conflicts` ends identically and already routes through
+    `Trail.failure`, so the whole of what git said reaches an artifact.
+    """
+    stderr = "".join(f"detail line {n}\n" for n in range(200))
+    fake_trail = mock.MagicMock()
+
+    def fake_run(cmd, **kwargs):
+        if "--abort" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr=stderr)
+
+    with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+         mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._step_advance("/fake")
+
+    assert rc == 1
+    fake_trail.warn.assert_not_called()
+    fake_trail.failure.assert_called_once()
+    kwargs = fake_trail.failure.call_args.kwargs
+    assert kwargs["output"].count("detail line") == 200
+    assert "detail line 0\n" in kwargs["output"]
+    assert kwargs["data"] == {"exit_code": 1}
+
+
 # ── _fresh ──────────────────────────────────────────────────────────────────
 
 

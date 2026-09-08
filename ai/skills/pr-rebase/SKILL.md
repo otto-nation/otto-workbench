@@ -55,16 +55,17 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
   ```
 
   **Start this as a background job, not a foreground command.** In Claude Code
-  that is the Bash tool's `run_in_background`; in Pi it is `job_start`. Give it at
-  least 30 minutes.
+  that is the Bash tool's `run_in_background`. In any other harness, use whatever
+  background-job facility it offers, and do not block a foreground call on this
+  run. Give it at least 30 minutes.
 
   AI conflict resolution takes one to three minutes per conflicted file, so a
   rebase with a dozen conflicts outlives every harness's default foreground
-  timeout — 300 seconds in Pi's case. A timeout there is not a clean retry: the
-  kill does not abort the rebase, it leaves a partial one in the worktree, and the
-  next run resumes it — announced on the console, but invisible in the JSON step
-  2 parses. What looks like "it timed out, run it again" is a mid-flight handoff
-  to a second run that inherits an unfinished rebase.
+  timeout. A timeout there is not a clean retry: the kill does not abort the
+  rebase, it leaves a partial one in the worktree, and the next run resumes it —
+  announced on the console, but invisible in the JSON step 2 parses. What looks
+  like "it timed out, run it again" is a mid-flight handoff to a second run that
+  inherits an unfinished rebase.
 
   Backgrounding is safe here because nothing downstream reads the run's output
   mid-flight: step 2 parses the JSON the completed job returns, and the script

@@ -542,6 +542,25 @@ class TestFailure:
         assert data["error"] == "boom"
         assert "log" not in data
 
+    def test_empty_output_writes_no_artifact(self):
+        """A blank AI response would otherwise get a path to an empty file."""
+        trail = Trail.start(script="test", context={})
+
+        assert trail.failure("triage", "no answer", output="") is None
+
+        data = _read_events()[-1]["data"]
+        assert "log" not in data
+        assert data["output_lines"] == 0
+        assert _artifact_files() == []
+
+    def test_whitespace_only_output_writes_no_artifact(self):
+        trail = Trail.start(script="test", context={})
+
+        assert trail.failure("triage", "no answer", output="  \n\n\t") is None
+
+        assert "log" not in _read_events()[-1]["data"]
+        assert _artifact_files() == []
+
 
 class TestUnrecordedFailure:
     def test_it_writes_no_artifact(self):

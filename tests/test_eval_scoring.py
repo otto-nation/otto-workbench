@@ -440,3 +440,147 @@ class TestSchemaVersion:
         data["entries"]["unchecked-error-go"]["billed_input_mean"] = "lots"
         errors = validate_baseline_schema(data)
         assert any("billed_input_mean" in e and "number" in e for e in errors)
+
+
+# ── TestRunCensus ───────────────────────────────────────────────────────────
+
+
+class TestRunCensus:
+    """A run that never executed is not a measurement (#1001).
+
+    Half the runs in a corpus pass died on transient backend failures, came
+    back as empty artifacts, scored recall 0, and were written straight into
+    the baseline as the number to beat.
+    """
+
+    @staticmethod
+    def _runs(*outcomes: eval_scoring.RunOutcome) -> list[ScoringResult]:
+        """One run per outcome. A measured run scores 1.0, a dead one 0.0."""
+        return [
+            ScoringResult(
+                "e", "m", i,
+                recall=1.0 if o is eval_scoring.RunOutcome.MEASURED else 0.0,
+                precision=1.0 if o is eval_scoring.RunOutcome.MEASURED else 0.0,
+                cost_usd=0.05 if o is eval_scoring.RunOutcome.MEASURED else 0.0,
+                outcome=o,
+            )
+            for i, o in enumerate(outcomes)
+        ]
+
+    def test_a_dead_run_is_not_averaged_into_the_mean(self):
+        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        agg = aggregate_runs(self._runs(measured, not_run, not_run))
+        assert agg["recall_mean"] == 1.0
+        assert agg["cost_mean"] == 0.05
+
+    def test_the_census_reports_what_survived(self):
+        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        agg = aggregate_runs(self._runs(measured, not_run, not_run))
+        assert (agg["runs_measured"], agg["runs_attempted"]) == (1, 3)
+
+    def test_a_dead_run_does_not_manufacture_a_standard_deviation(self):
+        """Averaging a zero in reads as variance the model never showed."""
+        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        agg = aggregate_runs(self._runs(measured, measured, not_run))
+        assert agg["recall_std"] == 0.0
+
+    def test_all_runs_dead_yields_zeros_and_says_so(self):
+        not_run = eval_scoring.RunOutcome.NOT_RUN
+        agg = aggregate_runs(self._runs(not_run, not_run))
+        assert agg["recall_mean"] == 0.0
+        assert (agg["runs_measured"], agg["runs_attempted"]) == (0, 2)
+
+    def test_a_result_is_measured_unless_it_says_otherwise(self):
+        """The default keeps a caller that never classifies scoring as it did."""
+        assert ScoringResult("e", "m", 0).measured
+
+    def test_the_summary_table_shows_the_census(self):
+        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        table = format_summary_table({("e", "m"): self._runs(measured, not_run, not_run)})
+        assert "| 1/3 |" in table
+
+
+class TestUnmeasuredEntries:
+    @staticmethod
+    def _output(measured: int, attempted: int) -> dict:
+        return {"entries": {"e": {"m": {
+            "runs_measured": measured, "runs_attempted": attempted,
+        }}}}
+
+    def test_a_complete_pass_reports_nothing(self):
+        assert eval_scoring.unmeasured_entries(self._output(3, 3)) == []
+
+    def test_a_short_pass_is_named_with_its_counts(self):
+        assert eval_scoring.unmeasured_entries(self._output(1, 3)) == [("e", "m", 1, 3)]
+
+    def test_an_entry_with_no_census_is_taken_at_face_value(self):
+        """A results file written before the census still compares."""
+        assert eval_scoring.unmeasured_entries(
+            {"entries": {"e": {"m": {"recall_mean": 1.0}}}}) == []
+
+
+class TestCompareSkipsUnmeasured:
+    def test_an_entry_that_never_ran_is_not_gated(self):
+        """Gating it reports a regression against a model that was never asked."""
+        baselines = {"sonnet": _baseline_data(0.8, 0.9)}
+        current = _current_output("sonnet", 0.0, 0.0)
+        current["entries"]["test-entry"]["sonnet"].update(
+            runs_measured=0, runs_attempted=3)
+        result = compare_baselines(baselines, current)
+        assert result["regressions"] == []
+        assert ("test-entry", "sonnet") in result["unmeasured_entries"]
+
+    def test_a_partially_measured_entry_is_still_compared(self):
+        """One surviving run is a real, if noisy, measurement — gate it."""
+        baselines = {"sonnet": _baseline_data(0.8, 0.9)}
+        current = _current_output("sonnet", 0.3, 0.9)
+        current["entries"]["test-entry"]["sonnet"].update(
+            runs_measured=1, runs_attempted=3)
+        result = compare_baselines(baselines, current)
+        assert any(r[2] == "recall_mean" for r in result["regressions"])
+
+    def test_the_table_marks_it_not_run(self):
+        baselines = {"sonnet": _baseline_data(0.8, 0.9)}
+        current = _current_output("sonnet", 0.0, 0.0)
+        current["entries"]["test-entry"]["sonnet"].update(
+            runs_measured=0, runs_attempted=3)
+        table = format_comparison_table(compare_baselines(baselines, current))
+        assert "not run" in table
+
+
+class TestBaselineCensusSchema:
+    @staticmethod
+    def _baseline(**census) -> dict:
+        data = _baseline_data()
+        data["entries"]["test-entry"].update(census)
+        return data
+
+    def test_a_complete_census_validates(self):
+        assert validate_baseline_schema(
+            self._baseline(runs_measured=3, runs_attempted=3)) == []
+
+    def test_a_baseline_short_of_measurements_is_rejected(self):
+        errors = validate_baseline_schema(self._baseline(runs_measured=1, runs_attempted=3))
+        assert any("never executed" in e for e in errors)
+
+    def test_more_measured_than_attempted_is_rejected(self):
+        errors = validate_baseline_schema(self._baseline(runs_measured=4, runs_attempted=3))
+        assert any("exceeds runs_attempted" in e for e in errors)
+
+    def test_half_a_census_is_rejected(self):
+        errors = validate_baseline_schema(self._baseline(runs_measured=3))
+        assert any("runs_attempted" in e for e in errors)
+
+    def test_a_non_integer_census_is_rejected(self):
+        errors = validate_baseline_schema(
+            self._baseline(runs_measured="3", runs_attempted=3))
+        assert any("must be an integer" in e for e in errors)
+
+    def test_a_baseline_without_a_census_still_loads(self):
+        """Version 1 and 2 baselines predate the field and are not failed for it."""
+        assert validate_baseline_schema(_baseline_data()) == []
+
+    def test_the_current_schema_version_is_accepted(self):
+        data = _baseline_data()
+        data["schema_version"] = eval_scoring.SCHEMA_VERSION
+        assert validate_baseline_schema(data) == []

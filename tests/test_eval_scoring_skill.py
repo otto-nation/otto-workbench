@@ -19,6 +19,7 @@ if LIB_DIR not in sys.path:
 
 from eval import scoring_skill as ess
 from agent.usage import SessionUsage
+from eval.scoring import RunOutcome
 from eval.task import RunArtifacts, RunOptions
 
 
@@ -900,3 +901,33 @@ class TestRunWiring:
         finally:
             for path in artifacts.temp_dirs:
                 shutil.rmtree(path, ignore_errors=True)
+
+
+class TestSkillOutcome:
+    """A dead invocation must not reach the baseline as a skill violation.
+
+    A skill case that never ran leaves an empty trace: no `requires` group is
+    satisfied and no `forbids` group fires, which scores recall 0.0 and
+    precision 1.0 — a compliant model that found nothing, exactly what a real
+    miss looks like.
+    """
+
+    def test_a_backend_failure_that_spent_nothing_never_ran(self, monkeypatch, tmp_path):
+        case_dir = _skill_case(
+            tmp_path, skill="pr-rebase", prompt="rebase",
+            requires=[["git", "rebase"]], forbids=[["push", "--force"]],
+        )
+        monkeypatch.setattr(ess.ai_backend, "invoke_fix", lambda inv: 1)
+
+        artifacts = ess.SkillTask().run(case_dir, RunOptions())
+        try:
+            assert artifacts.outcome is RunOutcome.NOT_RUN
+            assert not ess.SkillTask().score(artifacts, {}).measured
+        finally:
+            for path in artifacts.temp_dirs:
+                shutil.rmtree(path, ignore_errors=True)
+
+    def test_the_outcome_reaches_the_score(self):
+        artifacts = RunArtifacts(
+            data={"matches": [], "violations": []}, outcome=RunOutcome.NOT_RUN)
+        assert ess.SkillTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN

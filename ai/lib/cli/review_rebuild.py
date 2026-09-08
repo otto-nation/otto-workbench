@@ -1,0 +1,123 @@
+"""Rebuild review.md from group finding files.
+
+Reads group-N.md files from the review directory, merges findings,
+post-processes them, and writes a new review.md. Used to recover from
+synthesis agent formatting drift or corrupted review files.
+"""
+
+# doc-group: cli
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import replace
+from datetime import date
+from pathlib import Path
+
+from core import log
+from core.trail import Trail, add_trail_args
+from agent.registry import PHASES
+from core.phases import Phase
+from review.document import ReviewDocument, ReviewHeader, review_title
+from review.paths import read_review_meta
+from review.verdict import build_mechanical_body, states_verdict
+from review.verify import post_process_findings
+from review.merge import merge_reviews
+
+# The binary a user runs and the trail records, which is not this module's own
+# name. Spelled out rather than derived, so the shim can be renamed only by
+# changing the name in both places at once.
+SCRIPT = "review-rebuild"
+REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
+
+
+def _discover_group_files(review_dir: Path) -> list[str]:
+    groups = []
+    i = 1
+    while True:
+        path = review_dir / PHASES[Phase.GROUP].output_filename.format(i)
+        if not path.exists():
+            break
+        groups.append(str(path))
+        i += 1
+    return groups
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog=SCRIPT,
+                                     description="Rebuild review.md from group findings")
+    parser.add_argument("--review-dir", required=True, help="Path to the review directory")
+    parser.add_argument("--pr", required=True, help="PR number")
+    add_trail_args(parser)
+    args = parser.parse_args(argv)
+
+    review_dir = Path(args.review_dir)
+    review_file = review_dir / "review.md"
+
+    group_files = _discover_group_files(review_dir)
+    if not group_files:
+        log.error(f"No group finding files in {review_dir}")
+        return 1
+
+    log.info(f"Found {len(group_files)} group files")
+
+    meta = read_review_meta(review_dir)
+    if not meta.repo:
+        log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
+        return 1
+    repo = meta.repo
+    # A sidecar written before the field existed numbers no PR, so the operator's
+    # `--pr` stands in — it is the same number, and the title has to state one.
+    if meta.pr_number is None and args.pr.isdigit():
+        meta = replace(meta, pr_number=int(args.pr))
+
+    trail = Trail.start(
+        script=SCRIPT,
+        context={"repo": repo, "pr": args.pr},
+        debug=args.debug,
+    )
+
+    try:
+        trail.info("discover_groups", f"found {len(group_files)} group files",
+                   data={"count": len(group_files), "files": group_files})
+
+        merged_content = merge_reviews(group_files)
+        trail.info("merge_reviews", "merged group outputs",
+                   data={"group_count": len(group_files)})
+
+        review_file.write_text(merged_content)
+        verification = post_process_findings(str(review_file))
+        if verification:
+            v = verification
+            detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
+            trail.info("evidence_verification", detail, data=v)
+        processed = review_file.read_text()
+
+        # Dated today and carrying no status: a rebuild reconstructs the
+        # document from the group files, so the one thing it cannot attest to
+        # is how the pipeline run ended — this is not one.
+        document = ReviewDocument(
+            title=review_title(meta),
+            header=ReviewHeader.from_meta(meta, date=date.today().isoformat()),
+            body=build_mechanical_body(
+                processed,
+                group_count=len(group_files),
+                summary_note=REBUILD_SUMMARY,
+                include_verdict=states_verdict(meta.mode),
+                file_count=meta.changed_files,
+            ),
+        )
+
+        final = document.render()
+        review_file.write_text(final)
+        log.info(f"Rebuilt {review_file}")
+
+        finding_lines = [line for line in final.splitlines() if line.startswith("- [")]
+        trail.info("post_process", f"processed {len(finding_lines)} findings",
+                   data={"finding_count": len(finding_lines), "review_file": str(review_file)})
+        return 0
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()

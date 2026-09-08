@@ -2921,6 +2921,25 @@ Usage:
   pr-describe --dry-run               # print the revision, do not push it
   pr-describe --repo-dir <path>       # specify worktree directory
 
+### cli/review_positions.py
+
+Validate review finding positions against a PR diff.
+
+Checks that each finding's path:line falls within a diff hunk so GitHub
+will accept the inline comment. Findings outside diff hunks are demoted
+to file-level comments; findings for paths not in the diff are skipped.
+
+Usage:
+  validate-review-positions --diff DIFF_FILE --review FINDINGS_JSON
+  gh api repos/.../pulls/N -H 'Accept: application/vnd.github.v3.diff' \
+    | validate-review-positions --diff - --review findings.json
+
+Exit codes:
+  0  All findings valid (in diff hunks)
+  1  Some findings demoted to file-level
+  2  Some findings skipped (path not in diff)
+  3  --review did not contain a JSON array
+
 ### cli/review_post.py
 
 Post a review file to GitHub as a PR review.
@@ -2933,3 +2952,11 @@ the GitHub API. Pass --submit to submit the review immediately.
 Usage:
   review-post --pr NUMBER --review-file PATH
               [--severity M,S,N] [--dry-run]
+
+### cli/review_rebuild.py
+
+Rebuild review.md from group finding files.
+
+Reads group-N.md files from the review directory, merges findings,
+post-processes them, and writes a new review.md. Used to recover from
+synthesis agent formatting drift or corrupted review files.

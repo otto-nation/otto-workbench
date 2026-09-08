@@ -123,7 +123,10 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 
 The review's trail is not in this directory. Every script appends to one root —
 `~/.local/state/workbench/trail/YYYY-MM.jsonl`. Read it with
-`otto-log query --pr <n>`.
+`otto-log query --pr <n>`. When a record carries a `log:` line, the whole of
+what the failing command printed is in
+`~/.local/state/workbench/trail/artifacts/<YYYY-MM>/` — the record holds only
+its tail, and both age out on the same six-month horizon.
 
 **Diagnosing max-turns failures:**
 1. Read `prompt-stats.json` — check `utilization_pct` and `file_contents.omitted` for prompt bloat

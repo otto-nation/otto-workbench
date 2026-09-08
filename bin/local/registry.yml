@@ -79,6 +79,11 @@ tools:
     visibility: brief
     description: "Validates that stat format flags are confined to the lib/portable.sh helpers"
 
+  - name: validate-bats-version
+    permission: false
+    visibility: brief
+    description: "Validates that a bats suite using flags on run declares bats_require_minimum_version 1.5.0"
+
   - name: validate-script-loading
     permission: false
     visibility: brief

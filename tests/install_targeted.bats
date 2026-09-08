@@ -3,6 +3,8 @@
 # install-needed detection (_check_install_needed in otto-workbench sync).
 # Also covers parse_install_flags set -e safety (regression: silent exit with no args).
 
+bats_require_minimum_version 1.5.0
+
 setup() {
   load 'test_helper'
   common_setup

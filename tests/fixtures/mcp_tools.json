@@ -1,7 +1,7 @@
 {
   "pr": {
     "_script": "ai/bin/pr",
-    "description": "Unified PR lifecycle CLI — CI failures, code review, and review comments\n\nWhen to use: Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status\n\nUsage: pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto <ref>]  |  pr gc",
+    "description": "Unified PR lifecycle CLI — CI failures, code review, and review comments\n\nWhen to use: Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status\n\nUsage: pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--push] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto <ref>]  |  pr gc",
     "input_schema": {
       "properties": {
         "branch": {

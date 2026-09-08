@@ -1017,7 +1017,7 @@ def _run_self_review_body(
         prior_review_path=prior_review_path, issue_link=issue_link,
         issue_context=issue_context, max_parallel=max_parallel,
         max_cost=max_cost, model=model,
-        mode="self", fix_pass=fix_pass, post=args.post,
+        mode="self", fix_pass=fix_pass, post=args.post or args.push,
         effort=effort, max_groups=max_groups,
         skip_phases=skip_phases, disprove=disprove, generated=generated,
         recover_sha=recover_sha, target_dir=ctx.target_dir,
@@ -1196,6 +1196,7 @@ def main() -> None:
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--self", action="store_true", dest="self_review")
     parser.add_argument("--fix", action="store_true")
+    parser.add_argument("--push", action="store_true")
     parser.add_argument("--skip-user-verification", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--recover", action="store_true")
@@ -1246,6 +1247,10 @@ def main() -> None:
 
     if parsed.fix and not parsed.self_review:
         log.error("--fix requires --self")
+        sys.exit(1)
+
+    if parsed.push and not parsed.fix:
+        log.error("--push requires --fix")
         sys.exit(1)
 
     if parsed.recover and parsed.force:

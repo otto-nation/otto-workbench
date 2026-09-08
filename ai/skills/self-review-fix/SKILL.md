@@ -90,11 +90,13 @@ write the flag enables: the publishing gate also covers replies and tracking
 issues, but those belong to `pr comments`, and nothing on this path creates
 them.
 
-Budget for a long run. The push runs the repo's pre-push gate — in
-otto-workbench that is shellcheck, the selected bats files, and pytest — so
-the command does not return when the review does. Give it a timeout that
-covers review plus gate rather than letting a tool default kill it partway,
-which leaves the fixes committed and unpushed and needs a bare `git push` to
+Budget for a long run. The push runs the repo's full pre-push gate — in
+otto-workbench that is a gitleaks secret scan, `validate-all`,
+`check-surface-compat`, tool-context regeneration, shellcheck, YAML/ZSH/JSON
+checks, the selected bats files, and pytest, in that order — so the command
+does not return when the review does. Give it a timeout that covers review
+plus the full gate rather than letting a tool default kill it partway, which
+leaves the fixes committed and unpushed and needs a bare `git push` to
 finish.
 
 **Exit 4 — the branch may already be superseded, and nothing was reviewed.**
@@ -146,8 +148,11 @@ all fixing is done by `pr review --self --fix --push`. The fix agent determines
 what is auto-fixable; trust its judgment.
 
 Confirm the push landed rather than assuming it did — a drafted push prints
-`DRAFT (not published)` and a gate failure fails the push without touching the
-commit:
+`DRAFT (not published)`, a gate failure fails the push without touching the
+commit, and a push git reports as successful can still leave `HEAD` and
+`@{u}` diverged if the remote didn't actually hold the commit or couldn't be
+asked to confirm it. The check below can't tell those apart, but the fix is
+the same either way — push again:
 
 ```bash
 git rev-parse HEAD; git rev-parse @{u}

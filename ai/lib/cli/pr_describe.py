@@ -1,0 +1,302 @@
+"""Revise a PR description against the repo's PR template.
+
+Run after the branch stops moving — a description written before the fix passes
+describes a PR that no longer exists.  The pass is commit-aware: it records the
+HEAD it described, and a repeated run against an unchanged branch is a no-op
+rather than another AI call.
+
+Exit codes:
+  0  Success (description current, revised, or nothing to do)
+  1  Error (no PR, gh failure, unusable AI output)
+
+Usage:
+  pr-describe                         # revise if HEAD moved since the last pass
+  pr-describe --force                 # revise regardless of HEAD
+  pr-describe --dry-run               # print the revision, do not push it
+  pr-describe --repo-dir <path>       # specify worktree directory
+"""
+
+# doc-group: cli
+
+import json
+from pathlib import Path
+
+from agent import invoke as agent_invoke
+from gh import client as gh_client
+from git import client as git_client
+from git import topology as git_topology
+from core import log
+from pr import context as pr_context
+from pr import state as pr_state
+from core.phases import Phase
+from pr.domains import DescribeSummary
+from core.tool_parser import ToolParser
+from core.trail import Trail, add_trail_args
+
+# The binary a user runs and the trail records, which is not this module's own
+# name. Spelled out rather than derived, so the shim can be renamed only by
+# changing the name in both places at once.
+SCRIPT = "pr-describe"
+
+# GitHub's recognised template locations, in the order GitHub itself resolves
+# them. Mirrors _pr_load_template in lib/ai/pr.sh, which serves `task pr:create`
+# from bash — keep the two lists in step.
+_TEMPLATE_PATHS = (
+    ".github/pull_request_template.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "pull_request_template.md",
+    "PULL_REQUEST_TEMPLATE.md",
+)
+
+_FALLBACK_TEMPLATE = "## Summary\n\n## Changes\n\n## Testing"
+
+# The model says this, alone, when the body already conforms. Anything else is
+# taken as the replacement body.
+_NO_CHANGE = "DESCRIPTION_CURRENT"
+
+# Extraction markers: the model wraps the revised description in these so we can
+# parse and validate the response before posting it to GitHub.
+_DESCRIBE_BEGIN = "<<<DESCRIPTION>>>"
+_DESCRIBE_END = "<<<END_DESCRIPTION>>>"
+
+
+def _git(cwd: Path, *args: str) -> str:
+    r = git_client.run(*args, cwd=cwd)
+    if not r.ok:
+        # Silent fallback is intentional — the prompt degrades gracefully to
+        # "(none)" for commits/changed files rather than aborting the pass.
+        # Log so a bad revision (e.g. unfetched origin/<base>) is diagnosable.
+        log.warn(f"git {' '.join(args)} failed: {r.detail}")
+        return ""
+    return r.stdout.strip()
+
+
+def _load_template(wt_path: Path) -> tuple[str, str]:
+    """Return (template, relative path). Path is "" when none is checked in."""
+    for candidate in _TEMPLATE_PATHS:
+        path = wt_path / candidate
+        if path.is_file():
+            return path.read_text(), candidate
+    return _FALLBACK_TEMPLATE, ""
+
+
+def _fetch_pr_body(repo: str, pr_number: int) -> tuple[str, str] | None:
+    """Return (title, body) for the PR, or None when gh cannot answer."""
+    r = gh_client.run(
+        "pr", "view", str(pr_number), "--repo", repo, "--json", "title,body",
+    )
+    if not r.ok:
+        log.error(f"gh pr view failed: {r.detail}")
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        log.error("gh pr view returned unparseable JSON")
+        return None
+    return data.get("title", ""), data.get("body", "") or ""
+
+
+def _build_prompt(
+    template: str, has_template: bool, title: str, body: str,
+    commits: str, changed_files: str,
+) -> str:
+    """Build the revision prompt.
+
+    The template's own section headers are the contract — a repo that ships one
+    expects exactly those sections, so the prompt forbids inventing others.
+    """
+    origin = (
+        "the repo's checked-in PR template"
+        if has_template else
+        "the default template (this repo ships none)"
+    )
+    return f"""You are revising the description of an open pull request so it matches \
+{origin} and the work the branch actually contains.
+
+PR template — its section headers are required, and you must not add, rename, or
+drop any of them:
+{template}
+
+Current PR title:
+{title}
+
+Current PR description:
+{body or "(empty)"}
+
+Commits on this branch (newest first):
+{commits or "(none)"}
+
+Files changed:
+{changed_files or "(none)"}
+
+Rules:
+- Describe what the branch does now, not the order it was built in. Fix passes and
+  review follow-ups are part of the change, not a changelog to recite.
+- Keep any content in the current description that is still accurate.
+- Do not mention AI assistance, agents, or tooling that produced the change.
+- Do not append a footer.
+
+If the current description already satisfies the template and describes the
+branch accurately, reply with exactly {_NO_CHANGE} and nothing else.
+
+Otherwise wrap the complete revised description in {_DESCRIBE_BEGIN} and \
+{_DESCRIBE_END} markers — no preamble, no fencing, nothing outside the markers:
+{_DESCRIBE_BEGIN}
+(your revised description here)
+{_DESCRIBE_END}"""
+
+
+def _extract_description(text: str) -> str | None:
+    """Extract the revised description from between the extraction markers.
+
+    Returns None when either marker is missing or the content is blank —
+    the caller must not post an unparseable response to GitHub.
+    """
+    begin = text.find(_DESCRIBE_BEGIN)
+    end = text.find(_DESCRIBE_END)
+    if begin == -1 or end == -1 or end <= begin:
+        return None
+    return text[begin + len(_DESCRIBE_BEGIN):end].strip() or None
+
+
+def _usable_revision(text: str) -> bool:
+    """The response must be the no-change sentinel or contain parseable markers."""
+    t = text.strip()
+    if t == _NO_CHANGE:
+        return True
+    return _extract_description(t) is not None
+
+
+def _apply_body(repo: str, pr_number: int, body: str) -> bool:
+    r = gh_client.run(
+        "pr", "edit", str(pr_number), "--repo", repo, "--body-file", "-",
+        input_text=body,
+    )
+    if not r.ok:
+        log.error(f"gh pr edit failed: {r.detail}")
+        return False
+    return True
+
+
+def _persist(wt: Path, ctx: pr_context.ResolvedContext,
+             summary: DescribeSummary) -> None:
+    state = pr_state.load_or_init(
+        target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
+        pr_number=ctx.pr_number, head_sha=ctx.head_sha,
+        worktree_root=str(wt),
+    )
+    pr_state.apply(state, summary)
+    pr_state.save_state(ctx.target_dir, state)
+
+
+def run_describe(
+    ctx: pr_context.ResolvedContext, *,
+    force: bool = False, dry_run: bool = False,
+    trail: Trail | None = None,
+) -> int:
+    """Revise the PR description if HEAD moved since the last pass."""
+    if not ctx.pr_number:
+        log.info("No PR for this branch — nothing to describe")
+        return 0
+
+    wt_path = ctx.require_worktree()
+    state = pr_state.load_state(ctx.target_dir)
+    last_sha = state.describe.head_sha if state else ""
+    if last_sha and last_sha == ctx.head_sha and not force:
+        log.info(
+            f"Description already written for {git_client.abbrev(ctx.head_sha)} — skipping")
+        return 0
+
+    template, template_path = _load_template(wt_path)
+    fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
+    if fetched is None:
+        return 1
+    title, body = fetched
+
+    base = git_topology.default_branch(wt_path)
+    commits = _git(wt_path, "log", "--oneline", f"origin/{base}..HEAD")
+    changed_files = _git(wt_path, "diff", "--name-only", f"origin/{base}...HEAD")
+
+    prompt = _build_prompt(
+        template, bool(template_path), title, body, commits, changed_files,
+    )
+    answer = agent_invoke.run_prompt(
+        Phase.DESCRIBE, prompt,
+        cwd=wt_path, usable=_usable_revision, task=SCRIPT,
+        repo=ctx.repo, pr=str(ctx.pr_number),
+    )
+    if not answer.ok:
+        if trail:
+            trail.error("describe", "AI prompt failed", data={"exit_code": answer.exit_code})
+        log.error("ai prompt failed")
+        return 1
+
+    raw = answer.text.strip()
+    if raw == _NO_CHANGE:
+        log.info("Description already matches the template — no change")
+        _persist(wt_path, ctx, DescribeSummary(
+            head_sha=ctx.head_sha, template_path=template_path,
+            changed=False, updated_at=pr_state.now_iso(),
+        ))
+        return 0
+
+    revised = _extract_description(raw)
+    if revised is None:
+        # _usable_revision already passed, so this should not happen, but guard
+        # against a caller that bypasses agent_invoke.run_prompt and so never
+        # ran that check.
+        if trail:
+            trail.error("describe", "AI response missing extraction markers")
+        log.error("ai response missing extraction markers — not posting to GitHub")
+        return 1
+
+    if dry_run:
+        print(revised)
+        return 0
+
+    if not _apply_body(ctx.repo, ctx.pr_number, revised):
+        return 1
+
+    log.info(f"Revised PR description against {template_path or 'the default template'}")
+    if trail:
+        trail.info("describe", "description revised",
+                   data={"template": template_path, "head_sha": ctx.head_sha})
+    _persist(wt_path, ctx, DescribeSummary(
+        head_sha=ctx.head_sha, template_path=template_path,
+        changed=True, updated_at=pr_state.now_iso(),
+    ))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = ToolParser(
+        prog=SCRIPT,
+        description="Revise the PR description against the repo's PR template",
+        output_schema=DescribeSummary,
+    )
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir",
+                        help="Git worktree directory")
+    parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
+    parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
+    parser.add_argument("--force", action="store_true",
+                        help="Revise even when HEAD has not moved since the last pass")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print the revision instead of applying it")
+    add_trail_args(parser)
+
+    args = parser.parse_args(argv)
+
+    ctx = pr_context.resolve(
+        repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
+    )
+    trail = Trail.start(
+        script=SCRIPT,
+        context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
+        debug=args.debug,
+    )
+    try:
+        return run_describe(
+            ctx, force=args.force, dry_run=args.dry_run, trail=trail,
+        )
+    finally:
+        trail.finish()

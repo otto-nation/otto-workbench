@@ -13,6 +13,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from eval import scoring_review
 from eval.scoring_review import (
     ExpectedFinding,
     ReviewTask,
@@ -328,6 +329,14 @@ class TestReviewTask:
         )
         result = ReviewTask().score(artifacts, manifest)
         assert result.recall == 1.0
+
+    def test_the_orchestrate_binary_it_runs_is_on_disk(self):
+        """The path is built by walking up from this module, which nothing checks.
+
+        Every run shells out to it, so a wrong number of `.parent` hops fails the
+        whole eval at the first subprocess rather than at import.
+        """
+        assert scoring_review._REVIEW_ORCHESTRATE.exists()
 
     def test_carries_token_metrics_off_the_session_usage(self):
         """Billed input and cache-read ratio are what the CI ratchet gates on."""

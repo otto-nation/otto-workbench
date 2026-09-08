@@ -27,6 +27,8 @@ from gh import landed as branch_landed  # noqa: E402
 from git import client as git_client  # noqa: E402
 from git import land  # noqa: E402
 from git import regenerate as regen  # noqa: E402
+from core import conventions  # noqa: E402
+from core import report as core_report  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
@@ -2145,7 +2147,7 @@ def test_rebase_success_emits_stale_files():
              pr_rebase_cli.RebaseOutcome, "save",
              lambda self, c: saved.append(self),
          ), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         rc = pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.PUSH, tally, target_ref=_TARGET,
         )
@@ -2168,7 +2170,7 @@ def test_rebase_success_counts_commits_before_push():
     with mock.patch.object(git_client, "commits_ahead", lambda _, **kw: next(ahead)), \
          _lands(_pushed()), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.FIX, tally, target_ref=_TARGET,
         )
@@ -2183,7 +2185,7 @@ def test_rebase_success_conflicts_resolved_counts_files():
 
     with mock.patch.object(git_client, "commits_ahead", return_value=5), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.PUSH, tally, target_ref=_TARGET,
         )
@@ -3059,7 +3061,7 @@ def test_refuse_landed_records_the_status_for_the_dashboard():
         branch=_LANDED_BRANCH, signal="empty_diff", detail="no diff", commits_ahead=2,
     )
 
-    with mock.patch.object(pr_rebase_cli, "_emit_json"):
+    with mock.patch.object(core_report, "emit_json"):
         pr_rebase_cli._refuse(ctx, report, target_ref=_OTHER_TARGET)
 
     state = pr_state.load_state(ctx.target_dir)
@@ -3496,7 +3498,7 @@ def _diff_only(diff: str):
 
 def test_commit_types_read_from_conventions():
     """The type list comes from lib/conventions.sh, not a copy in the script."""
-    types = pr_rebase_cli._commit_types()
+    types = conventions.commit_types()
     assert "fix" in types and "test" in types and "refactor" in types
 
 
@@ -3511,7 +3513,7 @@ def test_commit_types_read_from_conventions():
     ("", False),
 ])
 def test_valid_commit_header(subject, valid):
-    assert pr_rebase_cli._valid_commit_header(subject) is valid
+    assert conventions.valid_commit_header(subject) is valid
 
 
 def test_fix_commit_message_uses_ai_subject():
@@ -4174,7 +4176,7 @@ def test_rebase_success_in_fix_only_prints_the_push_command(capsys):
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
          _lands(_held()), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+         mock.patch.object(core_report, "emit_json") as mock_emit:
         rc = pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.FIX_ONLY, target_ref=_TARGET,
         )
@@ -4205,7 +4207,7 @@ def test_manual_push_hint_only_when_the_run_never_pushes(mode, hinted, capsys):
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
          _lands(landed), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(pr_rebase_cli, "_emit_json"):
+         mock.patch.object(core_report, "emit_json"):
         rc = pr_rebase_cli._rebase_success("/fake", ctx, mode, target_ref=_TARGET)
 
     assert rc == 0

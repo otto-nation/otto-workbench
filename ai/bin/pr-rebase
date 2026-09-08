@@ -28,7 +28,6 @@ Usage:
 """
 
 import argparse
-import json
 import shlex
 import shutil
 import sys
@@ -50,7 +49,9 @@ from git import client as git_client
 from git import topology as git_topology
 from git import land
 from git import regenerate as regen
+from core import conventions
 from core import log
+from core import report as core_report
 from pr import context as pr_context
 from pr import domains as pr_domains
 from pr import state as pr_state
@@ -332,10 +333,6 @@ def _remaining_rebase_commits(cwd: str) -> int:
     return 0
 
 
-def _emit_json(report: dict) -> None:
-    """Write a report to stdout as indented JSON."""
-    json.dump(report, sys.stdout, indent=2)
-    print()
 
 
 @dataclass(frozen=True)
@@ -359,7 +356,7 @@ class ConflictReport:
         )
 
     def emit(self) -> None:
-        _emit_json(asdict(self))
+        core_report.emit_json(asdict(self))
 
 
 def _is_empty_patch(cwd: str) -> bool:
@@ -839,38 +836,10 @@ def _git_add(filepath: str, cwd: str) -> bool:
 # or staged diff. Both are truncated on a plain slice, so a hunk can be cut
 # mid-line; these prompts are best-effort and a partial tail still reads fine.
 _FIX_ERROR_MAX_CHARS = 4000
-_COMMIT_HEADER_MAX = 72
 _FALLBACK_FIX_SUBJECT = "fix: resolve pre-push check failures after rebase"
-_CONVENTIONS_SH = Path(__file__).resolve().parents[2] / "lib" / "conventions.sh"
 
-
-@cache
-def _commit_types() -> list[str]:
-    """Read the allowed conventional-commit types from lib/conventions.sh.
-
-    conventions.sh is the single source of truth for the type list; an
-    unreadable file degrades to an empty list, which skips type validation
-    rather than duplicating the types here and letting the copies drift.
-    """
-    try:
-        text = _CONVENTIONS_SH.read_text()
-    except OSError:
-        return []
-    line = next(
-        (ln for ln in text.splitlines() if ln.startswith("COMMIT_TYPES=")), "",
-    )
-    return line.split("=", 1)[1].strip().strip('"').split() if line else []
-
-
-def _valid_commit_header(subject: str) -> bool:
-    """Check a generated subject against the repo's commit conventions."""
-    if not subject or len(subject) > _COMMIT_HEADER_MAX or subject.endswith("."):
-        return False
-    head, sep, rest = subject.partition(":")
-    if not sep or not rest.strip():
-        return False
-    types = _commit_types()
-    return not types or head.split("(", 1)[0] in types
+# Commit conventions live in core.conventions.
+_valid_commit_header = conventions.valid_commit_header
 
 
 def _generated_subject(reply: str) -> str:
@@ -900,7 +869,7 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
         "repairs a check failure left behind by an automated rebase conflict "
         "resolution.\n\n"
         f"Files: {', '.join(fixed)}\n"
-        f"Format: type(scope): subject — at most {_COMMIT_HEADER_MAX} "
+        f"Format: type(scope): subject — at most {conventions.COMMIT_HEADER_MAX} "
         "characters, no trailing period. Say what changed in the code, not "
         "that a check failed. Output only the subject line.\n\n"
         f"--- DIFF ---\n{diff}",
@@ -1734,7 +1703,7 @@ class RebaseOutcome:
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed
-        _emit_json(report)
+        core_report.emit_json(report)
 
 
 # ── Refusals ────────────────────────────────────────────────────────────────
@@ -1763,7 +1732,7 @@ class RefusalReport:
     override: str = _REFUSAL_OVERRIDE_FLAG
 
     def emit(self) -> None:
-        _emit_json(asdict(self))
+        core_report.emit_json(asdict(self))
 
 
 def _as_refusal(

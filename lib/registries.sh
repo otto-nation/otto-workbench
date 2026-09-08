@@ -253,12 +253,13 @@ collect_registry_permissions() {
   done
 }
 
-# collect_claude_env_vars ARRAY_REF SCAN_DIR [BREW_DIR]
-# Populates the caller's array (via nameref) with the names of the env vars
-# declared by every registry whose meta block sets `claude_env: true` — the
-# variables `ai/claude/steps.sh` mirrors from `~/.env.local` into the live
-# `~/.claude/settings.json`. Scanning and the brew-directory default match
-# `collect_registry_permissions` above.
+# collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [BREW_DIR]
+# Populates two caller arrays (via nameref) with the env vars declared by every
+# registry whose meta block sets `claude_env: true`:
+#   sources — the canonical names in ~/.env.local (e.g. AI_MODEL)
+#   targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL)
+# When a registry entry has no `target:` field, the target defaults to the source
+# name (backward compatible with registries that predate the mapping).
 #
 # The flag is opt-in per registry rather than a sweep of every declaration
 # because the two files have different audiences: `~/.env.local` holds API keys
@@ -268,15 +269,17 @@ collect_registry_permissions() {
 # reaches the settings file is decided by what `~/.env.local` actually sets, so a
 # registry gated on a tool this machine lacks contributes nothing anyway.
 collect_claude_env_vars() {
-  local -n __env_out=$1
-  local scan_dir="$2"
-  local brew_dir="${3:-$scan_dir/brew}"
+  local -n __sources_out=$1
+  local -n __targets_out=$2
+  local scan_dir="$3"
+  local brew_dir="${4:-$scan_dir/brew}"
 
-  __env_out=()
+  __sources_out=()
+  __targets_out=()
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
 
-  local file flagged count i var
+  local file flagged count i var target
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
     flagged=$(yq '.meta.claude_env // false' "$file" 2>/dev/null) || continue
@@ -288,7 +291,10 @@ collect_claude_env_vars() {
     for (( i=0; i<count; i++ )); do
       var=$(yq ".env[$i].var // \"\"" "$file")
       [[ -n "$var" && "$var" != "null" ]] || continue
-      __env_out+=("$var")
+      target=$(yq ".env[$i].target // \"\"" "$file")
+      [[ -z "$target" || "$target" == "null" ]] && target="$var"
+      __sources_out+=("$var")
+      __targets_out+=("$target")
     done
   done
 }

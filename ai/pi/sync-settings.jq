@@ -1,20 +1,20 @@
 # Syncs managed settings from a template into Pi's live global settings file.
 #
 # Inputs (via --argjson):
-#   $t — template (ai/pi/settings.json)
-#   $e — existing (~/.pi/agent/settings.json)
+#   $t       — template (ai/pi/settings.json)
+#   $e       — existing (~/.pi/agent/settings.json)
 #   $allowed — template packages this machine was confirmed to reach
 #   $blocked — template packages this machine was confirmed not to reach
+#   $models  — model config derived from ~/.env.local ({} when unset)
 #
-# Scalar keys are seeds, not overrides: a template key is written only when the
-# live file does not already carry it. Whatever set the value first keeps it —
-# an extension, `pi config`, or Ctrl+S in /model. The cost of not overriding is
-# that changing a template default never reaches a machine that already has the
-# key; delete the key locally to be re-seeded.
+# Scalar keys from the template and model config override the live file on every
+# sync, so the workbench stays authoritative over extensions and `pi config`.
+# Model keys come from ~/.env.local — the same SSOT Claude Code reads — and are
+# applied after template scalars so they always win.
 #
-# `packages` is reconciled rather than seeded, because it is a list: adding an
-# entry displaces nothing, and seed-only semantics would withhold the package
-# from every machine that has ever run `pi install`.
+# `packages` is reconciled rather than overridden, because it is a list: adding
+# an entry displaces nothing, and override semantics would strip packages an
+# extension installed.
 #
 # $allowed and $blocked do not have to cover every template package. A package
 # whose reachability could not be determined — no gh, no network, no auth —
@@ -46,7 +46,8 @@ def ident: source_of | sub("@[^@/:]+$"; "");
 ($kept + [$allowed[] | select((ident) as $i | ($kept_idents | index($i)) == null)]) as $packages |
 
 $e
-| . + ($scalars | with_entries(select(.key | in($e) | not)))
+| . + $scalars
+| . + $models
 | if $packages == [] and (($e | has("packages")) | not) then .
   else .packages = $packages
   end

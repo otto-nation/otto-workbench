@@ -136,17 +136,6 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
         run_ids=run_ids, behind_main=behind_main,
     )
 
-    # Update summary fields in CIDomain and save unified state
-    kind_counts: dict[str, int] = {}
-    for f in report.failures:
-        k = f.get("kind", "unknown")
-        kind_counts[k] = kind_counts.get(k, 0) + 1
-    ci_domain.conclusion = run_state.conclusion
-    ci_domain.failure_count = len(report.failures)
-    ci_domain.failure_kinds = kind_counts
-    ci_domain.last_run_id = run_state.run_id
-    ci_domain.last_run_number = run_state.run_number
-    ci_domain.updated_at = pr_state.now_iso()
     try:
         pr_state.save_state(ctx.target_dir, state)
     except Exception as exc:
@@ -477,16 +466,6 @@ def _run_ci_wait(trail, args, ctx) -> ci_report.CIReport:
         run_ids=run_ids, behind_main=behind_main, counts=counts,
     )
 
-    kind_counts: dict[str, int] = {}
-    for f in report.failures:
-        k = f.get("kind", "unknown")
-        kind_counts[k] = kind_counts.get(k, 0) + 1
-    ci_domain.conclusion = run_state.conclusion
-    ci_domain.failure_count = len(report.failures)
-    ci_domain.failure_kinds = kind_counts
-    ci_domain.last_run_id = run_state.run_id
-    ci_domain.last_run_number = run_state.run_number
-    ci_domain.updated_at = pr_state.now_iso()
     try:
         pr_state.save_state(ctx.target_dir, state)
     except Exception as exc:

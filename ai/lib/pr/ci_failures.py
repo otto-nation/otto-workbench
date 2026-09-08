@@ -547,12 +547,36 @@ def _carry_forward_item(
     )
 
 
+def _summarize(domain, run: RunState) -> None:
+    """Write the run's headline numbers onto the domain.
+
+    These are what a reader that will not open `runs` sees — the status line,
+    the `pr` dashboard and the review prompt all read them and never the run
+    itself — so they are derived here from the run that was just stored rather
+    than by whoever happened to call the sync.
+    """
+    kind_counts: dict[str, int] = {}
+    for group in run.failures.values():
+        kind_counts[group.kind.value] = kind_counts.get(group.kind.value, 0) + len(group.items)
+
+    domain.conclusion = run.conclusion
+    domain.failure_count = sum(kind_counts.values())
+    domain.failure_kinds = kind_counts
+    domain.last_run_id = run.run_id
+    domain.last_run_number = run.run_number
+    domain.updated_at = run.fetched_at
+
+
 def sync_ci_domain(domain, run: RunState):
     """Merge a new run into a CIDomain, preserving prior diagnosis and fix history.
 
     Accepts a pr.domains.CIDomain and returns the updated CIDomain.
     If a failure item existed in the prior run with a diagnosis or fix_sha,
     those values carry forward to the new run's matching item.
+
+    The domain's summary fields are written here too: a caller that syncs a run
+    and leaves them alone would otherwise leave the state file reporting the
+    run before it.
     """
     prior_run = domain.runs.get(domain.latest_run_id) if domain.latest_run_id is not None else None
     prior_items = collect_item_ids(prior_run.failures) if prior_run else {}
@@ -575,6 +599,7 @@ def sync_ci_domain(domain, run: RunState):
 
     domain.runs[run.run_id] = synced_run
     domain.latest_run_id = run.run_id
+    _summarize(domain, synced_run)
 
     # Prune old runs to bound state file size
     _MAX_RUNS = 10

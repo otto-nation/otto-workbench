@@ -227,6 +227,49 @@ def test_sync_ci_domain_preserves_prior_diagnosis():
     assert synced_item.fix_sha == "abc"
 
 
+def test_sync_ci_domain_summarizes_the_run_it_stored():
+    domain = CIDomain()
+    run = RunState(
+        run_id=300, run_number=9, head_sha="ccc",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T16:00:00+00:00",
+        failures={
+            "shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a", "b"]),
+            "pytest": _make_group("pytest", FailureKind.TEST, ["c"]),
+        },
+    )
+
+    updated = sync_ci_domain(domain, run)
+    assert updated.conclusion == "failure"
+    assert updated.failure_count == 3
+    assert updated.failure_kinds == {"lint": 2, "test": 1}
+    assert updated.last_run_id == 300
+    assert updated.last_run_number == 9
+    assert updated.updated_at == "2026-06-18T16:00:00+00:00"
+
+
+def test_sync_ci_domain_clears_the_summary_when_the_branch_goes_green():
+    """A later green run must not leave the prior run's failure counts behind —
+    a reader that never opens `runs` would keep reporting failures that are gone."""
+    domain = CIDomain()
+    sync_ci_domain(domain, RunState(
+        run_id=300, run_number=9, head_sha="ccc",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T16:00:00+00:00",
+        failures={"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])},
+    ))
+
+    updated = sync_ci_domain(domain, RunState(
+        run_id=301, run_number=10, head_sha="ddd",
+        status="completed", conclusion="success",
+        fetched_at="2026-06-18T17:00:00+00:00", failures={},
+    ))
+    assert updated.conclusion == "success"
+    assert updated.failure_count == 0
+    assert updated.failure_kinds == {}
+    assert updated.updated_at == "2026-06-18T17:00:00+00:00"
+
+
 # ── Log Extraction Tests ─────────────────────────────────────────────────
 
 def test_extract_failure_context_empty():

@@ -88,9 +88,11 @@ push recovery adds (regeneration, check fixes) are excluded. `conflicts_resolved
 counts conflicted-file resolutions, matching `files_resolved`.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
-non-empty, those files were staged from the incoming side but their
-regeneration command failed — say so and tell the user to regenerate them
-manually. Done.
+non-empty, those files were staged from the incoming side and never rebuilt —
+either the repo's regeneration command failed, or it declares none and has no
+conventional `generate` task. Say so and tell the user to regenerate them
+manually; a repo that keeps landing in the second case wants a
+`rebase.regenerate` entry in its `.workbench.yml`. Done.
 
 **Exit 3 — conflicts detected (`--no-fix` mode only).** Parse the JSON:
 

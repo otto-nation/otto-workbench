@@ -93,6 +93,8 @@ def _values_column(hint) -> str:
         return ", ".join(f"`{member.value}`" for member in hint)
     if kind is serde.HintKind.SCALAR:
         return {bool: "boolean", int: "integer", float: "number"}.get(hint, "string")
+    if kind is serde.HintKind.LIST:
+        return f"list of {_values_column(args[0])}"
     return "any"
 
 

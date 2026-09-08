@@ -333,7 +333,7 @@ def test_rebase_render_stale_files():
         force_pushed=True, updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) == 2
-    assert "regeneration failed" in result[1]
+    assert "not regenerated" in result[1]
     assert "pnpm-lock.yaml" in result[1]
 
 

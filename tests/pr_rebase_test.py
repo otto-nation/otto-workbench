@@ -806,14 +806,14 @@ def test_parse_resolved_content_allows_equals_mid_line():
     assert reason == ""
 
 
-# ── _ai_suggest_regeneration ──────────────────────────────────────────────
+# ── Repo-level regeneration ───────────────────────────────────────────────
 
 
 @contextlib.contextmanager
 def _backend_answering(reply, *, available=True):
-    """Stub both halves of the backend the regeneration helper reaches.
+    """Stub both halves of the backend a rebase-assist helper reaches.
 
-    It asks ``ai_backend.is_available()`` itself but prompts through
+    A helper asks ``ai_backend.is_available()`` itself but prompts through
     ``agent_invoke``, which holds its own reference to the module — so these
     patch the module's attributes rather than replacing a script's alias for it,
     which would leave the prompt going to a live CLI.
@@ -825,32 +825,67 @@ def _backend_answering(reply, *, available=True):
         yield
 
 
-def test_ai_suggest_regeneration_returns_command(tmp_path):
-    subdir = tmp_path / "ui-admin"
-    subdir.mkdir()
-    (subdir / "package.json").write_text('{"name": "ui-admin"}')
-    (subdir / "pnpm-lock.yaml").write_text("lockfile content")
-
-    with _backend_answering(("pnpm install", 0)):
-        result = pr_rebase_cli._ai_suggest_regeneration(
-            "ui-admin/generated.css", str(tmp_path),
-        )
-
-    assert result == ("pnpm", "install")
-
-
-def test_ai_suggest_regeneration_returns_none_response(tmp_path):
-    with _backend_answering(("NONE", 0)):
-        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
-
-    assert result is None
+@contextlib.contextmanager
+def _repo_declaring(commands, *, root, mise_task=False):
+    """Stand in for the two sources ``_repo_regenerators`` consults."""
+    config = pr_rebase_cli.workbench_config.WorkbenchConfig(
+        rebase=pr_rebase_cli.workbench_config.RebaseConfig(regenerate=list(commands)),
+    )
+    with mock.patch.object(pr_rebase_cli.workbench_config, "load_config_or_default",
+                           return_value=config), \
+         mock.patch.object(pr_rebase_cli.git_client, "out", return_value=str(root)), \
+         mock.patch.object(pr_rebase_cli, "_mise_has_task", return_value=mise_task):
+        yield
 
 
-def test_ai_suggest_regeneration_ai_unavailable(tmp_path):
-    with _backend_answering(None, available=False):
-        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+def test_repo_regenerators_prefers_the_declared_commands(tmp_path):
+    with _repo_declaring(["mise run generate", "mise run generate:i18n"],
+                         root=tmp_path, mise_task=True):
+        regens = pr_rebase_cli._repo_regenerators(str(tmp_path))
 
-    assert result is None
+    assert [r.cmd for r in regens] == [
+        ("mise", "run", "generate"),
+        ("mise", "run", "generate:i18n"),
+    ]
+
+
+def test_repo_regenerators_falls_back_to_the_conventional_task(tmp_path):
+    """No declaration, but the repo has a `generate` task — use it."""
+    with _repo_declaring([], root=tmp_path, mise_task=True):
+        regens = pr_rebase_cli._repo_regenerators(str(tmp_path))
+
+    assert [r.cmd for r in regens] == [("mise", "run", "generate")]
+
+
+def test_repo_regenerators_empty_when_nothing_declares_one(tmp_path):
+    """No key and no conventional task means the rebuild is unknown.
+
+    Guessing here would commit wrong generated output, so the caller reports
+    the file stale instead.
+    """
+    with _repo_declaring([], root=tmp_path, mise_task=False):
+        assert pr_rebase_cli._repo_regenerators(str(tmp_path)) == ()
+
+
+def test_queue_repo_regeneration_collapses_files_into_one_run(tmp_path):
+    """Four generated files must not become four regeneration runs."""
+    queue = pr_rebase_cli.RegenQueue()
+    with _repo_declaring(["mise run generate"], root=tmp_path):
+        for name in ("a_pb2.py", "b_pb.ts", "models.go", ".queries.hash"):
+            assert pr_rebase_cli._queue_repo_regeneration(name, str(tmp_path), queue)
+
+    jobs = list(queue)
+    assert len(jobs) == 1
+    assert jobs[0].cmd == ("mise", "run", "generate")
+    assert len(jobs[0].files) == 4
+
+
+def test_queue_repo_regeneration_false_when_unknown(tmp_path):
+    queue = pr_rebase_cli.RegenQueue()
+    with _repo_declaring([], root=tmp_path, mise_task=False):
+        assert not pr_rebase_cli._queue_repo_regeneration("x.gen", str(tmp_path), queue)
+
+    assert list(queue) == []
 
 
 class TestLedgerAttribution:
@@ -867,8 +902,16 @@ class TestLedgerAttribution:
         trail.context = dict(context)
         return trail
 
+    @staticmethod
+    def _hand_written(tmp_path):
+        """A file the fixer will prompt about — generated ones never reach AI."""
+        target = tmp_path / "handler.go"
+        target.write_text("package main\n")
+        return target
+
     def test_the_runs_repo_and_pr_reach_the_ledger(self, tmp_path):
         recorded = {}
+        self._hand_written(tmp_path)
         with mock.patch.object(pr_rebase_cli, "_trail",
                                self._trail_for(repo="org/repo", pr=7,
                                                branch="feat/x")), \
@@ -876,13 +919,14 @@ class TestLedgerAttribution:
                                return_value=True), \
              mock.patch.object(pr_rebase_cli.ai_backend, "prompt",
                                side_effect=lambda *a, **kw: (
-                                   recorded.update(kw) or ("pnpm install", 0))):
-            pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+                                   recorded.update(kw) or ("", 1))):
+            pr_rebase_cli._fix_one_file("handler.go", str(tmp_path), "check output")
 
         assert (recorded["repo"], recorded["pr"]) == ("org/repo", "7")
 
     def test_a_branch_with_no_pr_bills_to_the_repo_alone(self, tmp_path):
         recorded = {}
+        self._hand_written(tmp_path)
         with mock.patch.object(pr_rebase_cli, "_trail",
                                self._trail_for(repo="org/repo", pr=None,
                                                branch="feat/x")), \
@@ -890,43 +934,14 @@ class TestLedgerAttribution:
                                return_value=True), \
              mock.patch.object(pr_rebase_cli.ai_backend, "prompt",
                                side_effect=lambda *a, **kw: (
-                                   recorded.update(kw) or ("pnpm install", 0))):
-            pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+                                   recorded.update(kw) or ("", 1))):
+            pr_rebase_cli._fix_one_file("handler.go", str(tmp_path), "check output")
 
         assert (recorded["repo"], recorded["pr"]) == ("org/repo", None)
 
     def test_no_trail_is_not_an_error(self):
         """`--help` and the unit tests below run with the global still unset."""
         assert pr_rebase_cli._billed_to() == {"repo": None, "pr": None}
-
-
-def test_ai_suggest_regeneration_ai_fails(tmp_path):
-    with _backend_answering(("", 1)):
-        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
-
-    assert result is None
-
-
-def test_ai_suggest_regeneration_empty_response(tmp_path):
-    with _backend_answering(("", 0)):
-        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
-
-    assert result is None
-
-
-def test_ai_suggest_regeneration_multiword_command(tmp_path):
-    with _backend_answering(("cargo generate-lockfile", 0)):
-        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
-
-    assert result == ("cargo", "generate-lockfile")
-
-
-def test_ai_suggest_regeneration_rejects_unknown_binary(tmp_path):
-    """AI-suggested command with unknown binary is rejected for safety."""
-    with _backend_answering(("rm -rf /", 0)):
-        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
-
-    assert result is None
 
 
 # ── _detect_delete_conflict ───────────────────────────────────────────────
@@ -1697,6 +1712,65 @@ def test_resolve_file_conflicts_regen_failure_warns():
         assert result.stale == ["pnpm-lock.yaml"]
         mock_warn.assert_called_once()
         assert "pnpm-lock.yaml" in mock_warn.call_args[0][0]
+
+
+def test_resolve_file_conflicts_generated_without_regenerator_is_stale():
+    """A generated file nothing can rebuild is reported stale, not resolved.
+
+    Taking theirs stages an artifact generated before the base moved, so a repo
+    that declares no rebuild leaves it as wrong as a rebuild that failed.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        gen_file = Path(tmpdir) / "service.pb.go"
+        gen_file.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with (
+            mock.patch.object(
+                pr_rebase_cli, "_is_generated_file",
+                return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
+            ),
+            mock.patch.object(pr_rebase_cli, "_repo_regenerators", return_value=()),
+            mock.patch("subprocess.run", side_effect=fake_run),
+        ):
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["service.pb.go"], tmpdir, "abc123", "feat: add proto",
+                target_ref=_TARGET,
+            )
+
+        assert result.files == ["service.pb.go"]
+        assert result.stale == ["service.pb.go"]
+
+
+def test_resolve_file_conflicts_generated_with_regenerator_is_not_stale():
+    """A rebuilt generated file is resolved outright — nothing left to redo."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        gen_file = Path(tmpdir) / "service.pb.go"
+        gen_file.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+        regen = pr_rebase_cli.Regenerator(("mise", "run", "generate"))
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with (
+            mock.patch.object(
+                pr_rebase_cli, "_is_generated_file",
+                return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
+            ),
+            mock.patch.object(pr_rebase_cli, "_repo_regenerators", return_value=(regen,)),
+            mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen,
+            mock.patch("subprocess.run", side_effect=fake_run),
+        ):
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["service.pb.go"], tmpdir, "abc123", "feat: add proto",
+                target_ref=_TARGET,
+            )
+
+        assert result.files == ["service.pb.go"]
+        assert result.stale == []
+        assert mock_regen.call_args[0][0].cmd == regen.cmd
 
 
 # ── _is_empty_patch ──────────────────────────────────────────────────────
@@ -3478,12 +3552,73 @@ def test_fix_push_failures_staging_fails(tmp_path):
     owner.assert_not_called()
 
 
-def test_fix_push_failures_ai_unavailable():
-    """AI backend unavailable — returns None without attempting."""
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = False
-        result = pr_rebase_cli._fix_push_failures("/fake", "errors", ["file.go"])
+def test_fix_push_failures_ai_unavailable(tmp_path):
+    """No backend and nothing to rebuild — returns None without attempting."""
+    (tmp_path / "file.go").write_text("package main\n")
 
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None):
+        mock_ai.is_available.return_value = False
+        result = pr_rebase_cli._fix_push_failures(str(tmp_path), "errors", ["file.go"])
+
+    assert result is None
+
+
+def test_fix_push_failures_regenerates_instead_of_prompting(tmp_path):
+    """The bug this guard exists for: a generated file must never reach the AI.
+
+    Hand-editing a protobuf descriptor or a hash manifest cannot produce the
+    generator's output, so the drift check that refused the push refuses it
+    again — after spending a whole-file call per artifact.
+    """
+    (tmp_path / "models.go").write_text("// Code generated by sqlc. DO NOT EDIT.\n")
+    prompted = []
+    regenerated = []
+
+    with mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_fix_one_file",
+                           side_effect=lambda f, *a: prompted.append(f)), \
+         mock.patch.object(pr_rebase_cli, "_run_regeneration",
+                           side_effect=lambda job, **kw: regenerated.append(job.cmd) or True), \
+         mock.patch.object(pr_rebase_cli, "_stage_worktree", return_value=[]), \
+         _repo_declaring(["mise run generate"], root=tmp_path):
+        pr_rebase_cli._fix_push_failures(
+            str(tmp_path), "drift: models.go", ["models.go"],
+        )
+
+    assert prompted == []
+    assert regenerated == [("mise", "run", "generate")]
+
+
+def test_fix_push_failures_still_prompts_for_hand_written_files(tmp_path):
+    """The guard is scoped to generated files — normal fixes are untouched."""
+    (tmp_path / "handler.go").write_text("package main\n")
+    prompted = []
+
+    with mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
+         mock.patch.object(pr_rebase_cli, "_fix_one_file",
+                           side_effect=lambda f, *a: prompted.append(f)), \
+         mock.patch.object(pr_rebase_cli, "_stage_worktree", return_value=[]):
+        pr_rebase_cli._fix_push_failures(
+            str(tmp_path), "vet: handler.go", ["handler.go"],
+        )
+
+    assert prompted == ["handler.go"]
+
+
+def test_fix_push_failures_generated_file_with_no_regenerator_is_left_alone(tmp_path):
+    """Unable to rebuild is still not a licence to hand-edit."""
+    (tmp_path / "x.gen").write_text("// @generated\n")
+    prompted = []
+
+    with mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_fix_one_file",
+                           side_effect=lambda f, *a: prompted.append(f)), \
+         _repo_declaring([], root=tmp_path, mise_task=False):
+        result = pr_rebase_cli._fix_push_failures(str(tmp_path), "drift: x.gen", ["x.gen"])
+
+    assert prompted == []
     assert result is None
 
 

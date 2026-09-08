@@ -58,6 +58,8 @@
     "config:issue_tracker.provider=jira",
     "config:issue_tracker.provider=linear",
     "config:issue_tracker.team",
+    "config:rebase",
+    "config:rebase.regenerate",
     "config:reuse",
     "config:reuse.default",
     "config:reuse.default=full",

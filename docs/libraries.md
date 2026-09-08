@@ -156,6 +156,7 @@ Every key any of them accepts:
 | `issue_tracker.team` | string | — |
 | `issue_tracker.jira_url` | string | — |
 | `github.ssh_over_443` | boolean | `false` |
+| `rebase.regenerate` | list of string | — |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `comments_fix`, `comments_triage`, `ci_fix`, `rebase`, `describe`
 

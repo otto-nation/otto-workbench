@@ -2901,3 +2901,35 @@ The mode table itself stays with the handlers it names — a mode is a need and 
 callable, and only the need half has a home below the entry point. The
 resolvers therefore take the table rather than reaching for one, which is also
 what lets a test declare a table of its own.
+
+### cli/pr_describe.py
+
+Revise a PR description against the repo's PR template.
+
+Run after the branch stops moving — a description written before the fix passes
+describes a PR that no longer exists.  The pass is commit-aware: it records the
+HEAD it described, and a repeated run against an unchanged branch is a no-op
+rather than another AI call.
+
+Exit codes:
+  0  Success (description current, revised, or nothing to do)
+  1  Error (no PR, gh failure, unusable AI output)
+
+Usage:
+  pr-describe                         # revise if HEAD moved since the last pass
+  pr-describe --force                 # revise regardless of HEAD
+  pr-describe --dry-run               # print the revision, do not push it
+  pr-describe --repo-dir <path>       # specify worktree directory
+
+### cli/review_post.py
+
+Post a review file to GitHub as a PR review.
+
+Parses a markdown review file (produced by claude-review), validates
+finding positions against the PR diff, renumbers findings by posted
+location (inline first, then body), and creates a PENDING review via
+the GitHub API. Pass --submit to submit the review immediately.
+
+Usage:
+  review-post --pr NUMBER --review-file PATH
+              [--severity M,S,N] [--dry-run]

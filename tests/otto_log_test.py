@@ -358,6 +358,18 @@ class TestPruneCommand:
         assert "nothing older" in capsys.readouterr().out
 
 
+class TestPrune:
+    def test_it_names_a_swept_artifact_month_under_its_directory(self, capsys):
+        stem = "2020-01"
+        month = trail_module.artifacts_dir() / stem
+        month.mkdir(parents=True)
+        (month / "aaaaaaaaaaaa-1-push.log").write_text("old\n")
+
+        otto_log.cmd_prune(argparse.Namespace(keep=1))
+
+        assert f"artifacts/{stem}" in capsys.readouterr().out
+
+
 class TestSummaryIsNotAlwaysFinish:
     def test_show_reports_the_runs_duration(self, capsys):
         trail = Trail.start(script="pr", context={"repo": "org/repo"})

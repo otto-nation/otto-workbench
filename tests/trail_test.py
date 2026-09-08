@@ -15,6 +15,8 @@ sys.path.insert(0, str(LIB_DIR))
 
 from core import workbench_paths
 from core.trail import (
+    ARTIFACT_LIMIT,
+    EXCERPT_LIMIT,
     FINISH_ACTION,
     INVOCATION_HEX_WIDTH,
     SCHEMA_VERSION,
@@ -23,6 +25,7 @@ from core.trail import (
     Level,
     Trail,
     add_trail_args,
+    artifacts_dir,
     prune_trail,
 )
 
@@ -60,6 +63,14 @@ def _read_events() -> list[dict]:
     for path in sorted(root.glob("*.jsonl")):
         events += [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     return events
+
+
+def _artifact_files() -> list[Path]:
+    """Every artifact under the trail root, oldest month first."""
+    root = artifacts_dir()
+    if not root.is_dir():
+        return []
+    return sorted(p for p in root.rglob("*.log"))
 
 
 class TestTrailEvent:
@@ -432,3 +443,145 @@ class TestAddTrailArgs:
         parser = argparse.ArgumentParser()
         add_trail_args(parser)
         assert parser.parse_args([]).debug is False
+
+
+class TestFailure:
+    def test_it_writes_the_whole_output_to_an_artifact(self):
+        trail = Trail.start(script="test", context={})
+        output = "\n".join(f"line {n}" for n in range(500))
+
+        path = trail.failure("push", "git refused the push", output=output)
+
+        assert path is not None
+        assert path.read_text() == output
+        assert path.parent.name == datetime.now(timezone.utc).strftime("%Y-%m")
+        assert path.parent.parent == artifacts_dir()
+
+    def test_the_record_points_at_the_artifact_by_relative_path(self):
+        """An absolute path does not survive a state root that moves."""
+        trail = Trail.start(script="test", context={})
+
+        path = trail.failure("push", "refused", output="boom")
+
+        event = _read_events()[-1]
+        assert event["data"]["log"] == str(path.relative_to(workbench_paths.trail_dir()))
+        assert event["data"]["log"].startswith("artifacts/")
+
+    def test_the_excerpt_is_the_tail_not_the_head(self):
+        """The line naming which gate failed is the last one a hook prints."""
+        output = "banner\n" + "x" * 2000 + "\n✗ lint:ts failed"
+        Trail.start(script="test", context={}).failure("push", "refused", output=output)
+
+        recorded = _read_events()[-1]["data"]["error"]
+        assert "✗ lint:ts failed" in recorded
+        assert "banner" not in recorded
+        assert len(recorded) <= EXCERPT_LIMIT
+
+    def test_it_counts_the_lines_of_the_whole_output(self):
+        Trail.start(script="test", context={}).failure(
+            "push", "refused", output="a\nb\nc")
+
+        assert _read_events()[-1]["data"]["output_lines"] == 3
+
+    def test_caller_data_is_kept_beside_the_excerpt(self):
+        Trail.start(script="test", context={}).failure(
+            "push", "refused", output="boom", data={"sha": "1a2b3c4d"})
+
+        data = _read_events()[-1]["data"]
+        assert data["sha"] == "1a2b3c4d"
+        assert data["error"] == "boom"
+
+    def test_it_records_an_error_event(self):
+        Trail.start(script="test", context={}).failure("push", "refused", output="boom")
+
+        event = _read_events()[-1]
+        assert event["level"] == "error"
+        assert event["event_type"] == "error"
+        assert event["action"] == "push"
+        assert event["detail"] == "refused"
+
+    def test_two_failures_in_one_run_do_not_collide(self):
+        trail = Trail.start(script="test", context={})
+
+        first = trail.failure("push", "refused", output="first")
+        second = trail.failure("push", "refused again", output="second")
+
+        assert first != second
+        assert first.read_text() == "first"
+        assert second.read_text() == "second"
+
+    def test_an_action_that_is_not_a_filename_is_sanitised(self):
+        trail = Trail.start(script="test", context={})
+
+        path = trail.failure("push/force --lease", "refused", output="boom")
+
+        assert path.parent == artifacts_dir() / datetime.now(timezone.utc).strftime("%Y-%m")
+        assert "/" not in path.name.removeprefix(f"{trail.invocation}-")
+
+    def test_output_over_the_cap_keeps_its_tail_under_a_banner(self):
+        trail = Trail.start(script="test", context={})
+        output = "H" * ARTIFACT_LIMIT + "TAIL"
+
+        written = trail.failure("push", "refused", output=output).read_text()
+
+        assert written.endswith("TAIL")
+        assert len(written.encode()) <= ARTIFACT_LIMIT + len(written.splitlines()[0]) + 1
+        assert "dropped" in written.splitlines()[0]
+
+    def test_an_unwritable_root_still_records_the_event(self, monkeypatch):
+        """A full disk must not turn a refused push into a crash."""
+        def _refuse(*args, **kwargs):
+            raise OSError("no space left on device")
+
+        trail = Trail.start(script="test", context={})
+        monkeypatch.setattr(Path, "mkdir", _refuse)
+
+        assert trail.failure("push", "refused", output="boom") is None
+
+        data = _read_events()[-1]["data"]
+        assert data["error"] == "boom"
+        assert "log" not in data
+
+
+class TestUnrecordedFailure:
+    def test_it_writes_no_artifact(self):
+        trail = Trail.start(script="test", context={}, record=False)
+
+        assert trail.failure("push", "refused", output="boom") is None
+
+        assert _read_events() == []
+        assert not artifacts_dir().exists()
+
+
+class TestArtifactRetention:
+    def _seed_artifact(self, stem: str) -> Path:
+        month = artifacts_dir() / stem
+        month.mkdir(parents=True, exist_ok=True)
+        path = month / "aaaaaaaaaaaa-1-push.log"
+        path.write_text("old output\n")
+        return month
+
+    def test_it_drops_an_artifact_month_below_the_cutoff(self):
+        stale = self._seed_artifact(_months_ago(TRAIL_KEEP_MONTHS + 1))
+
+        assert stale in prune_trail()
+
+        assert not stale.exists()
+
+    def test_it_keeps_an_artifact_month_inside_the_horizon(self):
+        fresh = self._seed_artifact(_months_ago(1))
+
+        prune_trail()
+
+        assert fresh.is_dir()
+
+    def test_a_directory_that_names_no_month_is_never_dropped(self):
+        odd = artifacts_dir() / "scratch"
+        odd.mkdir(parents=True, exist_ok=True)
+
+        prune_trail(1)
+
+        assert odd.is_dir()
+
+    def test_no_artifacts_root_is_not_an_error(self):
+        assert prune_trail() == []

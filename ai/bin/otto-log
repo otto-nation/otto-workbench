@@ -541,8 +541,9 @@ def cmd_prune(args):
     if not removed:
         print(f"Trail: nothing older than the last {args.keep} month(s).")
         return
+    root = workbench_paths.trail_dir()
     for path in removed:
-        print(f"Trail: dropped {path.name}")
+        print(f"Trail: dropped {path.relative_to(root)}")
 
 
 def cmd_stats(args):

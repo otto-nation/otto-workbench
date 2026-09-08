@@ -70,7 +70,7 @@ from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
 from agent.phases import collect_phase_models, resolve_effort
 from review.pipeline import (
-    DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, _fetch_metadata,
+    DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
 )
 from review.static_analysis import (
@@ -231,7 +231,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     _log_ai_backend(trail)
     if not ai_backend.preflight(collect_phase_models(args.model), trail):
         return 1
-    run_ctx = _fetch_metadata(
+    run_ctx = fetch_metadata(
         repo, args.pr, args.mode, args.repo_dir, args.recover_sha,
     )
     pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data

@@ -113,8 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     json.dump(asdict(positions), sys.stdout, indent=2)
     print()
 
+    if positions.ok:
+        return 0
     if positions.skipped:
         return SKIPPED_EXIT
-    if positions.file_level:
-        return DEMOTED_EXIT
-    return 0
+    return DEMOTED_EXIT

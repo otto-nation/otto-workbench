@@ -1,7 +1,7 @@
 """Revise a PR description against the repo's PR template.
 
 Run after the branch stops moving — a description written before the fix passes
-describes a PR that no longer exists.  The pass is commit-aware: it records the
+describes a PR that no longer exists. The pass is commit-aware: it records the
 HEAD it described, and a repeated run against an unchanged branch is a no-op
 rather than another AI call.
 
@@ -210,6 +210,9 @@ def run_describe(
     template, template_path = _load_template(wt_path)
     fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
     if fetched is None:
+        if trail:
+            trail.error("describe", "could not read the PR body",
+                        data={"pr": ctx.pr_number})
         return 1
     title, body = fetched
 
@@ -255,6 +258,9 @@ def run_describe(
         return 0
 
     if not _apply_body(ctx.repo, ctx.pr_number, revised):
+        if trail:
+            trail.error("describe", "could not write the PR body",
+                        data={"pr": ctx.pr_number})
         return 1
 
     log.info(f"Revised PR description against {template_path or 'the default template'}")

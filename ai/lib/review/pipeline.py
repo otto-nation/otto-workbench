@@ -303,9 +303,15 @@ class RunContext:
     data: "PRData | None"
 
 
-def _fetch_metadata(
+def fetch_metadata(
     repo: str, pr_number: str, mode: Mode, wt_path: str, pin_sha: str = "",
 ) -> RunContext:
+    """Everything a review run needs to know about what it is reviewing.
+
+    `mode` decides where that comes from: a self-review of an unopened branch
+    reads the work tree at `wt_path` alone, and every other case reads the PR
+    `repo`/`pr_number` names, pinned to `pin_sha` when one is given.
+    """
     if mode == Mode.SELF and not pr_number:
         log.info("Gathering branch metadata...")
         return RunContext(fetch_branch_metadata(wt_path), PRContext(), None)

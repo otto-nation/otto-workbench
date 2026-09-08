@@ -27,6 +27,11 @@ from review import paths as _rpath
 from review import posting as _rp
 from review import sections as _rs
 
+# Most of what follows is never referenced in this file. The names are re-exported
+# so a test can reach them at `review_post.<name>` and patch one, which the
+# `_ProxyModule` below forwards to the module that actually defines it. An import
+# an editor calls unused is therefore load-bearing — deleting it silently turns
+# the patch it serves into a no-op.
 from git import client as git_client
 from core import log
 from core import proc

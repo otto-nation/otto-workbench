@@ -2907,7 +2907,7 @@ what lets a test declare a table of its own.
 Revise a PR description against the repo's PR template.
 
 Run after the branch stops moving — a description written before the fix passes
-describes a PR that no longer exists.  The pass is commit-aware: it records the
+describes a PR that no longer exists. The pass is commit-aware: it records the
 HEAD it described, and a repeated run against an unchanged branch is a no-op
 rather than another AI call.
 

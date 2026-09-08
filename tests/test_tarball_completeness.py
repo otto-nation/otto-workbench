@@ -84,8 +84,6 @@ def _all_required_modules() -> set[str]:
         module = pending.pop()
         reached.add(module)
         source = LIB_DIR / Path(*module.split(".")).with_suffix(".py")
-        if not source.exists():
-            continue
         pending |= (_extract_python_imports(source) & lib_modules) - reached
     return reached
 

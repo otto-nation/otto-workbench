@@ -14,7 +14,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
-from core import log
+from core import log, proc
 from core.trail import Trail, add_trail_args
 from agent.registry import PHASES
 from core.phases import Phase
@@ -116,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
         trail.info("post_process", f"processed {len(finding_lines)} findings",
                    data={"finding_count": len(finding_lines), "review_file": str(review_file)})
         return 0
+    except KeyboardInterrupt:
+        return proc.INTERRUPT_RETURNCODE
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

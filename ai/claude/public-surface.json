@@ -32,7 +32,6 @@
     "command:review-orchestrate",
     "command:review-post",
     "command:review-rebuild",
-    "command:review-thread-triage",
     "command:review-threads",
     "command:run-auto-task",
     "command:validate-review-positions",

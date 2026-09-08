@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-echo "review-thread-triage is deprecated. Use: pr comments --triage" >&2
-
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-exec "$(dirname "$_SELF")/review-threads" --triage "$@"

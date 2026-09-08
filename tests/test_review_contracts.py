@@ -43,6 +43,7 @@ from review import registry as review_registry  # noqa: E402
 from review import spans as review_spans  # noqa: E402
 from review import types as review_types  # noqa: E402
 from gh.types import PRContext, PRMetadata  # noqa: E402
+from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from review.budget import MAX_PROMPT_BYTES  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
@@ -572,7 +573,12 @@ def _render_fix_ci(cc, wt_path) -> str:
     return _render_adapter(cc.CIFixAdapter(
         [{"id": "build-1", "job": "build", "kind": "build",
           "annotation": "test failed", "headline": "test failed"}],
-        {"run_number": 1}, ctx,
+        CIReport(
+            repo="owner/repo", branch="user/feat/thing", pr_number=42,
+            run_id=100, run_ids=[100], run_number=1, head_sha="abc123",
+            conclusion="failure", behind_main=0, failures=[],
+            progression={}, resolved_since_prior=[],
+        ), ctx,
         PRState(identity=PRIdentity(
             repo="owner/repo", branch="user/feat/thing", pr_number=42,
             head_sha="abc123", worktree_root=str(wt_path),

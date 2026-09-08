@@ -24,6 +24,7 @@ from core import publishing  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr import ci_annotations  # noqa: E402
 from pr import ci_failures as ci  # noqa: E402
+from pr.ci_report import CIReport  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 
@@ -31,6 +32,18 @@ from pr.state import PRIdentity, PRState  # noqa: E402
 def _no_log_fallback(kind):
     """A `log_fallback` result for a job whose logs yielded nothing."""
     return ci_annotations.LogFallback([], "", kind, structured=False)
+
+
+def _report(**kwargs) -> CIReport:
+    """A finished report, as `_run_ci` hands it to the fix phase."""
+    defaults = dict(
+        repo="owner/repo", branch="feat/test", pr_number=42,
+        run_id=100, run_ids=[100], run_number=7, head_sha="abc123",
+        conclusion="failure", behind_main=0, failures=[],
+        progression={}, resolved_since_prior=[],
+    )
+    defaults.update(kwargs)
+    return CIReport(**defaults)
 
 
 # ── CIFixAdapter ────────────────────────────────────────────────────────
@@ -46,7 +59,7 @@ def _ci_state():
 def _ci_adapter(tmp_path, failures, run_number=7, state=None):
     """The CI adapter as `_run_fix` builds it, against a real worktree path."""
     return ci_check.CIFixAdapter(
-        failures, {"run_number": run_number},
+        failures, _report(run_number=run_number),
         make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         state if state is not None else _ci_state(),
     )
@@ -190,20 +203,13 @@ def _mock_ctx(worktree_root="/tmp/wt", branch="feat/auth"):
 
 def test_rebase_if_behind_skips_when_not_behind():
     trail = MagicMock()
-    report = {"behind_main": 0}
-    assert ci_check._rebase_if_behind(trail, report, _mock_ctx()) is False
+    assert ci_check._rebase_if_behind(trail, _report(), _mock_ctx()) is False
     trail.decision.assert_not_called()
-
-
-def test_rebase_if_behind_skips_when_field_missing():
-    trail = MagicMock()
-    report = {}
-    assert ci_check._rebase_if_behind(trail, report, _mock_ctx()) is False
 
 
 def test_rebase_if_behind_runs_rebase_on_success():
     trail = MagicMock()
-    report = {"behind_main": 5}
+    report = _report(behind_main=5)
     mock_run = MagicMock()
     mock_run.returncode = 0
     with patch("ci_check.subprocess.run", return_value=mock_run) as mock_subrun:
@@ -218,7 +224,7 @@ def test_rebase_if_behind_runs_rebase_on_success():
 
 def test_rebase_if_behind_continues_on_failure():
     trail = MagicMock()
-    report = {"behind_main": 10}
+    report = _report(behind_main=10)
     mock_run = MagicMock()
     mock_run.returncode = 1
     mock_run.stderr = "conflict\n"
@@ -232,7 +238,7 @@ def test_rebase_if_behind_without_a_worktree_exits_with_guidance(capsys):
     """A rebase needs somewhere to run — "--repo-dir None" is not it."""
     ctx = make_ctx(branch="feat/auth", worktree_root=None, head_sha="abc1234")
     assert_no_worktree_exit(capsys, "feat/auth", ci_check._rebase_if_behind,
-                            MagicMock(), {"behind_main": 3}, ctx)
+                            MagicMock(), _report(behind_main=3), ctx)
 
 
 # ── _run_ci_wait ─────────────────────────────────────────────────────────
@@ -391,7 +397,7 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
         return exit_code
 
     trail = MagicMock()
-    report = {"failures": [_ONE_FAILURE], "run_number": 1}
+    report = _report(failures=[_ONE_FAILURE], run_number=1)
     with patch("ci_check._rebase_if_behind", return_value=False), \
          patch("ci_check.fix_engine.land.land",
                return_value=landed or land.LandResult(CommitStatus.NO_CHANGES)), \
@@ -466,7 +472,7 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
          patch("ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
          patch("ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
-            trail, {"failures": [_ONE_FAILURE], "run_number": 1},
+            trail, _report(failures=[_ONE_FAILURE], run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
     assert mock_land.call_args.kwargs["trail"] is trail
@@ -480,7 +486,7 @@ def test_the_fix_pass_commits_gated_and_asks_for_the_recovery(tmp_path):
          patch("ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
          patch("ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
-            MagicMock(), {"failures": [_ONE_FAILURE], "run_number": 1},
+            MagicMock(), _report(failures=[_ONE_FAILURE], run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
     kwargs = mock_land.call_args.kwargs

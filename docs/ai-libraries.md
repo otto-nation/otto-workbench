@@ -1111,6 +1111,19 @@ Classifying the text once it has been found belongs to `pr.ci_failures`, and
 getting it belongs to `gh.run_reads`. What is here is the decision of which
 source to believe.
 
+### pr/ci_report.py
+
+What a reader is told about a CI run — the JSON on stdout, the dashboard on stderr.
+
+`pr.ci_runs` says what a run is; this module says how it is reported. A person
+reads the dashboard, and a skill or a fix pass reads `CIReport`, whose fields
+are the published shape of `ci-check`'s stdout — adding one adds a key every
+consumer sees, and dropping one takes a key away from all of them.
+
+A `--wait` run reports the same run twice, once while it is still going and
+once when it is done, so `completed` and `total` are present on that path and
+absent on the single-shot one rather than being reported as zero.
+
 ### pr/ci_runs.py
 
 One `RunState` out of however many workflow runs a commit set off.
@@ -1324,8 +1337,9 @@ without pulling a review or comments layer in behind it.
 
 CI failure lifecycle tracking.
 
-Handles failure classification, progression tracking, and rendering for the
-ci-failures skill. State persistence is delegated to pr.domains.CIDomain.
+Handles failure classification and progression tracking for the ci-failures
+skill. State persistence is delegated to pr.domains.CIDomain, and how a run is
+reported to a person or a machine is `pr.ci_report`'s.
 
 ### pr/comments_fix.py
 
@@ -2280,6 +2294,15 @@ standard library, and a module called `cmd` there would shadow the stdlib
 Stdlib only, deliberately. This is the module everything else in `ai/lib`
 should be free to depend on, and pulling in `log`, `agent.usage`, or
 `workbench_paths` from here would make that impossible.
+
+### core/report.py
+
+How a tool writes a machine-readable report to stdout.
+
+A tool's stdout is its contract with whatever launched it, and the shape of
+that contract is the same everywhere: one indented JSON object, or a stream of
+them a reader can tell apart. Neither is domain vocabulary, so it lives here
+rather than being spelled out again in each binary that reports.
 
 ### core/run_lock.py
 

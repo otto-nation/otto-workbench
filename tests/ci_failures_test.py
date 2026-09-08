@@ -11,7 +11,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr.ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
-    compute_progression, sync_ci_domain, render_dashboard,
+    compute_progression, sync_ci_domain,
     extract_failure_context, extract_headline, extract_test_failures,
     LogMarker, LOG_MARKERS, SourceLocation, _MAX_CONTEXT_CHARS,
 )
@@ -225,69 +225,6 @@ def test_sync_ci_domain_preserves_prior_diagnosis():
     synced_item = updated.runs[200].failures["shellcheck"].items[0]
     assert synced_item.diagnosis == "root cause found"
     assert synced_item.fix_sha == "abc"
-
-
-# ── Dashboard Rendering Tests ─────────────────────────────────────────────
-
-def test_render_dashboard_basic():
-    item = _make_item("a", file="bin/foo.sh", line=42, annotation="SC2086: Double quote")
-    group = FailureGroup(job="lint / shellcheck", kind=FailureKind.LINT, items=(item,))
-    run = RunState(
-        run_id=123, run_number=7, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-18T14:30:00+00:00",
-        failures={"shellcheck": group},
-    )
-    progression = {"a": Outcome.NEW}
-    dashboard = render_dashboard(run, progression)
-    assert "Run #7" in dashboard
-    assert "abc1234" in dashboard
-    assert "lint" in dashboard.lower()
-    assert "1 new" in dashboard.lower()
-
-
-def test_render_dashboard_all_pass():
-    run = RunState(
-        run_id=123, run_number=7, head_sha="abc1234",
-        status="completed", conclusion="success",
-        fetched_at="2026-06-18T14:30:00+00:00",
-        failures={},
-    )
-    dashboard = render_dashboard(run, {})
-    assert "pass" in dashboard.lower() or "success" in dashboard.lower()
-
-
-def test_render_dashboard_in_progress_no_failures():
-    """In-progress runs with no failures yet should not say 'All checks passed'."""
-    run = RunState(
-        run_id=123, run_number=7, head_sha="abc1234",
-        status="in_progress", conclusion="",
-        fetched_at="2026-06-18T14:30:00+00:00",
-        failures={},
-    )
-    dashboard = render_dashboard(run, {})
-    assert "still running" in dashboard.lower()
-    assert "all checks passed" not in dashboard.lower()
-
-
-def test_render_dashboard_mixed_progression():
-    items = [
-        _make_item("a", file="a.sh", line=1),
-        _make_item("b", file="b.sh", line=2),
-        _make_item("c", file="c.sh", line=3),
-    ]
-    group = FailureGroup(job="shellcheck", kind=FailureKind.LINT, items=tuple(items))
-    run = RunState(
-        run_id=456, run_number=8, head_sha="def5678",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-18T15:00:00+00:00",
-        failures={"shellcheck": group},
-    )
-    progression = {"a": Outcome.NEW, "b": Outcome.PERSISTING, "c": Outcome.REGRESSED}
-    dashboard = render_dashboard(run, progression)
-    assert "1 new" in dashboard.lower()
-    assert "1 persisting" in dashboard.lower()
-    assert "1 regressed" in dashboard.lower()
 
 
 # ── Log Extraction Tests ─────────────────────────────────────────────────
@@ -823,71 +760,6 @@ def test_extract_headline_panic():
     assert headline == "panic: runtime error: index out of range"
 
 
-# ── Dashboard with Headlines Tests ──────────────────────────────────────
-
-
-def test_render_dashboard_with_headlines():
-    item = _make_item("a", annotation="full context...",
-                      headline="main.go:9:2: missing import")
-    group = FailureGroup(job="Analyze (go)", kind=FailureKind.BUILD, items=(item,))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"analyze-go": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW})
-    assert "Analyze (go):" in dashboard
-    assert "main.go:9:2: missing import" in dashboard
-
-
-def test_render_dashboard_deduplicates_headlines():
-    items = [
-        _make_item("a", headline="same error"),
-        _make_item("b", headline="same error"),
-        _make_item("c", headline="same error"),
-    ]
-    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=tuple(items))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"build": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW, "b": Outcome.NEW, "c": Outcome.NEW})
-    assert "same error (×3)" in dashboard
-    assert dashboard.count("same error") == 1
-
-
-def test_render_dashboard_truncates_at_five():
-    items = [_make_item(f"item-{i}", headline=f"error {i}") for i in range(8)]
-    group = FailureGroup(job="lint", kind=FailureKind.LINT, items=tuple(items))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"lint": group},
-    )
-    dashboard = render_dashboard(run, {f"item-{i}": Outcome.NEW for i in range(8)})
-    assert "▸" in dashboard
-    headline_lines = [l for l in dashboard.splitlines() if "▸" in l]
-    assert len(headline_lines) == 5
-    assert "… and 3 more" in dashboard
-
-
-def test_render_dashboard_no_headline_falls_back_to_annotation():
-    item = _make_item("a", annotation="SC2086: Double quote to prevent globbing")
-    group = FailureGroup(job="shellcheck", kind=FailureKind.LINT, items=(item,))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"shellcheck": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW})
-    assert "SC2086" in dashboard
-
-
 # ── source_run_id Tests ──────────────────────────────────────────────────
 
 
@@ -928,35 +800,6 @@ def test_failure_item_context_default():
     assert item.context is None
 
 
-# ── Multi-run Dashboard Tests ────────────────────────────────────────────
-
-
-def test_render_dashboard_shows_multiple_run_ids():
-    item = _make_item("a")
-    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=(item,))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"build": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW}, run_ids=[100, 200])
-    assert "100" in dashboard
-    assert "200" in dashboard
-    assert "Workflow runs:" in dashboard
-
-
-def test_render_dashboard_omits_run_ids_for_single_run():
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={},
-    )
-    dashboard = render_dashboard(run, {}, run_ids=[100])
-    assert "Workflow runs:" not in dashboard
-
-
 # ── failed_step Tests ───────────────────────────────────────────────────
 
 
@@ -973,76 +816,6 @@ def test_failure_group_failed_step_default():
     item = _make_item("a")
     group = FailureGroup(job="lint", kind=FailureKind.LINT, items=(item,))
     assert group.failed_step is None
-
-
-def test_render_dashboard_shows_failed_step():
-    item = _make_item("a", headline="Run 'mise run generate' locally and commit the changes.")
-    group = FailureGroup(
-        job="Generate & verify", kind=FailureKind.BUILD,
-        items=(item,), failed_step="Generate & check drift",
-    )
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"generate-verify": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW})
-    assert "Generate & verify → Generate & check drift:" in dashboard
-
-
-def test_render_dashboard_omits_arrow_without_failed_step():
-    item = _make_item("a", headline="SC2086: Double quote")
-    group = FailureGroup(job="shellcheck", kind=FailureKind.LINT, items=(item,))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"shellcheck": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW})
-    assert "shellcheck:" in dashboard
-    assert "→" not in dashboard
-
-
-def test_render_dashboard_show_status_in_progress():
-    item = _make_item("a")
-    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=(item,))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="in_progress", conclusion="",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"build": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW}, show_status=True)
-    assert "— in progress" in dashboard
-    assert "Run #5" in dashboard
-
-
-def test_render_dashboard_show_status_complete():
-    item = _make_item("a")
-    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=(item,))
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={"build": group},
-    )
-    dashboard = render_dashboard(run, {"a": Outcome.NEW}, show_status=True)
-    assert "— complete" in dashboard
-
-
-def test_render_dashboard_show_status_default_off():
-    """Without show_status, header has no status suffix."""
-    run = RunState(
-        run_id=100, run_number=5, head_sha="abc1234",
-        status="in_progress", conclusion="",
-        fetched_at="2026-06-26T00:00:00+00:00",
-        failures={},
-    )
-    dashboard = render_dashboard(run, {})
-    assert "— in progress" not in dashboard
-    assert "— complete" not in dashboard
 
 
 # ── Drift/Codegen Marker Tests ──────────────────────────────────────────

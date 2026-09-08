@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """CI failure lifecycle tracking.
 
-Handles failure classification, progression tracking, and rendering for the
-ci-failures skill. State persistence is delegated to pr.domains.CIDomain.
+Handles failure classification and progression tracking for the ci-failures
+skill. State persistence is delegated to pr.domains.CIDomain, and how a run is
+reported to a person or a machine is `pr.ci_report`'s.
 """
 
 # doc-group: pr-state
@@ -13,8 +14,6 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
-
-from git import client as git_client
 
 if TYPE_CHECKING:
     from pr.domains import CIDomain
@@ -585,91 +584,3 @@ def sync_ci_domain(domain, run: RunState):
             del domain.runs[old_id]
 
     return domain
-
-
-# ── Dashboard ──────────────────────────────────────────────────────────────
-
-_MAX_DASHBOARD_HEADLINES = 5
-_MAX_DASHBOARD_ANNOTATION = 120
-
-
-def render_dashboard(
-    run: RunState,
-    progression: dict[str, Outcome],
-    run_ids: list[int] | None = None,
-    show_status: bool = False,
-) -> str:
-    """Render a human-readable dashboard string for stderr output."""
-    header = f"## CI Run #{run.run_number} ({git_client.abbrev(run.head_sha)})"
-    if show_status:
-        suffix = "in progress" if run.status != "completed" else "complete"
-        header += f" — {suffix}"
-    lines = [header, ""]
-
-    if run_ids and len(run_ids) > 1:
-        lines.append(f"Workflow runs: {', '.join(str(r) for r in run_ids)}")
-        lines.append("")
-
-    if not run.failures:
-        if run.status != "completed":
-            lines.append("Checks still running — results incomplete.")
-        else:
-            lines.append("All checks passed.")
-        return "\n".join(lines)
-
-    kind_counts: dict[FailureKind, int] = {}
-    for group in run.failures.values():
-        kind_counts[group.kind] = kind_counts.get(group.kind, 0) + len(group.items)
-
-    total = sum(kind_counts.values())
-    lines.append(f"Failures: {total} total")
-    for kind in FailureKind:
-        count = kind_counts.get(kind, 0)
-        if count:
-            lines.append(f"  {kind.value}: {count}")
-    lines.append("")
-
-    headline_count = 0
-    overflow = 0
-    for group in run.failures.values():
-        group_headlines: dict[str, int] = {}
-        for item in group.items:
-            text = item.headline or item.annotation[:_MAX_DASHBOARD_ANNOTATION]
-            group_headlines[text] = group_headlines.get(text, 0) + 1
-
-        if not group_headlines:
-            continue
-
-        remaining = _MAX_DASHBOARD_HEADLINES - headline_count
-        if remaining <= 0:
-            overflow += len(group_headlines)
-            continue
-
-        job_label = f"{group.job} → {group.failed_step}" if group.failed_step else group.job
-        lines.append(f"  {job_label}:")
-        for text, count in list(group_headlines.items())[:remaining]:
-            suffix = f" (×{count})" if count > 1 else ""
-            lines.append(f"    ▸ {text}{suffix}")
-            headline_count += 1
-        leftover = len(group_headlines) - remaining
-        if leftover > 0:
-            overflow += leftover
-        lines.append("")
-
-    if overflow > 0:
-        lines.append(f"  … and {overflow} more")
-        lines.append("")
-
-    outcome_counts: dict[Outcome, int] = {}
-    for outcome in progression.values():
-        outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
-
-    if outcome_counts:
-        parts = [
-            f"{outcome_counts[o]} {o.value}"
-            for o in Outcome if outcome_counts.get(o, 0)
-        ]
-        lines.append("Progression: " + ", ".join(parts))
-        lines.append("")
-
-    return "\n".join(lines)

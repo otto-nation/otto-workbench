@@ -498,7 +498,6 @@ def _guard_repo_config():
 
 
 REVIEW_THREADS = REPO_ROOT / "ai" / "bin" / "review-threads"
-CI_CHECK = REPO_ROOT / "ai" / "bin" / "ci-check"
 EVAL_MODELS = REPO_ROOT / "ai" / "bin" / "eval-models"
 REUSE_SESSION_START = REPO_ROOT / "ai" / "claude" / "bin" / "reuse-session-start"
 
@@ -1023,11 +1022,6 @@ def rss():
 @pytest.fixture(scope="session")
 def em():
     return load_script("eval_models", EVAL_MODELS)
-
-
-@pytest.fixture(scope="session")
-def cc():
-    return load_script("ci_check", CI_CHECK)
 
 
 # One temp root for every make_ctx() default target_dir, not a tmp_path-scoped

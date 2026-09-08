@@ -2986,6 +2986,22 @@ closest to the comment being annotated.
 
 The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
 
+### cli/ci_check.py
+
+Fetch CI run data, classify failures, and output status.
+
+Renders a human-readable dashboard to stderr and structured JSON to stdout.
+Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
+on the run's target rather than on the checkout it was invoked from.
+
+Usage:
+  ci-check                      # latest run for current branch
+  ci-check --branch <name>      # specific branch (works from bare repos)
+  ci-check --run <run_id>       # specific run
+  ci-check --pr <number_or_url> # discover branch from PR
+  ci-check --repo-dir <path>    # specify worktree directory
+  ci-check --fix                # diagnose then invoke AI to fix failures
+
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.

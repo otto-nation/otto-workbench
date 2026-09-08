@@ -163,13 +163,15 @@ def test_a_failed_exec_fresh_puts_the_displaced_name_back(tmp_path, monkeypatch)
     assert sys.modules["failed_fresh_probe"] is placeholder
 
 
-def test_the_ci_check_fixture_and_its_test_module_share_one_object(cc):
-    """The regression this owner was written for: `ci_check_test` executed the
-    script at import time and the `cc` fixture executed it again, so whichever
-    ran second owned the name. `patch("ci_check.…")` then rewrote one copy
-    while the call under test read the other's globals, and the pairing that
-    exposed it depended on how xdist distributed the two files."""
-    import ci_check_test
+def test_two_test_modules_asking_for_one_script_get_one_object():
+    """The regression this owner was written for: two files executed the same
+    script and whichever ran second owned the name, so `patch("<name>.…")`
+    rewrote one copy while the call under test read the other's globals — and
+    the pairing that exposed it depended on how xdist distributed the files.
+    `validate_permissions` is loaded by two test modules, so it is the live
+    instance of that shape."""
+    import permission_mirror_test
+    import validate_permissions_test
 
-    assert cc is ci_check_test.ci_check
-    assert sys.modules["ci_check"] is cc
+    assert permission_mirror_test.vp is validate_permissions_test.vp
+    assert sys.modules["validate_permissions"] is validate_permissions_test.vp

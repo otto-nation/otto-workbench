@@ -1,4 +1,4 @@
-"""Tests for ci-check script functions."""
+"""Tests for `cli.ci_check` — the flow behind the `ci-check` command."""
 
 import json
 import sys
@@ -7,17 +7,14 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from conftest import (
-    CI_CHECK, assert_no_worktree_exit, load_script, make_ctx, write_thrash_log,
-)
+from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-ci_check = load_script("ci_check", CI_CHECK)
-
+from cli import ci_check  # noqa: E402
 from agent import retry as agent_retry  # noqa: E402
 from git import land  # noqa: E402
 from core import publishing  # noqa: E402
@@ -66,7 +63,7 @@ def test_rebase_if_behind_runs_rebase_on_success():
     report = _report(behind_main=5)
     mock_run = MagicMock()
     mock_run.returncode = 0
-    with patch("ci_check.subprocess.run", return_value=mock_run) as mock_subrun:
+    with patch("cli.ci_check.subprocess.run", return_value=mock_run) as mock_subrun:
         result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
     assert result is True
     trail.info.assert_called()
@@ -82,7 +79,7 @@ def test_rebase_if_behind_continues_on_failure():
     mock_run = MagicMock()
     mock_run.returncode = 1
     mock_run.stderr = "conflict\n"
-    with patch("ci_check.subprocess.run", return_value=mock_run):
+    with patch("cli.ci_check.subprocess.run", return_value=mock_run):
         result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
     assert result is False
     trail.warn.assert_called()
@@ -183,11 +180,11 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
 
     trail = MagicMock()
     report = _report(failures=_ONE_FAILURE, run_number=1)
-    with patch("ci_check._rebase_if_behind", return_value=False), \
-         patch("ci_check.fix_engine.land.land",
+    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+         patch("cli.ci_check.fix_engine.land.land",
                return_value=landed or land.LandResult(CommitStatus.NO_CHANGES)), \
-         patch("ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
-         patch("ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix",
+         patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
+         patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix",
                side_effect=invoke) as inv:
         rc = ci_check._run_fix(
             trail, report,
@@ -251,11 +248,11 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
     trail = MagicMock()
     artifacts = tmp_path / "ignore" / "ci-failures"
     artifacts.mkdir(parents=True)
-    with patch("ci_check._rebase_if_behind", return_value=False), \
-         patch("ci_check.fix_engine.land.land",
+    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+         patch("cli.ci_check.fix_engine.land.land",
                return_value=land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
-         patch("ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
-         patch("ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
+         patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
+         patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
             trail, _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
@@ -265,11 +262,11 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
 
 def test_the_fix_pass_commits_gated_and_asks_for_the_recovery(tmp_path):
     """A run without `--post` commits and drafts the push; regeneration is retried."""
-    with patch("ci_check._rebase_if_behind", return_value=False), \
-         patch("ci_check.fix_engine.land.land",
+    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+         patch("cli.ci_check.fix_engine.land.land",
                return_value=land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
-         patch("ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
-         patch("ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
+         patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
+         patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
             MagicMock(), _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),

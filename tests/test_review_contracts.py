@@ -624,9 +624,9 @@ def _render_fix_findings(wt_path) -> str:
 # One list, so a fourth domain adopting the engine is added to the contracts by
 # adding its renderer here rather than to each test in turn.
 _FIX_RENDERERS = {
-    "ci": lambda cc, rt, wt: _render_fix_ci(wt),
-    "comments": lambda cc, rt, wt: _render_fix_comments(rt, wt),
-    "findings": lambda cc, rt, wt: _render_fix_findings(wt),
+    "ci": lambda rt, wt: _render_fix_ci(wt),
+    "comments": lambda rt, wt: _render_fix_comments(rt, wt),
+    "findings": lambda rt, wt: _render_fix_findings(wt),
 }
 
 
@@ -727,8 +727,8 @@ class TestOutputBlockContract:
         self._assert_no_mandate(_template_of(key), _render_via_build_prompt(key))
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
-    def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt, tmp_path):
-        self._assert_no_mandate(render, _FIX_RENDERERS[render](cc, rt, tmp_path))
+    def test_fix_templates_have_no_write_tool_mandate(self, render, rt, tmp_path):
+        self._assert_no_mandate(render, _FIX_RENDERERS[render](rt, tmp_path))
 
     def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
@@ -774,24 +774,24 @@ class TestOutputBlockContract:
         assert expected == checked
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
-    def test_fix_templates_share_the_worktree_block(self, render, cc, rt, tmp_path):
-        rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
+    def test_fix_templates_share_the_worktree_block(self, render, rt, tmp_path):
+        rendered = _FIX_RENDERERS[render](rt, tmp_path)
         assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
-    def test_fix_templates_share_the_generated_block(self, render, cc, rt, tmp_path):
+    def test_fix_templates_share_the_generated_block(self, render, rt, tmp_path):
         """Any fix pass can edit a source whose artifact then needs rebuilding.
 
         Not a property of the domain — a CI fix, a comment fix and a finding fix
         all reach `lib/` docstrings and `.src` documents — so every template
         carries it and none of them words it for itself.
         """
-        rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
+        rendered = _FIX_RENDERERS[render](rt, tmp_path)
         assert agent_templates.GENERATED_BLOCK in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(
-        self, render, cc, rt, tmp_path,
+        self, render, rt, tmp_path,
     ):
         """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
 
@@ -800,7 +800,7 @@ class TestOutputBlockContract:
         a checklist the agent is not looking at. No template has to say it the
         same way — each only has to still be talking about all of them.
         """
-        task = _FIX_RENDERERS[render](cc, rt, tmp_path).split("## Task", 1)[1]
+        task = _FIX_RENDERERS[render](rt, tmp_path).split("## Task", 1)[1]
         for box in fix_tracking._BOXES:
             why = (
                 f" — {fix_tracking._WHY}"

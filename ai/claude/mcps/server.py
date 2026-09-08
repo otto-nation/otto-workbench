@@ -27,6 +27,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import stat
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -94,6 +95,12 @@ REQUIRED_SCHEMA_KEYS = ("name", "input_schema")
 # also matches — the scan is a cheap filter, not a guarantee, which is why tools
 # that take positional arguments must reject unknown flags on their own.
 DECLARATION_MARKERS = (TOOL_SCHEMA_FLAG.encode(), b"ToolParser")
+
+# A shim over ai/lib/cli/<module>.py, whose markers are in the module rather
+# than in the executable. Anchored at a line start so the import a shim is made
+# of is what matches, not a mention of one in a comment; the tail is open
+# because every shim carries a linter directive after it.
+SHIM_IMPORT = re.compile(rb"^from cli\.(\w+) import main\b", re.MULTILINE)
 
 # Bytes of a candidate read when looking for a marker. Scripts declare the
 # protocol in their imports or argument parsing, well inside this bound.
@@ -179,6 +186,15 @@ def _is_executable(path: Path) -> bool:
         return False
 
 
+def _head_bytes(path: Path) -> bytes:
+    try:
+        with path.open("rb") as f:
+            return f.read(DECLARATION_SCAN_BYTES)
+    except OSError as exc:
+        logger.debug("Cannot read %s: %s", path, exc)
+        return b""
+
+
 def declares_tool_schema(script: Path) -> bool:
     """True if *script* carries a protocol marker in its source.
 
@@ -186,14 +202,20 @@ def declares_tool_schema(script: Path) -> bool:
     default action instead of answering — ``build-otto-ai-tools-tarball`` read
     the flag as a version string and wrote a release archive into the CWD.
     Reading the source first limits execution to scripts that could respond.
+
+    A shim over ``ai/lib/cli/`` declares by delegation: the parser it answers
+    the probe with is in the module it imports, so the scan follows the import
+    rather than reading the twelve lines that carry no marker.
     """
-    try:
-        with script.open("rb") as f:
-            head = f.read(DECLARATION_SCAN_BYTES)
-    except OSError as exc:
-        logger.debug("Cannot read %s: %s", script, exc)
+    head = _head_bytes(script)
+    if any(marker in head for marker in DECLARATION_MARKERS):
+        return True
+
+    match = SHIM_IMPORT.search(head)
+    if match is None:
         return False
-    return any(marker in head for marker in DECLARATION_MARKERS)
+    module = script.resolve().parent.parent / "lib" / "cli" / f"{match.group(1).decode()}.py"
+    return any(marker in _head_bytes(module) for marker in DECLARATION_MARKERS)
 
 
 class ProbeFailure(Enum):

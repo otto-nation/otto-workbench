@@ -497,7 +497,6 @@ def _guard_repo_config():
     _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
-REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "bin" / "review-threads"
 CI_CHECK = REPO_ROOT / "ai" / "bin" / "ci-check"
 EVAL_MODELS = REPO_ROOT / "ai" / "bin" / "eval-models"
@@ -993,7 +992,10 @@ def _clear_bot_login_cache():
 
 @pytest.fixture(scope="session")
 def ro():
-    return load_script("review_orchestrate", REVIEW_ORCHESTRATE)
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from cli import review_orchestrate
+    return review_orchestrate
 
 
 @pytest.fixture(scope="session")

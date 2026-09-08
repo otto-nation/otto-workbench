@@ -1,0 +1,374 @@
+"""Review orchestration for claude-review.
+
+Handles everything between "worktree is ready" and "the review directory holds
+only its deliverable": PR metadata fetching, prompt template rendering, Claude
+agent invocation, stream progress display, file grouping, review merging, the
+static analysis section, and the optional fix pass.
+
+Phase order is this script's alone, and so is the cleanup that order decides —
+no phase cleans up after itself.
+
+Called by claude-review (bash wrapper) which handles worktree lifecycle,
+archive management, and interactive prompts.
+
+Usage:
+  review-orchestrate --pr NUMBER --review-file PATH \
+    --repo-dir PATH [--target-dir PATH] [--session-log PATH] \
+    [--prior-review PATH] [--issue URL] [--issue-context JSON]
+"""
+
+# doc-group: cli
+
+import argparse
+import json
+import os
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+from core.trail import Trail, add_trail_args
+from agent import diagnosis as _ad
+from agent import invoke as _ai
+from agent import phases as _aph
+from agent import usage as _au
+from review import prompt as _rpmt
+from review import prompt_prior as _rprior
+from review import prompt_sections as _rpsec
+from review import registry as _rreg
+from agent import session as _ra
+from review import pipeline as _rpl
+from review import fix as _rfx
+from review import gc as _rgc
+from review import paths as _rpath
+from review import phases as _rph
+from review import steps as _rstp
+from review import outcome as _rout
+from review import retry as _rrt
+from review import state as _rst
+from review import types as _rt
+
+from core import log
+from pr import state as pr_state
+from core import proc
+from core import publishing
+
+from pr.context import detect_repo
+from agent.registry import add_phase_skip_flags, phase_skips
+from core.phases import Effort, Mode
+from review.document import (
+    SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
+)
+from review.paths import (
+    FILENAME_SESSION, review_artifact_path, stamp_reviewed,
+)
+from core.tool_parser import enum_arg
+from review.collect import collect_preflight_data
+from review.reply_threads import fetch_reply_threads
+from review.types import Pipeline, ReviewJob, ViewerRole
+from agent.invoke import QuotaThrottle
+from review.fix import run_fix_pass
+from review.gc import cleaned_on_success
+from agent.phases import collect_phase_models, resolve_effort
+from review.pipeline import (
+    DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, _fetch_metadata,
+    run_multi_phase, run_single_agent,
+)
+from review.static_analysis import (
+    format_static_analysis, run_static_analysis,
+)
+from agent import backend as ai_backend
+
+# The binary a user runs and the trail records, which is not this module's own
+# name. Spelled out rather than derived, so the shim can be renamed only by
+# changing the name in both places at once.
+SCRIPT = "review-orchestrate"
+
+_SUBMODULES = (
+    _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc,
+    _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
+)
+
+# Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
+# submodule back the way it was. mock.patch deletes rather than restores when the
+# attribute was not in the proxy's own __dict__ to begin with, which is every
+# first patch of a given name. A caller that restores by assignment instead
+# (monkeypatch.setattr) leaves its entry behind, holding the value the attribute
+# already has again — bounded by the number of names ever patched.
+_ORIGINALS: dict[tuple[str, str], object] = {}
+_MISSING = object()
+
+
+class _ProxyModule(type(sys.modules[__name__])):
+    """Allows tests to access submodule attributes via the script module.
+
+    A name imported between submodules has one definition and several bindings.
+    Reading it can stop at the first — they are the same object. Writing it
+    cannot: a test replacing a seam means every caller of it, so `__setattr__`
+    writes through to all of them and `__delattr__` puts them all back.
+    """
+
+    def __getattr__(self, name):
+        for mod in _SUBMODULES:
+            try:
+                return getattr(mod, name)
+            except AttributeError:
+                continue
+        raise AttributeError(f"module 'review_orchestrate' has no attribute {name!r}")
+
+    def __setattr__(self, name, value):
+        for mod in _SUBMODULES:
+            if hasattr(mod, name):
+                _ORIGINALS.setdefault((mod.__name__, name), getattr(mod, name))
+                setattr(mod, name, value)
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name):
+        for mod in _SUBMODULES:
+            original = _ORIGINALS.pop((mod.__name__, name), _MISSING)
+            if original is not _MISSING:
+                setattr(mod, name, original)
+        super().__delattr__(name)
+
+
+sys.modules[__name__].__class__ = _ProxyModule
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+_AI_ENV_PREFIXES = ("ANTHROPIC_", "CLAUDE_CODE_", "CLOUD_ML_")
+_AI_ENV_EXACT = ("AI_BACKEND",)
+_SENSITIVE_FRAGMENTS = ("KEY", "TOKEN", "SECRET")
+
+
+def _log_ai_backend(trail) -> None:
+    data: dict[str, str] = {}
+    for key, val in sorted(os.environ.items()):
+        if not (key.startswith(_AI_ENV_PREFIXES) or key in _AI_ENV_EXACT):
+            continue
+        if any(f in key for f in _SENSITIVE_FRAGMENTS):
+            data[key] = "empty" if val == "" else "set"
+        else:
+            data[key] = val or ""
+    trail.info("ai_backend", "resolved AI backend configuration", data=data)
+
+
+def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_path: str) -> dict | None:
+    review_path = Path(review_file)
+    if not review_path.is_file():
+        return None
+    changed_files = [f["path"] for f in pr_files]
+    results = run_static_analysis(changed_files, wt_path)
+    section = format_static_analysis(results)
+    if not section:
+        return None
+    review_path.write_text(set_section(
+        review_path.read_text(), SECTION_STATIC_ANALYSIS, section, before=SECTION_VERDICT,
+    ))
+    return {
+        "checkers_run": len(results),
+        "files_checked": sum(r.files_checked for r in results),
+        "violations": sum(len(r.violations) for r in results),
+    }
+
+
+def _run_phases(trail, args, job) -> Pipeline:
+    """Every phase of one run, in order, returning the pipeline it chose.
+
+    Split out from `_run_orchestrate` so the whole sequence sits inside one
+    `cleaned_on_success` statement: what the sweep covers is exactly what this
+    function does, and a phase added here is swept without anyone remembering
+    to sweep it.
+    """
+    pr = job.pr
+    preset = EFFORT_PRESETS[job.effort]
+    line_threshold = preset.multi_phase_line_threshold
+    file_threshold = preset.multi_phase_file_threshold
+    is_large = (
+        pr.total_lines > line_threshold
+        or pr.changed_files > file_threshold
+    )
+    pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
+
+    trail.decision(
+        "select_pipeline",
+        f"chose {pipeline}",
+        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={file_threshold} lines={line_threshold})",
+        data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
+    )
+
+    if is_large:
+        with trail.span("multi_phase"):
+            run_multi_phase(
+                job, max_parallel=args.max_parallel,
+                max_cost=args.max_cost, max_groups=args.max_groups,
+                disprove=args.disprove,
+            )
+    else:
+        with trail.span("single_agent"):
+            run_single_agent(job, disprove=args.disprove)
+
+    if job.verification:
+        v = job.verification
+        detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
+        trail.info("evidence_verification", detail, data=v)
+
+    sa_summary = _inject_static_analysis_section(job.review_file, job.pr.files, job.wt_path)
+    if sa_summary is not None:
+        detail = f"checkers={sa_summary['checkers_run']} files={sa_summary['files_checked']} violations={sa_summary['violations']}"
+        trail.info("static_analysis", detail, data=sa_summary)
+
+    if args.fix and Path(job.review_file).exists():
+        trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
+        with trail.span("fix_pass"):
+            run_fix_pass(job, trail)
+    elif args.fix:
+        trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
+
+    return pipeline
+
+
+def _run_orchestrate(trail, args, repo, session_log) -> int:
+    _log_ai_backend(trail)
+    if not ai_backend.preflight(collect_phase_models(args.model), trail):
+        return 1
+    run_ctx = _fetch_metadata(
+        repo, args.pr, args.mode, args.repo_dir, args.recover_sha,
+    )
+    pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
+
+    prior_review = ""
+    if args.prior_review and Path(args.prior_review).exists():
+        prior_review = Path(args.prior_review).read_text()
+
+    job = ReviewJob(
+        repo=repo, pr_number=args.pr, pr=pr, ctx=ctx,
+        wt_path=args.repo_dir, review_file=args.review_file,
+        session_log=session_log,
+        issue_link=args.issue, issue_context=args.issue_context,
+        prior_review=prior_review, mode=args.mode,
+        generator_version=args.generator_version,
+        model=args.model, effort=resolve_effort(args.effort),
+        skip_phases=phase_skips(args),
+        include_generated=args.generated,
+    )
+
+    job.throttle = QuotaThrottle()
+    # Handed to us, not derived: --repo-dir may be a detached review worktree,
+    # which has no branch to key on.
+    job.pr_state_data = (
+        pr_state.load_state(Path(args.target_dir)) if args.target_dir else None
+    )
+
+    if pr_data and args.mode != Mode.SELF:
+        viewer = pr_data.viewer_login
+        pr_author = getattr(pr, "author", "")
+        if pr_author and pr_author.lower() == viewer.lower():
+            job.viewer_role = ViewerRole.AUTHOR
+        elif viewer.lower() in [r.lower() for r in getattr(pr_data, "requested_reviewers", [])]:
+            job.viewer_role = ViewerRole.REQUESTED
+        else:
+            job.viewer_role = ViewerRole.REVIEWER
+
+    log.info("Collecting file data...")
+    if prior_review and args.pr:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pf_future = pool.submit(collect_preflight_data, job)
+            rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)
+            job.preflight = pf_future.result()
+            job.reply_threads = rt_future.result()
+    else:
+        job.preflight = collect_preflight_data(job)
+
+    with cleaned_on_success(Path(job.artifact_dir)):
+        pipeline = _run_phases(trail, args, job)
+
+    # The one place a run is known to have finished with a review in hand: a
+    # phase that produced none exits the process rather than returning, so
+    # nothing below this line runs for it. Stamping here rather than beside the
+    # sidecar write is what makes `reviewed_at` mean reviewed.
+    stamp_reviewed(Path(job.artifact_dir))
+
+    result = {
+        "review_file": job.review_file,
+        "session_log": job.session_log,
+        "mode": pipeline,
+    }
+    json.dump(result, sys.stdout)
+    print()
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog=SCRIPT, description="Review orchestration for claude-review")
+    parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
+    parser.add_argument("--review-file", required=True, help="Output review file path")
+    parser.add_argument("--repo-dir", "--worktree",
+                        required=True, help="Worktree path")
+    parser.add_argument("--target-dir", default="",
+                        help="Where the run's state lives (see pr_target)")
+    parser.add_argument("--repo", default="", help="Repository name (owner/repo)")
+    parser.add_argument("--session-log", help="Session log path")
+    parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
+    parser.add_argument("--issue", default="", help="Issue URL")
+    parser.add_argument("--issue-context", default="", help="Issue context JSON")
+    parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
+                        help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
+    add_phase_skip_flags(parser)
+    parser.add_argument("--disprove", action="store_true", default=None,
+                        help="Enable disprove-it gate (default: effort-based)")
+    parser.add_argument("--generator-version", default="",
+                        help="Version string to embed in review metadata")
+    parser.add_argument("--mode", type=enum_arg(Mode), choices=list(Mode), default=Mode.PR,
+                        help="Review mode: pr (default) or self")
+    parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
+                        help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
+    parser.add_argument("--model", default="",
+                        help="Override model for all agents (e.g. sonnet, opus)")
+    parser.add_argument("--effort", type=enum_arg(Effort), choices=list(Effort), default=None,
+                        help="Effort preset controlling thinking, budget, phase skipping "
+                             "(default: review.effort in config.yml, else medium)")
+    parser.add_argument("--max-groups", type=int, default=None,
+                        help="Max file groups in multi-phase reviews (default: effort-based)")
+    parser.add_argument("--fix", action="store_true",
+                        help="Run fix pass after review to apply findings")
+    parser.add_argument("--post", action="store_true",
+                        help="Let the fix pass push its commit; without it the "
+                             "push is drafted")
+    parser.add_argument("--generated", action="store_true",
+                        help="Include tier3-generated files (skipped by default)")
+    parser.add_argument("--recover-sha", default="",
+                        help="Commit a --recover run must complete against "
+                             "(pins metadata to the failed run's HEAD)")
+    add_trail_args(parser)
+    args = parser.parse_args(argv)
+
+    # Before anything runs. `claude-review` decides whether this run may publish
+    # and forwards the answer here, because the gate is per-process and the fix
+    # pass lives in this one.
+    if args.post:
+        publishing.enable()
+
+    if args.mode == Mode.PR and not args.pr:
+        log.error("--pr is required in pr mode")
+        return 1
+
+    repo = args.repo or detect_repo(cwd=args.repo_dir)
+
+    session_log = args.session_log or review_artifact_path(args.review_file, FILENAME_SESSION)
+
+    trail = Trail.start(
+        script=SCRIPT,
+        context={"repo": repo, "pr": args.pr, "mode": args.mode},
+        debug=args.debug,
+    )
+
+    try:
+        return _run_orchestrate(trail, args, repo, session_log)
+    except KeyboardInterrupt:
+        return proc.INTERRUPT_RETURNCODE
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()

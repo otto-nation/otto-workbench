@@ -2921,6 +2921,26 @@ Usage:
   pr-describe --dry-run               # print the revision, do not push it
   pr-describe --repo-dir <path>       # specify worktree directory
 
+### cli/review_orchestrate.py
+
+Review orchestration for claude-review.
+
+Handles everything between "worktree is ready" and "the review directory holds
+only its deliverable": PR metadata fetching, prompt template rendering, Claude
+agent invocation, stream progress display, file grouping, review merging, the
+static analysis section, and the optional fix pass.
+
+Phase order is this script's alone, and so is the cleanup that order decides —
+no phase cleans up after itself.
+
+Called by claude-review (bash wrapper) which handles worktree lifecycle,
+archive management, and interactive prompts.
+
+Usage:
+  review-orchestrate --pr NUMBER --review-file PATH \
+    --repo-dir PATH [--target-dir PATH] [--session-log PATH] \
+    [--prior-review PATH] [--issue URL] [--issue-context JSON]
+
 ### cli/review_positions.py
 
 Validate review finding positions against a PR diff.

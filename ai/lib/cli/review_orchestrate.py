@@ -48,6 +48,7 @@ from review import state as _rst
 from review import types as _rt
 
 from core import log
+from core import module_proxy
 from pr import state as pr_state
 from core import proc
 from core import publishing
@@ -86,52 +87,10 @@ SCRIPT = "review-orchestrate"
 _SUBMODULES = (
     _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc,
     _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
-    ai_backend, log, pr_state, proc, publishing,
+    ai_backend, log, module_proxy, pr_state, proc, publishing,
 )
 
-# Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
-# submodule back the way it was. mock.patch deletes rather than restores when the
-# attribute was not in the proxy's own __dict__ to begin with, which is every
-# first patch of a given name. A caller that restores by assignment instead
-# (monkeypatch.setattr) leaves its entry behind, holding the value the attribute
-# already has again — bounded by the number of names ever patched.
-_ORIGINALS: dict[tuple[str, str], object] = {}
-_MISSING = object()
-
-
-class _ProxyModule(type(sys.modules[__name__])):
-    """Allows tests to access submodule attributes via the script module.
-
-    A name imported between submodules has one definition and several bindings.
-    Reading it can stop at the first — they are the same object. Writing it
-    cannot: a test replacing a seam means every caller of it, so `__setattr__`
-    writes through to all of them and `__delattr__` puts them all back.
-    """
-
-    def __getattr__(self, name):
-        for mod in _SUBMODULES:
-            try:
-                return getattr(mod, name)
-            except AttributeError:
-                continue
-        raise AttributeError(f"module 'review_orchestrate' has no attribute {name!r}")
-
-    def __setattr__(self, name, value):
-        for mod in _SUBMODULES:
-            if hasattr(mod, name):
-                _ORIGINALS.setdefault((mod.__name__, name), getattr(mod, name))
-                setattr(mod, name, value)
-        super().__setattr__(name, value)
-
-    def __delattr__(self, name):
-        for mod in _SUBMODULES:
-            original = _ORIGINALS.pop((mod.__name__, name), _MISSING)
-            if original is not _MISSING:
-                setattr(mod, name, original)
-        super().__delattr__(name)
-
-
-sys.modules[__name__].__class__ = _ProxyModule
+module_proxy.install(__name__, _SUBMODULES)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

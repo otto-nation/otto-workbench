@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from core.trail import Trail, add_trail_args
@@ -28,12 +27,13 @@ from review import posting as _rp
 from review import sections as _rs
 
 # Most of what follows is never referenced in this file. The names are re-exported
-# so a test can reach them at `review_post.<name>` and patch one, which the
-# `_ProxyModule` below forwards to the module that actually defines it. An import
-# an editor calls unused is therefore load-bearing — deleting it silently turns
-# the patch it serves into a no-op.
+# so a test can reach them at `review_post.<name>` and patch one, which the proxy
+# installed below forwards to the module that actually defines it. An import an
+# editor calls unused is therefore load-bearing — deleting it silently turns the
+# patch it serves into a no-op.
 from git import client as git_client
 from core import log
+from core import module_proxy
 from core import proc
 from review.dedup import dedup_against_posted
 from review.document import ReviewDocument
@@ -72,30 +72,11 @@ from review.sections import ReviewSections
 # changing the name in both places at once.
 SCRIPT = "review-post"
 
-_SUBMODULES = (_gh, _rd, _rfmt, _rg, _rpath, _rp, _rs, git_client, log, proc)
+_SUBMODULES = (
+    _gh, _rd, _rfmt, _rg, _rpath, _rp, _rs, git_client, log, module_proxy, proc,
+)
 
-
-class _ProxyModule(type(sys.modules[__name__])):
-    """Allows tests to access submodule attributes via the script module."""
-
-    def __getattr__(self, name):
-        for mod in _SUBMODULES:
-            try:
-                return getattr(mod, name)
-            except AttributeError:
-                continue
-        raise AttributeError(f"module 'review_post' has no attribute {name!r}")
-
-    def __setattr__(self, name, value):
-        for mod in _SUBMODULES:
-            if hasattr(mod, name):
-                setattr(mod, name, value)
-                super().__setattr__(name, value)
-                return
-        super().__setattr__(name, value)
-
-
-sys.modules[__name__].__class__ = _ProxyModule
+module_proxy.install(__name__, _SUBMODULES)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

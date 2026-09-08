@@ -434,40 +434,76 @@ def test_proxy_submodules_match_imports(script):
     )
 
 
-def test_proxy_setattr_reaches_every_binding(ro):
+_PROXIES = pytest.mark.parametrize(
+    "fixture", ["rp", "ro"], ids=["review-post", "review-orchestrate"],
+)
+
+
+def _shared_seam(module):
+    """A name several submodules bind to one object, and the modules binding it.
+
+    The proxy's write-through exists for exactly these names, and which one is
+    to hand drifts as the modules do — so the seam is found rather than named.
+    The seam is the object a read through the proxy returns, not the name on its
+    own: a name can also be defined twice (`gh.client.run` and `git.client.run`
+    are different functions), and a write follows the read rather than reaching
+    both. So the owners are the modules bound to what the read resolved to.
+    """
+    bound = (
+        (name, value, mod)
+        for mod in module._SUBMODULES
+        for name, value in vars(mod).items()
+        if not name.startswith("_") and callable(value)
+    )
+    owners: dict[str, list] = {}
+    for name, value, mod in bound:
+        if value is getattr(module, name):
+            owners.setdefault(name, []).append(mod)
+
+    shared = sorted((name, mods) for name, mods in owners.items() if len(mods) > 1)
+    assert shared, "no name spans submodules — the proxy has nothing to write through"
+    return shared[0]
+
+
+@_PROXIES
+def test_proxy_setattr_reaches_every_binding(fixture, request):
     """Patching a shared name through the proxy must reach all of its bindings.
 
     A name imported between submodules has one definition and several bindings.
     Patching only one of them leaves every other module's callers running the
     real implementation, which a test has no way to notice.
     """
-    owners = [mod for mod in ro._SUBMODULES if hasattr(mod, "run_agent")]
-    assert len(owners) > 1, "run_agent no longer spans modules — pick another seam"
+    module = request.getfixturevalue(fixture)
+    name, owners = _shared_seam(module)
 
-    originals = [mod.run_agent for mod in owners]
+    originals = [getattr(mod, name) for mod in owners]
     sentinel = object()
 
-    with mock.patch.object(ro, "run_agent", sentinel):
-        assert [mod.run_agent for mod in owners] == [sentinel] * len(owners)
+    with mock.patch.object(module, name, sentinel):
+        assert [getattr(mod, name) for mod in owners] == [sentinel] * len(owners)
 
-    assert [mod.run_agent for mod in owners] == originals
+    assert [getattr(mod, name) for mod in owners] == originals
 
     # mock.patch reaches __delattr__ only because the name was absent from the
     # proxy's own __dict__, which is its business and not a contract. Drive the
     # set-then-delete cycle directly so the restore stays pinned either way.
-    ro.run_agent = sentinel
-    assert [mod.run_agent for mod in owners] == [sentinel] * len(owners)
+    setattr(module, name, sentinel)
+    assert [getattr(mod, name) for mod in owners] == [sentinel] * len(owners)
 
-    del ro.run_agent
-    assert [mod.run_agent for mod in owners] == originals
+    delattr(module, name)
+    assert [getattr(mod, name) for mod in owners] == originals
 
 
 def test_shared_submodule_names_never_diverge(ro):
-    """A name bound in several submodules must be the same object in each.
+    """A name bound in several of these submodules is the same object in each.
 
-    This is what makes the proxy's write-to-every-binding correct. A module
-    that bound a peer's name to a definition of its own would have that
-    definition silently replaced by any patch of the shared name.
+    Then a patch through the proxy is unambiguous: the name means one thing to
+    every module that has it. `review_post` is not held to this — its set spans
+    `gh.client` and `git.client`, which mean different functions by `run`, `ok`,
+    `out` and `lines`. The proxy is safe either way, since a write follows the
+    read and reaches only the bindings holding what the read returned, but a
+    test patching one of those four names there is patching whichever module
+    comes first in `_SUBMODULES` and should say so.
     """
     bound = (
         (name, mod.__name__, value)

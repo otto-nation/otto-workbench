@@ -7516,6 +7516,25 @@ class TestTriageThrashGuard:
         assert len(prompts) == 2
         assert prompts[1].startswith(agent_retry.BLANK_RESPONSE_HINT)
 
+    def test_non_json_triage_output_is_kept_whole(self, rt, tmp_path):
+        """The old record kept a 500-character preview and no way to the rest."""
+        trail = MagicMock()
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+
+        def prompt(text, **kw):
+            return ("sorry, I cannot do that", 0)
+
+        with (
+            patch.object(rt.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(rt, "_branch_commit_log", return_value=""),
+        ):
+            result, rc = rt._run_triage(report, tmp_path, {}, trail)
+
+        assert result is None
+        assert rc == 1
+        assert trail.failure.call_args.kwargs["output"] == "sorry, I cannot do that"
+        assert "output_preview" not in trail.failure.call_args.kwargs.get("data", {})
+
 
 # ── permalink-backed claims ─────────────────────────────────────────────────
 

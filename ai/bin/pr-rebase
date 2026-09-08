@@ -64,7 +64,7 @@ from core.phases import Phase
 from pr.domains import RebaseStatus, RebaseSummary
 from core.proc import CmdResult
 from core.tool_parser import ToolParser
-from core.trail import EXCERPT_LIMIT, Trail, add_trail_args
+from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 
@@ -77,6 +77,10 @@ _trail: Trail | None = None
 def _terr(action: str, detail: str, **kwargs) -> None:
     if _trail:
         _trail.error(action, detail, **kwargs)
+
+
+def _tfail(action: str, detail: str, **kwargs) -> Path | None:
+    return _trail.failure(action, detail, **kwargs) if _trail else None
 
 
 def _tinfo(action: str, detail: str, **kwargs) -> None:
@@ -592,9 +596,12 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
         return False
 
     if r.returncode != 0:
-        _terr("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",
-              data={"cmd": cmd, "exit_code": r.returncode,
-                    "stderr": r.stderr.strip()[:EXCERPT_LIMIT]})
+        # `_try_run` hands back a raw `subprocess.CompletedProcess`, which has
+        # no `combined_output` — wrap it in `CmdResult` to reuse that owner.
+        combined = CmdResult(r.returncode, r.stdout or "", r.stderr or "").combined_output
+        _tfail("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",
+               output=combined,
+               data={"cmd": cmd, "exit_code": r.returncode})
         log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
         if r.stderr.strip():
             log.dim(r.stderr.strip()[:proc.DETAIL_LIMIT])
@@ -1335,15 +1342,11 @@ def _resolve_full_file(
     stdout = answer.text
     resolved_content, failure_reason = _parse_resolved_content(stdout)
     if resolved_content is None:
-        _terr(
+        _tfail(
             "resolve_conflicts",
             f"failed to parse resolution for {filepath}",
-            data={
-                "filepath": filepath,
-                "reason": failure_reason,
-                "stdout_len": len(stdout),
-                "stdout_tail": stdout[-EXCERPT_LIMIT:] if stdout else "",
-            },
+            output=stdout,
+            data={"filepath": filepath, "reason": failure_reason},
         )
         log.error(f"Failed to parse resolution for {filepath} ({failure_reason})")
         return None
@@ -1670,7 +1673,8 @@ def _step_conflicts(
     if _detect_rebase_in_progress(cwd):
         return None
 
-    _terr("step_conflicts", "rebase --continue failed after resolution", data={"stderr": r.stderr.strip()})
+    _tfail("step_conflicts", "rebase --continue failed after resolution",
+           output=r.combined_output)
     log.error("rebase --continue failed after conflict resolution — aborting.")
     git_client.run("rebase", "--abort", cwd=cwd)
     return 1
@@ -1763,7 +1767,7 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
 
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
-        _terr("unstash", "stash pop failed", data={"stderr": r.stderr.strip()})
+        _tfail("unstash", "stash pop failed", output=r.combined_output)
         log.error(f"git stash pop failed: {r.stderr.strip()}")
         log.warn(f"Your changes are still stashed as '{_STASH_MSG}' — "
                  "clear the blocking paths, then `git stash pop`.")
@@ -1809,15 +1813,11 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
         stdout = answer.text
         resolved_content, failure_reason = _parse_resolved_content(stdout)
         if resolved_content is None:
-            _terr(
+            _tfail(
                 "resolve_stash_conflicts",
                 f"failed to parse stash resolution for {filepath}",
-                data={
-                    "filepath": filepath,
-                    "reason": failure_reason,
-                    "stdout_len": len(stdout),
-                    "stdout_tail": stdout[-EXCERPT_LIMIT:] if stdout else "",
-                },
+                output=stdout,
+                data={"filepath": filepath, "reason": failure_reason},
             )
             log.error(f"Failed to parse stash resolution for {filepath} ({failure_reason})")
             continue
@@ -2372,7 +2372,7 @@ def _run_checkout(
     """Run one checkout, reporting git's own stderr when it refuses."""
     co = git_client.run(*args, cwd=cwd)
     if not co.ok:
-        _terr("preflight", f"cannot checkout {ctx.branch}", data={"stderr": co.stderr.strip()})
+        _tfail("preflight", f"cannot checkout {ctx.branch}", output=co.combined_output)
         log.error(f"Cannot checkout {ctx.branch}: {co.stderr.strip()}")
         return 1
     return 0
@@ -2451,7 +2451,7 @@ def _fresh(
         return _rebase_success(cwd, ctx, mode, target_ref=target_ref)
 
     if not _detect_rebase_in_progress(cwd):
-        _terr("rebase", f"git rebase failed (exit {r.returncode})", data={"stderr": r.stderr.strip()})
+        _tfail("rebase", f"git rebase failed (exit {r.returncode})", output=r.combined_output)
         log.error(f"git rebase failed (exit {r.returncode})")
         if r.stderr.strip():
             log.dim(r.stderr.strip())

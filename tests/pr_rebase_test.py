@@ -944,6 +944,37 @@ class TestLedgerAttribution:
         assert pr_rebase_cli._billed_to() == {"repo": None, "pr": None}
 
 
+class TestFailureRecording:
+    def test_the_guard_delegates_to_the_trail(self):
+        fake_trail = mock.MagicMock()
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail):
+            pr_rebase_cli._tfail("unstash", "stash pop failed", output="boom")
+        fake_trail.failure.assert_called_once_with(
+            "unstash", "stash pop failed", output="boom")
+
+    def test_no_trail_is_not_an_error(self):
+        with mock.patch.object(pr_rebase_cli, "_trail", None):
+            assert pr_rebase_cli._tfail("unstash", "failed", output="boom") is None
+
+    def test_an_unparseable_resolution_hands_over_the_whole_answer(self):
+        """The old record kept 500 characters of a tail and no way to the rest."""
+        fake_trail = mock.MagicMock()
+        answer = mock.Mock(exit_code=0, text="the model explained itself at length")
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+             mock.patch.object(pr_rebase_cli, "_get_ours_content", return_value=""), \
+             mock.patch.object(pr_rebase_cli, "_get_commit_diff", return_value=""), \
+             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+                               return_value=answer):
+            resolved = pr_rebase_cli._resolve_full_file(
+                "a.py", Path("/tmp/a.py"), "<<<<<<< ours\n", "1a2b3c4d", "subject",
+                "/tmp/wt", target_ref="origin/main",
+            )
+
+        assert resolved is None
+        kwargs = fake_trail.failure.call_args.kwargs
+        assert kwargs["output"] == answer.text
+        assert "stdout_tail" not in kwargs["data"]
+        assert "stdout_len" not in kwargs["data"]
 # ── _detect_delete_conflict ───────────────────────────────────────────────
 
 

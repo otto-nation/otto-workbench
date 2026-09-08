@@ -29,13 +29,10 @@ Usage:
 
 import argparse
 import json
-import os
 import shlex
 import shutil
-import subprocess
 import sys
 import traceback
-from collections.abc import Iterator
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
@@ -52,6 +49,7 @@ from gh import client as gh_client
 from git import client as git_client
 from git import topology as git_topology
 from git import land
+from git import regenerate as regen
 from core import log
 from pr import context as pr_context
 from pr import domains as pr_domains
@@ -208,11 +206,10 @@ class RunMode(StrEnum):
         return self in (RunMode.FIX, RunMode.PUSH)
 
 
-@dataclass(frozen=True)
-class Regenerator:
-    """A command that rebuilds a generated file from its source."""
-    cmd: tuple[str, ...]
-    stage_dir: bool = False
+# Regenerator, RegenJob, and RegenQueue live in git.regenerate.
+Regenerator = regen.Regenerator
+RegenJob = regen.RegenJob
+RegenQueue = regen.RegenQueue
 
 
 @dataclass(frozen=True)
@@ -238,44 +235,6 @@ class ConflictPlan:
     delete_side: DeleteSide | None = None
     signal: GeneratedSignal | None = None
 
-
-@dataclass
-class RegenJob:
-    """A deferred regeneration command and the files it covers."""
-    regen_dir: str
-    cmd: tuple[str, ...]
-    stage_dir: bool = False
-    files: list[str] = field(default_factory=list)
-
-
-class RegenQueue:
-    """Deferred regeneration commands, deduplicated by (directory, command).
-
-    Also holds the complement — generated files no command was found for.
-    They are staged from the incoming side and never rebuilt, which is the
-    same end state as a regeneration that failed, so they belong in the same
-    stale report rather than passing as cleanly resolved.
-    """
-
-    def __init__(self) -> None:
-        self._jobs: dict[tuple[str, tuple[str, ...]], RegenJob] = {}
-        self.unrebuildable: list[str] = []
-
-    def add(
-        self, regen_dir: Path, filepath: str,
-        cmd: tuple[str, ...], stage_dir: bool = False,
-    ) -> None:
-        key = (str(regen_dir), cmd)
-        job = self._jobs.setdefault(
-            key, RegenJob(regen_dir=str(regen_dir), cmd=cmd, stage_dir=stage_dir),
-        )
-        job.files.append(filepath)
-
-    def mark_unrebuildable(self, filepath: str) -> None:
-        self.unrebuildable.append(filepath)
-
-    def __iter__(self) -> Iterator[RegenJob]:
-        return iter(self._jobs.values())
 
 
 @dataclass(frozen=True)
@@ -409,59 +368,11 @@ def _is_empty_patch(cwd: str) -> bool:
     return staged and git_client.ok("diff", "--quiet", cwd=cwd)
 
 
-# ── Lockfile regeneration registry ─────────────────────────────────────────
-
-# Keys are basenames — _find_regenerator looks up os.path.basename(filepath),
-# so a key containing a path separator would never match.
-# yarn and bun have no lockfile-only flag in the versions we target, so they
-# run a full install and its lifecycle scripts as a side effect of resolution.
-_LOCKFILE_REGENERATORS: dict[str, Regenerator] = {
-    "go.sum":            Regenerator(("go", "mod", "tidy"), stage_dir=True),
-    "pnpm-lock.yaml":    Regenerator(("pnpm", "install", "--lockfile-only")),
-    "package-lock.json": Regenerator(("npm", "install", "--package-lock-only")),
-    "yarn.lock":         Regenerator(("yarn", "install")),
-    "bun.lock":          Regenerator(("bun", "install")),
-    "bun.lockb":         Regenerator(("bun", "install")),
-    "Cargo.lock":        Regenerator(("cargo", "generate-lockfile")),
-    "uv.lock":           Regenerator(("uv", "lock")),
-    "poetry.lock":       Regenerator(("poetry", "lock", "--no-update")),
-    "composer.lock":     Regenerator(("composer", "update", "--lock")),
-    "Gemfile.lock":      Regenerator(("bundle", "lock")),
-}
-
-
-def _find_regenerator(filepath: str) -> Regenerator | None:
-    """Look up a regeneration command by lockfile basename."""
-    return _LOCKFILE_REGENERATORS.get(os.path.basename(filepath))
-
-
-# mise accepts any of these config filenames; a project may use any one of
-# them, so checking only the undotted mise.toml misses most real repos.
-_MISE_CONFIG_NAMES = (
-    "mise.toml",
-    ".mise.toml",
-    "mise.local.toml",
-    ".mise.local.toml",
-    ".config/mise.toml",
-    ".config/mise/config.toml",
-    ".mise/config.toml",
-    "mise/config.toml",
-    ".tool-versions",
-)
-
-
-def _detect_mise(target_dir: str, repo_root: str) -> bool:
-    """Check if mise is available and configured for this directory."""
-    if not shutil.which("mise"):
-        return False
-    d = Path(target_dir).resolve()
-    root = Path(repo_root).resolve()
-    while True:
-        if any((d / name).is_file() for name in _MISE_CONFIG_NAMES):
-            return True
-        if d == root or d.parent == d:
-            return False
-        d = d.parent
+# The lockfile registry and mise detection live in git.regenerate.
+_LOCKFILE_REGENERATORS = regen.LOCKFILE_REGENERATORS
+_find_regenerator = regen.find_regenerator
+_MISE_CONFIG_NAMES = regen.MISE_CONFIG_NAMES
+_detect_mise = regen.detect_mise
 
 
 # ── Repo-level regeneration ────────────────────────────────────────────────
@@ -481,7 +392,7 @@ def _mise_has_task(repo_root: str, task: str) -> bool:
     """
     if not shutil.which("mise"):
         return False
-    r = _try_run(
+    r = regen.try_run(
         ["mise", "tasks", "ls", "--no-header"],
         cwd=repo_root, timeout=timeouts.QUICK,
     )
@@ -541,83 +452,9 @@ def _queue_repo_regeneration(filepath: str, cwd: str, queue: RegenQueue) -> bool
     return True
 
 
-def _try_run(
-    cmd: list[str], *, cwd: str, timeout: float | None = timeouts.UNBOUNDED,
-) -> CmdResult | None:
-    """Run a command, returning None if it could not be launched or finished.
-
-    subprocess.run raises instead of exiting 127 when the executable is absent,
-    not executable, or cwd is unusable. All of these mean the command never
-    ran, so the caller should fall back or report the file as stale. An expired
-    ``timeout`` is the same answer for the same reason: no usable output.
-
-    Unbounded by default because the caller that omits a bound is running a
-    project's own regeneration command — an arbitrary build step whose runtime
-    belongs to the project, not to us. Callers with a bound take a tier from
-    ``timeouts``; see that module for why the number is not theirs to pick.
-    """
-    try:
-        p = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
-        )
-        return CmdResult(p.returncode, p.stdout or "", p.stderr or "")
-    except OSError as exc:
-        log.dim(f"Could not launch {' '.join(cmd)}: {exc}")
-        return None
-    except subprocess.TimeoutExpired:
-        log.dim(f"Timed out after {timeout:g}s: {' '.join(cmd)}")
-        return None
-
-
-def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
+def _run_regeneration(job: regen.RegenJob, *, cwd: str) -> bool:
     """Run a regeneration command and stage the result. Returns success."""
-    repo_root = git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
-
-    cmd = list(job.cmd)
-    use_mise = _detect_mise(job.regen_dir, repo_root)
-    run_cmd = ["mise", "exec", "--"] + cmd if use_mise else cmd
-
-    log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(job.regen_dir).name}/)")
-    r = _try_run(run_cmd, cwd=job.regen_dir)
-
-    # A missing binary raises FileNotFoundError rather than reporting the
-    # command-not-found code, and a tool-managed binary is only on PATH inside
-    # `mise exec`. Retry there.
-    missing = r is None or r.returncode == proc.MISSING_RETURNCODE
-    if missing and not use_mise and shutil.which("mise"):
-        use_mise = True
-        run_cmd = ["mise", "exec", "--"] + cmd
-        log.info(f"Retrying with mise: {' '.join(run_cmd)}")
-        r = _try_run(run_cmd, cwd=job.regen_dir)
-
-    if r is None:
-        _terr("regeneration", f"could not run {cmd[0]} in {job.regen_dir}",
-              data={"cmd": cmd})
-        log.warn(f"Regeneration failed: could not run {cmd[0]}")
-        return False
-
-    if r.returncode != 0:
-        _tfail("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",
-               output=r.combined_output,
-               data={"cmd": cmd, "exit_code": r.returncode})
-        log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
-        if r.stderr.strip():
-            log.dim(r.stderr.strip()[:proc.DETAIL_LIMIT])
-        return False
-
-    if job.stage_dir:
-        if not git_client.ok("add", "-u", ".", cwd=job.regen_dir):
-            _terr("regeneration", f"git add -u failed in {job.regen_dir}")
-            log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
-            return False
-    elif not all(_git_add(f, cwd) for f in job.files):
-        return False
-
-    if _trail:
-        _trail.info("regeneration", f"regenerated {', '.join(job.files)}",
-                    data={"cmd": cmd, "dir": job.regen_dir, "mise": use_mise})
-    log.ok(f"Regenerated: {', '.join(job.files)}")
-    return True
+    return regen.run_regeneration(job, cwd=cwd, trail=_trail)
 
 
 # ── Conflict resolution ────────────────────────────────────────────────────

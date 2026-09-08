@@ -26,6 +26,7 @@ pr_rebase_cli = load_script("pr_rebase_cli", BIN_DIR / "pr-rebase")
 from gh import landed as branch_landed  # noqa: E402
 from git import client as git_client  # noqa: E402
 from git import land  # noqa: E402
+from git import regenerate as regen  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
@@ -334,7 +335,7 @@ def test_run_regeneration_bare_command(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+         mock.patch.object(regen, "detect_mise", return_value=False):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
                 regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
@@ -358,7 +359,7 @@ def test_run_regeneration_with_mise(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True):
+         mock.patch.object(regen, "detect_mise", return_value=True):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
                 regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
@@ -385,7 +386,7 @@ def test_run_regeneration_bare_fails_retries_mise(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -411,7 +412,7 @@ def test_run_regeneration_missing_binary_retries_mise(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -435,7 +436,7 @@ def test_run_regeneration_missing_binary_without_mise_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value=None):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -457,7 +458,7 @@ def test_run_regeneration_not_executable_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value=None):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -483,7 +484,7 @@ def test_run_regeneration_missing_binary_under_mise_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True), \
+         mock.patch.object(regen, "detect_mise", return_value=True), \
          mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -503,7 +504,7 @@ def test_run_regeneration_stage_dir(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+         mock.patch.object(regen, "detect_mise", return_value=False):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
                 regen_dir=str(tmp_path), cmd=("go", "mod", "tidy"),
@@ -524,7 +525,7 @@ def test_run_regeneration_failure_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch.object(regen, "detect_mise", return_value=False), \
          mock.patch("shutil.which", return_value=None):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
@@ -3237,7 +3238,7 @@ def test_fresh_falls_back_to_the_git_signals_when_the_tracker_is_unreachable():
     seen = []
 
     with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
-         mock.patch.object(pr_rebase_cli, "_try_run", return_value=None), \
+         mock.patch.object(regen, "try_run", return_value=None), \
          mock.patch.object(git_client, "commits_ahead", return_value=2), \
          mock.patch.object(branch_landed, "diff_is_empty", return_value=True), \
          mock.patch.object(pr_rebase_cli, "_refuse",

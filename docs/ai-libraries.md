@@ -2216,6 +2216,15 @@ Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable
 would cost the user their session for a bookkeeping entry.
 
+### core/conventions.py
+
+Bridge to the repo's conventional-commit rules in lib/conventions.sh.
+
+``conventions.sh`` is the SSOT for the commit-type list and the header
+format; ``git.generated.md`` is generated from it.  This module is the
+only Python reader, so every layer can reach the same rules without
+duplicating the types or the path.
+
 ### core/log.py
 
 Centralized human-facing stderr output for otto-workbench AI scripts.
@@ -2864,6 +2873,20 @@ since a second implementation in shell is the thing being avoided. It takes
 `--cwd`, `--branch`, `--remote` and `--set-upstream`, runs ungated, and answers
 in exit codes — `0` pushed, `1` refused, `2` lost, `3` unverified.
 
+### git/regenerate.py
+
+Lockfile regeneration registry and runner.
+
+Owns the mapping from lockfile basenames to the commands that rebuild them,
+the mise detection that decides how to invoke those commands, and the runner
+that stages the result.  Everything here is repo-agnostic — it knows what
+*kind* of file a lockfile is, not which repo it belongs to.
+
+Higher layers (``rebase``) own the repo-specific half: which regeneration
+commands a repo declares, how generated files are queued for rebuild, and
+how stale files are reported.  That split is what lets ``git.land`` import
+this module without pulling in ``config`` or ``pr``.
+
 ### git/topology.py
 
 Which directory holds which branch, and creating one when there is none.
@@ -2938,6 +2961,36 @@ passes through it on the way to work that has nothing to do with pushing, so an
 escaping exception would take the whole CLI down over a side-feature. Warning
 rather than passing is what keeps a bug in here loud without coupling anything
 to it.
+
+### rebase/conflicts.py
+
+Conflict classification, parsing, and git-level resolution.
+
+Pure conflict-analysis functions — prompt construction, AI invocation,
+and file-level dispatch live in ``resolve_ai``.
+
+### rebase/inspect.py
+
+Rebase-state detection and ref reads.
+
+Everything in this module is a read — it inspects ``.git/rebase-merge/`` or
+``.git/rebase-apply/`` to tell the caller what state the worktree is in, but
+never mutates it.
+
+### rebase/resolve_ai.py
+
+AI-backed conflict resolution — prompts, parsing, dispatch.
+
+Builds on the pure analysis in ``conflicts`` to drive agent-based file
+resolution during a rebase.  Every function that calls the AI backend
+accepts a ``trail`` parameter for audit logging.
+
+### rebase/types.py
+
+Enums, dataclasses, and report payloads for the rebase subsystem.
+
+All wire-format types live here so that every ``rebase/`` module reaches them
+through the same import and the binary can re-export them with one alias block.
 
 ### retro/github.py
 

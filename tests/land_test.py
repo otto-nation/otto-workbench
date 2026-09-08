@@ -6,13 +6,12 @@ refuses — is git's behaviour rather than this module's, and a mocked
 `git_client` would agree with whatever the assertion expected.
 """
 
-import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from conftest import git_out
+from conftest import _last_event, git_out
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
@@ -178,14 +177,6 @@ def test_the_message_is_the_commit_message(wt):
 # ── the commit git refuses ──────────────────────────────────────────────────
 
 
-def _last_event() -> dict:
-    """The most recent record in the sandboxed trail root."""
-    root = workbench_paths.trail_dir()
-    lines = [line for p in sorted(root.glob("*.jsonl"))
-             for line in p.read_text().splitlines() if line.strip()]
-    return json.loads(lines[-1])
-
-
 def test_a_failed_commit_records_a_verdict_printed_on_stdout(wt, tmp_path,
                                                              live_git_hooks):
     """A pre-commit chain reports on stdout; `stderr or stdout` lost it."""
@@ -204,6 +195,38 @@ def test_a_failed_commit_records_a_verdict_printed_on_stdout(wt, tmp_path,
     data = _last_event()["data"]
     assert "✗ gitleaks found a secret" in data["error"]
     assert "running 14 checks" in (workbench_paths.trail_dir() / data["log"]).read_text()
+
+
+def test_a_failed_commit_names_the_full_output_artifact(wt, tmp_path, live_git_hooks,
+                                                         capsys):
+    """The console gains `push.report`'s own line naming where the rest went."""
+    hook = tmp_path / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\n"
+                    "echo 'running 14 checks'\n"
+                    "echo '✗ gitleaks found a secret'\n"
+                    "exit 1\n")
+    hook.chmod(0o755)
+    (wt / "src.py").write_text("edited\n")
+    trail = Trail.start(script="test", context={})
+
+    landed, _ = _land(wt, trail=trail)
+
+    assert landed.status is CommitStatus.COMMIT_FAILED
+    artifact = workbench_paths.trail_dir() / _last_event()["data"]["log"]
+    assert f"full output: {artifact}" in capsys.readouterr().err
+
+
+def test_a_failed_commit_omits_the_line_when_there_is_no_artifact(wt, tmp_path,
+                                                                   live_git_hooks,
+                                                                   capsys):
+    """No trail, no artifact — and so no line naming one."""
+    _install_failing_pre_commit(tmp_path)
+    (wt / "src.py").write_text("edited\n")
+
+    landed, _ = _land(wt)
+
+    assert landed.status is CommitStatus.COMMIT_FAILED
+    assert "full output:" not in capsys.readouterr().err
 
 
 def test_a_rejected_commit_is_not_pushed(wt, tmp_path, live_git_hooks):

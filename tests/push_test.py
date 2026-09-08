@@ -12,7 +12,6 @@ remote ends up holding what it held before. That is the failure #962 describes,
 reproduced rather than simulated.
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -25,12 +24,11 @@ if str(LIB_DIR) not in sys.path:
 
 from git import client as git_client  # noqa: E402
 from core import proc  # noqa: E402
-from core import workbench_paths  # noqa: E402
 from git import push  # noqa: E402
 from core import timeouts  # noqa: E402
 from core.trail import Trail  # noqa: E402
 
-from conftest import git_in, run_checked, seed_repo  # noqa: E402
+from conftest import _last_event, git_in, run_checked, seed_repo  # noqa: E402
 
 _LOSING_HOOK = """#!/usr/bin/env bash
 while read -r old new ref; do
@@ -46,14 +44,6 @@ done
 def _never_runs(*cmd, **kwargs):
     """A `git_client.run` that fails the test if anything reaches it."""
     raise AssertionError(f"git ran when it should not have: {cmd}")
-
-
-def _last_event() -> dict:
-    """The most recent record in the sandboxed trail root."""
-    root = workbench_paths.trail_dir()
-    lines = [line for p in sorted(root.glob("*.jsonl"))
-             for line in p.read_text().splitlines() if line.strip()]
-    return json.loads(lines[-1])
 
 
 def _commit(wt: Path, message: str) -> str:

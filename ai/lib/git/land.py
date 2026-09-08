@@ -438,8 +438,10 @@ def _commit(
             # combined, not `error`: a pre-commit chain prints its banner on
             # stdout and its verdict there too, so the stderr-first reading the
             # message takes is the wrong one for the record.
-            trail.failure("commit", "commit failed",
-                          output=committed.combined_output)
+            artifact = trail.failure("commit", "commit failed",
+                                     output=committed.combined_output)
+            if artifact:
+                log.dim(f"full output: {artifact}")
         return _Commit(outcome=LandResult(CommitStatus.COMMIT_FAILED, error=error))
 
     sha = git_client.head_sha(cwd=wt_path)

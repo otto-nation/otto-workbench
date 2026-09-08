@@ -868,7 +868,7 @@ def test_repo_regenerators_empty_when_nothing_declares_one(tmp_path):
 
 
 def test_queue_repo_regeneration_collapses_files_into_one_run(tmp_path):
-    """Six generated files must not become six regeneration runs."""
+    """Four generated files must not become four regeneration runs."""
     queue = pr_rebase_cli.RegenQueue()
     with _repo_declaring(["mise run generate"], root=tmp_path):
         for name in ("a_pb2.py", "b_pb.ts", "models.go", ".queries.hash"):

@@ -486,6 +486,13 @@ def _mise_has_task(repo_root: str, task: str) -> bool:
     return any(line.split()[:1] == [task] for line in r.stdout.splitlines() if line.strip())
 
 
+@cache
+def _repo_root(cwd: str) -> str:
+    """The toplevel of the repo `cwd` sits in, falling back to `cwd` itself."""
+    return git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
+
+
+@cache
 def _repo_regenerators(cwd: str) -> tuple[Regenerator, ...]:
     """The commands that rebuild this repo's generated files, in order.
 
@@ -498,8 +505,12 @@ def _repo_regenerators(cwd: str) -> tuple[Regenerator, ...]:
     a generated file's rebuild is unknown. The caller reports it stale rather
     than guessing, because a wrong rebuild command silently commits wrong
     generated output.
+
+    Cached for the same reason `_mise_has_task` is: this is asked once per
+    generated file, and neither `.workbench.yml` nor the repo's task list
+    changes under a rebase that is only replaying commits.
     """
-    repo_root = git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
+    repo_root = _repo_root(cwd)
 
     declared = workbench_config.load_config_or_default(repo_root).rebase.regenerate
     if declared:
@@ -521,9 +532,8 @@ def _queue_repo_regeneration(filepath: str, cwd: str, queue: RegenQueue) -> bool
     regenerators = _repo_regenerators(cwd)
     if not regenerators:
         return False
-    repo_root = Path(git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd)
     for regen in regenerators:
-        queue.add(repo_root, filepath, regen.cmd, stage_dir=True)
+        queue.add(Path(_repo_root(cwd)), filepath, regen.cmd, stage_dir=True)
     return True
 
 

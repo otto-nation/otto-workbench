@@ -2222,6 +2222,26 @@ Centralized human-facing stderr output for otto-workbench AI scripts.
 
 NOT for structured event logging — use trail.py for that.
 
+### core/module_proxy.py
+
+A command module standing in front of the submodules its flow is spread over.
+
+A module under `ai/lib/cli/` re-imports the names its submodules define so a
+test can reach one at `<command>.<name>` and patch it. A name imported between
+submodules has one definition and several bindings: reading it can stop at the
+first, since they are the same object, but writing it cannot — replacing a seam
+means replacing it for every caller. `install` gives such a module the attribute
+protocol that does both, and puts every binding back when the patch is undone.
+
+Two submodules can also define a name each, meaning different things by it —
+`gh.client` and `git.client` both have a `run`. A read resolves that to the
+first of them, so a write follows the read: it reaches the bindings holding the
+object the read returned, and leaves the other definition alone.
+
+A caller passes every `ai/lib` module it imports, this one included — the set is
+checked against the module's imports rather than curated, so a proxy listing
+itself is the rule holding rather than a module patching its own attributes.
+
 ### core/proc.py
 
 One type for what a subprocess said, and one helper for running it.

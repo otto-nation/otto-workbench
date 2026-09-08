@@ -264,6 +264,20 @@ def test_main_exits_1_on_a_violation(monkeypatch, capsys):
     assert "imports outside its layer" in capsys.readouterr().err
 
 
+def test_main_names_the_init_that_declares_no_layer(monkeypatch, capsys):
+    """The report points at the file to edit, as the other two reports do.
+
+    A label naming the package directory reads as a path and is not one, so
+    nothing an operator clicks or pastes reaches the docstring at fault.
+    """
+    monkeypatch.setattr(val, "undeclared_packages", lambda *a: ["newthing"])
+    monkeypatch.setattr(sys, "argv", ["validate-ai-layers", "--quiet"])
+    with pytest.raises(SystemExit) as exc:
+        val.main()
+    assert exc.value.code == 1
+    assert "ai/lib/newthing/__init__.py: declares no layer" in capsys.readouterr().err
+
+
 def test_main_exits_0_on_the_repo(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["validate-ai-layers", "--quiet"])
     val.main()

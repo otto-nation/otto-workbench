@@ -366,9 +366,9 @@ def main():
 
     for package in undeclared_packages(repo_root, layers):
         errors += 1
-        _report_violations(f'{LIB_DIR}/{package}', 'declares no layer', [
-            Violation(line=1, target='__init__.py',
-                      reason='first docstring line must read '
+        _report_violations(f'{LIB_DIR}/{package}/__init__.py', 'declares no layer', [
+            Violation(line=1, target='docstring',
+                      reason='first line must read '
                              '"Layer N — purpose. May import: ...."')])
 
     for package, problems in check_declarations(layers).items():

@@ -82,6 +82,10 @@ def _all_required_modules() -> set[str]:
     reached: set[str] = set()
     while pending:
         module = pending.pop()
+        # Marked reached before its imports are read, so the `- reached` below
+        # can exclude the module being visited. Deferring the add until after
+        # the union would let a module that reaches itself queue itself again
+        # on every visit, and the walk would not terminate.
         reached.add(module)
         source = LIB_DIR / Path(*module.split(".")).with_suffix(".py")
         pending |= (_extract_python_imports(source) & lib_modules) - reached

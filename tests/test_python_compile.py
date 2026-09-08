@@ -168,7 +168,10 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
         names.add(args.kwarg.arg)
 
     for node in _walk_scope(func_node):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        # A class statement binds its name in the scope it appears in, exactly
+        # as a def does — a class defined inside a function is a local of that
+        # function, not a name the module has to supply.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             names.add(node.id)
@@ -288,6 +291,13 @@ def test_dotted_import_binds_top_level_package():
 
     assert "urllib" in available
     assert not _collect_bare_refs(tree) - available
+
+
+def test_class_defined_in_a_function_is_local_to_it():
+    """``class C`` inside a function binds ``C`` there — it is not a bare ref."""
+    tree = ast.parse("def f():\n    class C:\n        pass\n    return C()\n")
+
+    assert not _collect_bare_refs(tree)
 
 
 def test_aliased_dotted_import_binds_alias_only():

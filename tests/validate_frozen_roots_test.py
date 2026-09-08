@@ -278,7 +278,7 @@ def freeze(default=workbench_paths.state_dir()):
 """)
     assert len(violations) == 1
     assert violations[0].root == "workbench_paths.state_dir"
-    assert "<default of freeze>" in violations[0].name
+    assert "default of freeze()" in violations[0].name
 
 
 def test_an_annotated_assignment_is_flagged(tmp_path):

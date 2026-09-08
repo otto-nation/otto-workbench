@@ -32,6 +32,7 @@ Exit code: 0 if all files pass, 1 if any have violations.
 
 import argparse
 import ast
+import itertools
 import os
 import sys
 from dataclasses import dataclass
@@ -237,9 +238,9 @@ def _import_time_children(node):
     ExceptHandler nodes are unwrapped so the caller sees their body statements
     directly rather than the handler node itself.
     """
-    items = []
-    for field in _COMPOUND_BODY_FIELDS:
-        items.extend(getattr(node, field, None) or ())
+    items = itertools.chain.from_iterable(
+        getattr(node, field, None) or () for field in _COMPOUND_BODY_FIELDS
+    )
     # ExceptHandler wraps a body list; unwrap so callers see statements.
     return [
         stmt
@@ -322,7 +323,7 @@ def check_file(filepath: str) -> list[Violation]:
         root = _resolver_called(expr, local_roots, module_names, dotted_paths)
         if root is None:
             continue
-        found.append(Violation(line=lineno, name=f'<default of {func_name}>', root=root))
+        found.append(Violation(line=lineno, name=f'default of {func_name}()', root=root))
     return sorted(found, key=lambda v: v.line)
 
 

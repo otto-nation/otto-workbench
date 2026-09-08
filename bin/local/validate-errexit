@@ -22,6 +22,7 @@ import sys
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
+from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 FUNC_DEF = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{')
 FUNC_END = re.compile(r'^\}\s*$')
@@ -200,7 +201,7 @@ def _discover_by_extension(repo_root: str, shebang_re: re.Pattern) -> set[str]:
     scripts: set[str] = set()
 
     for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = [d for d in dirnames if d not in ('.git', 'node_modules', 'ignore', '.superpowers', 'corpus')]
+        dirnames[:] = [d for d in dirnames if d not in BASE_SKIP_DIRS]
         paths = [os.path.join(dirpath, f) for f in filenames if f.endswith(('.sh', '.bash'))]
         scripts.update(p for p in paths if _has_bash_shebang(p, shebang_re))
 

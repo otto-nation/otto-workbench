@@ -32,6 +32,7 @@ Exit code: 0 if all files pass, 1 if any have violations.
 
 import argparse
 import ast
+import itertools
 import os
 import sys
 from dataclasses import dataclass
@@ -218,23 +219,80 @@ def _assigned_names(node) -> list[str]:
     return [n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)]
 
 
+# Compound statements whose bodies execute at import time, just like the
+# module body itself.  Function/async-function bodies are excluded — that is
+# where a root call *should* live — but their default-argument expressions
+# are evaluated once at definition time and therefore count.
+_IMPORT_TIME_CONTAINERS = (
+    ast.ClassDef, ast.If, ast.Try, ast.For, ast.While, ast.With,
+    ast.AsyncWith, ast.AsyncFor,
+)
+
+
+_COMPOUND_BODY_FIELDS = ('body', 'orelse', 'finalbody', 'handlers')
+
+
+def _import_time_children(node):
+    """Immediate children of a compound statement that run at import time.
+
+    ExceptHandler nodes are unwrapped so the caller sees their body statements
+    directly rather than the handler node itself.
+    """
+    items = itertools.chain.from_iterable(
+        getattr(node, field, None) or () for field in _COMPOUND_BODY_FIELDS
+    )
+    # ExceptHandler wraps a body list; unwrap so callers see statements.
+    return [
+        stmt
+        for item in items
+        for stmt in (item.body if isinstance(item, ast.ExceptHandler) else [item])
+    ]
+
+
 def _module_level_assignments(tree):
-    """Every assignment that runs at import — module scope and class bodies.
+    """Every assignment that runs at import — module scope, class bodies,
+    and compound-statement bodies that execute at import time.
 
     A class body executes at import just as the module body does, so a root
     frozen into a class attribute is frozen exactly as hard as one at the top
-    level. Function bodies are not descended into: that is where a root call
+    level.  The same applies to ``if``/``try``/``for``/``with`` blocks at
+    module scope — their bodies run at import.
+
+    Function bodies are not descended into: that is where a root call
     belongs.
     """
     found = []
     pending = list(tree.body)
     while pending:
         node = pending.pop()
-        if isinstance(node, ast.ClassDef):
-            pending += node.body
+        if isinstance(node, _IMPORT_TIME_CONTAINERS):
+            pending.extend(_import_time_children(node))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            pass
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             found.append(node)
     return found
+
+
+def _default_arg_expressions(tree):
+    """Default-argument expressions from functions defined at import time.
+
+    ``def f(x=wp.state_dir())`` evaluates the default once at definition
+    time.  The expression is returned as ``(expr, func_name, lineno)`` so
+    the caller can report it without the assignment-node API.
+    """
+    results = []
+    pending = list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, _IMPORT_TIME_CONTAINERS):
+            pending.extend(_import_time_children(node))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defaults = node.args.defaults + node.args.kw_defaults
+            results.extend(
+                (d, node.name, node.lineno) for d in defaults if d is not None
+            )
+    return results
 
 
 def check_file(filepath: str) -> list[Violation]:
@@ -261,6 +319,11 @@ def check_file(filepath: str) -> list[Violation]:
             continue
         names = _assigned_names(node) or ['<unnamed>']
         found.append(Violation(line=node.lineno, name=names[0], root=root))
+    for expr, func_name, lineno in _default_arg_expressions(tree):
+        root = _resolver_called(expr, local_roots, module_names, dotted_paths)
+        if root is None:
+            continue
+        found.append(Violation(line=lineno, name=f'default of {func_name}()', root=root))
     return sorted(found, key=lambda v: v.line)
 
 

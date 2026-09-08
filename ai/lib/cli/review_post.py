@@ -72,7 +72,7 @@ from review.sections import ReviewSections
 # changing the name in both places at once.
 SCRIPT = "review-post"
 
-_SUBMODULES = (_gh, _rd, _rfmt, _rg, _rpath, _rp, _rs)
+_SUBMODULES = (_gh, _rd, _rfmt, _rg, _rpath, _rp, _rs, git_client, log, proc)
 
 
 class _ProxyModule(type(sys.modules[__name__])):

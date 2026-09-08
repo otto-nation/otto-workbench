@@ -375,12 +375,24 @@ def test_library_module_imports_independently(mod_name, rp):
 # ── 7. Proxy submodule completeness ────────────────────────────────────────
 
 
+# Layer package names — used to distinguish layer-module imports from stdlib/symbol imports.
+_LAYER_PACKAGES = {
+    p.name for p in (REPO_ROOT / "ai" / "lib").iterdir()
+    if p.is_dir() and (p / "__init__.py").exists()
+}
+
+
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
 def test_proxy_submodules_match_imports(script):
-    """Every module listed in _SUBMODULES must have a matching import."""
+    """_SUBMODULES and layer-module imports must match in both directions.
+
+    Forward: every name in _SUBMODULES has a matching import.
+    Reverse: every layer-module import (``from <layer> import <mod>``) is
+    listed in _SUBMODULES, so ``mock.patch`` through the proxy reaches it.
+    """
     tree = ast.parse(script.read_text(), filename=str(script))
 
-    aliases = [
+    submodule_names = {
         elt.id
         for node in ast.iter_child_nodes(tree)
         if isinstance(node, ast.Assign)
@@ -389,7 +401,7 @@ def test_proxy_submodules_match_imports(script):
         and isinstance(node.value, ast.Tuple)
         for elt in node.value.elts
         if isinstance(elt, ast.Name)
-    ]
+    }
 
     imports = {
         alias.asname or alias.name
@@ -398,11 +410,28 @@ def test_proxy_submodules_match_imports(script):
         for alias in node.names
     }
 
-    for alias in aliases:
-        assert alias in imports, (
-            f"{script.name}: _SUBMODULES references '{alias}' but no "
-            f"'import ... as {alias}' found"
+    # Forward: every _SUBMODULES entry has a matching import.
+    for name in submodule_names:
+        assert name in imports, (
+            f"{script.name}: _SUBMODULES references '{name}' but no "
+            f"matching import found"
         )
+
+    # Reverse: every `from <layer> import <mod> [as alias]` binding appears
+    # in _SUBMODULES. A missing entry means mock.patch through the proxy
+    # does not reach that module.
+    layer_imports = {
+        alias.asname or alias.name
+        for node in ast.iter_child_nodes(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module in _LAYER_PACKAGES
+        for alias in node.names
+    }
+    missing = sorted(layer_imports - submodule_names)
+    assert not missing, (
+        f"{script.name}: layer modules imported but missing from "
+        f"_SUBMODULES — mock.patch won't reach them: {missing}"
+    )
 
 
 def test_proxy_setattr_reaches_every_binding(ro):

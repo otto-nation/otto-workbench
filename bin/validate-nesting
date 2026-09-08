@@ -25,11 +25,12 @@ _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
 from nesting import get_checker_for_extension, get_checker_for_shebang, get_all_extensions  # noqa: E402
+from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 
-SKIP_DIRS = {
-    '.git', 'node_modules', 'vendor', '__pycache__', '.venv', 'venv',
+SKIP_DIRS = BASE_SKIP_DIRS | {
+    'vendor', '__pycache__', '.venv', 'venv',
     '.tox', '.mypy_cache', 'dist', 'build', '.eggs', '.cache',
 }
 

@@ -50,30 +50,31 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
 - **Default mode** (auto-fix):
 
-```bash
-pr rebase --fix --branch <branch>
-```
+  ```bash
+  pr rebase --fix --branch <branch>
+  ```
 
-**Start this as a background job, not a foreground command.** In Claude Code
-that is the Bash tool's `run_in_background`; in Pi it is `job_start`. Give it at
-least 30 minutes.
+  **Start this as a background job, not a foreground command.** In Claude Code
+  that is the Bash tool's `run_in_background`; in Pi it is `job_start`. Give it at
+  least 30 minutes.
 
-AI conflict resolution takes one to three minutes per conflicted file, so a
-rebase with a dozen conflicts outlives every harness's default foreground
-timeout — 300 seconds in Pi's case. A timeout there is not a clean retry: the
-kill does not abort the rebase, it leaves a partial one in the worktree, and the
-next run silently resumes it. What looks like "it timed out, run it again" is a
-mid-flight handoff to a second run that inherits an unfinished rebase.
+  AI conflict resolution takes one to three minutes per conflicted file, so a
+  rebase with a dozen conflicts outlives every harness's default foreground
+  timeout — 300 seconds in Pi's case. A timeout there is not a clean retry: the
+  kill does not abort the rebase, it leaves a partial one in the worktree, and the
+  next run resumes it — announced on the console, but invisible in the JSON step
+  2 parses. What looks like "it timed out, run it again" is a mid-flight handoff
+  to a second run that inherits an unfinished rebase.
 
-Backgrounding is safe here because nothing downstream reads the run's output
-mid-flight: step 2 parses the JSON the completed job returns, and the script
-owns its own locking and state.
+  Backgrounding is safe here because nothing downstream reads the run's output
+  mid-flight: step 2 parses the JSON the completed job returns, and the script
+  owns its own locking and state.
 
 - **`--no-fix` mode** (report only):
 
-```bash
-pr rebase --branch <branch>
-```
+  ```bash
+  pr rebase --branch <branch>
+  ```
 
 `--no-push` composes with either: the rebase runs (and the AI still resolves
 conflicts under `--fix`), but nothing reaches the remote — the force-push command
@@ -238,4 +239,4 @@ they then ask for the branch to be pushed.
   present while its hooks run
 - Never run `pr rebase --fix` in the foreground, and never under a timeout below
   30 minutes — a killed run leaves a partial rebase that the next run resumes
-  without saying so
+  without the JSON saying so

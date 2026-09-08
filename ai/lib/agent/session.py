@@ -45,11 +45,17 @@ def _try_parse_json(line: str) -> dict | None:
         return None
 
 
-def _read_jsonl(log_path: str) -> list[dict]:
-    """Every parseable record in the log, in order.
+def read_jsonl(log_path: str | Path) -> list[dict]:
+    """Every parseable record in a JSONL file, in order.
 
-    Callers that need more than one record type should read once and filter
-    with `_of_type` rather than making a pass per type.
+    A line that does not parse is skipped and the rest are kept, so a log still
+    being written to — or an artifact truncated by the job that died producing
+    it — yields the records it did finish rather than nothing at all.
+
+    Public because it is the machine's one JSONL reader: an agent session log is
+    what it was written for, but a Go test artifact is the same format and had
+    grown a second copy of this in `ci-check`. Callers that need more than one
+    record type should read once and filter rather than making a pass per type.
     """
     with open(log_path) as f:
         parsed = (_try_parse_json(line) for line in f)
@@ -61,7 +67,7 @@ def _of_type(records: list[dict], record_type: str) -> list[dict]:
 
 
 def _parse_jsonl_records(log_path: str, record_type: str) -> list[dict]:
-    return _of_type(_read_jsonl(log_path), record_type)
+    return _of_type(read_jsonl(log_path), record_type)
 
 
 def _parse_session_cost(log_path: str) -> float:
@@ -123,7 +129,7 @@ def diagnose_missing_output(log_path: str) -> Diagnosis:
     """
     if not Path(log_path).exists():
         return Diagnosis(DiagnosisKind.NO_SESSION_LOG)
-    records = _read_jsonl(log_path)
+    records = read_jsonl(log_path)
     results = _of_type(records, "result")
     if not results:
         if _has_quota_retry(records):
@@ -232,7 +238,7 @@ def is_quota_error(log_path: str) -> bool:
     """
     if not Path(log_path).exists():
         return False
-    return _has_quota_retry(_read_jsonl(log_path))
+    return _has_quota_retry(read_jsonl(log_path))
 
 
 # ── Agent invocation ──────────────────────────────────────────────────────────

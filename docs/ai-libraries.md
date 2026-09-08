@@ -1068,6 +1068,25 @@ Nor is the worktree. A branch with no PR behind it is described from local git
 by `review.collect.fetch_branch_metadata`, which reaches the same `PRMetadata`
 this fetches — every read here goes to GitHub.
 
+### gh/run_reads.py
+
+What GitHub says about a workflow run, before anything interprets it.
+
+Every read here returns the payload `gh` handed back — a run dict, a list of
+annotation dicts, log text — with no failure classification and no `RunState`.
+Turning those into something a fix pass can act on belongs to `pr.ci_annotations`
+and `pr.ci_runs`, which sit a layer up and call through here for their inputs.
+
+The transport is not here either: `gh.client` owns running gh, its timeout tiers
+and its rate-limit ladder. This module owns which questions CI asks about a run
+and nothing about how the asking is done, the same division `gh.pr_reads` keeps
+for a PR.
+
+`SKIP_CONCLUSIONS` and `FAILURE_CONCLUSIONS` live here because they are the
+vocabulary of the payload rather than of any one reading of it — both layer-4
+modules classify against the same words, and a run GitHub calls `stale` is a
+failure to each of them or to neither.
+
 ### gh/types.py
 
 What a GitHub PR read returns: the PR's own metadata, and its conversation.
@@ -1076,6 +1095,34 @@ Below the `gh`-layer module that fetches both, so the shapes a read answers
 with sit at or beneath the layer that answers. `review.collect` builds
 the same `PRMetadata` from local git for a branch with no PR behind it, which is
 why the type is not spelled in terms of the API's field names.
+
+### pr/ci_annotations.py
+
+What a failed CI job was actually complaining about, as `FailureItem`s.
+
+GitHub's own account of a failure is an annotation, and an annotation is often
+useless: "Process completed with exit code 1" pinned to a line of the workflow
+file. This module is the ladder down from that — annotations first, then the
+job's logs, then the test-results artifact — stopping at the first source that
+says something a fix pass could act on. `fetch_job_failure` is the whole ladder
+for one job and is the only thing outside here that needs calling.
+
+Classifying the text once it has been found belongs to `pr.ci_failures`, and
+getting it belongs to `gh.run_reads`. What is here is the decision of which
+source to believe.
+
+### pr/ci_runs.py
+
+One `RunState` out of however many workflow runs a commit set off.
+
+GitHub reports a push as several independent runs, each with its own id,
+conclusion and job list, and nothing downstream of here wants to know that: a
+branch is passing or it is not. `merge_runs` folds them into one payload and
+`parse_run` turns that into the `RunState` the report, the dashboard and the fix
+pass all read.
+
+Deciding what a failed job was complaining about is `pr.ci_annotations`'s job,
+called from here once per failed job and in parallel.
 
 ### pr/comments.py
 

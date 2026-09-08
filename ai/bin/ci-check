@@ -15,25 +15,20 @@ Usage:
 """
 
 import json
-import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from agent import retry as agent_retry
 from pr import ci_failures as ci
+from pr import ci_runs
 from fix import engine as fix_engine
 from fix import types as fix_types
-from gh import client as gh_client
+from gh import run_reads
 from pr import context as pr_context
 from pr import domains as pr_domains
 from pr import state as pr_state
@@ -51,438 +46,6 @@ SCRIPT = Path(__file__).name
 
 
 _SKIP_KINDS = frozenset(("infra", "flaky"))
-
-
-_SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))
-_FAILURE_CONCLUSIONS = frozenset(("failure", "timed_out", "action_required", "stale", "startup_failure"))
-
-
-def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
-    """Fetch workflow run IDs for the latest commit, one per workflow.
-
-    Filters out skipped and cancelled runs before deduplication.
-    When a workflow is re-run, both the original and re-run share the same
-    SHA.  gh run list returns newest first, so we deduplicate by workflow
-    name to keep only the most recent run of each workflow.
-    """
-    runs = gh_client.json_out(
-        "run", "list", "--repo", repo, "--branch", branch,
-        "--limit", "20", "--json", "databaseId,headSha,workflowName,conclusion",
-        default=[],
-    )
-    if not runs:
-        return []
-    latest_sha = runs[0]["headSha"]
-    seen_workflows: set[str] = set()
-    ids: list[int] = []
-    for r in runs:
-        if r["headSha"] != latest_sha:
-            continue
-        if r.get("conclusion") in _SKIP_CONCLUSIONS:
-            continue
-        wf = r.get("workflowName", "")
-        if wf in seen_workflows:
-            continue
-        seen_workflows.add(wf)
-        ids.append(r["databaseId"])
-    return ids
-
-
-def _fetch_run_data(repo: str, run_id: int) -> dict | None:
-    """Fetch run metadata and job results."""
-    return gh_client.json_out(
-        "run", "view", str(run_id), "--repo", repo,
-        "--json", "databaseId,number,headSha,status,conclusion,jobs",
-    )
-
-
-def _fetch_annotations(repo: str, job_id: int) -> list[dict]:
-    """Fetch annotations for a check run (job)."""
-    return gh_client.api_json(
-        f"repos/{repo}/check-runs/{job_id}/annotations", paginate=True, default=[],
-    )
-
-
-def _fetch_job_logs(repo: str, job_id: int) -> str:
-    """Fetch logs for a single job via API. Smaller and faster than per-run.
-
-    Escape sequences are allowed through because a job that coloured its output
-    has them on every line, and gh refuses the whole response over them — which
-    reads here as a job with no logs and silently demotes every such job to the
-    per-run fallback. `ci_failures` strips them.
-    """
-    r = gh_client.api(
-        f"repos/{repo}/actions/jobs/{job_id}/logs", allow_escape_sequences=True,
-    )
-    return r.stdout if r.ok else ""
-
-
-def _fetch_failed_logs(repo: str, run_id: int) -> str:
-    """Fetch logs for failed steps. Returns raw log text."""
-    r = gh_client.run("run", "view", str(run_id), "--repo", repo, "--log-failed")
-    return r.stdout if r.ok else ""
-
-
-def _build_failure_id(annotation: dict, job_name: str) -> str:
-    """Build a deterministic failure item ID from annotation data.
-
-    A title is preferred over the message hash for a pathless annotation
-    because Python randomises string hashing per process: an id built that way
-    never matches the same failure in the next run, so progression reports it
-    as new every time.
-    """
-    path = annotation.get("path", "")
-    line = annotation.get("start_line", 0)
-    title = annotation.get("title", "")
-    if path and line:
-        slug = title.split(":")[0].strip().lower() if title else "err"
-        return f"{slug}-{path}-{line}"
-    if title:
-        return f"{job_name}-{_slugify(title)}"
-    message = annotation.get("message", "")
-    return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
-
-
-def _slugify(text: str) -> str:
-    """Lowercase, hyphen-joined, alphanumerics only — stable across processes."""
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-
-
-def _annotations_to_items(
-    annotations: list[dict], job_name: str, source_run_id: int | None = None,
-    context: str | None = None,
-) -> list[ci.FailureItem]:
-    """Convert raw annotations to FailureItems, skipping notices."""
-    items: list[ci.FailureItem] = []
-    for ann in annotations:
-        if ann.get("annotation_level") == "notice":
-            continue
-        item_id = _build_failure_id(ann, job_name)
-        text = ann.get("message", ann.get("title", ""))
-        items.append(ci.FailureItem(
-            id=item_id,
-            annotation=text,
-            file=ann.get("path") or None,
-            line=ann.get("start_line") or None,
-            diagnosis=None,
-            fix_sha=None,
-            outcome=None,
-            headline=ci.extract_headline(text) or ci.extract_headline(context),
-            source_run_id=source_run_id,
-            context=context,
-        ))
-    return items
-
-
-def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.FailureItem:
-    """Create a placeholder item for a failed job with no annotations."""
-    return ci.FailureItem(
-        id=f"{job_name}-no-annotation",
-        annotation=f"Job '{job_name}' failed with no annotations",
-        file=None,
-        line=None,
-        diagnosis=None,
-        fix_sha=None,
-        outcome=None,
-        source_run_id=source_run_id,
-    )
-
-
-_GENERIC_MESSAGES = (
-    "process completed with exit code",
-    "a]process completed with exit code",  # GHA bracket-notation artifact
-    "check failure on line",
-    "failed with exit code",
-    "exited with code",
-    "returned a non-zero code",
-)
-
-
-def _annotations_uninformative(annotations: list[dict]) -> bool:
-    """True when non-notice annotations carry no actionable diagnostic context.
-
-    A generic message (exit code restated, check failure marker) is always
-    uninformative regardless of path — the real error is in the logs.
-    """
-    non_notices = [a for a in annotations if a.get("annotation_level") != "notice"]
-    if not non_notices:
-        return True
-    for a in non_notices:
-        msg = (a.get("message", "") or "").lower()
-        if any(g in msg for g in _GENERIC_MESSAGES):
-            continue
-        path = a.get("path", "")
-        has_source_path = bool(path) and "." in path.rsplit("/", 1)[-1]
-        if has_source_path:
-            return False
-    return True
-
-
-@dataclass(frozen=True)
-class _LogFallback:
-    """What a job's logs yielded once its annotations turned out to be too thin.
-
-    `structured` is the distinction the caller acts on: one annotation per
-    failure, as the log itself delimited them, is worth more than whatever
-    GitHub attached to the failed step — which for a generic step failure is
-    the workflow file and a line number in the log. An unstructured extraction
-    is one window over the whole run and only good for context, so it leaves
-    the original annotations in place.
-    """
-    annotations: list[dict]
-    context: str
-    kind: ci.FailureKind
-    structured: bool
-
-    @property
-    def ok(self) -> bool:
-        return bool(self.annotations)
-
-
-def _test_annotation(failure: ci.TestFailure) -> dict:
-    """One test failure in the annotation shape `_annotations_to_items` reads.
-
-    A located failure withholds the title so its id stays `err-<path>-<line>`;
-    the test name is the first line of the message either way. An unlocated one
-    passes the name, which is the only stable thing left to key it on.
-    """
-    if not failure.location:
-        return {"message": failure.context, "path": "", "start_line": 0, "title": failure.name}
-    return {
-        "message": failure.context,
-        "path": failure.location.file,
-        "start_line": failure.location.line,
-        "title": "",
-    }
-
-
-def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> _LogFallback:
-    """Fetch job logs and extract failure context as synthetic annotations.
-
-    A log in a format `ci.extract_test_failures` parses becomes one annotation
-    per failing test rather than one window over the whole run, so a suite with
-    several failures surfaces as several items and each carries the location
-    the suite itself printed for it.
-    """
-    job_id = job.get("databaseId", 0)
-    log_text = _fetch_job_logs(repo, job_id) if job_id else ""
-    if not log_text:
-        source_run_id = job.get("_source_run_id", run_data["databaseId"])
-        log_text = _fetch_failed_logs(repo, source_run_id)
-    if not log_text:
-        return _LogFallback([], "", kind, structured=False)
-
-    job_name = job.get("name", "unknown")
-    tests = ci.extract_test_failures(log_text)
-    if tests:
-        context = "\n\n".join(f.context for f in tests)
-        return _LogFallback(
-            [_test_annotation(f) for f in tests], context,
-            ci.classify_job(job_name, [context]),
-            structured=True,
-        )
-
-    context = ci.extract_failure_context(log_text, kind)
-    if not context:
-        return _LogFallback([], "", kind, structured=False)
-    annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
-    return _LogFallback(annotations, context, ci.classify_job(job_name, [context]), structured=False)
-
-
-def _read_jsonl(path: Path) -> list[dict]:
-    """Read a JSONL file into a list of dicts, returning [] on any parse error."""
-    try:
-        lines = path.read_text().splitlines()
-    except OSError:
-        return []
-    entries = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entries.append(json.loads(line))
-        except (json.JSONDecodeError, KeyError):
-            return []
-    return entries
-
-
-def _parse_test_artifact(artifact_dir: str) -> str:
-    """Parse a downloaded test-results artifact directory for failure output."""
-    jsonl_files = sorted(Path(artifact_dir).glob("*.json"))
-    if not jsonl_files:
-        return ""
-    entries = _read_jsonl(jsonl_files[0])
-    fail_packages = {e.get("Package", "") for e in entries if e.get("Action") == "fail"}
-    if not fail_packages:
-        return ""
-    output_lines = [
-        e.get("Output", "").rstrip()
-        for e in entries
-        if e.get("Action") == "output" and e.get("Package") in fail_packages
-    ]
-    if not output_lines:
-        return ""
-    return ci.extract_failure_context("\n".join(output_lines), ci.FailureKind.TEST)
-
-
-def _fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
-    """Download and parse a test-results artifact for failure context."""
-    slug = job_name.lower()
-    for prefix in ("test: ", "test "):
-        if slug.startswith(prefix):
-            slug = slug[len(prefix):]
-            break
-    slug = slug.replace(" ", "-")
-    artifact_name = f"test-results-{slug}"
-
-    tmpdir = tempfile.mkdtemp(prefix="ci-artifact-")
-    try:
-        if not gh_client.ok(
-            "run", "download", str(run_id), "--repo", repo,
-            "--name", artifact_name, "--dir", tmpdir,
-        ):
-            return ""
-        return _parse_test_artifact(tmpdir)
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-def _extract_failed_step(job: dict) -> str | None:
-    """Return the name of the first failed step in a job, if available."""
-    for step in job.get("steps", []):
-        if step.get("conclusion") in _FAILURE_CONCLUSIONS:
-            return step.get("name")
-    return None
-
-
-class _JobFailure(TypedDict):
-    job_name: str
-    kind: ci.FailureKind
-    items: list[dict]
-    failed_step: str | None
-
-
-def _make_result(job_name, kind, annotations, source_run_id, failed_step, context=None):
-    """Build the _JobFailure dict from resolved annotations."""
-    if annotations:
-        items = _annotations_to_items(annotations, job_name, source_run_id, context=context)
-    else:
-        items = [_fallback_item(job_name, source_run_id)]
-    if not items:
-        return None
-    return {"job_name": job_name, "kind": kind, "items": items, "failed_step": failed_step}
-
-
-def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | None:
-    """Fetch annotations/logs for a single failed job. Thread-safe."""
-    job_name = job.get("name", "unknown")
-    job_id = job.get("databaseId", 0)
-    source_run_id = job.get("_source_run_id") or run_data.get("databaseId")
-    failed_step = _extract_failed_step(job)
-
-    annotations = _fetch_annotations(repo, job_id) if job_id else []
-    annotation_texts = [a.get("message", "") for a in annotations]
-    kind = ci.classify_job(job_name, annotation_texts)
-
-    if kind not in (ci.FailureKind.BUILD, ci.FailureKind.TEST):
-        return _make_result(job_name, kind, annotations, source_run_id, failed_step)
-
-    if annotations and not _annotations_uninformative(annotations):
-        return _make_result(job_name, kind, annotations, source_run_id, failed_step)
-
-    # Annotations absent or uninformative — try logs, then artifact
-    have_original = bool(annotations)
-    fallback = _log_fallback(repo, job, run_data, kind)
-
-    # A location the log reported beats the one GitHub attached to the failed
-    # step, which for a generic step failure anchors on the workflow file. The
-    # annotations carry their own context here, so nothing below is needed.
-    if fallback.structured:
-        return _make_result(job_name, fallback.kind, fallback.annotations, source_run_id, failed_step)
-
-    ctx = fallback.context if fallback.ok else _fetch_test_artifact(repo, source_run_id, job_name)
-    if ctx and have_original:
-        return _make_result(job_name, fallback.kind if fallback.ok else kind, annotations, source_run_id, failed_step, context=ctx)
-    if ctx:
-        annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
-        kind = ci.classify_job(job_name, [ctx])
-    return _make_result(job_name, kind, annotations, source_run_id, failed_step)
-
-
-def _parse_run(repo: str, run_data: dict) -> ci.RunState:
-    """Parse gh run data into a RunState with classified failures."""
-    failed_jobs = [j for j in run_data.get("jobs", []) if j.get("conclusion") in _FAILURE_CONCLUSIONS]
-    failures: dict[str, ci.FailureGroup] = {}
-
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        results = list(pool.map(lambda j: _fetch_job_failure(repo, j, run_data), failed_jobs))
-
-    for r in results:
-        if not r:
-            continue
-        job_key = r["job_name"].lower().replace(" ", "-").replace("/", "-")
-        prior_items = failures[job_key].items if job_key in failures else ()
-        failures[job_key] = ci.FailureGroup(
-            job=r["job_name"], kind=r["kind"], items=prior_items + tuple(r["items"]),
-            failed_step=r["failed_step"],
-        )
-
-    return ci.RunState(
-        run_id=run_data["databaseId"],
-        run_number=run_data.get("number", 0),
-        head_sha=run_data.get("headSha", ""),
-        status=run_data.get("status", ""),
-        conclusion=run_data.get("conclusion", ""),
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-        failures=failures,
-    )
-
-
-def _merge_runs(run_data_list: list[dict]) -> dict | None:
-    """Merge multiple workflow run dicts into a single combined run.
-
-    The first run becomes the primary; its conclusion is overridden to
-    "failure" if any run has a real failure conclusion.  Jobs from all
-    runs are collected into the primary's "jobs" list.
-    """
-    if not run_data_list:
-        return None
-    primary = run_data_list[0]
-    all_jobs = []
-    any_incomplete = False
-    for rd in run_data_list:
-        if rd.get("conclusion") in _FAILURE_CONCLUSIONS:
-            primary["conclusion"] = "failure"
-        if rd.get("status") not in (None, "completed"):
-            any_incomplete = True
-        rid = rd.get("_run_id")
-        for job in rd.get("jobs", []):
-            job["_source_run_id"] = rid
-        all_jobs.extend(rd.get("jobs", []))
-    primary["jobs"] = all_jobs
-    if any_incomplete:
-        primary["status"] = "in_progress"
-        if primary.get("conclusion") not in _FAILURE_CONCLUSIONS:
-            primary["conclusion"] = ""
-    return primary
-
-
-def _count_job_states(merged: dict) -> tuple[int, int, int, int]:
-    """Count jobs by state: (completed, failed, running, queued)."""
-    completed = failed = running = queued = 0
-    for job in merged.get("jobs", []):
-        status = job.get("status", "")
-        if status == "in_progress":
-            running += 1
-            continue
-        if status != "completed":
-            queued += 1
-            continue
-        completed += 1
-        if job.get("conclusion") in _FAILURE_CONCLUSIONS:
-            failed += 1
-    return completed, failed, running, queued
 
 
 def _serialize_failures(
@@ -511,13 +74,6 @@ def _serialize_failures(
     return result
 
 
-def _commits_behind_main(repo: str, branch: str) -> int:
-    """Count commits on origin/main not reachable from the branch."""
-    r = gh_client.api(f"repos/{repo}/compare/{branch}...main", jq=".ahead_by")
-    val = r.stdout.strip()
-    return int(val) if r.ok and val.isdigit() else 0
-
-
 def _run_ci(trail, args, ctx) -> dict:
     repo = ctx.repo
     branch = ctx.branch
@@ -528,7 +84,7 @@ def _run_ci(trail, args, ctx) -> dict:
     if args.run:
         run_ids = [args.run]
     else:
-        run_ids = _fetch_latest_run_ids(repo, branch)
+        run_ids = run_reads.fetch_latest_run_ids(repo, branch)
         if not run_ids:
             trail.warn("no_runs", "no workflow runs found")
             log.error(f"No workflow runs found for branch '{branch}'")
@@ -537,7 +93,7 @@ def _run_ci(trail, args, ctx) -> dict:
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
 
     with ThreadPoolExecutor(max_workers=5) as pool:
-        fetched = list(pool.map(lambda rid: (rid, _fetch_run_data(repo, rid)), run_ids))
+        fetched = list(pool.map(lambda rid: (rid, run_reads.fetch_run_data(repo, rid)), run_ids))
     run_data_list = []
     for rid, rd in fetched:
         if rd is not None:
@@ -545,14 +101,14 @@ def _run_ci(trail, args, ctx) -> dict:
             run_data_list.append(rd)
             trail.info("fetch_run_data", f"fetched run {rid}", data={"run_id": rid, "conclusion": rd.get("conclusion")})
 
-    primary_run_data = _merge_runs(run_data_list)
+    primary_run_data = ci_runs.merge_runs(run_data_list)
     if primary_run_data is None:
         trail.error("fetch_run_data", "failed to fetch run data")
         log.error("Failed to fetch run data")
         sys.exit(1)
 
     # Parse into typed state
-    run_state = _parse_run(repo, primary_run_data)
+    run_state = ci_runs.parse_run(repo, primary_run_data)
 
     # Load unified PR state (or init fresh). Unconditional: the file is keyed on
     # the target, not on the caller's checkout, so a run from a bare repo has the
@@ -597,7 +153,7 @@ def _run_ci(trail, args, ctx) -> dict:
 
     # Check how far behind origin/main the branch is — runs on every invocation
     # (not just --fix) because the JSON report includes behind_main for SKILL.md consumers
-    behind_main = _commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
+    behind_main = run_reads.commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
 
     # JSON report to stdout
     report = {
@@ -857,18 +413,17 @@ def _emit_partial(repo, merged, new_failed_jobs, reported_job_ids, trail):
     """Parse new failures and emit a partial JSON report."""
     partial_merged = dict(merged)
     partial_merged["jobs"] = new_failed_jobs
-    partial_run = _parse_run(repo, partial_merged)
+    partial_run = ci_runs.parse_run(repo, partial_merged)
 
-    completed, _failed, running, queued = _count_job_states(merged)
-    total = completed + running + queued
+    counts = ci_runs.count_job_states(merged)
 
     failures = _serialize_failures(partial_run.failures)
     if not failures:
         return
 
     partial_report = {
-        "completed": completed,
-        "total": total,
+        "completed": counts.completed,
+        "total": counts.total,
         "failures": failures,
         "progression": {},
     }
@@ -893,17 +448,17 @@ def _run_ci_wait(trail, args, ctx) -> dict:
     while True:
         elapsed = time.monotonic() - start_time
 
-        run_ids = [args.run] if args.run else _fetch_latest_run_ids(repo, branch)
+        run_ids = [args.run] if args.run else run_reads.fetch_latest_run_ids(repo, branch)
         if not run_ids:
             trail.warn("no_runs", "no workflow runs found")
             log.error(f"No workflow runs found for branch '{branch}'")
             sys.exit(1)
 
         with ThreadPoolExecutor(max_workers=5) as pool:
-            fetched = list(pool.map(lambda rid: (rid, _fetch_run_data(repo, rid)), run_ids))
+            fetched = list(pool.map(lambda rid: (rid, run_reads.fetch_run_data(repo, rid)), run_ids))
         run_data_list = [{**rd, "_run_id": rid} for rid, rd in fetched if rd is not None]
 
-        merged = _merge_runs(run_data_list)
+        merged = ci_runs.merge_runs(run_data_list)
         if merged is None:
             trail.error("fetch_run_data", "failed to fetch run data")
             log.error("Failed to fetch run data")
@@ -911,24 +466,23 @@ def _run_ci_wait(trail, args, ctx) -> dict:
 
         new_failed_jobs = [
             j for j in merged.get("jobs", [])
-            if j.get("conclusion") in _FAILURE_CONCLUSIONS
+            if j.get("conclusion") in run_reads.FAILURE_CONCLUSIONS
             and j.get("databaseId", 0) not in reported_job_ids
         ]
 
         if new_failed_jobs:
             _emit_partial(repo, merged, new_failed_jobs, reported_job_ids, trail)
 
-        completed, failed, running, queued = _count_job_states(merged)
-        total = completed + running + queued
-        status_parts = [f"{completed}/{total} jobs complete"]
-        if running:
-            status_parts.append(f"{running} running")
-        if queued:
-            status_parts.append(f"{queued} queued")
-        if failed:
-            status_parts.append(f"{failed} failed")
+        counts = ci_runs.count_job_states(merged)
+        status_parts = [f"{counts.completed}/{counts.total} jobs complete"]
+        if counts.running:
+            status_parts.append(f"{counts.running} running")
+        if counts.queued:
+            status_parts.append(f"{counts.queued} queued")
+        if counts.failed:
+            status_parts.append(f"{counts.failed} failed")
 
-        is_complete = merged.get("status") == "completed" or running + queued == 0
+        is_complete = merged.get("status") == "completed" or counts.finished
 
         print(f"  {', '.join(status_parts)}", file=sys.stderr, flush=True)
 
@@ -943,7 +497,7 @@ def _run_ci_wait(trail, args, ctx) -> dict:
         time.sleep(interval)
 
     # Final full report — reuse _run_ci() logic for the complete state
-    run_state = _parse_run(repo, merged)
+    run_state = ci_runs.parse_run(repo, merged)
 
     # Unconditional for the same reason as _run_ci: the state file belongs to
     # the target, not to whichever checkout the poll was launched from.
@@ -967,7 +521,7 @@ def _run_ci_wait(trail, args, ctx) -> dict:
     dashboard = ci.render_dashboard(run_state, progression, run_ids=run_ids, show_status=True)
     print(dashboard, file=sys.stderr)
 
-    behind_main = _commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
+    behind_main = run_reads.commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
 
     report = {
         "repo": repo,
@@ -982,8 +536,8 @@ def _run_ci_wait(trail, args, ctx) -> dict:
         "failures": _serialize_failures(run_state.failures, progression),
         "progression": {k: v.value for k, v in progression.items()},
         "resolved_since_prior": [],
-        "completed": completed,
-        "total": total,
+        "completed": counts.completed,
+        "total": counts.total,
     }
 
     if prior_run:

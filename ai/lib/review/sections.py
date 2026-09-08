@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from core.text import slugify
 from review.document import (
     SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
     SECTION_VERDICT, ReviewDocument,
@@ -58,10 +59,6 @@ _KNOWN_BY_HEADER: dict[str, SectionConfig] = {
 _SECTION_HEADER_RE = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
 
 
-def _slugify(header: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", header.lower()).strip("_")
-
-
 class ReviewSections:
     def __init__(
         self,
@@ -92,7 +89,7 @@ class ReviewSections:
             cfg = _KNOWN_BY_HEADER.get(header_lower)
             if cfg is None:
                 cfg = SectionConfig(
-                    key=_slugify(original),
+                    key=slugify(original, sep="_"),
                     header=original,
                     position=POSITION_AFTER,
                     heading=f"## {original}",

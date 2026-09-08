@@ -1,0 +1,34 @@
+{
+  "fix_pass": {
+    "fixed": [
+      {
+        "id": "T-1",
+        "summary": "quote the path in deploy.sh",
+        "reviewer": "alice"
+      },
+      {
+        "id": "T-2",
+        "summary": "guard the empty-array expansion",
+        "reviewer": "bob"
+      }
+    ],
+    "needs_human": [],
+    "dismissed": [],
+    "already_addressed": [],
+    "deferred": [],
+    "commit_sha": "a1b2c3d",
+    "commit_status": "pushed",
+    "replies_posted": 0,
+    "summary_url": null,
+    "summary_deferred": true,
+    "comment_items": {
+      "fixed": 2,
+      "needs_human": 0,
+      "dismissed": 0,
+      "deferred": 0
+    }
+  },
+  "comment_items": [],
+  "issue_comments": [],
+  "review_body_comments": []
+}

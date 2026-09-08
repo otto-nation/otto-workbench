@@ -1,0 +1,11 @@
+{
+  "name": "pr-comments-publish",
+  "task": "skill",
+  "skill": "pr-comments",
+  "description": "Resumes an approved pass with nothing deferred and publishes the closeout, scoping --track to nobody",
+  "prompt": "Address the review comments on PR 42. I read the drafts in an earlier pass and I approve them — publish them.",
+  "requires": [["pr", "comments", "--finish", "--post"]],
+  "forbids": [["pr", "comments", "--fix"], ["--track"], ["--track-all"], ["gh", "api"]],
+  "false_positives_max": 0,
+  "tags": ["skill", "pr-comments"]
+}

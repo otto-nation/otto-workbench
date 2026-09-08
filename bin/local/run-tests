@@ -14,7 +14,7 @@
 # nothing the failure output does not. A caller that wants it back passes it
 # after --.
 #
-# Usage: bin/local/run-tests [--bats|--pytest] [-- RUNNER_ARGS...]
+# Usage: bin/local/run-tests [--bats|--pytest] [--shard N/M] [-- RUNNER_ARGS...]
 # Exit code: 0 when every suite it ran passed, 1 otherwise.
 
 set -e
@@ -101,7 +101,7 @@ test_jobs() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--bats|--pytest] [-- RUNNER_ARGS...]
+Usage: $(basename "$0") [--bats|--pytest] [--shard N/M] [-- RUNNER_ARGS...]
 
 Run the test suites with the repo's parallelism settings. With no suite flag,
 runs bats and then pytest, stopping at the first failure.
@@ -109,6 +109,10 @@ runs bats and then pytest, stopping at the first failure.
 Options:
   --bats          Run only the bats suite
   --pytest        Run only the pytest suite
+  --shard N/M     Run only shard N of M (1-indexed). Partitions bats files
+                  via longest-processing-time packing on @test count.
+  --files LIST    Run only the bats files in LIST (newline-separated paths).
+                  Used by the pre-push hook for change-based selection.
   --              Pass every remaining argument through to the runner
   -h, --help      Show this help
 
@@ -120,16 +124,106 @@ Environment:
 EOF
 }
 
+# _find_min_bucket TOTAL — echo the index of the bucket with the smallest load.
+# Reads bucket_load[] from the caller's scope.
+_find_min_bucket() {
+  local total="$1" j min_idx=0 min_load=${bucket_load[0]}
+  for (( j = 1; j < total; j++ )); do
+    [[ ${bucket_load[$j]} -lt $min_load ]] || continue
+    min_load=${bucket_load[$j]}
+    min_idx=$j
+  done
+  echo "$min_idx"
+}
+
+# shard_files SHARD TOTAL — emit the test file paths for shard SHARD of TOTAL.
+#
+# Partitions by longest-processing-time (LPT) packing on @test count: sort files
+# by descending test count, then assign each to the lightest bucket. Deterministic
+# under LC_ALL=C. Files are emitted one per line, absolute paths.
+shard_files() {
+  local shard="$1" total="$2"
+  if [[ "$shard" -lt 1 || "$shard" -gt "$total" ]]; then
+    err "--shard: shard $shard out of range 1..$total"
+    return 1
+  fi
+
+  # Collect (test_count, filename) pairs sorted by descending test count, then
+  # by filename for stability when counts are equal.
+  local -a weights=() files=()
+  local count fname
+  while IFS= read -r line; do
+    count="${line%% *}"
+    fname="${line#* }"
+    weights+=("$count")
+    files+=("$fname")
+  done < <(
+    for f in "$WORKBENCH_DIR"/tests/*.bats; do
+      c=$(grep -c '^@test ' "$f" 2>/dev/null) || c=0
+      echo "$c $(basename "$f")"
+    done | LC_ALL=C sort -rn -k1,1 -k2,2
+  )
+
+  # LPT packing: assign each file to the bucket with the smallest load.
+  local -a bucket_load=()
+  local -a bucket_assign=()
+  local i
+  for (( i = 0; i < total; i++ )); do
+    bucket_load[$i]=0
+  done
+  for (( i = 0; i < ${#files[@]}; i++ )); do
+    local min_idx
+    min_idx=$(_find_min_bucket "$total")
+    bucket_assign[$i]=$min_idx
+    bucket_load[$min_idx]=$(( ${bucket_load[$min_idx]} + ${weights[$i]} ))
+  done
+
+  # Emit files assigned to the requested shard (0-indexed internally).
+  local target=$(( shard - 1 ))
+  for (( i = 0; i < ${#files[@]}; i++ )); do
+    if [[ ${bucket_assign[$i]} -eq $target ]]; then
+      echo "$WORKBENCH_DIR/tests/${files[$i]}"
+    fi
+  done
+}
+
 # run_bats ARGS... — the bats suite, TAP on stdout.
 #
 # --timing is not optional: the pre-push hook reads the per-test durations out
 # of this stream to report the ones over its threshold.
+#
+# When SHARD is set (N/M), only the files assigned to that shard are run.
 run_bats() {
   local jobs_flag=()
   # bats farms tests out through GNU parallel and silently runs them serially
   # without it, so the flag is only worth passing when parallel is installed.
   command -v parallel >/dev/null 2>&1 && jobs_flag=(--jobs "$JOBS")
-  bats "$WORKBENCH_DIR/tests/" --recursive --timing "${jobs_flag[@]}" "$@"
+
+  if [[ -n "${SHARD:-}" ]]; then
+    local shard_n="${SHARD%/*}"
+    local shard_m="${SHARD#*/}"
+    local -a shard_test_files=()
+    while IFS= read -r f; do
+      shard_test_files+=("$f")
+    done < <(shard_files "$shard_n" "$shard_m")
+    if [[ ${#shard_test_files[@]} -eq 0 ]]; then
+      err "--shard $SHARD: produced an empty file list"
+      return 1
+    fi
+    bats "${shard_test_files[@]}" --timing "${jobs_flag[@]}" "$@"
+  elif [[ -n "${BATS_FILES:-}" ]]; then
+    local -a file_list=()
+    while IFS= read -r f; do
+      [[ -n "$f" ]] && file_list+=("$f")
+    done <<< "$BATS_FILES"
+    if [[ ${#file_list[@]} -eq 0 ]]; then
+      err "--files: no files provided"
+      return 1
+    fi
+    bats "${file_list[@]}" --timing "${jobs_flag[@]}" "$@"
+  else
+    bats "$WORKBENCH_DIR/tests/" --recursive --timing "${jobs_flag[@]}" "$@"
+  fi
 }
 
 # run_pytest ARGS... — the pytest suite.
@@ -143,6 +237,12 @@ run_pytest() {
   pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "$@"
 }
 
+# SHARD — when set, only this shard's files are run. Format: N/M.
+SHARD=""
+
+# BATS_FILES — when set, run only these bats files (newline-separated paths).
+BATS_FILES=""
+
 main() {
   local suite=all
   local -a runner_args=()
@@ -151,11 +251,35 @@ main() {
       -h|--help) usage; exit 0 ;;
       --bats) suite=bats ;;
       --pytest) suite=pytest ;;
+      --shard) shift; SHARD="$1" ;;
+      --files) shift; BATS_FILES="$1" ;;
       --) shift; runner_args=("$@"); break ;;
       *) err "Unknown option: $1"; usage >&2; exit 1 ;;
     esac
     shift
   done
+
+  if [[ -n "$SHARD" && "$suite" != bats ]]; then
+    err "--shard only applies to the bats suite; pass --bats"
+    exit 1
+  fi
+
+  if [[ -n "$BATS_FILES" && "$suite" != bats ]]; then
+    err "--files only applies to the bats suite; pass --bats"
+    exit 1
+  fi
+
+  if [[ -n "$SHARD" && -n "$BATS_FILES" ]]; then
+    err "--shard and --files are mutually exclusive"
+    exit 1
+  fi
+
+  if [[ -n "$SHARD" ]]; then
+    if ! [[ "$SHARD" =~ ^[0-9]+/[0-9]+$ ]]; then
+      err "--shard: expected N/M (e.g. 1/3), got '$SHARD'"
+      exit 1
+    fi
+  fi
 
   if [[ "$suite" == all && ${#runner_args[@]} -gt 0 ]]; then
     err "Pass-through arguments need a suite: --bats or --pytest"

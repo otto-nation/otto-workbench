@@ -159,6 +159,16 @@ tools:
     visibility: brief
     description: "Validates that the committed public surface snapshots match the registries, config schema, and shipped artifacts they are generated from"
 
+  - name: select-tests
+    permission: false
+    visibility: brief
+    description: "Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection"
+
+  - name: validate-test-deps
+    permission: false
+    visibility: brief
+    description: "Validates that every bats test has resolvable source refs or is in the always-run list"
+
   - name: check-surface-compat
     permission: false
     visibility: brief

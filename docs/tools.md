@@ -84,6 +84,8 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
 | `validate-public-surface` | Validates that the committed public surface snapshots match the registries, config schema, and shipped artifacts they are generated from |
+| `select-tests` | Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection |
+| `validate-test-deps` | Validates that every bats test has resolvable source refs or is in the always-run list |
 | `check-surface-compat` | Fails when a public surface entry is removed without a breaking-change or Not-Breaking declaration |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |

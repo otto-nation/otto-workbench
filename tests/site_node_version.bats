@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# site/.node-version owns which Node the site builds on: ci.yml and pages.yml
+# site/.node-version owns which Node the site builds on: site.yml and pages.yml
 # both consume it by reference through setup-node's node-version-file, and mise
 # reads it locally. @types/node restates that same fact at compile time — its
 # major IS a Node version, not an independent quality axis — so the two have to

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# validate-test-deps — fail when a bats test has no resolvable source refs
+# and is not in the always-run list.
+#
+# This catches renames that silently break the change-based test selection map:
+# a rename drops every unedited test that referenced the old path to zero refs,
+# making it indistinguishable from a legitimately-unmappable test — except it
+# is not in the always-run list, so it becomes never-run with no error.
+#
+# Usage: bin/local/validate-test-deps [--quiet]
+# Exit code: 0 when every test is accounted for, 1 otherwise.
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=../../bin/local/select-tests
+. "$REPO_ROOT/bin/local/select-tests"
+
+main() {
+  local quiet=false
+  [[ "${1:-}" == "--quiet" ]] && quiet=true
+
+  _validate_test_refs || return 1
+
+  local total
+  total=$(_all_test_files | wc -l | tr -d ' ')
+  $quiet || echo "✓ All $total test files have source refs or are in the always-run list"
+}
+
+main "$@"

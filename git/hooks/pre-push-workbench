@@ -200,14 +200,37 @@ if ! command -v bats >/dev/null 2>&1; then
   exit 1
 fi
 
-_step "Running tests"
+# Change-based test selection: only run bats tests affected by the diff.
+# Falls back to the full suite when the selector is unavailable or when
+# shared infra (test_helper.bash, run-tests, workflows) changed.
+_bats_selected=""
+_bats_label="tests"
+if [[ -x "$REPO_ROOT/bin/local/select-tests" ]]; then
+  _bats_selected=$("$REPO_ROOT/bin/local/select-tests" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null) || _bats_selected=""
+  if [[ -n "$_bats_selected" ]]; then
+    _bats_file_count=$(echo "$_bats_selected" | wc -l | tr -d ' ')
+    _bats_total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l | tr -d ' ')
+    _bats_label="tests ($_bats_file_count/$_bats_total files)"
+  fi
+fi
+
+_step "Running $_bats_label"
 _bats_start=$SECONDS
-_bats_output=$("$REPO_ROOT/bin/local/run-tests" --bats 2>&1) || {
-  printf "${RED}✗${NC}\n" >&2
-  echo "$_bats_output" | grep -E '^(not ok |# )'
-  err "Tests failed"
-  exit 1
-}
+if [[ -n "$_bats_selected" ]]; then
+  _bats_output=$("$REPO_ROOT/bin/local/run-tests" --bats --files "$_bats_selected" 2>&1) || {
+    printf "${RED}✗${NC}\n" >&2
+    echo "$_bats_output" | grep -E '^(not ok |# )'
+    err "Tests failed"
+    exit 1
+  }
+else
+  _bats_output=$("$REPO_ROOT/bin/local/run-tests" --bats 2>&1) || {
+    printf "${RED}✗${NC}\n" >&2
+    echo "$_bats_output" | grep -E '^(not ok |# )'
+    err "Tests failed"
+    exit 1
+  }
+fi
 _bats_elapsed=$(( SECONDS - _bats_start ))
 
 # Extract test count from TAP plan line (1..N)

@@ -122,6 +122,25 @@ class TestTarballCompleteness:
             f"{binary.name} is in BIN_EXCLUDE and will not be packaged"
         )
 
+    def test_every_layer_package_is_reachable(self):
+        """Every layer package in ai/lib must be transitively imported.
+
+        The build script copies only directories with an __init__.py, so a
+        layer that no packaged binary reaches is silently dropped from the
+        tarball.  This test ensures the import graph covers every layer,
+        catching the gap before the artifact ships.
+        """
+        source_layers = {
+            p.name for p in LIB_DIR.iterdir()
+            if p.is_dir() and (p / "__init__.py").exists()
+        }
+        reached_layers = {mod.split(".")[0] for mod in _all_required_modules()}
+        missing = sorted(source_layers - reached_layers)
+        assert not missing, (
+            f"Layer packages in ai/lib not reached by any packaged binary "
+            f"(will be silently dropped from the tarball): {missing}"
+        )
+
     def test_tarball_copies_review_templates(self):
         """Review templates must be included — review-orchestrate reads them."""
         content = BUILD_SCRIPT.read_text()

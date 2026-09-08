@@ -63,6 +63,15 @@ DECLARATION = re.compile(
 # What layer 1 writes where the others write a package list.
 NOTHING = 'nothing in ai/lib'
 
+# Every module here is imported with `ai/lib` itself on `sys.path`, so a package
+# is reached by its bare name. But neither `ai/` nor `ai/lib/` holds an
+# `__init__.py`, which makes them implicit namespace packages — so `ai.lib.pr`
+# also resolves from anything with the repo root on `sys.path`, and would name
+# the same package by a spelling no layer declaration mentions. Nothing writes
+# it that way today; recognising it is what keeps it from becoming the way
+# around this check.
+LIB_PACKAGE = 'ai.lib'
+
 SKIP_DIRS = {'__pycache__', '.git'}
 
 
@@ -122,19 +131,28 @@ def parse_declaration(package: str, source: str) -> Layer | None:
                  purpose=match['purpose'], allowed=frozenset(allowed))
 
 
+def package_names(repo_root: str) -> list[str]:
+    """Every directory under `ai/lib/` holding an `__init__.py`, in name order.
+
+    A package is a package whether or not its declaration parses, so this is the
+    set both readers below start from — the declared ones and the unplaced ones
+    are the two halves of one scan, and asking the filesystem twice is how they
+    come to disagree.
+    """
+    lib_root = os.path.join(repo_root, LIB_DIR)
+    return [name for name in sorted(os.listdir(lib_root))
+            if os.path.isfile(os.path.join(lib_root, name, '__init__.py'))]
+
+
 def read_layers(repo_root: str) -> dict[str, Layer]:
     """Every declared package under `ai/lib/`, keyed by package name.
 
-    A directory holding an `__init__.py` is a package whether or not it parses;
-    one that fails to declare a layer is absent from this mapping, and
+    A package that fails to declare a layer is absent from this mapping, and
     `undeclared_packages` is what reports it.
     """
-    lib_root = os.path.join(repo_root, LIB_DIR)
     found = {}
-    for name in sorted(os.listdir(lib_root)):
-        init = os.path.join(lib_root, name, '__init__.py')
-        if not os.path.isfile(init):
-            continue
+    for name in package_names(repo_root):
+        init = os.path.join(repo_root, LIB_DIR, name, '__init__.py')
         with open(init, encoding='utf-8') as f:
             layer = parse_declaration(name, f.read())
         if layer is not None:
@@ -144,10 +162,7 @@ def read_layers(repo_root: str) -> dict[str, Layer]:
 
 def undeclared_packages(repo_root: str, layers: dict[str, Layer]) -> list[str]:
     """Package directories under `ai/lib/` that declared no layer."""
-    lib_root = os.path.join(repo_root, LIB_DIR)
-    names = [n for n in sorted(os.listdir(lib_root))
-             if os.path.isfile(os.path.join(lib_root, n, '__init__.py'))]
-    return [n for n in names if n not in layers]
+    return [name for name in package_names(repo_root) if name not in layers]
 
 
 def check_declarations(layers: dict[str, Layer]) -> dict[str, list[Violation]]:
@@ -206,16 +221,40 @@ def _escapes_lib(node: ast.ImportFrom, parts: tuple[str, ...]) -> bool:
     return node.level - 1 >= len(parts)
 
 
+def _head(dotted: str) -> str:
+    """The package a dotted module name reaches, whichever way it is spelled.
+
+    `pr.ci_failures` and `ai.lib.pr.ci_failures` name the same package by the two
+    paths that both resolve, so both have to answer `pr`. Anything else answers
+    its own first segment, which no declaration names and the caller ignores.
+    """
+    prefix = f'{LIB_PACKAGE}.'
+    trimmed = dotted[len(prefix):] if dotted.startswith(prefix) else dotted
+    return trimmed.split('.')[0]
+
+
+def _reached(node: ast.AST) -> list[str]:
+    """The dotted module names one import statement reaches.
+
+    `from ai.lib import pr` puts the package in the alias rather than the module,
+    so the two have to be rejoined before `_head` can see past the prefix.
+    """
+    if isinstance(node, ast.Import):
+        return [a.name for a in node.names]
+    module = node.module or ''
+    if module == LIB_PACKAGE:
+        return [f'{module}.{a.name}' for a in node.names]
+    return [module]
+
+
 def _import_edges(tree: ast.AST, parts: tuple[str, ...]):
     """Yield an `Edge` for every import statement in *tree*."""
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            yield from (Edge(node.lineno, a.name.split('.')[0]) for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and not node.level:
-            yield Edge(node.lineno, (node.module or '').split('.')[0])
-        elif isinstance(node, ast.ImportFrom):
+        if isinstance(node, ast.ImportFrom) and node.level:
             escaped = _escapes_lib(node, parts)
             yield Edge(node.lineno, '' if escaped else parts[0], escaped)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            yield from (Edge(node.lineno, _head(name)) for name in _reached(node))
 
 
 def check_source(source: str, relpath: str, layers: dict[str, Layer]) -> list[Violation]:

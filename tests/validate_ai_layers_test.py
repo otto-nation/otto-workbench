@@ -146,6 +146,36 @@ def test_every_offending_import_is_reported_once():
     assert [(v.line, v.target) for v in violations] == [(1, "review"), (3, "review")]
 
 
+def test_an_upward_import_spelled_through_the_namespace_is_flagged():
+    """`ai/` and `ai/lib/` hold no `__init__.py`, so `ai.lib.review` resolves as a
+    namespace package and reaches the same code the bare name does."""
+    layers = dict(LAYERS, review=_layer("review", 6, ("core", "pr")))
+    violations = _check("from ai.lib.review import pipeline\n", layers=layers)
+    assert [(v.line, v.target) for v in violations] == [(1, "review")]
+
+
+def test_an_upward_dotted_import_through_the_namespace_is_flagged():
+    layers = dict(LAYERS, review=_layer("review", 6, ("core", "pr")))
+    violations = _check("import ai.lib.review.pipeline\n", layers=layers)
+    assert [v.target for v in violations] == ["review"]
+
+
+def test_an_upward_import_of_the_package_itself_is_flagged():
+    """`from ai.lib import review` names the package in the alias, not the module."""
+    layers = dict(LAYERS, review=_layer("review", 6, ("core", "pr")))
+    violations = _check("from ai.lib import core, review\n", layers=layers)
+    assert [v.target for v in violations] == ["review"]
+
+
+def test_a_permitted_import_through_the_namespace_is_clean():
+    assert _check("from ai.lib.gh import client\nfrom ai.lib import core\n") == []
+
+
+def test_an_unrelated_ai_import_is_clean():
+    """`ai.bin` is not a package under `ai/lib`, so no declaration governs it."""
+    assert _check("import ai.claude.mcps.server\n") == []
+
+
 def test_a_relative_import_stays_inside_its_own_package():
     """`from ..gh import client` inside `pr.sub` resolves to `pr.gh`, not to the
     `gh` package — a relative import cannot reach a sibling by construction."""

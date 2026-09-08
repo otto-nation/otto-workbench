@@ -448,7 +448,7 @@ class RebaseSummary(Domain):
         lines = [f"**Rebase**: {desc}"]
         if self.files_stale:
             lines.append(
-                f"**Rebase**: regeneration failed for {', '.join(self.files_stale)} — "
+                f"**Rebase**: not regenerated: {', '.join(self.files_stale)} — "
                 "content is the incoming side, unmerged"
             )
         return lines

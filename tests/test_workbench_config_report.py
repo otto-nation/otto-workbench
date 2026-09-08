@@ -260,6 +260,11 @@ def test_render_value_writes_what_a_config_file_would_hold():
     assert wcr.render_value("") == "—"
 
 
+def test_a_list_key_names_what_it_holds():
+    """A list key names its element type — `any` told the reader nothing."""
+    assert wcr._values_column(list[str]) == "list of string"
+
+
 # ── Schema ──────────────────────────────────────────────────────────────────
 
 

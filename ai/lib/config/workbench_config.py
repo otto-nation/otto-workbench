@@ -253,12 +253,35 @@ class GitHubConfig:
 
 
 @dataclass(frozen=True)
+class RebaseConfig:
+    """How a rebase rebuilds this repo's generated files.
+
+    ``.gitattributes`` already says which files are generated, and
+    ``git check-attr`` is how the rebase finds them — but a path-to-attribute
+    map carries no producer, so nothing in git can say what rebuilds one. This
+    is that missing half, and the only reason it is configuration rather than
+    detection.
+
+    Each entry is one command line, run from the repo root in order. A list
+    because a repo's generators are not always reachable from one task:
+    a top-level ``generate`` that excludes i18n needs both named, and a repo
+    that has to run them in sequence cannot say so with a single string.
+
+    Empty means fall back to the conventional ``generate`` task, which is right
+    for most repos and wrong only where that task is incomplete.
+    """
+
+    regenerate: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
+    rebase: RebaseConfig = field(default_factory=RebaseConfig)
 
 
 def global_config_path() -> Path:

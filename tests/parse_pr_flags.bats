@@ -80,6 +80,24 @@ teardown() {
   parse_pr_flags ""
   [ "$PR_TITLE_OVERRIDE" = "" ]
   [ "$PR_BODY_OVERRIDE" = "" ]
+  [ "$PR_ISSUE_OVERRIDE" = "" ]
+}
+
+@test "--issue sets PR_ISSUE_OVERRIDE" {
+  parse_pr_flags "--issue ENG-123"
+  [ "$PR_ISSUE_OVERRIDE" = "ENG-123" ]
+}
+
+@test "--issue without value fails" {
+  run parse_pr_flags "--issue"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--issue requires a value"* ]]
+}
+
+@test "--issue and --draft together" {
+  parse_pr_flags "--issue PROJ-42 --draft"
+  [ "$PR_ISSUE_OVERRIDE" = "PROJ-42" ]
+  [ "$PR_DRAFT" = "true" ]
 }
 
 @test "--title with quoted multi-word value" {

@@ -218,7 +218,7 @@ tasks:
         fi
 
   pr:content:
-    desc: "Preview AI-generated PR title and description (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
+    desc: "Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --base <branch>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -242,7 +242,7 @@ tasks:
         echo "$PR_DESCRIPTION"
 
   pr:create:
-    desc: "Create AI-powered pull request (-- --no-issue, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
+    desc: "Create AI-powered pull request (-- --no-issue, --issue <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -280,7 +280,7 @@ tasks:
         create_pr "${GH_ARGS[@]}" || exit 1
 
   pr:update:
-    desc: "Update current PR description (-- --no-issue, --base <branch>, --title <title>, --body <body>)"
+    desc: "Update current PR description (-- --no-issue, --issue <ID>, --base <branch>, --title <title>, --body <body>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -461,7 +461,7 @@ tasks:
         echo "   pr:create         AI-generated PR (auto-pushes if needed)"
         echo "   pr:update         Update existing PR description"
         echo "   pr:review         AI review of the current PR"
-        echo "   Pass -- --no-issue to any pr:* task to skip issue prompts"
+        echo "   Pass -- --no-issue to skip issue prompts, or --issue <ID> to link one directly"
         echo ""
         echo "Homebrew:"
         echo "   brew:install      Install core packages from brew/Brewfile"

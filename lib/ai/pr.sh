@@ -171,13 +171,14 @@ load_pr_context() {
 
 # _set_pr_flag FLAG VALUE
 # Assigns VALUE to the variable corresponding to FLAG.
-# shellcheck disable=SC2034  # PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE read by callers
+# shellcheck disable=SC2034  # PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE, PR_ISSUE_OVERRIDE read by callers
 _set_pr_flag() {
   case "$1" in
     --base)      PR_BASE="$2" ;;
     --title)     PR_TITLE_OVERRIDE="$2" ;;
     --body)      PR_BODY_OVERRIDE="$2" ;;
     --body-file) PR_BODY_OVERRIDE="$(cat "$2")" ;;
+    --issue)     PR_ISSUE_OVERRIDE="$2" ;;
   esac
 }
 
@@ -197,6 +198,7 @@ parse_pr_flags() {
   PR_BASE=""
   PR_TITLE_OVERRIDE=""
   PR_BODY_OVERRIDE=""
+  PR_ISSUE_OVERRIDE=""
 
   [[ -z "$args" ]] && return 0
 
@@ -215,6 +217,7 @@ parse_pr_flags() {
     case "$arg" in
       --no-issue) SKIP_ISSUE=true ;;
       --draft)    PR_DRAFT=true ;;
+      --issue)    expect_flag="$arg" ;;
       --base|--title|--body|--body-file) expect_flag="$arg" ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
     esac
@@ -240,6 +243,13 @@ load_pr() {
 # Sets PR_ISSUE.
 _pr_resolve_issue() {
   local branch="$1"
+
+  if [[ -n "${PR_ISSUE_OVERRIDE:-}" ]]; then
+    PR_ISSUE="$PR_ISSUE_OVERRIDE"
+    echo "✓ Using issue: $PR_ISSUE"
+    return
+  fi
+
   PR_ISSUE=$(echo "$branch" | grep -oE '[A-Z]+-[0-9]+' | head -1)
 
   if [ -z "$PR_ISSUE" ]; then

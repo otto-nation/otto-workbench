@@ -189,9 +189,11 @@ step_claude_rules() {
   done
 }
 
-# _claude_env_json VAR... — prints, as a JSON object, the values ~/.env.local
-# sets for the named variables. Variables the file does not export are absent
-# from the object rather than present and empty.
+# _claude_env_json ENTRY... — prints, as a JSON object, the values ~/.env.local
+# sets for the named variables. Each ENTRY is either a bare variable name (read
+# and output under the same key) or a tab-separated "source\ttarget" pair (read
+# source from ~/.env.local, output under target key). Variables the file does
+# not export are absent from the object rather than present and empty.
 #
 # The file is read directly instead of the ambient environment because the sync
 # that matters most cannot see one: maintenance/bin/otto-workbench-maintenance
@@ -200,9 +202,16 @@ step_claude_rules() {
 # by hand the next time someone synced from a terminal.
 _claude_env_json() {
   local -a pairs=()
-  local var line value
-  for var in "$@"; do
-    line=$(grep -m1 "^export ${var}=" "$ENV_LOCAL_FILE") || continue
+  local entry source key line value
+  for entry in "$@"; do
+    if [[ "$entry" == *$'\t'* ]]; then
+      source="${entry%%$'\t'*}"
+      key="${entry#*$'\t'}"
+    else
+      source="$entry"
+      key="$entry"
+    fi
+    line=$(grep -m1 "^export ${source}=" "$ENV_LOCAL_FILE") || continue
     value=${line#*=}
     # A shell file quotes what needs quoting; settings.json carries the value.
     # Only a matched pair comes off — a lone quote is part of a line nothing here
@@ -211,7 +220,7 @@ _claude_env_json() {
       value=${value:1:${#value}-2}
     fi
     [[ -n "$value" ]] || continue
-    pairs+=("$var"$'\t'"$value")
+    pairs+=("$key"$'\t'"$value")
   done
 
   if [[ ${#pairs[@]} -eq 0 ]]; then
@@ -235,16 +244,26 @@ _claude_env_json() {
 _claude_mirror_env() {
   local result="$1"
 
-  local -a managed=()
-  collect_claude_env_vars managed "$WORKBENCH_STABLE_DIR"
-  if [[ ! -f "$ENV_LOCAL_FILE" || ${#managed[@]} -eq 0 ]]; then
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$WORKBENCH_STABLE_DIR"
+  if [[ ! -f "$ENV_LOCAL_FILE" || ${#sources[@]} -eq 0 ]]; then
     printf '%s' "$result"
     return 0
   fi
 
+  # Build "source\ttarget" entries for _claude_env_json so it reads from
+  # ~/.env.local using the source name and outputs under the target name.
+  local -a entries=()
+  local i
+  for (( i=0; i<${#sources[@]}; i++ )); do
+    entries+=("${sources[i]}"$'\t'"${targets[i]}")
+  done
+
   local env_json managed_json
-  env_json=$(_claude_env_json "${managed[@]}")
-  managed_json=$(printf '%s\n' "${managed[@]}" | jq -Rn '[inputs]')
+  env_json=$(_claude_env_json "${entries[@]}")
+  # The managed list uses target names — those are the keys that appear in the
+  # env block and need to be tracked for cleanup when dropped from ~/.env.local.
+  managed_json=$(printf '%s\n' "${targets[@]}" | jq -Rn '[inputs]')
 
   jq --argjson env "$env_json" --argjson managed "$managed_json" '
     .settings.env = (((.settings.env // {})

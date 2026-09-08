@@ -108,15 +108,15 @@ _live() {
   [ "$(_live '.defaultProvider')" = "google-vertex-claude" ]
 }
 
-@test "a value already in the live file is seeded past, not overridden" {
-  # Whatever set it first keeps it — an extension, `pi config`, or Ctrl+S in
-  # /model. Only the keys the file does not carry are written.
+@test "template scalars override the live file" {
+  # The workbench is authoritative — template values always win over whatever
+  # an extension or `pi config` set.
   _write_live '{"defaultModel": "claude-sonnet-5"}'
   _stub_gh 'echo active'
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ "$(_live '.defaultModel')" = "claude-sonnet-5" ]
+  [ "$(_live '.defaultModel')" = "claude-opus-4-6" ]
   [ "$(_live '.defaultProvider')" = "google-vertex-claude" ]
 }
 
@@ -254,12 +254,11 @@ _live() {
   [ "$output" = "$PKG" ]
 }
 
-@test "the template's defaultModel is one of its enabledModels" {
-  # Pi will not select a default that is not enabled, and the failure is a
-  # silent fall-through to whatever the provider offers first.
-  run jq -e '
-    (.enabledModels // []) as $m
-    | ((.defaultProvider + "/" + .defaultModel) as $d | $m | index($d))
-  ' "$REPO_ROOT/ai/pi/settings.json"
-  [ "$status" -eq 0 ]
+@test "the template carries no hardcoded model keys" {
+  # Model config comes from ~/.env.local at sync time, not the template.
+  # A hardcoded defaultModel or enabledModels would fight the SSOT.
+  run jq -e 'has("defaultModel")' "$REPO_ROOT/ai/pi/settings.json"
+  [ "$status" -ne 0 ]
+  run jq -e 'has("enabledModels")' "$REPO_ROOT/ai/pi/settings.json"
+  [ "$status" -ne 0 ]
 }

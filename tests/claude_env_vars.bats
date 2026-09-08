@@ -33,11 +33,35 @@ env:
   - var: SECOND_VAR
 tools: []'
 
-  local -a vars=()
-  collect_claude_env_vars vars "$TMPDIR"
-  [[ "${#vars[@]}" -eq 2 ]]
-  [[ "${vars[0]}" == "FIRST_VAR" ]]
-  [[ "${vars[1]}" == "SECOND_VAR" ]]
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$TMPDIR"
+  [[ "${#sources[@]}" -eq 2 ]]
+  [[ "${sources[0]}" == "FIRST_VAR" ]]
+  [[ "${sources[1]}" == "SECOND_VAR" ]]
+  # No target: field — targets default to source names
+  [[ "${targets[0]}" == "FIRST_VAR" ]]
+  [[ "${targets[1]}" == "SECOND_VAR" ]]
+}
+
+@test "target: field maps source to a different output name" {
+  _write_env_registry "$TMPDIR/comp" 'meta:
+  section: Test
+  validation: none
+  claude_env: true
+env:
+  - var: AI_MODEL
+    target: ANTHROPIC_MODEL
+  - var: PLAIN_VAR
+tools: []'
+
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$TMPDIR"
+  [[ "${#sources[@]}" -eq 2 ]]
+  [[ "${sources[0]}" == "AI_MODEL" ]]
+  [[ "${targets[0]}" == "ANTHROPIC_MODEL" ]]
+  # No target — defaults to source
+  [[ "${sources[1]}" == "PLAIN_VAR" ]]
+  [[ "${targets[1]}" == "PLAIN_VAR" ]]
 }
 
 @test "an unflagged registry contributes nothing" {
@@ -50,9 +74,9 @@ env:
   - var: SOME_API_TOKEN
 tools: []'
 
-  local -a vars=()
-  collect_claude_env_vars vars "$TMPDIR"
-  [[ "${#vars[@]}" -eq 0 ]]
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$TMPDIR"
+  [[ "${#sources[@]}" -eq 0 ]]
 }
 
 @test "claude_env: false contributes nothing" {
@@ -64,9 +88,9 @@ env:
   - var: SOME_API_TOKEN
 tools: []'
 
-  local -a vars=()
-  collect_claude_env_vars vars "$TMPDIR"
-  [[ "${#vars[@]}" -eq 0 ]]
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$TMPDIR"
+  [[ "${#sources[@]}" -eq 0 ]]
 }
 
 @test "a flagged registry with no env block is skipped" {
@@ -76,9 +100,9 @@ tools: []'
   claude_env: true
 tools: []'
 
-  local -a vars=()
-  collect_claude_env_vars vars "$TMPDIR"
-  [[ "${#vars[@]}" -eq 0 ]]
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$TMPDIR"
+  [[ "${#sources[@]}" -eq 0 ]]
 }
 
 @test "vars from several flagged registries are all collected" {
@@ -97,38 +121,48 @@ env:
   - var: TWO_VAR
 tools: []'
 
-  local -a vars=()
-  collect_claude_env_vars vars "$TMPDIR"
-  [[ "${#vars[@]}" -eq 2 ]]
-  printf '%s\n' "${vars[@]}" | grep -qx ONE_VAR
-  printf '%s\n' "${vars[@]}" | grep -qx TWO_VAR
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$TMPDIR"
+  [[ "${#sources[@]}" -eq 2 ]]
+  printf '%s\n' "${sources[@]}" | grep -qx ONE_VAR
+  printf '%s\n' "${sources[@]}" | grep -qx TWO_VAR
 }
 
 # ── the real registries ──────────────────────────────────────────────────────
 
 @test "the Vertex routing vars are on the allowlist" {
-  local -a vars=()
-  collect_claude_env_vars vars "$REPO_ROOT"
-  printf '%s\n' "${vars[@]}" | grep -qx CLAUDE_CODE_USE_VERTEX
-  printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_VERTEX_PROJECT_ID
-  printf '%s\n' "${vars[@]}" | grep -qx CLOUD_ML_REGION
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$REPO_ROOT"
+  printf '%s\n' "${sources[@]}" | grep -qx CLAUDE_CODE_USE_VERTEX
+  printf '%s\n' "${sources[@]}" | grep -qx ANTHROPIC_VERTEX_PROJECT_ID
+  printf '%s\n' "${sources[@]}" | grep -qx CLOUD_ML_REGION
 }
 
-@test "the model routing vars are on the allowlist" {
-  local -a vars=()
-  collect_claude_env_vars vars "$REPO_ROOT"
-  printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_MODEL
-  printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_DEFAULT_OPUS_MODEL
-  printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_DEFAULT_SONNET_MODEL
-  printf '%s\n' "${vars[@]}" | grep -qx ANTHROPIC_DEFAULT_HAIKU_MODEL
+@test "the model routing vars use generic AI_* names" {
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$REPO_ROOT"
+  # Source names (what ~/.env.local carries)
+  printf '%s\n' "${sources[@]}" | grep -qx AI_MODEL
+  printf '%s\n' "${sources[@]}" | grep -qx AI_OPUS_MODEL
+  printf '%s\n' "${sources[@]}" | grep -qx AI_SONNET_MODEL
+  printf '%s\n' "${sources[@]}" | grep -qx AI_HAIKU_MODEL
+}
+
+@test "model vars map to Claude Code's ANTHROPIC_* target names" {
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$REPO_ROOT"
+  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_MODEL
+  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_DEFAULT_OPUS_MODEL
+  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_DEFAULT_SONNET_MODEL
+  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_DEFAULT_HAIKU_MODEL
 }
 
 @test "no credential the registries declare reaches the allowlist" {
   # Every var an unflagged registry declares, checked against the allowlist as a
   # set — a registry that gains the flag by mistake fails here rather than in a
   # settings file someone reads a token out of.
-  local -a vars=()
-  collect_claude_env_vars vars "$REPO_ROOT"
-  run bash -c 'printf "%s\n" "$@" | grep -Ex "(JIRA_API_TOKEN|LINEAR_API_KEY|CONTEXT7_API_KEY|AWS_PROFILE)"' _ "${vars[@]}"
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$REPO_ROOT"
+  run bash -c 'printf "%s\n" "$@" | grep -Ex "(JIRA_API_TOKEN|LINEAR_API_KEY|CONTEXT7_API_KEY|AWS_PROFILE)"' _ "${sources[@]}"
   [ "$status" -ne 0 ]
 }

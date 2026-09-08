@@ -261,12 +261,9 @@ GENERATED_RULES_DIR="$WORKBENCH_STATE_DIR/rules"
 AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
-# PI_SETTINGS_SRC's enabledModels pins claude-haiku-4-5 to the @20251001
-# snapshot while opus and sonnet float on rolling aliases: at the time this
-# was authored, Vertex only published haiku-4-5 under the snapshot id, with
-# no rolling alias yet to track. Drop the pin once Vertex ships one — check
-# before assuming the omission was an oversight. JSON has no comment syntax,
-# so the rationale lives here instead of inline.
+# PI_SETTINGS_SRC carries only non-model scalars (provider, thinking level,
+# packages). Model config is derived at sync time from the AI_MODEL / AI_*_MODEL
+# env vars in ~/.env.local — the same SSOT Claude Code reads.
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
 PI_CONTEXT_HEAD_SRC="$PI_SRC_DIR/AGENTS.head.md"

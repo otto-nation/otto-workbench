@@ -883,7 +883,7 @@ the caller has not already sourced `constants.sh`, since an
 | `iter_registry_env FILE CALLBACK` | Calls CALLBACK var comment default_val setup_url prefix for each env[] entry. |
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
 | `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
-| `collect_claude_env_vars ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with the names of the env vars declared by every registry whose meta block sets `claude_env: true` — the variables `ai/claude/steps.sh` mirrors from `~/.env.local` into the live `~/.claude/settings.json`. Scanning and the brew-directory default match `collect_registry_permissions` above. |
+| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). |
 
 ### summary.sh
 

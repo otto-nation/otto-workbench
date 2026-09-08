@@ -1363,7 +1363,7 @@ _seed_env_local() {
   _seed_env_local "$home" \
     'export CLAUDE_CODE_USE_VERTEX=1' \
     "export ANTHROPIC_VERTEX_PROJECT_ID='proj-x'" \
-    'export ANTHROPIC_MODEL="claude-opus-5"'
+    'export AI_MODEL="claude-opus-5"'
   _sync_run "$home" "$state"
 
   # Quoting is the shell file's business; the settings file carries the value.
@@ -1371,6 +1371,7 @@ _seed_env_local() {
   [ "$output" = "1" ]
   run jq -r '.env.ANTHROPIC_VERTEX_PROJECT_ID' "$home/.claude/settings.json"
   [ "$output" = "proj-x" ]
+  # AI_MODEL in ~/.env.local is mapped to ANTHROPIC_MODEL in the env block.
   run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
   [ "$output" = "claude-opus-5" ]
 }
@@ -1456,7 +1457,7 @@ _seed_env_local() {
 
 @test "env mirror: a value carrying an = sign survives intact" {
   local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
-  _seed_env_local "$home" 'export ANTHROPIC_MODEL=claude-opus-5=beta'
+  _seed_env_local "$home" 'export AI_MODEL=claude-opus-5=beta'
   _sync_run "$home" "$state"
   run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
   [ "$output" = "claude-opus-5=beta" ]

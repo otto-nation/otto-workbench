@@ -55,6 +55,33 @@ def test_a_declared_long_flag_passes(tmp_path):
     assert _check(tmp_path, DECLARATION + '@test "a" {\n  run --separate-stderr cmd\n}\n') is None
 
 
+def test_a_declaration_below_the_required_version_is_flagged(tmp_path):
+    source = 'bats_require_minimum_version 1.0.0\n' + '@test "a" {\n  run ! false\n}\n'
+    reason, offenders = _check(tmp_path, source)
+    assert "below the required 1.5.0" in reason
+    assert [line for line, _ in offenders] == [3]
+
+
+def test_a_declaration_at_exactly_the_required_version_passes(tmp_path):
+    assert _check(tmp_path, DECLARATION + '@test "a" {\n  run ! false\n}\n') is None
+
+
+def test_a_declaration_above_the_required_version_passes(tmp_path):
+    source = 'bats_require_minimum_version 1.10.0\n' + '@test "a" {\n  run ! false\n}\n'
+    assert _check(tmp_path, source) is None
+
+
+def test_a_flagged_run_on_a_one_line_test_body_is_seen(tmp_path):
+    _, offenders = _check(tmp_path, '@test "a" { run ! false; }\n')
+    assert [line for line, _ in offenders] == [1]
+
+
+def test_a_hash_inside_a_quoted_string_is_not_a_comment(tmp_path):
+    reason, offenders = _check(tmp_path, '@test "a" {\n  echo "tag #foo"; run ! false\n}\n')
+    assert "without bats_require_minimum_version" in reason
+    assert [line for line, _ in offenders] == [2]
+
+
 # ── suites that need one and lack it ─────────────────────────────────────
 
 

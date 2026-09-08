@@ -3,6 +3,7 @@
 Pure conflict-analysis functions — prompt construction, AI invocation,
 and file-level dispatch live in ``resolve_ai``.
 """
+# doc-group: platform
 
 from __future__ import annotations
 

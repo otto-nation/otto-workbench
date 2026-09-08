@@ -4,6 +4,7 @@ Builds on the pure analysis in ``conflicts`` to drive agent-based file
 resolution during a rebase.  Every function that calls the AI backend
 accepts a ``trail`` parameter for audit logging.
 """
+# doc-group: platform
 
 from __future__ import annotations
 

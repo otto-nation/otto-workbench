@@ -219,11 +219,13 @@ def test_a_failed_commit_names_the_full_output_artifact(wt, tmp_path, live_git_h
 def test_a_failed_commit_omits_the_line_when_there_is_no_artifact(wt, tmp_path,
                                                                    live_git_hooks,
                                                                    capsys):
-    """No trail, no artifact — and so no line naming one."""
+    """A trail that writes nothing still runs `trail.failure` — which then
+    hands back no artifact, and the console must not claim one exists."""
     _install_failing_pre_commit(tmp_path)
     (wt / "src.py").write_text("edited\n")
+    trail = Trail.start(script="test", context={}, record=False)
 
-    landed, _ = _land(wt)
+    landed, _ = _land(wt, trail=trail)
 
     assert landed.status is CommitStatus.COMMIT_FAILED
     assert "full output:" not in capsys.readouterr().err

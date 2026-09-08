@@ -20,42 +20,11 @@ main() {
   local quiet=false
   [[ "${1:-}" == "--quiet" ]] && quiet=true
 
-  local unmapped=0
-  local total=0
-  while IFS= read -r test_file; do
-    total=$((total + 1))
-    local test_name
-    test_name="$(basename "$test_file" .bats)"
+  _validate_test_refs || return 1
 
-    # Skip tests in the always-run or no-refs lists
-    if _is_in_array "$test_name" "${ALWAYS_RUN_TESTS[@]}" "${NO_REFS_TESTS[@]}"; then
-      continue
-    fi
-
-    # Extract refs and check that at least one exists
-    local has_ref=false
-    while IFS= read -r ref; do
-      if [[ -n "$ref" ]]; then
-        has_ref=true
-        break
-      fi
-    done < <(_extract_refs "$test_file")
-
-    if ! $has_ref; then
-      echo "✗ Unmapped test: $test_name (no source refs, not in always-run list)" >&2
-      unmapped=$((unmapped + 1))
-    fi
-  done < <(_all_test_files)
-
-  if [[ $unmapped -gt 0 ]]; then
-    echo "✗ $unmapped/$total test(s) have no source refs and are not in the always-run list" >&2
-    echo "  Add them to ALWAYS_RUN_TESTS or NO_REFS_TESTS in bin/local/select-tests" >&2
-    return 1
-  fi
-
-  if ! $quiet; then
-    echo "✓ All $total test files have source refs or are in the always-run list"
-  fi
+  local total
+  total=$(_all_test_files | wc -l | tr -d ' ')
+  $quiet || echo "✓ All $total test files have source refs or are in the always-run list"
 }
 
 main "$@"

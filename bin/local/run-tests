@@ -124,6 +124,18 @@ Environment:
 EOF
 }
 
+# _find_min_bucket TOTAL — echo the index of the bucket with the smallest load.
+# Reads bucket_load[] from the caller's scope.
+_find_min_bucket() {
+  local total="$1" j min_idx=0 min_load=${bucket_load[0]}
+  for (( j = 1; j < total; j++ )); do
+    [[ ${bucket_load[$j]} -lt $min_load ]] || continue
+    min_load=${bucket_load[$j]}
+    min_idx=$j
+  done
+  echo "$min_idx"
+}
+
 # shard_files SHARD TOTAL — emit the test file paths for shard SHARD of TOTAL.
 #
 # Partitions by longest-processing-time (LPT) packing on @test count: sort files
@@ -155,19 +167,13 @@ shard_files() {
   # LPT packing: assign each file to the bucket with the smallest load.
   local -a bucket_load=()
   local -a bucket_assign=()
-  local i min_idx min_load j
+  local i
   for (( i = 0; i < total; i++ )); do
     bucket_load[$i]=0
   done
   for (( i = 0; i < ${#files[@]}; i++ )); do
-    min_idx=0
-    min_load=${bucket_load[0]}
-    for (( j = 1; j < total; j++ )); do
-      if [[ ${bucket_load[$j]} -lt $min_load ]]; then
-        min_load=${bucket_load[$j]}
-        min_idx=$j
-      fi
-    done
+    local min_idx
+    min_idx=$(_find_min_bucket "$total")
     bucket_assign[$i]=$min_idx
     bucket_load[$min_idx]=$(( ${bucket_load[$min_idx]} + ${weights[$i]} ))
   done

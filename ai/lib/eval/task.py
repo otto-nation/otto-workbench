@@ -20,6 +20,12 @@ that becomes the run's `cwd`, and a case without one is skipped.
 could reasonably keep going rather than a bound on a subprocess that should
 already have answered, which is why it sits outside the `timeouts` table.
 
+A run reports a `RunOutcome`, and only `MEASURED` is a number. An invocation
+that died before the agent did any work produces empty artifacts, which score as
+recall 0 and are indistinguishable in the results from a genuine miss — one bad
+backend window then replaces a good baseline with zeros. `outcome_for` names that
+case from the two things it always shows: a non-zero exit and no usage at all.
+
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 """
@@ -38,7 +44,7 @@ from typing import Protocol
 from core import proc
 from core import timeouts
 from agent.usage import SessionUsage
-from eval.scoring import ScoringResult
+from eval.scoring import RunOutcome, ScoringResult
 
 DEFAULT_TASK = "review"
 
@@ -68,6 +74,23 @@ class RunOptions:
     verbose: bool = False
 
 
+def outcome_for(exit_code: int, usage: SessionUsage) -> RunOutcome:
+    """Classify a completed invocation from its exit code and what it spent.
+
+    Both conditions are needed. A non-zero exit alone is ordinary: an agent that
+    ran, worked, and gave up still exited non-zero and its findings are a real
+    result. Zero usage alone is ordinary too — a cached or stubbed path can cost
+    nothing. Together they say the process produced nothing at all, which is the
+    signature the poisoned baseline was found by: `$0.00` and about four seconds
+    across half the runs in a pass.
+    """
+    if exit_code == 0:
+        return RunOutcome.MEASURED
+    if usage.cost > 0 or usage.total_tokens > 0:
+        return RunOutcome.MEASURED
+    return RunOutcome.NOT_RUN
+
+
 @dataclass
 class RunArtifacts:
     """What one run left behind, for the scorer and for cleanup."""
@@ -76,6 +99,13 @@ class RunArtifacts:
     temp_dirs: list[str] = field(default_factory=list)
     # Task-specific outputs: findings for review, command results for ci-fix.
     data: dict = field(default_factory=dict)
+    # Defaults to MEASURED so a task that never classifies keeps today's
+    # behaviour rather than silently reporting every run as unmeasured.
+    outcome: RunOutcome = RunOutcome.MEASURED
+
+    @property
+    def measured(self) -> bool:
+        return self.outcome is RunOutcome.MEASURED
 
 
 class EvalTask(Protocol):

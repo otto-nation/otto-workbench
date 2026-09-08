@@ -68,8 +68,8 @@ from pathlib import Path
 
 from agent import backend as ai_backend
 from agent import usage as ai_usage
-from eval.scoring import ScoringResult
-from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo
+from eval.scoring import RunOutcome, ScoringResult
+from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
 
 
 @dataclass(frozen=True)
@@ -434,6 +434,7 @@ class SkillTask:
                 repo="eval/corpus",
             ))
 
+            usage = ai_usage.parse_session_log(session_log)
             lines = load_trace(str(trace_file))
             matches = match_required(manifest.get("requires", []), lines)
             violations = match_forbidden(manifest.get("forbids", []), lines)
@@ -448,7 +449,8 @@ class SkillTask:
 
         return RunArtifacts(
             exit_code=rc,
-            usage=ai_usage.parse_session_log(session_log),
+            usage=usage,
+            outcome=outcome_for(rc, usage),
             temp_dirs=[repo_dir, str(work_dir)],
             data={
                 "matches": matches,
@@ -467,6 +469,7 @@ class SkillTask:
         usage = artifacts.usage
         return ScoringResult(
             entry_name="", model="", run_index=0,
+            outcome=artifacts.outcome,
             matches=matches,
             false_positive_ids=violations,
             # 0.0 is a floor for a manifest the corpus rejects, not a score any

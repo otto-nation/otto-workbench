@@ -20,6 +20,7 @@ from eval import task as eval_task
 from core import proc
 from core import timeouts
 from agent.usage import SessionUsage
+from eval import scoring as eval_scoring
 from eval.scoring import ScoringResult
 
 
@@ -206,3 +207,97 @@ class TestReportRun:
         err = self._report(em, capsys, fp_count=2, fp_ok=True)
         assert "FP: 2" in err
         assert "over budget" not in err
+
+
+class TestOutcomeFor:
+    """Classifying an invocation that produced nothing (#1001).
+
+    The poisoned baseline was found by three cases reading `$0.00 / 4s` at
+    once. Both halves of that signature are needed: an exit code alone cannot
+    tell a dead invocation from an agent that worked and gave up.
+    """
+
+    def test_a_clean_exit_is_measured(self):
+        assert eval_task.outcome_for(0, SessionUsage()) is eval_scoring.RunOutcome.MEASURED
+
+    def test_a_non_zero_exit_that_spent_money_is_measured(self):
+        """An agent that ran, worked, and failed produced a real result."""
+        assert eval_task.outcome_for(1, SessionUsage(cost=0.31)) is eval_scoring.RunOutcome.MEASURED
+
+    def test_a_non_zero_exit_that_burned_tokens_is_measured(self):
+        """A run can do real work and still report no cost — a stubbed or free model."""
+        assert eval_task.outcome_for(
+            1, SessionUsage(input_tokens=900)) is eval_scoring.RunOutcome.MEASURED
+
+    def test_a_non_zero_exit_with_nothing_spent_never_ran(self):
+        assert eval_task.outcome_for(1, SessionUsage()) is eval_scoring.RunOutcome.NOT_RUN
+
+    def test_cache_reads_alone_count_as_work(self):
+        """total_tokens covers the cache fields; billed_input alone would miss them."""
+        assert eval_task.outcome_for(
+            1, SessionUsage(cache_read_tokens=4000)) is eval_scoring.RunOutcome.MEASURED
+
+    def test_artifacts_default_to_measured(self):
+        """A task that never classifies keeps today's behaviour."""
+        assert eval_task.RunArtifacts().measured
+
+
+class TestReportUnmeasuredRun:
+    def test_a_dead_run_reports_no_score(self, em, capsys):
+        """recall 0% for a run that never happened is the confusion, not the report."""
+        result = ScoringResult(
+            "", "", 0, recall=0.0, outcome=eval_scoring.RunOutcome.NOT_RUN)
+        em._report_run(eval_task.RunArtifacts(), result, 3)
+        err = capsys.readouterr().err
+        assert "not scored" in err
+        assert "recall" not in err
+
+
+class TestSaveBaselineRefusal:
+    """--save-baselines writes a model's file wholesale from one pass (#1001).
+
+    One window of backend failures would therefore replace a good baseline with
+    zeros, and nothing downstream catches it: validate-eval-baselines checks
+    corpus coverage, not plausibility.
+    """
+
+    @staticmethod
+    def _args(tmp_path):
+        return argparse.Namespace(
+            save_baselines=True, compare=False, results_dir=str(tmp_path / "results"),
+        )
+
+    @staticmethod
+    def _output(measured: int, attempted: int) -> dict:
+        return {
+            "effort": "low", "runs_per_entry": attempted,
+            "entries": {"case-a": {"sonnet": {
+                "recall_mean": 1.0, "precision_mean": 1.0,
+                "runs_measured": measured, "runs_attempted": attempted,
+            }}},
+        }
+
+    def test_a_complete_pass_is_saved(self, em, tmp_path, capsys):
+        code = em._run_post_eval(self._args(tmp_path), self._output(3, 3), tmp_path)
+        assert code == 0
+        assert (tmp_path / "results" / "sonnet.json").is_file()
+
+    def test_a_pass_with_dead_runs_is_refused(self, em, tmp_path, capsys):
+        code = em._run_post_eval(self._args(tmp_path), self._output(1, 3), tmp_path)
+        assert code == 3
+        assert not (tmp_path / "results").exists()
+
+    def test_the_refusal_names_the_entry_and_its_counts(self, em, tmp_path, capsys):
+        em._run_post_eval(self._args(tmp_path), self._output(1, 3), tmp_path)
+        err = capsys.readouterr().err
+        assert "case-a / sonnet: 1/3 runs measured" in err
+        assert "--entry" in err
+
+    def test_an_existing_baseline_survives_the_refusal(self, em, tmp_path):
+        """The overwritten file is the thing that cannot be re-attempted."""
+        results = tmp_path / "results"
+        results.mkdir()
+        good = results / "sonnet.json"
+        good.write_text('{"keep": true}\n')
+        em._run_post_eval(self._args(tmp_path), self._output(0, 3), tmp_path)
+        assert good.read_text() == '{"keep": true}\n'

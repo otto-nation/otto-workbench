@@ -20,6 +20,11 @@ collapsing, and the value it collapsed from is not the interesting number.
 A baseline written before a metric existed leaves it ungated rather than
 failing, so an older baseline still loads. The comparison table marks every
 metric `pass`, `fail`, or `ungated` — including the ones that cannot fail.
+
+A run that never executed is not a measurement. `RunOutcome` records that, and
+`aggregate_runs` averages only the measured runs — an invocation that died before
+the agent did any work would otherwise land as recall 0, indistinguishable from a
+genuine miss and averaged into the figure a baseline is written from.
 """
 
 # doc-group: eval
@@ -28,6 +33,21 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from enum import Enum
+
+
+class RunOutcome(Enum):
+    """Whether a run produced a measurement.
+
+    The string values are stable: they reach the results JSON and the run
+    report, and a reader of either should not have to know the member names.
+    """
+
+    MEASURED = "measured"
+    # The invocation never did any work — a transient backend failure, a killed
+    # subprocess, a fixture that could not be built. Scoring it produces zeros
+    # that read exactly like a model that found nothing.
+    NOT_RUN = "not_run"
 
 
 @dataclass
@@ -49,19 +69,40 @@ class ScoringResult:
     output_tokens: int = 0
     billed_input: int = 0
     cache_read_ratio: float = 0.0
+    # Defaults to MEASURED so a caller that never classifies keeps today's
+    # behaviour rather than having every run silently dropped.
+    outcome: RunOutcome = RunOutcome.MEASURED
+
+    @property
+    def measured(self) -> bool:
+        return self.outcome is RunOutcome.MEASURED
+
+
+_EMPTY_AGGREGATE = {
+    "recall_mean": 0.0, "recall_std": 0.0,
+    "precision_mean": 0.0, "precision_std": 0.0,
+    "severity_accuracy_mean": 0.0,
+    "false_positive_mean": 0.0,
+    "cost_mean": 0.0, "duration_mean_ms": 0,
+    "billed_input_mean": 0.0, "output_tokens_mean": 0.0,
+    "cache_read_ratio_mean": 0.0,
+}
 
 
 def aggregate_runs(results: list[ScoringResult]) -> dict:
+    """Mean and spread over the *measured* runs, plus a census of all of them.
+
+    A run that never executed is excluded from every metric rather than averaged
+    in as a zero. `runs_measured` and `runs_attempted` carry the census, so an
+    entry aggregated from one surviving run of three is visible as that rather
+    than reading like a clean three-run figure.
+    """
+    attempted = len(results)
+    results = [r for r in results if r.measured]
+    census = {"runs_measured": len(results), "runs_attempted": attempted}
+
     if not results:
-        return {
-            "recall_mean": 0.0, "recall_std": 0.0,
-            "precision_mean": 0.0, "precision_std": 0.0,
-            "severity_accuracy_mean": 0.0,
-            "false_positive_mean": 0.0,
-            "cost_mean": 0.0, "duration_mean_ms": 0,
-            "billed_input_mean": 0.0, "output_tokens_mean": 0.0,
-            "cache_read_ratio_mean": 0.0,
-        }
+        return {**_EMPTY_AGGREGATE, **census}
 
     def _mean(vals: list[float]) -> float:
         return sum(vals) / len(vals)
@@ -91,20 +132,54 @@ def aggregate_runs(results: list[ScoringResult]) -> dict:
         "billed_input_mean": _mean([float(r.billed_input) for r in results]),
         "output_tokens_mean": _mean([float(r.output_tokens) for r in results]),
         "cache_read_ratio_mean": _mean([r.cache_read_ratio for r in results]),
+        **census,
     }
+
+
+def _census(entry: dict) -> tuple[int, int]:
+    """An entry's (measured, attempted) counts.
+
+    An entry with no census predates the field, and defaulting measured to
+    attempted takes it at face value rather than reporting it as all-failed.
+    """
+    attempted = entry.get("runs_attempted", 0)
+    return entry.get("runs_measured", attempted), attempted
+
+
+def _entry_models(output: dict):
+    """Flatten the results tree to (entry, model, data) triples, in a stable order."""
+    for entry_name, models in sorted(output.get("entries", {}).items()):
+        for model_label, data in sorted(models.items()):
+            yield entry_name, model_label, data
+
+
+def incomplete_entries(output: dict) -> list[tuple[str, str, int, int]]:
+    """Every (entry, model, measured, attempted) whose runs did not all execute.
+
+    Read off the census the aggregate recorded rather than recomputed, so what
+    is reported here is what a baseline would have been written from.
+    """
+    rows = (
+        (entry_name, model_label, *_census(data))
+        for entry_name, model_label, data in _entry_models(output)
+    )
+    return [row for row in rows if row[2] < row[3]]
 
 
 def format_summary_table(
     all_results: dict[tuple[str, str], list[ScoringResult]],
 ) -> str:
     header = (
-        "| Entry | Model | Recall | Precision | Sev.Acc | FP | Cost | Duration |"
+        "| Entry | Model | Runs | Recall | Precision | Sev.Acc | FP | Cost | Duration |"
     )
-    sep = "|---|---|---|---|---|---|---|---|"
+    sep = "|---|---|---|---|---|---|---|---|---|"
     rows = [header, sep]
 
     for (entry, model), results in sorted(all_results.items()):
         agg = aggregate_runs(results)
+        # The census sits next to the numbers it produced: an entry averaged
+        # from one surviving run of three should not read like a three-run mean.
+        runs_s = f"{agg['runs_measured']}/{agg['runs_attempted']}"
         recall_s = f"{agg['recall_mean']:.0%}"
         if agg["recall_std"] > 0:
             recall_s += f" ±{agg['recall_std']:.0%}"
@@ -113,6 +188,7 @@ def format_summary_table(
             prec_s += f" ±{agg['precision_std']:.0%}"
         rows.append(
             f"| {entry} | {model} "
+            f"| {runs_s} "
             f"| {recall_s} "
             f"| {prec_s} "
             f"| {agg['severity_accuracy_mean']:.0%} "
@@ -124,15 +200,53 @@ def format_summary_table(
     return "\n".join(rows)
 
 
-# Version 2 added the token metrics the CI ratchet gates on. Version 1 baselines
-# still load: a metric they never recorded is ungated, not failing.
-SCHEMA_VERSION = 2
-_SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+# Version 2 added the token metrics the CI ratchet gates on. Version 3 added the
+# run census. Earlier baselines still load: a field they never recorded is
+# ungated and unchecked, not failing.
+SCHEMA_VERSION = 3
+_SUPPORTED_SCHEMA_VERSIONS = (1, 2, 3)
 
 _ENTRY_METRIC_KEYS = {"recall_mean", "precision_mean"}
 _OPTIONAL_METRIC_KEYS = {
     "billed_input_mean", "output_tokens_mean", "cache_read_ratio_mean",
 }
+_CENSUS_KEYS = ("runs_measured", "runs_attempted")
+
+
+def _validate_census(name: str, entry: dict) -> list[str]:
+    """Check the run census, and reject a baseline built from runs that failed.
+
+    This is the downstream gate the poisoned baseline got past. The runner now
+    refuses to write one, so an entry arriving here short of measurements was
+    hand-edited or predates the refusal — either way it is not a number to hold
+    a model to.
+
+    An entry with no census predates the field and is taken at face value.
+    """
+    present = [key for key in _CENSUS_KEYS if key in entry]
+    if not present:
+        return []
+    if len(present) != len(_CENSUS_KEYS):
+        missing = set(_CENSUS_KEYS) - set(present)
+        return [f"entry '{name}': has {present[0]} but not {', '.join(sorted(missing))}"]
+
+    errors = [
+        f"entry '{name}': {key} must be an integer"
+        for key in _CENSUS_KEYS
+        if not isinstance(entry[key], int) or isinstance(entry[key], bool)
+    ]
+    if errors:
+        return errors
+
+    measured, attempted = entry["runs_measured"], entry["runs_attempted"]
+    if measured > attempted:
+        return [f"entry '{name}': runs_measured {measured} exceeds runs_attempted {attempted}"]
+    if measured < attempted:
+        return [
+            f"entry '{name}': recorded from {measured} of {attempted} runs — "
+            "the rest never executed, so this is not a measurement"
+        ]
+    return []
 
 
 def _validate_entry(name: str, entry: object) -> list[str]:
@@ -149,6 +263,7 @@ def _validate_entry(name: str, entry: object) -> list[str]:
             errors.append(f"entry '{name}': {key} must be a number")
     if "runs" in entry and not isinstance(entry["runs"], list):
         errors.append(f"entry '{name}': runs must be a list")
+    errors.extend(_validate_census(name, entry))
     return errors
 
 
@@ -300,7 +415,13 @@ def _compare_model_baseline(
         cur_model = current_entries.get(entry_name, {}).get(model_label)
         base_entry = baseline_entries.get(entry_name)
 
-        if cur_model is None and base_entry is not None:
+        # An entry whose runs all failed has no current figure to diff. Gating
+        # it would report a regression against a model that was never asked,
+        # which is the same false signal a zeroed baseline carries — read the
+        # other way round.
+        if cur_model is not None and _has_no_measurement(cur_model):
+            out["unmeasured_entries"].append((entry_name, model_label))
+        elif cur_model is None and base_entry is not None:
             out["missing_entries"].append((entry_name, model_label))
         elif cur_model is not None and base_entry is None:
             out["new_entries"].append((entry_name, model_label))
@@ -310,6 +431,17 @@ def _compare_model_baseline(
             )
             out["comparisons"][(entry_name, model_label)] = metrics
             out["regressions"].extend(regs)
+
+
+def _has_no_measurement(entry: dict) -> bool:
+    """True when an entry records attempts but nothing that executed.
+
+    An entry with no census at all predates the field and is taken at face
+    value, so an older results file still compares.
+    """
+    if "runs_attempted" not in entry:
+        return False
+    return entry.get("runs_measured", 0) == 0 and entry["runs_attempted"] > 0
 
 
 def compare_baselines(
@@ -322,6 +454,7 @@ def compare_baselines(
         "comparisons": {},
         "new_entries": [],
         "missing_entries": [],
+        "unmeasured_entries": [],
     }
     current_entries = current.get("entries", {})
 
@@ -387,5 +520,7 @@ def format_comparison_table(comparison: dict) -> str:
         rows.append(f"| {entry} | {model} | - | - | - | - | new | - |")
     for entry, model in comparison.get("missing_entries", []):
         rows.append(f"| {entry} | {model} | - | - | - | - | missing | - |")
+    for entry, model in comparison.get("unmeasured_entries", []):
+        rows.append(f"| {entry} | {model} | - | - | - | - | not run | - |")
 
     return "\n".join(rows)

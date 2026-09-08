@@ -1957,6 +1957,11 @@ A baseline written before a metric existed leaves it ungated rather than
 failing, so an older baseline still loads. The comparison table marks every
 metric `pass`, `fail`, or `ungated` — including the ones that cannot fail.
 
+A run that never executed is not a measurement. `RunOutcome` records that, and
+`aggregate_runs` averages only the measured runs — an invocation that died before
+the agent did any work would otherwise land as recall 0, indistinguishable from a
+genuine miss and averaged into the figure a baseline is written from.
+
 ### eval/scoring_cifix.py
 
 The ci-fix eval task: hand a failing repo to the fix agent, re-run the check.
@@ -2075,6 +2080,12 @@ that becomes the run's `cwd`, and a case without one is skipped.
 `EVAL_CASE_BUDGET` bounds a single case's run. It is a deadline on work that
 could reasonably keep going rather than a bound on a subprocess that should
 already have answered, which is why it sits outside the `timeouts` table.
+
+A run reports a `RunOutcome`, and only `MEASURED` is a number. An invocation
+that died before the agent did any work produces empty artifacts, which score as
+recall 0 and are indistinguishable in the results from a genuine miss — one bad
+backend window then replaces a good baseline with zeros. `outcome_for` names that
+case from the two things it always shows: a non-zero exit and no usage at all.
 
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.

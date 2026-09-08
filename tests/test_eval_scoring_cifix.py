@@ -22,6 +22,7 @@ if str(LIB_DIR) not in sys.path:
 from eval import scoring_cifix as eval_scoring_cifix
 from agent.usage import SessionUsage
 from eval.scoring_cifix import CiFixTask, run_verify, verify_command
+from eval.scoring import RunOutcome
 from eval.task import RunArtifacts, RunOptions, get_task
 
 CORPUS = REPO_ROOT / "eval" / "corpus"
@@ -137,6 +138,9 @@ class TestCiFixTaskRun:
         assert artifacts.data["fixture_ok"] is False
         assert artifacts.data["fixed"] is False
         assert artifacts.exit_code != 0
+        # A broken fixture measures the fixture, not the model — scoring it as
+        # zero would put a fixture bug into the baseline as a quality drop.
+        assert artifacts.outcome is RunOutcome.NOT_RUN
         _rm(artifacts)
 
     def test_reports_fixed_when_the_agent_makes_verify_pass(self, tmp_path, monkeypatch):
@@ -162,6 +166,9 @@ class TestCiFixTaskRun:
 
         assert artifacts.data["fixed"] is False
         assert artifacts.data["summary"] == "still failing"
+        # The agent ran and did not fix it. That is a score of zero, not a
+        # dead invocation — exit 0 says the invocation itself completed.
+        assert artifacts.outcome is RunOutcome.MEASURED
         _rm(artifacts)
 
     def test_hands_the_agent_the_repo_and_the_failure(self, tmp_path, monkeypatch):
@@ -236,3 +243,22 @@ class TestCiFixTaskScore:
 class TestTaskRegistration:
     def test_the_registry_resolves_ci_fix(self):
         assert get_task("ci-fix").name == "ci-fix"
+
+
+class TestCiFixOutcome:
+    """A backend failure must not reach the baseline as a fix the model missed."""
+
+    def test_a_dead_invocation_is_not_a_failed_fix(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+                            lambda *a, **kw: 1)
+        case_dir = _case(tmp_path, "test -f fixed\n")
+
+        artifacts = CiFixTask().run(case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
+
+        assert artifacts.outcome is RunOutcome.NOT_RUN
+        assert not CiFixTask().score(artifacts, {}).measured
+        _rm(artifacts)
+
+    def test_the_outcome_reaches_the_score(self):
+        artifacts = RunArtifacts(data={"fixed": False}, outcome=RunOutcome.NOT_RUN)
+        assert CiFixTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN

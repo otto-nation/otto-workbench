@@ -25,8 +25,8 @@ from pathlib import Path
 
 from agent import backend as ai_backend
 from agent import usage as ai_usage
-from eval.scoring import ScoringResult
-from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo
+from eval.scoring import RunOutcome, ScoringResult
+from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
 
 FIX_MAX_TURNS = 30
 FIX_MAX_BUDGET = 2.0
@@ -69,10 +69,13 @@ def run_verify(repo_dir: str, manifest: dict, timeout: int) -> tuple[int, str]:
 def _unfixable(repo_dir: str, log_dir: str, output: str) -> RunArtifacts:
     """A case whose check already passes proves nothing — do not pay an agent for it.
 
-    The zero usage here is real, not a placeholder: no agent was invoked.
+    The zero usage here is real, not a placeholder: no agent was invoked. That
+    also makes it `NOT_RUN` rather than a score of zero, which is the honest
+    reading — a broken fixture measures the fixture, not the model.
     """
     return RunArtifacts(
         exit_code=1,
+        outcome=RunOutcome.NOT_RUN,
         temp_dirs=[repo_dir, log_dir],
         data={
             "fixed": False,
@@ -116,9 +119,11 @@ class CiFixTask:
         ))
 
         post_code, post_output = run_verify(repo_dir, manifest, opts.timeout)
+        usage = ai_usage.parse_session_log(session_log)
         return RunArtifacts(
             exit_code=rc,
-            usage=ai_usage.parse_session_log(session_log),
+            usage=usage,
+            outcome=outcome_for(rc, usage),
             temp_dirs=[repo_dir, log_dir],
             data={
                 "fixed": post_code == 0,
@@ -135,6 +140,7 @@ class CiFixTask:
         usage = artifacts.usage
         return ScoringResult(
             entry_name="", model="", run_index=0,
+            outcome=artifacts.outcome,
             recall=passed,
             precision=passed,
             cost_usd=usage.cost,

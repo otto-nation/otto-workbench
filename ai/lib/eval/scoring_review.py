@@ -28,8 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent import usage as ai_usage
-from eval.scoring import ScoringResult
-from eval.task import RunArtifacts, RunOptions, create_temp_repo, clean_env
+from eval.scoring import RunOutcome, ScoringResult
+from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
 from review.document import ReviewDocument
 from review.types import Finding
 
@@ -143,6 +143,7 @@ def score_entry(
     output_tokens: int = 0,
     billed_input: int = 0,
     cache_read_ratio: float = 0.0,
+    outcome: RunOutcome = RunOutcome.MEASURED,
 ) -> ScoringResult:
     matches, fp_ids = match_findings(expected, actuals)
     matched_count = sum(1 for m in matches if m.matched)
@@ -173,6 +174,7 @@ def score_entry(
         output_tokens=output_tokens,
         billed_input=billed_input,
         cache_read_ratio=cache_read_ratio,
+        outcome=outcome,
     )
 
 
@@ -228,6 +230,7 @@ class ReviewTask:
             usage=usage,
             temp_dirs=[repo_dir, artifact_dir],
             data={"findings": findings, "summary": f"findings: {len(findings)}"},
+            outcome=outcome_for(exit_code, usage),
         )
 
     def score(self, artifacts: RunArtifacts, manifest: dict) -> ScoringResult:
@@ -235,6 +238,7 @@ class ReviewTask:
         usage = artifacts.usage
         return score_entry(
             entry_name="", model="", run_index=0,
+            outcome=artifacts.outcome,
             expected=expected,
             actuals=artifacts.data.get("findings", []),
             false_positives_max=fp_max,

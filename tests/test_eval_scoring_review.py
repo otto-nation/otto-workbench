@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -21,7 +22,8 @@ from eval.scoring_review import (
     parse_manifest,
     score_entry,
 )
-from eval.task import RunArtifacts
+from eval.scoring import RunOutcome
+from eval.task import RunArtifacts, RunOptions
 from agent.usage import SessionUsage
 from review.types import Finding
 
@@ -337,6 +339,45 @@ class TestReviewTask:
         whole eval at the first subprocess rather than at import.
         """
         assert scoring_review._REVIEW_ORCHESTRATE.exists()
+
+    def test_a_dead_orchestrate_run_is_not_a_review_that_found_nothing(
+            self, monkeypatch, tmp_path):
+        """An empty review.md scores recall 0 — the same as a model that missed.
+
+        The transient backend failures that poisoned the baseline came back
+        exactly like this: no findings, no cost, and a non-zero exit.
+        """
+        monkeypatch.setattr(scoring_review, "_run_orchestrate", lambda *a, **kw: 1)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.go").write_text("package main\n")
+
+        artifacts = ReviewTask().run(tmp_path, RunOptions())
+        try:
+            assert artifacts.outcome is RunOutcome.NOT_RUN
+            assert not ReviewTask().score(artifacts, {}).measured
+        finally:
+            for path in artifacts.temp_dirs:
+                shutil.rmtree(path, ignore_errors=True)
+
+    def test_a_review_that_cost_money_is_measured_even_when_it_exits_non_zero(
+            self, monkeypatch, tmp_path):
+        monkeypatch.setattr(scoring_review, "_run_orchestrate", lambda *a, **kw: 1)
+        monkeypatch.setattr(
+            scoring_review, "parse_review_output",
+            lambda *a: ([], SessionUsage(cost=0.22)))
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.go").write_text("package main\n")
+
+        artifacts = ReviewTask().run(tmp_path, RunOptions())
+        try:
+            assert artifacts.outcome is RunOutcome.MEASURED
+        finally:
+            for path in artifacts.temp_dirs:
+                shutil.rmtree(path, ignore_errors=True)
+
+    def test_the_outcome_reaches_the_score(self):
+        artifacts = RunArtifacts(outcome=RunOutcome.NOT_RUN)
+        assert ReviewTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN
 
     def test_carries_token_metrics_off_the_session_usage(self):
         """Billed input and cache-read ratio are what the CI ratchet gates on."""

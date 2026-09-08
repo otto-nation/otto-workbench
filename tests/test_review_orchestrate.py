@@ -2133,7 +2133,7 @@ class TestFetchMetadataSelfMode:
             lambda repo_name, pr_number: _pr_metadata(ro),
         )
 
-        run_ctx = ro._fetch_metadata("o/r", "1", ro.Mode.SELF, str(repo))
+        run_ctx = ro.fetch_metadata("o/r", "1", ro.Mode.SELF, str(repo))
         pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
         assert [f["path"] for f in pr.files] == ["unpushed.go"]
@@ -2629,7 +2629,7 @@ class TestCleanupScope:
         monkeypatch.setattr(ro.ai_backend, "preflight", lambda *a, **k: True)
         monkeypatch.setattr(ro.pr_state, "load_state", lambda *a, **k: None)
         monkeypatch.setattr(
-            ro, "_fetch_metadata",
+            ro, "fetch_metadata",
             lambda *a, **k: ro.RunContext(pr, ro.PRContext(), None),
         )
         monkeypatch.setattr(ro, "collect_preflight_data", lambda job: MagicMock())

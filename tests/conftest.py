@@ -497,8 +497,6 @@ def _guard_repo_config():
     _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
-REVIEW_POST = REPO_ROOT / "ai" / "bin" / "review-post"
-REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "bin" / "review-threads"
 CI_CHECK = REPO_ROOT / "ai" / "bin" / "ci-check"
 EVAL_MODELS = REPO_ROOT / "ai" / "bin" / "eval-models"
@@ -867,9 +865,14 @@ def write_marker_file(directory, name: str, *lines: str) -> Path:
 # One module object per script, shared across every test that asks for it, so a
 # test must not mutate module-level state. The fixtures are the ergonomic face
 # of `load_script`; a module-level caller reaches for `load_script` directly.
+# A command that has moved under `ai/lib/cli/` needs neither — an import gives
+# every caller the one module object the interpreter already holds.
 @pytest.fixture(scope="session")
 def rp():
-    return load_script("review_post", REVIEW_POST)
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from cli import review_post
+    return review_post
 
 
 @pytest.fixture(autouse=True)
@@ -989,7 +992,10 @@ def _clear_bot_login_cache():
 
 @pytest.fixture(scope="session")
 def ro():
-    return load_script("review_orchestrate", REVIEW_ORCHESTRATE)
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from cli import review_orchestrate
+    return review_orchestrate
 
 
 @pytest.fixture(scope="session")

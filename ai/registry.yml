@@ -99,11 +99,6 @@ tools:
     visibility: hidden
     description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
 
-  - name: review-thread-triage
-    permission: false
-    visibility: hidden
-    description: "Deprecated — redirects to review-threads --triage"
-
   - name: validate-review-positions
     permission: false
     visibility: hidden

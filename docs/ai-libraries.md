@@ -2884,3 +2884,99 @@ the rule nearest a piece of comment text by keyword overlap. `extract_keywords`
 is the vocabulary primitive both rule loading and bullet matching are built
 on — `retro.report` reuses it to find which bullet inside a matched rule is
 closest to the comment being annotated.
+
+## Command entry points
+
+The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
+
+### cli/needs.py
+
+What a `pr` subcommand needs of dispatch before its handler runs.
+
+`Need` is the declaration; `review_need` is the one resolver that reads a mode
+flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
+import them and no test could reach them without executing the binary.
+
+The mode table itself stays with the handlers it names — a mode is a need and a
+callable, and only the need half has a home below the entry point. The
+resolvers therefore take the table rather than reaching for one, which is also
+what lets a test declare a table of its own.
+
+### cli/pr_describe.py
+
+Revise a PR description against the repo's PR template.
+
+Run after the branch stops moving — a description written before the fix passes
+describes a PR that no longer exists. The pass is commit-aware: it records the
+HEAD it described, and a repeated run against an unchanged branch is a no-op
+rather than another AI call.
+
+Exit codes:
+  0  Success (description current, revised, or nothing to do)
+  1  Error (no PR, gh failure, unusable AI output)
+
+Usage:
+  pr-describe                         # revise if HEAD moved since the last pass
+  pr-describe --force                 # revise regardless of HEAD
+  pr-describe --dry-run               # print the revision, do not push it
+  pr-describe --repo-dir <path>       # specify worktree directory
+
+### cli/review_orchestrate.py
+
+Review orchestration for claude-review.
+
+Handles everything between "worktree is ready" and "the review directory holds
+only its deliverable": PR metadata fetching, prompt template rendering, Claude
+agent invocation, stream progress display, file grouping, review merging, the
+static analysis section, and the optional fix pass.
+
+Phase order is this script's alone, and so is the cleanup that order decides —
+no phase cleans up after itself.
+
+Called by claude-review (bash wrapper) which handles worktree lifecycle,
+archive management, and interactive prompts.
+
+Usage:
+  review-orchestrate --pr NUMBER --review-file PATH \
+    --repo-dir PATH [--target-dir PATH] [--session-log PATH] \
+    [--prior-review PATH] [--issue URL] [--issue-context JSON]
+
+### cli/review_positions.py
+
+Validate review finding positions against a PR diff.
+
+Checks that each finding's path:line falls within a diff hunk so GitHub
+will accept the inline comment. Findings outside diff hunks are demoted
+to file-level comments; findings for paths not in the diff are skipped.
+
+Usage:
+  validate-review-positions --diff DIFF_FILE --review FINDINGS_JSON
+  gh api repos/.../pulls/N -H 'Accept: application/vnd.github.v3.diff' \
+    | validate-review-positions --diff - --review findings.json
+
+Exit codes:
+  0  All findings valid (in diff hunks)
+  1  Some findings demoted to file-level
+  2  Some findings skipped (path not in diff)
+  3  --review did not contain a JSON array
+
+### cli/review_post.py
+
+Post a review file to GitHub as a PR review.
+
+Parses a markdown review file (produced by claude-review), validates
+finding positions against the PR diff, renumbers findings by posted
+location (inline first, then body), and creates a PENDING review via
+the GitHub API. Pass --submit to submit the review immediately.
+
+Usage:
+  review-post --pr NUMBER --review-file PATH
+              [--severity M,S,N] [--dry-run]
+
+### cli/review_rebuild.py
+
+Rebuild review.md from group finding files.
+
+Reads group-N.md files from the review directory, merges findings,
+post-processes them, and writes a new review.md. Used to recover from
+synthesis agent formatting drift or corrupted review files.

@@ -208,12 +208,24 @@ def test_syntax_error_is_tolerated_but_reported(capsys):
 # ── discovery and the repo ───────────────────────────────────────────────
 
 
-def test_read_layers_finds_every_package():
+def test_read_layers_parses_the_real_declarations():
+    """The base of the stack, read off disk rather than from a fixture.
+
+    Which packages exist is `test_every_package_declares_a_layer`'s claim, and
+    it asks the directory rather than a list — a golden here would have to be
+    edited by every tranche that adds a package, which is the drift the layer
+    declarations themselves exist to avoid.
+    """
     layers = val.read_layers(str(REPO_ROOT))
-    assert set(layers) == {"agent", "config", "core", "eval", "fix",
-                           "gh", "git", "pr", "retro", "review"}
     assert layers["core"].number == 1
     assert layers["core"].allowed == frozenset()
+
+
+def test_the_entry_point_layer_sits_on_top_of_all_the_others():
+    """`cli` is the top of the stack and the only layer that sees all of it."""
+    layers = val.read_layers(str(REPO_ROOT))
+    assert layers["cli"].number == max(layer.number for layer in layers.values())
+    assert layers["cli"].allowed == frozenset(set(layers) - {"cli"})
 
 
 def test_every_package_declares_a_layer():

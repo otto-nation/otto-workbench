@@ -64,16 +64,28 @@ def _lib_python_files() -> set[str]:
 
 
 def _all_required_modules() -> set[str]:
-    """Collect all local modules imported by any packaged Python binary."""
+    """Every lib module a packaged binary reaches, directly or through another.
+
+    The walk is transitive because a binary under `ai/bin/` is a shim: it names
+    one `cli.*` module and nothing else, so the set its own imports yield says
+    nothing about what the tarball has to carry. Following each module's imports
+    in turn is what puts the layers underneath `cli` back in the answer.
+    """
     lib_modules = {
         f"{p.parent.name}.{p.stem}"
         for p in LIB_DIR.glob("*/*.py")
         if p.stem != "__init__"
     }
-    all_imports: set[str] = set()
+    pending: set[str] = set()
     for binary in PACKAGED_BINARIES:
-        all_imports.update(_extract_python_imports(binary))
-    return all_imports & lib_modules
+        pending.update(_extract_python_imports(binary) & lib_modules)
+    reached: set[str] = set()
+    while pending:
+        module = pending.pop()
+        reached.add(module)
+        source = LIB_DIR / Path(*module.split(".")).with_suffix(".py")
+        pending |= (_extract_python_imports(source) & lib_modules) - reached
+    return reached
 
 
 class TestTarballCompleteness:

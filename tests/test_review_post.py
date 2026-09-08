@@ -1762,7 +1762,7 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         "- [ ] **[S3]** **`file.go:6`** — genuinely open\n"
     )
 
-    def _dry_run_payload(self, rp, tmp_path, capsys, review_text=None):
+    def _run_dry(self, rp, tmp_path, review_text=None) -> int:
         import argparse
         review_dir = tmp_path / "review"
         review_dir.mkdir(exist_ok=True)
@@ -1780,9 +1780,11 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         args.debug = False
 
         with patch.object(rp, "_get_diff", return_value=self.DIFF):
-            rp._run_post(MagicMock(), args, "org/repo", rp.ReviewMeta(repo="org/repo"),
-                         review_file)
+            return rp._run_post(MagicMock(), args, "org/repo",
+                                rp.ReviewMeta(repo="org/repo"), review_file)
 
+    def _dry_run_payload(self, rp, tmp_path, capsys, review_text=None):
+        assert self._run_dry(rp, tmp_path, review_text) == 0
         out = capsys.readouterr().out
         return json.loads(out[out.index("{"):out.rindex("}") + 1])
 
@@ -1809,6 +1811,5 @@ class TestPostSkipsResolvedAndDeclinedFindings:
             "## Should fix\n"
             "- [x] **[S1]** **`file.go:4`** — already fixed\n"
         )
-        with pytest.raises(SystemExit) as exc:
-            self._dry_run_payload(rp, tmp_path, capsys, review_text=text)
-        assert exc.value.code == 0
+        assert self._run_dry(rp, tmp_path, review_text=text) == 0
+        assert "{" not in capsys.readouterr().out

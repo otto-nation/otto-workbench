@@ -29,7 +29,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
 | `review-rebuild` | Rebuild review.md from group finding files — recovers from synthesis formatting drift |
 | `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
-| `review-thread-triage` | Deprecated — redirects to review-threads --triage |
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
 | `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
 | `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |

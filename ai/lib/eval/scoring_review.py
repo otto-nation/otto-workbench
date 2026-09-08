@@ -33,8 +33,9 @@ from eval.task import RunArtifacts, RunOptions, create_temp_repo, clean_env
 from review.document import ReviewDocument
 from review.types import Finding
 
+# `parent.parent.parent` is `ai/`, so the binary is `ai/bin/review-orchestrate`.
 _REVIEW_ORCHESTRATE = (
-    Path(__file__).resolve().parent.parent.parent / "claude" / "bin" / "review-orchestrate"
+    Path(__file__).resolve().parent.parent.parent / "bin" / "review-orchestrate"
 )
 
 

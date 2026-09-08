@@ -6,6 +6,7 @@ refuses — is git's behaviour rather than this module's, and a mocked
 `git_client` would agree with whatever the assertion expected.
 """
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +22,8 @@ from git import land  # noqa: E402
 from git import push  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from core.proc import CmdResult  # noqa: E402
+from core import workbench_paths  # noqa: E402
+from core.trail import Trail  # noqa: E402
 
 _PUSHED = push.PushResult(
     push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x", remote_sha="9bc3f64ab",
@@ -173,6 +176,34 @@ def test_the_message_is_the_commit_message(wt):
 
 
 # ── the commit git refuses ──────────────────────────────────────────────────
+
+
+def _last_event() -> dict:
+    """The most recent record in the sandboxed trail root."""
+    root = workbench_paths.trail_dir()
+    lines = [line for p in sorted(root.glob("*.jsonl"))
+             for line in p.read_text().splitlines() if line.strip()]
+    return json.loads(lines[-1])
+
+
+def test_a_failed_commit_records_a_verdict_printed_on_stdout(wt, tmp_path,
+                                                             live_git_hooks):
+    """A pre-commit chain reports on stdout; `stderr or stdout` lost it."""
+    hook = tmp_path / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\n"
+                    "echo 'running 14 checks'\n"
+                    "echo '✗ gitleaks found a secret'\n"
+                    "exit 1\n")
+    hook.chmod(0o755)
+    (wt / "src.py").write_text("edited\n")
+    trail = Trail.start(script="test", context={})
+
+    landed, _ = _land(wt, trail=trail)
+
+    assert landed.status is CommitStatus.COMMIT_FAILED
+    data = _last_event()["data"]
+    assert "✗ gitleaks found a secret" in data["error"]
+    assert "running 14 checks" in (workbench_paths.trail_dir() / data["log"]).read_text()
 
 
 def test_a_rejected_commit_is_not_pushed(wt, tmp_path, live_git_hooks):

@@ -87,7 +87,7 @@ from core import proc
 from git import push
 from core.proc import CmdResult
 from git.push import PushResult, PushStatus
-from core.trail import EXCERPT_LIMIT, Trail
+from core.trail import Trail
 
 # git prints these on stdout, with exit 1, when a commit resolves to an empty
 # change. `--allow-empty` is not the answer: an empty commit is noise on the
@@ -435,8 +435,11 @@ def _commit(
         error = committed.stderr.strip() or committed.stdout.strip()
         log.error(f"commit failed: {error}")
         if trail:
-            trail.error("commit", "commit failed",
-                        data={"error": error[:EXCERPT_LIMIT]})
+            # combined, not `error`: a pre-commit chain prints its banner on
+            # stdout and its verdict there too, so the stderr-first reading the
+            # message takes is the wrong one for the record.
+            trail.failure("commit", "commit failed",
+                          output=committed.combined_output)
         return _Commit(outcome=LandResult(CommitStatus.COMMIT_FAILED, error=error))
 
     sha = git_client.head_sha(cwd=wt_path)

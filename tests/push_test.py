@@ -12,6 +12,7 @@ remote ends up holding what it held before. That is the failure #962 describes,
 reproduced rather than simulated.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,8 +25,10 @@ if str(LIB_DIR) not in sys.path:
 
 from git import client as git_client  # noqa: E402
 from core import proc  # noqa: E402
+from core import workbench_paths  # noqa: E402
 from git import push  # noqa: E402
 from core import timeouts  # noqa: E402
+from core.trail import Trail  # noqa: E402
 
 from conftest import git_in, run_checked, seed_repo  # noqa: E402
 
@@ -43,6 +46,14 @@ done
 def _never_runs(*cmd, **kwargs):
     """A `git_client.run` that fails the test if anything reaches it."""
     raise AssertionError(f"git ran when it should not have: {cmd}")
+
+
+def _last_event() -> dict:
+    """The most recent record in the sandboxed trail root."""
+    root = workbench_paths.trail_dir()
+    lines = [line for p in sorted(root.glob("*.jsonl"))
+             for line in p.read_text().splitlines() if line.strip()]
+    return json.loads(lines[-1])
 
 
 def _commit(wt: Path, message: str) -> str:
@@ -246,6 +257,90 @@ def test_a_held_push_reads_nothing_from_the_repository(pushable, monkeypatch):
     assert result.status is push.PushStatus.HELD
     assert result.sha == ""
     assert push.push(wt, gated=True, sha="abc1234").sha == "abc1234"
+
+
+# ── what a refusal records ──────────────────────────────────────────────────
+
+
+_HOOK_DUMP = (
+    "Running pre-push checks for: .claude,dev-ci,lib-go,svc-product\n"
+    + "\n".join(f"pkl-drift: generated file {n} matches" for n in range(80))
+    + "\n✗ pre-commit: lint:ts failed\n"
+)
+
+
+def test_a_refusal_records_the_verdict_not_the_banner(monkeypatch):
+    """The banner is the first 500 characters; the verdict is the last line."""
+    monkeypatch.setattr(push.git_client, "run",
+                        lambda *a, **k: proc.CmdResult(1, "", _HOOK_DUMP))
+    trail = Trail.start(script="test", context={})
+
+    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+                       trail=trail)
+
+    recorded = _last_event()["data"]["error"]
+    assert "✗ pre-commit: lint:ts failed" in recorded
+    assert "Running pre-push checks" not in recorded
+    assert result.status is push.PushStatus.REFUSED
+
+
+def test_a_refusal_keeps_the_whole_hook_output(monkeypatch):
+    monkeypatch.setattr(push.git_client, "run",
+                        lambda *a, **k: proc.CmdResult(1, "", _HOOK_DUMP))
+    trail = Trail.start(script="test", context={})
+
+    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+                       trail=trail)
+
+    assert result.log is not None
+    assert "Running pre-push checks" in result.log.read_text()
+    assert "✗ pre-commit: lint:ts failed" in result.log.read_text()
+
+
+def test_a_refusal_still_records_the_sha_and_branch(monkeypatch):
+    monkeypatch.setattr(push.git_client, "run",
+                        lambda *a, **k: proc.CmdResult(1, "", "denied"))
+    trail = Trail.start(script="test", context={})
+
+    push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x", trail=trail)
+
+    data = _last_event()["data"]
+    assert data["sha"] == "1a2b3c4d"
+    assert data["branch"] == "feat/x"
+
+
+def test_a_push_without_a_trail_still_reports_the_refusal(monkeypatch):
+    monkeypatch.setattr(push.git_client, "run",
+                        lambda *a, **k: proc.CmdResult(1, "", "denied"))
+
+    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+
+    assert result.status is push.PushStatus.REFUSED
+    assert result.log is None
+
+
+def test_the_refused_report_names_the_full_output(capsys, tmp_path):
+    artifact = tmp_path / "214e9758c739-1-push.log"
+    artifact.write_text("everything the hook said")
+    result = push.PushResult(
+        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.HOOK, output="✗ lint:ts failed", log=artifact,
+    )
+
+    push.report(result, "/tmp/wt")
+
+    assert f"full output: {artifact}" in capsys.readouterr().err
+
+
+def test_the_refused_report_omits_the_line_when_there_is_no_artifact(capsys):
+    result = push.PushResult(
+        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.HOOK, output="✗ lint:ts failed",
+    )
+
+    push.report(result, "/tmp/wt")
+
+    assert "full output:" not in capsys.readouterr().err
 
 
 # ── the refusal classifier ──────────────────────────────────────────────────

@@ -85,7 +85,7 @@ from git import client as git_client
 from core import log
 from core import proc
 from core import publishing
-from core.trail import EXCERPT_LIMIT, Trail
+from core.trail import Trail
 
 
 class PushStatus(StrEnum):
@@ -133,6 +133,10 @@ class PushResult:
     `args` is what the caller passed through to `git push`, kept so
     `resume_command` can name the same push rather than a plainer one the remote
     would refuse for a second reason.
+
+    `log` is the artifact holding everything the push and its hooks printed,
+    when there was a trail to write one. The result carries the excerpt's own
+    source rather than making `report` go looking for it.
     """
 
     status: PushStatus
@@ -144,6 +148,7 @@ class PushResult:
     retry: Retry = Retry.NONE
     remote: str = "origin"
     args: tuple[str, ...] = ()
+    log: Path | None = None
 
     @property
     def ok(self) -> bool:
@@ -313,9 +318,12 @@ def _retry_lost(
     r = git_client.run("push", "--no-verify", *args, cwd=wt_path)
     if not r.ok:
         output = r.combined_output
+        artifact = trail.failure(
+            "push", "the retry without the gates was refused too", output=output,
+            data={"sha": lost.sha, "branch": lost.branch}) if trail else None
         return dataclasses.replace(
             lost, status=PushStatus.REFUSED, refusal=classify(output),
-            output=output, retry=Retry.ATTEMPTED,
+            output=output, retry=Retry.ATTEMPTED, log=artifact,
         )
 
     verified = _verify(wt_path, lost.sha, lost.branch, remote, r.combined_output)
@@ -356,12 +364,11 @@ def push(
     r = git_client.run("push", *argv, cwd=wt_path)
     if not r.ok:
         output = r.combined_output
-        if trail:
-            trail.error("push", "git refused the push",
-                        data={"sha": sha, "branch": branch,
-                              "error": output[:EXCERPT_LIMIT]})
+        artifact = trail.failure(
+            "push", "git refused the push", output=output,
+            data={"sha": sha, "branch": branch}) if trail else None
         return PushResult(PushStatus.REFUSED, sha, branch, refusal=classify(output),
-                          output=output, remote=remote, args=argv)
+                          output=output, remote=remote, args=argv, log=artifact)
 
     verified = _verify(wt_path, sha, branch, remote, r.combined_output)
     result = dataclasses.replace(verified, args=argv)
@@ -432,6 +439,8 @@ def report(result: PushResult, wt_path: str | Path) -> None:
         log.error(f"push refused ({result.refusal}) — nothing reached the remote")
         for line in proc.tail(result.output).splitlines():
             log.dim(line)
+        if result.log:
+            log.dim(f"full output: {result.log}")
         log.dim(f"Resume: {resume}")
         return
 

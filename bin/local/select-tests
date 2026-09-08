@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+# select-tests — emit the bats test files affected by a set of changed paths.
+#
+# Derives dependencies by grepping path literals ($REPO_ROOT/...) from each
+# test file and matching them against the changed paths. Tests that depend on
+# directory listings (find/glob on $REPO_ROOT) are always included — they can
+# break on file addition, which is invisible to a path-literal map.
+#
+# Usage: select-tests [--base REF] [--validate]
+#   --base REF     Diff against REF (default: origin/main)
+#   --validate     Fail if any test file has zero refs and is not in the
+#                  always-run list (catches renames that silently break the map)
+#   --all          Print all test files (used when fallback triggers fire)
+#
+# Output: one absolute path per line, suitable for passing to bats.
+# Exit code: 0 when at least one file is selected, 1 on error.
+
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+
+# shellcheck source=../../lib/ui.sh
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+TESTS_DIR="$WORKBENCH_DIR/tests"
+
+# Tests that always run because they depend on directory listings rather than
+# specific files. A file addition breaks these without co-editing any .bats file.
+ALWAYS_RUN_TESTS=(
+  bin_scripts
+  claude_settings
+  collect_component_registries
+  export_config
+  generate_public_surface
+  install_components
+  install_targeted
+  migrations
+  run_tests
+  skills_install
+  validate_all
+  validate_registries
+  site_docs_frontmatter
+  site_sidebar_order
+  site_doc_links
+)
+
+# Tests with no resolvable path refs — they can't be mapped, so they always run.
+NO_REFS_TESTS=(
+  claude_rules_install
+  compact_diff
+  create_pr
+  files_frontmatter
+  find_commitlint_config
+  install_cask
+  load_ai_command
+  load_gh_token
+  load_pr_context
+  parse_pr_flags
+  push_branch
+  run_ai
+  session_count
+  step_install_claude
+  step_install_pi
+  test_helper_isolation
+  validate_commit_msg
+)
+
+# Fallback triggers — changes to these run the full suite.
+FULL_SUITE_TRIGGERS=(
+  tests/test_helper.bash
+  tests/conftest.py
+  bin/local/run-tests
+  bin/local/select-tests
+)
+
+# _is_in_array VALUE ARRAY... — returns 0 if VALUE is in the remaining args.
+_is_in_array() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# _extract_refs FILE — emit the source paths a bats test references.
+# Looks for $REPO_ROOT/path and $WORKBENCH_DIR/path patterns.
+_extract_refs() {
+  local file="$1"
+  grep -oE '(\$REPO_ROOT|\$WORKBENCH_DIR|\$\{REPO_ROOT\}|\$\{WORKBENCH_DIR\})/(lib|bin|ai|git|zsh|docker|brew|eval|task|site|maintenance|terminals|editors|mise|Formula|scripts)/[^ "'\''}\)]+' "$file" 2>/dev/null \
+    | sed -E 's/^\$(\{)?(REPO_ROOT|WORKBENCH_DIR)\}?\///' \
+    | sort -u
+}
+
+# _path_matches CHANGED_FILE REF — returns 0 if the changed file is under the ref path.
+_path_matches() {
+  local changed="$1" ref="$2"
+  # Strip trailing quotes/parens that grep may have captured
+  ref="${ref%%[\"\')\}\;]*}"
+  # A ref to a specific file: exact match or the changed file is under it
+  [[ "$changed" == "$ref" ]] && return 0
+  # A ref to a directory: the changed file is under that directory
+  [[ "$changed" == "${ref}"/* ]] && return 0
+  # The changed file's directory matches the ref's directory
+  local ref_dir="${ref%/*}"
+  local changed_dir="${changed%/*}"
+  [[ "$changed_dir" == "$ref_dir" ]] && return 0
+  return 1
+}
+
+# _all_test_files — emit every .bats file path, one per line.
+_all_test_files() {
+  find "$TESTS_DIR" -maxdepth 1 -name '*.bats' -print | LC_ALL=C sort
+}
+
+main() {
+  local base="origin/main"
+  local validate=false
+  local print_all=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --base) shift; base="$1" ;;
+      --validate) validate=true ;;
+      --all) print_all=true ;;
+      -h|--help)
+        echo "Usage: select-tests [--base REF] [--validate] [--all]"
+        exit 0
+        ;;
+      *) err "Unknown option: $1"; exit 1 ;;
+    esac
+    shift
+  done
+
+  if $print_all; then
+    _all_test_files
+    return 0
+  fi
+
+  # Get changed files relative to the base
+  local -a changed_files=()
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && changed_files+=("$f")
+  done < <(git diff --name-only "$base"...HEAD 2>/dev/null || git diff --name-only "$base" HEAD 2>/dev/null || true)
+
+  if [[ ${#changed_files[@]} -eq 0 ]]; then
+    # No changes detected — run everything
+    _all_test_files
+    return 0
+  fi
+
+  # Check for full-suite triggers
+  for changed in "${changed_files[@]}"; do
+    for trigger in "${FULL_SUITE_TRIGGERS[@]}"; do
+      if [[ "$changed" == "$trigger" ]]; then
+        _all_test_files
+        return 0
+      fi
+    done
+    # Any workflow change triggers full suite
+    if [[ "$changed" == .github/workflows/* ]]; then
+      _all_test_files
+      return 0
+    fi
+  done
+
+  # Build the selected set
+  local -a selected=()
+
+  # Always-run tests
+  for name in "${ALWAYS_RUN_TESTS[@]}" "${NO_REFS_TESTS[@]}"; do
+    local path="$TESTS_DIR/${name}.bats"
+    [[ -f "$path" ]] && selected+=("$path")
+  done
+
+  # For each test file not already selected, check if any changed file
+  # matches any of its source refs
+  while IFS= read -r test_file; do
+    local test_name
+    test_name="$(basename "$test_file" .bats)"
+
+    # Skip if already in the always-run set
+    if _is_in_array "$test_name" "${ALWAYS_RUN_TESTS[@]}" "${NO_REFS_TESTS[@]}"; then
+      continue
+    fi
+
+    # A changed .bats file always selects itself
+    for changed in "${changed_files[@]}"; do
+      if [[ "$changed" == "tests/${test_name}.bats" ]]; then
+        selected+=("$test_file")
+        continue 2
+      fi
+    done
+
+    # Extract refs and check against changed files
+    local -a refs=()
+    while IFS= read -r ref; do
+      [[ -n "$ref" ]] && refs+=("$ref")
+    done < <(_extract_refs "$test_file")
+
+    local matched=false
+    for ref in "${refs[@]}"; do
+      for changed in "${changed_files[@]}"; do
+        if _path_matches "$changed" "$ref"; then
+          matched=true
+          break 2
+        fi
+      done
+    done
+
+    if $matched; then
+      selected+=("$test_file")
+    fi
+  done < <(_all_test_files)
+
+  # Validation mode: check for unmapped tests
+  if $validate; then
+    local unmapped=0
+    while IFS= read -r test_file; do
+      local test_name
+      test_name="$(basename "$test_file" .bats)"
+      if _is_in_array "$test_name" "${ALWAYS_RUN_TESTS[@]}" "${NO_REFS_TESTS[@]}"; then
+        continue
+      fi
+      local -a refs=()
+      while IFS= read -r ref; do
+        [[ -n "$ref" ]] && refs+=("$ref")
+      done < <(_extract_refs "$test_file")
+      if [[ ${#refs[@]} -eq 0 ]]; then
+        err "Unmapped test: $test_name (no source refs found, not in always-run list)"
+        unmapped=$((unmapped + 1))
+      fi
+    done < <(_all_test_files)
+    if [[ $unmapped -gt 0 ]]; then
+      err "$unmapped test(s) have no source refs and are not in the always-run list"
+      err "Add them to ALWAYS_RUN_TESTS or NO_REFS_TESTS in bin/local/select-tests"
+      return 1
+    fi
+  fi
+
+  # Deduplicate and sort
+  printf '%s\n' "${selected[@]}" | LC_ALL=C sort -u
+
+  local total
+  total=$(_all_test_files | wc -l | tr -d ' ')
+  local count
+  count=$(printf '%s\n' "${selected[@]}" | LC_ALL=C sort -u | wc -l | tr -d ' ')
+  echo "# selected $count/$total test files" >&2
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

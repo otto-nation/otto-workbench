@@ -132,3 +132,67 @@ machine() {
   # it, setup() would have run both suites before the first assertion.
   [ -z "$JOBS" ]
 }
+
+# ── Sharding ─────────────────────────────────────────────────────────────────
+
+@test "shard_files partitions every test file exactly once" {
+  local total=3
+  local -a all_files=()
+  for shard in 1 2 3; do
+    while IFS= read -r f; do
+      all_files+=("$f")
+    done < <(shard_files "$shard" "$total")
+  done
+  # Count actual .bats files
+  local expected
+  expected=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l | tr -d ' ')
+  [ "${#all_files[@]}" -eq "$expected" ]
+  # No duplicates — sort and compare with unique
+  local sorted
+  sorted=$(printf '%s\n' "${all_files[@]}" | sort)
+  local unique
+  unique=$(printf '%s\n' "${all_files[@]}" | sort -u)
+  [ "$sorted" = "$unique" ]
+}
+
+@test "no shard is empty" {
+  for shard in 1 2 3; do
+    local count
+    count=$(shard_files "$shard" 3 | wc -l | tr -d ' ')
+    [ "$count" -gt 0 ]
+  done
+}
+
+@test "shard partition is deterministic" {
+  local run1 run2
+  run1=$(shard_files 1 3)
+  run2=$(shard_files 1 3)
+  [ "$run1" = "$run2" ]
+}
+
+@test "out-of-range shard exits non-zero" {
+  run shard_files 0 3
+  [ "$status" -ne 0 ]
+  run shard_files 4 3
+  [ "$status" -ne 0 ]
+}
+
+@test "shard 1/1 returns all files" {
+  local shard_count
+  shard_count=$(shard_files 1 1 | wc -l | tr -d ' ')
+  local total
+  total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l | tr -d ' ')
+  [ "$shard_count" -eq "$total" ]
+}
+
+@test "--shard requires --bats" {
+  run main --shard 1/3
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--shard only applies to the bats suite"* ]]
+}
+
+@test "--shard rejects invalid format" {
+  run main --bats --shard abc
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"expected N/M"* ]]
+}

@@ -63,9 +63,13 @@ jobs:
           bash bin/local/generate-tool-context
           bash git/bin/local/generate-git-rules
 
-  test-bats:
-    name: Tests (bats)
+  bats-shard:
+    name: bats shard ${{ matrix.shard }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -85,8 +89,8 @@ jobs:
       - name: Verify Taskfile parses
         run: task --list
 
-      - name: Run bats tests
-        run: bin/local/run-tests --bats
+      - name: Run bats tests (shard ${{ matrix.shard }}/3)
+        run: bin/local/run-tests --bats --shard ${{ matrix.shard }}/3
 
       - name: Check tests did not pollute repo config
         run: |
@@ -98,6 +102,25 @@ jobs:
           done
           if $dirty; then
             echo "A test set git config without cd-ing to a temp directory first."
+            exit 1
+          fi
+
+  # Aggregator preserves the "Tests (bats)" required-check name across the
+  # sharded matrix. Without it, branch protection would need updating to match
+  # the per-shard job names.
+  test-bats:
+    name: Tests (bats)
+    needs: [bats-shard]
+    # !cancelled(): with the default if: success(), a failing shard makes this
+    # job 'skipped', and branch protection counts skipped required checks as
+    # satisfied — that is a green check on a broken build.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check shard results
+        run: |
+          if [[ "${{ needs.bats-shard.result }}" != "success" ]]; then
+            echo "::error::bats shards: ${{ needs.bats-shard.result }}"
             exit 1
           fi
 
@@ -145,35 +168,6 @@ jobs:
       - name: Check public surface compatibility
         run: bin/local/check-surface-compat --base origin/${{ github.base_ref || 'main' }}
 
-  site:
-    name: Site
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: site/.node-version
-          cache: "npm"
-          cache-dependency-path: site/package-lock.json
-
-      - name: Install dependencies
-        working-directory: site
-        run: npm ci
-
-      - name: Test remark plugins
-        working-directory: site
-        run: npm test
-
-      - name: Check brand configuration
-        working-directory: site
-        run: npm run check
-
-      - name: Build
-        working-directory: site
-        run: npm run build
-
-      - name: Verify the brand package reached the export
-        working-directory: site
-        run: npm run verify
+  # Site job moved to .github/workflows/site.yml with paths filtering.
+  # 99% of commits don't touch site/ — a dedicated workflow avoids running
+  # the Node.js build on every PR.

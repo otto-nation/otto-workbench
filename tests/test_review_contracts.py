@@ -32,6 +32,7 @@ from conftest import make_ctx  # noqa: E402
 
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
+from fix import ci as fix_ci  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
@@ -43,6 +44,7 @@ from review import registry as review_registry  # noqa: E402
 from review import spans as review_spans  # noqa: E402
 from review import types as review_types  # noqa: E402
 from gh.types import PRContext, PRMetadata  # noqa: E402
+from pr import ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from review.budget import MAX_PROMPT_BYTES  # noqa: E402
@@ -567,16 +569,21 @@ def _render_adapter(adapter) -> str:
     return fix_engine._prompt(adapter, 15)
 
 
-def _render_fix_ci(cc, wt_path) -> str:
+def _render_fix_ci(wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    worktree_root=wt_path, target_dir=wt_path)
-    return _render_adapter(cc.CIFixAdapter(
-        [{"id": "build-1", "job": "build", "kind": "build",
-          "annotation": "test failed", "headline": "test failed"}],
+    failure = ci_failures.FailureItem(
+        id="build-1", annotation="test failed", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None, headline="test failed",
+    )
+    return _render_adapter(fix_ci.CIFixAdapter(
         CIReport(
             repo="owner/repo", branch="user/feat/thing", pr_number=42,
             run_id=100, run_ids=[100], run_number=1, head_sha="abc123",
-            conclusion="failure", behind_main=0, failures=[],
+            conclusion="failure", behind_main=0,
+            failures={"build": ci_failures.FailureGroup(
+                job="build", kind=ci_failures.FailureKind.BUILD, items=(failure,),
+            )},
             progression={}, resolved_since_prior=[],
         ), ctx,
         PRState(identity=PRIdentity(
@@ -617,7 +624,7 @@ def _render_fix_findings(wt_path) -> str:
 # One list, so a fourth domain adopting the engine is added to the contracts by
 # adding its renderer here rather than to each test in turn.
 _FIX_RENDERERS = {
-    "ci": lambda cc, rt, wt: _render_fix_ci(cc, wt),
+    "ci": lambda cc, rt, wt: _render_fix_ci(wt),
     "comments": lambda cc, rt, wt: _render_fix_comments(rt, wt),
     "findings": lambda cc, rt, wt: _render_fix_findings(wt),
 }
@@ -675,8 +682,8 @@ class TestTemplateRendering:
             + ", ".join(f"${{{v}}}" for v in left)
         )
 
-    def test_fix_ci_template_fully_substituted(self, cc, tmp_path):
-        left = _unsubstituted(_render_fix_ci(cc, tmp_path))
+    def test_fix_ci_template_fully_substituted(self, tmp_path):
+        left = _unsubstituted(_render_fix_ci(tmp_path))
         assert not left, f"fix-ci.md left: {left}"
 
     def test_fix_comments_template_fully_substituted(self, rt, tmp_path):

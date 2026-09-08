@@ -58,7 +58,13 @@ def serialize_failures(
 
 @dataclass(frozen=True)
 class CIReport:
-    """One run as `ci-check` reports it on stdout."""
+    """One run as `ci-check` reports it on stdout.
+
+    The failures and their progression are held in the form `pr.ci_failures`
+    produced them; the flat dicts are what `to_json` renders. Everything in
+    this process that acts on a failure — the fix pass most of all — reads the
+    typed item, so the serialized shape has one producer and no readers here.
+    """
 
     repo: str
     branch: str
@@ -69,8 +75,8 @@ class CIReport:
     head_sha: str
     conclusion: str | None
     behind_main: int
-    failures: list[dict]
-    progression: dict[str, str]
+    failures: dict[str, ci.FailureGroup]
+    progression: dict[str, ci.Outcome]
     resolved_since_prior: list[str]
     completed: int | None = None
     total: int | None = None
@@ -114,8 +120,8 @@ class CIReport:
             head_sha=run_state.head_sha,
             conclusion=run_state.conclusion,
             behind_main=behind_main,
-            failures=serialize_failures(run_state.failures, progression),
-            progression={k: v.value for k, v in progression.items()},
+            failures=run_state.failures,
+            progression=progression,
             resolved_since_prior=resolved,
             completed=counts.completed if counts else None,
             total=counts.total if counts else None,
@@ -133,8 +139,8 @@ class CIReport:
             "head_sha": self.head_sha,
             "conclusion": self.conclusion,
             "behind_main": self.behind_main,
-            "failures": self.failures,
-            "progression": self.progression,
+            "failures": serialize_failures(self.failures, self.progression),
+            "progression": {k: v.value for k, v in self.progression.items()},
             "resolved_since_prior": self.resolved_since_prior,
         }
         if self.completed is not None:

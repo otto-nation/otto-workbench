@@ -22,12 +22,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from agent import retry as agent_retry
 from pr import ci_failures as ci
 from pr import ci_report
 from pr import ci_runs
+from fix import ci as fix_ci
 from fix import engine as fix_engine
-from fix import types as fix_types
 from gh import run_reads
 from pr import context as pr_context
 from pr import domains as pr_domains
@@ -37,16 +36,11 @@ from core import report as core_report
 from core import run_lock
 from core import log
 from core import timeouts
-from core.phases import Phase
 from git.land import CommitStatus
-from pr.fix import FixOutcome, FixRecord, ItemOutcome
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
-
-
-_SKIP_KINDS = frozenset(("infra", "flaky"))
 
 
 def _run_ci(trail, args, ctx) -> ci_report.CIReport:
@@ -151,108 +145,6 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
 # ── Fix phase ────────────────────────────────────────────────────────────────
 
 
-def _failure_body(f: dict) -> str:
-    """The diagnosis this domain puts under one failure's heading.
-
-    The heading, the id marker and the outcome boxes belong to `fix_tracking`,
-    which is also what reads them back, so the two halves of the format cannot
-    drift apart.
-    """
-    body = f"**Kind:** {f['kind']}\n"
-    if f.get("headline"):
-        body += f"**Error:** {f['headline']}\n"
-    if f.get("annotation") and f["annotation"] != f.get("headline"):
-        body += f"**Details:** {f['annotation']}\n"
-    if f.get("context"):
-        body += f"**Context:** {f['context']}\n"
-    if f.get("outcome") and f["outcome"] != "new":
-        body += f"**Progression:** {f['outcome']}\n"
-    return body
-
-
-class CIFixAdapter(fix_engine.FixAdapter):
-    """CI's half of a fix pass: the failures, the commit, and the state write.
-
-    Infra and flaky failures never reach the agent — nothing it could edit would
-    clear them — so they are held back here and recorded as SKIPPED rather than
-    handed over and declined. `fixable` is what the pass is actually asked
-    about, and an empty one is a run with nothing to do.
-    """
-
-    phase = Phase.CI_FIX
-    action = "fixing CI failures"
-    item_noun = "failure"
-    # The shared hint is written for review findings. This one names the same
-    # mechanism in CI's terms; both point the agent at the three boxes below.
-    fix_hint = agent_retry.CI_FIX_RETRY_HINT
-
-    def __init__(self, failures: list[dict], report: ci_report.CIReport, ctx, state) -> None:
-        self.workdir = ctx.require_worktree()
-        self.artifacts = self.workdir / "ignore" / "ci-failures"
-        self.title = f"CI Fix Tracking — Run #{report.run_number}"
-        self.branch = ctx.branch
-        self.repo = ctx.repo
-        self.pr = str(ctx.pr_number) if ctx.pr_number else ""
-        self.ctx = ctx
-        self.state = state
-        self.skipped = [f for f in failures if f["kind"] in _SKIP_KINDS]
-        self.fixable = [f for f in failures if f["kind"] not in _SKIP_KINDS]
-
-    def items(self) -> list[fix_types.FixItem]:
-        return [
-            fix_types.FixItem(
-                id=f["id"], file=f.get("file") or "", line=f.get("line") or 0,
-                label=f["job"], body=_failure_body(f),
-            )
-            for f in self.fixable
-        ]
-
-    def template_vars(self) -> dict[str, str]:
-        """Nothing — `fix-ci.md` asks for no substitution the engine withholds."""
-        return {}
-
-    def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:
-        """Commit the whole tree — a CI fix pass owns the worktree it runs in.
-
-        The push is gated, so a run without `--post` commits the fixes and
-        drafts the push instead of making it.
-        """
-        fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
-        msg = "fix: address CI failures"
-        if fixed:
-            msg += f"\n\n{fixed} fixed, {len(outcomes) - fixed} skipped"
-        return fix_engine.LandSpec(
-            message=msg, regen="chore: regenerate after CI fixes",
-        )
-
-    def record(self, run: fix_engine.FixRun) -> None:
-        """Fold the pass into `state.ci.fix` and save it.
-
-        The held-back failures go in alongside the agent's answers: a run that
-        left three infra failures standing has accounted for them, and a record
-        holding only what the agent saw reads as if they were never seen.
-        """
-        skipped = [
-            ItemOutcome(
-                id=f["id"], outcome=FixOutcome.SKIPPED, summary=f["job"],
-                reason=f"{f['kind']} failure — no code change would clear it",
-                file=f.get("file") or "", line=f.get("line") or 0,
-                read_sha=run.head_before,
-            )
-            for f in self.skipped
-        ]
-        landed = run.landed
-        fresh = FixRecord(
-            items=run.outcomes + skipped,
-            commit_sha=landed.sha if landed else "",
-            commit_status=landed.status if landed else None,
-            head_sha=(landed.sha if landed else "") or run.head_before,
-            updated_at=pr_state.now_iso(),
-        )
-        self.state.ci.fix = fresh.merge_into(self.state.ci.fix)
-        pr_state.save_state(self.ctx.target_dir, self.state)
-
-
 def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
     """Rebase onto origin/main if branch is behind. Returns True if rebased and pushed."""
     behind = report.behind_main
@@ -300,7 +192,7 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
         pr_number=ctx.pr_number, head_sha=report.head_sha,
         worktree_root=str(ctx.worktree_root),
     )
-    adapter = CIFixAdapter(report.failures, report, ctx, state)
+    adapter = fix_ci.CIFixAdapter(report, ctx, state)
     if not adapter.fixable:
         log.info("No fixable failures (all infra/flaky)")
         return 0

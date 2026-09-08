@@ -222,6 +222,15 @@ Every function has a no-answer value — ``False`` and ``""`` — so a caller
 in a hook, a CI job, or a subprocess gets a usable result instead of an
 exception. No answer is never consent.
 
+### fix/ci.py
+
+CI's half of a fix pass: the failures, the commit, and the state write.
+
+`fix.engine` runs the pass; this says what CI hands it. The other side of that
+boundary is `fix.types.FixItem`, and the translation into one happens here so
+that what the engine sees is the same for every domain and what CI reasons
+about stays `pr.ci_failures`' own types.
+
 ### fix/engine.py
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.

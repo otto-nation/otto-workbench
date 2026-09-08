@@ -18,15 +18,13 @@ if str(LIB_DIR) not in sys.path:
 
 ci_check = load_script("ci_check", CI_CHECK)
 
-from fix import engine as fix_engine  # noqa: E402
+from agent import retry as agent_retry  # noqa: E402
 from git import land  # noqa: E402
 from core import publishing  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr import ci_annotations  # noqa: E402
 from pr import ci_failures as ci  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
-from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
-from pr.state import PRIdentity, PRState  # noqa: E402
 
 
 def _no_log_fallback(kind):
@@ -39,155 +37,11 @@ def _report(**kwargs) -> CIReport:
     defaults = dict(
         repo="owner/repo", branch="feat/test", pr_number=42,
         run_id=100, run_ids=[100], run_number=7, head_sha="abc123",
-        conclusion="failure", behind_main=0, failures=[],
+        conclusion="failure", behind_main=0, failures={},
         progression={}, resolved_since_prior=[],
     )
     defaults.update(kwargs)
     return CIReport(**defaults)
-
-
-# ── CIFixAdapter ────────────────────────────────────────────────────────
-
-
-def _ci_state():
-    return PRState(identity=PRIdentity(
-        repo="owner/repo", branch="feat/test", pr_number=42,
-        head_sha="abc123", worktree_root="",
-    ))
-
-
-def _ci_adapter(tmp_path, failures, run_number=7, state=None):
-    """The CI adapter as `_run_fix` builds it, against a real worktree path."""
-    return ci_check.CIFixAdapter(
-        failures, _report(run_number=run_number),
-        make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
-        state if state is not None else _ci_state(),
-    )
-
-
-def test_only_fixable_failures_are_handed_to_the_agent(tmp_path):
-    """Infra and flaky failures are held back — no edit would clear either."""
-    failures = [
-        {"id": "lint-1", "job": "shellcheck", "kind": "lint",
-         "annotation": "SC2086", "headline": "SC2086",
-         "file": "bin/foo.sh", "line": 42, "outcome": "new"},
-        {"id": "infra-1", "job": "docker", "kind": "infra",
-         "annotation": "connection refused", "headline": "connection refused",
-         "file": None, "line": None, "outcome": "new"},
-        {"id": "flaky-1", "job": "pytest", "kind": "flaky",
-         "annotation": "timeout", "headline": "timeout",
-         "file": "tests/slow.py", "line": 1, "outcome": "new"},
-    ]
-    adapter = _ci_adapter(tmp_path, failures)
-
-    assert [i.id for i in adapter.items()] == ["lint-1"]
-    assert [f["id"] for f in adapter.skipped] == ["infra-1", "flaky-1"]
-
-
-def test_each_item_carries_the_failure_the_agent_has_to_read(tmp_path):
-    """Location, job and the failure text all reach the checklist entry."""
-    failures = [
-        {"id": "sc2086-bin-foo-42", "job": "shellcheck", "kind": "lint",
-         "annotation": "SC2086: Double quote", "headline": "SC2086: Double quote",
-         "file": "bin/foo.sh", "line": 42, "outcome": "new"},
-        {"id": "pytest-test-auth-18", "job": "pytest", "kind": "test",
-         "annotation": "AssertionError", "headline": "AssertionError",
-         "file": "tests/auth.py", "line": 18, "outcome": "persisting"},
-    ]
-    lint, test = _ci_adapter(tmp_path, failures).items()
-
-    assert (lint.file, lint.line, lint.label) == ("bin/foo.sh", 42, "shellcheck")
-    assert "SC2086: Double quote" in lint.body
-    assert (test.file, test.line, test.label) == ("tests/auth.py", 18, "pytest")
-    assert "persisting" in test.body
-
-
-def test_a_failure_with_no_location_still_becomes_an_item(tmp_path):
-    """A build failure names no file, and the em dash stands in for one."""
-    failures = [
-        {"id": "build-1", "job": "gradle", "kind": "build",
-         "annotation": "compilation failed", "headline": "compilation failed",
-         "file": None, "line": None, "outcome": "new"},
-    ]
-    item, = _ci_adapter(tmp_path, failures).items()
-
-    assert (item.file, item.line) == ("", 0)
-    assert item.location() == "—"
-
-
-def test_a_run_of_only_skipped_failures_hands_over_nothing(tmp_path):
-    """`_run_fix` reads `fixable` to decide there is nothing to ask an agent."""
-    failures = [
-        {"id": "infra-1", "job": "docker", "kind": "infra",
-         "annotation": "OOM", "headline": "OOM",
-         "file": None, "line": None, "outcome": "new"},
-    ]
-    adapter = _ci_adapter(tmp_path, failures)
-
-    assert adapter.fixable == []
-    assert adapter.items() == []
-
-
-def test_the_tracking_file_is_named_for_the_run(tmp_path):
-    """One directory per pass holds both the checklist and the session log."""
-    adapter = _ci_adapter(tmp_path, [], run_number=11)
-
-    assert adapter.title == "CI Fix Tracking — Run #11"
-    assert adapter.tracking_path == tmp_path / "ignore" / "ci-failures" / "fix-tracking.md"
-    assert adapter.session_log == tmp_path / "ignore" / "ci-failures" / "fix-session.jsonl"
-
-
-def test_the_commit_message_counts_what_the_agent_answered(tmp_path):
-    """Fixed and not-fixed, so the log says what a pass achieved without a diff."""
-    adapter = _ci_adapter(tmp_path, [])
-    outcomes = [
-        ItemOutcome(id="a", outcome=FixOutcome.FIXED),
-        ItemOutcome(id="b", outcome=FixOutcome.DECLINED),
-        ItemOutcome(id="c", outcome=FixOutcome.DEFERRED),
-    ]
-
-    spec = adapter.landing(outcomes)
-
-    assert spec.message == "fix: address CI failures\n\n1 fixed, 2 skipped"
-    assert spec.regen == "chore: regenerate after CI fixes"
-
-
-def test_a_pass_that_fixed_nothing_says_only_what_it_did(tmp_path):
-    """No counts line — "0 fixed, 3 skipped" is noise in a log."""
-    adapter = _ci_adapter(tmp_path, [])
-    outcomes = [ItemOutcome(id="a", outcome=FixOutcome.DECLINED)]
-
-    assert adapter.landing(outcomes).message == "fix: address CI failures"
-
-
-def test_held_back_failures_are_recorded_as_skipped(tmp_path):
-    """A record holding only the agent's answers reads as if infra was never seen."""
-    failures = [
-        {"id": "lint-1", "job": "shellcheck", "kind": "lint",
-         "annotation": "SC2086", "headline": "SC2086",
-         "file": "bin/foo.sh", "line": 42, "outcome": "new"},
-        {"id": "infra-1", "job": "docker", "kind": "infra",
-         "annotation": "connection refused", "headline": "connection refused",
-         "file": None, "line": None, "outcome": "new"},
-    ]
-    state = _ci_state()
-    adapter = _ci_adapter(tmp_path, failures, state=state)
-    run = fix_engine.FixRun(
-        outcomes=[ItemOutcome(id="lint-1", outcome=FixOutcome.FIXED)],
-        landed=land.LandResult(CommitStatus.PUSH_HELD, "deadbee"),
-        head_before="cafe123",
-    )
-
-    with patch.object(ci_check.pr_state, "save_state") as saved:
-        adapter.record(run)
-
-    recorded = {i.id: i for i in state.ci.fix.items}
-    assert recorded["lint-1"].outcome is FixOutcome.FIXED
-    assert recorded["infra-1"].outcome is FixOutcome.SKIPPED
-    assert "infra" in recorded["infra-1"].reason
-    assert recorded["infra-1"].read_sha == "cafe123"
-    assert state.ci.fix.commit_sha == "deadbee"
-    assert saved.called
 
 
 # ── _rebase_if_behind ───────────────────────────────────────────────────
@@ -369,9 +223,14 @@ def test_run_ci_wait_times_out(capsys):
 
 
 _ONE_FAILURE = {
-    "id": "build-1", "job": "build", "kind": "build",
-    "annotation": "compilation failed", "headline": "compilation failed",
-    "file": "src/main.go", "line": 3, "outcome": "new",
+    "build": ci.FailureGroup(
+        job="build", kind=ci.FailureKind.BUILD,
+        items=(ci.FailureItem(
+            id="build-1", annotation="compilation failed", file="src/main.go",
+            line=3, diagnosis=None, fix_sha=None, outcome=None,
+            headline="compilation failed",
+        ),),
+    ),
 }
 
 
@@ -397,7 +256,7 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
         return exit_code
 
     trail = MagicMock()
-    report = _report(failures=[_ONE_FAILURE], run_number=1)
+    report = _report(failures=_ONE_FAILURE, run_number=1)
     with patch("ci_check._rebase_if_behind", return_value=False), \
          patch("ci_check.fix_engine.land.land",
                return_value=landed or land.LandResult(CommitStatus.NO_CHANGES)), \
@@ -421,7 +280,7 @@ def test_ci_fix_pass_that_checks_nothing_off_is_retried_with_the_hint(tmp_path):
     prompts = [c.args[0].prompt for c in inv.call_args_list]
 
     assert len(prompts) == 2
-    assert prompts[1] == ci_check.agent_retry.CI_FIX_RETRY_HINT + prompts[0]
+    assert prompts[1] == agent_retry.CI_FIX_RETRY_HINT + prompts[0]
 
 
 def test_ci_fix_pass_with_a_checked_box_is_not_retried(tmp_path):
@@ -472,7 +331,7 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
          patch("ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
          patch("ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
-            trail, _report(failures=[_ONE_FAILURE], run_number=1),
+            trail, _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
     assert mock_land.call_args.kwargs["trail"] is trail
@@ -486,7 +345,7 @@ def test_the_fix_pass_commits_gated_and_asks_for_the_recovery(tmp_path):
          patch("ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
          patch("ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
-            MagicMock(), _report(failures=[_ONE_FAILURE], run_number=1),
+            MagicMock(), _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
     kwargs = mock_land.call_args.kwargs

@@ -220,6 +220,67 @@ class Ledger:
     assert [(v.line, v.name) for v in violations] == [(5, "ROOT")]
 
 
+def test_a_root_inside_if_block_is_flagged(tmp_path):
+    """An if/else body at module scope runs at import."""
+    violations = _check(tmp_path, """
+import os
+import workbench_paths
+
+if os.name == 'posix':
+    ROOT = workbench_paths.state_dir()
+""")
+    assert [(v.line, v.name) for v in violations] == [(6, "ROOT")]
+
+
+def test_a_root_inside_try_block_is_flagged(tmp_path):
+    """A try/except body at module scope runs at import."""
+    violations = _check(tmp_path, """
+import workbench_paths
+
+try:
+    ROOT = workbench_paths.state_dir()
+except Exception:
+    ROOT = None
+""")
+    assert [(v.line, v.name) for v in violations] == [(5, "ROOT")]
+
+
+def test_a_root_inside_for_block_is_flagged(tmp_path):
+    """A for body at module scope runs at import."""
+    violations = _check(tmp_path, """
+import workbench_paths
+
+for _ in [1]:
+    ROOT = workbench_paths.state_dir()
+""")
+    assert [(v.line, v.name) for v in violations] == [(5, "ROOT")]
+
+
+def test_a_root_inside_with_block_is_flagged(tmp_path):
+    """A with body at module scope runs at import."""
+    violations = _check(tmp_path, """
+import workbench_paths
+import contextlib
+
+with contextlib.suppress(Exception):
+    ROOT = workbench_paths.state_dir()
+""")
+    assert [(v.line, v.name) for v in violations] == [(6, "ROOT")]
+
+
+def test_a_default_arg_is_flagged(tmp_path):
+    """A function default expression is evaluated once at definition time."""
+    violations = _check(tmp_path, """
+import workbench_paths
+
+def freeze(default=workbench_paths.state_dir()):
+    return default
+""")
+    assert len(violations) == 1
+    assert violations[0].root == "workbench_paths.state_dir"
+    assert "<default of freeze>" in violations[0].name
+
+
 def test_an_annotated_assignment_is_flagged(tmp_path):
     violations = _check(tmp_path, """
 import workbench_paths

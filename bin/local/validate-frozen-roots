@@ -228,6 +228,26 @@ _IMPORT_TIME_CONTAINERS = (
 )
 
 
+_COMPOUND_BODY_FIELDS = ('body', 'orelse', 'finalbody', 'handlers')
+
+
+def _import_time_children(node):
+    """Immediate children of a compound statement that run at import time.
+
+    ExceptHandler nodes are unwrapped so the caller sees their body statements
+    directly rather than the handler node itself.
+    """
+    items = []
+    for field in _COMPOUND_BODY_FIELDS:
+        items.extend(getattr(node, field, None) or ())
+    # ExceptHandler wraps a body list; unwrap so callers see statements.
+    return [
+        stmt
+        for item in items
+        for stmt in (item.body if isinstance(item, ast.ExceptHandler) else [item])
+    ]
+
+
 def _module_level_assignments(tree):
     """Every assignment that runs at import — module scope, class bodies,
     and compound-statement bodies that execute at import time.
@@ -245,20 +265,8 @@ def _module_level_assignments(tree):
     while pending:
         node = pending.pop()
         if isinstance(node, _IMPORT_TIME_CONTAINERS):
-            # Descend into bodies of compound statements that run at import.
-            for field in ('body', 'orelse', 'finalbody', 'handlers'):
-                children = getattr(node, field, None)
-                if children is None:
-                    continue
-                if isinstance(children, list):
-                    # ExceptHandler nodes carry their own body.
-                    for child in children:
-                        if isinstance(child, ast.ExceptHandler):
-                            pending += child.body
-                        else:
-                            pending.append(child)
+            pending.extend(_import_time_children(node))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Don't descend into function bodies.
             pass
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             found.append(node)
@@ -277,20 +285,12 @@ def _default_arg_expressions(tree):
     while pending:
         node = pending.pop()
         if isinstance(node, _IMPORT_TIME_CONTAINERS):
-            for field in ('body', 'orelse', 'finalbody', 'handlers'):
-                children = getattr(node, field, None)
-                if children is None:
-                    continue
-                if isinstance(children, list):
-                    for child in children:
-                        if isinstance(child, ast.ExceptHandler):
-                            pending += child.body
-                        else:
-                            pending.append(child)
+            pending.extend(_import_time_children(node))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for default in node.args.defaults + node.args.kw_defaults:
-                if default is not None:
-                    results.append((default, node.name, node.lineno))
+            defaults = node.args.defaults + node.args.kw_defaults
+            results.extend(
+                (d, node.name, node.lineno) for d in defaults if d is not None
+            )
     return results
 
 

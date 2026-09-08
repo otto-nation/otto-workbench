@@ -24,6 +24,7 @@ Exit code: 0 if all files pass, 1 if any have violations.
 import argparse
 import os
 import re
+import shlex
 import sys
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
@@ -42,29 +43,24 @@ DECLARATION = re.compile(r'^\s*bats_require_minimum_version\s+(\S+)')
 
 
 def strip_comments(line: str) -> str:
-    """Strip a trailing shell comment, honoring quotes so a `#` inside a
-    string literal is not mistaken for one."""
-    in_single = False
-    in_double = False
-    i = 0
-    while i < len(line):
-        ch = line[i]
-        if in_single:
-            if ch == "'":
-                in_single = False
-        elif in_double:
-            if ch == '\\':
-                i += 1
-            elif ch == '"':
-                in_double = False
-        elif ch == "'":
-            in_single = True
-        elif ch == '"':
-            in_double = True
-        elif ch == '#' and (i == 0 or line[i - 1].isspace()):
-            return line[:i]
-        i += 1
-    return line
+    """Drop a trailing shell comment, leaving a `#` inside a quoted string alone.
+
+    `shlex` in POSIX mode already knows where a quoted string ends, which a
+    regex over the raw line does not: `echo "value #tag" run ! false` has no
+    comment on it, and truncating at the `#` hides the flagged `run` after it.
+
+    A line shlex cannot tokenize is returned whole rather than dropped. An
+    unbalanced quote is routine mid-heredoc and in a line continuation, and the
+    caller's own regex is the thing that decides whether the line matters —
+    refusing to answer here would silently exempt the line from the check.
+    """
+    lexer = shlex.shlex(line, punctuation_chars=True)
+    lexer.commenters = '#'
+    lexer.whitespace_split = True
+    try:
+        return ' '.join(lexer)
+    except ValueError:
+        return line
 
 
 def _parse_version(version: str) -> tuple[int, ...] | None:

@@ -82,6 +82,21 @@ def test_a_hash_inside_a_quoted_string_is_not_a_comment(tmp_path):
     assert [line for line, _ in offenders] == [2]
 
 
+def test_a_hash_inside_single_quotes_is_not_a_comment_either(tmp_path):
+    reason, offenders = _check(tmp_path, "@test 'a' {\n  echo 'tag #foo'; run ! false\n}\n")
+    assert [line for line, _ in offenders] == [2]
+
+
+def test_an_unbalanced_quote_does_not_exempt_the_line(tmp_path):
+    """shlex refuses to tokenize it; dropping the line would skip the check.
+
+    An unbalanced quote is routine mid-heredoc, so the line is kept whole and
+    the flagged `run` on it is still found.
+    """
+    _, offenders = _check(tmp_path, '@test "a" {\n  cat <<EOF\n  it\'s here\n  run ! false\n}\n')
+    assert 4 in [line for line, _ in offenders]
+
+
 # ── suites that need one and lack it ─────────────────────────────────────
 
 

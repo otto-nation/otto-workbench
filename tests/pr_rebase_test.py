@@ -944,6 +944,77 @@ class TestLedgerAttribution:
         assert pr_rebase_cli._billed_to() == {"repo": None, "pr": None}
 
 
+class TestFailureRecording:
+    def test_the_guard_delegates_to_the_trail(self):
+        fake_trail = mock.MagicMock()
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail):
+            pr_rebase_cli._tfail("unstash", "stash pop failed", output="boom")
+        fake_trail.failure.assert_called_once_with(
+            "unstash", "stash pop failed", output="boom")
+
+    def test_no_trail_is_not_an_error(self):
+        with mock.patch.object(pr_rebase_cli, "_trail", None):
+            assert pr_rebase_cli._tfail("unstash", "failed", output="boom") is None
+
+    def test_an_unparseable_resolution_hands_over_the_whole_answer(self):
+        """The old record kept 500 characters of a tail and no way to the rest."""
+        fake_trail = mock.MagicMock()
+        answer = mock.Mock(exit_code=0, text="the model explained itself at length")
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+             mock.patch.object(pr_rebase_cli, "_get_ours_content", return_value=""), \
+             mock.patch.object(pr_rebase_cli, "_get_commit_diff", return_value=""), \
+             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+                               return_value=answer):
+            resolved = pr_rebase_cli._resolve_full_file(
+                "a.py", Path("/tmp/a.py"), "<<<<<<< ours\n", "1a2b3c4d", "subject",
+                "/tmp/wt", target_ref="origin/main",
+            )
+
+        assert resolved is None
+        kwargs = fake_trail.failure.call_args.kwargs
+        assert kwargs["output"] == answer.text
+        assert "stdout_tail" not in kwargs["data"]
+        assert "stdout_len" not in kwargs["data"]
+
+    def test_an_unparseable_chunked_resolution_hands_over_the_whole_answer(self):
+        """Same guard as the full-file path, exercised through the chunked one."""
+        fake_trail = mock.MagicMock()
+        answer = mock.Mock(exit_code=0, text="the model explained itself at length")
+        block = pr_rebase_cli.ConflictBlock(
+            index=1, start=0, end=0, conflict="<<<<<<< ours\n",
+            context_before="", context_after="",
+        )
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+             mock.patch.object(pr_rebase_cli, "_get_commit_diff", return_value=""), \
+             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+                               return_value=answer):
+            resolved = pr_rebase_cli._resolve_chunked(
+                "a.py", Path("/tmp/a.py"), "<<<<<<< ours\n", [block], "1a2b3c4d",
+                "subject", "/tmp/wt", target_ref="origin/main",
+            )
+
+        assert resolved is None
+        kwargs = fake_trail.failure.call_args.kwargs
+        assert kwargs["output"] == answer.text
+        assert kwargs["data"] == {
+            "filepath": "a.py",
+            "reason": f"{pr_rebase_cli.ParseFailure.MISSING_BLOCK_MARKERS}_1",
+        }
+
+    def test_an_unparseable_push_fix_hands_over_the_whole_answer(self, tmp_path):
+        """`_fix_one_file` discarded the answer the same way before this migration."""
+        fake_trail = mock.MagicMock()
+        (tmp_path / "a.py").write_text("original\n")
+        answer = mock.Mock(exit_code=0, text="the model explained itself at length")
+        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+             mock.patch.object(pr_rebase_cli.agent_invoke, "run_prompt",
+                               return_value=answer):
+            pr_rebase_cli._fix_one_file("a.py", str(tmp_path), "check output")
+
+        kwargs = fake_trail.failure.call_args.kwargs
+        assert kwargs["output"] == answer.text
+        assert kwargs["data"]["filepath"] == "a.py"
+
 # ── _detect_delete_conflict ───────────────────────────────────────────────
 
 
@@ -2274,6 +2345,35 @@ def test_step_advance_continue_fails_aborts():
 
     assert rc == 1
     assert abort_called
+
+
+def test_step_advance_continue_failure_records_the_whole_output():
+    """The abort path recorded a warn carrying a bare `stderr` key before this.
+
+    Its sibling `_step_conflicts` ends identically and already routes through
+    `Trail.failure`, so the whole of what git said reaches an artifact.
+    """
+    stderr = "".join(f"detail line {n}\n" for n in range(200))
+    fake_trail = mock.MagicMock()
+
+    def fake_run(cmd, **kwargs):
+        if "--abort" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr=stderr)
+
+    with mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+         mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._step_advance("/fake")
+
+    assert rc == 1
+    fake_trail.warn.assert_not_called()
+    fake_trail.failure.assert_called_once()
+    kwargs = fake_trail.failure.call_args.kwargs
+    assert kwargs["output"].count("detail line") == 200
+    assert "detail line 0\n" in kwargs["output"]
+    assert kwargs["data"] == {"exit_code": 1}
 
 
 # ── _fresh ──────────────────────────────────────────────────────────────────

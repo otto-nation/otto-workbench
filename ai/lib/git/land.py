@@ -87,7 +87,7 @@ from core import proc
 from git import push
 from core.proc import CmdResult
 from git.push import PushResult, PushStatus
-from core.trail import EXCERPT_LIMIT, Trail
+from core.trail import Trail
 
 # git prints these on stdout, with exit 1, when a commit resolves to an empty
 # change. `--allow-empty` is not the answer: an empty commit is noise on the
@@ -408,6 +408,19 @@ class _Commit:
     outcome: LandResult | None = None
 
 
+def _record_commit_failure(trail: Trail | None, output: str) -> None:
+    """Record a failed commit and say where the whole of its output went.
+
+    Split out of `_commit` so the artifact check does not add a third nesting
+    level to a function already branching on the commit's own outcome.
+    """
+    if not trail:
+        return
+    artifact = trail.failure("commit", "commit failed", output=output)
+    if artifact:
+        log.dim(f"full output: {artifact}")
+
+
 def _commit(
     wt_path: str | Path,
     *,
@@ -434,9 +447,10 @@ def _commit(
             return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
         error = committed.stderr.strip() or committed.stdout.strip()
         log.error(f"commit failed: {error}")
-        if trail:
-            trail.error("commit", "commit failed",
-                        data={"error": error[:EXCERPT_LIMIT]})
+        # combined, not `error`: a pre-commit chain prints its banner on
+        # stdout and its verdict there too, so the stderr-first reading the
+        # message takes is the wrong one for the record.
+        _record_commit_failure(trail, committed.combined_output)
         return _Commit(outcome=LandResult(CommitStatus.COMMIT_FAILED, error=error))
 
     sha = git_client.head_sha(cwd=wt_path)

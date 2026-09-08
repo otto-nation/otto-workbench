@@ -65,7 +65,7 @@ from gh.pr_reads import fetch_pr_data
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
 from pr import supersession
 from core.tool_parser import handle_value_flags
-from core.trail import EXCERPT_LIMIT, Trail, add_trail_args
+from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 
@@ -423,9 +423,8 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     except (json.JSONDecodeError, TypeError):
         preview = (stdout or "")[:proc.DETAIL_LIMIT]
         if trail:
-            trail.error("triage", "AI returned non-JSON output",
-                        data={"output_len": len(stdout or ""),
-                              "output_preview": (stdout or "")[:EXCERPT_LIMIT]})
+            trail.failure("triage", "AI returned non-JSON output",
+                          output=stdout or "")
         log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
         return None, 1
 

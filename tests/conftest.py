@@ -889,6 +889,18 @@ def _isolate_state_root(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
 
 
+def _last_event() -> dict:
+    """The most recent record in the sandboxed trail root."""
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from core import workbench_paths
+
+    root = workbench_paths.trail_dir()
+    lines = [line for p in sorted(root.glob("*.jsonl"))
+             for line in p.read_text().splitlines() if line.strip()]
+    return json.loads(lines[-1])
+
+
 @pytest.fixture(autouse=True)
 def _disown_git_hooks(monkeypatch, tmp_path_factory):
     """Detach every git command in every test from the machine's git config.

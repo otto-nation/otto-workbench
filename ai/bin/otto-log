@@ -216,6 +216,12 @@ def _format_event_line(e: dict) -> str:
         parts.append(f"\n{'':>{_DETAIL_COLUMN}}reason: {e['reason']}")
     if e.get("duration_ms") is not None:
         parts.append(f" ({e['duration_ms']}ms)")
+    artifact = (e.get("data") or {}).get("log")
+    if artifact:
+        # Absolute, because the reader's next move is to open it, and the record
+        # stores it relative so a state root that moves still resolves.
+        full = workbench_paths.trail_dir() / artifact
+        parts.append(f"\n{'':>{_DETAIL_COLUMN}}log: {full}")
     return "".join(parts)
 
 
@@ -541,8 +547,9 @@ def cmd_prune(args):
     if not removed:
         print(f"Trail: nothing older than the last {args.keep} month(s).")
         return
+    root = workbench_paths.trail_dir()
     for path in removed:
-        print(f"Trail: dropped {path.name}")
+        print(f"Trail: dropped {path.relative_to(root)}")
 
 
 def cmd_stats(args):

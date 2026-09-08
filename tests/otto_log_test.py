@@ -358,6 +358,18 @@ class TestPruneCommand:
         assert "nothing older" in capsys.readouterr().out
 
 
+class TestPrune:
+    def test_it_names_a_swept_artifact_month_under_its_directory(self, capsys):
+        stem = "2020-01"
+        month = trail_module.artifacts_dir() / stem
+        month.mkdir(parents=True)
+        (month / "aaaaaaaaaaaa-1-push.log").write_text("old\n")
+
+        otto_log.cmd_prune(argparse.Namespace(keep=1))
+
+        assert f"artifacts/{stem}" in capsys.readouterr().out
+
+
 class TestSummaryIsNotAlwaysFinish:
     def test_show_reports_the_runs_duration(self, capsys):
         trail = Trail.start(script="pr", context={"repo": "org/repo"})
@@ -382,3 +394,32 @@ class TestSummaryIsNotAlwaysFinish:
             script=None, since=None, repo=None, json=True))
         rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
         assert rows[0]["duration_ms"] is None
+
+
+class TestLogPointerRendering:
+    def test_an_event_with_an_artifact_names_it_absolutely(self):
+        event = {"ts": "2026-09-04T20:07:24Z", "level": "error",
+                 "event_type": "error", "action": "push", "detail": "refused",
+                 "data": {"log": "artifacts/2026-09/214e9758c739-1-push.log"}}
+
+        rendered = otto_log._format_event_line(event)
+
+        expected = workbench_paths.trail_dir() / "artifacts/2026-09/214e9758c739-1-push.log"
+        assert f"log: {expected}" in rendered
+
+    def test_an_event_without_one_renders_unchanged(self):
+        event = {"ts": "2026-09-04T20:07:24Z", "level": "info",
+                 "event_type": "action", "action": "push", "detail": "pushed"}
+
+        assert "log:" not in otto_log._format_event_line(event)
+
+    def test_the_duration_stays_on_the_header_line(self):
+        """The pointer goes last, so a run's timing is not pushed onto its own
+        line by an artifact that arrived after it."""
+        event = {"ts": "2026-09-04T20:07:24Z", "level": "error",
+                 "event_type": "error", "action": "push", "detail": "refused",
+                 "duration_ms": 42, "data": {"log": "artifacts/2026-09/a-1-push.log"}}
+
+        header, pointer = otto_log._format_event_line(event).split("\n")
+        assert "(42ms)" in header
+        assert "log:" in pointer

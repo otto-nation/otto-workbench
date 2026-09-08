@@ -2225,13 +2225,14 @@ class TestPushHeldCommit:
     def test_a_failed_push_reaches_the_trail(self, rt, publishing_on):
         """Same as the two sibling push paths — a failure here is not silent."""
         trail = MagicMock()
+        trail.failure.return_value = Path("/trail/push.log")
         state = self._state()
         with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run",
                           return_value=_git_ran(1, stderr="rejected\n")):
             rt._push_held_commit(state, Path("/fake"), trail)
-        trail.error.assert_called_once()
-        assert "rejected" in trail.error.call_args.kwargs["data"]["error"]
+        trail.failure.assert_called_once()
+        assert trail.failure.call_args.kwargs["output"] == "rejected\n"
 
     def test_a_commit_already_on_the_remote_is_just_marked(self, rt, publishing_on):
         """Someone pushed by hand between the two runs."""
@@ -7515,6 +7516,25 @@ class TestTriageThrashGuard:
         assert result is not None
         assert len(prompts) == 2
         assert prompts[1].startswith(agent_retry.BLANK_RESPONSE_HINT)
+
+    def test_non_json_triage_output_is_kept_whole(self, rt, tmp_path):
+        """The old record kept a 500-character preview and no way to the rest."""
+        trail = MagicMock()
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+
+        def prompt(text, **kw):
+            return ("sorry, I cannot do that", 0)
+
+        with (
+            patch.object(rt.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(rt, "_branch_commit_log", return_value=""),
+        ):
+            result, rc = rt._run_triage(report, tmp_path, {}, trail)
+
+        assert result is None
+        assert rc == 1
+        assert trail.failure.call_args.kwargs["output"] == "sorry, I cannot do that"
+        assert "output_preview" not in trail.failure.call_args.kwargs.get("data", {})
 
 
 # ── permalink-backed claims ─────────────────────────────────────────────────

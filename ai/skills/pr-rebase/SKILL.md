@@ -50,15 +50,32 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
 - **Default mode** (auto-fix):
 
-```bash
-pr rebase --fix --branch <branch>
-```
+  ```bash
+  pr rebase --fix --branch <branch>
+  ```
+
+  **Start this as a background job, not a foreground command.** In Claude Code
+  that is the Bash tool's `run_in_background`. In any other harness, use whatever
+  background-job facility it offers, and do not block a foreground call on this
+  run. Give it at least 30 minutes.
+
+  AI conflict resolution takes one to three minutes per conflicted file, so a
+  rebase with a dozen conflicts outlives every harness's default foreground
+  timeout. A timeout there is not a clean retry: the kill does not abort the
+  rebase, it leaves a partial one in the worktree, and the next run resumes it —
+  announced on the console, but invisible in the JSON step 2 parses. What looks
+  like "it timed out, run it again" is a mid-flight handoff to a second run that
+  inherits an unfinished rebase.
+
+  Backgrounding is safe here because nothing downstream reads the run's output
+  mid-flight: step 2 parses the JSON the completed job returns, and the script
+  owns its own locking and state.
 
 - **`--no-fix` mode** (report only):
 
-```bash
-pr rebase --branch <branch>
-```
+  ```bash
+  pr rebase --branch <branch>
+  ```
 
 `--no-push` composes with either: the rebase runs (and the AI still resolves
 conflicts under `--fix`), but nothing reaches the remote — the force-push command
@@ -173,7 +190,11 @@ rebase done and only the push outstanding — both end at step 3, never at a
 - **The pre-push hook refused the push.** The JSON reads `"status": "completed"`
   with `"force_pushed": false`, and the hook output above it names the check that
   failed. Diagnose that check, fix it, commit the fix, then finish at step 3.
-  Re-running with `--fix` only repeats the AI recovery that already failed here.
+  The hook output on stderr is the tail only. The whole of it is written to a
+  file the run names on a `full output: <path>` line, and `otto-log show
+  <invocation>` prints the same path under the failing event — read that file
+  when the tail does not name the check. Re-running with `--fix` only repeats
+  the AI recovery that already failed here.
 - **`Recovery left uncommitted changes — not pushing`.** A push-recovery step left
   edits outside any commit, so the branch was deliberately left unpushed
   (`force_pushed` is `false`). Pre-push hooks validate the worktree rather than the
@@ -217,3 +238,6 @@ they then ask for the branch to be pushed.
   it afterwards; the pre-push hooks then validate the branch alone. A resumed
   rebase cannot stash (the index is mid-rebase), so uncommitted work is still
   present while its hooks run
+- Never run `pr rebase --fix` in the foreground, and never under a timeout below
+  30 minutes — a killed run leaves a partial rebase that the next run resumes
+  without the JSON saying so

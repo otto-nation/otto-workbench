@@ -19,6 +19,14 @@ short of space. A file whose stem is not a month — ``legacy.jsonl``, where the
 cutover migration parked the pre-cutover history — is never dropped: its name
 cannot place it in time, and nothing appends to it, so it is a fixed size
 rather than a source of growth.
+
+Beside the month files, ``trail/artifacts/<YYYY-MM>/`` holds the whole of what a
+failing command printed: a record written by ``Trail.failure`` carries only the
+tail under ``error`` and points at the artifact under ``log``, so the JSONL stays
+readable while nothing is lost. One artifact keeps at most ``ARTIFACT_LIMIT``
+bytes (2 MiB) of its command's tail under a line saying what was dropped, and an
+artifact month ages out on the same six-month cutoff the JSONL files take — a
+record and the output it names go together.
 """
 
 # doc-group: platform
@@ -27,9 +35,11 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import itertools
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -40,6 +50,7 @@ from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
+from core import proc
 from core import workbench_paths
 
 
@@ -113,14 +124,36 @@ EVENT_TYPE_WIDTH = max(len(event_type.value) for event_type in EventType)
 # Durations are measured with `time.monotonic_ns` and reported in milliseconds.
 NS_PER_MS = 1_000_000
 
-# How much of a command's output an event's `data` carries. A record is read
-# long after the process that wrote it is gone, so the excerpt is the whole of
-# what a later reader gets — generous enough for a stack trace's first frames,
-# bounded because a build step that writes megabytes to stderr would otherwise
-# put all of them in the month file every caller reads. Wider than
-# `proc.DETAIL_LIMIT`, which bounds what a *console* line quotes back to
-# someone who still has the terminal in front of them.
+# How much of a command's output an event's `data` carries inline. The excerpt
+# is the *tail*: a gate that fails prints its banner first and the line naming
+# what failed last, so the head is the end with none of the answer in it. It is
+# no longer all a later reader gets — `Trail.failure` writes the whole output to
+# an artifact and records the path beside this — but it is what a reader sees
+# without opening a second file, so it stays generous. Wider than
+# `proc.DETAIL_LIMIT`, which bounds what a *console* line quotes back to someone
+# who still has the terminal in front of them.
 EXCERPT_LIMIT = 500
+
+# Where a failure's full output goes, under the trail root beside the month
+# files, and the most of one that is kept. A hook that dumps a whole test suite
+# is the case the artifact exists for; a generator looping on its own output is
+# not, so the tail is kept and the rest is dropped with a line saying so.
+ARTIFACT_DIRNAME = "artifacts"
+ARTIFACT_LIMIT = 2 * 1024 * 1024
+
+# ASCII only: the banner's own bytes are what a caller doing byte-budget math
+# against the file has to add back on top of `ARTIFACT_LIMIT`, and a
+# multi-byte ellipsis would make that arithmetic depend on the character set
+# rather than the count `len()` gives you. The resulting ceiling is
+# approximate, not exact — the tail is cut on a byte boundary and decoded with
+# `errors="replace"`, so a cut landing inside a multi-byte sequence re-encodes
+# a couple of bytes larger than the limit it was cut to.
+_ARTIFACT_TRUNCATED = "... {dropped} earlier bytes dropped; the last {kept} follow ..."
+
+# What an action may contribute to a filename. An action is free-form — `pr
+# rebase` writes `push/force`, and a path separator there would put the artifact
+# somewhere nobody looks for it.
+_ARTIFACT_NAME = re.compile(r"[^A-Za-z0-9_-]+")
 
 _ANSI_DIM = "\033[2m"
 _ANSI_RESET = "\033[0m"
@@ -145,13 +178,25 @@ def oldest_kept_month(now: datetime, keep_months: int) -> str:
     return f"{months // 12:04d}-{months % 12 + 1:02d}"
 
 
-def prune_trail(keep_months: int = TRAIL_KEEP_MONTHS) -> list[Path]:
-    """Drop every month file older than the horizon; return what went.
+def artifacts_dir() -> Path:
+    """Where the full output of a failure is kept, by month.
 
-    Runs as each trail opens, so it costs one readdir of a directory holding
-    one file per retained month — less than the records the run is about to
-    write. A file that is already gone is not an error: two runs sweeping at
-    once is the ordinary case, not a race worth reporting.
+    A function rather than a constant because every workbench root resolves per
+    call — see `core.workbench_paths`. A module-level binding would freeze
+    whichever root was live when the first importer loaded this module, and
+    every test that re-points the state root would have to patch it by name.
+    """
+    return workbench_paths.trail_dir() / ARTIFACT_DIRNAME
+
+
+def prune_trail(keep_months: int = TRAIL_KEEP_MONTHS) -> list[Path]:
+    """Drop every month older than the horizon; return the files and artifact
+    directories that went.
+
+    Runs as each trail opens, so it costs one readdir per retained month — less
+    than the records the run is about to write. A path that is already gone is
+    not an error: two runs sweeping at once is the ordinary case, not a race
+    worth reporting.
     """
     cutoff = oldest_kept_month(datetime.now(timezone.utc), keep_months)
     try:
@@ -170,7 +215,48 @@ def prune_trail(keep_months: int = TRAIL_KEEP_MONTHS) -> list[Path]:
         except OSError:
             continue
         removed.append(path)
+    removed.extend(_prune_artifacts(cutoff))
     return removed
+
+
+def _prune_artifacts(cutoff: str) -> list[Path]:
+    """Drop every artifact month older than *cutoff*; return what went.
+
+    The same horizon the month files take, computed once by the caller: an
+    artifact outliving the record that points at it is a file nothing can name,
+    and a record outliving its artifact is a pointer that resolves to nothing.
+    """
+    try:
+        months = sorted(p for p in artifacts_dir().iterdir() if p.is_dir())
+    except OSError:
+        # Same reading as the month files above: a root that is not there yet
+        # holds nothing to drop, and one that cannot be read is not one to start
+        # deleting from.
+        return []
+    dropped = []
+    for month in months:
+        if not MONTH_STEM.match(month.name) or month.name >= cutoff:
+            continue
+        shutil.rmtree(month, ignore_errors=True)
+        if not month.exists():
+            dropped.append(month)
+    return dropped
+
+
+def _bounded(output: str) -> str:
+    """*output*, or its last `ARTIFACT_LIMIT` bytes under a line saying so.
+
+    The tail rather than the head, for the same reason the excerpt takes the
+    tail: output this long is a gate that ran a suite, and the verdict is the
+    last thing it said.
+    """
+    raw = output.encode()
+    if len(raw) <= ARTIFACT_LIMIT:
+        return output
+    kept = raw[-ARTIFACT_LIMIT:].decode(errors="replace")
+    banner = _ARTIFACT_TRUNCATED.format(dropped=len(raw) - ARTIFACT_LIMIT,
+                                        kept=ARTIFACT_LIMIT)
+    return f"{banner}\n{kept}"
 
 
 # ── Event ─────────────────────────────────────────────────────────────────
@@ -220,6 +306,12 @@ class Trail:
         self._debug = debug
         self._start_ns = start_ns
         self._record = record
+        # Named per artifact rather than per action: one invocation fails more
+        # than once — a refused push, the commit that tries to fix it, the retry
+        # — and the action alone would have them overwrite each other. `next` on
+        # a count is atomic, so this needs no lock; it must not take `_emit_lock`,
+        # which `_emit` holds and which is not reentrant.
+        self._artifacts = itertools.count(1)
 
     @classmethod
     def start(cls, script: str, context: dict, debug: bool = False, *,
@@ -333,6 +425,59 @@ class Trail:
 
     def error(self, action: str, detail: str, data: dict | None = None) -> None:
         self._emit(self._make_event(Level.ERROR, EventType.ERROR, action, detail, data=data))
+
+    def failure(self, action: str, detail: str, *, output: str,
+                data: dict | None = None) -> Path | None:
+        """Record a failure, keeping the whole of what the command printed.
+
+        The event carries the tail of *output* under `error`, its line count
+        under `output_lines`, and the path to all of it under `log`, relative to
+        the trail root. Those three keys are reserved: they are merged over
+        *data*, so a caller passing one of them loses it. Returns the artifact
+        path so the caller can name it on the console, or None when nothing was
+        written — an unrecorded trail, a root that could not be written to, or
+        an *output* that is empty or whitespace only, which has no `log` key
+        either.
+
+        This is the one owner of the excerpt: a call site that slices the output
+        itself picks its own end and its own bound, which is how a refused push
+        came to record the banner of a hook and not its verdict.
+        """
+        path = self._write_artifact(action, output)
+        recorded = {
+            "error": proc.tail(output, limit=EXCERPT_LIMIT),
+            "output_lines": len(output.splitlines()),
+        }
+        if path is not None:
+            recorded["log"] = str(path.relative_to(workbench_paths.trail_dir()))
+        self.error(action, detail, data={**(data or {}), **recorded})
+        return path
+
+    def _write_artifact(self, action: str, output: str) -> Path | None:
+        """Write *output* whole under the artifacts root; None if nothing was."""
+        if not output.strip():
+            # A blank AI response reaches here often enough to carry its own
+            # retry hint. A recorded path to an empty file reads as output that
+            # was kept, and both `otto-log show` and the console advertise it as
+            # the whole of what the command said.
+            return None
+        if not self._record:
+            # `start` promises an unrecorded run leaves the root exactly as it
+            # found it, which has to include the artifacts under it.
+            return None
+        month = datetime.now(timezone.utc).strftime(TS_FORMAT)[TS_MONTH]
+        name = _ARTIFACT_NAME.sub("-", action).strip("-") or "failure"
+        path = (artifacts_dir() / month /
+                f"{self.invocation}-{next(self._artifacts)}-{name}.log")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_bounded(output))
+        except OSError:
+            # A full disk must not turn a refused push into a crash. The event
+            # still carries the tail, which is everything a record held before
+            # artifacts existed.
+            return None
+        return path
 
     def warn(self, action: str, detail: str, data: dict | None = None) -> None:
         self._emit(self._make_event(Level.WARN, EventType.ACTION, action, detail, data=data))

@@ -19,6 +19,7 @@
 # file_mode  PATH   # permission bits, octal — e.g. 644
 # load_average      # one-minute load average, e.g. 3.72
 # iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
+# cpu_count         # CPUs the machine reports, e.g. 18
 # ```
 #
 # Each prints nothing and returns 1 when neither form resolves the value, so
@@ -96,4 +97,20 @@ iso_to_epoch() {
     || value=$(date -u -d "$ts" +%s 2>/dev/null) \
     || return 1
   printf '%s' "$value"
+}
+
+# cpu_count — how many CPUs the machine reports, as a decimal string.
+#
+# The count a work-splitting caller sizes its pool against, not a count of what
+# is idle — pair it with `load_average` where that distinction matters. BSD
+# answers `sysctl -n hw.ncpu` and GNU answers `nproc`; the two forms are
+# assigned separately for the reason `load_average` gives. Prints nothing and
+# returns 1 where neither is readable, so a caller that wants a fallback
+# supplies it: `jobs=$(cpu_count) || jobs=4`.
+cpu_count() {
+  local n
+  n=$(sysctl -n hw.ncpu 2>/dev/null) \
+    || n=$(nproc 2>/dev/null) \
+    || return 1
+  printf '%s' "$n"
 }

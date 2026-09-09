@@ -530,6 +530,7 @@ file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
 file_mode  PATH   # permission bits, octal — e.g. 644
 load_average      # one-minute load average, e.g. 3.72
 iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
+cpu_count         # CPUs the machine reports, e.g. 18
 ```
 
 Each prints nothing and returns 1 when neither form resolves the value, so
@@ -546,6 +547,7 @@ ts=$(file_mtime "$f") || ts=0
 | `file_mode PATH` | permission bits as an octal string, e.g. 644. |
 | `load_average` | the machine's one-minute load average, as the kernel spells it. |
 | `iso_to_epoch TIMESTAMP` | an ISO 8601 UTC timestamp (`2026-09-09T16:15:52Z`) in epoch seconds. |
+| `cpu_count` | how many CPUs the machine reports, as a decimal string. |
 
 Loaded via `ui.sh`.
 

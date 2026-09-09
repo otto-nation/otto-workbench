@@ -22,19 +22,32 @@ _generator_under_test() {
 }
 
 # _shim_failure BINARY MATCH MESSAGE — installs a fake BINARY that fails with
-# MESSAGE when any argument contains MATCH and execs the real one otherwise,
-# then prints the directory to put in front of PATH.
+# MESSAGE when any argument contains MATCH and hands every other call to the
+# real one, then prints the directory to put in front of PATH.
 #
 # Failing one call site and not the whole binary is the point of the MATCH
 # argument. A total tool outage is already caught by _collect's empty-category
 # check, so a shim that failed unconditionally would abort against any
 # implementation and discriminate nothing; each caller passes a fragment unique
 # to the single call it is targeting.
+
+# Every shim below hands its call on by dropping its own directory from PATH
+# and re-execing the bare name, never by exec-ing what `command -v` reported.
+# Under a version manager that path is itself a shim — mise's are symlinks to
+# the mise binary — which re-resolves the tool through PATH, finds this shim
+# still in front of it, and execs it again. The recursion never terminates, so
+# the test hangs until something kills it instead of failing. Re-resolving the
+# bare name against the trimmed PATH reaches the real binary whatever is
+# managing it, and needs no knowledge of which manager that is.
+_shim_untrap() {
+  # shellcheck disable=SC2016  # the expansion belongs to the generated shim, not to us
+  printf 'PATH="${PATH//"%s:"/}"' "$1"
+}
+
 _shim_failure() {
   local binary="$1" match="$2" message="$3"
-  local fakebin="$TMPDIR/fakebin" real
+  local fakebin="$TMPDIR/fakebin"
   mkdir -p "$fakebin"
-  real="$(command -v "$binary")"
   cat > "$fakebin/$binary" <<EOF
 #!/usr/bin/env bash
 for a in "\$@"; do
@@ -43,7 +56,8 @@ for a in "\$@"; do
     exit 1
   fi
 done
-exec "$real" "\$@"
+$(_shim_untrap "$fakebin")
+exec $binary "\$@"
 EOF
   chmod +x "$fakebin/$binary"
   echo "$fakebin"
@@ -172,6 +186,27 @@ EOF
   [[ "$output" == *"config entries failed"* ]]
 }
 
+@test "a shim hands non-matching calls to the real tool instead of itself" {
+  # The bug this guards: passing through with `exec "$(command -v jq)"` reaches
+  # a version manager's shim, which re-resolves jq through a PATH that still
+  # starts with the fake one and execs it again. Nothing fails — the shim calls
+  # itself until killed, so every test built on the helper hangs rather than
+  # reporting, and a whole suite stalls on one silent defect.
+  #
+  # There is no timeout guarding this. BATS_TEST_TIMEOUT cannot bound it: the
+  # runaway is a chain of execs that replaces the process image each time, so
+  # bats' watchdog loses the pid it was told to kill. What the assertions below
+  # do catch is the case where passthrough reaches the wrong binary or none at
+  # all; a true recursion still presents as a hung suite, and the comment above
+  # `_shim_untrap` is what keeps the next person from reintroducing it.
+  local fakebin
+  fakebin="$(_shim_failure jq 'NEVER_MATCHES_ANYTHING' 'jq: unreachable')"
+
+  run env PATH="$fakebin:$PATH" jq --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == jq-* ]]
+}
+
 @test "a broken yq call inside _registries_for aborts instead of truncating" {
   local gen fakebin
   gen="$(_generator_under_test)"
@@ -237,9 +272,8 @@ EOF
 @test "config keys and enums nested under allOf reach the snapshot" {
   local gen
   gen="$(_generator_under_test)"
-  local fakebin="$TMPDIR/fakebin" real_jq
+  local fakebin="$TMPDIR/fakebin"
   mkdir -p "$fakebin"
-  real_jq="$(command -v jq)"
   # config.schema.json uses no allOf today, so the walk can only be exercised
   # against a fixture. This shim swaps the schema path for exactly the two
   # _config_entries jq calls (identified by a fragment of their programs) and
@@ -270,7 +304,8 @@ for a in "\$@"; do
   fi
   args+=("\$a")
 done
-exec "$real_jq" "\${args[@]}"
+$(_shim_untrap "$fakebin")
+exec jq "\${args[@]}"
 EOF
   chmod +x "$fakebin/jq"
 

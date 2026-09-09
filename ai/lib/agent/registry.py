@@ -127,14 +127,31 @@ _SPECS: tuple[PhaseSpec, ...] = (
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
-    # One phase, six ledger labels: pr-rebase asks for conflict resolutions,
-    # chunked resolutions, stash resolutions, lockfile commands and push-check
-    # fixes. They are the same call sized the same way, and an operator moving
-    # the rebase model means all of them.
+    # One phase, five ledger labels: pr-rebase asks for conflict resolutions,
+    # chunked resolutions, stash resolutions and lockfile commands. They are the
+    # same call sized the same way, and an operator moving the rebase model
+    # means all of them. Repairing the checks a rebased branch failed was the
+    # sixth until it became a fix pass of its own below — an agent editing in
+    # place is not one stateless call, and sizing it as one is what left it
+    # unbatched.
     PhaseSpec(
         Phase.REBASE, PhaseDomain.REBASE, "Rebase assist",
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
+    ),
+    # Sized as CI's fix pass, and for the same reason: both are handed a set of
+    # files a check complained about, and neither knows anything about an item
+    # beyond the complaint. The rates below are that flat 20 turns and $3
+    # divided by the ten files it is sized for, so a rebase that resolved forty
+    # gets four passes of that budget rather than one prompt holding all forty.
+    PhaseSpec(
+        Phase.PREPUSH_FIX, PhaseDomain.REBASE, "Pre-push fix pass",
+        template="fix-prepush.md",
+        max_turns=20, max_budget=3.0,
+        shape=PhaseShape.FIX,
+        scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=2, turns_cap=20,
+                            budget_per_item=0.25, budget_cap=3.0),
     ),
     PhaseSpec(
         Phase.DESCRIBE, PhaseDomain.DESCRIBE, "Describe",

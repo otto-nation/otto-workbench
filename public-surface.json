@@ -40,6 +40,7 @@
     "config:agent.phases=fix",
     "config:agent.phases=group",
     "config:agent.phases=holistic",
+    "config:agent.phases=prepush_fix",
     "config:agent.phases=rebase",
     "config:agent.phases=scout",
     "config:agent.phases=single",

@@ -115,6 +115,7 @@
               "comments_triage",
               "ci_fix",
               "rebase",
+              "prepush_fix",
               "describe"
             ]
           }

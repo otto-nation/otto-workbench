@@ -37,6 +37,7 @@ from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 from core.phases import Mode, Phase, PhaseShape  # noqa: E402
+from rebase import prepush as rebase_prepush  # noqa: E402
 from review import fix as review_fix  # noqa: E402
 from review import grammar as review_grammar  # noqa: E402
 from review import prompt as review_prompt  # noqa: E402
@@ -620,6 +621,13 @@ def _render_fix_findings(wt_path) -> str:
     return _render_adapter(review_fix.ReviewFixAdapter(job, [finding], set()))
 
 
+def _render_fix_prepush(wt_path) -> str:
+    return _render_adapter(rebase_prepush.PrePushFixAdapter(
+        str(wt_path), ["server.go"], "gofmt: server.go needs formatting",
+        repo="owner/repo", branch="user/feat/thing",
+    ))
+
+
 # Every fix template, keyed the way the parametrized contracts below name them.
 # One list, so a fourth domain adopting the engine is added to the contracts by
 # adding its renderer here rather than to each test in turn.
@@ -627,6 +635,7 @@ _FIX_RENDERERS = {
     "ci": lambda rt, wt: _render_fix_ci(wt),
     "comments": lambda rt, wt: _render_fix_comments(rt, wt),
     "findings": lambda rt, wt: _render_fix_findings(wt),
+    "prepush": lambda rt, wt: _render_fix_prepush(wt),
 }
 
 
@@ -700,6 +709,7 @@ class TestTemplateRendering:
             PHASES[Phase.FIX].template_for(),
             PHASES[Phase.CI_FIX].template_for(),
             PHASES[Phase.COMMENTS_FIX].template_for(),
+            PHASES[Phase.PREPUSH_FIX].template_for(),
         }
         uncovered = sorted(
             name for name in _template_files() - covered

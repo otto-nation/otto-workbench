@@ -85,6 +85,7 @@ class Phase(StrEnum):
     COMMENTS_TRIAGE = "comments_triage"
     CI_FIX = "ci_fix"
     REBASE = "rebase"
+    PREPUSH_FIX = "prepush_fix"
     DESCRIBE = "describe"
 
     @property

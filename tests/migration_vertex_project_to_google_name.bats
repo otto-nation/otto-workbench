@@ -10,6 +10,15 @@ setup() {
   MIGRATION="$REPO_ROOT/zsh/migrations/20260909-vertex-project-to-google-name.sh"
   FAKE_HOME="$(mktemp -d)"
   ENV_LOCAL="$FAKE_HOME/.env.local"
+
+  # The migration returns the framework's own statuses, so the numbers stay
+  # owned by lib/migrations.sh rather than being restated here — a test holding
+  # its own copy of 3 and 4 would keep passing against values that had moved.
+  export WORKBENCH_DIR="$REPO_ROOT"
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/ui.sh"
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/migrations.sh"
 }
 
 teardown() {
@@ -21,18 +30,23 @@ teardown() {
 # out. Sources the file and then calls its function, which is what the framework
 # does (lib/migrations.sh — _source_migration, then "$fn_name"), and reads the
 # exit status the framework reads to decide what to record.
+#
+# The status constants are the real ones from lib/migrations.sh, handed to the
+# child as arguments. Not as an environment prefix: they are readonly in this
+# shell, and `MIGRATION_NOOP="$MIGRATION_NOOP" bash -c ...` is rejected as an
+# assignment to a readonly variable before the child is reached.
 _run_migration() {
   bash -c '
     success() { echo "OK $*"; }
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
     err()     { echo "ERR $*" >&2; }
-    MIGRATION_NOOP=3
-    MIGRATION_DEFERRED=4
     ENV_LOCAL_FILE="$2"
+    MIGRATION_NOOP="$3"
+    MIGRATION_DEFERRED="$4"
     . "$1"
     migration_20260909_vertex_project_to_google_name
-  ' _ "$MIGRATION" "$ENV_LOCAL"
+  ' _ "$MIGRATION" "$ENV_LOCAL" "$MIGRATION_NOOP" "$MIGRATION_DEFERRED"
 }
 
 @test "renames an active export" {
@@ -77,7 +91,7 @@ EOF
 export GOOGLE_CLOUD_PROJECT=proj-x
 EOF
   run _run_migration
-  [ "$status" -eq 3 ]
+  [ "$status" -eq "$MIGRATION_NOOP" ]
   grep -qx 'export GOOGLE_CLOUD_PROJECT=proj-x' "$ENV_LOCAL"
 }
 
@@ -89,7 +103,7 @@ EOF
   [ "$status" -eq 0 ]
   cp "$ENV_LOCAL" "$BATS_TEST_TMPDIR/first"
   run _run_migration
-  [ "$status" -eq 3 ]
+  [ "$status" -eq "$MIGRATION_NOOP" ]
   diff "$BATS_TEST_TMPDIR/first" "$ENV_LOCAL"
 }
 
@@ -101,7 +115,7 @@ export ANTHROPIC_VERTEX_PROJECT_ID=proj-old
 export GOOGLE_CLOUD_PROJECT=proj-new
 EOF
   run _run_migration
-  [ "$status" -eq 3 ]
+  [ "$status" -eq "$MIGRATION_NOOP" ]
   [[ "$output" == *"WARN"* ]]
   grep -qx 'export ANTHROPIC_VERTEX_PROJECT_ID=proj-old' "$ENV_LOCAL"
   grep -qx 'export GOOGLE_CLOUD_PROJECT=proj-new' "$ENV_LOCAL"
@@ -113,5 +127,5 @@ EOF
   # on a later pass. A noop is recorded and never revisited, so this migration
   # would never see those lines.
   run _run_migration
-  [ "$status" -eq 4 ]
+  [ "$status" -eq "$MIGRATION_DEFERRED" ]
 }

@@ -105,21 +105,30 @@ _check_permission_seq() {
   done
 }
 
+# _check_unknown_keys FILE YQ_PATH LABEL ALLOWED
+# Rejects any key under YQ_PATH that ALLOWED — a space-separated field list —
+# does not name. LABEL prefixes the failure so the reader is told which entry of
+# which array is at fault.
+_check_unknown_keys() {
+  local file="$1" path="$2" label="$3" allowed="$4"
+  local key
+  while IFS= read -r key; do
+    local known=false field
+    for field in $allowed; do
+      if [[ "$key" == "$field" ]]; then known=true; break; fi
+    done
+    if ! $known; then
+      _fail "$(basename "$file") $label: unknown field '$key'"
+    fi
+  done < <(yq "$path | keys | .[]" "$file")
+}
+
 # _check_unknown_fields FILE INDEX
 _check_unknown_fields() {
   local file="$1" i="$2"
   local name
   name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
-  local key
-  while IFS= read -r key; do
-    local known=false field
-    for field in $KNOWN_TOOL_FIELDS; do
-      if [[ "$key" == "$field" ]]; then known=true; break; fi
-    done
-    if ! $known; then
-      _fail "$(basename "$file") entry '$name': unknown field '$key'"
-    fi
-  done < <(yq ".tools[$i] | keys | .[]" "$file")
+  _check_unknown_keys "$file" ".tools[$i]" "entry '$name'" "$KNOWN_TOOL_FIELDS"
 }
 
 # _check_permission_field FILE INDEX
@@ -313,16 +322,7 @@ _check_unknown_env_fields() {
   local file="$1" i="$2"
   local var
   var=$(yq ".env[$i].var // \"[$i]\"" "$file")
-  local key
-  while IFS= read -r key; do
-    local known=false field
-    for field in $KNOWN_ENV_FIELDS; do
-      if [[ "$key" == "$field" ]]; then known=true; break; fi
-    done
-    if ! $known; then
-      _fail "$(basename "$file") env '$var': unknown field '$key'"
-    fi
-  done < <(yq ".env[$i] | keys | .[]" "$file")
+  _check_unknown_keys "$file" ".env[$i]" "env '$var'" "$KNOWN_ENV_FIELDS"
 }
 
 # _check_env_claude_env FILE INDEX

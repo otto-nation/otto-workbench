@@ -12,7 +12,7 @@
     "deferred": [
       {"id": "T-3", "summary": "extract the retry loop", "reviewer": "alice"}
     ],
-    "commit_sha": "a1b2c3d",
+    "commit_sha": "@@HEAD_SHORT@@",
     "replies_posted": 0,
     "summary_url": null,
     "summary_deferred": true,

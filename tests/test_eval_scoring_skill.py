@@ -424,6 +424,133 @@ class TestWriteShims:
             )
 
 
+class TestFixtureSubstitution:
+    """A case cannot spell the sha of a repo built at run time.
+
+    Three `pr-comments` fixtures cited a literal `a1b2c3d` no commit has. It was
+    inert while the cases stopped at a draft and load-bearing the moment one
+    graded publishing: a model told to publish replies citing that sha checked
+    it, found nothing, and declined — the care the skill asks for, scored as
+    recall 0.
+    """
+
+    SUBS = {"HEAD_SHA": "0" * 40, "HEAD_SHORT": "0123abc"}
+
+    def test_a_placeholder_in_stderr_is_replaced_with_the_fixture_sha(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["comments"], "stderr": "fixed in @@HEAD_SHORT@@\n"},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl", substitutions=self.SUBS,
+        )
+        assert _run(bin_dir, "pr", "comments").stderr == "fixed in 0123abc\n"
+
+    def test_a_placeholder_inside_a_stdout_file_is_replaced_too(self, tmp_path):
+        """The report the skill parses is where the sha it quotes comes from."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        (case / "report.json").write_text('{"commit_sha": "@@HEAD_SHORT@@"}')
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["comments"], "stdout_file": "report.json"},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl", substitutions=self.SUBS,
+        )
+        assert json.loads(_run(bin_dir, "pr", "comments").stdout) == {
+            "commit_sha": "0123abc"}
+
+    def test_a_placeholder_in_a_match_token_fires_the_rule_on_the_real_sha(
+        self, tmp_path,
+    ):
+        """So a case can stub a command that takes the sha as an argument."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["--commit", "@@HEAD_SHORT@@"], "stdout": "settled"},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl", substitutions=self.SUBS,
+        )
+        assert _run(bin_dir, "pr", "--commit", "0123abc").stdout == "settled"
+
+    def test_the_short_form_is_the_width_the_report_field_is_documented_at(
+        self, tmp_path,
+    ):
+        """`commit_sha` is the abbreviated sha the real command persists, and
+        `git.client` owns that width rather than this module slicing its own."""
+        from git import client as git_client
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "bug.py").write_text("x = 1\n")
+        repo = ess.create_temp_repo(str(src), prefix="eval-subs-test-")
+        try:
+            subs = ess.fixture_substitutions(repo)
+            assert subs["HEAD_SHORT"] == git_client.abbrev(subs["HEAD_SHA"])
+            kind = subprocess.run(
+                ["git", "-C", repo, "cat-file", "-t", subs["HEAD_SHORT"]],
+                capture_output=True, text=True)
+            assert kind.stdout.strip() == "commit"
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_a_rule_with_no_placeholder_is_left_byte_for_byte_alone(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["comments"], "stdout": '{"ok": 1}', "exit": 3},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl", substitutions=self.SUBS,
+        )
+        result = _run(bin_dir, "pr", "comments")
+        assert (result.stdout, result.returncode) == ('{"ok": 1}', 3)
+
+    def test_an_unknown_placeholder_names_the_binary_and_itself(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        with pytest.raises(ValueError, match=re.escape("@@HEAD_SHAA@@")) as exc:
+            ess.write_shims(
+                {"pr": {"rules": [
+                    {"match": ["comments"], "stderr": "fixed in @@HEAD_SHAA@@"},
+                ]}},
+                bin_dir, case, tmp_path / "t.jsonl", substitutions=self.SUBS,
+            )
+        assert "pr:" in str(exc.value)
+
+    def test_a_placeholder_with_no_substitutions_offered_is_still_an_error(
+        self, tmp_path,
+    ):
+        """A caller with no repo must not ship the literal token to the model:
+        an absent value and a misspelt name are the same fixture bug."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        with pytest.raises(ValueError, match=re.escape("@@HEAD_SHORT@@")):
+            ess.write_shims(
+                {"pr": {"rules": [
+                    {"match": ["comments"], "stderr": "fixed in @@HEAD_SHORT@@"},
+                ]}},
+                bin_dir, case, tmp_path / "t.jsonl",
+            )
+
+    def test_a_placeholder_is_rejected_before_a_run_is_paid_for(
+        self, monkeypatch, tmp_path,
+    ):
+        """The typo costs nothing: the raise lands before the model is invoked."""
+        case_dir = _skill_case(
+            tmp_path, skill="pr-rebase", prompt="go", requires=[["git", "rebase"]])
+        (case_dir / "responses.json").write_text(json.dumps(
+            {"pr": {"rules": [{"match": ["comments"], "stdout": "@@NOPE@@"}]}}))
+
+        def fail_if_called(inv):
+            raise AssertionError("invoke_fix ran despite an unknown placeholder")
+
+        monkeypatch.setattr(ess.ai_backend, "invoke_fix", fail_if_called)
+        with pytest.raises(ValueError, match=re.escape("@@NOPE@@")):
+            ess.SkillTask().run(case_dir, RunOptions())
+
+
 class TestSkillBody:
     def test_frontmatter_is_stripped(self):
         """The trigger/skip metadata is routing config, not instructions."""
@@ -593,6 +720,25 @@ def _skill_cases():
     return cases
 
 
+def _stub_rules(manifest_path):
+    """Every (binary, rule) pair a case stubs, flattened over the binaries."""
+    responses = json.loads((manifest_path.parent / "responses.json").read_text())
+    return [
+        (name, rule)
+        for name, spec in responses.items()
+        for rule in spec.get("rules", [])
+    ]
+
+
+def _rule_texts(case_dir, rule):
+    """The replayed text of one rule, inlining `stdout_file` as the shim does."""
+    texts = [rule.get("stdout", ""), rule.get("stderr", "")]
+    source = rule.get("stdout_file", "")
+    if source:
+        texts.append((case_dir / source).read_text())
+    return texts
+
+
 class TestSkillCasesAreNotVacuous:
     """An oracle that cannot fail, or cannot be met, measures nothing.
 
@@ -672,6 +818,52 @@ class TestSkillCasesAreNotVacuous:
         for group in named:
             assert group[0] in responses, (
                 f"requires {group} names {group[0]!r}, which no shim records")
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_no_stub_text_cites_a_hard_coded_commit_sha(self, manifest_path):
+        """A literal sha in stub text names a commit the fixture repo has not got.
+
+        The repo is built at run time, so any sha an author could type is one no
+        commit will have. `pr-comments-publish` is where that bites: publishing
+        is the graded action, and a model that resolved the cited sha, found
+        nothing, and declined to post a link that would 404 scored recall 0 for
+        doing what the skill asks.
+
+        A heuristic, deliberately: a hex run of 7-40 characters holding both a
+        digit and a letter. That is what a sha looks like and what prose does
+        not — it clears `deferred` and `facade` while catching `a1b2c3d`.
+        """
+        hexish = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+        for name, rule in _stub_rules(manifest_path):
+            text = "\n".join(_rule_texts(manifest_path.parent, rule))
+            found = hexish.findall(ess._PLACEHOLDER.sub("", text))
+            assert not found, (
+                f"{name} rule {rule['match']} cites {found} — use "
+                f"@@HEAD_SHORT@@ so the sha names a real commit")
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_every_reported_commit_sha_is_a_placeholder_or_null(self, manifest_path):
+        """The precise complement to the heuristic above, on the one field the
+        skill actually parses and quotes back to the reviewer."""
+        for _, rule in _stub_rules(manifest_path):
+            source = rule.get("stdout_file", "")
+            if not source:
+                continue
+            report = json.loads((manifest_path.parent / source).read_text())
+            sha = report.get("fix_pass", {}).get("commit_sha")
+            assert sha is None or ess._PLACEHOLDER.fullmatch(sha), (
+                f"{source} reports commit_sha {sha!r}, which no commit has")
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_no_manifest_group_carries_a_placeholder(self, manifest_path):
+        """The oracle is not expanded — groups are validated before the fixture
+        repo exists — so a group naming `@@HEAD_SHORT@@` grades against the
+        literal token and can never match."""
+        manifest = json.loads(manifest_path.read_text())
+        for group in manifest["requires"] + manifest.get("forbids", []):
+            for token in group:
+                assert not ess._PLACEHOLDER.search(token), (
+                    f"group {group} carries a placeholder; only stub rules are expanded")
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
     def test_tokens_appear_in_the_live_skill_text(self, manifest_path):
@@ -774,7 +966,12 @@ class TestWorktreeStubAnswersEverySwitchSpelling:
         case = CORPUS / case_name
         responses = json.loads((case / "responses.json").read_text())
         bin_dir = tmp_path / "bin"
-        ess.write_shims(responses, bin_dir, case, tmp_path / "t.jsonl")
+        # The case's `pr` rules cite the fixture sha, and expansion is strict,
+        # so a corpus file cannot be shimmed without offering one.
+        ess.write_shims(
+            responses, bin_dir, case, tmp_path / "t.jsonl",
+            substitutions=TestFixtureSubstitution.SUBS,
+        )
         result = _run(bin_dir, "wt", "switch", target)
         assert result.returncode == 0
         assert json.loads(result.stdout)["path"]
@@ -898,6 +1095,42 @@ class TestRunWiring:
             assert artifacts.temp_dirs == [inv.cwd, str(bin_dir.parent)]
             assert [m.matched for m in artifacts.data["matches"]] == [True]
             assert artifacts.data["violations"] == []
+        finally:
+            for path in artifacts.temp_dirs:
+                shutil.rmtree(path, ignore_errors=True)
+
+    def test_the_fixture_sha_reaches_the_shims_the_session_runs(
+        self, monkeypatch, tmp_path,
+    ):
+        """End to end: the sha a stub replays is one the session's own repo has.
+
+        The unit tests above pass substitutions in by hand, so none of them would
+        notice `run()` failing to derive them — which is the whole path #1177 is
+        about.
+        """
+        case_dir = _skill_case(
+            tmp_path, skill="pr-rebase", prompt="go", requires=[["git", "rebase"]])
+        (case_dir / "responses.json").write_text(json.dumps(
+            {"pr": {"rules": [
+                {"match": ["comments"], "stdout": "@@HEAD_SHORT@@"},
+            ]}}))
+
+        captured = {}
+
+        def stub_invoke_fix(inv):
+            bin_dir = Path(inv.env["PATH"].split(os.pathsep)[0])
+            captured["stdout"] = _run(bin_dir, "pr", "comments").stdout
+            captured["cwd"] = inv.cwd
+            return 0
+
+        monkeypatch.setattr(ess.ai_backend, "invoke_fix", stub_invoke_fix)
+
+        artifacts = ess.SkillTask().run(case_dir, RunOptions())
+        try:
+            expected = subprocess.run(
+                ["git", "-C", captured["cwd"], "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True)
+            assert captured["stdout"] == expected.stdout.strip()
         finally:
             for path in artifacts.temp_dirs:
                 shutil.rmtree(path, ignore_errors=True)

@@ -2048,6 +2048,17 @@ a binary into `on_no_match: "passthrough"` when it wants the real one — both
 all and no trace line is recorded for it, so a binary named as the leading token
 of any group needs an entry here or the group can never be satisfied or violated.
 
+Stub text may cite the fixture repo's own commit through `@@HEAD_SHORT@@` and
+`@@HEAD_SHA@@`, expanded when the shims are written. A case cannot spell that sha
+itself — the repo is built at run time — and a placeholder standing in for it is
+not inert: `pr-comments-publish` grades publishing, a model asked to publish
+replies citing a sha checked it, found no such commit, and declined, which is the
+care the skill asks for scored as a failure. Expansion is strict, so a misspelt
+name raises before a run is paid for rather than reinstating that. Manifest
+`requires`/`forbids` groups are *not* expanded: they are validated before the
+repo exists, and a group naming a placeholder would grade against the literal
+token.
+
 Two limits worth naming. The trace cannot see obligations that are text-only,
 such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
 regenerate those files by hand. And each case drives a single *user* turn, with
@@ -2075,7 +2086,10 @@ tasks existed keeps working.
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
-that becomes the run's `cwd`, and a case without one is skipped.
+that becomes the run's `cwd`, and a case without one is skipped. That repo is
+built at run time, so its commit shas are not knowable when a case is authored;
+a case that needs to cite the commit it is standing on reads it back with
+`fixture_head_sha` rather than spelling a literal that no commit will have.
 
 `EVAL_CASE_BUDGET` bounds a single case's run. It is a deadline on work that
 could reasonably keep going rather than a bound on a subprocess that should

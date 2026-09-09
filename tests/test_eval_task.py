@@ -120,6 +120,34 @@ class TestCreateTempRepo:
         with self._repo(tmp_path) as repo:
             assert (repo / ".git").is_dir()
 
+    def test_the_fixture_head_sha_names_a_commit_the_repo_has(self, tmp_path):
+        """The whole point: a case citing this sha cites something that resolves."""
+        with self._repo(tmp_path) as repo:
+            sha = eval_task.fixture_head_sha(str(repo))
+            kind = proc.run(["git", "-C", str(repo), "cat-file", "-t", sha],
+                            timeout=timeouts.LOCAL)
+            assert kind.stdout.strip() == "commit"
+
+    def test_an_inherited_git_dir_does_not_redirect_the_head_read(
+        self, tmp_path, monkeypatch,
+    ):
+        """`-C` loses to `GIT_DIR`, so an unsanitised read answers with the
+        calling checkout's HEAD — a sha that resolves everywhere except the
+        fixture, which is quieter than the placeholder it replaces."""
+        with self._repo(tmp_path) as repo:
+            expected = eval_task.fixture_head_sha(str(repo))
+            monkeypatch.setenv("GIT_DIR", str(REPO_ROOT / ".git"))
+            assert eval_task.fixture_head_sha(str(repo)) == expected
+
+    def test_an_unbuildable_repo_raises_rather_than_returning_an_empty_sha(
+        self, tmp_path,
+    ):
+        """An empty sha substituted into a rule's `match` produces a rule that
+        can never fire — the failure `check_group` exists to prevent."""
+        with pytest.raises(RuntimeError) as exc:
+            eval_task.fixture_head_sha(str(tmp_path))
+        assert "git rev-parse HEAD failed" in str(exc.value)
+
     def test_a_failing_step_raises_with_gits_own_words(self, tmp_path):
         """Calls the private `_git_step` directly, not `create_temp_repo`, to isolate
         the error-message contract from the rest of the fixture build."""

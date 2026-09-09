@@ -14,7 +14,10 @@ tasks existed keeps working.
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
-that becomes the run's `cwd`, and a case without one is skipped.
+that becomes the run's `cwd`, and a case without one is skipped. That repo is
+built at run time, so its commit shas are not knowable when a case is authored;
+a case that needs to cite the commit it is standing on reads it back with
+`fixture_head_sha` rather than spelling a literal that no commit will have.
 
 `EVAL_CASE_BUDGET` bounds a single case's run. It is a deadline on work that
 could reasonably keep going rather than a bound on a subprocess that should
@@ -200,6 +203,47 @@ def create_temp_repo(src_dir: str, prefix: str = "eval-") -> str:
         _git_step(git, step, env)
 
     return tmpdir
+
+
+def fixture_head_sha(repo_dir: str) -> str:
+    """The sha of the commit `create_temp_repo` left at the case branch's tip.
+
+    A fixture repo is built at run time, so a case author cannot know the sha of
+    the commit their scenario is standing on — which is how three `pr-comments`
+    fixtures came to cite a placeholder `a1b2c3d` that no commit has. This is
+    the value a case cites instead, resolved once the repo exists.
+
+    `clean_env` is load-bearing rather than tidiness: `GIT_DIR` takes precedence
+    over `-C` discovery, so an inherited one makes this read the *calling*
+    checkout's HEAD. That sha resolves, so nothing downstream can tell it is the
+    wrong repo's — a quieter failure than the placeholder it replaces.
+
+    `proc.run` rather than `git.client`, for the reason `_git_step` gives: the
+    client has no `env` parameter. `LOCAL` rather than `UNBOUNDED` because this
+    reads a ref instead of running the hooks a build step runs.
+
+    Raises rather than returning "" on failure. An empty sha substituted into a
+    stub rule's `match` produces a rule that can never fire — the failure
+    `check_group` exists to prevent — and into stub text it produces a fixture
+    citing nothing at all.
+
+    ceiling: the commit this names is titled "add buggy code", which is not what
+    a case whose stubs describe a *fix* commit would have called it, so a session
+    reading the subject rather than resolving the sha still sees a mismatch. The
+    subject is hard-coded and shared by all three tasks. Upgrade trigger: if a
+    graded run declines to act citing the commit's message or contents rather
+    than its existence, give `create_temp_repo` a case-supplied subject.
+    """
+    r = proc.run(
+        ["git", "-C", repo_dir, "rev-parse", "HEAD"],
+        env=clean_env(), timeout=timeouts.LOCAL,
+    )
+    if not r.ok:
+        raise RuntimeError(proc.failure_message("git rev-parse HEAD failed", r))
+    sha = r.stdout.strip()
+    if not sha:
+        raise RuntimeError(f"git rev-parse HEAD printed no sha in {repo_dir}")
+    return sha
 
 
 def task_name(manifest: dict) -> str:

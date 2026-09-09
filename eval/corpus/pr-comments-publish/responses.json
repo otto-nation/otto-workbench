@@ -11,13 +11,13 @@
       {
         "match": ["comments", "--finish"],
         "stdout": "{\"replies_posted\": 0, \"summary_url\": \"\"}",
-        "stderr": "DRAFT (not published) — reply to T-1 (alice)\n  Fixed in a1b2c3d.\nDRAFT (not published) — reply to T-2 (bob)\n  Fixed in a1b2c3d.\nDRAFT (not published) — summary comment\n  Addressed both threads; nothing deferred.\n",
+        "stderr": "DRAFT (not published) — reply to T-1 (alice)\n  Fixed in @@HEAD_SHORT@@.\nDRAFT (not published) — reply to T-2 (bob)\n  Fixed in @@HEAD_SHORT@@.\nDRAFT (not published) — summary comment\n  Addressed both threads; nothing deferred.\n",
         "exit": 0
       },
       {
         "match": ["comments", "--fix"],
         "stdout_file": "fix-report.json",
-        "stderr": "DRAFT (not published) reply to T-1 (alice): fixed in a1b2c3d\nDRAFT (not published) reply to T-2 (bob): fixed in a1b2c3d\n",
+        "stderr": "DRAFT (not published) reply to T-1 (alice): fixed in @@HEAD_SHORT@@\nDRAFT (not published) reply to T-2 (bob): fixed in @@HEAD_SHORT@@\n",
         "exit": 0
       }
     ]

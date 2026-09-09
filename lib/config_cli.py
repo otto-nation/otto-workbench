@@ -108,10 +108,19 @@ from config import workbench_config  # noqa: E402
 from config import workbench_config_report  # noqa: E402
 from config import workbench_config_write  # noqa: E402
 from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
+import git_layout  # noqa: E402
 
 
 def _project_root() -> Path | None:
-    """The work-tree root of the repo the caller is in, or ``None`` outside one."""
+    """The work-tree root of the repo the caller is in, or ``None`` outside one.
+
+    A bare-repo container is resolved to the checkout on its default branch.
+    Run from one, `rev-parse --show-toplevel` exits 128 and every scope below
+    the global one disappears — so `config get` reported the machine's answer
+    for a repo that had its own, and `config status` showed the repo as having
+    said nothing.  A container naming no worktree stays ``None``: there is no
+    checkout to read a config out of.
+    """
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -119,10 +128,10 @@ def _project_root() -> Path | None:
         )
     except OSError:
         return None
-    if result.returncode != 0:
-        return None
-    root = result.stdout.strip()
-    return Path(root) if root else None
+    if result.returncode == 0 and result.stdout.strip():
+        return Path(result.stdout.strip())
+    resolved = git_layout.worktree_for(str(Path.cwd()))
+    return Path(resolved.path) if resolved.ok else None
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

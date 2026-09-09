@@ -107,6 +107,22 @@ def test_with_no_dir_it_answers_for_the_callers_own_repo(capsys, repo, monkeypat
     assert records == [(wc.PROJECT_SCOPE, "github", str(repo))]
 
 
+def test_with_no_dir_it_answers_from_a_bare_repos_container(capsys, container, monkeypatch):
+    """Run from the container, this reported the default for a repo that answers.
+
+    `rev-parse --show-toplevel` exits 128 at a container, so every scope below
+    the global one disappeared and the command printed `default` — the same
+    record a repo that has genuinely never declared one gets. The container is
+    where a bare-repo checkout is routinely stood in, so this was the common
+    case reading as the empty one.
+    """
+    _declare(container / "main", "github")
+    monkeypatch.chdir(container)
+    code, records = _run(capsys, KEY)
+    assert code == 0
+    assert records == [(wc.PROJECT_SCOPE, "github", str(container / "main"))]
+
+
 # ─── Nothing to report ───────────────────────────────────────────────────────
 #
 # Each of these is the built-in default standing, which is what every other

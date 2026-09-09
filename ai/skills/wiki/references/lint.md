@@ -1,9 +1,9 @@
 # Lint
 
 ```bash
-wiki lint             # ten mechanical checks
+wiki lint             # eleven mechanical checks
 wiki lint --json      # the same, for filtering
-wiki lint --json --signals   # findings plus the counted evidence below
+wiki lint --signals   # findings plus the counted evidence below
 ```
 
 Exit 0 is clean, 1 means findings. The CLI decides everything a rule can decide:

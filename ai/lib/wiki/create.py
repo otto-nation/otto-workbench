@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -168,8 +169,22 @@ def stage_source(root: Path, source: Path, source_type: str = "file", title: str
     return target
 
 
-def archive_article(wiki: Wiki, slug: str, force: bool = False) -> Path:
-    """Retire the article named *slug* to `archive/` and return where it landed.
+@dataclass(frozen=True)
+class ArchiveResult:
+    """Where the article ended up, and whether this call is what put it there.
+
+    *moved* is False when the article was already archived. The caller needs the
+    distinction to avoid reporting a move that did not happen — re-running
+    `wiki archive` on a retired slug succeeds, but nothing changed and no
+    follow-up `wiki index` is owed.
+    """
+
+    path: Path
+    moved: bool
+
+
+def archive_article(wiki: Wiki, slug: str, force: bool = False) -> ArchiveResult:
+    """Retire the article named *slug* to `archive/` and report where it landed.
 
     Retiring is a move, not a delete: the article stays readable, keeps its
     slug, and remains a valid wikilink target. What changes is that it leaves
@@ -187,7 +202,7 @@ def archive_article(wiki: Wiki, slug: str, force: bool = False) -> Path:
     if article is None:
         raise ArticleNotFoundError(slug)
     if article.is_archived:
-        return article.path
+        return ArchiveResult(path=article.path, moved=False)
 
     referrers = sorted(
         a.slug for a in wiki.published() if a.slug != slug and slug in a.links
@@ -201,7 +216,7 @@ def archive_article(wiki: Wiki, slug: str, force: bool = False) -> Path:
 
     note = f" (still linked from {', '.join(referrers)})" if referrers else ""
     append_log(wiki.root, f"ARCHIVED: {slug}{note}")
-    return target
+    return ArchiveResult(path=target, moved=True)
 
 
 def _yaml_scalar(value: str) -> str:

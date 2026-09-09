@@ -59,8 +59,10 @@ HASH_PREFIX_LEN = wiki_parsing.HASH_PREFIX_LEN
 INDEX_FILE = wiki_paths.INDEX_FILE
 MAX_PARENT_DEPTH = wiki_paths.MAX_PARENT_DEPTH
 SCHEMA_FILE = wiki_paths.SCHEMA_FILE
+ArchiveResult = wiki_create.ArchiveResult
 ArticleNotFoundError = wiki_create.ArticleNotFoundError
 ArticleReferencedError = wiki_create.ArticleReferencedError
+QueryGap = wiki_parsing.QueryGap
 Wiki = wiki_model.Wiki
 WikiExistsError = wiki_create.WikiExistsError
 archive_article = wiki_create.archive_article
@@ -92,6 +94,8 @@ __all__ = [
     "DEFAULT_WIKI_DIRNAME",
     "HASH_PREFIX_LEN",
     "MAX_PARENT_DEPTH",
+    "ArchiveResult",
+    "QueryGap",
     "Wiki",
     "archive_article",
     "build_index",
@@ -184,8 +188,16 @@ def cmd_lint(wiki: Wiki, args: argparse.Namespace) -> int:
 
     if not findings:
         print(f"{wiki.root}: clean")
-        return 0
+    else:
+        _print_findings(wiki, findings)
 
+    if args.signals:
+        _print_signals(collect_signals(wiki))
+    return 1 if findings else 0
+
+
+def _print_findings(wiki: Wiki, findings: list[dict]) -> None:
+    """The lint findings as text, grouped by check in the order they were raised."""
     errors = sum(1 for f in findings if f["severity"] == "error")
     warnings = len(findings) - errors
     print(f"{wiki.root}: {errors} error(s), {warnings} warning(s)")
@@ -195,7 +207,6 @@ def cmd_lint(wiki: Wiki, args: argparse.Namespace) -> int:
         for finding in group:
             where = f"{finding['where']}: " if finding["where"] else ""
             print(f"  {where}{finding['message']}")
-    return 1
 
 
 def cmd_signals(wiki: Wiki, args: argparse.Namespace) -> int:
@@ -210,6 +221,12 @@ def cmd_signals(wiki: Wiki, args: argparse.Namespace) -> int:
         return 0
 
     print(f"{wiki.root}")
+    _print_signals(signals)
+    return 0
+
+
+def _print_signals(signals: dict) -> None:
+    """The four signal tables as text, shared by `signals` and `lint --signals`."""
     print(f"\ntags ({len(signals['tags'])})")
     for row in signals["tags"]:
         print(f"  {row['count']:>3}  {row['tag']}")
@@ -234,13 +251,12 @@ def cmd_signals(wiki: Wiki, args: argparse.Namespace) -> int:
         age = "undated" if draft["age_days"] is None else f"{draft['age_days']}d"
         origin = f"  {draft['origin']}" if draft["origin"] else ""
         print(f"  {age:>8}  {draft['slug']}{origin}")
-    return 0
 
 
 def cmd_archive(wiki: Wiki, args: argparse.Namespace) -> int:
     """Retire one article. The only `wiki` subcommand that moves content."""
     try:
-        target = archive_article(wiki, args.slug, force=args.force)
+        result = archive_article(wiki, args.slug, force=args.force)
     except ArticleNotFoundError:
         print(f"{SCRIPT}: no article named '{args.slug}'", file=sys.stderr)
         return 1
@@ -255,7 +271,12 @@ def cmd_archive(wiki: Wiki, args: argparse.Namespace) -> int:
         print(f"{SCRIPT}: cannot archive {args.slug}: {exc}", file=sys.stderr)
         return 1
 
-    print(f"{target.relative_to(wiki.root).as_posix()}: archived")
+    where = result.path.relative_to(wiki.root).as_posix()
+    if not result.moved:
+        print(f"{where}: already archived, nothing to do")
+        return 0
+
+    print(f"{where}: archived")
     print("  run `wiki index` to drop it from the master index")
     return 0
 
@@ -378,7 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument(
                 "--signals",
                 action="store_true",
-                help="Include the counted signals in --json output",
+                help="Also report the counted signals",
             )
         if name == "archive":
             sub.add_argument(

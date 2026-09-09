@@ -1,6 +1,7 @@
 """Layer 2 — knowledge base store. May import: core."""
 
 from .create import (
+    ArchiveResult,
     ArticleNotFoundError,
     ArticleReferencedError,
     WikiExistsError,
@@ -35,6 +36,7 @@ from .report import build_index, collect_lint, collect_signals, collect_status
 __all__ = [
     "ARCHIVE_DIR",
     "ARTICLES_DIR",
+    "ArchiveResult",
     "Article",
     "ArticleNotFoundError",
     "ArticleReferencedError",
@@ -46,6 +48,7 @@ __all__ = [
     "LOG_FILE",
     "MAX_PARENT_DEPTH",
     "META_DIR",
+    "QueryGap",
     "RAW_DIR",
     "SCHEMA_FILE",
     "SOURCES_FILE",

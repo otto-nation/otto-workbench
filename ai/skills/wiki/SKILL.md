@@ -49,7 +49,7 @@ Run these instead of deriving the answer:
 wiki init                # create a knowledge base
 wiki ingest --stage FILE # copy a source into raw/ with a real hash
 wiki status              # counts, uncompiled sources, recent activity
-wiki lint                # ten mechanical health checks
+wiki lint                # eleven mechanical health checks
 wiki lint --json         # the same, for filtering
 wiki signals             # tag table, similar pairs, gap clusters, draft ages
 wiki sources --new       # sources that are new or changed since last compile

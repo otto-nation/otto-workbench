@@ -219,10 +219,10 @@ def _gap_clusters(wiki: Wiki) -> list[dict]:
     is the signal, the grouping is a convenience, and the model re-reads the
     questions before concluding anything from either.
     """
-    gaps = [(date, question, gap_tokens(question)) for date, question in wiki.query_gaps()]
     clusters: list[dict] = []
-    for date, question, tokens in gaps:
-        entry = {"date": date, "question": question}
+    for gap in wiki.query_gaps():
+        tokens = gap_tokens(gap.question)
+        entry = {"date": gap.date, "question": gap.question}
         joined = next(
             (c for c in clusters if _jaccard(frozenset(tokens), frozenset(c["_tokens"])) >= GAP_CLUSTER_THRESHOLD),
             None,

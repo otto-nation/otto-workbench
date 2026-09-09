@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -178,13 +179,26 @@ def _parse_date(value) -> datetime | None:
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
 
 
-def parse_query_gap(line: str) -> tuple[str, str] | None:
+@dataclass(frozen=True)
+class QueryGap:
+    """One `QUERY_GAP` log entry: something the wiki was asked and answered poorly.
+
+    *date* is empty when the entry was written without the bracketed prefix the
+    query reference asks for, which is common enough that dropping the entry
+    over it would lose real gaps.
+    """
+
+    date: str
+    question: str
+
+
+def parse_query_gap(line: str) -> QueryGap | None:
     """The date and question from a QUERY_GAP log line, or None if it is not one."""
     match = _QUERY_GAP_RE.match(line)
     if match is None:
         return None
     question = match.group(2).strip().strip("\"'").strip()
-    return (match.group(1) or "").strip(), question
+    return QueryGap(date=(match.group(1) or "").strip(), question=question)
 
 
 def gap_tokens(question: str) -> set[str]:

@@ -884,10 +884,11 @@ class TestArchive:
     def test_moves_the_article_and_keeps_it_readable(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="the old way", title="Old Flow")
-        target = wiki.archive_article(wiki.Wiki(root), "old-flow")
-        assert target == root / "archive" / "old-flow.md"
+        result = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        assert result.path == root / "archive" / "old-flow.md"
+        assert result.moved is True
         assert not (root / "articles" / "old-flow.md").exists()
-        assert "the old way" in target.read_text(encoding="utf-8")
+        assert "the old way" in result.path.read_text(encoding="utf-8")
 
     def test_archived_article_leaves_the_published_set(self, tmp_path):
         root = make_wiki(tmp_path)
@@ -934,17 +935,28 @@ class TestArchive:
         raise AssertionError("expected ArticleNotFoundError")
 
     def test_archiving_twice_is_a_no_op(self, tmp_path):
+        """The second call lands nowhere new and says so, rather than claiming a move."""
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
         first = wiki.archive_article(wiki.Wiki(root), "old-flow")
         again = wiki.archive_article(wiki.Wiki(root), "old-flow")
-        assert first == again
+        assert again.path == first.path
+        assert first.moved is True
+        assert again.moved is False
+
+    def test_cli_reports_an_already_archived_article_as_unchanged(self, tmp_path, capsys):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body", subdir="archive")
+        assert wiki.main(["archive", "old-flow", "--wiki", str(root)]) == 0
+        out = capsys.readouterr().out
+        assert "already archived" in out
+        assert "wiki index" not in out
 
     def test_name_collision_in_archive_keeps_both(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="second version")
         (root / "archive" / "old-flow.md").write_text("first version\n", encoding="utf-8")
-        target = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        target = wiki.archive_article(wiki.Wiki(root), "old-flow").path
         assert target.name == "old-flow-2.md"
         assert "first version" in (root / "archive" / "old-flow.md").read_text(encoding="utf-8")
 
@@ -1038,13 +1050,15 @@ class TestQueryGapParsing:
         root = make_wiki(tmp_path)
         write_log(root, '[2026-01-05] QUERY_GAP: "how does token refresh work?"')
         assert wiki.Wiki(root).query_gaps() == [
-            ("2026-01-05", "how does token refresh work?")
+            wiki.QueryGap(date="2026-01-05", question="how does token refresh work?")
         ]
 
     def test_undated_and_bulleted_entries_still_parse(self, tmp_path):
         root = make_wiki(tmp_path)
         write_log(root, "- QUERY_GAP: what signs a release?")
-        assert wiki.Wiki(root).query_gaps() == [("", "what signs a release?")]
+        assert wiki.Wiki(root).query_gaps() == [
+            wiki.QueryGap(date="", question="what signs a release?")
+        ]
 
     def test_other_log_lines_are_ignored(self, tmp_path):
         root = make_wiki(tmp_path)
@@ -1167,3 +1181,18 @@ class TestSignalsCLI:
         write_article(root, "a", body="body")
         wiki.main(["lint", "--json", "--signals", "--wiki", str(root)])
         assert "signals" in json.loads(capsys.readouterr().out)
+
+    def test_lint_signals_prints_the_tables_without_json(self, tmp_path, capsys):
+        """The flag reports something in text mode too, rather than silently doing nothing."""
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="body", tags=["auth"])
+        wiki.main(["lint", "--signals", "--wiki", str(root)])
+        out = capsys.readouterr().out
+        assert "tags (1)" in out
+        assert "query gap clusters" in out
+
+    def test_lint_still_exits_on_findings_with_signals_asked_for(self, tmp_path, capsys):
+        """Signals are additive; they must not mask a failing lint."""
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="see [[nowhere]]")
+        assert wiki.main(["lint", "--signals", "--wiki", str(root)]) == 1

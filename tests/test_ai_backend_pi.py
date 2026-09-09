@@ -377,6 +377,44 @@ class TestExtensionFlag:
             f"{ai_backend_pi.REVIEW_EXTENSION} is missing — the review agent would run ungated"
         )
 
+    def test_the_guard_is_written_against_pi_s_own_api(self):
+        """Existing on disk is not the same as being loadable.
+
+        The first version of this file imported `@anthropic-ai/pi`, exported an
+        object literal with an `onToolCall` method, and returned `{blocked}`.
+        None of those are Pi's API — the package is not installed, the factory
+        is a default-exported function, and the blocking key is `block` — so
+        every review agent ran ungated while `is_file()` above passed.
+        """
+        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        assert "@anthropic-ai/pi" not in source
+        assert "@earendil-works/pi-coding-agent" in source
+        assert "export default function" in source
+        assert 'pi.on("tool_call"' in source
+        assert "blocked: true" not in source
+
+    def test_the_guard_is_not_installed_into_every_pi_session(self):
+        """It gates on REVIEW_WORKTREE_DIR, which no interactive session sets.
+
+        ai/pi/steps.sh installs everything under ai/pi/extensions/ into
+        ~/.pi/agent/extensions, where Pi loads it in every session on the
+        machine. This one belongs to the review pipeline and is passed with
+        --extension instead.
+        """
+        assert ai_backend_pi.REVIEW_EXTENSION.parent.name == "extensions-cli"
+
+    def test_the_guard_matches_pi_s_tool_names_and_input_fields(self):
+        """Pi's built-in tools are lowercase and take `path`, not `file_path`.
+
+        The original checked for "Write"/"Edit"/"Bash" and read
+        `arguments.file_path`, so it would have matched nothing even had it
+        loaded.
+        """
+        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        assert 'isToolCallEventType("write"' in source
+        assert 'isToolCallEventType("bash"' in source
+        assert "file_path" not in source
+
 
 class TestWriteAwareSteer:
     """The 80% steer names the write mechanism when nothing has been written."""

@@ -131,8 +131,8 @@ def refuse_diverged(
 ) -> int:
     """Report a local branch that neither ref can be discarded from."""
     subjects = unpushed_subjects(cwd, ctx.branch)
-    terr(trail, 
-        "preflight", f"{ctx.branch} has diverged from origin/{ctx.branch}",
+    terr(
+        trail, "preflight", f"{ctx.branch} has diverged from origin/{ctx.branch}",
         data={"ahead": div.ahead, "behind": div.behind, "unpushed": subjects},
     )
     log.error(

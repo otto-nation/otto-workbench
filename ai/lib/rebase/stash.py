@@ -118,8 +118,8 @@ def auto_unstash(
         stdout = answer.text
         resolved_content, failure_reason = rebase_conflicts.parse_resolved_content(stdout)
         if resolved_content is None:
-            tfail(trail, 
-                "resolve_stash_conflicts",
+            tfail(
+                trail, "resolve_stash_conflicts",
                 f"failed to parse stash resolution for {filepath}",
                 output=stdout,
                 data={"filepath": filepath, "reason": failure_reason},

@@ -1651,7 +1651,7 @@ def test_step_conflicts_fix_resolves():
 
     with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
-         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
          mock.patch.object(rebase_resolve, "resolve_file_conflicts",
              return_value=rebase_types.Resolution(files=["a.py"]),
          ), \
@@ -1676,7 +1676,7 @@ def test_step_conflicts_records_stale_files():
 
     with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
-         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
          mock.patch.object(rebase_resolve, "resolve_file_conflicts", return_value=resolution), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
@@ -1696,7 +1696,7 @@ def _run_step_over_budget(*, force=False, already=None, conflicts=None):
     tally = rebase_types.ResolutionTally(
         files=already if already is not None else [f"f{i}.py" for i in range(over)],
     )
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+    with mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
          mock.patch.object(refusals, "refuse_over_budget", return_value=4) as refuse, \
          mock.patch.object(rebase_resolve, "resolve_file_conflicts",
              return_value=rebase_types.Resolution(files=["late.py"]),
@@ -1818,7 +1818,7 @@ def test_step_conflicts_fix_resolution_fails_aborts():
     ctx = mock.MagicMock()
     with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
-         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
          mock.patch.object(rebase_resolve, "resolve_file_conflicts", return_value=None), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
         mock_ai.is_available.return_value = True
@@ -1858,7 +1858,7 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
 
     with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
-         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
          mock.patch.object(rebase_resolve, "resolve_file_conflicts",
              return_value=rebase_types.Resolution(files=["a.py"]),
          ), \
@@ -1888,7 +1888,7 @@ def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
 
     with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
-         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
          mock.patch.object(rebase_resolve, "resolve_file_conflicts",
              return_value=rebase_types.Resolution(files=["a.py"]),
          ), \
@@ -2998,6 +2998,27 @@ def test_main_threads_one_ref_into_both_commands():
     assert mock_push.call_args.kwargs["target_ref"] == "origin/master"
 
 
+def test_main_resolves_the_target_ref_once():
+    """Each resolution can hit the GitHub API, and both answers must agree."""
+    with mock.patch.object(rebase_target, "resolve_target_ref",
+                           return_value=_TARGET) as resolve:
+        _run_main(0)
+
+    resolve.assert_called_once()
+
+
+def test_main_aborts_without_asking_the_network():
+    """Abort is the escape hatch for a hung rebase — it cannot need a round trip."""
+    with mock.patch.object(rebase_types, "recorded_target_base",
+                           return_value="origin/release/1.2"), \
+         mock.patch.object(rebase_target, "resolve_target_ref") as resolve, \
+         mock.patch.object(pr_rebase_cli, "cmd_abort", return_value=0) as abort:
+        _run_main(0, "--abort")
+
+    resolve.assert_not_called()
+    assert abort.call_args.kwargs["target_ref"] == "origin/release/1.2"
+
+
 # ── _land ──────────────────────────────────────────────────────────────────
 
 
@@ -3848,7 +3869,7 @@ def test_fix_only_still_resolves_conflicts():
 
     with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
-         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
          mock.patch.object(rebase_resolve, "resolve_file_conflicts",
              return_value=rebase_types.Resolution(files=["a.py"]),
          ), \

@@ -34,7 +34,7 @@ CONVENTIONAL_REGEN_TASK = "generate"
 # replaying commits, and each is asked once per generated file. A caller that
 # outlives one repo state — a test suite, in practice — clears them.
 @cache
-def mise_has_task(repo_root: str, task: str) -> bool:
+def mise_has_task(root: str, task: str) -> bool:
     """Whether `mise tasks ls` in this repo lists a task by exactly this name.
 
     Asked of mise rather than parsed out of a config file: a task can come from
@@ -45,7 +45,7 @@ def mise_has_task(repo_root: str, task: str) -> bool:
         return False
     r = regen.try_run(
         ["mise", "tasks", "ls", "--no-header"],
-        cwd=repo_root, timeout=timeouts.QUICK,
+        cwd=root, timeout=timeouts.QUICK,
     )
     if r is None or r.returncode != 0:
         return False

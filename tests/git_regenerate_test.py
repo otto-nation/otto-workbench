@@ -144,11 +144,12 @@ class TestRegenQueue:
 
 
 class TestRegistryInvariants:
+    """Properties every registry entry must hold, whatever is added to it."""
+
     def test_find_regenerator_all_entries_have_cmd(self):
         """Every registry entry must carry a non-empty command tuple."""
         for name, entry in regen.LOCKFILE_REGENERATORS.items():
             assert isinstance(entry.cmd, tuple) and len(entry.cmd) > 0, f"{name} has invalid cmd"
-
 
     def test_find_regenerator_all_keys_are_basenames(self):
         """Lookup is by basename — a key with a path separator could never match."""
@@ -160,7 +161,9 @@ class TestRegistryInvariants:
 
 
 class TestRunRegeneration:
-    def test_run_regeneration_bare_command(self, tmp_path):
+    """Running one rebuild: bare first, mise as the fallback, then staging."""
+
+    def testrun_regeneration_bare_command(self, tmp_path):
         lockfile = tmp_path / "pnpm-lock.yaml"
         lockfile.write_text("old content")
         calls = []
@@ -183,8 +186,7 @@ class TestRunRegeneration:
         assert ["pnpm", "install"] in cmds
         assert ["git", "add", "pnpm-lock.yaml"] in cmds
 
-
-    def test_run_regeneration_with_mise(self, tmp_path):
+    def testrun_regeneration_with_mise(self, tmp_path):
         lockfile = tmp_path / "pnpm-lock.yaml"
         lockfile.write_text("old content")
         calls = []
@@ -206,17 +208,14 @@ class TestRunRegeneration:
         cmds = [c[0] for c in calls]
         assert ["mise", "exec", "--", "pnpm", "install"] in cmds
 
-
-    def test_run_regeneration_bare_fails_retries_mise(self, tmp_path):
+    def testrun_regeneration_bare_fails_retries_mise(self, tmp_path):
         lockfile = tmp_path / "pnpm-lock.yaml"
         lockfile.write_text("old content")
         calls = []
-        run_count = [0]
 
         def fake_run(cmd, **kwargs):
             calls.append((list(cmd), kwargs.get("cwd")))
             if cmd == ["pnpm", "install"]:
-                run_count[0] += 1
                 return subprocess.CompletedProcess(args=cmd, returncode=127, stdout="", stderr="command not found")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
@@ -234,8 +233,7 @@ class TestRunRegeneration:
         cmds = [c[0] for c in calls]
         assert ["mise", "exec", "--", "pnpm", "install"] in cmds
 
-
-    def test_run_regeneration_missing_binary_retries_mise(self, tmp_path):
+    def testrun_regeneration_missing_binary_retries_mise(self, tmp_path):
         """A binary absent from PATH raises FileNotFoundError, not exit 127."""
         (tmp_path / "pnpm-lock.yaml").write_text("old content")
         calls = []
@@ -260,8 +258,7 @@ class TestRunRegeneration:
         cmds = [c[0] for c in calls]
         assert ["mise", "exec", "--", "pnpm", "install"] in cmds
 
-
-    def test_run_regeneration_missing_binary_without_mise_returns_false(self, tmp_path):
+    def testrun_regeneration_missing_binary_without_mise_returns_false(self, tmp_path):
         """Missing binary and no mise degrades to a stale file, never a crash."""
         (tmp_path / "pnpm-lock.yaml").write_text("old content")
 
@@ -282,8 +279,7 @@ class TestRunRegeneration:
 
         assert result is False
 
-
-    def test_run_regeneration_not_executable_returns_false(self, tmp_path):
+    def testrun_regeneration_not_executable_returns_false(self, tmp_path):
         """A present-but-unexecutable binary raises PermissionError, not 127."""
         (tmp_path / "pnpm-lock.yaml").write_text("old content")
 
@@ -304,12 +300,11 @@ class TestRunRegeneration:
 
         assert result is False
 
-
-    def test_run_regeneration_missing_binary_under_mise_returns_false(self, tmp_path):
+    def testrun_regeneration_missing_binary_under_mise_returns_false(self, tmp_path):
         """Defensive: a launch failure under mise must not propagate as a traceback.
 
-        _detect_mise gates on shutil.which, so this pairing is unreachable in
-        production; the test pins _run_regeneration's own error handling.
+        detect_mise gates on shutil.which, so this pairing is unreachable in
+        production; the test pins run_regeneration's own error handling.
         """
         (tmp_path / "pnpm-lock.yaml").write_text("old content")
 
@@ -330,8 +325,7 @@ class TestRunRegeneration:
 
         assert result is False
 
-
-    def test_run_regeneration_stage_dir(self, tmp_path):
+    def testrun_regeneration_stage_dir(self, tmp_path):
         calls = []
 
         def fake_run(cmd, **kwargs):
@@ -352,8 +346,7 @@ class TestRunRegeneration:
         cmds = [c[0] for c in calls]
         assert ["git", "add", "-u", "."] in cmds
 
-
-    def test_run_regeneration_failure_returns_false(self, tmp_path):
+    def testrun_regeneration_failure_returns_false(self, tmp_path):
         def fake_run(cmd, **kwargs):
             if cmd[0] in ("pnpm", "mise"):
                 return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")

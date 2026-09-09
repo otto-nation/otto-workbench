@@ -15,7 +15,6 @@ from core import log
 from core.proc import CmdResult
 from core.trail import Trail, tdecision, terr, tfail, tinfo, tspan
 from git import client as git_client
-from git import land as git_land
 from git import topology as git_topology
 from pr import context as pr_context
 from pr.domains import RebaseStatus

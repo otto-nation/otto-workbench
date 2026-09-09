@@ -1,5 +1,6 @@
 """Layer 2 — knowledge base store. May import: core."""
 
+from .create import WikiExistsError, append_log, init_wiki, manifest_row, slugify_title, stage_source
 from .model import Article, Source, Wiki
 from .paths import (
     ARCHIVE_DIR,
@@ -10,13 +11,14 @@ from .paths import (
     INDEX_FILE,
     LOG_FILE,
     MAX_PARENT_DEPTH,
+    META_DIR,
     RAW_DIR,
     SCHEMA_FILE,
     SOURCES_FILE,
     find_wiki,
     is_wiki,
 )
-from .parsing import HASH_PREFIX_LEN, read_text
+from .parsing import HASH_PREFIX_LEN, hash_file, read_text
 from .report import build_index, collect_lint, collect_status
 
 __all__ = [
@@ -29,15 +31,23 @@ __all__ = [
     "HASH_PREFIX_LEN",
     "INDEX_FILE",
     "LOG_FILE",
+    "META_DIR",
     "MAX_PARENT_DEPTH",
     "RAW_DIR",
     "SCHEMA_FILE",
     "SOURCES_FILE",
     "Source",
     "Wiki",
+    "WikiExistsError",
+    "append_log",
     "build_index",
     "collect_lint",
     "collect_status",
+    "stage_source",
+    "slugify_title",
+    "manifest_row",
+    "init_wiki",
+    "hash_file",
     "find_wiki",
     "is_wiki",
     "read_text",

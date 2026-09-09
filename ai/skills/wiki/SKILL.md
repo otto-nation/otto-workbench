@@ -27,7 +27,7 @@ The division of labour that follows from that:
 
 | Request | Do this |
 |---|---|
-| `/wiki init [path]` | Read `references/init.md` |
+| `/wiki init [path]` | Run `wiki init`, then read `references/init.md` |
 | `/wiki ingest <source>` | Read `references/ingest.md` |
 | `/wiki compile` | Read `references/compile.md` |
 | `/wiki status` | Run `wiki status`. Print it. Nothing else |
@@ -44,6 +44,8 @@ none exists — offer `/wiki init`, do not guess a location.
 Run these instead of deriving the answer:
 
 ```bash
+wiki init                # create a knowledge base
+wiki ingest --stage FILE # copy a source into raw/ with a real hash
 wiki status              # counts, uncompiled sources, recent activity
 wiki lint                # nine mechanical health checks
 wiki lint --json         # the same, for filtering

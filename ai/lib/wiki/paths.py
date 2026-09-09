@@ -21,6 +21,7 @@ ARTICLES_DIR = "articles"
 RAW_DIR = "raw"
 DRAFTS_DIR = "drafts"
 ARCHIVE_DIR = "archive"
+META_DIR = "meta"
 
 DEFAULT_WIKI_DIRNAME = "wiki"
 

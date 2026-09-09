@@ -2,11 +2,13 @@
 """Mechanical operations over a compiled knowledge base.
 
 Usage:
+  wiki init   [--wiki DIR] [--domain TEXT] [--audience TEXT] [DIR]
   wiki path   [--wiki DIR] [DIR]
   wiki status [--wiki DIR] [--json] [DIR]
   wiki lint   [--wiki DIR] [--json] [DIR]
   wiki sources [--wiki DIR] [--new] [--json] [DIR]
   wiki index  [--wiki DIR] [--check] [DIR]
+  wiki ingest --stage SRC [--type T] [--title TEXT] [--wiki DIR] [DIR]
 
 A knowledge base is a directory holding SCHEMA.md, an `articles/` tree of compiled
 markdown, and a `raw/` tree of the immutable sources they were compiled from.
@@ -23,7 +25,7 @@ computed here or not at all.
 Exit codes:
   0  success; for `lint` and `index --check`, also means no findings
   1  a finding was reported (lint findings, stale index), or the operation failed
-  2  no knowledge base found
+  2  no knowledge base found — `init` is the one command that does not need one
 """
 
 from __future__ import annotations
@@ -48,12 +50,27 @@ from wiki import (  # noqa: E402
     MAX_PARENT_DEPTH,
     SCHEMA_FILE,
     Wiki,
+    WikiExistsError,
     build_index,
     collect_lint,
     collect_status,
     find_wiki,
+    hash_file,
+    init_wiki,
+    manifest_row,
     read_text,
+    slugify_title,
+    stage_source,
 )
+
+# The SCHEMA template ships with the skill, the layer that owns the prose. It is
+# absent when the CLI is installed without the skill, so init falls back to a
+# minimal schema rather than failing.
+_SCHEMA_TEMPLATE = _BIN_DIR.parent / "skills" / "wiki" / "assets" / "SCHEMA.template.md"
+
+
+def _schema_template() -> Path | None:
+    return _SCHEMA_TEMPLATE if _SCHEMA_TEMPLATE.is_file() else None
 
 # Re-exported so `wiki <command>` and the store it reads are one import for a
 # caller, and so the names this script's own usage text cites resolve here.
@@ -68,7 +85,12 @@ __all__ = [
     "collect_status",
     "configured_dirname",
     "find_wiki",
+    "hash_file",
+    "init_wiki",
     "main",
+    "manifest_row",
+    "slugify_title",
+    "stage_source",
 ]
 
 SCRIPT = Path(__file__).name
@@ -182,6 +204,39 @@ def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init(start: Path, args: argparse.Namespace) -> int:
+    """Create a knowledge base. The one command that runs without one existing."""
+    target = Path(args.wiki).expanduser() if args.wiki else start / configured_dirname(start)
+    try:
+        root = init_wiki(target, args.domain, args.audience, template=_schema_template())
+    except WikiExistsError as exc:
+        print(f"{SCRIPT}: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"{SCRIPT}: cannot create {target}: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"{root}: created")
+    print(f"  edit {SCHEMA_FILE} to say what this covers, then stage a source")
+    return 0
+
+
+def cmd_ingest(wiki: Wiki, args: argparse.Namespace) -> int:
+    """Stage one source. Reading it and compiling it is the skill's work."""
+    try:
+        staged = stage_source(wiki.root, Path(args.stage).expanduser(), args.source_type, args.title)
+    except FileNotFoundError:
+        print(f"{SCRIPT}: no such file: {args.stage}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"{SCRIPT}: cannot stage {args.stage}: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"{staged.relative_to(wiki.root).as_posix()}: staged")
+    print(f"  manifest row: {manifest_row(wiki.root, staged, args.source_type).strip()}")
+    return 0
+
+
 def cmd_index(wiki: Wiki, args: argparse.Namespace) -> int:
     rendered = build_index(wiki)
     target = wiki.root / INDEX_FILE
@@ -203,23 +258,17 @@ def cmd_index(wiki: Wiki, args: argparse.Namespace) -> int:
 
 # ── Entry point ─────────────────────────────────────────────────────────────
 
+# `init` is handled before resolution in `main`, since it is the one command
+# that runs without a knowledge base already existing. Its entry is here so it
+# appears in `--help` beside the rest.
 _COMMANDS = {
+    "init": (None, "Create a knowledge base"),
     "path": (cmd_path, "Print the resolved knowledge base directory"),
     "status": (cmd_status, "Counts, uncompiled sources, and recent activity"),
     "lint": (cmd_lint, "Mechanical health checks over articles and sources"),
     "sources": (cmd_sources, "Raw sources with their hashes and compile state"),
     "index": (cmd_index, "Rebuild the master index from article frontmatter"),
-}
-
-
-# ── Entry point ─────────────────────────────────────────────────────────────
-
-_COMMANDS = {
-    "path": (cmd_path, "Print the resolved knowledge base directory"),
-    "status": (cmd_status, "Counts, uncompiled sources, and recent activity"),
-    "lint": (cmd_lint, "Mechanical health checks over articles and sources"),
-    "sources": (cmd_sources, "Raw sources with their hashes and compile state"),
-    "index": (cmd_index, "Rebuild the master index from article frontmatter"),
+    "ingest": (cmd_ingest, "Copy a source into raw/ with frontmatter and a real hash"),
 }
 
 
@@ -241,6 +290,15 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("--new", action="store_true", help="Only new or changed sources")
         if name == "index":
             sub.add_argument("--check", action="store_true", help="Report staleness without writing")
+        if name == "init":
+            sub.add_argument("--domain", default="", help="What the knowledge base is about")
+            sub.add_argument("--audience", default="", help="Who will use it")
+        if name == "ingest":
+            sub.add_argument("--stage", metavar="SRC", required=True, help="File to copy into raw/")
+            sub.add_argument(
+                "--type", default="file", dest="source_type", help="Source type recorded in frontmatter"
+            )
+            sub.add_argument("--title", default="", help="Title, used for the filename and frontmatter")
     return parser
 
 
@@ -255,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     start = Path(args.directory)
+    if args.command == "init":
+        return cmd_init(start, args)
+
     root = find_wiki(start, explicit=args.wiki, dirname=configured_dirname(start))
     if root is None:
         where = args.wiki or args.directory

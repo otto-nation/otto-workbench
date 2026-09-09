@@ -22,49 +22,26 @@ otto-workbench config set wiki.dir docs/knowledge --project
 
 If the user skips, use generic defaults and move on. `SCHEMA.md` is editable.
 
-## 2. Create the structure
+## 2. Create it
 
-```
-{path}/
-  SCHEMA.md     # from assets/SCHEMA.template.md, filled in
-  _index.md     # empty until the first compile
-  _log.md       # starts with the init entry
-  _sources.md   # empty manifest
-  raw/
-  articles/
-  drafts/
-  archive/
-  meta/glossary.md
+```bash
+wiki init --domain "{domain}" --audience "{audience}"
 ```
 
-`SCHEMA.md` is what makes this directory a knowledge base — `wiki path` looks for exactly
-that file. Copy `assets/SCHEMA.template.md` and substitute the domain and audience;
-everything else in it is a working default.
+That writes the whole layout — `SCHEMA.md` from the template with the domain and audience
+filled in, the empty `_index.md`, the `_sources.md` header, the first `_log.md` entry, and
+`raw/`, `articles/`, `drafts/`, `archive/`, `meta/`. Do not write these by hand: the
+manifest header in particular has a shape `wiki` parses.
 
-`_sources.md` starts as the manifest header:
-
-```markdown
-# Source Manifest
-
-| Source | Hash | Type | Ingested | Articles |
-| --- | --- | --- | --- | --- |
-```
-
-The first two columns are read by `wiki`; hashes come from `wiki sources`, never by hand.
-
-`_log.md` starts with:
-
-```markdown
-# Activity Log
-
-[{DATE}] INIT: {domain}
-```
+It refuses if a knowledge base is already there, and completes one left half-written by an
+interrupted run rather than starting over.
 
 ## 3. Check it
 
 ```bash
 wiki path      # should print the new directory
 wiki status    # should report zero articles and zero sources
+wiki lint      # should be clean
 ```
 
 If `wiki path` does not resolve, `SCHEMA.md` is missing or misplaced. Fix that before

@@ -67,7 +67,7 @@ def _source_frontmatter(path: Path) -> dict:
     return {} if text is None else _split_frontmatter(text)[0]
 
 
-def _hash_file(path: Path) -> str:
+def hash_file(path: Path) -> str:
     """The sha256 prefix the compile step uses to detect changed sources.
 
     Read in chunks rather than whole: `raw/` holds whatever was ingested, and a

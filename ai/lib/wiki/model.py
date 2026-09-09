@@ -28,7 +28,7 @@ from .parsing import (
     _MD_LINK_RE,
     _LOG_UNPROCESSED_RE,
     _LOG_EVENT_TEMPLATE,
-    _hash_file,
+    hash_file,
     _normalise_source_path,
     _is_table_furniture,
     _parse_date,
@@ -162,13 +162,18 @@ class Wiki:
         return settings
 
     def domain(self) -> str | None:
-        """The wiki's subject, from the first non-heading line of SCHEMA.md."""
+        """The wiki's subject: the first line of prose in SCHEMA.md.
+
+        Headings, rules, and HTML comments are skipped. The comment case is not
+        hypothetical — the shipped template opens with an editing note, and
+        reading it as the domain put that note in every status report.
+        """
         text = read_text(self.root / SCHEMA_FILE)
         if text is None:
             return None
         for line in _strip_frontmatter(text).splitlines():
             stripped = line.strip()
-            if not stripped or stripped.startswith("#") or stripped.startswith("---"):
+            if not stripped or stripped.startswith(("#", "---", "<!--")):
                 continue
             return stripped.lstrip("-* ").strip()
         return None
@@ -224,7 +229,7 @@ class Wiki:
             path=path,
             root=self.root,
             frontmatter=_source_frontmatter(path),
-            content_hash=_hash_file(path),
+            content_hash=hash_file(path),
         )
 
     # -- bookkeeping files

@@ -3118,6 +3118,10 @@ is the vocabulary primitive both rule loading and bullet matching are built
 on — `retro.report` reuses it to find which bullet inside a matched rule is
 closest to the comment being annotated.
 
+### wiki/create.py
+
+Making a knowledge base, and putting a source into one.
+
 ### wiki/model.py
 
 The knowledge base as objects: articles, sources, and the store over them.

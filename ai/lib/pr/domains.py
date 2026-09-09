@@ -314,10 +314,11 @@ class ReviewSummary(Domain):
     verdict: str = ""
     status: str = ""
     failure_detail: str = ""
-    # Whether `pr review --recover` could do better than the run this describes.
-    # Some failures repeat identically however many times they are retried, so a
-    # degraded review is not on its own an invitation to resume one.
-    recoverable: bool = False
+    # Whether `pr review --recover` could do better than the run this describes
+    # — see `review.state.build_recoverable`, which decides it. `None` is a
+    # state file written before the field existed: unknown, not "no", so a
+    # reader offers the recovery it would have offered before.
+    recoverable: bool | None = None
     cost_usd: float = 0.0
     total_tokens: int = 0
 
@@ -349,7 +350,11 @@ class ReviewSummary(Domain):
             lines.append(f"  findings: {', '.join(parts)}")
         if self.cost_usd:
             lines.append(f"  cost: ${self.cost_usd:.2f}")
-        if self._incomplete:
+        # `recoverable is False` rather than `not self.recoverable`: only an
+        # explicit no suppresses the hint. A run whose state predates the field
+        # says nothing either way, and silently dropping the hint there would
+        # hide a recovery that does work.
+        if self._incomplete and self.recoverable is not False:
             lines.append("  recover: pr review --recover")
         return lines
 

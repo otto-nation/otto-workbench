@@ -182,6 +182,31 @@ def test_review_render_error_with_failure_detail():
     assert any("recover" in line for line in lines)
 
 
+def test_review_render_partial_without_recovery_omits_the_hint():
+    """A degraded run whose failures would repeat is not offered a recovery.
+
+    The dashboard reads the same verdict the review document does, so the two
+    cannot disagree about whether `--recover` is worth running.
+    """
+    lines = pr_domains.ReviewSummary(
+        review_type="pr", status=pr_domains.ReviewStatus.PARTIAL.value,
+        failure_detail="1/8 groups failed: agent error: Prompt is too long",
+        recoverable=False, cost_usd=4.50, updated_at="t",
+    ).render_status()
+    assert any("PARTIAL" in line for line in lines)
+    assert not any("recover" in line for line in lines)
+
+
+def test_review_render_partial_keeps_the_hint_when_recovery_is_unknown():
+    """State written before the field existed keeps the hint it always had."""
+    lines = pr_domains.ReviewSummary(
+        review_type="pr", status=pr_domains.ReviewStatus.PARTIAL.value,
+        failure_detail="2/8 groups failed: quota exhausted (429)",
+        cost_usd=4.50, updated_at="t",
+    ).render_status()
+    assert any("recover" in line for line in lines)
+
+
 def test_review_render_complete_no_recover_hint():
     lines = pr_domains.ReviewSummary(
         review_type="pr", verdict=pr_domains.ReviewVerdict.APPROVE.value,

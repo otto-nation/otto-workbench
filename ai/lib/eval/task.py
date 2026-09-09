@@ -48,6 +48,13 @@ from eval.scoring import RunOutcome, ScoringResult
 
 DEFAULT_TASK = "review"
 
+# The two branches every fixture repo is built from. Named rather than spelled
+# at each step because `create_temp_repo` has to state the trunk twice — once to
+# create it, once to pin `origin/HEAD` back to it — and the whole bug this pair
+# prevents is those two answers disagreeing about which branch is trunk.
+TRUNK_BRANCH = "main"
+CASE_BRANCH = "eval"
+
 # Inherited git env vars point at the *calling* repo. A fixture repo built with
 # them set silently becomes a worktree of this checkout.
 _GIT_ENV_SANITIZE = [
@@ -158,7 +165,18 @@ def _git_step(git: list[str], step: list[str], env: dict[str, str]) -> None:
 
 
 def create_temp_repo(src_dir: str, prefix: str = "eval-") -> str:
-    """Copy a case's sources into a throwaway git repo with an `eval` branch."""
+    """Copy a case's sources into a throwaway git repo with an `eval` branch.
+
+    The repo is its own `origin`, and the fetch that wires that up runs while
+    `eval` is checked out — so git creates `origin/HEAD` pointing at
+    `origin/eval`. Every consumer resolves trunk from that symref first, which
+    made the review pipeline diff `origin/eval..HEAD`, find nothing, and write a
+    review saying the branch had no changes. The case then scored recall 0 on a
+    run that exited cleanly and spent full price, so it read as a model that
+    found nothing rather than a fixture that showed it nothing.
+
+    `set-head` pins the symref to the branch this function actually forked from.
+    """
     tmpdir = tempfile.mkdtemp(prefix=prefix)
     env = clean_env()
     git = [
@@ -167,9 +185,9 @@ def create_temp_repo(src_dir: str, prefix: str = "eval-") -> str:
         "-c", "user.name=eval",
     ]
     steps = [
-        ["init", "-b", "main"],
+        ["init", "-b", TRUNK_BRANCH],
         ["commit", "--allow-empty", "-m", "initial"],
-        ["checkout", "-b", "eval"],
+        ["checkout", "-b", CASE_BRANCH],
     ]
     for step in steps:
         _git_step(git, step, env)
@@ -177,7 +195,8 @@ def create_temp_repo(src_dir: str, prefix: str = "eval-") -> str:
     _copy_into(Path(src_dir), Path(tmpdir))
 
     for step in (["add", "-A"], ["commit", "-m", "add buggy code"],
-                 ["remote", "add", "origin", tmpdir], ["fetch", "origin"]):
+                 ["remote", "add", "origin", tmpdir], ["fetch", "origin"],
+                 ["remote", "set-head", "origin", TRUNK_BRANCH]):
         _git_step(git, step, env)
 
     return tmpdir

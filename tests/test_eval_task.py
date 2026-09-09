@@ -89,6 +89,31 @@ class TestCreateTempRepo:
                               timeout=timeouts.LOCAL)
             assert branch.stdout.strip() == "eval"
 
+    def test_origin_head_names_the_branch_the_case_forked_from(self, tmp_path):
+        """The fetch that wires up `origin` runs on `eval`, so git aimed the
+        symref at `origin/eval`. Trunk resolution reads it first, so the review
+        pipeline diffed the branch against itself and every review case scored
+        recall 0 on a clean, fully-billed run."""
+        with self._repo(tmp_path) as repo:
+            head = proc.run(
+                ["git", "-C", str(repo), "symbolic-ref", "refs/remotes/origin/HEAD"],
+                timeout=timeouts.LOCAL)
+            assert head.stdout.strip() == "refs/remotes/origin/main"
+
+    def test_the_resolved_trunk_yields_a_range_holding_the_sources(self, tmp_path):
+        """Asserting the symref alone would not catch this: the pipeline reaches
+        trunk through `resolve_default_branch`, and the empty diff it produced
+        is the symptom that cost the run. Resolve the base the way the pipeline
+        does, then diff against it."""
+        from git import topology as git_topology
+        with self._repo(tmp_path) as repo:
+            base = git_topology.default_branch(str(repo))
+            assert base == "main"
+            diff = proc.run(
+                ["git", "-C", str(repo), "diff", "--name-only", f"origin/{base}...HEAD"],
+                timeout=timeouts.LOCAL)
+            assert diff.stdout.split() == ["bug.py"]
+
     def test_the_inherited_git_env_does_not_reach_the_fixture(self, tmp_path, monkeypatch):
         """`clean_env` drops GIT_DIR; merging back over os.environ would restore it."""
         monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere.git"))

@@ -1,0 +1,31 @@
+name: Install worktrunk
+description: >-
+  Put a pinned worktrunk (`wt`) on PATH. The bats suite asserts wt-cleanup's
+  reader against the JSON schema `wt list` really emits, which is only a gate
+  if a real `wt` is present — without one that test skips and a schema change
+  reaches production unnoticed, which is the failure it exists to catch.
+
+runs:
+  using: composite
+  steps:
+    - name: Install worktrunk
+      shell: bash
+      env:
+        # Pinned rather than latest: an unannounced schema bump should fail in
+        # a run that changed this version, not in an unrelated PR whose only
+        # sin was being merged the day worktrunk released.
+        WORKTRUNK_VERSION: v0.77.0
+      run: |
+        set -euo pipefail
+        target="x86_64-unknown-linux-musl"
+        tarball="worktrunk-${target}.tar.xz"
+        base="https://github.com/max-sixty/worktrunk/releases/download/${WORKTRUNK_VERSION}"
+        tmp=$(mktemp -d)
+        cd "$tmp"
+        # The published .sha256 names the asset it covers, so the file has to
+        # be on disk under that name for -c to find it.
+        wget -q "$base/$tarball" "$base/$tarball.sha256"
+        sha256sum -c "$tarball.sha256"
+        tar -xJf "$tarball"
+        sudo install -m 0755 "worktrunk-${target}/wt" /usr/local/bin/wt
+        wt --version

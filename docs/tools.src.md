@@ -93,6 +93,13 @@ and are named in the summary. Every path the check forgives is written to
 `~/.local/state/workbench/logs/wt-cleanup.log` with its reason, so a removal this
 widens can be audited afterwards.
 
+The worktree list comes from `wt list --format json`, whose payload carries a `schema`
+number. The script reads one schema and refuses any other with an error rather than
+reading fields that may have moved — a mismatch means worktrunk changed the format and
+`wt-cleanup` needs updating for it. This is deliberately noisy: the bump to schema 2
+moved every field the script read, and because the call site swallowed the failure it
+no-opped silently on every session exit instead of reporting anything.
+
 ### `wt-init`
 
 Convert a regular git repo to a bare repo with worktrees.

@@ -18,6 +18,7 @@
 # file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
 # file_mode  PATH   # permission bits, octal — e.g. 644
 # load_average      # one-minute load average, e.g. 3.72
+# iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
 # ```
 #
 # Each prints nothing and returns 1 when neither form resolves the value, so
@@ -78,4 +79,21 @@ load_average() {
     || return 1
   raw="${raw#\{ }"
   printf '%s' "${raw%% *}"
+}
+
+# iso_to_epoch TIMESTAMP — an ISO 8601 UTC timestamp (`2026-09-09T16:15:52Z`)
+# in epoch seconds.
+#
+# The two forms are assigned separately for the same reason `_stat_field` does
+# it — a `$(A || B)` would concatenate any stdout the losing form produced.
+# BSD needs the input format spelled out and `-u` to read the stamp as UTC;
+# GNU parses it from the string. Prints nothing and returns 1 when neither
+# form resolves it, so a caller that wants a default supplies its own.
+iso_to_epoch() {
+  local ts="$1" value
+  [[ -n "$ts" ]] || return 1
+  value=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" +%s 2>/dev/null) \
+    || value=$(date -u -d "$ts" +%s 2>/dev/null) \
+    || return 1
+  printf '%s' "$value"
 }

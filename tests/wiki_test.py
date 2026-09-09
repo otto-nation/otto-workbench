@@ -172,13 +172,18 @@ class TestConfiguredDirnameResolvesTheRepoRoot:
         nested.mkdir(parents=True)
         assert wiki.configured_dirname(nested) == "knowledge"
 
-    def test_the_walk_honours_it_from_a_nested_directory(self, tmp_path):
-        """End to end: the setting reaches `find_wiki`, not just `configured_dirname`."""
+    def test_the_walk_honours_it_from_a_nested_directory(self, tmp_path, capsys):
+        """End to end through the CLI: the setting reaches the walk.
+
+        Driven through `main` rather than `find_wiki`, because resolving the
+        name is the CLI's job — `find_wiki` is handed the answer.
+        """
         repo = self._repo(tmp_path, "knowledge")
         root = make_wiki(repo, dirname="knowledge")
         nested = repo / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.find_wiki(nested) == root
+        assert wiki.main(["path", str(nested)]) == 0
+        assert capsys.readouterr().out.strip() == str(root)
 
     def test_outside_a_repo_falls_back_to_the_start_directory(self, tmp_path):
         """No git toplevel to resolve; the search start stands in for it."""

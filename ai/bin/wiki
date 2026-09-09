@@ -29,12 +29,8 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import re
 import sys
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 _BIN_DIR = Path(__file__).resolve().parent
@@ -44,322 +40,43 @@ from _version import version_string as _version_string  # noqa: E402
 from config.workbench_config import load_config_or_default  # noqa: E402
 from core import proc  # noqa: E402
 from git import client as git_client  # noqa: E402
+from wiki import (  # noqa: E402
+    DEFAULT_SETTINGS,
+    DEFAULT_WIKI_DIRNAME,
+    HASH_PREFIX_LEN,
+    INDEX_FILE,
+    MAX_PARENT_DEPTH,
+    SCHEMA_FILE,
+    Wiki,
+    build_index,
+    collect_lint,
+    collect_status,
+    find_wiki,
+    read_text,
+)
+
+# Re-exported so `wiki <command>` and the store it reads are one import for a
+# caller, and so the names this script's own usage text cites resolve here.
+__all__ = [
+    "DEFAULT_SETTINGS",
+    "DEFAULT_WIKI_DIRNAME",
+    "HASH_PREFIX_LEN",
+    "MAX_PARENT_DEPTH",
+    "Wiki",
+    "build_index",
+    "collect_lint",
+    "collect_status",
+    "configured_dirname",
+    "find_wiki",
+    "main",
+]
 
 SCRIPT = Path(__file__).name
 
-# ceiling: single-file CLI holding its own store model, with no ai/lib/wiki
-# package behind it. The knowledge base is one data model and this is its only
-# consumer, so a package would be indirection with nothing on the other side.
-# Split into ai/lib/wiki/ (Layer 2 — knowledge base store. May import: core.)
-# once this file passes 600 lines or a second script needs to read the store.
-
-# SCHEMA.md is what makes a directory a knowledge base. The plugin this was
-# ported from used two different markers — `_index.md` in its session hook and
-# SCHEMA.md in its init flow — so a wiki mid-build answered "yes" to one and
-# "no" to the other. The index is generated and can be deleted and rebuilt; the
-# schema is authored and cannot.
-SCHEMA_FILE = "SCHEMA.md"
-INDEX_FILE = "_index.md"
-SOURCES_FILE = "_sources.md"
-LOG_FILE = "_log.md"
-
-ARTICLES_DIR = "articles"
-RAW_DIR = "raw"
-DRAFTS_DIR = "drafts"
-ARCHIVE_DIR = "archive"
-
-DEFAULT_WIKI_DIRNAME = "wiki"
-
-# How far up from cwd to look. The search stops at a repo root when there is
-# one, so this only bounds the walk outside a repo.
-MAX_PARENT_DEPTH = 8
-
-# Schema settings this script reads, and the value each falls back to when the
-# schema does not say. Every one is overridable in SCHEMA.md; the defaults are
-# the plugin's, kept so an existing wiki behaves the same after the port.
-DEFAULT_SETTINGS = {
-    "min_article_words": 150,
-    "staleness_threshold_days": 180,
-}
-
-# A setting line in SCHEMA.md: `- key: value`, or `key: value` in a fenced block.
-_SETTING_RE = re.compile(r"^\s*-?\s*([a-z_]+):\s*(\S+)\s*$")
-
-_FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.DOTALL)
-_WIKILINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|[^\]]*?)?\]\]")
-_MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
-_CONTRADICTION_RE = re.compile(r"\[CONTRADICTION\]", re.IGNORECASE)
-_LOG_UNPROCESSED_RE = re.compile(r"^\s*[-*]?\s*(SESSION_OBSERVATION|QUERY_GAP)\b")
-
-# Log lines open with a bracketed date, so the event keyword is matched on its own
-# word boundary rather than anchored: `[2024-01-01] COMPILE: ...`. Testing for the
-# keyword anywhere in the line instead would let RECOMPILE answer for COMPILE.
-_LOG_EVENT_TEMPLATE = r"(?<![A-Z_])%s:"
-_RELATED_HEADING_RE = re.compile(r"^#{1,6}\s*(related|relationships|see also)\s*$", re.IGNORECASE)
-_HEADING_RE = re.compile(r"^#{1,6}\s")
-
-# Enough of YAML for article frontmatter, which is flat scalars plus one list
-# form. A real parser would mean a dependency for two shapes that have never
-# varied; anything more complex than these is left to the schema's own tooling.
-_YAML_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$")
-_YAML_ITEM_RE = re.compile(r"^\s*-\s+(.*)$")
-
-HASH_PREFIX_LEN = 8
-HASH_CHUNK_BYTES = 65536
-
-# A recorded hash is hex. Used to tell a manifest's header row from a real entry.
-_HEX_RE = re.compile(r"[0-9a-f]+", re.IGNORECASE)
+SCRIPT = Path(__file__).name
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-# ── Store ───────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class Article:
-    """One compiled article, with the frontmatter and links already extracted."""
-
-    path: Path
-    root: Path
-    frontmatter: dict = field(default_factory=dict)
-    body: str = ""
-
-    @property
-    def slug(self) -> str:
-        return self.path.stem
-
-    @property
-    def rel(self) -> str:
-        return self.path.relative_to(self.root).as_posix()
-
-    @property
-    def title(self) -> str:
-        title = self.frontmatter.get("title")
-        return title if isinstance(title, str) and title else self.slug
-
-    @property
-    def is_draft(self) -> bool:
-        return DRAFTS_DIR in self.path.relative_to(self.root).parts
-
-    @property
-    def is_archived(self) -> bool:
-        return ARCHIVE_DIR in self.path.relative_to(self.root).parts
-
-    @property
-    def word_count(self) -> int:
-        return len(self.body.split())
-
-    @property
-    def updated(self) -> datetime | None:
-        for key in ("updated", "created", "date"):
-            parsed = _parse_date(self.frontmatter.get(key))
-            if parsed is not None:
-                return parsed
-        return None
-
-    @property
-    def links(self) -> list[str]:
-        """Wikilink targets, normalised to slugs, in order of appearance."""
-        return [_slugify(m.group(1)) for m in _WIKILINK_RE.finditer(self.body)]
-
-    @property
-    def tags(self) -> list[str]:
-        tags = self.frontmatter.get("tags")
-        if isinstance(tags, list):
-            return [str(t).strip().lower() for t in tags if str(t).strip()]
-        if isinstance(tags, str):
-            return [t.strip().lower() for t in re.split(r"[,\s]+", tags) if t.strip()]
-        return []
-
-    def related_section_links(self) -> list[str] | None:
-        """Wikilinks under the Related heading, or None when there is no such heading."""
-        lines = self.body.splitlines()
-        start = next((i for i, line in enumerate(lines) if _RELATED_HEADING_RE.match(line)), None)
-        if start is None:
-            return None
-        section: list[str] = []
-        for line in lines[start + 1:]:
-            if _HEADING_RE.match(line):
-                break
-            section.append(line)
-        return [_slugify(m.group(1)) for m in _WIKILINK_RE.finditer("\n".join(section))]
-
-
-@dataclass
-class Source:
-    """One raw source file, with the hash the compile step keys off."""
-
-    path: Path
-    root: Path
-    frontmatter: dict = field(default_factory=dict)
-    content_hash: str = ""
-
-    @property
-    def rel(self) -> str:
-        return self.path.relative_to(self.root).as_posix()
-
-
-class Wiki:
-    """A knowledge base on disk, loaded once and read many times."""
-
-    def __init__(self, root: Path):
-        self.root = root
-        self._articles: list[Article] | None = None
-        self._sources: list[Source] | None = None
-        self._settings: dict | None = None
-
-    # -- configuration
-
-    @property
-    def settings(self) -> dict:
-        if self._settings is None:
-            self._settings = self._load_settings()
-        return self._settings
-
-    def _load_settings(self) -> dict:
-        settings = dict(DEFAULT_SETTINGS)
-        text = _read_text(self.root / SCHEMA_FILE)
-        if text is None:
-            return settings
-        for line in text.splitlines():
-            match = _SETTING_RE.match(line)
-            if match is None:
-                continue
-            key, raw = match.group(1), match.group(2).strip().strip("\"'")
-            if key not in DEFAULT_SETTINGS:
-                continue
-            try:
-                settings[key] = int(raw)
-            except ValueError:
-                continue
-        return settings
-
-    def domain(self) -> str | None:
-        """The wiki's subject, from the first non-heading line of SCHEMA.md."""
-        text = _read_text(self.root / SCHEMA_FILE)
-        if text is None:
-            return None
-        for line in _strip_frontmatter(text).splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or stripped.startswith("---"):
-                continue
-            return stripped.lstrip("-* ").strip()
-        return None
-
-    # -- content
-
-    @property
-    def articles(self) -> list[Article]:
-        if self._articles is None:
-            self._articles = self._load_articles()
-        return self._articles
-
-    def published(self) -> list[Article]:
-        """Articles in `articles/` — not drafts, not archived."""
-        return [a for a in self.articles if not a.is_draft and not a.is_archived]
-
-    def drafts(self) -> list[Article]:
-        return [a for a in self.articles if a.is_draft]
-
-    def _load_articles(self) -> list[Article]:
-        paths = [
-            path
-            for subdir in (ARTICLES_DIR, DRAFTS_DIR, ARCHIVE_DIR)
-            for path in sorted((self.root / subdir).rglob("*.md"))
-            if (self.root / subdir).is_dir()
-        ]
-        return [a for a in (self._read_article(p) for p in paths) if a is not None]
-
-    def _read_article(self, path: Path) -> Article | None:
-        text = _read_text(path)
-        if text is None:
-            return None
-        frontmatter, body = _split_frontmatter(text)
-        return Article(path=path, root=self.root, frontmatter=frontmatter, body=body)
-
-    @property
-    def sources(self) -> list[Source]:
-        if self._sources is None:
-            self._sources = self._load_sources()
-        return self._sources
-
-    def _load_sources(self) -> list[Source]:
-        base = self.root / RAW_DIR
-        if not base.is_dir():
-            return []
-        paths = [
-            p for p in sorted(base.rglob("*")) if p.is_file() and not p.name.startswith(".")
-        ]
-        return [self._read_source(p) for p in paths]
-
-    def _read_source(self, path: Path) -> Source:
-        return Source(
-            path=path,
-            root=self.root,
-            frontmatter=_source_frontmatter(path),
-            content_hash=_hash_file(path),
-        )
-
-    # -- bookkeeping files
-
-    def index_targets(self) -> set[str]:
-        """Article slugs the master index links to, by wikilink or markdown link."""
-        text = _read_text(self.root / INDEX_FILE)
-        if text is None:
-            return set()
-        targets = {_slugify(m.group(1)) for m in _WIKILINK_RE.finditer(text)}
-        for match in _MD_LINK_RE.finditer(text):
-            target = match.group(1).split("#", 1)[0].strip()
-            if target.endswith(".md"):
-                targets.add(_slugify(Path(target).stem))
-        return targets
-
-    def recorded_source_hashes(self) -> dict[str, str]:
-        """Source path to recorded hash, from the `_sources.md` manifest.
-
-        The manifest is a markdown table the compile step maintains. Rows are
-        read positionally from the first two columns: path, then hash.
-        """
-        text = _read_text(self.root / SOURCES_FILE)
-        if text is None:
-            return {}
-        recorded: dict[str, str] = {}
-        for line in text.splitlines():
-            if not line.strip().startswith("|"):
-                continue
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) < 2:
-                continue
-            path, digest = cells[0].strip("`"), cells[1].strip("`")
-            if _is_table_furniture(path, digest):
-                continue
-            recorded[_normalise_source_path(path)] = digest.lower()
-        return recorded
-
-    def unprocessed_log_entries(self) -> list[str]:
-        text = _read_text(self.root / LOG_FILE)
-        if text is None:
-            return []
-        return [line.strip() for line in text.splitlines() if _LOG_UNPROCESSED_RE.match(line)]
-
-    def last_log_event(self, kind: str) -> str | None:
-        """The most recent `KIND:` line in the activity log."""
-        text = _read_text(self.root / LOG_FILE)
-        if text is None:
-            return None
-        pattern = re.compile(_LOG_EVENT_TEMPLATE % re.escape(kind.upper()))
-        matches = [ln.strip() for ln in text.splitlines() if pattern.search(ln.upper())]
-        return matches[-1] if matches else None
-
-
-# ── Resolution ──────────────────────────────────────────────────────────────
-
-
-def is_wiki(path: Path) -> bool:
-    return (path / SCHEMA_FILE).is_file()
+# ── Configuration ───────────────────────────────────────────────────────────
 
 
 def configured_dirname(start: Path) -> str:
@@ -381,199 +98,12 @@ def configured_dirname(start: Path) -> str:
     return configured or DEFAULT_WIKI_DIRNAME
 
 
-def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = None) -> Path | None:
-    """Locate the knowledge base governing *start*.
-
-    Three steps, in order: an explicit path, then the configured directory name
-    at each level from *start* up to the repo root, then *start* itself if it is
-    a wiki. An explicit path that is not a wiki resolves to nothing rather than
-    falling back to the walk — it names one specific base, and silently using a
-    different one is how the wrong wiki gets written to.
-
-    The plugin this replaces consulted a global registry as a fallback and
-    returned its first entry, so a session in one project got another project's
-    wiki.
-    """
-    if explicit:
-        candidate = Path(explicit).expanduser().resolve()
-        return candidate if is_wiki(candidate) else None
-
-    start = start.resolve()
-    name = dirname if dirname is not None else configured_dirname(start)
-    for depth, directory in enumerate([start, *start.parents]):
-        if depth > MAX_PARENT_DEPTH:
-            break
-        if is_wiki(directory / name):
-            return directory / name
-        if is_wiki(directory):
-            return directory
-        if (directory / ".git").exists():
-            break
-    return None
-
-
-# ── Parsing helpers ─────────────────────────────────────────────────────────
-
-
-def _read_text(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-def _source_frontmatter(path: Path) -> dict:
-    """Frontmatter of a markdown source; empty for every other source type."""
-    if path.suffix.lower() != ".md":
-        return {}
-    text = _read_text(path)
-    return {} if text is None else _split_frontmatter(text)[0]
-
-
-def _hash_file(path: Path) -> str:
-    """The sha256 prefix the compile step uses to detect changed sources.
-
-    Read in chunks rather than whole: `raw/` holds whatever was ingested, and a
-    repo snapshot or a large PDF should not be resident in memory to be hashed.
-    """
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as handle:
-            _consume(handle, digest)
-    except OSError:
-        return ""
-    return digest.hexdigest()[:HASH_PREFIX_LEN]
-
-
-def _consume(handle, digest) -> None:
-    for chunk in iter(lambda: handle.read(HASH_CHUNK_BYTES), b""):
-        digest.update(chunk)
-
-
-def _strip_frontmatter(text: str) -> str:
-    return _FRONTMATTER_RE.sub("", text, count=1)
-
-
-def _split_frontmatter(text: str) -> tuple[dict, str]:
-    match = _FRONTMATTER_RE.match(text)
-    if match is None:
-        return {}, text
-    return _parse_frontmatter(match.group(1)), text[match.end():]
-
-
-def _parse_frontmatter(block: str) -> dict:
-    """Parse the flat-scalar-and-list subset of YAML that article frontmatter uses."""
-    data: dict = {}
-    key: str | None = None
-    for line in block.splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        item = _YAML_ITEM_RE.match(line)
-        if item is not None and key is not None:
-            _append_item(data, key, _scalar(item.group(1)))
-            continue
-        match = _YAML_KV_RE.match(line)
-        if match is None:
-            continue
-        key = match.group(1)
-        raw = match.group(2).strip()
-        if not raw:
-            data[key] = []
-        elif raw.startswith("[") and raw.endswith("]"):
-            inner = raw[1:-1].strip()
-            data[key] = [_scalar(p) for p in inner.split(",") if p.strip()] if inner else []
-        else:
-            data[key] = _scalar(raw)
-    return data
-
-
-def _append_item(data: dict, key: str, value: str) -> None:
-    """Add a block-list item, ignoring it when the key already holds a scalar."""
-    existing = data.setdefault(key, [])
-    if isinstance(existing, list):
-        existing.append(value)
-
-
-def _scalar(raw: str) -> str:
-    return raw.strip().strip("\"'").strip()
-
-
-def _parse_date(value) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    raw = value.strip().strip("\"'")
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
-
-
-def _slugify(text: str) -> str:
-    """Normalise a link target or title to the slug an article file is named by."""
-    text = text.strip()
-    if text.endswith(".md"):
-        text = text[:-3]
-    text = text.rsplit("/", 1)[-1]
-    text = re.sub(r"[^\w\s-]", "", text.lower())
-    return re.sub(r"[\s_]+", "-", text).strip("-")
-
-
-def _is_table_furniture(path: str, digest: str) -> bool:
-    """True for a manifest table's header row or its `---` separator.
-
-    Both are rows by the parser's reckoning, and the header in particular reads
-    as a source named `source` with the hash `hash` — a phantom entry that would
-    report a real source of that name as compiled, against a hash that is a word.
-    """
-    if not path:
-        return True
-    if set(path) <= set("-: "):
-        return True
-    return path.strip().lower() == "source" and not _HEX_RE.fullmatch(digest.strip())
-
-
-def _normalise_source_path(path: str) -> str:
-    """Bring a manifest path to the same spelling as `Source.rel`.
-
-    The manifest is written by hand and by the compile step, so a source turns
-    up as `note.md`, `raw/note.md`, or `./raw/note.md`. All three mean the file
-    at `raw/note.md`, which is the form lookups use, so normalise toward that
-    rather than away from it — stripping the prefix instead would leave every
-    manifest key unable to match the source it records.
-    """
-    cleaned = path.strip().lstrip("./").strip()
-    if not cleaned:
-        return ""
-    if not cleaned.startswith(f"{RAW_DIR}/"):
-        cleaned = f"{RAW_DIR}/{cleaned}"
-    return cleaned
-
-
 # ── Commands ────────────────────────────────────────────────────────────────
 
 
 def cmd_path(wiki: Wiki, args: argparse.Namespace) -> int:
     print(wiki.root)
     return 0
-
-
-def collect_status(wiki: Wiki) -> dict:
-    published = wiki.published()
-    recorded = wiki.recorded_source_hashes()
-    uncompiled = [s for s in wiki.sources if recorded.get(s.rel) != s.content_hash]
-    return {
-        "path": str(wiki.root),
-        "domain": wiki.domain(),
-        "articles": len(published),
-        "drafts": len(wiki.drafts()),
-        "archived": sum(1 for a in wiki.articles if a.is_archived),
-        "sources": len(wiki.sources),
-        "uncompiled_sources": len(uncompiled),
-        "unprocessed_log_entries": len(wiki.unprocessed_log_entries()),
-        "last_compile": wiki.last_log_event("COMPILE"),
-        "last_ingest": wiki.last_log_event("INGEST"),
-    }
 
 
 def cmd_status(wiki: Wiki, args: argparse.Namespace) -> int:
@@ -606,86 +136,6 @@ def cmd_status(wiki: Wiki, args: argparse.Namespace) -> int:
         for hint in hints:
             print(f"  → {hint}")
     return 0
-
-
-def collect_lint(wiki: Wiki) -> list[dict]:
-    """Every mechanically decidable health finding, in stable order.
-
-    Three checks from the original lint reference are deliberately absent: tag
-    near-duplicates, duplicate articles at ~80% overlap, and resolving (rather
-    than finding) contradictions. Each needs a judgement no rule here can make,
-    so they belong to the skill reading this report.
-    """
-    findings: list[dict] = []
-    published = wiki.published()
-    known = {a.slug for a in wiki.articles}
-
-    def add(check: str, severity: str, message: str, where: str | None = None) -> None:
-        findings.append({"check": check, "severity": severity, "message": message, "where": where})
-
-    for article in wiki.articles:
-        for target in [t for t in dict.fromkeys(article.links) if t not in known]:
-            add("broken-link", "error", f"link to missing article '{target}'", article.rel)
-
-    indexed = wiki.index_targets()
-    for article in published:
-        if article.slug not in indexed:
-            add("missing-index-entry", "error", "not listed in the master index", article.rel)
-
-    inbound: dict[str, int] = {a.slug: 0 for a in wiki.articles}
-    for article in wiki.articles:
-        for target in {t for t in article.links if t in inbound and t != article.slug}:
-            inbound[target] += 1
-    for article in published:
-        if inbound.get(article.slug, 0) == 0:
-            add("orphan-article", "warning", "no inbound links from other articles", article.rel)
-
-    recorded = wiki.recorded_source_hashes()
-    for source in wiki.sources:
-        if source.rel not in recorded:
-            add("orphan-source", "warning", "never compiled into an article", source.rel)
-        elif recorded[source.rel] != source.content_hash:
-            add("changed-source", "warning", "changed since it was last compiled", source.rel)
-
-    threshold = wiki.settings["staleness_threshold_days"]
-    now = _utc_now()
-    for article in published:
-        updated = article.updated
-        if updated is None:
-            continue
-        age = (now - updated).days
-        if age > threshold:
-            add("stale-article", "warning", f"not updated in {age} days", article.rel)
-
-    for article in wiki.articles:
-        if _CONTRADICTION_RE.search(article.body):
-            add("contradiction", "error", "carries an unresolved contradiction block", article.rel)
-
-    minimum = wiki.settings["min_article_words"]
-    for article in published:
-        if article.word_count < minimum:
-            add(
-                "sparse-article",
-                "warning",
-                f"{article.word_count} words, below the {minimum}-word minimum",
-                article.rel,
-            )
-
-    for article in published:
-        related = article.related_section_links()
-        if related is not None and not related:
-            add("empty-related", "warning", "Related section has no links", article.rel)
-
-    unprocessed = wiki.unprocessed_log_entries()
-    if unprocessed:
-        add(
-            "unprocessed-log",
-            "warning",
-            f"{len(unprocessed)} observation or gap entries not yet acted on",
-            LOG_FILE,
-        )
-
-    return findings
 
 
 def cmd_lint(wiki: Wiki, args: argparse.Namespace) -> int:
@@ -732,35 +182,11 @@ def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
     return 0
 
 
-def build_index(wiki: Wiki) -> str:
-    """Render the master index from article frontmatter."""
-    lines = ["# Index", ""]
-    articles = sorted(wiki.published(), key=lambda a: a.title.lower())
-    if not articles:
-        lines.append("_No articles yet._")
-        return "\n".join(lines) + "\n"
-
-    tagged: dict[str, list[Article]] = {}
-    for article in articles:
-        for tag in article.tags or ["untagged"]:
-            tagged.setdefault(tag, []).append(article)
-
-    for tag in sorted(tagged):
-        lines.append(f"## {tag}")
-        lines.append("")
-        for article in tagged[tag]:
-            summary = article.frontmatter.get("summary")
-            suffix = f" — {summary}" if isinstance(summary, str) and summary else ""
-            lines.append(f"- [[{article.slug}]]{suffix}")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def cmd_index(wiki: Wiki, args: argparse.Namespace) -> int:
     rendered = build_index(wiki)
     target = wiki.root / INDEX_FILE
     if args.check:
-        current = _read_text(target)
+        current = read_text(target)
         if current == rendered:
             print(f"{target}: current")
             return 0
@@ -773,6 +199,17 @@ def cmd_index(wiki: Wiki, args: argparse.Namespace) -> int:
         return 1
     print(f"{target}: rebuilt from {len(wiki.published())} article(s)")
     return 0
+
+
+# ── Entry point ─────────────────────────────────────────────────────────────
+
+_COMMANDS = {
+    "path": (cmd_path, "Print the resolved knowledge base directory"),
+    "status": (cmd_status, "Counts, uncompiled sources, and recent activity"),
+    "lint": (cmd_lint, "Mechanical health checks over articles and sources"),
+    "sources": (cmd_sources, "Raw sources with their hashes and compile state"),
+    "index": (cmd_index, "Rebuild the master index from article frontmatter"),
+}
 
 
 # ── Entry point ─────────────────────────────────────────────────────────────
@@ -817,7 +254,8 @@ def main_entry() -> None:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    root = find_wiki(Path(args.directory), explicit=args.wiki)
+    start = Path(args.directory)
+    root = find_wiki(start, explicit=args.wiki, dirname=configured_dirname(start))
     if root is None:
         where = args.wiki or args.directory
         print(

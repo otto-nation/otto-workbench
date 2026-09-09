@@ -25,6 +25,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import frontmatter_keys
 
 WIKI_BIN = Path(__file__).resolve().parent.parent / "ai" / "bin" / "wiki"
 
@@ -83,7 +84,7 @@ class TestLifecycle:
 
     def test_status_reports_the_domain_not_template_furniture(self, project):
         """The template's own editing note must not surface as the subject."""
-        run("init", "--domain", "Payments", cwd=project)
+        assert run("init", "--domain", "Payments", cwd=project).returncode == 0
         # Matched on the label, not the substring: a pytest tmp path can itself
         # contain the word and would otherwise match the path line above it.
         line = [
@@ -95,7 +96,7 @@ class TestLifecycle:
         assert "<!--" not in line and "Replace" not in line
 
     def test_a_new_schema_carries_no_placeholder_text(self, project):
-        run("init", "--domain", "Payments", "--audience", "the team", cwd=project)
+        assert run("init", "--domain", "Payments", "--audience", "the team", cwd=project).returncode == 0
         schema = (project / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         assert "{DOMAIN}" not in schema and "{AUDIENCE}" not in schema
         assert "Replace Payments" not in schema
@@ -109,7 +110,7 @@ class TestLifecycle:
 class TestHashesAreComputed:
     def test_reported_hash_matches_the_file(self, project):
         """The reason this CLI exists: hashes come from bytes, not recollection."""
-        run("init", cwd=project)
+        assert run("init", cwd=project).returncode == 0
         source = project / "notes.md"
         source.write_text("known content\n", encoding="utf-8")
         run("ingest", "--stage", str(source), cwd=project)
@@ -119,7 +120,7 @@ class TestHashesAreComputed:
         assert expected in run("sources", cwd=project).stdout
 
     def test_binary_source_survives_staging(self, project):
-        run("init", cwd=project)
+        assert run("init", cwd=project).returncode == 0
         source = project / "paper.pdf"
         source.write_bytes(b"%PDF-1.4\nbinary\x00bytes")
         run("ingest", "--stage", str(source), "--type", "pdf", cwd=project)
@@ -130,7 +131,7 @@ class TestHashesAreComputed:
 class TestContainment:
     def test_type_cannot_write_outside_the_base(self, project):
         """`--type ../../evil` wrote the source two directories up, once."""
-        run("init", cwd=project)
+        assert run("init", cwd=project).returncode == 0
         source = project / "s.md"
         source.write_text("body\n", encoding="utf-8")
         assert run("ingest", "--stage", str(source), "--type", "../../evil", cwd=project).returncode == 0
@@ -141,15 +142,18 @@ class TestContainment:
         assert not list(project.parent.glob("*evil*"))
 
     def test_type_cannot_add_a_frontmatter_key(self, project):
-        run("init", cwd=project)
+        assert run("init", cwd=project).returncode == 0
         source = project / "s.md"
         source.write_text("body\n", encoding="utf-8")
         run("ingest", "--stage", str(source), "--type", "file\ninjected: yes", cwd=project)
 
         staged = next((project / "wiki" / "raw").iterdir())
-        block = staged.read_text(encoding="utf-8").split("---")[1]
-        keys = [ln.split(":", 1)[0] for ln in block.splitlines() if ":" in ln]
-        assert keys == ["source_type", "title", "original_path", "ingest_date"]
+        assert frontmatter_keys(staged) == [
+            "source_type",
+            "title",
+            "original_path",
+            "ingest_date",
+        ]
 
 
 class TestExitCodes:
@@ -159,7 +163,7 @@ class TestExitCodes:
         assert "no knowledge base found" in result.stderr
 
     def test_findings_exit_one(self, project):
-        run("init", cwd=project)
+        assert run("init", cwd=project).returncode == 0
         (project / "wiki" / "articles" / "a.md").write_text(
             "---\ntitle: A\n---\nsee [[ghost]]\n", encoding="utf-8"
         )

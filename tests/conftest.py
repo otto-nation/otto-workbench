@@ -848,6 +848,17 @@ def write_thrash_log(path) -> str:
     return str(path)
 
 
+def frontmatter_keys(path) -> list[str]:
+    """The YAML keys of a file's leading frontmatter block, in order.
+
+    Shared by the wiki suites because both assert on it to show that a value
+    carrying a newline stayed a value. Two copies of "what counts as a key"
+    could drift apart and quietly stop testing the same thing.
+    """
+    block = Path(path).read_text(encoding="utf-8").split("---")[1]
+    return [line.split(":", 1)[0] for line in block.splitlines() if ":" in line]
+
+
 def write_marker_file(directory, name: str, *lines: str) -> Path:
     """Write a ceiling-marker fixture, one line per argument.
 

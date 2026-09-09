@@ -731,8 +731,14 @@ def _stub_rules(manifest_path):
 
 
 def _rule_texts(case_dir, rule):
-    """The replayed text of one rule, inlining `stdout_file` as the shim does."""
-    texts = [rule.get("stdout", ""), rule.get("stderr", "")]
+    """Every string one rule holds, inlining `stdout_file` as the shim does.
+
+    `match` is included because `_resolve_rules` expands it too, and a guard
+    covering less than the harness substitutes leaves somewhere for a literal
+    sha to sit. A hard-coded one there is self-revealing — the rule never fires
+    and the stub exits 97 — but the fixture is still wrong for the same reason.
+    """
+    texts = [rule.get("stdout", ""), rule.get("stderr", ""), *rule.get("match", [])]
     source = rule.get("stdout_file", "")
     if source:
         texts.append((case_dir / source).read_text())

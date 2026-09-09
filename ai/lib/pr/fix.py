@@ -122,6 +122,27 @@ class SettledBy(StrEnum):
     OPERATOR = "operator"
 
 
+# Prose stamped on an outcome the fix pass never landed, for the person reading
+# the summary row. It says nothing to the code: what keeps the pass's commit —
+# and the row's own line history — from being credited is
+# `SettledBy.RECONCILIATION`, recorded beside it.
+#
+# Distinct from CommitStatus.RECONCILED, which `history_rewrite.reconciled_commit`
+# reports for a branch that moved past the fix snapshot — this reason accompanies
+# snapshot reconciliation against GitHub instead. The two "reconciled" names are
+# not the same mechanism.
+RECONCILED_REASON = "reconciled: handled outside the fix pass"
+
+# Prose for an outcome the operator settled by hand and told the CLI about with
+# --settle, recorded beside `SettledBy.OPERATOR`.
+#
+# The two provenances are kept apart because they are different evidence.
+# Reconciliation is the tool inferring a settlement from what GitHub shows; this
+# is the operator stating one. Only the second can be trusted for a thread
+# nobody has replied to yet, which is exactly the thread --settle exists for.
+SETTLED_REASON = "settled: recorded by hand"
+
+
 @dataclass
 class ItemOutcome:
     """What one fix pass did about one item.

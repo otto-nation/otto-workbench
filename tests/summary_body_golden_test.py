@@ -63,6 +63,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from git.land import CommitStatus  # noqa: E402
+from pr import attribution  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
@@ -113,8 +114,7 @@ class _FrozenHistory:
     covers that against a real repository.
     """
 
-    def __init__(self, rt, by_id):
-        self._rt = rt
+    def __init__(self, by_id):
         self._by_id = by_id
 
     def framing(self, entry, thread, acted=False):
@@ -124,7 +124,7 @@ class _FrozenHistory:
         renderer; it is here so the stub cannot drift out of shape with the
         object it stands in for.
         """
-        return self._by_id.get(entry.id, self._rt.AddressedFraming(False))
+        return self._by_id.get(entry.id, attribution.AddressedFraming(False))
 
 
 def _threads():
@@ -247,7 +247,7 @@ def _full_body(rt):
 
     return rt._build_summary_body(
         content,
-        rt.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED, error=""),
+        attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED, error=""),
         _REPO,
         _PR,
         _threads(),
@@ -277,8 +277,8 @@ def _full_body(rt):
             ),
         ],
         wt_path=None,
-        history=_FrozenHistory(rt, {
-            "t12": rt.AddressedFraming(True, sha="def5678"),
+        history=_FrozenHistory({
+            "t12": attribution.AddressedFraming(True, sha="def5678"),
         }),
         scope=scope,
         chain=[
@@ -301,12 +301,12 @@ def _empty_body(rt):
     """
     return rt._build_summary_body(
         _round_content(rt),
-        rt.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
+        attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
         _PR,
         {},
         wt_path=None,
-        history=_FrozenHistory(rt, {}),
+        history=_FrozenHistory({}),
     )
 
 
@@ -344,13 +344,13 @@ def _raw_sections_body(rt, *, has_comment_items: bool = False):
                  "state": "CHANGES_REQUESTED"},
             ],
         ),
-        rt.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
+        attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
         _PR,
         {},
         has_comment_items=has_comment_items,
         wt_path=None,
-        history=_FrozenHistory(rt, {}),
+        history=_FrozenHistory({}),
     )
 
 
@@ -375,14 +375,14 @@ def _uncommitted_body(rt):
                             file="b.py"),
             ],
         ),
-        rt.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
+        attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
         _PR,
         _threads(),
         deferred_issue_id="ENG-789",
         has_comment_items=True,
         wt_path=None,
-        history=_FrozenHistory(rt, {}),
+        history=_FrozenHistory({}),
     )
 
 

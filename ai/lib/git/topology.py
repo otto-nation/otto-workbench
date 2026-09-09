@@ -14,6 +14,7 @@ bound, and the one unbounded call is `wt switch`, which creates a checkout.
 
 from __future__ import annotations
 
+import functools
 import json
 import subprocess
 import sys
@@ -207,9 +208,27 @@ def default_branch(cwd: str | Path | None = None) -> str:
 
     Deliberately uncached: this is imported by every `pr` script, and a
     module-level cache here would outlive the tests that set up their own repos.
-    Call sites that need it per-file wrap it in their own cache.
+    Call sites that need it per-file wrap it in their own cache, or use
+    :func:`default_branch_cached`.
     """
     return git_remote.resolve_default_branch(str(cwd) if cwd is not None else None)
+
+
+@functools.cache
+def default_branch_cached(wt_path: Path) -> str:
+    """:func:`default_branch`, memoised for the life of the process.
+
+    The default branch cannot change mid-run and several call sites need it once
+    per file processed, so the memo is worth having — but it is a separate name
+    rather than a decorator on the resolver above, because the two have
+    different contracts and only one of them is safe to hold across repos.
+
+    The cache is process-global. Safe for a single CLI invocation; a test
+    harness that exercises several worktree paths with different git state must
+    call ``default_branch_cached.cache_clear()`` between cases, or read a stale
+    answer from an earlier one.
+    """
+    return default_branch(wt_path)
 
 
 def find_bare_repo_worktree(

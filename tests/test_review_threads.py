@@ -34,6 +34,9 @@ from pr.comments_state import ThreadState
 from pr.comments_fix import FixSummary
 from pr.domains import SupersessionKind
 from git.land import CommitStatus
+from git import topology as git_topology
+from core import markdown
+from pr import permalinks
 from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
@@ -1804,7 +1807,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
                           side_effect=_tick_every_fix(tmp_path)), \
              patch.object(rt, "_diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
-             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state") as persist, \
              patch.object(rt.git_client, "run", side_effect=mock_run), \
              patch("pr.comments.post_thread_reply", return_value=True), \
@@ -3313,7 +3316,7 @@ class TestHandWrittenRepliesSurvive:
         entry = CommentItem(id="t1", summary="use helper", file="src/app.py")
         with patch("pr.comments.post_thread_reply", return_value=True) as post, \
              patch.object(rt, "_find_addressing_commit", return_value=None), \
-             patch.object(rt, "_code_link", return_value=""):
+             patch.object(permalinks, "code_link", return_value=""):
             rt._post_already_addressed_replies(
                 [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
                 "owner/repo", 42, tmp_path,
@@ -3323,7 +3326,7 @@ class TestHandWrittenRepliesSurvive:
     def test_the_dismissal_body_with_no_evidence_is_recognised(self, rt, tmp_path):
         entry = CommentItem(id="t1", summary="not applicable", reasoning="premise fails")
         with patch("pr.comments.post_thread_reply", return_value=True) as post, \
-             patch.object(rt, "_evidence_link", return_value=""):
+             patch.object(permalinks, "evidence_link", return_value=""):
             rt._post_dismissed_replies(
                 [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
                 "owner/repo", 42, tmp_path,
@@ -3333,7 +3336,7 @@ class TestHandWrittenRepliesSurvive:
     def test_the_dismissal_body_with_no_reasoning_is_recognised(self, rt, tmp_path):
         entry = CommentItem(id="t1", summary="not applicable")
         with patch("pr.comments.post_thread_reply", return_value=True) as post, \
-             patch.object(rt, "_evidence_link", return_value=""):
+             patch.object(permalinks, "evidence_link", return_value=""):
             rt._post_dismissed_replies(
                 [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
                 "owner/repo", 42, tmp_path,
@@ -4342,7 +4345,7 @@ class TestResolveSettledCommit:
 
     def test_infers_the_commit_that_changed_the_threads_own_line(self, rt, tmp_path):
         repo = _hand_fixed(tmp_path)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "")
         assert resolved.ok
         assert resolved.sha == repo.sha[:7]
@@ -4350,14 +4353,14 @@ class TestResolveSettledCommit:
     def test_an_unpushed_fix_is_still_recorded_but_cites_nothing(self, rt, tmp_path):
         """A link into a commit the remote never saw is a 404 for the reviewer."""
         repo = _hand_fixed(tmp_path, pushed=False)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "")
         assert resolved.ok
         assert resolved.sha == ""
 
     def test_a_thread_with_no_line_cites_nothing_and_is_no_error(self, rt, tmp_path):
         repo = _hand_fixed(tmp_path)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             resolved = rt._resolve_settled_commit(repo.path, self._outcome(line=0), "")
         assert resolved.ok
         assert resolved.sha == ""
@@ -4876,25 +4879,25 @@ class TestReplyEvidence:
         entry = CommentItem(id="t1", file="other.py", line=1,
                             evidence_file="src/app.py", evidence_line=2,
                             read_sha="cafe123")
-        link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
+        link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/src/app.py#L2" in link
 
     def test_code_link_falls_back_when_the_citation_is_not_in_the_tree(self, rt, tmp_path):
         entry = CommentItem(id="t1", file="other.py", line=7,
                             evidence_file="src/gone.py", evidence_line=2,
                             read_sha="cafe123")
-        link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
+        link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/other.py#L7" in link
 
     def test_code_link_drops_an_anchor_it_cannot_vouch_for(self, rt, tmp_path):
         """A line with no recorded tree is a number, not a location."""
         entry = CommentItem(id="t1", file="other.py", line=7)
-        link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
+        link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert link == "[`other.py`](https://github.com/owner/repo/blob/cafe123/other.py)"
 
     def test_code_link_is_empty_with_nothing_to_point_at(self, rt, tmp_path):
-        assert rt._code_link(CommentItem(id="t1"), "owner/repo", "cafe123", tmp_path) == ""
-        assert rt._code_link(
+        assert permalinks.code_link(CommentItem(id="t1"), "owner/repo", "cafe123", tmp_path) == ""
+        assert permalinks.code_link(
             CommentItem(id="t1", file="a.py", line=1), "owner/repo", "", tmp_path,
         ) == ""
 
@@ -5059,7 +5062,7 @@ class TestDiffContextForFile:
         from a ref the repository does not have.
         """
         mock_run.return_value = _git_ran(0, stdout="+ added line\n")
-        with patch.object(rt, "_resolve_default_branch", return_value="trunk"):
+        with patch.object(git_topology, "default_branch_cached", return_value="trunk"):
             rt._diff_context_for_file("src/foo.go", Path("/wt"))
 
         assert "origin/trunk" in mock_run.call_args[0]
@@ -5426,7 +5429,7 @@ class TestFixPassHoldsWhenContested:
                           side_effect=_tick_every_fix(tmp_path)), \
              patch.object(rt, "_diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
-             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(mock_run)), \
@@ -5531,7 +5534,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
         )
         with patch.object(rt, "_diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
-             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
@@ -5581,7 +5584,7 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
             target_dir=tmp_path,
         )
         with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
-             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
@@ -5723,11 +5726,11 @@ class TestPipesStayInTheirCell:
 
     def test_a_summary_pipe_does_not_add_a_cell(self, rt):
         row = self._row(rt, "use a || b, not a | b")
-        assert len(rt._row_cells(row)) == len(rt._SUMMARY_TABLE_COLUMNS)
+        assert len(markdown.row_cells(row)) == len(rt._SUMMARY_TABLE_COLUMNS)
 
     def test_a_status_pipe_does_not_add_a_cell(self, rt):
         row = self._row(rt, "plain", status="Deferred — a | b")
-        assert len(rt._row_cells(row)) == len(rt._SUMMARY_TABLE_COLUMNS)
+        assert len(markdown.row_cells(row)) == len(rt._SUMMARY_TABLE_COLUMNS)
 
     def test_the_fallback_key_survives_a_summary_pipe(self, rt):
         deferred = self._row(rt, "use a | b", status="Deferred")
@@ -6741,18 +6744,18 @@ class TestAddressingCommitIsPerLine:
                                second=self._sha(worktree, "HEAD"))
 
     def test_each_line_resolves_to_the_commit_that_changed_it(self, rt, branch):
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert rt._find_addressing_commit(branch.path, "a.py", 1) == branch.first
             assert rt._find_addressing_commit(branch.path, "a.py", 2) == branch.second
 
     def test_a_thread_with_no_line_claims_no_commit(self, rt, branch):
         """A file-wide thread has no line history to read, so it cites nothing."""
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert rt._find_addressing_commit(branch.path, "a.py", 0) is None
 
     def test_a_line_past_the_end_of_the_file_claims_no_commit(self, rt, branch):
         """git refuses the range rather than answering — nothing is invented."""
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert rt._find_addressing_commit(branch.path, "a.py", 99) is None
 
     def test_two_threads_on_one_file_cite_different_commits(self, rt, branch):
@@ -6764,7 +6767,7 @@ class TestAddressingCommitIsPerLine:
             "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
             "t2": ReportThread(id="t2", comments=[{"databaseId": 222}]),
         }
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._post_already_addressed_replies(
                 entries, threads_by_id, "owner/repo", 42, branch.path,
@@ -6824,29 +6827,29 @@ class TestLineAnchorsAreTreeScoped:
 
     def test_a_line_in_an_untouched_file_keeps_its_anchor(self, rt, trees):
         entry = CommentItem(id="t1", file="still.py", line=2, read_sha=trees.read)
-        assert rt._anchored_line(
+        assert permalinks.anchored_line(
             entry, "still.py", 2, trees.fixed, trees.path) == 2
 
     def test_a_line_in_a_rewritten_file_loses_its_anchor(self, rt, trees):
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
-        assert rt._anchored_line(
+        assert permalinks.anchored_line(
             entry, "moved.py", 1, trees.fixed, trees.path) == 0
 
     def test_the_same_tree_needs_no_comparison(self, rt, trees):
         """The triage replies go out before the fix commit, so this is the common case."""
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
-        assert rt._anchored_line(
+        assert permalinks.anchored_line(
             entry, "moved.py", 1, trees.read, trees.path) == 1
 
     def test_an_unrecorded_tree_loses_the_anchor(self, rt, trees):
         entry = CommentItem(id="t1", file="still.py", line=2)
-        assert rt._anchored_line(
+        assert permalinks.anchored_line(
             entry, "still.py", 2, trees.fixed, trees.path) == 0
 
     def test_a_reply_drafted_after_the_fix_commit_links_the_file(self, rt, trees):
         """End to end: the shape that sent reviewers to unrelated code."""
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
-        link = rt._code_link(entry, "owner/repo", trees.fixed, trees.path)
+        link = permalinks.code_link(entry, "owner/repo", trees.fixed, trees.path)
         assert link.endswith(f"/blob/{trees.fixed}/moved.py)")
         assert "#L" not in link
 
@@ -6909,7 +6912,7 @@ class TestAddressedInResponseFraming:
         ])
 
     def _reply_body(self, rt, entry, thread, wt_path, **kwargs):
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._post_already_addressed_replies(
                 [entry], {entry.id: thread}, "owner/repo", 42, wt_path, **kwargs,
@@ -6953,7 +6956,7 @@ class TestAddressedInResponseFraming:
         """
         entry = CommentItem(id="t1", summary="use the helper", file="a.py", line=1)
         cp = rt.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
                 [entry], {"t1": self._thread("t1", 111)}, "owner/repo", 42,
@@ -6966,7 +6969,7 @@ class TestAddressedInResponseFraming:
 
     def _summary(self, rt, content, entry, thread, wt_path):
         cp = rt.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             return rt._build_summary_body(
                 content(already_addressed=[entry]),
                 cp, "owner/repo", 42, {entry.id: thread}, wt_path=wt_path,
@@ -7070,7 +7073,7 @@ def _row(tid, line, summary, **kw):
 
 def _summary_over(rt, content, branch, entries, threads):
     cp = _undetermined_pass(rt, branch)
-    with patch.object(rt, "_resolve_default_branch", return_value="main"):
+    with patch.object(git_topology, "default_branch_cached", return_value="main"):
         return rt._build_summary_body(
             content(fixed=entries), cp, "owner/repo", 42, threads,
             wt_path=branch.path,
@@ -7134,7 +7137,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
     ):
         """No tree to read is the case reconciliation was right to decline."""
         cp = _undetermined_pass(rt, hand_landed_branch)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             body = rt._build_summary_body(
                 content(fixed=[_row("t1", 1, "first point")]), cp,
                 "owner/repo", 42, {"t1": _reviewed("t1", 111)},
@@ -7149,7 +7152,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         branch = hand_landed_branch
         entry = CommentItem(id="t1", summary="first point", file="a.py", line=1)
         cp = _undetermined_pass(rt, branch)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
                 [entry], {"t1": _reviewed("t1", 111)}, "owner/repo", 42,
@@ -7170,7 +7173,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         attribution problem no reader of that table can find.
         """
         cp = _undetermined_pass(rt, hand_landed_branch)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             rt._warn_unattributed_fixes(
                 [_row("t1", 1, "first point")], cp, None,
                 rt.AddressingHistory(hand_landed_branch.path),
@@ -7182,7 +7185,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         self, rt, hand_landed_branch, capsys,
     ):
         cp = _undetermined_pass(rt, hand_landed_branch)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
             rt._warn_unattributed_fixes(
                 [_row("t3", 3, "third point")], cp, None,
                 rt.AddressingHistory(hand_landed_branch.path),
@@ -7240,7 +7243,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         branch = hand_landed_branch
         entry = CommentItem(id="t1", summary="first point", file="a.py", line=1,
                             settled_by=SettledBy.RECONCILIATION)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
                 [entry], {"t1": _reviewed("t1", 111)}, "owner/repo", 42,
@@ -7279,7 +7282,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         branch = hand_landed_branch
         entry = CommentItem(id="t3", summary="third point", file="a.py", line=3,
                             settled_by=SettledBy.RECONCILIATION)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
                 patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
                 [entry], {"t3": _reviewed("t3", 333)}, "owner/repo", 42,
@@ -7447,7 +7450,7 @@ class TestOneHandLandedCommitIsStillAskedOfEachRow:
         """One prior-round thread, two surfaces, one resolver."""
         branch = one_hand_landed_commit
         entry = CommentItem(id="t2", summary="second point", file="a.py", line=2)
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
                 [entry], {"t2": _reviewed("t2", 222)}, "owner/repo", 42,
@@ -7466,7 +7469,7 @@ class TestCommitLookupsUseDefaultBranch:
 
     def test_branch_commit_log_uses_resolved_branch(self, rt, tmp_path):
         with (
-            patch.object(rt, "_resolve_default_branch", return_value="trunk"),
+            patch.object(git_topology, "default_branch_cached", return_value="trunk"),
             patch.object(rt.git_client, "run") as run,
         ):
             run.return_value = _git_ran(0, stdout="abc1234 fix: thing\n")
@@ -7475,7 +7478,7 @@ class TestCommitLookupsUseDefaultBranch:
 
     def test_find_addressing_commit_uses_resolved_branch(self, rt, tmp_path):
         with (
-            patch.object(rt, "_resolve_default_branch", return_value="trunk"),
+            patch.object(git_topology, "default_branch_cached", return_value="trunk"),
             patch.object(rt.git_client, "run") as run,
         ):
             run.return_value = _git_ran(0, stdout="deadbeef\n")
@@ -7629,12 +7632,12 @@ class TestEvidencePermalinks:
     """Every claim links to the code at a pinned SHA."""
 
     def test_permalink_pins_the_sha(self, rt):
-        assert rt._blob_permalink("owner/repo", "abc123", "a/b.py", 7) == (
+        assert permalinks.blob_permalink("owner/repo", "abc123", "a/b.py", 7) == (
             "https://github.com/owner/repo/blob/abc123/a/b.py#L7")
 
     def test_uncited_entry_renders_no_link(self, rt):
         entry = CommentItem(id="t1", summary="s")
-        assert rt._evidence_link(entry, "owner/repo", "abc123") == ""
+        assert permalinks.evidence_link(entry, "owner/repo", "abc123") == ""
 
     def test_dismissal_carries_the_cited_line(self, rt, tmp_path):
         dismissed = [CommentItem(
@@ -7742,7 +7745,7 @@ class TestCommentTrackingRoundTrip:
             fixable=list(threads), fixable_items=list(comment_items),
         )
         with patch.object(rt, "_diff_context_for_file", return_value=""), \
-             patch.object(rt, "_resolve_default_branch", return_value="main"):
+             patch.object(git_topology, "default_branch_cached", return_value="main"):
             fix_tracking.write(
                 adapter.tracking_path, adapter.title, adapter.items(),
             )
@@ -7865,7 +7868,7 @@ class TestHumanReason:
         )
         rows = rt._summary_table_rows(body)
         assert len(rows) == 1
-        return rt._row_cells(rows[0])[-1]
+        return markdown.row_cells(rows[0])[-1]
 
     @pytest.mark.parametrize("reason", [
         "contested", "conflicting", "question", "complex", "needs_discussion",
@@ -7922,7 +7925,7 @@ class TestHumanReason:
         body = rt._build_summary_body(
             content(needs_human=[entry]), cp, "owner/repo", 1, {})
         rows = rt._summary_table_rows(body)
-        assert rt._row_cells(rows[0])[-1] == rt.HumanReason.CONTESTED.prose
+        assert markdown.row_cells(rows[0])[-1] == rt.HumanReason.CONTESTED.prose
 
 
 # ── comment items settle through their source comment ─────────────────────

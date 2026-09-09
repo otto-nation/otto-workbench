@@ -38,6 +38,7 @@ from pr import comments_fix as pr_comments_fix
 from pr import comments_state as pcs
 from pr import context as pr_context
 from pr import domains as pr_domains
+from pr import permalinks
 from pr import state as pr_state
 from pr import sync as pr_sync
 from core import proc
@@ -48,6 +49,7 @@ from git.land import CommitStatus
 from pr.comments_state import ThreadRecord, ThreadState
 from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
 from review import issue as review_issue
+from core import markdown
 from core import text
 from core import timeouts
 from core.phases import Phase
@@ -169,7 +171,7 @@ def _branch_commit_log(wt_path: Path | None) -> str:
     """
     if not wt_path:
         return ""
-    base = f"origin/{_resolve_default_branch(wt_path)}"
+    base = f"origin/{git_topology.default_branch_cached(wt_path)}"
     return git_client.out("log", "--format=%h %s", f"{base}..HEAD", cwd=wt_path)
 
 
@@ -331,30 +333,6 @@ _DOWNGRADE_REASON = (
 )
 
 
-def _evidence_is_real(repo_dir: Path, entry: CommentItem) -> bool:
-    """Whether the entry cites a line that actually exists inside `repo_dir`.
-
-    Both halves matter, and neither is checked by joining and stating the
-    result.  Containment needs the resolved paths compared, because joining a
-    directory with an absolute path discards the directory and a relative path
-    made of `..` walks straight out of the tree — either way a citation from
-    outside the repo would stat a real file and pass for verified.  The line
-    number needs the file's length, because a permalink past EOF highlights
-    nothing.
-    """
-    if not entry.has_evidence():
-        return False
-    root = repo_dir.resolve()
-    try:
-        cited = (root / entry.evidence_file).resolve()
-        if not cited.is_relative_to(root) or not cited.is_file():
-            return False
-        with cited.open(encoding="utf-8", errors="replace") as fh:
-            return entry.evidence_line <= sum(1 for _ in fh)
-    except OSError:
-        return False
-
-
 def _downgrade_unsupported_verdicts(
     entries: list[CommentItem], repo_dir: Path, trail: Trail | None = None,
 ) -> int:
@@ -370,7 +348,7 @@ def _downgrade_unsupported_verdicts(
     for entry in entries:
         if entry.verification not in _UNSUPPORTED_VERDICTS:
             continue
-        if _evidence_is_real(repo_dir, entry):
+        if permalinks.evidence_is_real(repo_dir, entry):
             continue
         reason = _DOWNGRADE_REASON.format(verdict=entry.verification)
         if trail:
@@ -505,7 +483,7 @@ def _diff_context_for_file(
     """
     if not file_path:
         return ""
-    default_branch = default_branch or _resolve_default_branch(wt_path)
+    default_branch = default_branch or git_topology.default_branch_cached(wt_path)
     diff = git_client.out("diff", f"origin/{default_branch}", "--", file_path, cwd=wt_path)
     if not diff:
         return ""
@@ -598,25 +576,9 @@ def _main_worktree_block(main_wt: Path | None) -> str:
     )
 
 
-@functools.cache
-def _resolve_default_branch(wt_path: Path) -> str:
-    """`git_topology.default_branch`, cached for the run.
-
-    The default branch cannot change mid-run and several call sites need it per
-    file processed, so the shared resolver is memoised here rather than in the
-    library every script imports.
-
-    The cache is process-global (no `cache_clear` exposed).  Safe for a single
-    CLI invocation, but a test harness that exercises multiple worktree paths
-    with different mocked git state must call `_resolve_default_branch.cache_clear()`
-    between cases to avoid stale results from an earlier call.
-    """
-    return git_topology.default_branch(wt_path)
-
-
 def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
     """Find the default-branch worktree and update it to match origin."""
-    default_branch = _resolve_default_branch(wt_path)
+    default_branch = git_topology.default_branch_cached(wt_path)
 
     main_wt = git_topology.find_worktree_for_branch(default_branch, str(wt_path))
     if not main_wt:
@@ -924,7 +886,7 @@ def _post_fix_replies(
         # and pointing a reviewer at the wrong line is worse than pointing them
         # at the file the change landed in.
         if entry.file:
-            url = _blob_permalink(repo, sha, entry.file)
+            url = permalinks.blob_permalink(repo, sha, entry.file)
             parts.append(f"Result is in [`{entry.file}`]({url}).")
         return "\n\n".join(parts)
 
@@ -1065,95 +1027,6 @@ def _stamp_read_sha(entries: list[CommentItem], sha: str) -> None:
             entry.read_sha = sha
 
 
-def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
-    """A blob URL pinned to a SHA, so the link still points at the cited code.
-
-    Branch-relative blob URLs drift as the branch moves; a claim posted to a
-    reviewer has to survive the next push. Omit line for a whole-file link.
-    """
-    url = f"https://github.com/{repo}/blob/{sha}/{filepath}"
-    return f"{url}#L{line}" if line else url
-
-
-def _anchored_line(
-    entry: CommentItem,
-    filepath: str, line: int, sha: str, wt_path: Path | None,
-) -> int:
-    """`line` when it still points at the same code in `sha`, else 0.
-
-    A line number is a coordinate in one tree. Both kinds an entry carries were
-    read before the fix pass edited the branch — GitHub anchored the review
-    comment at the head it was written against, and triage cited what it read
-    at that same head — so pinning either to the tree the fix commit produced
-    sends the reviewer to whatever code inherited the number.
-
-    Unknown reads as no. An entry with no recorded tree, or one this call has no
-    worktree to compare against, loses its anchor and keeps a whole-file link:
-    the anchor is the part of the claim that has to be earned, and a file link
-    still resolves. `git diff --quiet` answers per file rather than per line,
-    which over-drops on a file changed elsewhere and never under-drops.
-    """
-    read_sha = getattr(entry, "read_sha", "")
-    if not line or not read_sha:
-        return 0
-    if read_sha == sha:
-        return line
-    if not wt_path:
-        return 0
-    unchanged = git_client.ok("diff", "--quiet", read_sha, sha, "--", filepath, cwd=wt_path)
-    return line if unchanged else 0
-
-
-def _anchored_link(
-    entry: CommentItem,
-    repo: str, filepath: str, line: int, sha: str, wt_path: Path | None,
-) -> str:
-    """A markdown blob link to `filepath`, anchored only where the line holds."""
-    anchor = _anchored_line(entry, filepath, line, sha, wt_path)
-    url = _blob_permalink(repo, sha, filepath, anchor)
-    label = f"{filepath}:{anchor}" if anchor else filepath
-    return f"[`{label}`]({url})"
-
-
-def _evidence_link(
-    entry: CommentItem, repo: str, sha: str, wt_path: Path | None = None,
-) -> str:
-    """Render an entry's cited location as a markdown link, or "" if uncited."""
-    if not entry.has_evidence() or not sha:
-        return ""
-    return _anchored_link(
-        entry, repo, entry.evidence_file, entry.evidence_line, sha, wt_path,
-    )
-
-
-def _code_link(
-    entry: CommentItem, repo: str, sha: str, wt_path: Path | None = None,
-    verify_evidence: bool = True,
-) -> str:
-    """Link the code an entry is about, or "" when there is nothing to point at.
-
-    Triage's citation is the better anchor where there is one, but entries
-    rebuilt from stored thread records carry no citation at all.  Those still
-    have the review comment's own file and line, which always resolve as a
-    file — GitHub anchored the thread there — so a reply is never left
-    asserting something with no link behind it.
-
-    `verify_evidence` is what a caller turns off when an earlier gate already
-    refused to let an uncitable verdict through; `wt_path` is still wanted in
-    that case, because the line anchor is a separate question from whether the
-    cited file exists.
-    """
-    if entry.has_evidence() and (
-        not verify_evidence or wt_path is None or _evidence_is_real(wt_path, entry)
-    ):
-        link = _evidence_link(entry, repo, sha, wt_path)
-        if link:
-            return link
-    if not entry.file or not sha:
-        return ""
-    return _anchored_link(entry, repo, entry.file, entry.line, sha, wt_path)
-
-
 def _find_addressing_commit(
     wt_path: Path, filepath: str, line: int = 0,
 ) -> str | None:
@@ -1170,7 +1043,7 @@ def _find_addressing_commit(
     """
     if not line:
         return None
-    base = f"origin/{_resolve_default_branch(wt_path)}"
+    base = f"origin/{git_topology.default_branch_cached(wt_path)}"
     # A non-zero exit means the range does not resolve at HEAD — the file was
     # renamed away, or the line is past its end. Nothing here can say which
     # commit carried the change, so nothing is claimed, and the empty default
@@ -1403,7 +1276,7 @@ def _post_already_addressed_replies(
         # let an already_addressed verdict through without a citation that
         # resolves. Checking again here would only overrule it with a weaker
         # link.
-        link = _code_link(entry, repo, head_sha, wt_path, verify_evidence=False)
+        link = permalinks.code_link(entry, repo, head_sha, wt_path, verify_evidence=False)
         if link:
             parts.append(f"Current behaviour is at {link}.")
         if framing.cited:
@@ -1490,7 +1363,7 @@ def _post_dismissed_replies(
         reasoning = entry.reasoning
         body = _DISMISSED_REPLY_PREFIX
         body = f"{body}: {reasoning}" if reasoning else f"{body}."
-        link = _evidence_link(entry, repo, head_sha, wt_path)
+        link = permalinks.evidence_link(entry, repo, head_sha, wt_path)
         return f"{body}\n\nSee {link}." if link else body
 
     posted = _post_thread_replies(dismissed, threads_by_id, repo, pr_number, body_fn)
@@ -1517,7 +1390,7 @@ def _post_deferred_replies(
                  f"Tracked in {issue_ref}."]
         # A deferral says the code still stands as the reviewer found it, which
         # is a claim about the tree like any other — pin it.
-        link = _code_link(entry, repo, head_sha, wt_path)
+        link = permalinks.code_link(entry, repo, head_sha, wt_path)
         if link:
             parts.append(f"Unchanged at {link}.")
         return "\n\n".join(parts)
@@ -1787,7 +1660,7 @@ def _answered_comment_sources(
     such a reply could settle.
     """
     if not any(
-        o.outcome in _UNSETTLED_OUTCOMES and _comment_item_source(o).ok
+        o.outcome in _UNSETTLED_OUTCOMES and permalinks.comment_item_source(o).ok
         for o in outcomes
     ):
         return frozenset()
@@ -1838,7 +1711,7 @@ def _entry_settlement(
     thread = threads_by_id.get(entry.id)
     if thread:
         return _settlement_for(thread)
-    source = _comment_item_source(entry)
+    source = permalinks.comment_item_source(entry)
     if not source.ok:
         return None
     if source.id in answered_sources:
@@ -2175,7 +2048,7 @@ def _build_deferred_issue_body(
     ]
     for entry in deferred:
         summary = entry.summary or "—"
-        permalink = _thread_permalink(entry, threads_by_id, repo, pr_number)
+        permalink = permalinks.thread_permalink(entry, threads_by_id, repo, pr_number)
         thread_cell = f"[{summary}]({permalink})" if permalink else summary
         file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
         reason = entry.reason or "—"
@@ -2491,98 +2364,14 @@ def _warn_unattributed_fixes(
     )
 
 
-@dataclass(frozen=True)
-class CommentSource:
-    """The top-level comment a decomposed item was split out of.
-
-    Empty for anything that is not such an item — a review thread's id parses to
-    no source at all — and `ok` is how a caller asks which it got. A type with a
-    predicate rather than a pair of strings because "is this a comment item"
-    and "which comment" are asked together everywhere they are asked.
-    """
-
-    type: str = ""
-    id: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return bool(self.id)
-
-    def permalink(self, repo: str, pr_number: int) -> str | None:
-        """The anchor a reader follows back to the comment, or None."""
-        if not self.ok:
-            return None
-        base = f"https://github.com/{repo}/pull/{pr_number}"
-        if self.type == "issue_comment":
-            return f"{base}#issuecomment-{self.id}"
-        if self.type == "review_body":
-            return f"{base}#pullrequestreview-{self.id}"
-        return None
-
-
-def _comment_item_source(entry: CommentItem | ItemOutcome) -> CommentSource:
-    """The comment a decomposed item came from, empty when it is not one.
-
-    Takes either shape because reconciliation asks it of the record directly,
-    before an outcome has been rebuilt into an entry — an `ItemOutcome` carries
-    no source of its own, so the synthetic id is all there is to read.
-    """
-    source_id = getattr(entry, "source_id", "")
-    source_type = getattr(entry, "source_type", "")
-    if not source_id and not source_type:
-        # Parse the synthetic id: ic-{source_id}-{index} or rb-{source_id}-{index}
-        eid = entry.id
-        if eid.startswith("ic-"):
-            source_type = "issue_comment"
-            source_id = "-".join(eid.split("-")[1:-1])
-        elif eid.startswith("rb-"):
-            source_type = "review_body"
-            source_id = "-".join(eid.split("-")[1:-1])
-    return CommentSource(source_type, source_id)
-
-
-def _comment_item_permalink(
-    entry: CommentItem,
-    repo: str, pr_number: int,
-) -> str | None:
-    """Build a permalink for a decomposed comment item from its source comment."""
-    return _comment_item_source(entry).permalink(repo, pr_number)
-
-
-def _thread_permalink(
-    entry: CommentItem,
-    threads_by_id: dict[str, ReportThread],
-    repo: str, pr_number: int,
-) -> str | None:
-    """Build a GitHub permalink for a review thread or comment item."""
-    thread = threads_by_id.get(entry.id)
-    if thread and thread.comments:
-        db_id = thread.comments[0].get("databaseId")
-        if db_id:
-            return f"https://github.com/{repo}/pull/{pr_number}#discussion_r{db_id}"
-    return _comment_item_permalink(entry, repo, pr_number)
-
-
-def _escape_cell(text: str) -> str:
-    """Escape a literal pipe so free-form text cannot break out of its cell.
-
-    Summaries and reasons are prose written per round, and nothing constrains
-    them to avoid a pipe. One unescaped pipe shifts every later cell in the row,
-    which breaks the rendered table and corrupts the key that carry-over reads
-    back out of the published comment — a row whose key never matches itself
-    looks new every round.
-    """
-    return text.replace("|", "\\|")
-
-
 def _summary_cell(
     entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str:
     """Thread summary as a markdown link if a permalink is available, plain text otherwise."""
-    summary = _escape_cell(entry.summary or "—")
-    url = _thread_permalink(entry, threads_by_id, repo, pr_number)
+    summary = markdown.escape_cell(entry.summary or "—")
+    url = permalinks.thread_permalink(entry, threads_by_id, repo, pr_number)
     if url:
         return f"[{summary}]({url})"
     return summary
@@ -2604,9 +2393,9 @@ def _build_row(
     summary = _summary_cell(entry, threads_by_id, repo, pr_number)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
     if entry.file and head_sha:
-        anchor = _anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
+        anchor = permalinks.anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
         label = f"{entry.file}:{anchor}" if anchor else entry.file
-        url = _blob_permalink(repo, head_sha, entry.file, anchor)
+        url = permalinks.blob_permalink(repo, head_sha, entry.file, anchor)
         file_loc = f"[`{label}`]({url})"
     elif entry.file and entry.line:
         file_loc = f"`{entry.file}:{entry.line}`"
@@ -2614,7 +2403,7 @@ def _build_row(
         file_loc = f"`{entry.file}`"
     else:
         file_loc = "—"
-    return f"| {summary} | {reviewer} | {file_loc} | {_escape_cell(status)} |"
+    return f"| {summary} | {reviewer} | {file_loc} | {markdown.escape_cell(status)} |"
 
 
 def _summarize_comment_body(body: str, max_len: int = 120) -> str:
@@ -2659,7 +2448,7 @@ def _duplicate_item_ids(
     return {
         e.id for e in entries
         if e.id not in threads_by_id
-        and _comment_item_source(e).ok
+        and permalinks.comment_item_source(e).ok
         and _finding_location(e) in covered
     }
 
@@ -3008,7 +2797,7 @@ def _comment_timestamps(
 ) -> dict[str, str]:
     """When each top-level comment a summary row can be cut from was written.
 
-    Keyed by the source id `_comment_item_source` reads off a row's entry, and
+    Keyed by the source id `permalinks.comment_item_source` reads off an entry, and
     stringified because that id is parsed out of a synthetic id while the
     listing carries it as a number.
     """
@@ -3050,7 +2839,7 @@ def _entry_activity_at(
             ),
             default="",
         )
-    return sources_at.get(_comment_item_source(entry).id, "")
+    return sources_at.get(permalinks.comment_item_source(entry).id, "")
 
 
 @dataclass(frozen=True)
@@ -3362,25 +3151,12 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
 # The two anchors a rendered row can carry, for telling which surface it came
 # from once the entry behind it is out of reach — and, in `_summary_row_key`,
 # whether that anchor identifies the row or only the comment it was cut from.
+# The two anchor shapes a published row can be identified by. Not markdown
+# primitives: what they match is a GitHub review thread and a decomposed
+# comment item, which is PR vocabulary — `core.markdown` owns the cell, this
+# owns what a cell of ours says.
 _ITEM_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-\d+")
 _THREAD_ANCHOR_RE = re.compile(r"#discussion_r\d+")
-_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
-
-
-def _row_cells(row: str) -> list[str]:
-    """Split a rendered row into cells, honouring the escape `_escape_cell` writes."""
-    return [cell.strip() for cell in _CELL_SPLIT_RE.split(row.strip().strip("|"))]
-
-
-def _plain_cell(cell: str) -> str:
-    """A rendered cell's text, with link targets and backticks taken away.
-
-    What is left is the part of the cell a later round renders the same way: a
-    link target carries the SHA its round was pinned to, and the backticks are
-    decoration the text underneath does not depend on.
-    """
-    return _MD_LINK_RE.sub(r"\1", cell).replace("`", "").strip()
 
 
 def _row_location_key(row: str) -> str:
@@ -3396,10 +3172,10 @@ def _row_location_key(row: str) -> str:
     is markdown rather than a typed entry: the reviewer and file cells are all
     that survive to match on.
     """
-    cells = _row_cells(row)
+    cells = markdown.row_cells(row)
     if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
         return ""
-    location = _plain_cell(cells[2])
+    location = markdown.plain_cell(cells[2])
     if ":" not in location:
         return ""
     return f"{cells[1]}|{location}"
@@ -3426,7 +3202,7 @@ def _summary_row_key(row: str) -> str:
     thread = _THREAD_ANCHOR_RE.search(row)
     if thread:
         return thread.group(0)
-    cells = _row_cells(row)
+    cells = markdown.row_cells(row)
     item = _ITEM_ANCHOR_RE.search(row)
     if item:
         # ceiling: the summary cell is the whole of what separates one item
@@ -3434,9 +3210,9 @@ def _summary_row_key(row: str) -> str:
         # as a new row and the published one carries forward beside it.
         # Upgrade trigger: once a reworded item is seen rendering twice, write
         # the item's synthetic id into the row and key on that instead.
-        return f"{item.group(0)} | {_plain_cell(cells[0])}"
+        return f"{item.group(0)} | {markdown.plain_cell(cells[0])}"
     return " | ".join(
-        _plain_cell(cell) for cell in cells[:len(_SUMMARY_TABLE_COLUMNS) - 1]
+        markdown.plain_cell(cell) for cell in cells[:len(_SUMMARY_TABLE_COLUMNS) - 1]
     )
 
 
@@ -3449,7 +3225,7 @@ def _summary_table_rows(body: str) -> list[str]:
             continue
         if not line.strip("|-: "):
             continue
-        if _row_cells(line) == list(_SUMMARY_TABLE_COLUMNS):
+        if markdown.row_cells(line) == list(_SUMMARY_TABLE_COLUMNS):
             continue
         rows.append(line)
     return rows
@@ -3507,7 +3283,7 @@ def _carried_over_rows(
 
 def _row_action_cell(row: str) -> str:
     """The Action cell of a rendered row, or "" for a row that has no such cell."""
-    cells = _row_cells(row)
+    cells = markdown.row_cells(row)
     if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
         return ""
     return cells[len(_SUMMARY_TABLE_COLUMNS) - 1]
@@ -4449,7 +4225,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         return _fix_items(
             self.fixable, self.threads_by_id, self.workdir,
             fixable_items=self.fixable_items,
-            default_branch=_resolve_default_branch(self.workdir),
+            default_branch=git_topology.default_branch_cached(self.workdir),
         )
 
     def template_vars(self) -> dict[str, str]:
@@ -4633,7 +4409,7 @@ def _run_comment_fix(
     _hold_if_superseded(
         supersession.detect_cached(
             wt_path, ctx.repo, ctx.target_dir,
-            base=f"origin/{_resolve_default_branch(wt_path)}", trail=trail,
+            base=f"origin/{git_topology.default_branch_cached(wt_path)}", trail=trail,
         ),
         trail,
     )

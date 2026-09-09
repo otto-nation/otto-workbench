@@ -1200,6 +1200,23 @@ missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
 
+### pr/permalinks.py
+
+Links back to the code a review comment is about, pinned so they keep pointing.
+
+`git-operations.md` § Replying to Review Comments makes a SHA-pinned permalink a
+standing requirement for every reply: a branch-relative blob URL drifts as the
+branch moves, so a claim posted to a reviewer stops resolving to the code it was
+making a claim about. This is the implementation that gets it right, including
+the part that is easy to leave out — a line number is a coordinate in one tree,
+and pinning one to a tree it was not read in sends the reviewer to whatever code
+inherited the number.
+
+Two questions are answered here rather than one, because a citation is only as
+good as both: *where does this link point*, and *is there anything there*.
+:func:`evidence_is_real` is the second, and it sits beside the linkers rather
+than beside triage because the thing it guards is the link.
+
 ### pr/thread_models.py
 
 Typed domain objects for PR review thread processing.
@@ -2263,6 +2280,20 @@ It goes if a second release ships with no Python reader.
 Centralized human-facing stderr output for otto-workbench AI scripts.
 
 NOT for structured event logging — use trail.py for that.
+
+### core/markdown.py
+
+Markdown table cells, written and read back.
+
+A table this workbench publishes is not only output: the summary comment on a
+PR is re-read on the next round to recover which rows it already carried, so
+the same cell text has to survive a round trip through GitHub. That makes the
+escaping and the un-escaping one subject with two halves, and splitting them
+across the writer and the reader is how they drift.
+
+Both halves are here, below any package that knows what a row *means*. What a
+cell says is a domain question; that a pipe inside one has to be escaped, and
+that a link renders as `[label](url)`, is not.
 
 ### core/module_proxy.py
 

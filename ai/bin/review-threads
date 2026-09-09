@@ -2388,7 +2388,7 @@ def _build_row(
     The file cell is a permalink whenever a SHA is known — every claim the table
     makes should be one line away from the code that backs it. The line anchor
     is kept only where it still holds in that SHA, on the same terms as a reply's
-    link: see `_anchored_line`.
+    link: see `permalinks.anchored_line`.
     """
     summary = _summary_cell(entry, threads_by_id, repo, pr_number)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"

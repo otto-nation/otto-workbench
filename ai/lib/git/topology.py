@@ -223,10 +223,13 @@ def default_branch_cached(wt_path: Path) -> str:
     rather than a decorator on the resolver above, because the two have
     different contracts and only one of them is safe to hold across repos.
 
-    The cache is process-global. Safe for a single CLI invocation; a test
-    harness that exercises several worktree paths with different git state must
-    call ``default_branch_cached.cache_clear()`` between cases, or read a stale
-    answer from an earlier one.
+    The cache is process-global and never expires, which is the right trade for
+    a short-lived CLI run against one worktree and the wrong one for anything
+    long-running: a caller that walks several worktrees in one process, or that
+    outlives a branch being renamed underneath it, gets the first answer for
+    each path forever. Such a caller wants :func:`default_branch`. A test
+    harness exercising several paths with different git state must call
+    ``default_branch_cached.cache_clear()`` between cases.
     """
     return default_branch(wt_path)
 

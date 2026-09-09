@@ -62,6 +62,7 @@
     "skill:retro",
     "skill:reviewer",
     "skill:self-review-fix",
-    "skill:wiki"
+    "skill:wiki",
+    "skill:wiki-capture"
   ]
 }

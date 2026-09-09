@@ -45,7 +45,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, wiki — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, wiki-capture, wiki — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -219,6 +219,19 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
 
+### `/wiki-capture`
+
+Reviews the session that just ended for anything worth keeping and logs it to the knowledge base, without writing articles. TRIGGER when: a session ends in a repo with a knowledge base and a capture is due. SKIP: writing or editing articles (use wiki compile); one-off answers already in the codebase.
+
+```
+/wiki-capture
+```
+
+**Output:** `SESSION_OBSERVATION entries appended to the knowledge base's _log.md`
+**Auto-trigger:** 24h (via Stop hook)
+**Trigger:** Auto-triggers at session end, at most once every 24h per repo, in repos that have a knowledge base.
+**Skip:** Never writes or edits an article — /wiki compile processes what this logs, deliberately.
+
 ### `/wiki [init|ingest|compile|status|lint|promote] [args]`
 
 Build and maintain a compiled knowledge base — ingest sources, compile them into interlinked articles, query them, and keep them healthy. TRIGGER when: user wants a knowledge base, asks to ingest or compile a source, queries compiled knowledge, or asks about wiki health. SKIP: one-off questions answerable from the codebase; project docs that belong in docs/.
@@ -235,15 +248,17 @@ Build and maintain a compiled knowledge base — ingest sources, compile them in
 
 Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:
 
-1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`
-2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag
+1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks
+2. **If due** — `run-auto-task <skill>` detaches a headless `claude -p` session, which inherits the exiting session's working directory and logs to `~/.claude/logs/`
 3. **Skill completion** — completion script records a timestamp so the cooldown resets
+
+The headless session runs with `--bare`, so its own Stop hooks do not fire and nothing cascades.
 
 Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
 
 ### Manual triggers
 
-All lifecycle skills can be run on demand: `/ceiling-debt`, `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
+Every lifecycle skill can be run on demand by its invocation in the table above.
 
 ## Task Automation
 

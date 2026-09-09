@@ -395,6 +395,33 @@ class TestLint:
         assert len(findings) == 1
         assert "2 observation" in findings[0]["message"]
 
+    def test_detects_entries_written_in_the_documented_form(self, tmp_path):
+        """The bracketed date is what the artifacts rule tells sessions to write.
+
+        It was not matched, so an entry written exactly as documented counted
+        for nothing: no backlog in `wiki status`, nothing to process in `wiki
+        lint` — indistinguishable from a log that had been drained.
+        """
+        root = make_wiki(tmp_path)
+        (root / "_log.md").write_text(
+            "[2026-01-15] SESSION_OBSERVATION: the hook resolves the container\n"
+            "  Context: a session started at the bare repo\n"
+            "[2026-01-15] QUERY_GAP: no article on worktree layout\n",
+            encoding="utf-8",
+        )
+        findings = findings_for(root, "unprocessed-log")
+        assert len(findings) == 1
+        assert "2 observation" in findings[0]["message"]
+
+    def test_a_compile_entry_is_not_an_unprocessed_one(self, tmp_path):
+        """Widening the date prefix must not make every log line an entry."""
+        root = make_wiki(tmp_path)
+        (root / "_log.md").write_text(
+            "[2026-01-15] COMPILE: drained the log\n",
+            encoding="utf-8",
+        )
+        assert findings_for(root, "unprocessed-log") == []
+
     def test_drafts_are_not_linted_as_published(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "d", body="short", subdir="drafts")

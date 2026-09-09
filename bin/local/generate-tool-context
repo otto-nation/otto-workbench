@@ -334,14 +334,16 @@ _emit_lifecycle() {
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf 'Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:\n\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
-  printf '1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`\n'
-  printf '2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag\n'
+  printf '1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf '2. **If due** — `run-auto-task <skill>` detaches a headless `claude -p` session, which inherits the exiting session'"'"'s working directory and logs to `~/.claude/logs/`\n'
   printf '3. **Skill completion** — completion script records a timestamp so the cooldown resets\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf '\nThe headless session runs with `--bare`, so its own Stop hooks do not fire and nothing cascades.\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf '\nAdditionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.\n'
   printf '\n### Manual triggers\n\n'
-  # shellcheck disable=SC2016  # backticks are markdown literals
-  printf 'All lifecycle skills can be run on demand: `/ceiling-debt`, `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.\n'
+  printf 'Every lifecycle skill can be run on demand by its invocation in the table above.\n'
 }
 
 # _emit_skill_reference — renders the Skill Reference section for ai-automation.md.

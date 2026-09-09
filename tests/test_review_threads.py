@@ -34,10 +34,16 @@ from pr.comments_state import ThreadState
 from pr.comments_fix import FixSummary
 from pr.domains import SupersessionKind
 from git.land import CommitStatus
+from git import client as git_client
+from pr import attribution
+from pr import history_rewrite
 from git import topology as git_topology
 from core import markdown
 from pr import permalinks
-from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
+from pr.fix import (
+    RECONCILED_REASON, SETTLED_REASON,
+    FixOutcome, FixRecord, ItemOutcome, SettledBy,
+)
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
@@ -936,7 +942,7 @@ class TestCommentFixLanding:
     def _recorded(rt, landed, *, short="abc1234"):
         with patch.object(rt.git_client, "run",
                           return_value=_git_ran(0, stdout=f"{short}\n")):
-            return rt._pass_commit(Path("/fake"), landed)
+            return attribution.pass_commit(Path("/fake"), landed)
 
     def test_the_owner_is_asked_for_the_retry_and_the_recovery(self, rt, tmp_path):
         """Both are options, and a pass that did not ask would get neither."""
@@ -982,17 +988,6 @@ class TestCommentFixLanding:
         assert "rejected" in result.error
 
 
-# ── _get_head_sha ────────────────────────────────────────────────────────────
-
-
-class TestGetHeadSha:
-    def test_returns_short_sha(self, rt):
-        with patch.object(rt.git_client, "run",
-                          return_value=_git_ran(0, stdout="abc1234\n")):
-            result = rt._get_head_sha(Path("/fake"))
-        assert result == "abc1234"
-
-
 # ── _fixed_status_text ──────────────────────────────────────────────────────
 
 
@@ -1000,7 +995,7 @@ class TestFixedStatusText:
     """Test status text rendering for each CommitPushResult state."""
 
     def test_pushed(self, rt):
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert "Fixed in" in text
         assert "abc1234" in text
@@ -1008,14 +1003,14 @@ class TestFixedStatusText:
 
     def test_push_failed_says_the_commit_exists(self, rt):
         """"Fix pending" would deny a commit that is sitting in the worktree."""
-        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        cp = attribution.CommitPushResult("abc1234", "push_failed", "rejected")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert "committed locally" in text
         assert "push failed" in text
         assert "abc1234" not in text
 
     def test_push_held_says_why_it_is_waiting(self, rt):
-        cp = rt.CommitPushResult("abc1234", "push_held", "")
+        cp = attribution.CommitPushResult("abc1234", "push_held", "")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert "committed locally" in text
         assert "push held" in text
@@ -1023,7 +1018,7 @@ class TestFixedStatusText:
 
     def test_push_lost_says_the_remote_does_not_have_it(self, rt):
         """The operator saw a clean push, so "push failed" would read as wrong."""
-        cp = rt.CommitPushResult("abc1234", "push_lost", "")
+        cp = attribution.CommitPushResult("abc1234", "push_lost", "")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert "committed locally" in text
         assert "remote does not have it" in text
@@ -1031,7 +1026,7 @@ class TestFixedStatusText:
 
     def test_push_unverified_does_not_claim_the_remote_answered(self, rt):
         """An unreachable remote said neither yes nor no — say only that."""
-        cp = rt.CommitPushResult("abc1234", "push_unverified", "")
+        cp = attribution.CommitPushResult("abc1234", "push_unverified", "")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert "could not reach the remote" in text
         assert "does not have it" not in text
@@ -1039,13 +1034,13 @@ class TestFixedStatusText:
 
     def test_no_changes_claims_nothing_about_why(self, rt):
         """"Fixed" and "nothing committed" cannot both be true."""
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert text == rt._UNATTRIBUTED_STATUS_TEXT
         assert "no commit needed" not in text
 
     def test_commit_failed(self, rt):
-        cp = rt.CommitPushResult(None, "commit_failed", "hook error")
+        cp = attribution.CommitPushResult(None, "commit_failed", "hook error")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert "commit failed" in text
         assert "pre-commit" in text
@@ -1069,60 +1064,60 @@ class TestAttributeCommit:
 
     def test_a_recorded_commit_outranks_the_running_pass(self, rt):
         """An earlier round's commit is the one that carries the change."""
-        got = rt._attribute_commit(
+        got = attribution.attribute_commit(
             self._entry(commit_sha=_ROUND_1_SHA),
-            rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+            attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
         )
-        assert got.claim is rt.CommitClaim.RECORDED
+        assert got.claim is attribution.CommitClaim.RECORDED
         assert got.sha == _ROUND_1_SHA
 
     def test_an_entry_the_pass_landed_rides_the_pass_commit(self, rt):
-        got = rt._attribute_commit(
+        got = attribution.attribute_commit(
             self._entry(commit_sha=_PASS_SHA),
-            rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+            attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
         )
-        assert got.claim is rt.CommitClaim.PASS
+        assert got.claim is attribution.CommitClaim.PASS
         assert got.sha == _PASS_SHA
 
     def test_an_unpublished_pass_commit_is_not_citable(self, rt):
         """A SHA the remote does not have would 404 for whoever clicks it."""
-        got = rt._attribute_commit(
+        got = attribution.attribute_commit(
             self._entry(commit_sha=_PASS_SHA),
-            rt.CommitPushResult(_PASS_SHA, "push_failed", "rejected"),
+            attribution.CommitPushResult(_PASS_SHA, "push_failed", "rejected"),
         )
-        assert got.claim is rt.CommitClaim.PASS
+        assert got.claim is attribution.CommitClaim.PASS
         assert got.cited is False
 
     def test_an_entry_the_pass_never_recorded_claims_nothing(self, rt):
         """The pass committed and this entry is not in that commit."""
-        got = rt._attribute_commit(
-            self._entry(), rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+        got = attribution.attribute_commit(
+            self._entry(), attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
         )
-        assert got.claim is rt.CommitClaim.UNRECORDED
+        assert got.claim is attribution.CommitClaim.UNRECORDED
         assert got.cited is False
 
     def test_an_undetermined_pass_lends_nothing(self, rt):
         """Commits landed outside the pass; none of them answers for a row."""
-        got = rt._attribute_commit(
+        got = attribution.attribute_commit(
             self._entry(),
-            rt.CommitPushResult(_PASS_SHA, "pushed", "",
-                                claim=rt.CommitClaim.UNDETERMINED),
+            attribution.CommitPushResult(_PASS_SHA, "pushed", "",
+                                claim=attribution.CommitClaim.UNDETERMINED),
         )
-        assert got.claim is rt.CommitClaim.UNDETERMINED
+        assert got.claim is attribution.CommitClaim.UNDETERMINED
         assert got.cited is False
 
     def test_a_pass_with_no_commit_leaves_the_row_to_the_pass(self, rt):
         """Nothing was committed by anyone, so there is nothing row-specific to say."""
-        got = rt._attribute_commit(
-            self._entry(), rt.CommitPushResult(None, "no_changes", ""),
+        got = attribution.attribute_commit(
+            self._entry(), attribution.CommitPushResult(None, "no_changes", ""),
         )
-        assert got.claim is rt.CommitClaim.PASS
+        assert got.claim is attribution.CommitClaim.PASS
         assert got.cited is False
 
     def test_the_pass_stamps_the_entries_it_landed(self, rt):
         """The one write of thread → commit; every reader goes through the resolver."""
         fresh, earlier = self._entry(), self._entry(commit_sha=_ROUND_1_SHA)
-        rt._stamp_pass_commit([fresh, earlier], _PASS_SHA)
+        attribution.stamp_pass_commit([fresh, earlier], _PASS_SHA)
         assert fresh.commit_sha == _PASS_SHA
         assert earlier.commit_sha == _ROUND_1_SHA
 
@@ -1139,7 +1134,7 @@ class TestBuildSummaryBody:
         return CommentItem(**defaults)
 
     def test_pushed_shows_commit_link(self, rt, content):
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[self._fixed_entry(commit_sha="abc1234")]),
             cp, "owner/repo", 1, {},
@@ -1148,7 +1143,7 @@ class TestBuildSummaryBody:
         assert "push failed" not in body
 
     def test_no_changes_shows_an_unattributed_fix(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             content(fixed=[self._fixed_entry()]), cp, "owner/repo", 1, {},
         )
@@ -1156,7 +1151,7 @@ class TestBuildSummaryBody:
         assert "no commit needed" not in body
 
     def test_commit_failed_shows_precommit_hint(self, rt, content):
-        cp = rt.CommitPushResult(None, "commit_failed", "hook error")
+        cp = attribution.CommitPushResult(None, "commit_failed", "hook error")
         body = rt._build_summary_body(
             content(fixed=[self._fixed_entry()]), cp, "owner/repo", 1, {},
         )
@@ -1168,7 +1163,7 @@ class TestBuildSummaryBody:
         A SHA the remote does not have would 404 for whoever clicks it, so the
         cell states the situation rather than citing it.
         """
-        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        cp = attribution.CommitPushResult("abc1234", "push_failed", "rejected")
         body = rt._build_summary_body(
             content(fixed=[self._fixed_entry(commit_sha="abc1234")]),
             cp, "owner/repo", 1, {},
@@ -1177,7 +1172,7 @@ class TestBuildSummaryBody:
         assert "/commit/abc1234" not in body
 
     def test_needs_human_rows(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             content(needs_human=[
                 CommentItem(summary="question", file="a.py", line=1, reason="contested"),
@@ -1193,7 +1188,7 @@ class TestBuildSummaryBody:
         reviewer-facing one with `NEEDS_HUMAN`; a renderer reading only the
         latter would drop the entries the agent argued against.
         """
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             content(
                 needs_human=[CommentItem(
@@ -1211,7 +1206,7 @@ class TestBuildSummaryBody:
         assert "2 need discussion" in body
 
     def test_empty_returns_no_table(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(content(), cp, "owner/repo", 1, {})
         assert "Thread" not in body
 
@@ -1222,7 +1217,7 @@ class TestBuildSummaryBody:
         threads_by_id = {
             tid: ReportThread(id=tid, comments=[{"databaseId": 999}]),
         }
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[entry]), cp, "owner/repo", 42, threads_by_id,
         )
@@ -1235,7 +1230,7 @@ class TestBuildSummaryBody:
             id="ic-77777-0", summary="add tests", file="foo.py", line=5,
             source_id="77777", source_type="issue_comment",
         )
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[entry]), cp, "owner/repo", 42, {},
         )
@@ -1248,7 +1243,7 @@ class TestBuildSummaryBody:
             id="rb-88888-1", summary="refactor needed", file="bar.py", line=3,
             source_id="88888", source_type="review_body",
         )
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[entry]), cp, "owner/repo", 42, {},
         )
@@ -1266,7 +1261,7 @@ class TestBuildSummaryBody:
             id="ic-99999-0", summary="fix typo", file="readme.md", line=1,
             outcome=FixOutcome.FIXED,
         ))
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[entry]), cp, "owner/repo", 42, {},
         )
@@ -1276,7 +1271,7 @@ class TestBuildSummaryBody:
     def test_reviewer_column_rendered(self, rt, content):
         """Table rows include the reviewer as @mention."""
         entry = self._fixed_entry(reviewer="alice")
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[entry]), cp, "owner/repo", 1, {},
         )
@@ -1286,14 +1281,14 @@ class TestBuildSummaryBody:
     def test_reviewer_column_missing_shows_dash(self, rt, content):
         """Entries without a reviewer show a dash."""
         entry = self._fixed_entry(reviewer="")
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[entry]), cp, "owner/repo", 1, {},
         )
         assert "| — |" in body
 
     def test_unseen_issue_comments_render_discussion_section(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         issue_comments = [
             {"user": "alice", "body": "Can we add tests?", "seen": False},
         ]
@@ -1305,7 +1300,7 @@ class TestBuildSummaryBody:
         assert "Can we add tests?" in body
 
     def test_seen_issue_comments_not_rendered(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         issue_comments = [
             {"user": "alice", "body": "Old comment", "seen": True},
         ]
@@ -1315,7 +1310,7 @@ class TestBuildSummaryBody:
         assert "Discussion Comments" not in body
 
     def test_unseen_review_body_comments_render_review_level_section(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         review_body_comments = [
             {"user": "bob", "state": "CHANGES_REQUESTED", "body": "Needs refactor", "seen": False},
         ]
@@ -1329,7 +1324,7 @@ class TestBuildSummaryBody:
         assert "Needs refactor" in body
 
     def test_seen_review_body_comments_not_rendered(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         review_body_comments = [
             {"user": "bob", "state": "APPROVED", "body": "Looks good", "seen": True},
         ]
@@ -1340,7 +1335,7 @@ class TestBuildSummaryBody:
         assert "Review-Level Comments" not in body
 
     def test_deferred_with_issue_link(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         deferred = [CommentItem(id="t1", summary="fix regex", file="parsers.py", line=10)]
         body = rt._build_summary_body(
             content(deferred=deferred), cp, "owner/repo", 1, {},
@@ -1352,7 +1347,7 @@ class TestBuildSummaryBody:
         assert "linear.app" in body
 
     def test_deferred_without_issue(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         deferred = [CommentItem(id="t1", summary="fix regex", file="parsers.py", line=10)]
         body = rt._build_summary_body(
             content(deferred=deferred), cp, "owner/repo", 1, {},
@@ -1391,7 +1386,7 @@ class TestPostOrDeferSummary:
         return CommentItem(**defaults)
 
     def test_posts_when_pushed_no_deferred(self, rt, content):
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         with patch("pr.comments.post_issue_comment", return_value="https://url") as mock:
             url = rt._post_or_defer_summary(
                 content(fixed=[self._fixed_entry()]), cp, "owner/repo", 1, {},
@@ -1400,7 +1395,7 @@ class TestPostOrDeferSummary:
         mock.assert_called_once()
 
     def test_defers_when_needs_human(self, rt, content):
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         url = rt._post_or_defer_summary(
             content(
                 fixed=[self._fixed_entry()],
@@ -1416,7 +1411,7 @@ class TestPostOrDeferSummary:
         Both mean a person still owes an answer, so the pass that reads only
         one of them posts a summary over a round that is not finished.
         """
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         url = rt._post_or_defer_summary(
             content(
                 fixed=[self._fixed_entry()],
@@ -1427,7 +1422,7 @@ class TestPostOrDeferSummary:
         assert url is None
 
     def test_defers_when_push_failed(self, rt, content):
-        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        cp = attribution.CommitPushResult("abc1234", "push_failed", "rejected")
         with patch("pr.comments.post_issue_comment") as mock:
             url = rt._post_or_defer_summary(
                 content(fixed=[self._fixed_entry()]), cp, "owner/repo", 1, {},
@@ -1570,7 +1565,7 @@ class TestRenderDeferredSummary:
             id="t1", state=ThreadState.RESOLVED, is_resolved=True,
             comments=[{"body": "x"}],
         )])
-        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+        with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as mock_post:
             rt._finish_deferred_work(ctx, report, track=rt.TRACK_ALL)
         body = mock_post.call_args[0][2]
@@ -1716,7 +1711,7 @@ class TestSummaryUsesPerThreadCommit:
             ItemOutcome(id="t1", summary="fixed by hand", file="a.py", line=1,
                           outcome=FixOutcome.FIXED,
                           settled_by=SettledBy.RECONCILIATION,
-                          reason=rt._RECONCILED_REASON),
+                          reason=RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
         assert "Fixed in" not in body
@@ -1734,7 +1729,7 @@ class TestSummaryUsesPerThreadCommit:
             ItemOutcome(id="t1", summary="deferred by the reviewer", file="a.py", line=1,
                           outcome=FixOutcome.SETTLED_ELSEWHERE,
                           settled_by=SettledBy.RECONCILIATION,
-                          reason=rt._RECONCILED_REASON),
+                          reason=RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
         assert rt._RECONCILED_STATUS_TEXT in body
@@ -1858,7 +1853,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             commit_status="commit_failed", head_sha="aaa1111",
             summary_deferred=True,
         )
-        with patch.object(rt, "_get_head_sha", return_value="ccc3333"), \
+        with patch.object(git_client, "head_sha", return_value="ccc3333"), \
              patch.object(rt.push, "holds", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
@@ -1878,7 +1873,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             commit_status="commit_failed", head_sha="aaa1111",
             summary_deferred=True,
         )
-        with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
+        with patch.object(git_client, "head_sha", return_value="bbb2222"), \
              patch.object(rt.push, "holds", return_value=False), \
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
@@ -1894,7 +1889,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             commit_status="commit_failed", head_sha="aaa1111",
             summary_deferred=True,
         )
-        with patch.object(rt, "_get_head_sha", return_value="aaa1111"), \
+        with patch.object(git_client, "head_sha", return_value="aaa1111"), \
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
@@ -1902,7 +1897,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
 
     def test_the_contradiction_is_reported(self, rt, capsys):
         """N fixes and no commit is caught, not rendered quietly."""
-        cp = rt.CommitPushResult(None, "commit_failed", "hook")
+        cp = attribution.CommitPushResult(None, "commit_failed", "hook")
         rt._warn_unattributed_fixes(
             [CommentItem(id="t1", summary="fix it", file="a.py", line=1)], cp,
         )
@@ -1937,7 +1932,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
             reviewers={t.id: "kgn" for t in threads},
             summary_deferred=True, has_comment_items=True,
         )
-        with patch.object(rt, "_get_head_sha", return_value="aaa1111"), \
+        with patch.object(git_client, "head_sha", return_value="aaa1111"), \
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(
                 _make_state(fix), PRReport(), "owner/repo", 1, by_id,
@@ -2062,7 +2057,7 @@ class TestEveryVerdictReachesTheTable:
             for n, o in enumerate(verdicts, start=1)
         }
         body = rt._build_summary_body(
-            content(**buckets), rt.CommitPushResult("abc1234", "pushed", ""),
+            content(**buckets), attribution.CommitPushResult("abc1234", "pushed", ""),
             "owner/repo", 42, {},
         )
         assert [f"point {n}" in body for n in range(1, len(verdicts) + 1)] == (
@@ -2399,7 +2394,7 @@ class TestFollowHistoryRewrite:
     def test_a_rebased_commit_is_followed_to_its_replay(self, rt, tmp_path):
         repo = _held_fix_branch(tmp_path)
         state = self._state(repo)
-        rt._follow_history_rewrite(state, repo.path)
+        history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.replay
         assert state.fix.fix.head_sha == repo.replay
         assert state.fix.fix.items[0].commit_sha == repo.replay
@@ -2410,7 +2405,7 @@ class TestFollowHistoryRewrite:
         repo = _held_fix_branch(tmp_path)
         assert rt.push.holds(repo.path, repo.held) is False
         state = self._state(repo)
-        rt._follow_history_rewrite(state, repo.path)
+        history_rewrite.follow_history_rewrite(state, repo.path)
         assert rt.push.holds(repo.path, state.fix.fix.commit_sha) is True
 
     def test_the_closeout_stops_holding_after_a_rebase(
@@ -2452,7 +2447,7 @@ class TestFollowHistoryRewrite:
                               commit_sha=repo.second, read_sha=repo.second),
             ],
         ))
-        rt._follow_history_rewrite(state, repo.path)
+        history_rewrite.follow_history_rewrite(state, repo.path)
         assert repo.first_replay != repo.second_replay
         assert state.fix.fix.items[0].commit_sha == repo.first_replay
         assert state.fix.fix.items[1].commit_sha == repo.second_replay
@@ -2469,7 +2464,7 @@ class TestFollowHistoryRewrite:
         ))
         warned = []
         with patch.object(rt.log, "warn", side_effect=warned.append):
-            rt._follow_history_rewrite(state, repo.path)
+            history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.held
         assert any(repo.held in w and "pr comments --fix" in w for w in warned)
 
@@ -2483,7 +2478,7 @@ class TestFollowHistoryRewrite:
         with patch.object(rt.log, "info", side_effect=logged.append), \
                 patch.object(rt, "_reply_to_fixed", return_value=1) as reply, \
                 patch.object(rt, "_resolve_fixed_threads"):
-            rt._follow_history_rewrite(state, repo.path)
+            history_rewrite.follow_history_rewrite(state, repo.path)
             rt._post_pending_fix_replies(state, "owner/repo", 42, {})
         assert not any("Push still pending" in m for m in logged)
         assert reply.call_args[0][4].sha == repo.replay
@@ -2492,7 +2487,7 @@ class TestFollowHistoryRewrite:
         """The replay is real and local — which is an ordinary unpushed commit."""
         repo = _held_fix_branch(tmp_path, push=False)
         state = self._state(repo)
-        rt._follow_history_rewrite(state, repo.path)
+        history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.replay
         assert rt.push.holds(repo.path, state.fix.fix.commit_sha) is False
         rt._push_held_commit(state, repo.path)
@@ -2502,7 +2497,7 @@ class TestFollowHistoryRewrite:
         """No rewrite happened: the SHA is on the branch and simply not sent."""
         repo = _held_fix_branch(tmp_path, rebase=False, push=False)
         state = self._state(repo)
-        rt._follow_history_rewrite(state, repo.path)
+        history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.held
         assert rt.push.holds(repo.path, state.fix.fix.commit_sha) is False
         rt._push_held_commit(state, repo.path)
@@ -2516,7 +2511,7 @@ class TestFollowHistoryRewrite:
         state = self._state(repo)
         warned = []
         with patch.object(rt.log, "warn", side_effect=warned.append):
-            rt._follow_history_rewrite(state, repo.path)
+            history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.held
         assert any(repo.held in w and "pr comments --fix" in w for w in warned)
 
@@ -2526,7 +2521,7 @@ class TestFollowHistoryRewrite:
         state = self._state(repo, status=CommitStatus.PUSHED)
         warned = []
         with patch.object(rt.log, "warn", side_effect=warned.append):
-            rt._follow_history_rewrite(state, repo.path)
+            history_rewrite.follow_history_rewrite(state, repo.path)
         assert warned == []
 
     def test_a_snapshot_with_no_shas_asks_git_nothing(self, rt):
@@ -2535,7 +2530,7 @@ class TestFollowHistoryRewrite:
 
         state = _make_state(_fix(items=[ItemOutcome(id="t1")]))
         with patch.object(rt.git_client, "run", boom):
-            rt._follow_history_rewrite(state, Path("/fake"))
+            history_rewrite.follow_history_rewrite(state, Path("/fake"))
         assert state.fix.fix.commit_sha == ""
 
 
@@ -2773,7 +2768,7 @@ class TestPendingFixReplies:
             head_sha="abc1234",
         )
         state = _make_state(fix)
-        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+        with patch.object(git_client, "head_sha", return_value="def5678"), \
              patch.object(rt.push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
@@ -2792,9 +2787,9 @@ class TestPendingFixReplies:
             head_sha="abc1234",
         )
         state = _make_state(fix)
-        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
+        with patch.object(git_client, "head_sha", return_value="abc1234"), \
              patch.object(rt.push, "holds", return_value=True), \
-             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2846,8 +2841,8 @@ class TestTriageOnlyPassQueue:
             FixOutcome.ALREADY_ADDRESSED, FixOutcome.DISMISSED,
         )
         state = _make_state(fix)
-        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
-             patch.object(rt, "_find_addressing_commit", return_value=None), \
+        with patch.object(git_client, "head_sha", return_value="deadbee"), \
+             patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2861,8 +2856,8 @@ class TestTriageOnlyPassQueue:
             FixOutcome.ALREADY_ADDRESSED, FixOutcome.DISMISSED,
         )
         state = _make_state(fix)
-        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
-             patch.object(rt, "_find_addressing_commit", return_value=None), \
+        with patch.object(git_client, "head_sha", return_value="deadbee"), \
+             patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2877,7 +2872,7 @@ class TestTriageOnlyPassQueue:
         """
         fix, threads_by_id = self._queue(FixOutcome.DISMISSED)
         state = _make_state(fix)
-        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+        with patch.object(git_client, "head_sha", return_value="deadbee"), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply:
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert "because the dismissed premise says so" in mock_reply.call_args.args[3]
@@ -2887,8 +2882,8 @@ class TestTriageOnlyPassQueue:
         fix, threads_by_id = self._queue(FixOutcome.ALREADY_ADDRESSED)
         state = _make_state(fix)
         with patch.object(rt.push, "holds", return_value=False) as mock_pushed, \
-             patch.object(rt, "_get_head_sha", return_value="deadbee"), \
-             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch.object(git_client, "head_sha", return_value="deadbee"), \
+             patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2899,8 +2894,8 @@ class TestTriageOnlyPassQueue:
         """The pass committed nothing; saying it pushed would invent a commit."""
         fix, threads_by_id = self._queue(FixOutcome.ALREADY_ADDRESSED)
         state = _make_state(fix)
-        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
-             patch.object(rt, "_find_addressing_commit", return_value=None), \
+        with patch.object(git_client, "head_sha", return_value="deadbee"), \
+             patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2910,8 +2905,8 @@ class TestTriageOnlyPassQueue:
         """post_thread_reply is left real here — the draft gate lives inside it."""
         fix, threads_by_id = self._queue(FixOutcome.ALREADY_ADDRESSED)
         state = _make_state(fix)
-        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
-             patch.object(rt, "_find_addressing_commit", return_value=None):
+        with patch.object(git_client, "head_sha", return_value="deadbee"), \
+             patch.object(attribution, "find_addressing_commit", return_value=None):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.replies_posted == 0
         assert fix.replies_pending is True
@@ -3133,7 +3128,7 @@ class TestReplyAttributionAcrossRounds:
         """One precedence rule, two renderers — they must not disagree."""
         outcome = self._fixed("t1", _ROUND_1_SHA, "a.py")
         bodies = self._drain(rt, outcome)
-        cell = rt._fixed_status_for(outcome, rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+        cell = rt._fixed_status_for(outcome, attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
                                     "owner/repo")
         assert _ROUND_1_SHA in cell
         assert _ROUND_1_SHA in bodies["t1"]
@@ -3151,7 +3146,7 @@ class TestHandWrittenRepliesSurvive:
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             count = rt._post_fix_replies(
                 [entry], threads_by_id, "owner/repo", 42,
-                rt.CommitPushResult("abc1234", "pushed", ""),
+                attribution.CommitPushResult("abc1234", "pushed", ""),
             )
         return count, edit, post
 
@@ -3193,7 +3188,7 @@ class TestHandWrittenRepliesSurvive:
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             count = rt._post_fix_replies(
                 [entry], {"t1": thread}, "owner/repo", 42,
-                rt.CommitPushResult("abc1234", "pushed", ""),
+                attribution.CommitPushResult("abc1234", "pushed", ""),
             )
         return count, edit, post
 
@@ -3315,7 +3310,7 @@ class TestHandWrittenRepliesSurvive:
         copy — a wording change there must not silently orphan the reply."""
         entry = CommentItem(id="t1", summary="use helper", file="src/app.py")
         with patch("pr.comments.post_thread_reply", return_value=True) as post, \
-             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch.object(permalinks, "code_link", return_value=""):
             rt._post_already_addressed_replies(
                 [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
@@ -3875,7 +3870,7 @@ class TestReconcileRunsBeforeTheWrites:
             id="t1", state=ThreadState.NEW, is_resolved=False,
             comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
         )])
-        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+        with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 patch.object(rt, "_create_or_update_deferred_issue") as create, \
                 patch.object(rt, "_post_deferred_replies") as reply, \
                 patch.object(rt, "_render_deferred_summary"):
@@ -3898,7 +3893,7 @@ class TestReconcileRunsBeforeTheWrites:
             id="t1", state=ThreadState.RESOLVED, is_resolved=True,
             comments=[{"body": "x"}],
         )])
-        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+        with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(ctx, report)
         on_disk = pr_state.load_state(worktree / "target")
@@ -3931,7 +3926,7 @@ class TestStaleSnapshotIsAnnounced:
 
     def _warnings(self, rt, worktree, current_sha):
         seen = []
-        with patch.object(rt, "_get_head_sha", return_value=current_sha), \
+        with patch.object(git_client, "head_sha", return_value=current_sha), \
                 patch.object(rt.log, "warn", side_effect=seen.append), \
                 patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(rt, "_render_deferred_summary"), \
@@ -4302,7 +4297,7 @@ class TestRecordSettlement:
     def test_a_fix_records_where_the_settlement_came_from(self, rt):
         outcome = self._outcome()
         assert rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
-        assert outcome.reason == rt._SETTLED_REASON
+        assert outcome.reason == SETTLED_REASON
         assert outcome.commit_sha == "abc1234"
 
     def test_saying_the_same_thing_twice_is_a_no_op(self, rt):
@@ -4381,7 +4376,7 @@ class TestResolveSettledCommit:
     def test_the_named_commit_is_taken_over_the_inferred_one(self, rt, tmp_path):
         """The point of --commit: a fix that landed away from the anchored line."""
         repo = _hand_fixed(tmp_path)
-        with patch.object(rt, "_find_addressing_commit") as infer:
+        with patch.object(attribution, "find_addressing_commit") as infer:
             resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "HEAD")
         infer.assert_not_called()
         assert resolved.sha == repo.sha[:7]
@@ -4430,7 +4425,7 @@ class TestRunSettle:
         outcome = self._reload(ctx).fix.items[0]
         assert outcome.outcome is FixOutcome.FIXED
         assert outcome.commit_sha == "abc1234"
-        assert outcome.reason == rt._SETTLED_REASON
+        assert outcome.reason == SETTLED_REASON
 
     def test_it_publishes_nothing_and_names_the_step_that_does(self, rt, tmp_path, capsys):
         ctx = self._ctx(tmp_path)
@@ -4548,7 +4543,7 @@ class TestSettledRowsAreNotCreditedToThePass:
     def test_an_uncitable_settled_row_says_the_work_was_handled(self, rt):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
                             settled_by=SettledBy.OPERATOR)
-        cp = rt.CommitPushResult("aaa1111", "pushed", "")
+        cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = rt._fixed_status_for(entry, cp, "owner/repo")
         assert cell == rt._RECONCILED_STATUS_TEXT
         assert cell != rt._UNATTRIBUTED_STATUS_TEXT
@@ -4556,7 +4551,7 @@ class TestSettledRowsAreNotCreditedToThePass:
     def test_a_settled_row_that_resolved_a_commit_cites_that_one(self, rt):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
                             settled_by=SettledBy.OPERATOR, commit_sha="bbb2222")
-        cp = rt.CommitPushResult("aaa1111", "pushed", "")
+        cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = rt._fixed_status_for(entry, cp, "owner/repo")
         assert "bbb2222" in cell
         assert "aaa1111" not in cell
@@ -4569,8 +4564,8 @@ class TestSettledRowsAreNotCreditedToThePass:
         sentence written for a reviewer to read.
         """
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
-                            reason=rt._RECONCILED_REASON)
-        cp = rt.CommitPushResult("aaa1111", "pushed", "")
+                            reason=RECONCILED_REASON)
+        cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         assert rt._fixed_status_for(entry, cp, "owner/repo") == (
             rt._UNATTRIBUTED_STATUS_TEXT
         )
@@ -4619,7 +4614,7 @@ class TestPostAlreadyAddressedReplies:
         threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
             patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
-            patch.object(rt, "_find_addressing_commit", return_value="abc1234def5678"),
+            patch.object(attribution, "find_addressing_commit", return_value="abc1234def5678"),
         ):
             count = rt._post_already_addressed_replies(
                 fixed, threads_by_id, "owner/repo", 42, tmp_path,
@@ -4636,7 +4631,7 @@ class TestPostAlreadyAddressedReplies:
         threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
             patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
-            patch.object(rt, "_find_addressing_commit", return_value=None),
+            patch.object(attribution, "find_addressing_commit", return_value=None),
         ):
             count = rt._post_already_addressed_replies(
                 fixed, threads_by_id, "owner/repo", 42, tmp_path,
@@ -4815,7 +4810,7 @@ class TestReplyUpsert:
              patch("pr.comments.patch_thread_reply", return_value=True) as edit:
             count = rt._post_fix_replies(
                 fixed, threads_by_id, "owner/repo", 42,
-                rt.CommitPushResult("def5678", "pushed", ""),
+                attribution.CommitPushResult("def5678", "pushed", ""),
             )
         assert count == 1
         post.assert_not_called()
@@ -4853,7 +4848,7 @@ class TestReplyEvidence:
         threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._post_fix_replies(fixed, threads_by_id, "owner/repo", 42,
-                                 rt.CommitPushResult("def5678", "pushed", ""))
+                                 attribution.CommitPushResult("def5678", "pushed", ""))
         body = post.call_args[0][3]
         assert "owner/repo/blob/def5678/src/app.py" in body
         # No line anchor: the fix just moved the lines around it.
@@ -4864,7 +4859,7 @@ class TestReplyEvidence:
                                 read_sha="cafe123")]
         threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with patch("pr.comments.post_thread_reply", return_value=True) as post, \
-             patch.object(rt, "_get_head_sha", return_value="cafe123"):
+             patch.object(git_client, "head_sha", return_value="cafe123"):
             rt._post_deferred_replies(
                 deferred, threads_by_id, "owner/repo", 42,
                 "ENG-456", "https://linear.app/team/issue/ENG-456", tmp_path,
@@ -5605,7 +5600,7 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
 
 class TestAlreadyAddressedInSummary:
     def test_rendered_as_addressed_not_dismissed(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         entry = CommentItem(
             id="t1", summary="drop the guard", file="f.go", line=10, reviewer="kgn",
         )
@@ -5642,7 +5637,7 @@ class TestSummaryMarker:
     """Each review round must edit one summary comment, not append a new one."""
 
     def test_body_carries_marker(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             content(fixed=[CommentItem(id="t1", summary="fix", file="a.py", line=1)]),
             cp, "owner/repo", 1, {},
@@ -5650,7 +5645,7 @@ class TestSummaryMarker:
         assert body.startswith(rt._SUMMARY_MARKER)
 
     def test_post_fix_summary_passes_marker(self, rt, content):
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         with patch("pr.comments.post_issue_comment", return_value="https://url") as mock_post:
             rt._post_fix_summary(
                 content(fixed=[
@@ -5815,7 +5810,7 @@ class TestPublishedRowsSurviveTheEdit:
 
     def test_the_fix_pass_upsert_carries_too(self, rt, content):
         """--fix edits the same comment, so it can shrink it the same way."""
-        cp = rt.CommitPushResult("bbbbbbb", "pushed", "")
+        cp = attribution.CommitPushResult("bbbbbbb", "pushed", "")
         with _published(_published_summary(rt, ROUND_ONE_ROW)), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
             rt._post_fix_summary(
@@ -5860,9 +5855,9 @@ class TestGeneratedActionCell:
         """Assert on what the builders emit, not on a transcribed copy — a
         wording change there must not silently freeze the rows it renders."""
         for status in CommitStatus:
-            cp = rt.CommitPushResult("9f2e1a0", status, "")
+            cp = attribution.CommitPushResult("9f2e1a0", status, "")
             assert rt._is_generated_action(rt._fixed_status_text(cp, "owner/repo")) is True
-            bare = rt.CommitPushResult(None, status, "")
+            bare = attribution.CommitPushResult(None, status, "")
             assert rt._is_generated_action(rt._fixed_status_text(bare, "owner/repo")) is True
 
     def test_every_human_reason_prose_is_recognised(self, rt):
@@ -5921,10 +5916,10 @@ class TestActionCellOutcome:
                 FixOutcome.SETTLED_ELSEWHERE if status == CommitStatus.RECONCILED
                 else FixOutcome.FIXED
             )
-            cp = rt.CommitPushResult("9f2e1a0", status, "")
+            cp = attribution.CommitPushResult("9f2e1a0", status, "")
             assert rt._action_outcome(
                 rt._fixed_status_text(cp, "owner/repo")) is expected
-            bare = rt.CommitPushResult(None, status, "")
+            bare = attribution.CommitPushResult(None, status, "")
             assert rt._action_outcome(
                 rt._fixed_status_text(bare, "owner/repo")) is expected
 
@@ -5939,14 +5934,14 @@ class TestActionCellOutcome:
         settled = CommentItem(id="t2", summary="s", file="a.py", line=1,
                               settled_by=SettledBy.RECONCILIATION)
         cells = [
-            rt._fixed_status_for(e, rt.CommitPushResult(sha, status, ""), "owner/repo")
+            rt._fixed_status_for(e, attribution.CommitPushResult(sha, status, ""), "owner/repo")
             for status in CommitStatus
             for sha in ("9f2e1a0", None)
             for e in (entry, settled)
         ]
         cells += [
             rt._addressed_status_for(
-                rt.AddressedFraming(in_response=r, sha=sha), "owner/repo",
+                attribution.AddressedFraming(in_response=r, sha=sha), "owner/repo",
             )
             for r in (True, False)
             for sha in ("9f2e1a0", "")
@@ -6102,7 +6097,7 @@ class TestHandEditedCellsSurviveTheRender:
 
     def test_the_fix_pass_upsert_holds_the_cell_too(self, rt, content):
         """--fix edits the same comment, so it can destroy the edit the same way."""
-        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        cp = attribution.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
         with _published(_published_summary(rt, HAND_EDITED_ROW)), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
             rt._post_fix_summary(
@@ -6185,7 +6180,7 @@ class TestEveryItemReachesTheTable:
     """A held row used to stand in for its siblings, which then vanished."""
 
     def _render(self, rt, content, published=""):
-        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        cp = attribution.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
         with _published(published), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
             rt._post_fix_summary(
@@ -6224,7 +6219,7 @@ class TestEveryItemReachesTheTable:
     def test_a_sibling_state_lost_is_carried_rather_than_dropped(self, rt, content):
         """One sibling in the fresh render used to account for all of them."""
         published = _published_summary(rt, *_sibling_rows(rt))
-        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        cp = attribution.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
         with _published(published), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
             rt._post_fix_summary(
@@ -6498,7 +6493,7 @@ class TestASummaryDescribesItsOwnRound:
                 f"[2]({second.url})") in post.call_args[0][2]
 
     def test_a_first_summary_has_no_footer(self, rt, content):
-        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        cp = attribution.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
         with patch("pr.comments.post_issue_comment", return_value="https://url") as post:
             rt._post_fix_summary(
                 content(fixed=[
@@ -6745,18 +6740,18 @@ class TestAddressingCommitIsPerLine:
 
     def test_each_line_resolves_to_the_commit_that_changed_it(self, rt, branch):
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
-            assert rt._find_addressing_commit(branch.path, "a.py", 1) == branch.first
-            assert rt._find_addressing_commit(branch.path, "a.py", 2) == branch.second
+            assert attribution.find_addressing_commit(branch.path, "a.py", 1) == branch.first
+            assert attribution.find_addressing_commit(branch.path, "a.py", 2) == branch.second
 
     def test_a_thread_with_no_line_claims_no_commit(self, rt, branch):
         """A file-wide thread has no line history to read, so it cites nothing."""
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
-            assert rt._find_addressing_commit(branch.path, "a.py", 0) is None
+            assert attribution.find_addressing_commit(branch.path, "a.py", 0) is None
 
     def test_a_line_past_the_end_of_the_file_claims_no_commit(self, rt, branch):
         """git refuses the range rather than answering — nothing is invented."""
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
-            assert rt._find_addressing_commit(branch.path, "a.py", 99) is None
+            assert attribution.find_addressing_commit(branch.path, "a.py", 99) is None
 
     def test_two_threads_on_one_file_cite_different_commits(self, rt, branch):
         entries = [
@@ -6955,7 +6950,7 @@ class TestAddressedInResponseFraming:
         be what carried a fix made after it, so nothing is cited.
         """
         entry = CommentItem(id="t1", summary="use the helper", file="a.py", line=1)
-        cp = rt.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+        cp = attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
         with patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
@@ -6968,7 +6963,7 @@ class TestAddressedInResponseFraming:
         assert branch.before[:7] not in body
 
     def _summary(self, rt, content, entry, thread, wt_path):
-        cp = rt.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+        cp = attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             return rt._build_summary_body(
                 content(already_addressed=[entry]),
@@ -7060,8 +7055,8 @@ def _undetermined_pass(rt, branch):
         commit_status=CommitStatus.NO_CHANGES, head_sha=branch.snapshot,
     )
     with patch.object(rt.push, "holds", return_value=True):
-        cp = rt._reconciled_commit(record, CommitStatus.NO_CHANGES, branch.path)
-    assert cp.claim is rt.CommitClaim.UNDETERMINED, "fixture must reach the gap"
+        cp = history_rewrite.reconciled_commit(record, CommitStatus.NO_CHANGES, branch.path)
+    assert cp.claim is attribution.CommitClaim.UNDETERMINED, "fixture must reach the gap"
     return cp
 
 
@@ -7176,7 +7171,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             rt._warn_unattributed_fixes(
                 [_row("t1", 1, "first point")], cp, None,
-                rt.AddressingHistory(hand_landed_branch.path),
+                attribution.AddressingHistory(hand_landed_branch.path),
                 {"t1": _reviewed("t1", 111)},
             )
         assert "no commit to attribute" not in capsys.readouterr().err
@@ -7188,7 +7183,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             rt._warn_unattributed_fixes(
                 [_row("t3", 3, "third point")], cp, None,
-                rt.AddressingHistory(hand_landed_branch.path),
+                attribution.AddressingHistory(hand_landed_branch.path),
                 {"t3": _reviewed("t3", 333)},
             )
         assert "1 fixed row(s) have no commit" in capsys.readouterr().err
@@ -7259,7 +7254,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         """The reason channel is dead: prose alone withholds no commit."""
         body = _summary_over(
             rt, content, hand_landed_branch,
-            [_row("t1", 1, "first point", reason=rt._RECONCILED_REASON)],
+            [_row("t1", 1, "first point", reason=RECONCILED_REASON)],
             {"t1": _reviewed("t1", 111)},
         )
         assert f"Fixed in [`{hand_landed_branch.first}`]" in body
@@ -7321,16 +7316,16 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
     def test_every_provenance_but_the_pass_reads_as_handled_outside(
         self, rt, settled_by,
     ):
-        assert rt._handled_outside(CommentItem(id="t1", settled_by=settled_by))
+        assert attribution.handled_outside(CommentItem(id="t1", settled_by=settled_by))
 
     def test_the_pass_own_entry_is_not_one_of_them(self, rt):
         """Including one whose reason happens to read like the reconciler's."""
-        assert not rt._handled_outside(CommentItem(id="t1"))
-        assert not rt._handled_outside(
-            CommentItem(id="t1", reason=rt._RECONCILED_REASON),
+        assert not attribution.handled_outside(CommentItem(id="t1"))
+        assert not attribution.handled_outside(
+            CommentItem(id="t1", reason=RECONCILED_REASON),
         )
-        assert not rt._handled_outside(
-            CommentItem(id="t1", reasoning=rt._SETTLED_REASON),
+        assert not attribution.handled_outside(
+            CommentItem(id="t1", reasoning=SETTLED_REASON),
         )
 
 
@@ -7482,7 +7477,7 @@ class TestCommitLookupsUseDefaultBranch:
             patch.object(rt.git_client, "run") as run,
         ):
             run.return_value = _git_ran(0, stdout="deadbeef\n")
-            assert rt._find_addressing_commit(tmp_path, "a.py", 10) == "deadbeef"
+            assert attribution.find_addressing_commit(tmp_path, "a.py", 10) == "deadbeef"
         assert "origin/trunk..HEAD" in run.call_args[0]
 
     def test_branch_commit_log_without_worktree(self, rt):
@@ -7646,7 +7641,7 @@ class TestEvidencePermalinks:
         )]
         threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
-            patch.object(rt, "_get_head_sha", return_value="cafe123"),
+            patch.object(git_client, "head_sha", return_value="cafe123"),
             patch("pr.comments.post_thread_reply", return_value=True) as reply,
         ):
             rt._post_dismissed_replies(dismissed, threads, "owner/repo", 42, tmp_path)
@@ -7661,8 +7656,8 @@ class TestEvidencePermalinks:
         )]
         threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
-            patch.object(rt, "_get_head_sha", return_value="cafe123"),
-            patch.object(rt, "_find_addressing_commit", return_value="dead" * 10),
+            patch.object(git_client, "head_sha", return_value="cafe123"),
+            patch.object(attribution, "find_addressing_commit", return_value="dead" * 10),
             patch("pr.comments.post_thread_reply", return_value=True) as reply,
         ):
             rt._post_already_addressed_replies(
@@ -7672,7 +7667,7 @@ class TestEvidencePermalinks:
         assert "/commit/deaddeaddead" in body
 
     def test_summary_file_cell_links_at_the_fix_commit(self, rt, content):
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[CommentItem(id="t1", summary="fix", file="a.py", line=9,
                                        read_sha="abc1234")]),
@@ -7682,7 +7677,7 @@ class TestEvidencePermalinks:
 
     def test_summary_file_cell_drops_a_line_read_in_another_tree(self, rt, content):
         """The fix commit moved the line, so the cell links the file alone."""
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[CommentItem(id="t1", summary="fix", file="a.py", line=9,
                                        read_sha="0ldc0de")]),
@@ -7692,7 +7687,7 @@ class TestEvidencePermalinks:
         assert "#L9" not in body
 
     def test_summary_file_cell_stays_plain_without_a_sha(self, rt, content):
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             content(fixed=[CommentItem(id="t1", summary="fix", file="a.py", line=9)]),
             cp, "owner/repo", 1, {},
@@ -7859,7 +7854,7 @@ class TestHumanReason:
 
     def _action_cell(self, rt, content, reason):
         """The rendered Action cell for a needs-human entry with this reason."""
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             content(needs_human=[
                 CommentItem(summary="s", file="a.py", line=1, reason=reason),
@@ -7917,7 +7912,7 @@ class TestHumanReason:
         `ItemOutcome`s rather than the triage entries, so the prose mapping has
         to hold across the rehydration `from_outcome` performs.
         """
-        cp = rt.CommitPushResult(None, "no_changes", "")
+        cp = attribution.CommitPushResult(None, "no_changes", "")
         entry = CommentItem.from_outcome(ItemOutcome(
             id="t1", summary="premise disputed", file="a.py", line=1,
             outcome=FixOutcome.NEEDS_HUMAN, reason=rt.HumanReason.CONTESTED.value,
@@ -8143,7 +8138,7 @@ class TestFinishReconcilesCommentItems:
                         target_dir=worktree / "target")
 
     def _run(self, rt, ctx, comments):
-        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+        with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 _fetches(comments), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(ctx, PRReport(my_login="me"))
@@ -8177,7 +8172,7 @@ class TestDuplicateFindingRendersOnce:
         return CommentItem(**defaults)
 
     def _body(self, rt, content, fixed, needs_human, threads_by_id=None):
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         return rt._build_summary_body(
             content(fixed=fixed, needs_human=needs_human),
             cp, "owner/repo", 42,
@@ -8236,7 +8231,7 @@ class TestDuplicateFindingRendersOnce:
         bucket names, which is what keeps an outcome added later from being
         folded only once someone remembers to add it.
         """
-        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
             content(fixed=[self._thread()], declined=[self._item()]),
             cp, "owner/repo", 42, self._threads(),

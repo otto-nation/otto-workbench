@@ -31,10 +31,13 @@ from agent import invoke as agent_invoke
 from fix import engine as fix_engine
 from fix import types as fix_types
 from git import client as git_client
+from git import replay
 from git import topology as git_topology
 from git import land
+from pr import attribution
 from pr import comments as pc
 from pr import comments_fix as pr_comments_fix
+from pr import history_rewrite
 from pr import comments_state as pcs
 from pr import context as pr_context
 from pr import domains as pr_domains
@@ -47,7 +50,10 @@ from core import publishing
 from git import push
 from git.land import CommitStatus
 from pr.comments_state import ThreadRecord, ThreadState
-from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy
+from pr.fix import (
+    RECONCILED_REASON, SETTLED_REASON,
+    FixOutcome, FixRecord, ItemOutcome, SettledBy,
+)
 from review import issue as review_issue
 from core import markdown
 from core import text
@@ -638,79 +644,6 @@ def _parse_tracking_results(
     return result
 
 
-class CommitClaim(StrEnum):
-    """How firmly one thread's change can be pinned to a commit.
-
-    Render-time only, never persisted: this is what a run may *say* about a
-    row, not a fact recorded about the branch.
-
-    The three that carry no SHA are the point of the type. "This entry has no
-    commit" used to be one case, and two reviewer-facing surfaces wanted
-    opposite renderings of it, so whichever was patched last inverted the
-    other. They are separate answers now.
-    """
-
-    # The entry names the commit that carried it, recorded when the fix pass
-    # that landed it committed. Wins over anything the running pass could say.
-    RECORDED = "recorded"
-    # The row rode the running pass's own commit. Whether that commit may be
-    # named is the pass's question, not the row's — an unpushed one would 404.
-    PASS = "pass"
-    # Work landed outside the pass, and the row's own line history says which
-    # commit carries it.
-    RESOLVED = "resolved"
-    # The same, with nothing at the row's line to resolve it: the thread is
-    # outdated, or the fix landed somewhere the thread is not anchored to.
-    UNDETERMINED = "undetermined"
-    # No commit carries this row: it was satisfied without one, or it was
-    # replayed from a round that recorded none.
-    UNRECORDED = "unrecorded"
-
-
-@dataclass
-class CommitPushResult:
-    sha: str | None
-    # A land.CommitStatus. Typed as `str` because a status read back out
-    # of a state file is a plain string, and CommitStatus is a StrEnum
-    # precisely so the two compare equal.
-    status: str
-    error: str
-    # Where `sha` came from, which decides what an entry with no commit of its
-    # own inherits from it. The default is the only honest answer for a pass
-    # that committed its own work; `_reconciled_commit` is the one place that
-    # recovers a SHA from somewhere else and says so.
-    claim: CommitClaim = CommitClaim.PASS
-
-
-# A commit that may not be citable outward. `push_failed` is git refusing;
-# `push_held` is us refusing, because the gate was shut when the pass ran;
-# `push_lost` is git reporting a push the remote did not keep; `push_unverified`
-# is a push nobody could confirm either way. All four leave the SHA unsafe to
-# cite — a commit link that 404s for the reviewer reading it is worse than a
-# reply deferred a round.
-_UNPUSHED_STATUSES = frozenset({
-    CommitStatus.PUSH_FAILED, CommitStatus.PUSH_HELD, CommitStatus.PUSH_LOST,
-    CommitStatus.PUSH_UNVERIFIED,
-})
-
-def _commit_unpushed(status: str) -> bool:
-    return status in _UNPUSHED_STATUSES
-
-
-def _pass_commit(wt_path: Path, result: land.LandResult) -> CommitPushResult:
-    """The owner's landing, as the pass records and renders it.
-
-    The SHA is abbreviated because every other SHA this command persists is —
-    the snapshot HEAD, each thread's `commit_sha`, each `read_sha`. A state file
-    that mixed the two widths would make one commit recorded twice look like
-    two, which is exactly the comparison `_attribute_commit` turns on.
-    """
-    short = git_client.out(
-        "rev-parse", "--short", result.sha, cwd=wt_path,
-    ) if result.sha else ""
-    return CommitPushResult(short or None, result.status, result.error)
-
-
 def _our_last_reply_id(thread: ReportThread | None) -> int | None:
     """The ID of our own reply when it is still the last comment, else None.
 
@@ -862,12 +795,12 @@ def _post_fix_replies(
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
-    cp: CommitPushResult,
-    history: "AddressingHistory | None" = None,
+    cp: attribution.CommitPushResult,
+    history: "attribution.AddressingHistory | None" = None,
 ) -> int:
     """Post replies to each fixed thread. Returns count of replies posted.
 
-    Every entry here must be one `_attribute_commit` can cite, which is what
+    Every entry here must be one `attribution.attribute_commit` can cite, which is what
     `_reply_to_fixed` partitions for — this body asserts a commit link and a
     blob permalink under it, and neither has a shape that degrades gracefully.
 
@@ -877,7 +810,7 @@ def _post_fix_replies(
     partition exists to prevent.
     """
     def body_fn(entry: CommentItem) -> str:
-        sha = _attribute_commit(entry, cp, history, threads_by_id.get(entry.id)).sha
+        sha = attribution.attribute_commit(entry, cp, history, threads_by_id.get(entry.id)).sha
         parts = [
             f"{_APPLIED_REPLY_PREFIX}: {entry.summary}",
             f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha}).",
@@ -894,352 +827,6 @@ def _post_fix_replies(
     if posted:
         log.info(f"Replied on {posted} fixed thread(s)")
     return posted
-
-
-@dataclass(frozen=True)
-class CommitAttribution:
-    """Which commit carries one thread's change, and how well that is known.
-
-    `sha` is filled only when a reviewer could open that commit and find the
-    change in it, so `cited` is the whole question a renderer has to ask before
-    writing a link. `claim` says why, which is what lets callers render the
-    uncitable cases differently without re-deriving a SHA of their own.
-    """
-
-    claim: CommitClaim
-    sha: str = ""
-
-    @property
-    def cited(self) -> bool:
-        """Whether a commit may be named for this entry."""
-        return bool(self.sha)
-
-
-def _attribute_commit(
-    entry: CommentItem,
-    cp: CommitPushResult,
-    history: "AddressingHistory | None" = None,
-    thread: ReportThread | None = None,
-) -> CommitAttribution:
-    """Which commit carries this entry's change — the one answer to that question.
-
-    Every reviewer-facing surface reads this: the summary row, the thread
-    reply, and the blob permalink under it. Four mechanisms used to answer it
-    independently and three of them were wrong for some caller, because each
-    was written for the caller that noticed first.
-
-    An empty `entry.commit_sha` is not one case, it is four, and the whole
-    reason this function exists is that its callers wanted contradictory
-    things from it:
-
-    - UNRECORDED — the pass recorded a commit and this entry is not stamped
-      with it, so the entry was fixed in an earlier round or satisfied with no
-      commit at all. Crediting the pass would name a commit that does not
-      carry the change.
-    - RESOLVED — the work landed outside the pass and `history` found the
-      commit that changed this row's own line after the reviewer asked. That
-      is per-row evidence, which is the thing reconciliation lacked.
-    - UNDETERMINED — the same, with nothing at the row's line to go on, or a
-      row `_handled_outside` recognises, which `history` declines to cite for.
-
-    "Commits landed outside the pass" is a fact about the branch; "which commit
-    carries this row" is a fact about the row. Reconciliation only ever knew
-    the first, so it may not answer the second — stamping every row with the
-    commit that happens to be HEAD names one picked for having no relationship
-    to the row, and a branch that moved by exactly one commit makes that no
-    truer. A row replayed from an earlier round is the case that proves it: its
-    fix landed rounds ago, and the commit reconciliation recovered demonstrably
-    does not carry it. The line history is the second kind of answer: the
-    newest commit to touch the line a thread is anchored to is evidence about
-    that thread, not a guess standing in for one.
-
-    Passing no `history` keeps that decline, which is what a caller with no
-    worktree to read can honestly claim.
-
-    Callers decide how to render an entry with no citation. They do not get to
-    invent one.
-    """
-    sha = getattr(entry, "commit_sha", "")
-    pass_sha = cp.sha or ""
-    published = cp.status == CommitStatus.PUSHED
-    if sha and sha != pass_sha:
-        # An earlier round's commit, and one the remote already has: this round
-        # could only have read it back out of a state file the last one pushed.
-        return CommitAttribution(CommitClaim.RECORDED, sha)
-    if sha:
-        # Stamped with the pass's own commit, so only the pass knows whether it
-        # is safe to name yet.
-        return CommitAttribution(CommitClaim.PASS, pass_sha if published else "")
-    if cp.claim is CommitClaim.UNDETERMINED:
-        # ceiling: one SHA per row, resolved from the one line the thread is
-        # anchored to. A fix that also landed at a line the thread does not
-        # point at is invisible here, and widening this to carry n commits
-        # would not find it — the evidence is missing, not unrepresentable.
-        # Upgrade when a row records a fingerprint of the change it fixed,
-        # which is what would let a content search reach past the anchor.
-        framing = history.framing(entry, thread) if history else AddressedFraming(False)
-        if framing.in_response and framing.cited:
-            return CommitAttribution(CommitClaim.RESOLVED, framing.sha)
-        return CommitAttribution(CommitClaim.UNDETERMINED)
-    if pass_sha:
-        return CommitAttribution(CommitClaim.UNRECORDED)
-    # The pass has no commit of its own and none landed outside it, so there is
-    # nothing entry-specific to say and the pass-level status is the whole
-    # story for this row.
-    return CommitAttribution(CommitClaim.PASS)
-
-
-def _stamp_pass_commit(fixed: list[CommentItem], sha: str) -> None:
-    """Record the pass's commit on the entries it just landed.
-
-    The only place a *pass* attributes a thread to a commit — `_run_settle` is
-    the other writer of `commit_sha`, and it writes the operator's answer rather
-    than the pass's. Everything downstream reads the field back through
-    `_attribute_commit` instead of re-deriving a SHA from whichever pass happens
-    to be running, which is how a row fixed three rounds ago came to be credited
-    to today's commit.
-
-    Idempotent by design, not by accident: an entry that already names a
-    commit keeps it, so calling this again on the same entries (e.g. once
-    before replying to fixed threads, again when the outcomes are built) is
-    safe and a no-op on the second call. The reply queue spans rounds too, so
-    a drained entry keeps the commit that actually fixed it.
-    """
-    if not sha:
-        return
-    for entry in fixed:
-        if not getattr(entry, "commit_sha", ""):
-            entry.commit_sha = sha
-
-
-def _stamp_read_sha(entries: list[CommentItem], sha: str) -> None:
-    """Record the tree an entry's line numbers were read in.
-
-    The single writer of `entry.read_sha`, and idempotent for the same reason
-    `_stamp_pass_commit` is: the reply queue spans rounds, so an entry drained
-    later must keep the tree its lines were actually read in rather than be
-    relabelled with whichever head the draining round happens to be on.
-    """
-    if not sha:
-        return
-    for entry in entries:
-        if not getattr(entry, "read_sha", ""):
-            entry.read_sha = sha
-
-
-def _find_addressing_commit(
-    wt_path: Path, filepath: str, line: int = 0,
-) -> str | None:
-    """The branch commit that last changed `line` of `filepath`, or None.
-
-    `git log -1 -- <file>` answers a coarser question — the newest commit
-    touching the file at all — so every thread on one file was stamped with
-    the same SHA and at most one of them had landed there. `git log -L` traces
-    the one line the thread is about, which is the change, not the file.
-
-    A line is required, and no line means no citation. This resolves a commit
-    for an entry no fix pass ever recorded one for, so there is nothing else to
-    fall back to: the file-granular answer is the defect, not a safety net.
-    """
-    if not line:
-        return None
-    base = f"origin/{git_topology.default_branch_cached(wt_path)}"
-    # A non-zero exit means the range does not resolve at HEAD — the file was
-    # renamed away, or the line is past its end. Nothing here can say which
-    # commit carried the change, so nothing is claimed, and the empty default
-    # reads the same way as git answering with nothing.
-    sha = git_client.out(
-        "log", "-1", "--format=%H", "--no-patch",
-        f"-L{line},{line}:{filepath}", f"{base}..HEAD", cwd=wt_path,
-    )
-    return sha if sha else None
-
-
-def _commit_timestamp(wt_path: Path, sha: str) -> float:
-    """When `sha` was committed, in POSIX seconds, or 0.0 when unknown.
-
-    The committer date, not the author date: a rebased or cherry-picked fix
-    keeps the author date it was first written at, which would place work
-    landed in response to a review before the review that asked for it.
-    """
-
-    try:
-        return float(git_client.out("show", "-s", "--format=%ct", sha, cwd=wt_path))
-    except ValueError:
-        return 0.0
-
-
-def _thread_opened_at(thread: ReportThread | None) -> float:
-    """When the reviewer opened `thread`, in POSIX seconds, or 0.0 when unknown.
-
-    The first comment on the thread, not the newest. What a reply must not deny
-    is that the branch moved after the reviewer asked; the later comments are
-    routinely our own replies from the round that moved it, and reading one of
-    those would place every fix before the question it answered.
-    """
-    if not thread or not thread.comments:
-        return 0.0
-    stamp = str(thread.comments[0].get("createdAt", "") or "")
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0.0
-
-
-# Prose stamped on an outcome the fix pass never landed, for the person reading
-# the summary row. It says nothing to the code: what keeps the pass's commit —
-# and the row's own line history — from being credited is
-# `SettledBy.RECONCILIATION`, recorded beside it.
-#
-# Distinct from CommitStatus.RECONCILED, which `_reconciled_commit` reports for
-# a branch that moved past the fix snapshot — this reason accompanies snapshot
-# reconciliation against GitHub instead (see _reconcile_fix_snapshot). The two
-# "reconciled" names are not the same mechanism.
-_RECONCILED_REASON = "reconciled: handled outside the fix pass"
-
-# Prose for an outcome the operator settled by hand and told the CLI about with
-# --settle, recorded beside `SettledBy.OPERATOR`.
-#
-# The two provenances are kept apart because they are different evidence.
-# Reconciliation is the tool inferring a settlement from what GitHub shows; this
-# is the operator stating one. Only the second can be trusted for a thread
-# nobody has replied to yet, which is exactly the thread --settle exists for.
-_SETTLED_REASON = "settled: recorded by hand"
-
-
-def _handled_outside(entry: CommentItem) -> bool:
-    """Whether this entry records work the fix pass did not land.
-
-    The one question `AddressingHistory.framing` and `_fixed_status_for` both
-    ask before naming a commit for a row, so the summary cell, the thread reply
-    and the permalink under it cannot answer it differently.
-
-    Such a row can still name a commit that was *recorded* for it — the SHA
-    --settle resolved, or the single commit that landed outside the pass — but
-    never one inferred from its line history, and when nothing names one the
-    cell says the work was handled rather than crediting whatever the running
-    pass happened to commit.
-
-    Answered from the provenance the record carries rather than from the wording
-    of the reason beside it: the reason is written for a person, and a renderer
-    matching on it is one rewording away from crediting a commit for work that
-    commit does not contain.
-    """
-    return entry.settled_by is not SettledBy.PASS
-
-
-@dataclass(frozen=True)
-class AddressedFraming:
-    """Whether a satisfied thread was satisfied in response to the reviewer.
-
-    `in_response` is the whole reviewer-facing question. "The code does what
-    you asked" is true either way; what separates the two is whether the code
-    did it before the reviewer spoke, and only one of those readings tells them
-    their comment needed no action.
-
-    `sha` is the commit that made it true, when the branch can name one. It is
-    populated only alongside a reading it actually supports — a commit older
-    than the comment cannot be the one a fix pass just landed — so `cited` is
-    the one question a renderer asks before writing a commit link.
-    """
-
-    in_response: bool
-    sha: str = ""
-
-    @property
-    def cited(self) -> bool:
-        """Whether a commit may be named for this entry."""
-        return bool(self.sha)
-
-
-class AddressingHistory:
-    """When each satisfied thread's code became true, relative to the review.
-
-    The triage verdict `already_addressed` reads current HEAD, which includes
-    commits made earlier in the same review cycle — so a thread the pass fixed
-    on round one comes back satisfied on round two, and a flat "already
-    addressed" tells that reviewer their comment was moot. That is rejection,
-    which is the opposite of what the verdict means.
-
-    The reply and the summary row both ask this object the same question so the
-    two cannot disagree, and it caches both git lookups because `git log -L` is
-    a process per location and every surface asks about the same threads.
-    """
-
-    def __init__(self, wt_path: Path | None) -> None:
-        self._wt_path = wt_path
-        # Keyed by location rather than by file: two threads on one file are the
-        # case this reply got wrong, so a per-file cache would re-impose the
-        # answer `_find_addressing_commit` was narrowed to stop giving.
-        self._commits: dict[tuple[str, int], str] = {}
-        self._committed_at: dict[str, float] = {}
-
-    def framing(
-        self,
-        entry: CommentItem,
-        thread: ReportThread | None,
-        acted: bool = False,
-    ) -> AddressedFraming:
-        """How this entry's reply and summary row should read.
-
-        `acted` is for the caller that already knows the pass fixed the entry
-        and only came here because the resolver could not cite a commit for it.
-        That knowledge outranks anything the branch can show, but it does not
-        supply a citation: a commit predating the comment is not the one that
-        carried a fix made after it, so the entry keeps the in-response reading
-        and names nothing.
-
-        An entry `_handled_outside` recognises names nothing either, for a
-        different reason. `git log -L` answers what last changed the line, which
-        is evidence about a row the pass itself fixed and about nothing else:
-        the reason on such a row says the pass did not, and reconciliation
-        stamps it from a thread merely looking settled on GitHub — resolution
-        also covers answered, deferred and declined. Crediting the newest commit
-        to touch a busy file to one of those contradicts the reply standing on
-        the thread. How the row reads is untouched; only the commit link goes.
-        """
-        sha = self._commit_for(entry)
-        landed_after = bool(sha) and self._postdates(sha, thread)
-        if acted and not landed_after:
-            return AddressedFraming(True)
-        if _handled_outside(entry):
-            return AddressedFraming(landed_after)
-        # A line no branch commit touched is code that predates the branch, and
-        # so predates the review: that is the genuine already-addressed case and
-        # the one the flat prefix is reserved for.
-        return AddressedFraming(landed_after, sha)
-
-    def _commit_for(self, entry: CommentItem) -> str:
-        """The branch commit behind this entry's code, or "" when there is none."""
-        if not self._wt_path:
-            return ""
-        # Triage's citation where there is one: it names the code that makes
-        # the reviewer's point already true, which is the line whose history
-        # answers "when did it become true?". A stored outcome carries no
-        # citation, so it falls back to the location GitHub anchored the thread
-        # at.
-        evidence_file = getattr(entry, "evidence_file", "")
-        evidence_line = int(getattr(entry, "evidence_line", 0) or 0)
-        if evidence_file and evidence_line:
-            where = (evidence_file, evidence_line)
-        else:
-            where = (entry.file, int(entry.line or 0))
-        if where not in self._commits:
-            self._commits[where] = _find_addressing_commit(self._wt_path, *where) or ""
-        return self._commits[where]
-
-    def _postdates(self, sha: str, thread: ReportThread | None) -> bool:
-        """Whether `sha` landed after the reviewer opened `thread`.
-
-        Either timestamp missing reads as "no", which keeps the pre-existing
-        prefix: claiming credit for a fix is the assertion that needs evidence,
-        and there is none when the run cannot date one side of the comparison.
-        """
-        if sha not in self._committed_at:
-            self._committed_at[sha] = _commit_timestamp(self._wt_path, sha)
-        landed_at = self._committed_at[sha]
-        asked_at = _thread_opened_at(thread)
-        return bool(landed_at and asked_at) and landed_at > asked_at
 
 
 def _post_already_addressed_replies(
@@ -1261,8 +848,8 @@ def _post_already_addressed_replies(
     `_reply_to_fixed`, which is here for the linkless body and not because the
     reviewer's point was moot.
     """
-    history = AddressingHistory(wt_path)
-    head_sha = _get_head_sha(wt_path)
+    history = attribution.AddressingHistory(wt_path)
+    head_sha = git_client.head_sha(short=True, cwd=wt_path)
 
     def body_fn(entry: CommentItem) -> str:
         framing = history.framing(entry, threads_by_id.get(entry.id), acted=acted)
@@ -1302,7 +889,7 @@ def _reply_to_fixed(
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
-    cp: CommitPushResult,
+    cp: attribution.CommitPushResult,
     wt_path: Path,
 ) -> int:
     """Reply on every fixed thread, each citing the commit attributed to it.
@@ -1320,10 +907,10 @@ def _reply_to_fixed(
     # which rows can be cited and the reply then asks what to cite, and two
     # objects answering that could put a row in the citing bucket and then
     # decline to name the commit it was routed there for.
-    history = AddressingHistory(wt_path)
+    history = attribution.AddressingHistory(wt_path)
     attributed, unattributed = [], []
     for entry in fixed:
-        cited = _attribute_commit(
+        cited = attribution.attribute_commit(
             entry, cp, history, threads_by_id.get(entry.id),
         ).cited
         bucket = attributed if cited else unattributed
@@ -1357,7 +944,7 @@ def _post_dismissed_replies(
     Telling a reviewer they misread the code is the one reply that most needs a
     line to point at, so the dismissal carries the permalink triage cited.
     """
-    head_sha = _get_head_sha(wt_path)
+    head_sha = git_client.head_sha(short=True, cwd=wt_path)
 
     def body_fn(entry: CommentItem) -> str:
         reasoning = entry.reasoning
@@ -1383,7 +970,7 @@ def _post_deferred_replies(
 ) -> int:
     """Post replies to deferred threads linking the tracking issue."""
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
-    head_sha = _get_head_sha(wt_path) if wt_path else ""
+    head_sha = git_client.head_sha(short=True, cwd=wt_path) if wt_path else ""
 
     def body_fn(entry: CommentItem) -> str:
         parts = [f"{_DEFERRED_REPLY_PREFIX} {entry.summary}",
@@ -1537,7 +1124,7 @@ def _warn_if_snapshot_stale(state: pr_state.PRState, wt_path: Path) -> None:
     """
     if not state.fix.fix.items:
         return
-    current = _get_head_sha(wt_path)
+    current = git_client.head_sha(short=True, cwd=wt_path)
     if state.fix.fix.head_sha and state.fix.fix.head_sha == current:
         return
     log.warn(
@@ -1783,7 +1370,7 @@ def _reconcile_fix_snapshot(
             continue
         outcome.outcome = settlement
         outcome.settled_by = SettledBy.RECONCILIATION
-        outcome.reason = _RECONCILED_REASON
+        outcome.reason = RECONCILED_REASON
         flipped += 1
     if flipped:
         log.info(f"Reconciled {flipped} stale outcome(s) against GitHub")
@@ -1814,7 +1401,7 @@ def _finish_deferred_work(
     if state is None:
         return
     threads_by_id = {t.id: t for t in report.threads}
-    _follow_history_rewrite(state, wt_path)
+    history_rewrite.follow_history_rewrite(state, wt_path)
     _push_held_commit(state, wt_path, trail)
     if state.fix.pr_body_pending:
         state.fix.pr_body_pending = _deliver_pr_body(
@@ -1833,75 +1420,6 @@ def _finish_deferred_work(
     pr_state.save_state(ctx.target_dir, state)
 
 
-def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
-    """Re-point the snapshot at the commits a rewrite left in place of its own.
-
-    A fix pass that holds its push records the SHA it committed, and the run
-    that clears the hold is often the one *after* a rebase — `pr rebase --fix`
-    is what a supersession warning tells the operator to run. That rebase
-    rewrites every commit on the branch and force-pushes, so the recorded SHA
-    ends up orphaned: still resolvable, contained by no branch, and therefore
-    read as unpushed by every gate in the closeout. The work is on the remote;
-    only its name changed, and holding the replies and the summary over a name
-    leaves the operator with no way forward that does not discard reviewed
-    drafts.
-
-    So the rename is followed here, before anything asks whether a commit is
-    published. Downstream is unchanged and answers correctly either way: a
-    replay that reached the remote clears the hold, and one still sitting local
-    is unpushed for the ordinary reason and keeps holding.
-
-    Nothing is cleared when the rename cannot be followed. An orphan no single
-    commit replays keeps the SHA it was recorded with, the hold stands, and the
-    warning below names the two ways out — which is the honest answer to a state
-    this cannot read, and the one thing worse than blocking would be publishing
-    on a guess.
-    """
-    record = state.fix.fix
-    recorded = record.commit_sha
-    # Keyed by recorded SHA, so a branch whose threads all cite one commit asks
-    # git once. "" is a cached answer too: it means orphaned with no replay.
-    replays: dict[str, str] = {}
-
-    def followed(sha: str) -> str:
-        if not sha:
-            return sha
-        if sha not in replays:
-            replays[sha] = (
-                _replayed_commit(wt_path, sha) if _rewritten_away(wt_path, sha) else sha
-            )
-        return replays[sha] or sha
-
-    record.commit_sha = followed(record.commit_sha)
-    # The snapshot HEAD moves with the rest. It is the base of the "what landed
-    # outside the fix pass" range, and a base git cannot resolve makes that
-    # range empty — which reads as "nothing landed since", the one answer that
-    # is never true after a rebase.
-    record.head_sha = followed(record.head_sha)
-    for outcome in record.items:
-        outcome.commit_sha = followed(outcome.commit_sha)
-        outcome.read_sha = followed(outcome.read_sha)
-
-    moved = sum(1 for sha, replay in replays.items() if replay and replay != sha)
-    if moved:
-        log.info(
-            f"Followed {moved} rewritten commit(s) — the fix snapshot now cites "
-            "the history on the branch"
-        )
-    if recorded and replays.get(recorded) == "" and _commit_unpushed(record.commit_status):
-        log.warn(
-            f"Fix commit {recorded} is no longer on this branch and no single "
-            "commit on it carries that change — the closeout stays held. This "
-            "also fires when the change now appears twice (a duplicated "
-            "cherry-pick, an apply-revert-reapply) — check history for that "
-            "before restoring anything. If the work landed as a different "
-            "change — a squash, a reworked fix — re-run "
-            "`pr comments --fix --post` to re-triage against HEAD; if it was "
-            f"dropped, restore it with `git cherry-pick {recorded}` while the "
-            "orphaned object is still there — a gc reclaims it"
-        )
-
-
 def _push_held_commit(
     state: pr_state.PRState, wt_path: Path, trail: Trail | None = None,
 ) -> None:
@@ -1915,7 +1433,7 @@ def _push_held_commit(
     the SHA they link to is somewhere the reviewer can follow it.
     """
     record = state.fix.fix
-    if not record.commit_sha or not _commit_unpushed(record.commit_status):
+    if not record.commit_sha or not attribution.commit_unpushed(record.commit_status):
         return
 
     if push.holds(wt_path, record.commit_sha):
@@ -2206,12 +1724,12 @@ def _create_or_update_deferred_issue(
 
 def _fixed_status_for(
     entry: CommentItem,
-    cp: CommitPushResult,
+    cp: attribution.CommitPushResult,
     repo: str,
-    history: "AddressingHistory | None" = None,
+    history: "attribution.AddressingHistory | None" = None,
     thread: ReportThread | None = None,
 ) -> str:
-    """Status cell for one fixed row, rendering what `_attribute_commit` allows.
+    """Status cell for one fixed row, rendering what `attribution.attribute_commit` allows.
 
     The row asks the resolver which commit carries it and renders that answer;
     it does not reach past the resolver for a SHA. Falling through to the
@@ -2224,20 +1742,20 @@ def _fixed_status_for(
     the cell reads the same as before; the thread reply has always passed one,
     so a table built without it contradicts the reply posted beside it.
     """
-    attribution = _attribute_commit(entry, cp, history, thread)
-    if attribution.cited:
-        return _fixed_in_cell(attribution.sha, repo)
+    attributed = attribution.attribute_commit(entry, cp, history, thread)
+    if attributed.cited:
+        return _fixed_in_cell(attributed.sha, repo)
     # A row settled outside the pass landed in a commit this run could not
     # resolve. That is true of the row whatever the running pass did, so it is
     # answered before the pass-level text gets a say.
     if _settled_outside_the_pass(entry, cp):
         return _RECONCILED_STATUS_TEXT
-    if attribution.claim is CommitClaim.PASS:
+    if attributed.claim is attribution.CommitClaim.PASS:
         return _fixed_status_text(cp, repo)
     return _UNATTRIBUTED_STATUS_TEXT
 
 
-def _settled_outside_the_pass(entry: CommentItem, cp: CommitPushResult) -> bool:
+def _settled_outside_the_pass(entry: CommentItem, cp: attribution.CommitPushResult) -> bool:
     """Whether this fixed row's work landed where the running pass cannot name it.
 
     Two ways that happens and one cell for both. The record says so — reconciled
@@ -2251,7 +1769,7 @@ def _settled_outside_the_pass(entry: CommentItem, cp: CommitPushResult) -> bool:
     used to compare the rendered cell text, which made a reworded cell a silent
     change to what gets warned about.
     """
-    return _handled_outside(entry) or cp.status == CommitStatus.RECONCILED
+    return attribution.handled_outside(entry) or cp.status == CommitStatus.RECONCILED
 
 
 def _fixed_in_cell(sha: str, repo: str) -> str:
@@ -2263,7 +1781,7 @@ def _fixed_in_cell(sha: str, repo: str) -> str:
     return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
 
 
-def _addressed_status_for(framing: AddressedFraming, repo: str) -> str:
+def _addressed_status_for(framing: attribution.AddressedFraming, repo: str) -> str:
     """Status cell for one satisfied row, in the framing its history earned.
 
     A row whose commit postdates the review comment reports as a fix, because
@@ -2276,7 +1794,7 @@ def _addressed_status_for(framing: AddressedFraming, repo: str) -> str:
     return "Already addressed"
 
 
-def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
+def _fixed_status_text(cp: attribution.CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
     if cp.sha and cp.status == CommitStatus.PUSHED:
         return _fixed_in_cell(cp.sha, repo)
@@ -2308,9 +1826,9 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
 
 def _warn_unattributed_fixes(
     fixed: list,
-    cp: CommitPushResult,
+    cp: attribution.CommitPushResult,
     folded: set[str] | None = None,
-    history: "AddressingHistory | None" = None,
+    history: "attribution.AddressingHistory | None" = None,
     threads_by_id: dict[str, ReportThread] | None = None,
 ) -> None:
     """Say so when rows claim fixes that no commit accounts for.
@@ -2346,14 +1864,14 @@ def _warn_unattributed_fixes(
     An unpushed commit is not this either: the work is committed and the row
     says so, it is only the link that has to wait.
     """
-    if _commit_unpushed(cp.status):
+    if attribution.commit_unpushed(cp.status):
         return
     folded = folded or set()
     threads_by_id = threads_by_id or {}
     orphans = [
         e for e in fixed
         if e.id not in folded
-        and not _attribute_commit(e, cp, history, threads_by_id.get(e.id)).cited
+        and not attribution.attribute_commit(e, cp, history, threads_by_id.get(e.id)).cited
         and not _settled_outside_the_pass(e, cp)
     ]
     if not orphans:
@@ -2859,7 +2377,7 @@ class HeldRow:
 
 def _build_summary_body(
     content: RoundContent,
-    cp: CommitPushResult,
+    cp: attribution.CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -2870,7 +2388,7 @@ def _build_summary_body(
     carried_over: list[str] | None = None,
     hand_held: list[HeldRow] | None = None,
     wt_path: Path | None = None,
-    history: "AddressingHistory | None" = None,
+    history: "attribution.AddressingHistory | None" = None,
     scope: RoundScope | None = None,
     chain: list[SummaryRound] | None = None,
 ) -> str:
@@ -2979,7 +2497,7 @@ def _build_summary_body(
     # Resolved once for the whole table: the count and the row it belongs to
     # are two renderings of one answer, and a count that disagreed with its own
     # rows would be the same contradiction in a smaller font.
-    history = history or AddressingHistory(wt_path)
+    history = history or attribution.AddressingHistory(wt_path)
     addressed_framings = [
         history.framing(e, threads_by_id.get(e.id)) for e in already_addressed
     ]
@@ -3518,7 +3036,7 @@ def _publish_summary(
 
 def _post_fix_summary(
     content: RoundContent,
-    cp: CommitPushResult,
+    cp: attribution.CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -3526,7 +3044,7 @@ def _post_fix_summary(
     head_sha: str = "",
     activity_at: str = "",
     wt_path: Path | None = None,
-    history: "AddressingHistory | None" = None,
+    history: "attribution.AddressingHistory | None" = None,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     if not content.has_content:
@@ -3570,7 +3088,7 @@ def _post_pending_fix_replies(
     """
     fix = state.fix
     record = fix.fix
-    if not _commit_unpushed(record.commit_status) and not fix.replies_pending:
+    if not attribution.commit_unpushed(record.commit_status) and not fix.replies_pending:
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
@@ -3611,7 +3129,7 @@ def _post_pending_fix_replies(
         # otherwise be replied to with "Fixed in ``" over an empty link.
         fix.replies_posted += _reply_to_fixed(
             fixed, threads_by_id, repo, pr_number,
-            _reconciled_commit(record, record.commit_status, wt_path), wt_path,
+            history_rewrite.reconciled_commit(record, record.commit_status, wt_path), wt_path,
         )
         resolved += _resolve_fixed_threads(fixed, threads_by_id)
 
@@ -3635,52 +3153,9 @@ def _post_pending_fix_replies(
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     if publishing.enabled():
-        if _commit_unpushed(record.commit_status):
+        if attribution.commit_unpushed(record.commit_status):
             record.commit_status = CommitStatus.PUSHED
         fix.replies_pending = False
-
-
-def _reconciled_commit(
-    record: FixRecord, status: str, wt_path: Path | None,
-) -> CommitPushResult:
-    """The pass's commit as the worktree now shows it, not as it was recorded.
-
-    The permalinks in this summary already fall back to the identity HEAD when
-    the pass recorded no commit of its own; the status cell did not, so a
-    hook-rejected commit the operator then made by hand rendered as a flat
-    "no commit needed" beside a file link pointing at the very change it
-    denied.
-
-    A moved HEAD with nothing recorded means someone committed outside the
-    pass. That commit is only worth naming if a reviewer can open it, so an
-    unpushed one falls back to the same non-committal cell a reconciled
-    outcome gets.
-
-    What it cannot say is which of those commits carries any particular row.
-    Whether one landed or several, this function sees only the branch, and a
-    record holds rows from every round the fix pass has run — a row an earlier
-    round settled sits in it attributed to nothing, and the commit that just
-    landed is not the one that carried it. So the SHA is handed on as
-    `UNDETERMINED`: a tree for the permalinks to pin to, and not a commit any
-    surface may cite as the one carrying a row. That is a per-row question, so
-    it is asked per row: `_attribute_commit` reads each thread's own line
-    history and cites the commit that changed it after the reviewer asked.
-    """
-    if record.commit_sha or not wt_path or not record.head_sha:
-        return CommitPushResult(record.commit_sha or None, status, "")
-    current = _get_head_sha(wt_path)
-    if not current or current == record.head_sha:
-        return CommitPushResult(None, status, "")
-    if not push.holds(wt_path, current):
-        return CommitPushResult(None, CommitStatus.RECONCILED, "")
-    log.info(
-        "Work landed outside the fix pass — each row is attributed from its "
-        "own line history, and left unattributed rather than credited to "
-        f"{current} where that finds nothing"
-    )
-    return CommitPushResult(
-        current, CommitStatus.PUSHED, "", claim=CommitClaim.UNDETERMINED,
-    )
 
 
 def _render_deferred_summary(
@@ -3702,7 +3177,7 @@ def _render_deferred_summary(
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
 
     status = record.commit_status
-    if _commit_unpushed(record.commit_status) and record.commit_sha:
+    if attribution.commit_unpushed(record.commit_status) and record.commit_sha:
         if not wt_path or not push.holds(wt_path, record.commit_sha):
             log.info("Push still pending — keeping summary deferred")
             return
@@ -3737,10 +3212,10 @@ def _render_deferred_summary(
         review_body_comments=report.review_body_comments,
     )
 
-    cp = _reconciled_commit(record, status, wt_path)
+    cp = history_rewrite.reconciled_commit(record, status, wt_path)
     # One per render, shared with the table below: the warning asks the same
     # question of the same rows, and `git log -L` is a process per location.
-    history = AddressingHistory(wt_path)
+    history = attribution.AddressingHistory(wt_path)
     _warn_unattributed_fixes(
         content.of(FixOutcome.FIXED), cp,
         _folded_item_ids(content, threads_by_id),
@@ -3792,14 +3267,14 @@ def _summary_still_owed(
     """
     if content.of(FixOutcome.DEFERRED) or content.needs_a_person or has_unaccounted:
         return True
-    if _commit_unpushed(commit_status):
+    if attribution.commit_unpushed(commit_status):
         return True
     return content.has_content
 
 
 def _post_or_defer_summary(
     content: RoundContent,
-    cp: CommitPushResult,
+    cp: attribution.CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -3815,13 +3290,13 @@ def _post_or_defer_summary(
     """
     # One per render, shared with the table below: the warning asks the same
     # question of the same rows, and `git log -L` is a process per location.
-    history = AddressingHistory(wt_path)
+    history = attribution.AddressingHistory(wt_path)
     _warn_unattributed_fixes(
         content.of(FixOutcome.FIXED), cp,
         _folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
-    if _commit_unpushed(cp.status):
+    if attribution.commit_unpushed(cp.status):
         log.info("Deferred fix summary — commit not on the remote, will post after push lands")
         return None
 
@@ -3839,101 +3314,6 @@ def _post_or_defer_summary(
     return None
 
 
-def _get_head_sha(wt_path: Path) -> str:
-    return git_client.head_sha(cwd=wt_path, short=True)
-
-
-def _rewritten_away(wt_path: Path, sha: str) -> bool:
-    """Whether HEAD's history no longer reaches *sha* — a rewrite orphaned it.
-
-    Existence is the wrong question here, and asking it is the bug this answers.
-    A rebase writes new commits and leaves the originals in the object database,
-    so `cat-file` and `branch -r --contains` disagree in the worst possible way:
-    the recorded SHA still resolves, and no branch anywhere contains it.
-
-    Ancestry separates the two readings. Exit 1 is the orphan — reachable as an
-    object, unreachable as history. Exit 0 means the commit is still on the
-    branch and its absence from the remote is a genuine unpushed commit, which
-    must keep holding the closeout. Any other exit is git declining to answer
-    (an unresolvable SHA, a damaged object) and is read as "no evidence of a
-    rewrite" on purpose: a question git could not answer must never be the
-    reason a hold clears.
-    """
-    return git_client.run(
-        "merge-base", "--is-ancestor", sha, "HEAD", cwd=wt_path,
-    ).returncode == 1
-
-
-def _patch_ids(wt_path: Path, *revs: str) -> dict[str, list[str]]:
-    """Patch id → the commits in *revs* carrying it, git's own equivalence test.
-
-    The same one `git cherry` and `git rebase` use to recognise a commit they
-    have already replayed, reached here through `patch-id` because those two
-    answer "is it there?" and this has to answer "which one is it?".
-
-    `--stable` so the id is a property of the change and not of whoever's diff
-    settings produced it, and `--no-merges` because a merge has no single patch:
-    `log -p` prints no diff for one, which would otherwise land every merge on a
-    shared empty id. An empty commit drops out the same way, and neither can
-    collide with anything, since `patch-id` emits no line for either.
-
-    ceiling: the whole `revs` diff is materialised to be piped through one
-    `patch-id`, trading memory for a fixed two processes rather than two per
-    candidate commit. Upgrade to a per-commit `diff-tree | patch-id` walk if a
-    range ever grows large enough that the LOCAL timeout expires — which
-    degrades safely, since no ids means no match means the hold stands.
-    """
-    patches = git_client.run(
-        "log", "-p", "--no-merges", "--format=commit %H", *revs, cwd=wt_path,
-    )
-    if not patches.ok or not patches.stdout:
-        return {}
-    # Not git_client: this one reads a diff on stdin, and `run` deliberately
-    # exposes no way to write to a child's input.
-    ids = proc.run(["git", "patch-id", "--stable"], cwd=wt_path,
-                   input_text=patches.stdout, timeout=timeouts.LOCAL)
-    if not ids.ok:
-        return {}
-    by_id: dict[str, list[str]] = {}
-    for line in ids.stdout.splitlines():
-        patch_id, _, commit = line.partition(" ")
-        if patch_id and commit.strip():
-            by_id.setdefault(patch_id, []).append(commit.strip())
-    return by_id
-
-
-def _replayed_commit(wt_path: Path, sha: str) -> str:
-    """The commit now on the branch that replays *sha*, or "" when none does.
-
-    Matched on the patch the commit carries, because the header carries nothing
-    that tells two fix commits apart: every pass commits under one static
-    subject (`CommentFixAdapter.landing`), and two rounds close enough together — a
-    retry, a fast CI loop — share an author date to the second as well. Content
-    is the only field a rebase preserves that is also the commit's own, and it
-    survives an amend and a conflict resolution that a subject match would not.
-
-    Searched from the orphan's own merge base rather than from the upstream
-    branch, because the rewrite may have moved the branch onto a newer base and
-    the old one is the only commit both histories still agree on.
-
-    Two answers is no answer. A patch that appears twice in range — applied,
-    reverted, applied again; a cherry-pick duplicated by the rebase — leaves
-    nothing to choose between, so it takes the no-match path and keeps holding
-    rather than citing a commit picked by list order. A reword or an amend still
-    matches, since neither touches the diff; a squash, a dropped commit, and a
-    fix reworked into a different change do not, and that is the honest answer:
-    the recorded commit's work is not on the branch under any name.
-    """
-    orphan = _patch_ids(wt_path, "--no-walk", sha)
-    base = git_client.out("merge-base", sha, "HEAD", cwd=wt_path)
-    if len(orphan) != 1 or not base:
-        return ""
-    replays = _patch_ids(wt_path, f"{base}..HEAD").get(next(iter(orphan)), [])
-    if len(replays) != 1:
-        return ""
-    return git_client.out("rev-parse", "--short", replays[0], cwd=wt_path)
-
-
 def _build_fix_record(
     by_outcome: dict[FixOutcome, list[CommentItem]],
     commit_sha: str = "",
@@ -3948,14 +3328,14 @@ def _build_fix_record(
     time that vocabulary does.
 
     `commit_sha` is stamped only on the buckets whose outcome may cite a commit,
-    through `_stamp_pass_commit` — the one writer of that field, and safe to
+    through `attribution.stamp_pass_commit` — the one writer of that field, and safe to
     call here even when a caller already stamped `fixed` upstream, since the
     writer is a no-op on an entry that already names a commit. The others were
     not landed by this commit, and a SHA on them would read as if they had been.
     """
     for outcome, entries in by_outcome.items():
         if outcome.may_cite_a_commit:
-            _stamp_pass_commit(entries, commit_sha)
+            attribution.stamp_pass_commit(entries, commit_sha)
     return FixRecord(
         items=[
             entry.to_outcome(outcome)
@@ -4239,7 +3619,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
 
         `recover` because this agent edits a repo whose own conventions it
         follows, and a fix pass in a repo that commits its work leaves the
-        landing nothing to stage — see `_replayed_commit`, which is what finds
+        landing nothing to stage — see `replay.replayed_commit`, which is what finds
         that commit again after a rebase.
         """
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
@@ -4261,7 +3641,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         each of the outward acts is gated, and the state file has to record which
         of them actually went out.
         """
-        cp = _pass_commit(self.workdir, run.landed)
+        cp = attribution.pass_commit(self.workdir, run.landed)
         tracking = _parse_tracking_results(
             run.outcomes, self.fixable, fixable_items=self.fixable_items,
         )
@@ -4272,7 +3652,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         # an earlier round's.
         fixed_threads = tracking.bucket(FixOutcome.FIXED)
         all_fixed = tracking.both(FixOutcome.FIXED)
-        _stamp_pass_commit(all_fixed, cp.sha or "")
+        attribution.stamp_pass_commit(all_fixed, cp.sha or "")
 
         replies_posted = self.triage_replies
         resolved = list(self.resolved)
@@ -4333,7 +3713,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
                 # HEAD after the pass, not ctx.head_sha: the fix pass commits,
                 # so the snapshot must name the commit its outcomes were
                 # measured against.
-                head_sha=_get_head_sha(self.workdir),
+                head_sha=git_client.head_sha(short=True, cwd=self.workdir),
             ),
             reviewers=_reviewers_for(by_outcome),
             replies_posted=replies_posted,
@@ -4400,10 +3780,10 @@ def _run_comment_fix(
     # the review comment's own and triage's citation alike — was read against
     # this head, and a permalink built after the fix commit needs to know that
     # to decide whether its anchor still points at the reviewer's code.
-    _stamp_read_sha(
+    attribution.stamp_read_sha(
         fixable + list(fixable_items or [])
         + all_needs_human + all_dismissed + all_addressed,
-        _get_head_sha(wt_path),
+        git_client.head_sha(short=True, cwd=wt_path),
     )
 
     _hold_if_superseded(
@@ -4424,7 +3804,7 @@ def _run_comment_fix(
     )
     has_unaccounted = bool(non_resolved_ids - accounted_ids)
 
-    no_commit = CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+    no_commit = attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
 
     # Both return paths hand this to _persist_fix_state: the tally on disk was
     # written before this function ran, so it learns of these resolutions only
@@ -4497,7 +3877,7 @@ def _run_comment_fix(
             fix=_build_fix_record(
                 by_outcome,
                 commit_status=no_commit.status,
-                head_sha=_get_head_sha(wt_path),
+                head_sha=git_client.head_sha(short=True, cwd=wt_path),
             ),
             reviewers=_reviewers_for(by_outcome),
             replies_posted=triage_replies,
@@ -4838,7 +4218,7 @@ def _resolve_settled_commit(
     that says less than they asked it to.
 
     The answer comes back abbreviated, because that is the width every other SHA
-    this command persists carries — see `_pass_commit`. Git is asked in full
+    this command persists carries — see `attribution.pass_commit`. Git is asked in full
     first: `push.holds` compares ancestry, and an operator may well have typed a
     tag or a branch name rather than a SHA at all.
     """
@@ -4856,7 +4236,7 @@ def _resolve_settled_commit(
                 f"first, or the reply citing it sends the reviewer to a 404"
             ))
         return _SettledCommit(sha=git_client.abbrev(sha))
-    sha = _find_addressing_commit(wt_path, outcome.file, outcome.line) or ""
+    sha = attribution.find_addressing_commit(wt_path, outcome.file, outcome.line) or ""
     if sha and push.holds(wt_path, sha):
         return _SettledCommit(sha=git_client.abbrev(sha))
     return _SettledCommit()
@@ -4909,7 +4289,7 @@ def _record_settlement(
     # The operator's words for a dismissal, because that is the one settlement
     # whose reply is an argument the reviewer may answer. The other two render
     # from the summary, so their reason says what the provenance field records.
-    outcome.reason = reason if kind is FixOutcome.DISMISSED else _SETTLED_REASON
+    outcome.reason = reason if kind is FixOutcome.DISMISSED else SETTLED_REASON
     outcome.commit_sha = (sha or outcome.commit_sha) if kind.may_cite_a_commit else ""
     return (outcome.outcome, outcome.reason, outcome.commit_sha) != before
 

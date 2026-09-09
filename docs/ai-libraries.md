@@ -1105,6 +1105,27 @@ with sit at or beneath the layer that answers. `review.collect` builds
 the same `PRMetadata` from local git for a branch with no PR behind it, which is
 why the type is not spelled in terms of the API's field names.
 
+### pr/attribution.py
+
+Which commit carries one review thread's change, and how firmly.
+
+Every reviewer-facing surface asks this — the summary row, the thread reply, and
+the blob permalink under it — and four mechanisms used to answer it
+independently, each written for the caller that noticed first. Three of them
+were wrong for some caller. The one answer lives here, and the callers decide
+how to *render* an entry with no citation rather than inventing one.
+
+The distinction the module exists to keep is between a fact about the branch and
+a fact about a row. "Commits landed outside the pass" is the first; "which
+commit carries this thread" is the second, and the second may not be inferred
+from the first. Stamping every row with whatever is at HEAD names a commit
+picked for having no relationship to the row.
+
+:class:`AddressingHistory` is the per-row evidence that makes an honest answer
+possible: the newest commit to touch the one line a thread is anchored to, dated
+against when the reviewer opened it. It is a memo because `git log -L` costs a
+process per location and every surface asks about the same threads.
+
 ### pr/ci_annotations.py
 
 What a failed CI job was actually complaining about, as `FailureItem`s.
@@ -1608,6 +1629,29 @@ shared pipeline all three now run on, and the thing that produces the
 not the same as recording through these types: the review-findings pass
 re-renders the review document from its outcomes rather than writing a record
 at all.
+
+### pr/history_rewrite.py
+
+Keeping a recorded commit true after the branch is rewritten under it.
+
+A fix pass that holds its push records the SHA it committed, and the run that
+clears the hold is often the one *after* a rebase. That rebase rewrites every
+commit on the branch, so the recorded SHA is orphaned — still resolvable,
+contained by no branch, and therefore read as unpushed by every gate in the
+closeout. The work is on the remote; only its name changed.
+
+Two recoveries, one per direction:
+
+- :func:`follow_history_rewrite` re-points a stored snapshot at the commits a
+  rewrite left in place of its own, before anything asks whether a commit is
+  published.
+- :func:`reconciled_commit` goes the other way: the pass recorded *no* commit
+  and the branch moved anyway, so someone landed the work by hand.
+
+The git-level questions both rest on — was this orphaned, and which commit
+replays it — belong to `git.replay` at layer 2, so the rebase subsystem that
+causes these rewrites can reach the same answers. What is here is the part that
+knows about a `PRState` and a `FixRecord`.
 
 ### pr/state.py
 
@@ -2970,6 +3014,32 @@ Higher layers (``rebase``) own the repo-specific half: which regeneration
 commands a repo declares, how generated files are queued for rebuild, and
 how stale files are reported.  That split is what lets ``git.land`` import
 this module without pulling in ``config`` or ``pr``.
+
+### git/replay.py
+
+Whether a recorded commit survived a history rewrite, and as which commit.
+
+A rebase writes new commits and leaves the originals in the object database, so
+a SHA recorded before one still resolves afterwards while naming a commit no
+branch contains. Anything holding a recorded SHA across a rebase — a fix pass
+that stamped one onto a row, a state file carrying one between runs — has to be
+able to tell that apart from a commit that is simply not pushed yet.
+
+Two questions, and the distinction between them is the whole module:
+
+- :func:`rewritten_away` — *was it orphaned?* Ancestry, read for the one exit
+  code that means orphaned rather than for truthiness.
+- :func:`replayed_commit` — *which commit carries it now?* Patch equivalence,
+  refusing to answer when more than one candidate matches.
+
+`gh.landed` asks a neighbouring question of a whole branch — *is this work
+upstream at all?* — and answers it with `git cherry`, which is cheaper and
+all-or-nothing. Neither is a substitute for the other, and the boundary is worth
+keeping: `landed` answers "is it there?", this answers "which one is it?".
+
+Layer 2 rather than beside its first caller, so `gh`, `pr`, `fix` and `rebase`
+can all reach it. The rebase subsystem is what *causes* the rewrites this
+recovers from and should be reading the same answer.
 
 ### git/topology.py
 

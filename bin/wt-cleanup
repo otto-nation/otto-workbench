@@ -335,6 +335,11 @@ main() {
     # script removes worktrees, so there is nothing here to act on — and its
     # removal path would otherwise run against the literal string "null".
     [[ "$wt_path" == "null" || -z "$wt_path" ]] && continue
+    # A detached worktree has no branch to name, and every removal below goes
+    # through `wt remove "$branch"` — which would be handed the string "null".
+    # Leave it to a human: nothing here can tell a mid-rebase checkout from an
+    # abandoned one.
+    [[ "$branch" == "null" || -z "$branch" ]] && continue
     [[ "$is_main" == "true" ]] && continue
     [[ "$branch" == "$default_branch" ]] && continue
     [[ "$is_current" == "true" ]] && continue

@@ -908,7 +908,10 @@ FAKEWT
   local row
   row=$(jq -r '[.items[] | select(.worktree != null)][0]' <<< "$real")
   [ "$row" != "null" ]
-  [ "$(jq -r '.branch | type' <<< "$row")" = "string" ]
+  # `.branch` is null on a detached worktree, which is what `actions/checkout`
+  # leaves behind — so this asserts the two shapes the field really has, not
+  # the one a developer machine happens to show.
+  [[ "$(jq -r '.branch | type' <<< "$row")" =~ ^(string|null)$ ]]
   [ "$(jq -r '.worktree.path | type' <<< "$row")" = "string" ]
   [ "$(jq -r '.worktree.main | type' <<< "$row")" = "boolean" ]
   [ "$(jq -r '.worktree.current | type' <<< "$row")" = "boolean" ]
@@ -982,5 +985,26 @@ JSON
   [ "$status" -eq 0 ]
   [[ "$output" != *"removing: conflicting"* ]]
   [[ "$output" == *"conflicted"* ]]
+  [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+@test "a detached worktree is left alone rather than removed as \"null\"" {
+  # `actions/checkout` leaves a detached HEAD, so this is the shape CI runs
+  # against. Every removal path names the branch to `wt remove`; with no
+  # branch there is nothing safe to name, and a detached checkout may be a
+  # rebase in progress.
+  jq -n --argjson schema "$WT_LIST_SCHEMA" '
+    { schema: $schema, repo: {default_branch: "main"}, collected: {},
+      items: [{ branch: null,
+                head: {committed_at: "2026-01-01T00:00:00Z"},
+                worktree: {path: "/nonexistent/detached", main: false,
+                           current: false, detached: true,
+                           changes: {staged: false, modified: false,
+                                     untracked: false, renamed: false,
+                                     deleted: false, conflicted: false}},
+                display: {state: "integrated", symbols: "⊂"} }] }' > "$WT_JSON"
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
   [ ! -s "$WT_REMOVE_LOG" ]
 }

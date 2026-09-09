@@ -29,6 +29,27 @@ the regeneration — a Stop hook rewrites it and `/ceiling-debt` there forces a 
 so under any other harness, read it and treat a missing entry as one nobody has scanned
 for yet.
 
+## Knowledge Base
+
+Run `wiki path` when a task looks like it has been investigated before. It prints the
+project's knowledge base directory, or exits 2 when there is none — in which case there is
+nothing here to do. When one exists, read its `_index.md` and open any article bearing on
+the task before starting. Unlike the artifacts above, this one is authored: it holds what
+previous sessions concluded, not a regenerated view of the tree.
+
+During the session, append an entry to the knowledge base's `_log.md` when you find
+something that contradicts an article, fills a gap, or supersedes what is recorded:
+
+```
+[DATE] SESSION_OBSERVATION: {what was learned}
+  Context: {what prompted it}
+  Articles: [[existing-article]] if any
+```
+
+Log the observation and stop there. Do not write or edit articles as a side effect of
+unrelated work — `/wiki compile` processes these entries deliberately, and `wiki lint`
+reports them as unprocessed until it does.
+
 ## Reuse Level
 
 If `reuse.level` is set in `~/.config/workbench/config.yml`, read it at session

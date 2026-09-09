@@ -45,7 +45,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, wiki — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -218,6 +218,18 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 ```
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
+
+### `/wiki [init|ingest|compile|status|lint|promote] [args]`
+
+Build and maintain a compiled knowledge base — ingest sources, compile them into interlinked articles, query them, and keep them healthy. TRIGGER when: user wants a knowledge base, asks to ingest or compile a source, queries compiled knowledge, or asks about wiki health. SKIP: one-off questions answerable from the codebase; project docs that belong in docs/.
+
+```
+/wiki [init|ingest|compile|status|lint|promote] [args]
+```
+
+**Output:** `articles in the knowledge base directory; reports to stdout`
+**Trigger:** wiki, knowledge base, ingest a source, compile articles, query the wiki, wiki health
+**Skip:** Questions answerable directly from the codebase; documentation that belongs in the project's own docs/
 
 ## Session Lifecycle
 

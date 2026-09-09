@@ -59,6 +59,11 @@ tools:
     visibility: brief
     description: "Scan PR review comments and cross-reference against coding rules"
 
+  - name: wiki
+    permission: true
+    visibility: brief
+    description: "Mechanical operations over a compiled knowledge base — status, lint, source hashes, index"
+
   - name: workbench-reference
     permission: true
     visibility: brief

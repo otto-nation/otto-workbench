@@ -62,6 +62,11 @@ def clean_source_type(source_type: str) -> str:
 
     Applied for the same reason titles are: the value is interpolated into a
     path and into YAML, and it arrives from `--type` unvalidated.
+
+    `--type untitled` therefore records as `file`, since that is the word
+    `slugify_title` returns for an input that slugified to nothing. Collapsing
+    the two is deliberate: they describe the same source equally well, and
+    telling them apart would mean a second sentinel to carry around.
     """
     cleaned = slugify_title(source_type)
     return DEFAULT_SOURCE_TYPE if cleaned == "untitled" else cleaned
@@ -176,9 +181,16 @@ def _render_schema(template: Path | None, domain: str, audience: str) -> str:
 
 
 def _frontmatter(source_type: str, title: str, source: Path) -> str:
+    """The ingest block. Every value is escaped here, not by the caller.
+
+    `source_type` arrives already cleaned from `stage_source`, so quoting it is
+    redundant today — and that is exactly the kind of guarantee that is one
+    refactor away from being untrue. Escaping locally costs nothing and keeps
+    the function safe to call with anything.
+    """
     return (
         "---\n"
-        f"source_type: {source_type}\n"
+        f"source_type: {_yaml_scalar(source_type)}\n"
         f"title: {_yaml_scalar(title)}\n"
         f"original_path: {_yaml_scalar(str(source))}\n"
         f"ingest_date: {_today()}\n"

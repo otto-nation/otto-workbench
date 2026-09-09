@@ -6,7 +6,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from conftest import load_script
+from conftest import frontmatter_keys, load_script
 
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 
@@ -654,7 +654,10 @@ class TestIngestStage:
         assert wiki.main(["ingest", str(tmp_path), "--stage", str(src)]) == 0
         staged = next((root / "raw").iterdir())
         text = staged.read_text(encoding="utf-8")
-        assert "source_type: file" in text and "body" in text
+        # Every frontmatter value is a quoted scalar, so read it as one rather
+        # than matching the bare word.
+        assert '\nsource_type: "file"\n' in text
+        assert "body" in text
         assert "staged" in capsys.readouterr().out
 
     def test_staged_source_is_seen_as_new(self, tmp_path):
@@ -728,9 +731,7 @@ class TestIngestStage:
 
     def _staged_keys(self, root: Path) -> list[str]:
         """Frontmatter keys of the one staged source, as a parser sees them."""
-        staged = next((root / "raw").iterdir())
-        block = staged.read_text(encoding="utf-8").split("---")[1]
-        return [ln.split(":", 1)[0] for ln in block.splitlines() if ":" in ln]
+        return frontmatter_keys(next((root / "raw").iterdir()))
 
     def test_source_type_cannot_inject_frontmatter(self, tmp_path):
         """A newline in `--type` opened a second frontmatter key.

@@ -60,7 +60,6 @@ SCHEMA_FILE = wiki_paths.SCHEMA_FILE
 Wiki = wiki_model.Wiki
 WikiExistsError = wiki_create.WikiExistsError
 build_index = wiki_report.build_index
-clean_source_type = wiki_create.clean_source_type
 collect_lint = wiki_report.collect_lint
 collect_status = wiki_report.collect_status
 find_wiki = wiki_paths.find_wiki

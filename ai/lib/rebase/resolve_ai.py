@@ -14,7 +14,7 @@ from pathlib import Path
 from agent import invoke as agent_invoke
 from core import log
 from core.phases import Phase
-from core.trail import Trail
+from core.trail import Trail, billed_to, terr, tfail, tinfo
 from git import regenerate as regen
 
 from . import conflicts
@@ -27,29 +27,6 @@ GeneratedSignal = rebase_types.GeneratedSignal
 Regenerator = regen.Regenerator
 RegenQueue = regen.RegenQueue
 Resolution = rebase_types.Resolution
-
-
-# ── Trail helpers ─────────────────────────────────────────────────────────
-
-def _billed_to(trail: Trail | None) -> dict[str, str | None]:
-    """Extract repo and PR from the trail's context for AI billing."""
-    ctx = trail.context if trail else {}
-    pr = ctx.get("pr")
-    return {"repo": ctx.get("repo"), "pr": str(pr) if pr else None}
-
-
-def _terr(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
-    if trail:
-        trail.error(action, detail, **kwargs)
-
-
-def _tfail(trail: Trail | None, action: str, detail: str, **kwargs) -> Path | None:
-    return trail.failure(action, detail, **kwargs) if trail else None
-
-
-def _tinfo(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
-    if trail:
-        trail.info(action, detail, **kwargs)
 
 
 # ── Prompt construction ──────────────────────────────────────────────────
@@ -197,10 +174,10 @@ def resolve_full_file(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"conflict resolution for {filepath}",
         usable=conflicts.resolution_parses, task="conflict-resolve",
-        **_billed_to(trail),
+        **billed_to(trail),
     )
     if answer.exit_code != 0:
-        _terr(trail, "resolve_conflicts", f"AI prompt failed for {filepath}",
+        terr(trail, "resolve_conflicts", f"AI prompt failed for {filepath}",
               data={"filepath": filepath, "exit_code": answer.exit_code})
         log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
@@ -208,7 +185,7 @@ def resolve_full_file(
     stdout = answer.text
     resolved_content, failure_reason = conflicts.parse_resolved_content(stdout)
     if resolved_content is None:
-        _tfail(
+        tfail(
             trail, "resolve_conflicts",
             f"failed to parse resolution for {filepath}",
             output=stdout,
@@ -235,24 +212,24 @@ def resolve_chunked(
     prompt = build_chunked_prompt(
         filepath, blocks, sha, subject, commit_diff, target_ref=target_ref,
     )
-    _tinfo(trail, "chunked_resolve", f"using chunked resolution for {filepath}",
+    tinfo(trail, "chunked_resolve", f"using chunked resolution for {filepath}",
            data={"blocks": len(blocks), "total_lines": content.count("\n") + 1})
     answer = agent_invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"chunked resolution for {filepath}",
         usable=lambda s: conflicts.parse_chunked_resolutions(s, len(blocks))[0] is not None,
         task="conflict-resolve-chunked",
-        **_billed_to(trail),
+        **billed_to(trail),
     )
     if answer.exit_code != 0:
-        _terr(trail, "resolve_conflicts", f"AI prompt failed for {filepath}",
+        terr(trail, "resolve_conflicts", f"AI prompt failed for {filepath}",
               data={"filepath": filepath, "exit_code": answer.exit_code})
         log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
 
     resolutions, failure_reason = conflicts.parse_chunked_resolutions(answer.text, len(blocks))
     if resolutions is None:
-        _tfail(
+        tfail(
             trail, "resolve_conflicts",
             f"failed to parse chunked resolution for {filepath}",
             output=answer.text,
@@ -339,7 +316,7 @@ def dispatch_accept_theirs(
     if queue_repo_regeneration is None or not queue_repo_regeneration(filepath, cwd, queue):
         queue.mark_unrebuildable(filepath)
         log.warn(f"No regeneration command for {filepath} — staged stale")
-        _tinfo(
+        tinfo(
             trail, "generated_file", f"no regeneration command for {filepath}",
             data={"filepath": filepath, "signal": str(signal)},
         )
@@ -368,7 +345,7 @@ def dispatch_conflict(
             filepath, sha, cwd, plan.delete_side, trail=trail,
         )
     if plan.strategy is ConflictStrategy.BINARY_ERROR:
-        _terr(trail, "resolve_conflicts", f"binary file: {filepath}",
+        terr(trail, "resolve_conflicts", f"binary file: {filepath}",
               data={"filepath": filepath})
         log.error(f"Cannot resolve binary file: {filepath}")
         return False
@@ -380,7 +357,7 @@ def dispatch_conflict(
     )
     if resolved is None:
         return False
-    _tinfo(trail, "resolve_conflict", f"resolved {filepath}",
+    tinfo(trail, "resolve_conflict", f"resolved {filepath}",
            data={"commit": sha, "method": "ai"})
     return True
 
@@ -430,7 +407,7 @@ def resolve_file_conflicts(
     failed = _run_deferred_regenerations(queue, cwd, run_regeneration)
 
     if failed:
-        _terr(trail, "regenerate", "regeneration failed", data={"files": failed})
+        terr(trail, "regenerate", "regeneration failed", data={"files": failed})
         log.warn(f"Regeneration failed for: {', '.join(failed)} — lockfiles may be stale")
 
     return Resolution(files=resolved, stale=queue.unrebuildable + failed)

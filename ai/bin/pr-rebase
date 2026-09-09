@@ -63,6 +63,7 @@ from core.phases import Phase
 from pr.domains import RebaseStatus, RebaseSummary
 from core.proc import CmdResult
 from core.tool_parser import ToolParser
+from core import trail as core_trail
 from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
@@ -73,31 +74,25 @@ SCRIPT = Path(__file__).name
 _trail: Trail | None = None
 
 
+# The guards themselves live in core.trail, which every module the rebase
+# subsystem is being decomposed into shares. These bind the one argument they
+# take to this run's global, and go with the global when the last body leaves.
+
+
 def _terr(action: str, detail: str, **kwargs) -> None:
-    if _trail:
-        _trail.error(action, detail, **kwargs)
+    core_trail.terr(_trail, action, detail, **kwargs)
 
 
 def _tfail(action: str, detail: str, **kwargs) -> Path | None:
-    return _trail.failure(action, detail, **kwargs) if _trail else None
+    return core_trail.tfail(_trail, action, detail, **kwargs)
 
 
 def _tinfo(action: str, detail: str, **kwargs) -> None:
-    if _trail:
-        _trail.info(action, detail, **kwargs)
+    core_trail.tinfo(_trail, action, detail, **kwargs)
 
 
 def _billed_to() -> dict[str, str | None]:
-    """The repo and PR every AI call this run makes bills to in the usage ledger.
-
-    The conflict and pre-push helpers sit several frames below the resolved
-    context, and the trail this run opened already holds the same subject — so
-    they read it from there rather than each signature between them growing two
-    parameters that only get forwarded.
-    """
-    ctx = _trail.context if _trail else {}
-    pr = ctx.get("pr")
-    return {"repo": ctx.get("repo"), "pr": str(pr) if pr else None}
+    return core_trail.billed_to(_trail)
 
 
 # Constants delegated to rebase.types.

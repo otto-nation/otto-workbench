@@ -7,6 +7,7 @@ import sys
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from conftest import run_checked
 
@@ -26,7 +27,13 @@ from core.trail import (
     Trail,
     add_trail_args,
     artifacts_dir,
+    billed_to,
     prune_trail,
+    tdecision,
+    terr,
+    tfail,
+    tinfo,
+    tspan,
 )
 
 
@@ -429,6 +436,63 @@ class TestTrailContext:
         trail.info("after", "")
         after = next(e for e in _read_events() if e["action"] == "after")
         assert after["context"] == {"repo": "org/repo", "pr": 1}
+
+
+class TestOptionalTrailHelpers:
+    """A library function below an entry point records only if one is recording.
+
+    Every helper takes the trail it might not have been given, so the modules
+    calling them do not each carry the same None check.
+    """
+
+    def test_the_guard_delegates_to_the_trail(self):
+        trail = mock.MagicMock()
+        tfail(trail, "unstash", "stash pop failed", output="boom")
+        trail.failure.assert_called_once_with(
+            "unstash", "stash pop failed", output="boom")
+
+    def test_no_trail_is_not_a_failure(self):
+        assert tfail(None, "unstash", "failed", output="boom") is None
+
+    def test_each_guard_forwards_to_its_own_method(self):
+        trail = mock.MagicMock()
+        terr(trail, "act", "detail")
+        tinfo(trail, "act", "detail")
+        tdecision(trail, "act", "detail", reason="why")
+        trail.error.assert_called_once_with("act", "detail")
+        trail.info.assert_called_once_with("act", "detail")
+        trail.decision.assert_called_once_with("act", "detail", reason="why")
+
+    def test_no_trail_is_not_an_error(self):
+        terr(None, "act", "detail")
+        tinfo(None, "act", "detail")
+        tdecision(None, "act", "detail", reason="why")
+
+    def test_a_span_without_a_trail_still_runs_its_body(self):
+        ran = False
+        with tspan(None, "work"):
+            ran = True
+        assert ran
+
+    def test_a_span_with_a_trail_is_recorded(self):
+        trail = Trail.start(script="test", context={})
+        with tspan(trail, "work"):
+            pass
+        assert [e["event_type"] for e in _read_events() if e["span"] == "work"] == [
+            EventType.SPAN_START.value, EventType.SPAN_END.value,
+        ]
+
+    def test_the_runs_subject_is_what_a_call_bills_to(self):
+        trail = Trail.start(script="test", context={"repo": "org/repo", "pr": 7})
+        assert billed_to(trail) == {"repo": "org/repo", "pr": "7"}
+
+    def test_a_branch_with_no_pr_bills_to_the_repo_alone(self):
+        trail = Trail.start(script="test", context={"repo": "org/repo", "pr": None})
+        assert billed_to(trail) == {"repo": "org/repo", "pr": None}
+
+    def test_no_trail_bills_to_nothing(self):
+        """`--help` and the unit tests below run with no trail opened."""
+        assert billed_to(None) == {"repo": None, "pr": None}
 
 
 class TestAddTrailArgs:

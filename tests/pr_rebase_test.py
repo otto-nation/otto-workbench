@@ -946,23 +946,8 @@ class TestLedgerAttribution:
 
         assert (recorded["repo"], recorded["pr"]) == ("org/repo", None)
 
-    def test_no_trail_is_not_an_error(self):
-        """`--help` and the unit tests below run with the global still unset."""
-        assert pr_rebase_cli._billed_to() == {"repo": None, "pr": None}
-
 
 class TestFailureRecording:
-    def test_the_guard_delegates_to_the_trail(self):
-        fake_trail = mock.MagicMock()
-        with mock.patch.object(pr_rebase_cli, "_trail", fake_trail):
-            pr_rebase_cli._tfail("unstash", "stash pop failed", output="boom")
-        fake_trail.failure.assert_called_once_with(
-            "unstash", "stash pop failed", output="boom")
-
-    def test_no_trail_is_not_an_error(self):
-        with mock.patch.object(pr_rebase_cli, "_trail", None):
-            assert pr_rebase_cli._tfail("unstash", "failed", output="boom") is None
-
     def test_an_unparseable_resolution_hands_over_the_whole_answer(self):
         """The old record kept 500 characters of a tail and no way to the rest."""
         fake_trail = mock.MagicMock()

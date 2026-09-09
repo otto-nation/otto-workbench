@@ -149,6 +149,10 @@ tools: []'
   local -a before=() before_targets=()
   collect_claude_env_vars before before_targets "$TMPDIR"
   [[ "${#before[@]}" -eq 1 ]]
+  # Without the flag the entry is collected under its mapped name, so the second
+  # pass is suppressing a mapping that demonstrably worked rather than one that
+  # never applied.
+  [[ "${before_targets[0]}" == "SOME_OTHER_NAME" ]]
 
   _write_env_registry "$TMPDIR/comp" 'meta:
   section: Test

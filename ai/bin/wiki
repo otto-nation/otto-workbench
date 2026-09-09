@@ -42,27 +42,34 @@ from _version import version_string as _version_string  # noqa: E402
 from config.workbench_config import load_config_or_default  # noqa: E402
 from core import proc  # noqa: E402
 from git import client as git_client  # noqa: E402
-from wiki import (  # noqa: E402
-    DEFAULT_SETTINGS,
-    DEFAULT_WIKI_DIRNAME,
-    HASH_PREFIX_LEN,
-    INDEX_FILE,
-    MAX_PARENT_DEPTH,
-    SCHEMA_FILE,
-    Wiki,
-    WikiExistsError,
-    build_index,
-    collect_lint,
-    collect_status,
-    clean_source_type,
-    find_wiki,
-    hash_file,
-    init_wiki,
-    manifest_row,
-    read_text,
-    slugify_title,
-    stage_source,
-)
+from wiki import create as wiki_create  # noqa: E402
+from wiki import model as wiki_model  # noqa: E402
+from wiki import parsing as wiki_parsing  # noqa: E402
+from wiki import paths as wiki_paths  # noqa: E402
+from wiki import report as wiki_report  # noqa: E402
+
+# Bound here so the command bodies and this script's tests read the same
+# names, while the imports above stay in the `from <package> import <module>`
+# form the tarball's reachability walk follows.
+DEFAULT_SETTINGS = wiki_paths.DEFAULT_SETTINGS
+DEFAULT_WIKI_DIRNAME = wiki_paths.DEFAULT_WIKI_DIRNAME
+HASH_PREFIX_LEN = wiki_parsing.HASH_PREFIX_LEN
+INDEX_FILE = wiki_paths.INDEX_FILE
+MAX_PARENT_DEPTH = wiki_paths.MAX_PARENT_DEPTH
+SCHEMA_FILE = wiki_paths.SCHEMA_FILE
+Wiki = wiki_model.Wiki
+WikiExistsError = wiki_create.WikiExistsError
+build_index = wiki_report.build_index
+clean_source_type = wiki_create.clean_source_type
+collect_lint = wiki_report.collect_lint
+collect_status = wiki_report.collect_status
+find_wiki = wiki_paths.find_wiki
+hash_file = wiki_parsing.hash_file
+init_wiki = wiki_create.init_wiki
+manifest_row = wiki_create.manifest_row
+read_text = wiki_parsing.read_text
+slugify_title = wiki_create.slugify_title
+stage_source = wiki_create.stage_source
 
 # The SCHEMA template ships with the skill, the layer that owns the prose. It is
 # absent when the CLI is installed without the skill, so init falls back to a

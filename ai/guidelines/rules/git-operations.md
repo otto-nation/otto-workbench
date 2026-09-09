@@ -70,6 +70,17 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 
 - When implementation is complete, create a PR — never present a menu of completion options (see PR Creation for the full invocation)
 - When the user states a specific next step ("merge this", "push it", "just keep it"), execute it directly. If it fails, debug the failure — don't fall back to an options menu
+- Open the PR when the work is done, not when it is nearly done. Opening one is a claim that the branch is finished, and it is acted on as such: a reviewer reads it, marks it ready, and merges. Anything still on your list — a test you meant to add, a finding you meant to fix — belongs in the branch before the PR exists, or in a follow-up PR after it
+
+## A Branch With an Open PR Is Shared
+
+Once a PR exists, the branch is no longer yours alone. Someone may be reading it, may have marked it ready, may be merging it this second. A push that would have been routine an hour earlier is now a change to something another person is acting on.
+
+- Prefer not to push to a branch whose PR is open. Land the follow-up work as its own PR instead. This is the default, not the fallback
+- When you do push — review findings, CI fixes, a reviewer's request — say so on the PR, in a comment naming what changed and why. A silent push to a branch someone is reviewing wastes the review they already did
+- Never push to a PR that has been marked ready for review without saying something first. Ready is the author declaring the branch finished; a later push retracts that declaration, and only a comment tells the reviewer it was retracted
+- A push that loses a race with a merge is not a git problem to retry. The branch is gone because the work landed: check whether your commit made it in (`git log --oneline origin/main..HEAD`), and open a follow-up PR for whatever did not. `cannot lock ref` on push usually means exactly this, not a broken remote
+- Before pushing to any branch with an open PR, check the PR has not already merged. The tell is cheap: `gh pr view <n> --json state,mergedAt`
 
 ## Git Failure Debugging
 

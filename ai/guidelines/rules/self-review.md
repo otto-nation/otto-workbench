@@ -14,6 +14,25 @@ When running from a different directory than the target repo, use `--repo-dir`:
 
 Skip if the user explicitly requests it ("skip the review", "just create the PR").
 
+## The Review Covers One Commit
+
+A review is written against the SHA in its `<!-- head_sha: -->`, and says nothing about
+anything committed after it. Two commits pushed after a passing review are two commits that
+reached the merge unreviewed, however green the review file looks.
+
+1. Before creating a PR, check the review's `head_sha` against `git rev-parse HEAD`. If HEAD
+   has moved, re-run the review — do not open the PR on the strength of a review of an
+   earlier commit
+2. The same applies to a commit that only fixes review findings. Fixing what a review found
+   changes the code the review was written against, so the fixes are themselves unreviewed.
+   Re-run before creating the PR
+3. If the branch already has an open PR and you have pushed to it, re-run the review and say
+   on the PR what changed. See `git-operations.md` § A Branch With an Open PR Is Shared
+
+Re-running is cheap and finds real defects: a second pass over a branch whose first pass was
+clean has caught an injection left open by caller discipline, a docstring overclaiming what
+its tests covered, and duplicated test logic across two suites.
+
 ## Session-Start
 
 Check `~/.local/state/workbench/reviews/` for a self-review matching the current repo and branch:

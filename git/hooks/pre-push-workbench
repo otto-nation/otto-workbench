@@ -120,6 +120,40 @@ GIT_TERMINAL_PROMPT=0 git -C "$REPO_ROOT" fetch --quiet "$GIT_REMOTE" "$_default
 
 _run_step "Checking surface compatibility" "$REPO_ROOT/bin/local/check-surface-compat" --quiet
 
+# ── Open PR notice ───────────────────────────────────────────────────────────
+#
+# A branch with an open PR is one somebody may be reading, may have marked
+# ready, or may be merging right now. Pushing to it is not wrong, but it is a
+# different act from pushing to a branch nobody has seen, and the difference is
+# invisible at the terminal — which is how a push comes to lose a race with a
+# merge and strand a commit on a deleted branch.
+#
+# A notice, never a block: the legitimate cases (review findings, CI fixes, a
+# reviewer's request) are common, and a gate here would be answered with
+# --no-verify rather than thought. Entirely best-effort — no gh, no auth, no
+# network, or a repo with no PR all leave the push exactly as it was.
+_warn_if_pr_is_open() {
+  command -v gh > /dev/null 2>&1 || return 0
+  local branch line state is_draft url
+  branch="$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD 2> /dev/null)" || return 0
+  [[ -n "$branch" ]] || return 0
+
+  # Tab-separated so each field is read as a field; the URL is the one that can
+  # contain characters worth not splitting on.
+  line="$(gh pr view "$branch" --json state,isDraft,url \
+    --jq '[.state, (.isDraft|tostring), .url] | @tsv' 2> /dev/null)" || return 0
+  IFS=$'\t' read -r state is_draft url <<< "$line"
+  [[ "$state" == "OPEN" ]] || return 0
+
+  warn "This branch has an open PR: $url"
+  if [[ "$is_draft" == "false" ]]; then
+    warn "  Marked ready for review — say on the PR what this push changes."
+  fi
+  return 0
+}
+
+_warn_if_pr_is_open
+
 # ── Generation ───────────────────────────────────────────────────────────────
 
 # The composed docs are not checked here. bin/local/validate-docs-composed runs

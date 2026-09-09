@@ -3008,6 +3008,37 @@ Everything in this module is a read — it inspects ``.git/rebase-merge/`` or
 ``.git/rebase-apply/`` to tell the caller what state the worktree is in, but
 never mutates it.
 
+### rebase/land.py
+
+Force-pushing a replayed branch, with the hook-rejection recovery ladder.
+
+### rebase/lifecycle.py
+
+Driving a rebase to completion — the step loop and the two ways it ends.
+
+``fresh`` starts one and ``drive_to_completion`` resumes one; both converge on
+the same loop, which advances a step at a time until git says the rebase is
+over and ``rebase_success`` lands what was replayed. Every exit is either that,
+a refusal, or an abort that leaves the branch where it started.
+
+### rebase/refusals.py
+
+Preflight refusals — the four questions asked before a branch is replayed.
+
+Each check answers with a ``RefusalReport`` or None, and ``refuse`` is what
+turns one into the shared exit code. A refusal leaves the worktree untouched
+and nothing pushed, which is the guarantee the whole module exists to keep.
+
+### rebase/repo_regen.py
+
+The repo-specific half of regeneration — what *this* repo rebuilds, and how.
+
+``git.regenerate`` owns the repo-agnostic half: which command rebuilds a
+lockfile of a given kind. This module answers the question that needs a repo to
+answer it — what a repo declares under ``rebase.regenerate``, or what its task
+runner conventionally offers — which is why it sits at layer 6 with ``config``
+in reach rather than beside the registry at layer 2.
+
 ### rebase/resolve_ai.py
 
 AI-backed conflict resolution — prompts, parsing, dispatch.
@@ -3015,6 +3046,27 @@ AI-backed conflict resolution — prompts, parsing, dispatch.
 Builds on the pure analysis in ``conflicts`` to drive agent-based file
 resolution during a rebase.  Every function that calls the AI backend
 accepts a ``trail`` parameter for audit logging.
+
+### rebase/stash.py
+
+Auto-stash and auto-unstash around a rebase.
+
+A rebase tolerates uncommitted changes; the pre-push hooks that run after it do
+not, so anything left in the worktree is stashed for the duration and restored
+after. Restoring can conflict, which is why the AI resolution path is here too.
+
+### rebase/target.py
+
+Which ref a run replays onto, and putting the worktree on the branch.
+
+Two questions that travel together: what to rebase onto, and how to get the
+worktree onto the branch being rebased without discarding commits either the
+local ref or origin's holds alone. The second is the densest piece of
+irreversible-action logic in the subsystem — every path through
+``checkout_target_branch`` is either lossless or a refusal.
+
+Not to be confused with ``pr.target``, which owns repo identity and target
+*directories*. Nothing here touches either.
 
 ### rebase/types.py
 

@@ -28,41 +28,33 @@ Usage:
 """
 
 import argparse
-import shlex
-import shutil
 import sys
 import traceback
-from contextlib import nullcontext
-from dataclasses import asdict
-from functools import cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from agent import invoke as agent_invoke
 from agent import backend as ai_backend
-from config import workbench_config
-from gh import landed as branch_landed
-from gh import client as gh_client
 from git import client as git_client
-from git import topology as git_topology
 from git import land
 from git import regenerate as regen
 from rebase import types as rebase_types
 from rebase import inspect as rebase_inspect
+from rebase import land as rebase_land
+from rebase import lifecycle
+from rebase import repo_regen
+from rebase import stash
+from rebase import target as rebase_target
 from rebase import conflicts as rebase_conflicts
-from rebase import resolve_ai as rebase_resolve
 from core import conventions
 from core import log
 from pr import context as pr_context
-from core import proc
 from core import publishing
-from git import push
-from core import timeouts
 from core.phases import Phase
 from pr.domains import RebaseStatus, RebaseSummary
-from core.proc import CmdResult
 from core.tool_parser import ToolParser
+from core import trail as core_trail
 from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
@@ -73,170 +65,41 @@ SCRIPT = Path(__file__).name
 _trail: Trail | None = None
 
 
+# The guards themselves live in core.trail, which every module the rebase
+# subsystem is being decomposed into shares. These bind the one argument they
+# take to this run's global, and go with the global when the last body leaves.
+
+
 def _terr(action: str, detail: str, **kwargs) -> None:
-    if _trail:
-        _trail.error(action, detail, **kwargs)
+    core_trail.terr(_trail, action, detail, **kwargs)
 
 
 def _tfail(action: str, detail: str, **kwargs) -> Path | None:
-    return _trail.failure(action, detail, **kwargs) if _trail else None
+    return core_trail.tfail(_trail, action, detail, **kwargs)
 
 
 def _tinfo(action: str, detail: str, **kwargs) -> None:
-    if _trail:
-        _trail.info(action, detail, **kwargs)
+    core_trail.tinfo(_trail, action, detail, **kwargs)
 
 
 def _billed_to() -> dict[str, str | None]:
-    """The repo and PR every AI call this run makes bills to in the usage ledger.
-
-    The conflict and pre-push helpers sit several frames below the resolved
-    context, and the trail this run opened already holds the same subject — so
-    they read it from there rather than each signature between them growing two
-    parameters that only get forwarded.
-    """
-    ctx = _trail.context if _trail else {}
-    pr = ctx.get("pr")
-    return {"repo": ctx.get("repo"), "pr": str(pr) if pr else None}
+    return core_trail.billed_to(_trail)
 
 
-# Constants delegated to rebase.types.
-_UNPUSHED_SUBJECT_LIMIT = rebase_types.UNPUSHED_SUBJECT_LIMIT
-_FORCE_PUSH_ARGS = rebase_types.FORCE_PUSH_ARGS
-_REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
-_CONFLICT_FILE_BUDGET = rebase_types.CONFLICT_FILE_BUDGET
-_MAX_REBASE_STEPS = rebase_types.MAX_REBASE_STEPS
+# Names the pre-push fix loop and the entry point still reach for. Everything
+# else the binary used now lives with the code that uses it, in rebase/.
 
-
-# ── Types (delegated to rebase.types) ───────────────────────────────────────
-
-ConflictStrategy = rebase_types.ConflictStrategy
-DeleteSide = rebase_types.DeleteSide
-GeneratedSignal = rebase_types.GeneratedSignal
-RefusalSignal = rebase_types.RefusalSignal
-ParseFailure = rebase_types.ParseFailure
-RunMode = rebase_types.RunMode
-ConflictBlock = rebase_types.ConflictBlock
-ConflictPlan = rebase_types.ConflictPlan
-Resolution = rebase_types.Resolution
-ResolutionTally = rebase_types.ResolutionTally
-Regenerator = rebase_types.Regenerator
-RegenJob = regen.RegenJob
-RegenQueue = regen.RegenQueue
-
-
-# ── Git helpers (delegated to rebase.inspect) ───────────────────────────────
-
-_detect_rebase_in_progress = rebase_inspect.rebase_in_progress
-_status_lines = rebase_inspect.status_lines
-_detect_conflicts = rebase_inspect.detect_conflicts
-_rebase_head_info = rebase_inspect.rebase_head_info
-_remaining_rebase_commits = rebase_inspect.remaining_rebase_commits
-
-
-ConflictReport = rebase_types.ConflictReport
-RefusalReport = rebase_types.RefusalReport
-RebaseOutcome = rebase_types.RebaseOutcome
-RefDivergence = rebase_types.RefDivergence
 GeneratedFix = rebase_types.GeneratedFix
-_is_empty_patch = rebase_inspect.is_empty_patch
+RebaseOutcome = rebase_types.RebaseOutcome
+RegenQueue = regen.RegenQueue
+RunMode = rebase_types.RunMode
 
-
-# The lockfile regenerator lookup lives in git.regenerate.
-_find_regenerator = regen.find_regenerator
-
-
-# ── Repo-level regeneration ────────────────────────────────────────────────
-
-# The conventional task name for "rebuild everything this repo generates".
-# Used when a repo declares no `rebase.regenerate`, which is most of them.
-_CONVENTIONAL_REGEN_TASK = "generate"
-
-
-@cache
-def _mise_has_task(repo_root: str, task: str) -> bool:
-    """Whether `mise tasks ls` in this repo lists a task by exactly this name.
-
-    Asked of mise rather than parsed out of a config file: a task can come from
-    a `[tasks.*]` table, a `tasks/` directory, or an included file, and only
-    mise knows which of those this repo uses.
-    """
-    if not shutil.which("mise"):
-        return False
-    r = regen.try_run(
-        ["mise", "tasks", "ls", "--no-header"],
-        cwd=repo_root, timeout=timeouts.QUICK,
-    )
-    if r is None or r.returncode != 0:
-        return False
-    return any(line.split()[:1] == [task] for line in r.stdout.splitlines() if line.strip())
-
-
-@cache
-def _repo_root(cwd: str) -> str:
-    """The toplevel of the repo `cwd` sits in, falling back to `cwd` itself."""
-    return git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
-
-
-@cache
-def _repo_regenerators(cwd: str) -> tuple[Regenerator, ...]:
-    """The commands that rebuild this repo's generated files, in order.
-
-    A declared `rebase.regenerate` wins outright — a repo whose generators are
-    not all reachable from one task is the case the key exists for, and a
-    convention cannot know that. Otherwise fall back to the conventional
-    `generate` task when the repo actually has one.
-
-    Empty means this repo has told us nothing and has no conventional task, so
-    a generated file's rebuild is unknown. The caller reports it stale rather
-    than guessing, because a wrong rebuild command silently commits wrong
-    generated output.
-
-    Cached for the same reason `_mise_has_task` is: this is asked once per
-    generated file, and neither `.workbench.yml` nor the repo's task list
-    changes under a rebase that is only replaying commits.
-    """
-    repo_root = _repo_root(cwd)
-
-    declared = workbench_config.load_config_or_default(repo_root).rebase.regenerate
-    if declared:
-        return tuple(Regenerator(tuple(shlex.split(cmd))) for cmd in declared)
-
-    if _mise_has_task(repo_root, _CONVENTIONAL_REGEN_TASK):
-        return (Regenerator(("mise", "run", _CONVENTIONAL_REGEN_TASK)),)
-
-    return ()
-
-
-def _queue_repo_regeneration(filepath: str, cwd: str, queue: RegenQueue) -> bool:
-    """Queue this repo's regeneration for a generated file. False if unknown.
-
-    Keyed on the repo root rather than the file's directory, so the dozen
-    generated files one rebase touches collapse into a single run of each
-    command — RegenQueue dedupes on (directory, command).
-    """
-    regenerators = _repo_regenerators(cwd)
-    if not regenerators:
-        return False
-    for regenerator in regenerators:
-        queue.add(Path(_repo_root(cwd)), filepath, regenerator.cmd, stage_dir=True)
-    return True
-
-
-def _run_regeneration(job: regen.RegenJob, *, cwd: str) -> bool:
-    """Run a regeneration command and stage the result. Returns success."""
-    return regen.run_regeneration(job, cwd=cwd, trail=_trail)
-
-
-# ── Conflict resolution (delegated to rebase.conflicts + rebase.resolve_ai) ──
+_FORCE_PUSH_ARGS = rebase_types.FORCE_PUSH_ARGS
+_REFUSAL_EXIT = rebase_types.REFUSAL_EXIT
+_REFUSAL_OVERRIDE_FLAG = rebase_types.REFUSAL_OVERRIDE_FLAG
 
 _RESOLVE_BEGIN = rebase_conflicts.RESOLVE_BEGIN
 _RESOLVE_END = rebase_conflicts.RESOLVE_END
-_is_generated_file = rebase_conflicts.is_generated_file
-_is_binary = rebase_conflicts.is_binary
-_resolution_parses = rebase_conflicts.resolution_parses
-_parse_resolved_content = rebase_conflicts.parse_resolved_content
-_git_add = rebase_conflicts.git_add
 
 
 # One budget for every chunk of context pasted into a fix prompt — check output
@@ -318,7 +181,7 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
 
     answer = agent_invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd, label=f"pre-push fix for {filepath}",
-        usable=_resolution_parses, task="push-check-fix", **_billed_to(),
+        usable=rebase_conflicts.resolution_parses, task="push-check-fix", **_billed_to(),
     )
     if answer.exit_code != 0:
         log.error(f"AI fix failed for {filepath} (exit {answer.exit_code})")
@@ -328,7 +191,7 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
         )
         return
 
-    fixed_content, failure_reason = _parse_resolved_content(answer.text)
+    fixed_content, failure_reason = rebase_conflicts.parse_resolved_content(answer.text)
     if fixed_content is None:
         _tfail(
             "fix_push_failures", f"failed to parse fix for {filepath}",
@@ -397,10 +260,10 @@ def _regenerate_generated(targets: list[str], cwd: str) -> GeneratedFix:
     stale: list[str] = []
 
     for filepath in targets:
-        if _is_generated_file(filepath, Path(cwd) / filepath, cwd) is None:
+        if rebase_conflicts.is_generated_file(filepath, Path(cwd) / filepath, cwd) is None:
             continue
         excluded.append(filepath)
-        if not _queue_repo_regeneration(filepath, cwd, queue):
+        if not repo_regen.queue_repo_regeneration(filepath, cwd, queue):
             stale.append(filepath)
 
     if stale:
@@ -412,7 +275,7 @@ def _regenerate_generated(targets: list[str], cwd: str) -> GeneratedFix:
 
     rebuilt = False
     for job in queue:
-        if _run_regeneration(job, cwd=cwd):
+        if regen.run_regeneration(job, cwd=cwd, trail=_trail):
             rebuilt = True
             continue
         stale.extend(f for f in job.files if f not in stale)
@@ -487,536 +350,6 @@ def _fix_push_failures(
     return landed
 
 
-def _resolve_file_conflicts(
-    conflicts_list: list[str], cwd: str, sha: str, subject: str, *, target_ref: str,
-) -> Resolution | None:
-    """Resolve conflicted files via classify → dispatch → deferred regen."""
-    return rebase_resolve.resolve_file_conflicts(
-        conflicts_list, cwd, sha, subject, target_ref=target_ref,
-        trail=_trail, find_regenerator=_find_regenerator,
-        run_regeneration=_run_regeneration,
-        queue_repo_regeneration=_queue_repo_regeneration,
-    )
-
-
-# ── Rebase lifecycle ───────────────────────────────────────────────────────
-
-def _rebase_continue(cwd: str) -> CmdResult:
-    """Continue the rebase without stopping for a commit message.
-
-    `core.editor=true` is what keeps an unattended run unattended: git opens the
-    editor for a commit whose message it wants confirmed, and `true` exits zero
-    without touching the file, so the message is taken as it stands.
-    """
-    return git_client.run(
-        "rebase", "--continue", cwd=cwd, config={"core.editor": "true"},
-    )
-
-
-def _drive_to_completion(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
-    target_ref: str, force: bool = False,
-) -> int:
-    """Drive an in-progress rebase to completion, handling all intermediate states.
-
-    Loops until the rebase finishes, handling conflicts (via AI when --fix),
-    empty commits (via --skip), and stuck states (abort on unexpected failure).
-    """
-    with _trail.span("drive_to_completion") if _trail else nullcontext():
-        return _drive_loop(cwd, ctx, mode, target_ref=target_ref, force=force)
-
-
-def _drive_loop(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
-    target_ref: str, force: bool = False,
-) -> int:
-    tally = ResolutionTally()
-
-    for _ in range(_MAX_REBASE_STEPS):
-        if not _detect_rebase_in_progress(cwd):
-            return _rebase_success(cwd, ctx, mode, tally, target_ref=target_ref)
-
-        rc, conflict_found = _drive_one_step(
-            cwd, ctx, mode, tally, target_ref=target_ref, force=force,
-        )
-        if rc is not None:
-            return rc
-        if conflict_found:
-            tally.commits += 1
-
-    _terr("drive_to_completion", f"rebase did not complete after {_MAX_REBASE_STEPS} steps")
-    log.error(f"Rebase did not complete after {_MAX_REBASE_STEPS} steps — aborting.")
-    git_client.run("rebase", "--abort", cwd=cwd)
-    return 1
-
-
-def _drive_one_step(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    tally: ResolutionTally, *, target_ref: str, force: bool = False,
-) -> tuple[int | None, bool]:
-    conflicts = _detect_conflicts(cwd)
-    if not conflicts:
-        return _step_advance(cwd), False
-
-    rc = _step_conflicts(
-        cwd, ctx, mode, conflicts, tally, target_ref=target_ref, force=force,
-    )
-    if rc is not None:
-        return rc, False
-    return None, True
-
-
-def _report_conflicts_and_stop(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
-) -> int:
-    """Persist status=conflicts, emit the report, and return the conflicts exit code."""
-    RebaseOutcome(status=RebaseStatus.CONFLICTS, target_base=target_ref).save(ctx)
-    ConflictReport.from_repo(cwd).emit()
-    return 3
-
-
-def _step_conflicts(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    conflicts: list[str], tally: ResolutionTally, *,
-    target_ref: str, force: bool = False,
-) -> int | None:
-    """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
-    if not mode.resolves_conflicts:
-        return _report_conflicts_and_stop(cwd, ctx, target_ref=target_ref)
-
-    if not ai_backend.is_available():
-        _terr("resolve_conflicts", "AI backend unavailable")
-        log.error("Cannot resolve conflicts — AI backend unavailable.")
-        return _report_conflicts_and_stop(cwd, ctx, target_ref=target_ref)
-
-    spread = len(set(tally.files) | set(conflicts))
-    if not force and spread > _CONFLICT_FILE_BUDGET:
-        return _refuse_over_budget(cwd, ctx, spread, target_ref=target_ref)
-
-    sha, subject = _rebase_head_info(cwd)
-    remaining = _remaining_rebase_commits(cwd)
-
-    log.info(
-        f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
-        f"({remaining} remaining)..."
-    )
-    if _trail:
-        _trail.decision(
-            "step", f"resolving {len(conflicts)} conflict(s)",
-            reason=f"commit {sha} has unmerged files",
-            data={"commit": sha, "files": conflicts, "remaining": remaining},
-        )
-
-    resolved = _resolve_file_conflicts(
-        conflicts, cwd, sha, subject, target_ref=target_ref,
-    )
-    if resolved is None:
-        _terr("resolve_conflicts", "AI resolution failed, aborting rebase")
-        log.error("AI conflict resolution failed — aborting rebase.")
-        git_client.run("rebase", "--abort", cwd=cwd)
-        return 1
-    tally.absorb(resolved)
-
-    # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
-    if git_client.lines("diff", "--name-only", cwd=cwd):
-        git_client.run("add", "-u", cwd=cwd)
-
-    r = _rebase_continue(cwd)
-    if r.ok:
-        return None
-
-    if r.stderr.strip():
-        log.dim(r.stderr.strip())
-
-    # rebase --continue returns non-zero when the current commit is applied
-    # but the *next* commit has conflicts — that's normal, not a failure.
-    if _detect_rebase_in_progress(cwd):
-        return None
-
-    _tfail("step_conflicts", "rebase --continue failed after resolution",
-           output=r.combined_output)
-    log.error("rebase --continue failed after conflict resolution — aborting.")
-    git_client.run("rebase", "--abort", cwd=cwd)
-    return 1
-
-
-def _step_advance(cwd: str) -> int | None:
-    """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
-    if _is_empty_patch(cwd):
-        sha, subject = _rebase_head_info(cwd)
-        log.info(f"Skipping empty commit {sha} — {subject}")
-        if _trail:
-            _trail.decision(
-                "step", f"skipping empty commit {sha}",
-                reason="patch already applied upstream",
-                data={"commit": sha, "subject": subject},
-            )
-        r = git_client.run("rebase", "--skip", cwd=cwd)
-        if not r.ok:
-            log.error(f"git rebase --skip failed (exit {r.returncode})")
-            return 1
-        return None
-
-    r = _rebase_continue(cwd)
-    if r.ok:
-        return None
-
-    if r.stderr.strip():
-        log.dim(r.stderr.strip())
-
-    # rebase --continue can return non-zero when the next commit has conflicts
-    if _detect_rebase_in_progress(cwd):
-        return None
-
-    _tfail("step_advance", "rebase --continue failed without conflicts",
-           output=r.combined_output, data={"exit_code": r.returncode})
-    log.error("rebase --continue failed without conflicts — aborting.")
-    git_client.run("rebase", "--abort", cwd=cwd)
-    return 1
-
-
-# ── Stash helpers ──────────────────────────────────────────────────────────
-
-_STASH_MSG = "pr-rebase: auto-stash"
-
-
-def _auto_stash(cwd: str) -> bool | None:
-    """Stash uncommitted changes if the working tree is dirty.
-
-    Untracked files are stashed too (``-u``). A rebase tolerates them, but the
-    pre-push hooks run against the worktree, so anything the user left lying
-    around silently joins what the hooks validate — and the push recovery's
-    whole-tree stage would then commit it. Ignored files stay put; ``-u`` is
-    not ``-a``.
-
-    Returns True if stashed, False if the tree was clean, None if the tree
-    could not be read or the stash failed.
-    """
-    dirty = _status_lines(cwd)
-    if dirty is None:
-        log.error("Cannot tell whether the worktree is dirty — not rebasing.")
-        return None
-    if not dirty:
-        return False
-
-    log.info("Stashing uncommitted changes...")
-    r = git_client.run("stash", "push", "-u", "-m", _STASH_MSG, cwd=cwd)
-    if not r.ok:
-        log.error(f"git stash failed: {r.stderr.strip()}")
-        return None
-    if _trail:
-        _trail.info("stash", "auto-stashed uncommitted changes")
-    return True
-
-
-def _auto_unstash(cwd: str, mode: RunMode) -> None:
-    """Pop stashed changes, resolving conflicts if needed.
-
-    A pop can fail without leaving conflict markers — most often because the
-    stash holds an untracked file the rebased branch now tracks, which git
-    refuses to overwrite. Nothing is lost either way: a failed pop keeps the
-    stash entry, so the message names it rather than only echoing git.
-    """
-    r = git_client.run("stash", "pop", cwd=cwd)
-    if r.ok:
-        log.ok("Restored stashed changes.")
-        return
-
-    conflicts = _detect_conflicts(cwd)
-    if not conflicts:
-        _tfail("unstash", "stash pop failed", output=r.combined_output)
-        log.error(f"git stash pop failed: {r.stderr.strip()}")
-        log.warn(f"Your changes are still stashed as '{_STASH_MSG}' — "
-                 "clear the blocking paths, then `git stash pop`.")
-        return
-
-    if not mode.resolves_conflicts or not ai_backend.is_available():
-        log.warn(f"Stash pop has {len(conflicts)} conflict(s) — resolve manually, then `git stash drop`.")
-        return
-
-    log.info(f"Resolving {len(conflicts)} stash conflict(s)...")
-    for filepath in conflicts:
-        full_path = Path(cwd) / filepath
-        if _is_binary(full_path):
-            log.warn(f"Cannot resolve binary stash conflict: {filepath}")
-            continue
-        try:
-            content = full_path.read_text()
-        except OSError:
-            continue
-        prompt = (
-            "You are resolving a conflict after restoring uncommitted changes "
-            "(git stash pop) onto a rebased branch.\n\n"
-            f"File: {filepath}\n\n"
-            "<<<<<<< Updated upstream = the rebased branch state\n"
-            "======= separates the two sides\n"
-            ">>>>>>> Stashed changes = the user's uncommitted work\n\n"
-            "Preserve the user's uncommitted changes where possible, merged "
-            "with any structural changes from the rebase.\n\n"
-            f"Output the resolved file between {_RESOLVE_BEGIN} and {_RESOLVE_END} markers.\n"
-            "No explanation, no markdown fencing.\n\n"
-            f"{_RESOLVE_BEGIN}\n(your resolved content here)\n{_RESOLVE_END}\n\n"
-            f"--- FILE CONTENT WITH CONFLICT MARKERS ---\n{content}"
-        )
-        answer = agent_invoke.run_prompt(
-            Phase.REBASE, prompt, cwd=cwd,
-            label=f"stash conflict resolution for {filepath}",
-            usable=_resolution_parses, task="stash-conflict-resolve",
-            **_billed_to(),
-        )
-        if answer.exit_code != 0:
-            log.error(f"AI resolution failed for stash conflict: {filepath}")
-            continue
-        stdout = answer.text
-        resolved_content, failure_reason = _parse_resolved_content(stdout)
-        if resolved_content is None:
-            _tfail(
-                "resolve_stash_conflicts",
-                f"failed to parse stash resolution for {filepath}",
-                output=stdout,
-                data={"filepath": filepath, "reason": failure_reason},
-            )
-            log.error(f"Failed to parse stash resolution for {filepath} ({failure_reason})")
-            continue
-        full_path.write_text(resolved_content)
-        if not _git_add(filepath, cwd):
-            log.error(f"Failed to stage resolved stash conflict: {filepath}")
-            continue
-        log.ok(f"Resolved stash conflict: {filepath}")
-
-    remaining = _detect_conflicts(cwd)
-    if remaining:
-        log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, then `git stash drop`.")
-    else:
-        r = git_client.run("stash", "drop", cwd=cwd)
-        if r.ok:
-            log.ok("Restored stashed changes.")
-        else:
-            log.warn(f"git stash drop failed: {r.stderr.strip()}")
-
-
-# State helpers delegated to rebase.types.
-_load_or_init = rebase_types.load_or_init
-_recorded_target_base = rebase_types.recorded_target_base
-
-
-
-# ── Refusals ────────────────────────────────────────────────────────────────
-
-_REFUSAL_EXIT = rebase_types.REFUSAL_EXIT
-_REFUSAL_OVERRIDE_FLAG = rebase_types.REFUSAL_OVERRIDE_FLAG
-
-def _as_refusal(
-    landed: branch_landed.Landed | None, branch: str,
-) -> RefusalReport | None:
-    """`branch_landed`'s evidence as this script's refusal payload, or None.
-
-    The one place the two vocabularies meet. `Landed` carries no branch name —
-    its detail lines describe the comparison rather than who was compared — so
-    naming the branch is what this adds.
-    """
-    if landed is None:
-        return None
-    return RefusalReport(
-        branch=branch, signal=landed.signal.value, detail=landed.detail,
-        commits_ahead=landed.commits_ahead, pr_number=landed.pr_number,
-    )
-
-
-def _tracker_landed_check(
-    cwd: str, ctx: pr_context.ResolvedContext,
-) -> RefusalReport | None:
-    """Evidence from GitHub that the branch's PR merged, or None.
-
-    Split from the git signals because it asks about ``ctx``, not HEAD, which
-    is what lets it run before the branch is checked out. That ordering is the
-    whole point: for a branch whose PR merged and whose remote was deleted,
-    ``fetch --prune`` removes ``origin/<branch>``, so a checkout from that ref
-    fails — the refusal has to come first or it never comes at all.
-
-    The most authoritative signal, and the only one that survives a squash
-    merge once the target ref has moved on with unrelated work.
-    """
-    return _as_refusal(branch_landed.by_tracker(
-        cwd, branch=ctx.branch, repo=ctx.repo, pr_number=ctx.pr_number,
-    ), ctx.branch)
-
-
-def _git_landed_check(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
-) -> RefusalReport | None:
-    """Evidence from git that the branch's work is in the target ref, or None.
-
-    Every signal here compares HEAD, so this only means anything once the
-    branch is checked out — which is why it is a separate call from the tracker
-    check rather than `branch_landed.check`'s single ladder.
-    """
-    return _as_refusal(
-        branch_landed.by_git(cwd, target_ref=target_ref), ctx.branch,
-    )
-
-
-_ref_exists = rebase_inspect.ref_exists
-_shares_history = rebase_inspect.shares_history
-
-
-def _unrelated_history_check(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
-) -> RefusalReport | None:
-    """Refuse a branch that shares no history with the ref it would rebase onto.
-
-    Exact rather than heuristic: git either finds a merge base or it does not.
-    A branch with none was cut from a different root — a repo re-initialised
-    over an existing checkout leaves a whole population of them — and rebasing
-    it replays its entire history onto that unrelated root, conflicting on every
-    commit because there is no common ancestor to merge against.
-
-    Asked before the landed signals, which compare against a ref this branch has
-    no relationship to and so answer nothing.
-    """
-    if _shares_history(cwd, target_ref=target_ref):
-        return None
-    return RefusalReport(
-        branch=ctx.branch, signal=RefusalSignal.NO_MERGE_BASE.value,
-        detail=f"no commit in common with {target_ref}",
-        status=RebaseStatus.UNRELATED_HISTORY.value,
-    )
-
-
-# What each refusal tells the operator would happen if it did not refuse. Keyed
-# by status so a caller cannot pair a refusal with another one's explanation,
-# and `{ref}` is the resolved base, not necessarily origin/main.
-_REFUSAL_HINTS = {
-    RebaseStatus.ALREADY_LANDED.value:
-        "Rebasing would replay work already in {ref} and force-push it back, "
-        "recreating a remote branch the merge deleted.",
-    RebaseStatus.UNRELATED_HISTORY.value:
-        "Rebasing would replay the branch's entire history onto an unrelated "
-        "root, conflicting on every commit. Retarget the branch, or recreate "
-        "it from {ref}.",
-    RebaseStatus.CONFLICTS_OVER_BUDGET.value:
-        "A branch conflicting this widely with {ref} has usually had its work "
-        "land in another shape. Resolving that many conflicts unattended "
-        "rewrites files the branch never touched.",
-}
-
-
-def _refuse(
-    ctx: pr_context.ResolvedContext, report: RefusalReport, *, target_ref: str,
-) -> int:
-    """Report a refused rebase and stop, on the shared exit code."""
-    _terr("preflight", f"refusing to rebase ({report.signal})", data=asdict(report))
-    log.error(f"Refusing to rebase {report.branch} — {report.detail}.")
-    log.dim(_REFUSAL_HINTS[report.status].format(ref=target_ref))
-    log.dim(f"Pass {_REFUSAL_OVERRIDE_FLAG} to rebase it anyway.")
-    RebaseOutcome(status=RebaseStatus(report.status), target_base=target_ref).save(ctx)
-    report.emit()
-    return _REFUSAL_EXIT
-
-
-def _refuse_over_budget(
-    cwd: str, ctx: pr_context.ResolvedContext, spread: int, *, target_ref: str,
-) -> int:
-    """Abort a rebase conflicting too widely to be resolved unattended.
-
-    The only refusal raised mid-rebase rather than in the preflight: how far a
-    branch and its base have diverged is not knowable until git says so. The
-    abort restores the branch, so the refusal leaves the worktree where the
-    preflight refusals do — untouched, with nothing pushed.
-    """
-    git_client.run("rebase", "--abort", cwd=cwd)
-    return _refuse(ctx, RefusalReport(
-        branch=ctx.branch, signal=RefusalSignal.CONFLICTS_OVER_BUDGET.value,
-        detail=f"conflicts in {spread} files, over the "
-               f"{_CONFLICT_FILE_BUDGET}-file budget",
-        status=RebaseStatus.CONFLICTS_OVER_BUDGET.value,
-    ), target_ref=target_ref)
-
-
-# ── Target ref ──────────────────────────────────────────────────────────────
-
-
-def _pr_base_branch(cwd: str, ctx: pr_context.ResolvedContext) -> str | None:
-    """The branch the PR targets per GitHub, or None when it cannot say.
-
-    Only asked when a PR number is already resolved: a branch with no PR yet
-    has no base to report, and probing by branch name would spend a round trip
-    on every rebase to learn nothing.
-
-    Best effort like ``branch_landed.merged_pr`` — gh may be absent,
-    unauthenticated or rate-limited, and the repo's default branch is the right
-    answer for all but stacked and release-branch PRs.
-    """
-    if not ctx.pr_number:
-        return None
-
-    data = gh_client.pr_view(ctx.pr_number, "baseRefName", repo=ctx.repo, cwd=cwd)
-    return data.get("baseRefName") or None
-
-
-def _resolve_target_ref(
-    cwd: str, ctx: pr_context.ResolvedContext, onto: str | None,
-) -> str:
-    """The ref this run rebases onto, most authoritative source first.
-
-    Resolved once at entry and threaded through the run, so the rebase, the
-    already-landed signals, the ahead count, the recorded ``target_base`` and
-    the conflict prompts all name the same branch. A branch whose PR targets a
-    release or a stack parent is replayed onto that base, not onto whatever the
-    repo calls its trunk.
-    """
-    def decide(ref: str, reason: str) -> str:
-        if _trail:
-            _trail.decision("target_ref", f"rebasing onto {ref}", reason=reason)
-        return ref
-
-    if onto:
-        return decide(onto, "--onto flag set")
-
-    base = _pr_base_branch(cwd, ctx)
-    if base:
-        return decide(f"origin/{base}", f"PR #{ctx.pr_number} targets {base}")
-
-    return decide(
-        f"origin/{git_topology.default_branch(cwd)}",
-        "no PR base to read — falling back to the repo's default branch",
-    )
-
-
-# ── Landing ─────────────────────────────────────────────────────────────────
-
-
-def _land(cwd: str, resolved_files: list[str] | None = None) -> land.LandResult:
-    """Force-push the replayed branch, auto-recovering from a hook rejection.
-
-    Two recoveries sit under this and only the second is this script's. `land`
-    commits whatever the pre-push hook regenerated and pushes once more; when
-    that second run still reports check failures, `_fix_push_failures` hands
-    them to the AI and lands the repair. A hook can both rewrite a file and fail
-    a check, so the two are a ladder rather than alternatives — collapsing them
-    would make the AI fix unreachable on any repo whose hooks regenerate
-    anything.
-
-    Whether any of it reaches the remote is the publishing gate's answer, not an
-    argument here: `main` opens the gate for the modes that push, so `--no-push`
-    comes back `held`, with the force-push command in `resume`, rather than as a
-    failure or as a hand-written hint.
-    """
-    landed = land.land_head(
-        cwd, gated=True, args=_FORCE_PUSH_ARGS, trail=_trail, regen=_REGEN_MESSAGE,
-    )
-    # Only a refusal leaves something an agent could repair. A held, lost, or
-    # unverified push says nothing is wrong with the worktree, and handing one to
-    # the fix pass asks an agent to rewrite code that passed every check.
-    refused = landed.push is not None and landed.push.status is push.PushStatus.REFUSED
-    if not refused or not resolved_files or not landed.error:
-        return landed
-
-    log.info("Attempting to fix pre-push check failures...")
-    repaired = _fix_push_failures(cwd, landed.error, resolved_files)
-    return repaired if repaired is not None else landed
-
-
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 
@@ -1032,19 +365,19 @@ def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> 
 
 def cmd_push(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> int:
     """Force-push after a completed rebase."""
-    if _detect_rebase_in_progress(cwd):
+    if rebase_inspect.rebase_in_progress(cwd):
         _terr("push", "rebase still in progress")
         log.error("Cannot push — rebase still in progress.")
         return 1
 
     log.info("Force-pushing...")
-    landed = _land(cwd)
+    landed = rebase_land.land_rebased(cwd, trail=_trail)
     if not landed.ok:
         _terr("push", "force-push failed",
               data={"status": str(landed.status), "resume": landed.resume})
         return 1
 
-    state = _load_or_init(ctx)
+    state = rebase_types.load_or_init(ctx)
     RebaseOutcome(
         commits_replayed=(state.rebase.commits_replayed
                           or git_client.commits_ahead(cwd, target_ref=target_ref)),
@@ -1056,26 +389,6 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> i
     ).save(ctx)
     log.ok("Force-pushed successfully.")
     return 0
-
-
-def _resume_target_ref(ctx: pr_context.ResolvedContext, target_ref: str) -> str:
-    """The ref an in-progress rebase is actually replaying onto.
-
-    A resume continues the rebase a prior run started, so it names the ref that
-    run recorded rather than whatever this run resolved — the PR's base branch
-    can change on GitHub between the two, and the commits are already being
-    replayed onto the original.
-    """
-    recorded = _recorded_target_base(ctx)
-    if not recorded or recorded == target_ref:
-        return target_ref
-    if _trail:
-        _trail.decision(
-            "target_ref", f"resuming onto recorded {recorded}",
-            reason=f"in-progress rebase was started against {recorded}, "
-                   f"not this run's resolved {target_ref}",
-        )
-    return recorded
 
 
 def cmd_start(
@@ -1091,275 +404,35 @@ def cmd_start(
     for a sharper one — it refuses by aborting, and a resumed rebase is one an
     operator may have half-resolved by hand.
     """
-    if _detect_rebase_in_progress(cwd):
-        target_ref = _resume_target_ref(ctx, target_ref)
-        if _trail:
-            _trail.decision(
-                "rebase_state",
-                "detected in-progress rebase",
-                reason="rebase-merge or rebase-apply directory exists",
-            )
+    if rebase_inspect.rebase_in_progress(cwd):
+        target_ref = rebase_target.resume_target_ref(ctx, target_ref, trail=_trail)
+        core_trail.tdecision(
+            _trail, "rebase_state", "detected in-progress rebase",
+            reason="rebase-merge or rebase-apply directory exists",
+        )
         log.info("Detected in-progress rebase — resuming...")
-        return _drive_to_completion(cwd, ctx, mode, target_ref=target_ref, force=True)
+        return lifecycle.drive_to_completion(
+            cwd, ctx, mode, target_ref=target_ref, force=True, trail=_trail,
+            on_check_failure=_fix_push_failures,
+        )
 
-    stashed = _auto_stash(cwd)
+    stashed = stash.auto_stash(cwd, trail=_trail)
     if stashed is None:
         return 1
 
-    if _trail:
-        _trail.decision(
-            "rebase_state",
-            "starting fresh rebase",
-            reason="no in-progress rebase detected",
-        )
-    rc = _fresh(cwd, ctx, mode, force=force, target_ref=target_ref)
+    core_trail.tdecision(
+        _trail, "rebase_state", "starting fresh rebase",
+        reason="no in-progress rebase detected",
+    )
+    rc = lifecycle.fresh(
+        cwd, ctx, mode, force=force, target_ref=target_ref, trail=_trail,
+        on_check_failure=_fix_push_failures,
+    )
 
     if stashed:
-        _auto_unstash(cwd, mode)
+        stash.auto_unstash(cwd, mode, trail=_trail)
 
     return rc
-
-
-# ── Checking the target branch out ──────────────────────────────────────────
-
-
-
-def _local_vs_remote(cwd: str, branch: str) -> RefDivergence:
-    """Compare the local *branch* ref against origin's, without moving HEAD.
-
-    Deliberately ref-to-ref rather than the ``origin/<branch>..HEAD`` that
-    pr_context._unpushed_count asks: this runs while the worktree is still on
-    some other branch, so HEAD is not the thing being measured.
-    """
-    r = git_client.run(
-        "rev-list", "--left-right", "--count",
-        f"origin/{branch}...refs/heads/{branch}", cwd=cwd,
-    )
-    if not r.ok:
-        return RefDivergence()
-    parts = r.stdout.split()
-    if len(parts) != 2 or not all(p.isdigit() for p in parts):
-        return RefDivergence()
-    # Left of the symmetric difference is origin's side, right is the local ref.
-    return RefDivergence(ahead=int(parts[1]), behind=int(parts[0]), comparable=True)
-
-
-def _unpushed_subjects(cwd: str, branch: str) -> list[str]:
-    """Subjects of commits on local *branch* that origin's copy does not have."""
-    return git_client.lines(
-        "log", "--no-decorate", "--oneline",
-        f"-{_UNPUSHED_SUBJECT_LIMIT}", f"origin/{branch}..refs/heads/{branch}",
-        cwd=cwd,
-    )
-
-
-def _refuse_diverged(cwd: str, ctx: pr_context.ResolvedContext, div: RefDivergence) -> int:
-    """Report a local branch that neither ref can be discarded from."""
-    subjects = _unpushed_subjects(cwd, ctx.branch)
-    _terr(
-        "preflight", f"{ctx.branch} has diverged from origin/{ctx.branch}",
-        data={"ahead": div.ahead, "behind": div.behind, "unpushed": subjects},
-    )
-    log.error(
-        f"Refusing to check out {ctx.branch} — it holds {div.ahead} commit(s) "
-        f"origin/{ctx.branch} does not, and origin holds {div.behind} it does not."
-    )
-    for subject in subjects:
-        log.dim(f"  {subject}")
-    # A list that stops at the cap without saying so reads as the whole set,
-    # and the operator would go reconcile a branch they think they have seen.
-    if div.ahead > len(subjects):
-        log.dim(f"  ... and {div.ahead - len(subjects)} more")
-    log.dim("Reconcile the two in that branch's own worktree, then retry.")
-    return 1
-
-
-def _checkout_target_branch(cwd: str, ctx: pr_context.ResolvedContext) -> int:
-    """Put *cwd* on ctx.branch without discarding commits either ref holds alone.
-
-    ``checkout -B <branch> origin/<branch>`` resets an existing local branch to
-    the remote, so a commit that was never pushed leaves the branch ref before
-    the rebase that exists to replay it ever runs. It stays the way a
-    branch that is not here yet gets created, and the way one that is merely
-    behind is fast-forwarded — both are lossless. An existing ref carrying its
-    own commits is checked out as it stands instead, and true divergence is
-    refused rather than resolved: replaying a stale local branch over a remote
-    that was force-pushed and then force-pushing the result loses the same work
-    in the other direction.
-    """
-    from_origin = ("checkout", "-B", ctx.branch, f"origin/{ctx.branch}")
-    if not _ref_exists(cwd, f"refs/heads/{ctx.branch}"):
-        return _run_checkout(cwd, ctx, from_origin)
-
-    div = _local_vs_remote(cwd, ctx.branch)
-    if div.diverged:
-        return _refuse_diverged(cwd, ctx, div)
-
-    # Not comparable here means the local ref resolved but origin's did not, so
-    # every commit on it is unpushed and there is no remote to reset to anyway.
-    if div.local_only_work or not div.comparable:
-        return _run_checkout(cwd, ctx, ("checkout", ctx.branch))
-
-    return _run_checkout(cwd, ctx, from_origin)
-
-
-def _run_checkout(
-    cwd: str, ctx: pr_context.ResolvedContext, args: tuple[str, ...],
-) -> int:
-    """Run one checkout, reporting git's own stderr when it refuses."""
-    co = git_client.run(*args, cwd=cwd)
-    if not co.ok:
-        _tfail("preflight", f"cannot checkout {ctx.branch}", output=co.combined_output)
-        log.error(f"Cannot checkout {ctx.branch}: {co.stderr.strip()}")
-        return 1
-    return 0
-
-
-def _fresh(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    force: bool = False, *, target_ref: str,
-) -> int:
-    """Start a fresh rebase onto the target ref."""
-    default = git_topology.default_branch(cwd)
-    if ctx.branch == default:
-        _terr("preflight", f"on protected branch {ctx.branch}")
-        log.error("Cannot rebase — currently on protected branch.")
-        return 1
-
-    log.info("Fetching origin...")
-    # --prune is defense in depth behind the already-landed preflight, not a
-    # substitute for it: dropping the remote-tracking ref of a branch deleted
-    # on merge is what stops --force-with-lease from being satisfied by a stale
-    # lease and silently recreating the remote branch.
-    fetch = git_client.run("fetch", "--prune", "origin", cwd=cwd)
-    if not fetch.ok:
-        log.warn(f"Fetch failed — rebasing against potentially stale {target_ref}.")
-        if fetch.stderr.strip():
-            log.dim(fetch.stderr.strip())
-
-    # Before the checkout, deliberately: --prune has just dropped
-    # origin/<branch> for a branch whose PR merged and whose remote was
-    # deleted, and the checkout below starts from exactly that ref. Asking the
-    # tracker first is what turns "Cannot checkout feat/x" into the refusal
-    # this preflight exists to give.
-    landed = None if force else _tracker_landed_check(cwd, ctx)
-    if landed is not None:
-        return _refuse(ctx, landed, target_ref=target_ref)
-
-    if ctx.current_branch != ctx.branch:
-        display = ctx.current_branch or "detached HEAD"
-        # Defense in depth: pr_context now creates a worktree per branch, but
-        # --repo-dir bypasses that and can point straight at the default
-        # branch's worktree. Checking out here would leave a feature branch
-        # sitting in main/, where the next tool that syncs main/ to
-        # origin/<default> hard-resets the branch out from under it.
-        if ctx.current_branch == default:
-            _terr("preflight", f"refusing to check out {ctx.branch} into the {display} worktree")
-            log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")
-            log.dim(f"Run 'wt switch {ctx.branch}' and retry with --repo-dir on that worktree.")
-            return 1
-        log.info(f"Worktree on {display}, checking out {ctx.branch}...")
-        rc = _checkout_target_branch(cwd, ctx)
-        if rc != 0:
-            return rc
-        if _trail:
-            _trail.decision(
-                "branch_checkout",
-                f"checked out {ctx.branch} (was {display})",
-                reason="worktree was on wrong branch or detached HEAD",
-            )
-
-    # After the checkout, so HEAD is the branch these signals are asked about,
-    # and after the fetch, so the target ref they compare against is current.
-    # Unrelated history first: the landed signals compare HEAD against a ref an
-    # unrelated branch has no relationship to, so they answer nothing there.
-    unrelated = None if force else _unrelated_history_check(cwd, ctx, target_ref=target_ref)
-    if unrelated is not None:
-        return _refuse(ctx, unrelated, target_ref=target_ref)
-
-    landed = None if force else _git_landed_check(cwd, ctx, target_ref=target_ref)
-    if landed is not None:
-        return _refuse(ctx, landed, target_ref=target_ref)
-
-    log.info(f"Rebasing onto {target_ref}...")
-    r = git_client.run("rebase", target_ref, cwd=cwd)
-
-    if r.ok and not _detect_rebase_in_progress(cwd):
-        return _rebase_success(cwd, ctx, mode, target_ref=target_ref)
-
-    if not _detect_rebase_in_progress(cwd):
-        _tfail("rebase", f"git rebase failed (exit {r.returncode})", output=r.combined_output)
-        log.error(f"git rebase failed (exit {r.returncode})")
-        if r.stderr.strip():
-            log.dim(r.stderr.strip())
-        return 1
-
-    return _drive_to_completion(cwd, ctx, mode, target_ref=target_ref, force=force)
-
-
-def _rebase_success(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    tally: ResolutionTally | None = None, *, target_ref: str,
-) -> int:
-    """Handle rebase completion — update state and optionally force-push."""
-    tally = tally or ResolutionTally()
-
-    # Counted before the push: its recovery paths add regeneration and
-    # check-fix commits, which were never replayed from the old branch.
-    replayed = git_client.commits_ahead(cwd, target_ref=target_ref)
-
-    # RunMode.PUSH lands from main() via cmd_push; every other mode lands here.
-    # A mode that does not reach the remote still lands, because the publishing
-    # gate — shut for those modes — is what stops it, and a held landing is what
-    # carries the force-push command back as data.
-    lands_here = mode is not RunMode.PUSH
-
-    label = "Rebase complete" if not tally.commits else (
-        f"Rebase complete — resolved {len(tally.files)} file(s) "
-        f"across {tally.commits} commit(s)"
-    )
-
-    landed = None
-    if lands_here:
-        # Announced only when the push will actually happen; a held run says the
-        # same thing once at the end, through the label and the resume line.
-        if mode.reaches_remote:
-            log.info(f"{label} — force-pushing...")
-        landed = _land(cwd, resolved_files=tally.files or None)
-        if landed.ok:
-            _tinfo("force_push", "force-pushed to remote", data={"sha": landed.sha})
-        elif not landed.held:
-            _terr("force_push", "force-push failed",
-                  data={"status": str(landed.status), "resume": landed.resume})
-
-    outcome = RebaseOutcome(
-        commits_replayed=replayed,
-        conflicts_resolved=len(tally.files),
-        files_resolved=tally.files,
-        files_stale=tally.stale,
-        # None rather than False for a run that never tried: a held landing did
-        # exactly what --no-push asked for, and recording it as a failed push
-        # would be the summary's own invention.
-        force_pushed=None if landed is None or landed.held else landed.ok,
-        target_base=target_ref,
-    )
-    outcome.save(ctx)
-    outcome.emit()
-
-    if landed is not None and not landed.held:
-        if landed.ok:
-            log.ok("Force-pushed.")
-            return 0
-        log.error("Force-push failed.")
-        return 1
-
-    # The label holds in every mode that reaches here — the rebase finished.
-    # Under FIX_ONLY the AI's work is the whole point of the run and the user is
-    # about to push it by hand, so name it rather than reporting a bare "clean".
-    log.ok(label)
-    if landed is not None:
-        log.ok(f"Run `{landed.resume}` to push, or re-run without --no-push.")
-    return 0
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -1424,8 +497,6 @@ def main():
         debug=args.debug,
     )
     try:
-        target_ref = _resolve_target_ref(cwd, ctx, args.onto)
-
         if args.abort:
             _trail.decision("mode", "selected abort", reason="--abort flag set")
             # Abort is the escape hatch for a broken or hung rebase — it should
@@ -1433,10 +504,12 @@ def main():
             # in the aborted outcome, so prefer what the run that started the
             # rebase already resolved and fall back to a fresh resolution only
             # when no prior state exists to read.
-            target_ref = _recorded_target_base(ctx) or _resolve_target_ref(cwd, ctx, args.onto)
+            target_ref = rebase_types.recorded_target_base(ctx) or (
+                rebase_target.resolve_target_ref(cwd, ctx, args.onto, trail=_trail)
+            )
             sys.exit(cmd_abort(cwd, ctx, target_ref=target_ref))
 
-        target_ref = _resolve_target_ref(cwd, ctx, args.onto)
+        target_ref = rebase_target.resolve_target_ref(cwd, ctx, args.onto, trail=_trail)
 
         mode, reason = _select_mode(args)
         _trail.decision("mode", f"selected {mode}", reason=reason)

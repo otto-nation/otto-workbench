@@ -43,7 +43,7 @@ import shutil
 import sys
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -510,6 +510,51 @@ class Trail:
         elapsed_ms = (time.monotonic_ns() - self._start_ns) // NS_PER_MS
         self._emit(self._make_event(
             Level.INFO, EventType.SUMMARY, FINISH_ACTION, "", duration_ms=elapsed_ms))
+
+
+# ── Optional-trail helpers ────────────────────────────────────────────────
+
+# A library function several frames below an entry point takes its trail as a
+# parameter, and the entry point may not have opened one. These say "record
+# this if anything is recording" so each such module does not carry its own
+# copy of the same None check.
+
+
+def terr(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
+    if trail:
+        trail.error(action, detail, **kwargs)
+
+
+def tfail(trail: Trail | None, action: str, detail: str, **kwargs) -> Path | None:
+    return trail.failure(action, detail, **kwargs) if trail else None
+
+
+def tinfo(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
+    if trail:
+        trail.info(action, detail, **kwargs)
+
+
+def tdecision(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
+    if trail:
+        trail.decision(action, detail, **kwargs)
+
+
+def tspan(trail: Trail | None, name: str):
+    """The trail's span, or a no-op context manager when there is no trail."""
+    return trail.span(name) if trail else nullcontext()
+
+
+def billed_to(trail: Trail | None) -> dict[str, str | None]:
+    """The repo and PR an AI call bills to in the usage ledger.
+
+    Read from the trail rather than passed down beside it: the call sites sit
+    several frames below the resolved context and the trail already holds the
+    same subject, so the signatures between them do not each grow two
+    parameters that only get forwarded.
+    """
+    context = trail.context if trail else {}
+    pr = context.get("pr")
+    return {"repo": context.get("repo"), "pr": str(pr) if pr else None}
 
 
 # ── Argparse helper ───────────────────────────────────────────────────────

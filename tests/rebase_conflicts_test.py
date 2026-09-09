@@ -89,7 +89,6 @@ class TestClassifyConflict:
         ):
             plan = conflicts.classify_conflict(
                 "old.go", f, str(tmp_path),
-                find_regenerator=regen.find_regenerator,
             )
         assert plan.strategy is rebase_types.ConflictStrategy.DELETE
 
@@ -100,7 +99,6 @@ class TestClassifyConflict:
              mock.patch.object(conflicts, "is_generated_file", return_value=None):
             plan = conflicts.classify_conflict(
                 "main.go", f, str(tmp_path),
-                find_regenerator=regen.find_regenerator,
             )
         assert plan.strategy is rebase_types.ConflictStrategy.AI_MERGE
 

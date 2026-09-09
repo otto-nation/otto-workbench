@@ -12,6 +12,7 @@ from pathlib import Path
 from core import log
 from core.trail import Trail
 from git import client as git_client
+from git import regenerate as regen
 
 from . import types as rebase_types
 
@@ -302,21 +303,13 @@ def accept_theirs_and_stage(filepath: str, cwd: str) -> bool:
 
 # ── Classification ────────────────────────────────────────────────────────
 
-def classify_conflict(
-    filepath: str, full_path: Path, cwd: str,
-    *, find_regenerator,
-) -> ConflictPlan:
-    """Determine the resolution strategy for a conflicted file.
-
-    ``find_regenerator`` is a callable that takes a filename and returns
-    a ``Regenerator`` or None — injected so this module stays at layer 6
-    without pulling in config-dependent registry lookups.
-    """
+def classify_conflict(filepath: str, full_path: Path, cwd: str) -> ConflictPlan:
+    """Determine the resolution strategy for a conflicted file."""
     delete_side = detect_delete_conflict(filepath, cwd)
     if delete_side is not None:
         return ConflictPlan(ConflictStrategy.DELETE, delete_side=delete_side)
 
-    regenerator = find_regenerator(filepath)
+    regenerator = regen.find_regenerator(filepath)
     if regenerator is not None:
         return ConflictPlan(ConflictStrategy.REGENERATE, regenerator=regenerator)
 

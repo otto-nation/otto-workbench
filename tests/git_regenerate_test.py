@@ -1,5 +1,7 @@
 """Tests for the git.regenerate lockfile regeneration library."""
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -136,3 +138,228 @@ class TestRegenQueue:
         queue = regen.RegenQueue()
         queue.mark_unrebuildable("proto/gen.go")
         assert queue.unrebuildable == ["proto/gen.go"]
+
+
+# ── Registry invariants ─────────────────────────────────────────────────────
+
+
+class TestRegistryInvariants:
+    """Properties every registry entry must hold, whatever is added to it."""
+
+    def test_find_regenerator_all_entries_have_cmd(self):
+        """Every registry entry must carry a non-empty command tuple."""
+        for name, entry in regen.LOCKFILE_REGENERATORS.items():
+            assert isinstance(entry.cmd, tuple) and len(entry.cmd) > 0, f"{name} has invalid cmd"
+
+    def test_find_regenerator_all_keys_are_basenames(self):
+        """Lookup is by basename — a key with a path separator could never match."""
+        for name in regen.LOCKFILE_REGENERATORS:
+            assert os.path.basename(name) == name, f"{name} is not a bare basename"
+
+
+# ── Running a regeneration ──────────────────────────────────────────────────
+
+
+class TestRunRegeneration:
+    """Running one rebuild: bare first, mise as the fallback, then staging."""
+
+    def testrun_regeneration_bare_command(self, tmp_path):
+        lockfile = tmp_path / "pnpm-lock.yaml"
+        lockfile.write_text("old content")
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs.get("cwd")))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=False):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is True
+        cmds = [c[0] for c in calls]
+        assert ["pnpm", "install"] in cmds
+        assert ["git", "add", "pnpm-lock.yaml"] in cmds
+
+    def testrun_regeneration_with_mise(self, tmp_path):
+        lockfile = tmp_path / "pnpm-lock.yaml"
+        lockfile.write_text("old content")
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs.get("cwd")))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=True):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is True
+        cmds = [c[0] for c in calls]
+        assert ["mise", "exec", "--", "pnpm", "install"] in cmds
+
+    def testrun_regeneration_bare_fails_retries_mise(self, tmp_path):
+        lockfile = tmp_path / "pnpm-lock.yaml"
+        lockfile.write_text("old content")
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs.get("cwd")))
+            if cmd == ["pnpm", "install"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=127, stdout="", stderr="command not found")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is True
+        cmds = [c[0] for c in calls]
+        assert ["mise", "exec", "--", "pnpm", "install"] in cmds
+
+    def testrun_regeneration_missing_binary_retries_mise(self, tmp_path):
+        """A binary absent from PATH raises FileNotFoundError, not exit 127."""
+        (tmp_path / "pnpm-lock.yaml").write_text("old content")
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs.get("cwd")))
+            if cmd == ["pnpm", "install"]:
+                raise FileNotFoundError(2, "No such file or directory: 'pnpm'")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is True
+        cmds = [c[0] for c in calls]
+        assert ["mise", "exec", "--", "pnpm", "install"] in cmds
+
+    def testrun_regeneration_missing_binary_without_mise_returns_false(self, tmp_path):
+        """Missing binary and no mise degrades to a stale file, never a crash."""
+        (tmp_path / "pnpm-lock.yaml").write_text("old content")
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "pnpm":
+                raise FileNotFoundError(2, "No such file or directory: 'pnpm'")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch("shutil.which", return_value=None):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is False
+
+    def testrun_regeneration_not_executable_returns_false(self, tmp_path):
+        """A present-but-unexecutable binary raises PermissionError, not 127."""
+        (tmp_path / "pnpm-lock.yaml").write_text("old content")
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "pnpm":
+                raise PermissionError(13, "Permission denied: 'pnpm'")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch("shutil.which", return_value=None):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is False
+
+    def testrun_regeneration_missing_binary_under_mise_returns_false(self, tmp_path):
+        """Defensive: a launch failure under mise must not propagate as a traceback.
+
+        detect_mise gates on shutil.which, so this pairing is unreachable in
+        production; the test pins run_regeneration's own error handling.
+        """
+        (tmp_path / "pnpm-lock.yaml").write_text("old content")
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "mise":
+                raise FileNotFoundError(2, "No such file or directory: 'mise'")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=True), \
+             mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is False
+
+    def testrun_regeneration_stage_dir(self, tmp_path):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs.get("cwd")))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=False):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("go", "mod", "tidy"),
+                    stage_dir=True, files=["go.sum"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is True
+        cmds = [c[0] for c in calls]
+        assert ["git", "add", "-u", "."] in cmds
+
+    def testrun_regeneration_failure_returns_false(self, tmp_path):
+        def fake_run(cmd, **kwargs):
+            if cmd[0] in ("pnpm", "mise"):
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch("shutil.which", return_value=None):
+            result = regen.run_regeneration(
+                regen.RegenJob(
+                    regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+                ),
+                cwd=str(tmp_path),
+            )
+
+        assert result is False

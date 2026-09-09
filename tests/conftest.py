@@ -26,10 +26,20 @@ def _load_lib(name: str):
     adding it to the path would let one of them answer an unrelated import. The
     cache is what makes two callers asking for the same name share one module
     rather than hold copies whose state can drift apart.
+
+    The module still has to be in `sys.modules` while it executes, under a name
+    prefixed so it cannot be what an unrelated `import` resolves to. `@dataclass`
+    reads `sys.modules[cls.__module__]` to resolve annotations, so a `lib/`
+    module declaring one fails to import at all without this — not when the
+    class is used, but at exec time.
     """
     if name not in _LIBS:
-        spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "lib" / f"{name}.py")
+        qualified = f"_wb_lib_{name}"
+        spec = importlib.util.spec_from_file_location(
+            qualified, REPO_ROOT / "lib" / f"{name}.py",
+        )
         module = importlib.util.module_from_spec(spec)
+        sys.modules[qualified] = module
         spec.loader.exec_module(module)
         _LIBS[name] = module
     return _LIBS[name]

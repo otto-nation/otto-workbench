@@ -19,7 +19,8 @@ directory govern every unrelated checkout beneath it; "the directory holding
 this repo's common git dir" cannot reach sideways.
 
 `bin/resolve-worktree` is the bash owner of the other direction —
-container → the worktree it stands in for.
+container → the worktree it stands in for. `worktree_for` below is how Python
+asks it, by running it rather than by re-deriving the rule.
 """
 
 from __future__ import annotations
@@ -27,11 +28,119 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 
 _LIB_DIR = os.path.dirname(os.path.realpath(__file__))
 if _LIB_DIR not in sys.path:
     sys.path.insert(0, _LIB_DIR)
 from gitenv import git_env_clear  # noqa: E402
+
+_RESOLVE_WORKTREE = os.path.join(os.path.dirname(_LIB_DIR), 'bin', 'resolve-worktree')
+
+# Seconds `bin/resolve-worktree` may take. It reads two local refs and a
+# worktree list, so the bound is a hang detector rather than a work budget —
+# the same 10s `ai/lib/core/timeouts.LOCAL` names, spelled here because `lib/`
+# is outside `ai/` and cannot import it. Match that tier if it ever moves.
+_RESOLVE_TIMEOUT = 10.0
+
+# `bin/resolve-worktree`'s exit codes, which are its interface. NOT_BARE is the
+# ordinary answer — every normal repo, worktree and non-repo directory lands
+# there — and UNRESOLVED is the one a caller must not paper over: a container
+# naming no checkout has no tree to offer, and picking one anyway is how a tool
+# writes into a worktree the operator never asked for.
+RESOLVED = 0
+UNRESOLVED = 1
+NOT_BARE = 2
+USAGE = 64
+# Not one of resolve-worktree's codes: the script was not reachable, or did not
+# answer. Callers treat it like NOT_BARE — no tree, no guess — but it is spelled
+# apart so a missing install is distinguishable from a directory that simply is
+# not a container.
+UNAVAILABLE = 127
+
+
+@dataclass(frozen=True)
+class Worktree:
+    """What `bin/resolve-worktree` made of a directory.
+
+    `status` carries the script's exit code rather than collapsing to a bool,
+    because the two failures mean opposite things to a caller: `NOT_BARE` says
+    the directory was never a container and whatever the caller already had is
+    still right, while `UNRESOLVED` says it *is* one and deliberately names no
+    tree. `ok` is the predicate to branch on; `path` is set only when it holds.
+    """
+
+    path: str | None
+    status: int
+
+    @property
+    def ok(self) -> bool:
+        return self.status == RESOLVED and self.path is not None
+
+
+def worktree_for(directory: str) -> Worktree:
+    """The worktree a bare-repo container stands in for, via the bash owner.
+
+    A thin wrapper over `bin/resolve-worktree`, not a second implementation of
+    it. The rule — the checkout on the branch the container's own HEAD names —
+    already has more spellings than it should, and `tests/container_source.bats`
+    exists because a disagreement between two of them is a live hazard rather
+    than a hypothetical one. Paying a subprocess is the cost of not adding a
+    third.
+
+    The environment is cleared for the same reason `git()` above clears it, and
+    with sharper consequences: `resolve-worktree` does its own `cd` and asks
+    plain `git`, so an inherited `GIT_DIR` — which the pre-push hook exports —
+    makes it exit 128, outside the set of codes it documents.
+
+    A missing script is not an error worth raising. `bin/` does not ship in the
+    otto-ai-tools tarball, so a caller running from one gets `UNAVAILABLE` and
+    degrades to whatever it does without a container answer.
+    """
+    try:
+        result = subprocess.run(
+            (_RESOLVE_WORKTREE, directory),
+            capture_output=True, text=True, check=False,
+            env=git_env_clear(), timeout=_RESOLVE_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return Worktree(None, UNAVAILABLE)
+    if result.returncode != RESOLVED:
+        return Worktree(None, result.returncode)
+    path = result.stdout.strip()
+    return Worktree(path, RESOLVED) if path else Worktree(None, UNRESOLVED)
+
+
+def project_root(directory: str | None = None) -> str | None:
+    """The working tree a caller in `directory` belongs to, container included.
+
+    The Python spelling of `lib/worktree.sh`'s `project_root`, and the one
+    entry point a reader should use: a working tree names itself, and only when
+    there is none is the container asked. `directory` defaults to the current
+    one.
+
+    None covers both the ordinary outside-a-repo case and a container naming no
+    checkout — neither has a tree to read, and the second must not be answered
+    with a guess.
+
+    The environment is cleared here too, not only in `worktree_for`. An
+    inherited `GIT_DIR` beats `-C` and beats discovery, so without it this first
+    call answers for whatever repository the environment names and returns a
+    confident wrong tree instead of falling through to the container lookup —
+    and the pre-push hook, which exports one, is exactly when a gate runs.
+    """
+    directory = directory or os.getcwd()
+    try:
+        result = subprocess.run(
+            ('git', '-C', directory, 'rev-parse', '--show-toplevel'),
+            capture_output=True, text=True, check=False,
+            env=git_env_clear(), timeout=_RESOLVE_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return worktree_for(directory).path
 
 
 def git(repo_root: str, *args: str) -> str | None:

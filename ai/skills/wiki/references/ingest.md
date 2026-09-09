@@ -30,8 +30,22 @@ Report and stop if not. Bad input should cost nothing.
 
 ## Every source lands the same way
 
-Written to `raw/` as markdown with frontmatter, named `raw/{type}-{slug}.md` where the slug
-is lowercase, hyphenated, and no more than 60 characters:
+For a source that is already a local file, stage it with the CLI rather than copying it by
+hand:
+
+```bash
+wiki ingest --stage <path> --type <type> --title "{title}"
+```
+
+That copies it into `raw/`, names it `{type}-{slug}` with a slug it derives, adds
+frontmatter, logs the ingest, and prints the manifest row — hash included, computed from
+the bytes. Staging the same filename twice keeps both.
+
+For a source you had to fetch or assemble — a web page, a repo analysis, research — write
+the extracted markdown to a temporary file first, then stage that. The handlers below say
+what to extract.
+
+The frontmatter, whichever way it lands:
 
 ```markdown
 ---
@@ -47,7 +61,7 @@ Type-specific keys are added below. **Do not put a `content_hash` in frontmatter
 come from `wiki sources`, which computes them from file bytes; a hash written by hand is a
 guess, and a wrong one silently defeats incremental compilation.
 
-After writing, run `wiki sources --new` to confirm it registers, then compile unless
+After staging, run `wiki sources --new` to confirm it registers, then compile unless
 `--no-compile`.
 
 ## Handlers
@@ -95,7 +109,8 @@ path, and the identifiers are how they confirm it is the same problem.
 
 ## Log it
 
-Append to `_log.md`:
+`wiki ingest --stage` writes the log line itself. Add one by hand only for a source it did
+not stage:
 
 ```
 [{DATE}] INGEST: {source} → raw/{filename}

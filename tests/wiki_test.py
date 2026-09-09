@@ -172,13 +172,18 @@ class TestConfiguredDirnameResolvesTheRepoRoot:
         nested.mkdir(parents=True)
         assert wiki.configured_dirname(nested) == "knowledge"
 
-    def test_the_walk_honours_it_from_a_nested_directory(self, tmp_path):
-        """End to end: the setting reaches `find_wiki`, not just `configured_dirname`."""
+    def test_the_walk_honours_it_from_a_nested_directory(self, tmp_path, capsys):
+        """End to end through the CLI: the setting reaches the walk.
+
+        Driven through `main` rather than `find_wiki`, because resolving the
+        name is the CLI's job — `find_wiki` is handed the answer.
+        """
         repo = self._repo(tmp_path, "knowledge")
         root = make_wiki(repo, dirname="knowledge")
         nested = repo / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.find_wiki(nested) == root
+        assert wiki.main(["path", str(nested)]) == 0
+        assert capsys.readouterr().out.strip() == str(root)
 
     def test_outside_a_repo_falls_back_to_the_start_directory(self, tmp_path):
         """No git toplevel to resolve; the search start stands in for it."""
@@ -580,3 +585,264 @@ def _days_ago(days: int) -> str:
 def _config(dirname: str) -> WorkbenchConfig:
     """A merged workbench config carrying just `wiki.dir`."""
     return WorkbenchConfig(wiki=WikiConfig(dir=dirname))
+
+
+class TestInit:
+    def test_creates_the_full_layout(self, tmp_path, capsys):
+        assert wiki.main(["init", str(tmp_path)]) == 0
+        root = tmp_path / "wiki"
+        for name in ("raw", "articles", "drafts", "archive", "meta"):
+            assert (root / name).is_dir(), name
+        for name in ("SCHEMA.md", "_index.md", "_sources.md", "_log.md"):
+            assert (root / name).is_file(), name
+        assert "created" in capsys.readouterr().out
+
+    def test_the_result_is_findable(self, tmp_path):
+        """init and path must agree on what a knowledge base is."""
+        wiki.main(["init", str(tmp_path)])
+        assert wiki.find_wiki(tmp_path) == tmp_path / "wiki"
+
+    def test_the_result_lints_clean(self, tmp_path):
+        wiki.main(["init", str(tmp_path)])
+        assert wiki.collect_lint(wiki.Wiki(tmp_path / "wiki")) == []
+
+    def test_status_reports_an_empty_base(self, tmp_path):
+        wiki.main(["init", str(tmp_path)])
+        status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
+        assert (status["articles"], status["sources"]) == (0, 0)
+
+    def test_refuses_an_existing_base(self, tmp_path, capsys):
+        wiki.main(["init", str(tmp_path)])
+        assert wiki.main(["init", str(tmp_path)]) == 1
+        assert "already exists" in capsys.readouterr().err
+
+    def test_domain_reaches_the_schema(self, tmp_path):
+        wiki.main(["init", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        schema = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
+        assert "Payments" in schema and "the team" in schema
+        assert "{DOMAIN}" not in schema and "{AUDIENCE}" not in schema
+
+    def test_manifest_header_is_not_read_as_a_source(self, tmp_path):
+        """The header init writes must not register as an entry."""
+        wiki.main(["init", str(tmp_path)])
+        assert wiki.Wiki(tmp_path / "wiki").recorded_source_hashes() == {}
+
+    def test_explicit_path_is_honoured(self, tmp_path):
+        target = tmp_path / "somewhere" / "kb"
+        assert wiki.main(["init", str(tmp_path), "--wiki", str(target)]) == 0
+        assert (target / "SCHEMA.md").is_file()
+
+    def test_completes_a_half_created_base(self, tmp_path):
+        """An interrupted run should finish, not fail or lose what it wrote."""
+        root = tmp_path / "wiki"
+        (root / "raw").mkdir(parents=True)
+        (root / "_log.md").write_text("# Activity Log\n\nkept\n", encoding="utf-8")
+        assert wiki.main(["init", str(tmp_path)]) == 0
+        assert "kept" in (root / "_log.md").read_text(encoding="utf-8")
+        assert (root / "SCHEMA.md").is_file()
+
+
+class TestIngestStage:
+    def _base(self, tmp_path: Path) -> Path:
+        wiki.main(["init", str(tmp_path)])
+        return tmp_path / "wiki"
+
+    def test_stages_a_markdown_source(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        src = tmp_path / "notes.md"
+        src.write_text("# Notes\n\nbody\n", encoding="utf-8")
+        assert wiki.main(["ingest", str(tmp_path), "--stage", str(src)]) == 0
+        staged = next((root / "raw").iterdir())
+        text = staged.read_text(encoding="utf-8")
+        assert "source_type: file" in text and "body" in text
+        assert "staged" in capsys.readouterr().out
+
+    def test_staged_source_is_seen_as_new(self, tmp_path):
+        root = self._base(tmp_path)
+        src = tmp_path / "notes.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        store = wiki.Wiki(root)
+        assert len(store.sources) == 1
+        assert store.recorded_source_hashes() == {}
+
+    def test_reported_hash_matches_the_file(self, tmp_path):
+        """The manifest row must carry a computed hash, not a narrated one."""
+        root = self._base(tmp_path)
+        src = tmp_path / "notes.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        staged = next((root / "raw").iterdir())
+        row = wiki.manifest_row(root, staged, "file")
+        assert wiki.hash_file(staged) in row
+        assert wiki.Wiki(root).sources[0].content_hash == wiki.hash_file(staged)
+
+    def test_no_content_hash_in_frontmatter(self, tmp_path):
+        """One hash, computed on demand — a recorded copy would drift."""
+        root = self._base(tmp_path)
+        src = tmp_path / "notes.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        staged = next((root / "raw").iterdir())
+        keys = [
+            line.split(":", 1)[0]
+            for line in staged.read_text(encoding="utf-8").splitlines()[1:]
+            if line and not line.startswith("---")
+        ]
+        assert "content_hash" not in keys
+
+    def test_binary_source_is_copied_verbatim(self, tmp_path):
+        """Wrapping a PDF in frontmatter would corrupt it."""
+        root = self._base(tmp_path)
+        src = tmp_path / "paper.pdf"
+        src.write_bytes(b"%PDF-1.4\nbinary\x00bytes")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "pdf"])
+        staged = next((root / "raw").iterdir())
+        assert staged.read_bytes() == b"%PDF-1.4\nbinary\x00bytes"
+
+    def test_same_name_twice_does_not_overwrite(self, tmp_path):
+        root = self._base(tmp_path)
+        for body in ("first\n", "second\n"):
+            src = tmp_path / "README.md"
+            src.write_text(body, encoding="utf-8")
+            wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        staged = sorted((root / "raw").iterdir())
+        assert len(staged) == 2
+        bodies = {p.read_text(encoding="utf-8").strip().split("\n")[-1] for p in staged}
+        assert bodies == {"first", "second"}
+
+    def test_source_type_cannot_escape_raw(self, tmp_path):
+        """`--type` reaches the filename, so it is held to the slug shape.
+
+        Interpolated raw, a `../..` in it wrote the staged file outside the
+        knowledge base entirely.
+        """
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        assert wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"]) == 0
+        staged = list((root / "raw").iterdir())
+        assert len(staged) == 1
+        assert staged[0].parent == root / "raw"
+        assert not (tmp_path.parent / "evil-s.md").exists()
+
+    def _staged_keys(self, root: Path) -> list[str]:
+        """Frontmatter keys of the one staged source, as a parser sees them."""
+        staged = next((root / "raw").iterdir())
+        block = staged.read_text(encoding="utf-8").split("---")[1]
+        return [ln.split(":", 1)[0] for ln in block.splitlines() if ":" in ln]
+
+    def test_source_type_cannot_inject_frontmatter(self, tmp_path):
+        """A newline in `--type` opened a second frontmatter key.
+
+        Asserted on the key set rather than the text: the value survives as an
+        inert slug, which is fine — what must not happen is it becoming a key.
+        """
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "file\ninjected: yes"])
+        assert self._staged_keys(root) == [
+            "source_type",
+            "title",
+            "original_path",
+            "ingest_date",
+        ]
+
+    def test_title_cannot_inject_frontmatter(self, tmp_path):
+        """The same holds for a title, which is written as a YAML scalar."""
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'x"\ninjected: yes'])
+        assert "injected" not in self._staged_keys(root)
+
+    def test_a_quoted_title_stays_one_scalar(self, tmp_path):
+        """An embedded quote must be escaped, not close the scalar early."""
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'a "quoted" name'])
+        staged = next((root / "raw").iterdir())
+        title = [
+            ln for ln in staged.read_text(encoding="utf-8").splitlines() if ln.startswith("title:")
+        ][0]
+        assert title == 'title: "a \\"quoted\\" name"'
+
+    def test_manifest_row_uses_the_cleaned_type(self, tmp_path):
+        """The row must not carry a value the filename rejected."""
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"])
+        staged = next((root / "raw").iterdir())
+        row = wiki.manifest_row(root, staged, "../../evil")
+        assert ".." not in row
+
+    def test_title_drives_the_filename(self, tmp_path):
+        root = self._base(tmp_path)
+        src = tmp_path / "x.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", "How Auth Works"])
+        assert (root / "raw" / "file-how-auth-works.md").is_file()
+
+    def test_missing_source_reports_and_exits_one(self, tmp_path, capsys):
+        self._base(tmp_path)
+        assert wiki.main(["ingest", str(tmp_path), "--stage", str(tmp_path / "gone.md")]) == 1
+        assert "no such file" in capsys.readouterr().err
+
+    def test_ingest_is_logged(self, tmp_path):
+        root = self._base(tmp_path)
+        src = tmp_path / "notes.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        assert "INGEST:" in (root / "_log.md").read_text(encoding="utf-8")
+
+
+class TestSlugify:
+    def test_lowercases_and_hyphenates(self):
+        assert wiki.slugify_title("How Auth Works") == "how-auth-works"
+
+    def test_drops_punctuation(self):
+        assert wiki.slugify_title("What's a Token? (v2)") == "whats-a-token-v2"
+
+    def test_truncates_at_a_word_boundary(self):
+        """Every word is the same, so the last segment must be a whole one."""
+        slug = wiki.slugify_title(" ".join(["alpha"] * 30))
+        assert len(slug) <= 60
+        assert slug.rsplit("-", 1)[-1] == "alpha"
+
+    def test_a_single_long_word_is_cut_rather_than_emptied(self):
+        slug = wiki.slugify_title("x" * 200)
+        assert 0 < len(slug) <= 60
+
+    def test_empty_title_still_yields_a_name(self):
+        assert wiki.slugify_title("!!!") == "untitled"
+
+
+class TestSchemaTemplateSubstitution:
+    def test_no_placeholder_text_survives(self, tmp_path):
+        """Instructions to the filler must not be filled in themselves.
+
+        The template's opening line named both placeholders while telling the
+        reader to replace them, so substitution produced 'Replace Payments and
+        the team' in every new schema.
+        """
+        wiki.main(["init", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        body = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
+        prose = [ln for ln in body.splitlines() if not ln.strip().startswith("<!--")]
+        assert not any("Replace" in ln for ln in prose)
+        assert "A knowledge base about Payments, for the team." in body
+
+
+class TestDomainSkipsNonProse:
+    def test_html_comment_is_not_the_domain(self, tmp_path):
+        """The shipped template opens with an editing note in a comment."""
+        root = make_wiki(tmp_path, "<!-- an editing note -->\n\n# Wiki Schema\n\nPayments.\n")
+        assert wiki.Wiki(root).domain() == "Payments."
+
+    def test_init_output_reports_the_real_domain(self, tmp_path):
+        """End to end against the template init actually copies."""
+        wiki.main(["init", str(tmp_path), "--domain", "Payments"])
+        status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
+        assert status["domain"] == "A knowledge base about Payments, for whoever works on it."

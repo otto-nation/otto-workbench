@@ -1,7 +1,6 @@
-# Wiki Schema
+<!-- Everything below Identity is a working default. Edit as the wiki finds its shape. -->
 
-Replace {DOMAIN} and {AUDIENCE}. Everything below them is a working default — edit as the
-wiki finds its shape.
+# Wiki Schema
 
 ## Identity
 

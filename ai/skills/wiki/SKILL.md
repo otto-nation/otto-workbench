@@ -27,7 +27,7 @@ The division of labour that follows from that:
 
 | Request | Do this |
 |---|---|
-| `/wiki init [path]` | Read `references/init.md` |
+| `/wiki init [path]` | Run `wiki init`, then read `references/init.md` |
 | `/wiki ingest <source>` | Read `references/ingest.md` |
 | `/wiki compile` | Read `references/compile.md` |
 | `/wiki status` | Run `wiki status`. Print it. Nothing else |
@@ -44,6 +44,8 @@ none exists — offer `/wiki init`, do not guess a location.
 Run these instead of deriving the answer:
 
 ```bash
+wiki init                # create a knowledge base
+wiki ingest --stage FILE # copy a source into raw/ with a real hash
 wiki status              # counts, uncompiled sources, recent activity
 wiki lint                # nine mechanical health checks
 wiki lint --json         # the same, for filtering
@@ -91,7 +93,11 @@ with `wiki index` rather than editing it.
 
 ## Safety
 
-- `wiki` is read-only apart from `wiki index`, which writes only `_index.md`.
+- Three `wiki` subcommands write, and only where they say: `init` creates the base,
+  `ingest --stage` adds to `raw/` and `_log.md`, `index` rewrites `_index.md`. `path`,
+  `status`, `lint`, and `sources` read only.
+- `wiki init` refuses to write over an existing base. If it reports one exists, that is the
+  answer — do not pass `--wiki` at a different path to get around it.
 - Never edit anything in `raw/`. Sources are immutable; re-ingest instead.
 - Never delete an article to resolve a lint finding. Fix the finding or archive the article.
 - Report the counts `wiki status` gives. Do not estimate them from a directory listing.

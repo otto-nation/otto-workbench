@@ -35,7 +35,7 @@ be a fix pass asserting something outward nobody approved.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -85,12 +85,20 @@ class LandSpec:
     empty set commits nothing at all. Only the domain can tell the two apart —
     a pass that could not work out what its agent touched has an empty scope,
     not a licence to stage everything.
+
+    `args` is passed through to `git push`, and is the domain's to supply
+    because only it knows what it did to the branch underneath the commit. A
+    pass that appends to its branch needs nothing here; one repairing a branch
+    it has just replayed is pushing a non-fast-forward and has to say so, or
+    the remote rejects the work. Empty by default, so a domain that rewrote
+    nothing pushes exactly as it did before this existed.
     """
 
     message: str
     regen: str | None = None
     recover: bool = False
     paths: Iterable[str] | None = None
+    args: Sequence[str] = ()
 
 
 @dataclass
@@ -446,6 +454,7 @@ def run(adapter: FixAdapter, *, trail: Trail | None = None) -> FixRun:
         regen=spec.regen,
         recover_from=head_before if spec.recover else None,
         paths=spec.paths,
+        args=spec.args,
     )
     _stamp(settled.outcomes, head_before, landed.sha)
 

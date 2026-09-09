@@ -68,22 +68,26 @@ _join() {
 }
 
 # _iter_tools FILE CALLBACK
-# Calls CALLBACK name description when_to_use usage docs commands_json for each tool in FILE.
+# Calls CALLBACK name description when_to_use usage docs FILE INDEX for each tool in FILE.
+#
+# The last two arguments are the tool's own address rather than its commands,
+# which used to arrive as a JSON blob from `yq -o=json`. Only one callback
+# renders subcommands, and it can read them from the cache by index; building
+# the JSON meant a second parse of the file plus a jq fork per subcommand.
 _iter_tools() {
   local file="$1" cb="$2"
   [[ -f "$file" ]] || return 0
+  reg_load "$file" || return 1
   local count i
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   for (( i=0; i<count; i++ )); do
-    local name
-    name=$(yq ".tools[$i].name" "$file")
     "$cb" \
-      "$name" \
-      "$(yq ".tools[$i].description"   "$file")" \
-      "$(yq ".tools[$i].when_to_use"   "$file")" \
-      "$(yq ".tools[$i].usage // \"\""  "$file")" \
-      "$(yq ".tools[$i].docs  // \"\""  "$file")" \
-      "$(yq -o=json ".tools[$i].commands // \"\""  "$file")"
+      "$(reg_get "$file" tools "$i" name)" \
+      "$(reg_get "$file" tools "$i" description)" \
+      "$(reg_get "$file" tools "$i" when_to_use)" \
+      "$(reg_get "$file" tools "$i" usage)" \
+      "$(reg_get "$file" tools "$i" docs)" \
+      "$file" "$i"
   done
 }
 
@@ -92,35 +96,35 @@ _iter_tools() {
 _iter_tools_by_visibility() {
   local file="$1" target_vis="$2" cb="$3"
   [[ -f "$file" ]] || return 0
+  reg_load "$file" || return 1
   local count i
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   for (( i=0; i<count; i++ )); do
-    local name vis
-    name=$(yq ".tools[$i].name" "$file")
-    vis=$(yq ".tools[$i].visibility" "$file")
+    local vis
+    vis=$(reg_get "$file" tools "$i" visibility)
     [[ "$vis" == "$target_vis" ]] || continue
     "$cb" \
-      "$name" \
-      "$(yq ".tools[$i].description"   "$file")" \
-      "$(yq ".tools[$i].when_to_use // \"\""   "$file")" \
-      "$(yq ".tools[$i].usage // \"\""  "$file")" \
-      "$(yq ".tools[$i].docs  // \"\""  "$file")" \
-      "$(yq -o=json ".tools[$i].commands // \"\""  "$file")"
+      "$(reg_get "$file" tools "$i" name)" \
+      "$(reg_get "$file" tools "$i" description)" \
+      "$(reg_get "$file" tools "$i" when_to_use)" \
+      "$(reg_get "$file" tools "$i" usage)" \
+      "$(reg_get "$file" tools "$i" docs)" \
+      "$file" "$i"
   done
 }
 
 # ── tools.generated.md ────────────────────────────────────────────────────────
 
+# _render_subcommands FILE INDEX — a tool's commands[] as a markdown sublist.
 _render_subcommands() {
-  local commands_json="$1"
-  [[ -n "$commands_json" && "$commands_json" != "null" && "$commands_json" != '""' ]] || return 0
+  local file="$1" i="$2"
   local cmd_count cmd_i cmd_name cmd_desc
-  cmd_count=$(printf '%s' "$commands_json" | jq 'length')
+  cmd_count=$(reg_len "$file" tools "$i" commands)
   [[ "$cmd_count" -gt 0 ]] || return 0
   printf -- '- **Subcommands**:\n'
   for (( cmd_i=0; cmd_i<cmd_count; cmd_i++ )); do
-    cmd_name=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].name")
-    cmd_desc=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].description")
+    cmd_name=$(reg_get "$file" tools "$i" commands "$cmd_i" name)
+    cmd_desc=$(reg_get "$file" tools "$i" commands "$cmd_i" description)
     # shellcheck disable=SC2016  # backticks are markdown literals
     printf '  - `%s` — %s\n' "$cmd_name" "$cmd_desc"
   done
@@ -128,7 +132,7 @@ _render_subcommands() {
 
 _tool_md_entry() {
   local name="$1" description="$2" when_to_use="$3" usage="$4"
-  local commands_json="${6:-}"
+  local file="${6:-}" index="${7:-}"
   printf '\n### %s\n' "$name"
   printf '%s\n' "$description"
   printf -- '- **When to use**: %s\n' "$when_to_use"
@@ -138,7 +142,8 @@ _tool_md_entry() {
   fi
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
   if [[ -n "$usage" && "$usage" != "null" ]]; then printf -- '- **Usage**: `%s`\n' "$usage"; fi
-  _render_subcommands "$commands_json"
+  [[ -n "$file" ]] && _render_subcommands "$file" "$index"
+  return 0
 }
 
 _tool_ref_entry() {
@@ -158,12 +163,14 @@ declare -a _section_order=()
 _collect_registry() {
   local file="$1"
   [[ -f "$file" ]] || return 0
+  reg_load "$file" || return 1
   local count
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   [[ "$count" -gt 0 ]] || return 0
 
   local section
-  section=$(yq '.meta.section // "Tools"' "$file")
+  section=$(reg_get "$file" meta section)
+  section="${section:-Tools}"
 
   local full_content brief_content
   full_content=$(_iter_tools_by_visibility "$file" "full" _tool_md_entry)
@@ -231,14 +238,27 @@ SCOPE_PATHS[workbench]='  - "**/bin/local/**"
 # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
 _tool_readme_row() { printf '| `%s` | %s |\n' "$1" "$2"; }
 
+# _tool_index FILE NAME — the index of the tool called NAME, or a failure.
+_tool_index() {
+  local count i
+  count=$(reg_len "$1" tools)
+  for (( i=0; i<count; i++ )); do
+    [[ "$(reg_get "$1" tools "$i" name)" == "$2" ]] || continue
+    printf '%s' "$i"
+    return 0
+  done
+  return 1
+}
+
 _emit_scripts_table() {
   printf '| Script | Description |\n'
   printf '|--------|-------------|\n'
   local -a _script_registries=()
   collect_registries _script_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+  (( ${#_script_registries[@]} > 0 )) && { reg_load "${_script_registries[@]}" || return 1; }
   for _reg in "${_script_registries[@]}"; do
     local _val
-    _val=$(yq '.meta.validation // ""' "$_reg")
+    _val=$(reg_get "$_reg" meta validation)
     if [[ "$_val" == "bindir" ]]; then
       _iter_tools "$_reg" _tool_readme_row
     fi
@@ -248,10 +268,16 @@ _emit_scripts_table() {
 _emit_tasks_block() {
   local count i key desc
   printf '```bash\n'
-  count=$(yq '.tasks | to_entries | length' "$TASKFILE_PATH")
+  reg_load "$TASKFILE_PATH" || return 1
+  # A Taskfile's tasks are a map, so the keys are the task names — there is no
+  # `to_entries` index to count. reg_keys answers them in document order,
+  # which is the order `yq '.tasks | to_entries'` walked too.
+  local -a keys=()
+  mapfile -t keys < <(reg_keys "$TASKFILE_PATH" tasks)
+  count=${#keys[@]}
   for (( i=0; i<count; i++ )); do
-    key=$(yq ".tasks | to_entries[$i].key" "$TASKFILE_PATH")
-    desc=$(yq ".tasks | to_entries[$i].value.desc // \"\"" "$TASKFILE_PATH")
+    key="${keys[$i]}"
+    desc=$(reg_get "$TASKFILE_PATH" tasks "$key" desc)
     # Exclude utility/infrastructure tasks; only surface user-facing AI tasks
     [[ "$key" == brew:* || "$key" == "help" ]] && continue
     [[ -z "$desc" || "$desc" == "null" ]] && continue
@@ -431,12 +457,14 @@ _tool_readme_table_row() {
 _render_readme_registry() {
   local file="$1"
   [[ -f "$file" ]] || return 0
+  reg_load "$file" || return 1
   local count
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   [[ "$count" -gt 0 ]] || return 0
 
   local section
-  section=$(yq '.meta.section // "Tools"' "$file")
+  section=$(reg_get "$file" meta section)
+  section="${section:-Tools}"
 
   local content
   content=$(_iter_tools "$file" _tool_readme_table_row)
@@ -515,8 +543,13 @@ _emit_optional_components() {
 # from the `commands` array on the otto-workbench entry in bin/registry.yml.
 _emit_workbench_commands() {
   [[ -f "$BIN_REGISTRY" ]] || return 0
+  reg_load "$BIN_REGISTRY" || return 1
+  # The cache is addressed by index, so the entry is found by walking rather
+  # than by a `select(.name == ...)` filter.
+  local tool_i
+  tool_i=$(_tool_index "$BIN_REGISTRY" otto-workbench) || return 0
   local count
-  count=$(yq '.tools[] | select(.name == "otto-workbench") | .commands | length' "$BIN_REGISTRY" 2>/dev/null)
+  count=$(reg_len "$BIN_REGISTRY" tools "$tool_i" commands)
   [[ "$count" -gt 0 ]] || return 0
 
   # Command table with optional detail column
@@ -525,9 +558,9 @@ _emit_workbench_commands() {
   local i
   for (( i=0; i<count; i++ )); do
     local cmd scope desc
-    cmd=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].name" "$BIN_REGISTRY")
-    scope=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].scope" "$BIN_REGISTRY")
-    desc=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].description" "$BIN_REGISTRY")
+    cmd=$(reg_get "$BIN_REGISTRY" tools "$tool_i" commands "$i" name)
+    scope=$(reg_get "$BIN_REGISTRY" tools "$tool_i" commands "$i" scope)
+    desc=$(reg_get "$BIN_REGISTRY" tools "$tool_i" commands "$i" description)
     # shellcheck disable=SC2016  # backticks are markdown literals
     printf '| `otto-workbench %s` | %s | %s |\n' "$cmd" "$scope" "$desc"
   done
@@ -625,8 +658,9 @@ main() {
   # Group registries by meta.scope (empty/core → core group, others → named scope)
   declare -a _core_registries=()
   declare -A _scope_registries=()
+  (( ${#_tool_registries[@]} > 0 )) && { reg_load "${_tool_registries[@]}" || return 1; }
   for _reg in "${_tool_registries[@]}"; do
-    _scope=$(yq '.meta.scope // ""' "$_reg")
+    _scope=$(reg_get "$_reg" meta scope)
     if [[ -z "$_scope" || "$_scope" == "null" || "$_scope" == "core" ]]; then
       _core_registries+=("$_reg")
     else

@@ -80,7 +80,7 @@ Once a PR exists, the branch is no longer yours alone. Someone may be reading it
 - When you do push — review findings, CI fixes, a reviewer's request — say so on the PR, in a comment naming what changed and why. A silent push to a branch someone is reviewing wastes the review they already did
 - Never push to a PR that has been marked ready for review without saying something first. Ready is the author declaring the branch finished; a later push retracts that declaration, and only a comment tells the reviewer it was retracted
 - A push that loses a race with a merge is not a git problem to retry. The branch is gone because the work landed: check whether your commit made it in (`git log --oneline origin/main..HEAD`), and open a follow-up PR for whatever did not. `cannot lock ref` on push usually means exactly this, not a broken remote
-- Before pushing to any branch with an open PR, check the PR has not already merged. The tell is cheap: `gh pr view <n> --json state,mergedAt`
+- The pre-push hook says when the branch it is pushing has an open PR, and whether it is marked ready — so on this machine the check is already made for you. It is a notice and not a gate, and it is best-effort: no `gh`, no network, or a slow forge leaves the push silent. When it says nothing, that is not the same as there being no PR
 
 ## Git Failure Debugging
 

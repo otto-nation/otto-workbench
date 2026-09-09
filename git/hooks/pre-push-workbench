@@ -132,18 +132,63 @@ _run_step "Checking surface compatibility" "$REPO_ROOT/bin/local/check-surface-c
 # reviewer's request) are common, and a gate here would be answered with
 # --no-verify rather than thought. Entirely best-effort — no gh, no auth, no
 # network, or a repo with no PR all leave the push exactly as it was.
+#
+# Called at the end of the hook rather than here, so it is the last thing on
+# screen when the push begins. Defined beside the other checks; run where it
+# will be read.
+# _run_briefly SECONDS CMD... — CMD's stdout, or nothing if it outlives SECONDS.
+#
+# `timeout` is GNU and this is a BSD userland, so the deadline is kept by hand:
+# run the command writing to a temp file, poll for it to finish, kill it if it
+# does not. Only worth it for a call whose whole contract is that it cannot
+# delay the push — a hung TLS handshake is not a network error `gh` returns
+# from promptly, it is one it waits on.
+_run_briefly() {
+  local deadline="$1"
+  shift
+  local out pid waited=0
+  out="$(mktemp)" || return 1
+
+  "$@" > "$out" 2> /dev/null &
+  pid=$!
+
+  while kill -0 "$pid" 2> /dev/null; do
+    if [[ "$waited" -ge "$deadline" ]]; then
+      kill -TERM "$pid" 2> /dev/null
+      wait "$pid" 2> /dev/null
+      rm -f "$out"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  wait "$pid" 2> /dev/null || {
+    rm -f "$out"
+    return 1
+  }
+  cat "$out"
+  rm -f "$out"
+  return 0
+}
+
 _warn_if_pr_is_open() {
   command -v gh > /dev/null 2>&1 || return 0
-  local branch line state is_draft url
+  local branch line is_draft url
   branch="$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD 2> /dev/null)" || return 0
   [[ -n "$branch" ]] || return 0
 
+  # `gh pr list --head`, not `gh pr view $branch`: view reads an all-digit
+  # argument as a PR number, so a branch named `1180` would report PR #1180 —
+  # somebody else's, almost certainly. --head resolves by branch and nothing
+  # else, and --state open makes the filter the server's job.
+  #
   # Tab-separated so each field is read as a field; the URL is the one that can
   # contain characters worth not splitting on.
-  line="$(gh pr view "$branch" --json state,isDraft,url \
-    --jq '[.state, (.isDraft|tostring), .url] | @tsv' 2> /dev/null)" || return 0
-  IFS=$'\t' read -r state is_draft url <<< "$line"
-  [[ "$state" == "OPEN" ]] || return 0
+  line="$(_run_briefly 5 gh pr list --head "$branch" --state open --limit 1 \
+    --json isDraft,url --jq '.[0] | [(.isDraft|tostring), .url] | @tsv')" || return 0
+  IFS=$'\t' read -r is_draft url <<< "$line"
+  [[ -n "$url" ]] || return 0
 
   warn "This branch has an open PR: $url"
   if [[ "$is_draft" == "false" ]]; then
@@ -152,7 +197,6 @@ _warn_if_pr_is_open() {
   return 0
 }
 
-_warn_if_pr_is_open
 
 # ── Generation ───────────────────────────────────────────────────────────────
 
@@ -309,3 +353,9 @@ else
   _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
   _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
 fi
+
+# ── Open PR notice ───────────────────────────────────────────────────────────
+
+# Last, deliberately: this is the line that should still be on screen when the
+# push starts, not one buried above shellcheck and two test suites.
+_warn_if_pr_is_open

@@ -34,6 +34,7 @@ setup() {
 
   warn() { printf 'WARN: %s\n' "$*"; }
   export -f warn
+  eval "$(sed -n '/^_run_briefly()/,/^}/p' "$HOOK")"
   eval "$(sed -n '/^_warn_if_pr_is_open()/,/^}/p' "$HOOK")"
 }
 
@@ -42,17 +43,27 @@ teardown() {
   common_teardown
 }
 
-# stub_gh STATE ISDRAFT — a `gh` answering `pr view --jq` with one TSV line.
+# stub_gh ISDRAFT — a `gh` answering `pr list --jq` with one TSV line.
+#
+# The real query passes --state open, so the server returns nothing for a merged
+# or closed PR. stub_gh_empty is that case; there is no state field to fake.
 stub_gh() {
   cat > "$STUB_BIN/gh" <<EOF
 #!/usr/bin/env bash
-printf '%s\t%s\t%s\n' "$1" "$2" "https://example.test/pull/1"
+printf '%s\t%s\n' "$1" "https://example.test/pull/1"
 EOF
   chmod +x "$STUB_BIN/gh"
 }
 
+# stub_gh_empty — a `gh` finding no open PR for the branch, which is what
+# --state open returns once one is merged or closed.
+stub_gh_empty() {
+  printf '#!/usr/bin/env bash\nprintf \x27\\n\x27\n' > "$STUB_BIN/gh"
+  chmod +x "$STUB_BIN/gh"
+}
+
 @test "an open PR marked ready says so" {
-  stub_gh OPEN false
+  stub_gh false
   run _warn_if_pr_is_open
   [ "$status" -eq 0 ]
   [[ "$output" == *"open PR"* ]]
@@ -60,7 +71,7 @@ EOF
 }
 
 @test "an open draft is reported without the ready line" {
-  stub_gh OPEN true
+  stub_gh true
   run _warn_if_pr_is_open
   [ "$status" -eq 0 ]
   [[ "$output" == *"open PR"* ]]
@@ -68,14 +79,14 @@ EOF
 }
 
 @test "a merged PR is silent" {
-  stub_gh MERGED false
+  stub_gh_empty
   run _warn_if_pr_is_open
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
 
 @test "a closed PR is silent" {
-  stub_gh CLOSED false
+  stub_gh_empty
   run _warn_if_pr_is_open
   [ "$status" -eq 0 ]
   [ -z "$output" ]
@@ -94,6 +105,7 @@ EOF
   run env PATH="/usr/bin:/bin" bash -c "
     warn() { printf 'WARN: %s\n' \"\$*\"; }
     REPO_ROOT='$REPO_ROOT'; GIT_REMOTE=origin
+    $(sed -n '/^_run_briefly()/,/^}/p' "$HOOK")
     $(sed -n '/^_warn_if_pr_is_open()/,/^}/p' "$HOOK")
     _warn_if_pr_is_open"
   [ "$status" -eq 0 ]
@@ -104,7 +116,7 @@ EOF
   # No branch to ask about, and `gh pr view ''` would answer for whatever the
   # default branch is.
   git -C "$REPO_ROOT" checkout -q --detach
-  stub_gh OPEN false
+  stub_gh false
   run _warn_if_pr_is_open
   [ "$status" -eq 0 ]
   [ -z "$output" ]
@@ -128,4 +140,37 @@ EOF
   [ "$status" -eq 0 ]
   # It waits for the answer it asked for, and no longer.
   [ "$((after - before))" -lt 10 ]
+}
+
+@test "a hung gh is abandoned rather than waited on" {
+  # The case the deadline exists for: not a slow answer, but no answer. A dead
+  # TLS handshake is not an error gh returns from — it is one it sits on.
+  cat > "$STUB_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+sleep 300
+EOF
+  chmod +x "$STUB_BIN/gh"
+
+  local before after
+  before=$SECONDS
+  run _warn_if_pr_is_open
+  after=$SECONDS
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # Bounded at 5s by _run_briefly; the slack is for a loaded machine.
+  [ "$((after - before))" -lt 20 ]
+}
+
+@test "the deadline kills the process it gave up on" {
+  # A stub that outlives the deadline must not be left running behind the push.
+  cat > "$STUB_BIN/gh" <<EOF
+#!/usr/bin/env bash
+sleep 300 & echo \$! > "$TMPDIR/child.pid"
+wait
+EOF
+  chmod +x "$STUB_BIN/gh"
+
+  run _run_briefly 2 gh pr list
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
 }

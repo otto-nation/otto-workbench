@@ -61,6 +61,23 @@ common_setup() {
   # this call, pointing at a file it wrote — see lint_sweep.bats.
   export GIT_CONFIG_GLOBAL="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/gitconfig-global"
   export GIT_CONFIG_SYSTEM=/dev/null
+
+  # Pin mise's global config to the real one, for the same reason git gets a
+  # config of its own: a test that swaps HOME otherwise changes what mise
+  # considers global, and mise ignores `trusted_config_paths` in a config that
+  # is not global "for security reasons". The file then counts as untrusted,
+  # which mise treats as an error rather than a warning — so every jq and yq
+  # call in that test dies, because both resolve to mise shims on a machine
+  # that manages them.
+  #
+  # It fails as a parse error on stderr and a non-zero exit from the shim, not
+  # as anything naming mise, so the symptom is an assertion about YAML content
+  # failing for no visible reason. Exported because the tools under test are
+  # subprocesses.
+  #
+  # Only set when the caller has not: a test whose subject is mise's own config
+  # resolution points this somewhere else and must keep it.
+  export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
 }
 
 # common_teardown — call last in every test's teardown().

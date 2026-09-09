@@ -886,6 +886,12 @@ the caller has not already sourced `constants.sh`, since an
 | Function | Purpose |
 |----------|---------|
 | `is_installed NAME` | returns 0 if NAME is found in PATH |
+| `reg_load FILE...` | read every node of each FILE into the cache. |
+| `reg_has FILE PATH_SEGMENT...` | 0 when a node exists at that path. |
+| `reg_type FILE PATH_SEGMENT...` | the YAML tag at that path, e.g. `!!str`. |
+| `reg_get FILE PATH_SEGMENT...` | the scalar at that path, or empty. |
+| `reg_keys FILE PATH_SEGMENT...` | the child keys of a map, one per line. |
+| `reg_len FILE PATH_SEGMENT...` | the length of a sequence, or 0. |
 | `collect_component_registries ARRAY_REF SCAN_DIR` | the component `registry.yml` files under a root. ARRAY_REF names the caller's array, which is replaced with the paths found one and two directories below SCAN_DIR, in glob order. SCAN_DIR is the root those globs are anchored at; a root holding none of them leaves the array empty rather than filling it with unexpanded patterns. |
 | `collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
 | `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. Checks meta.install_check and meta.install_check_command. |

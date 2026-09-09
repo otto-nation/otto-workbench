@@ -35,6 +35,193 @@ KNOWN_ENV_FIELDS="var target comment default setup_url prefix claude_env"
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }
 
+# ── The read cache ────────────────────────────────────────────────────────────
+#
+# Every value below is read through `reg_load` and the four accessors, not
+# through a `yq` call per field. The reason is arithmetic: a `yq` fork costs
+# about 11ms, and reading each field of each tool separately meant 2471 of them
+# for one `validate-registries` run — 26 seconds, essentially all of it spent
+# starting processes. One `yq` reads all 24 registries in 31ms.
+#
+# The stream `yq` emits is one record per node — `file \x01 path \x01 tag \x01
+# value` — and deliberately never passes through `jq`. JSON has no `!!int` vs
+# `!!float` vs `!!bool`, and a JSON round trip also rewrites the scalar's text:
+# `1e3` comes back `1E+3`, `0x1F` comes back `31`, `00123` comes back `123`.
+# `_check_permission_field` branches on the tag and prints it in its error, so
+# both would be behaviour changes. yq's own tags and `tostring` preserve each
+# exactly as the file spells it.
+#
+# `\x01` and `\x02` are the delimiters because a YAML scalar cannot hold a raw
+# control character without escaping it; `reg_load` rejects a value that does,
+# rather than mis-parsing it. Records are NUL-separated for the same reason, so
+# a multi-line block scalar survives intact.
+
+# The tag of each node, and the value of each node, keyed by "$file\x01$path".
+# A map's value is its keys joined by \x02, in document order; a sequence's is
+# its length.
+declare -gA _REG_TAG=()
+declare -gA _REG_VAL=()
+# Which files are in the cache, so a second reg_load can skip them.
+declare -gA _REG_LOADED=()
+
+_REG_SEP=$'\x01'
+_REG_PSEP=$'\x02'
+
+# _reg_key FILE PATH_SEGMENT... — the cache key for one node.
+#
+# The join lives here alone so no call site spells the delimiter itself: a
+# lookup that built its key by hand would silently miss every time the
+# separator changed, and a miss reads as "absent", which is how a required-field
+# check stops firing.
+_reg_key() {
+  local file="$1"; shift
+  local path=""
+  local seg
+  for seg in "$@"; do
+    [[ -n "$path" ]] && path+="$_REG_PSEP"
+    path+="$seg"
+  done
+  printf '%s' "$file$_REG_SEP$path"
+}
+
+# reg_load FILE... — read every node of each FILE into the cache.
+#
+# Idempotent: a file already loaded is skipped, so a function that loads the one
+# file it was handed costs nothing when its caller already loaded the batch.
+# Returns 1 when yq cannot parse a file, naming it. That is stricter than what
+# it replaces, deliberately — a per-field `yq` on a malformed file returned an
+# empty count, the entry loop ran zero times, and every check on that file
+# passed by reading nothing.
+reg_load() {
+  local -a pending=()
+  local file
+  for file in "$@"; do
+    [[ -n "${_REG_LOADED[$file]:-}" ]] && continue
+    pending+=("$file")
+  done
+  (( ${#pending[@]} > 0 )) || return 0
+
+  # Via a file, not a `$(...)`: the records are NUL-separated and command
+  # substitution drops NUL bytes outright (with a warning on stderr), which
+  # would run every record together into one. A file also keeps yq's exit
+  # status readable, which a process substitution would not.
+  local tmp
+  tmp=$(mktemp "${TMPDIR:-/tmp}/reg-load.XXXXXX") || return 1
+  if ! _reg_stream "${pending[@]}" > "$tmp"; then
+    rm -f "$tmp"
+    err "reg_load: could not parse: ${pending[*]}"
+    return 1
+  fi
+
+  for file in "${pending[@]}"; do
+    _REG_LOADED[$file]=1
+  done
+
+  local record rec_file rec_path rec_tag rec_val
+  while IFS= read -r -d '' record; do
+    # A record is four \x01-separated fields, and only the value may itself be
+    # empty or multi-line — so the three prefixes are peeled off in order
+    # rather than read into an IFS split, which would drop trailing empties.
+    rec_file="${record%%"$_REG_SEP"*}"; record="${record#*"$_REG_SEP"}"
+    rec_path="${record%%"$_REG_SEP"*}"; record="${record#*"$_REG_SEP"}"
+    rec_tag="${record%%"$_REG_SEP"*}"
+    rec_val="${record#*"$_REG_SEP"}"
+    # A zero-byte file yields one record with an empty filename. Keying it
+    # would put a node under a file nobody named; the file is still marked
+    # loaded above, and reg_len answers 0 for it, which is what a per-field
+    # `yq '.tools | length'` answered too.
+    [[ -n "$rec_file" ]] || continue
+    _REG_TAG[$rec_file$_REG_SEP$rec_path]="$rec_tag"
+    _REG_VAL[$rec_file$_REG_SEP$rec_path]="$rec_val"
+  done < "$tmp"
+  rm -f "$tmp"
+}
+
+# _reg_stream FILE... — the flat node stream for a set of files.
+#
+# A map emits its keys and a sequence its length, because `reg_keys` and
+# `reg_len` answer questions no scalar record can: which fields an entry has
+# (for unknown-key detection) and how many entries there are.
+_reg_stream() {
+  yq -N -r -0 "
+    (.. | select(tag != \"!!map\" and tag != \"!!seq\")
+        | (filename + \"$_REG_SEP\" + ([path[]|tostring]|join(\"$_REG_PSEP\")) + \"$_REG_SEP\" + tag + \"$_REG_SEP\" + tostring)),
+    (.. | select(tag == \"!!map\")
+        | (filename + \"$_REG_SEP\" + ([path[]|tostring]|join(\"$_REG_PSEP\")) + \"$_REG_SEP!!map$_REG_SEP\" + ([keys[]|tostring]|join(\"$_REG_PSEP\")))),
+    (.. | select(tag == \"!!seq\")
+        | (filename + \"$_REG_SEP\" + ([path[]|tostring]|join(\"$_REG_PSEP\")) + \"$_REG_SEP!!seq$_REG_SEP\" + (length|tostring)))
+  " "$@"
+}
+
+# reg_has FILE PATH_SEGMENT... — 0 when a node exists at that path.
+#
+# Presence, not truthiness: an explicit `key:` with no value is present and has
+# tag `!!null`. This is the `yq '... | has("x")'` it replaces, and it is the
+# only way to tell absent from present-but-empty — `reg_get` returns empty for
+# both, matching the `// ""` idiom every call site was written against.
+reg_has() {
+  local key
+  key=$(_reg_key "$@")
+  [[ -n "${_REG_TAG[$key]+set}" ]]
+}
+
+# reg_type FILE PATH_SEGMENT... — the YAML tag at that path, e.g. `!!str`.
+#
+# Empty for a path that does not exist. Replaces `yq '... | tag'`, whose answer
+# for a missing node is `!!null` — a caller that needs to tell the two apart
+# asks `reg_has` first, as `_check_permission_field` does.
+reg_type() {
+  local key
+  key=$(_reg_key "$@")
+  printf '%s' "${_REG_TAG[$key]:-}"
+}
+
+# reg_get FILE PATH_SEGMENT... — the scalar at that path, or empty.
+#
+# Empty for absent and for null alike, which is what `yq '.x // ""'` answered
+# and what the `[[ -n "$x" && "$x" != "null" ]]` guards at the call sites are
+# written against. Trailing newlines are stripped: a `$(yq ...)` dropped them,
+# so a block scalar that kept its final newline here would come back one byte
+# longer than the same read used to return.
+reg_get() {
+  local key
+  key=$(_reg_key "$@")
+  local tag="${_REG_TAG[$key]:-}"
+  # A map's stored value is its key list and a sequence's is its length — both
+  # are answers to `reg_keys` and `reg_len`, not scalars. Returning them here
+  # would hand a caller the string "2" for a two-entry array, which reads as a
+  # perfectly good value at a call site expecting one.
+  [[ "$tag" == "!!null" || "$tag" == "!!map" || "$tag" == "!!seq" ]] && return 0
+  local val="${_REG_VAL[$key]:-}"
+  while [[ "$val" == *$'\n' ]]; do val="${val%$'\n'}"; done
+  printf '%s' "$val"
+}
+
+# reg_keys FILE PATH_SEGMENT... — the child keys of a map, one per line.
+#
+# Document order, not sorted — `_check_unknown_fields` reports the first
+# offending field, and sorting would change which one that is. Prints nothing
+# for a path that is absent or is not a map.
+reg_keys() {
+  local key
+  key=$(_reg_key "$@")
+  [[ "${_REG_TAG[$key]:-}" == "!!map" ]] || return 0
+  local joined="${_REG_VAL[$key]}"
+  [[ -n "$joined" ]] || return 0
+  printf '%s\n' "${joined//$_REG_PSEP/$'\n'}"
+}
+
+# reg_len FILE PATH_SEGMENT... — the length of a sequence, or 0.
+#
+# 0 for a path that is absent or is not a sequence, matching what
+# `yq '.tools | length'` answered for a registry with no tools at all.
+reg_len() {
+  local key
+  key=$(_reg_key "$@")
+  [[ "${_REG_TAG[$key]:-}" == "!!seq" ]] || { printf '0'; return 0; }
+  printf '%s' "${_REG_VAL[$key]}"
+}
+
 # collect_component_registries ARRAY_REF SCAN_DIR — the component `registry.yml`
 # files under a root. ARRAY_REF names the caller's array, which is replaced with
 # the paths found one and two directories below SCAN_DIR, in glob order.
@@ -106,15 +293,16 @@ collect_registries() {
 # Checks meta.install_check and meta.install_check_command.
 registry_passes_install_check() {
   local file="$1"
+  reg_load "$file" || return 1
   local install_check
-  install_check=$(yq '.meta.install_check // false' "$file")
+  install_check=$(reg_get "$file" meta install_check)
   [[ "$install_check" == "true" ]] || return 0
 
   # Symlink-based check: pass if a symlink's target contains the expected string.
   # Used by registries whose relevance depends on a runtime choice (e.g. Docker runtime).
   local check_symlink check_contains
-  check_symlink=$(yq '.meta.install_check_symlink // ""' "$file")
-  check_contains=$(yq '.meta.install_check_symlink_contains // ""' "$file")
+  check_symlink=$(reg_get "$file" meta install_check_symlink)
+  check_contains=$(reg_get "$file" meta install_check_symlink_contains)
   if [[ -n "$check_symlink" && "$check_symlink" != "null" ]]; then
     # Expand ~ to $HOME, and the workbench roots to their resolved values.
     # Literal substitution rather than eval — the value comes from a registry
@@ -130,7 +318,7 @@ registry_passes_install_check() {
 
   # Command-based check: pass if a specific command is in PATH.
   local check_cmd
-  check_cmd=$(yq '.meta.install_check_command // ""' "$file")
+  check_cmd=$(reg_get "$file" meta install_check_command)
   if [[ -n "$check_cmd" && "$check_cmd" != "null" ]]; then
     is_installed "$check_cmd"
     return $?
@@ -138,10 +326,10 @@ registry_passes_install_check() {
 
   # Fallback: pass if any tool from the registry is installed
   local count i
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   for (( i=0; i<count; i++ )); do
     local name
-    name=$(yq ".tools[$i].name" "$file")
+    name=$(reg_get "$file" tools "$i" name)
     if is_installed "$name"; then
       return 0
     fi
@@ -154,21 +342,20 @@ registry_passes_install_check() {
 iter_registry_env() {
   local file="$1" cb="$2"
   [[ -f "$file" ]] || return 0
-  local has_env
-  has_env=$(yq '. | has("env")' "$file")
-  [[ "$has_env" == "true" ]] || return 0
+  reg_load "$file" || return 1
+  reg_has "$file" env || return 0
 
   local count i
-  count=$(yq '.env | length' "$file")
+  count=$(reg_len "$file" env)
   for (( i=0; i<count; i++ )); do
     local var comment default_val setup_url prefix
-    var=$(yq ".env[$i].var // \"\"" "$file")
+    var=$(reg_get "$file" env "$i" var)
     [[ -n "$var" && "$var" != "null" ]] || continue
 
-    comment=$(yq ".env[$i].comment // \"\"" "$file")
-    default_val=$(yq ".env[$i].default // \"\"" "$file")
-    setup_url=$(yq ".env[$i].setup_url // \"\"" "$file")
-    prefix=$(yq ".env[$i].prefix // \"\"" "$file")
+    comment=$(reg_get "$file" env "$i" comment)
+    default_val=$(reg_get "$file" env "$i" default)
+    setup_url=$(reg_get "$file" env "$i" setup_url)
+    prefix=$(reg_get "$file" env "$i" prefix)
 
     "$cb" "$var" "$comment" "$default_val" "$setup_url" "$prefix"
   done
@@ -179,20 +366,21 @@ iter_registry_env() {
 iter_registry_auth() {
   local file="$1" cb="$2"
   [[ -f "$file" ]] || return 0
+  reg_load "$file" || return 1
 
   local count i
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   for (( i=0; i<count; i++ )); do
     local env_var
-    env_var=$(yq ".tools[$i].auth.env_var // \"\"" "$file")
+    env_var=$(reg_get "$file" tools "$i" auth env_var)
     [[ -n "$env_var" && "$env_var" != "null" ]] || continue
 
     local name
-    name=$(yq ".tools[$i].name" "$file")
+    name=$(reg_get "$file" tools "$i" name)
 
     local setup_url prefix
-    setup_url=$(yq ".tools[$i].auth.setup_url // \"\"" "$file")
-    prefix=$(yq ".tools[$i].auth.prefix // \"\"" "$file")
+    setup_url=$(reg_get "$file" tools "$i" auth setup_url)
+    prefix=$(reg_get "$file" tools "$i" auth prefix)
 
     "$cb" "$name" "$env_var" "$setup_url" "$prefix"
   done
@@ -204,26 +392,29 @@ _collect_tool_permission() {
   local file="$2" i="$3"
   local perm_tag perm_val name
 
-  perm_tag=$(yq ".tools[$i].permission | tag" "$file")
+  # An absent permission has no tag at all, where `yq '... | tag'` answered
+  # !!null for it. Both mean "nothing to collect", and the empty case falls
+  # through the same arm.
+  perm_tag=$(reg_type "$file" tools "$i" permission)
 
   case "$perm_tag" in
-    '!!null') return 0 ;;
+    ''|'!!null') return 0 ;;
     '!!bool')
-      perm_val=$(yq ".tools[$i].permission" "$file")
+      perm_val=$(reg_get "$file" tools "$i" permission)
       [[ "$perm_val" == "true" ]] || return 0
-      name=$(yq ".tools[$i].name" "$file")
+      name=$(reg_get "$file" tools "$i" name)
       __tool_perms+=("Bash($name:*)")
       ;;
     '!!str')
-      perm_val=$(yq ".tools[$i].permission" "$file")
+      perm_val=$(reg_get "$file" tools "$i" permission)
       [[ -n "$perm_val" ]] || return 0
       __tool_perms+=("Bash($perm_val:*)")
       ;;
     '!!seq')
       local j arr_len entry
-      arr_len=$(yq ".tools[$i].permission | length" "$file")
+      arr_len=$(reg_len "$file" tools "$i" permission)
       for (( j=0; j<arr_len; j++ )); do
-        entry=$(yq ".tools[$i].permission[$j]" "$file")
+        entry=$(reg_get "$file" tools "$i" permission "$j")
         __tool_perms+=("$entry")
       done
       ;;
@@ -243,11 +434,12 @@ collect_registry_permissions() {
   __perms_out=()
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
+  (( ${#registries[@]} > 0 )) && { reg_load "${registries[@]}" || return 1; }
 
   local file count i
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
-    count=$(yq '.tools | length' "$file" 2>/dev/null) || continue
+    count=$(reg_len "$file" tools)
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
@@ -296,22 +488,23 @@ collect_claude_env_vars() {
   __targets_out=()
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
+  (( ${#registries[@]} > 0 )) && { reg_load "${registries[@]}" || return 1; }
 
   local file flagged count i var target opted_out
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
-    flagged=$(yq '.meta.claude_env // false' "$file" 2>/dev/null) || continue
+    flagged=$(reg_get "$file" meta claude_env)
     [[ "$flagged" == "true" ]] || continue
 
-    count=$(yq '.env | length' "$file" 2>/dev/null) || continue
+    count=$(reg_len "$file" env)
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
-      var=$(yq ".env[$i].var // \"\"" "$file")
+      var=$(reg_get "$file" env "$i" var)
       [[ -n "$var" && "$var" != "null" ]] || continue
-      opted_out=$(yq ".env[$i].claude_env" "$file")
+      opted_out=$(reg_get "$file" env "$i" claude_env)
       [[ "$opted_out" != "false" ]] || continue
-      target=$(yq ".env[$i].target // \"\"" "$file")
+      target=$(reg_get "$file" env "$i" target)
       [[ -z "$target" || "$target" == "null" ]] && target="$var"
       __sources_out+=("$var")
       __targets_out+=("$target")

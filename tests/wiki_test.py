@@ -708,7 +708,76 @@ class TestIngestStage:
             wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
         staged = sorted((root / "raw").iterdir())
         assert len(staged) == 2
-        assert {"first", "second"} <= {p.read_text(encoding="utf-8").strip().split("\n")[-1] for p in staged}
+        bodies = {p.read_text(encoding="utf-8").strip().split("\n")[-1] for p in staged}
+        assert bodies == {"first", "second"}
+
+    def test_source_type_cannot_escape_raw(self, tmp_path):
+        """`--type` reaches the filename, so it is held to the slug shape.
+
+        Interpolated raw, a `../..` in it wrote the staged file outside the
+        knowledge base entirely.
+        """
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        assert wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"]) == 0
+        staged = list((root / "raw").iterdir())
+        assert len(staged) == 1
+        assert staged[0].parent == root / "raw"
+        assert not (tmp_path.parent / "evil-s.md").exists()
+
+    def _staged_keys(self, root: Path) -> list[str]:
+        """Frontmatter keys of the one staged source, as a parser sees them."""
+        staged = next((root / "raw").iterdir())
+        block = staged.read_text(encoding="utf-8").split("---")[1]
+        return [ln.split(":", 1)[0] for ln in block.splitlines() if ":" in ln]
+
+    def test_source_type_cannot_inject_frontmatter(self, tmp_path):
+        """A newline in `--type` opened a second frontmatter key.
+
+        Asserted on the key set rather than the text: the value survives as an
+        inert slug, which is fine — what must not happen is it becoming a key.
+        """
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "file\ninjected: yes"])
+        assert self._staged_keys(root) == [
+            "source_type",
+            "title",
+            "original_path",
+            "ingest_date",
+        ]
+
+    def test_title_cannot_inject_frontmatter(self, tmp_path):
+        """The same holds for a title, which is written as a YAML scalar."""
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'x"\ninjected: yes'])
+        assert "injected" not in self._staged_keys(root)
+
+    def test_a_quoted_title_stays_one_scalar(self, tmp_path):
+        """An embedded quote must be escaped, not close the scalar early."""
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'a "quoted" name'])
+        staged = next((root / "raw").iterdir())
+        title = [
+            ln for ln in staged.read_text(encoding="utf-8").splitlines() if ln.startswith("title:")
+        ][0]
+        assert title == 'title: "a \\"quoted\\" name"'
+
+    def test_manifest_row_uses_the_cleaned_type(self, tmp_path):
+        """The row must not carry a value the filename rejected."""
+        root = self._base(tmp_path)
+        src = tmp_path / "s.md"
+        src.write_text("body\n", encoding="utf-8")
+        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"])
+        staged = next((root / "raw").iterdir())
+        row = wiki.manifest_row(root, staged, "../../evil")
+        assert ".." not in row
 
     def test_title_drives_the_filename(self, tmp_path):
         root = self._base(tmp_path)
@@ -738,10 +807,10 @@ class TestSlugify:
         assert wiki.slugify_title("What's a Token? (v2)") == "whats-a-token-v2"
 
     def test_truncates_at_a_word_boundary(self):
+        """Every word is the same, so the last segment must be a whole one."""
         slug = wiki.slugify_title(" ".join(["alpha"] * 30))
         assert len(slug) <= 60
-        assert not slug.endswith("-")
-        assert "alph" not in slug.rsplit("-", 1)[-1] or slug.rsplit("-", 1)[-1] == "alpha"
+        assert slug.rsplit("-", 1)[-1] == "alpha"
 
     def test_a_single_long_word_is_cut_rather_than_emptied(self):
         slug = wiki.slugify_title("x" * 200)

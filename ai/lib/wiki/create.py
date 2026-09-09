@@ -47,9 +47,24 @@ SLUG_MAX_LEN = 60
 _SLUG_STRIP_RE = re.compile(r"[^\w\s-]")
 _SLUG_SPACE_RE = re.compile(r"[\s_]+")
 
+# A source type reaches the filename and the frontmatter, so it is held to the
+# same shape as a slug. Left free-form, a `/` or `..` in it walks the staged file
+# out of `raw/`, and a newline opens a second frontmatter key.
+DEFAULT_SOURCE_TYPE = "file"
+
 
 class WikiExistsError(Exception):
     """A knowledge base is already there, and init will not write over it."""
+
+
+def clean_source_type(source_type: str) -> str:
+    """*source_type* reduced to the slug shape, or the default when nothing is left.
+
+    Applied for the same reason titles are: the value is interpolated into a
+    path and into YAML, and it arrives from `--type` unvalidated.
+    """
+    cleaned = slugify_title(source_type)
+    return DEFAULT_SOURCE_TYPE if cleaned == "untitled" else cleaned
 
 
 def slugify_title(title: str) -> str:
@@ -105,13 +120,17 @@ def stage_source(root: Path, source: Path, source_type: str = "file", title: str
     if not source.is_file():
         raise FileNotFoundError(source)
 
+    kind = clean_source_type(source_type)
     stem = slugify_title(title or source.stem)
-    target = _unused_path(root / RAW_DIR / f"{source_type}-{stem}{source.suffix or '.md'}")
+    target = _unused_path(root / RAW_DIR / f"{kind}-{stem}{source.suffix or '.md'}")
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if source.suffix.lower() in {".md", ".markdown", ".txt", ".rst"}:
+        # A source carrying its own frontmatter keeps it, in the body, below the
+        # ingest block. Only the first block is parsed back out, and the
+        # original is part of what was ingested.
         target.write_text(
-            _frontmatter(source_type, title or source.stem, source)
+            _frontmatter(kind, title or source.stem, source)
             + source.read_text(encoding="utf-8", errors="replace"),
             encoding="utf-8",
         )
@@ -123,6 +142,12 @@ def stage_source(root: Path, source: Path, source_type: str = "file", title: str
 
     append_log(root, f"INGEST: {source} → {target.relative_to(root).as_posix()}")
     return target
+
+
+def _yaml_scalar(value: str) -> str:
+    """*value* as a double-quoted YAML scalar, on one line."""
+    flattened = " ".join(str(value).split())
+    return '"' + flattened.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def append_log(root: Path, message: str) -> None:
@@ -137,7 +162,7 @@ def append_log(root: Path, message: str) -> None:
 def manifest_row(root: Path, staged: Path, source_type: str) -> str:
     """The `_sources.md` row for a staged file, with a hash that was computed."""
     rel = staged.relative_to(root).as_posix()
-    return f"| {rel} | {hash_file(staged)} | {source_type} | {_today()} | |\n"
+    return f"| {rel} | {hash_file(staged)} | {clean_source_type(source_type)} | {_today()} | |\n"
 
 
 def _render_schema(template: Path | None, domain: str, audience: str) -> str:
@@ -154,8 +179,8 @@ def _frontmatter(source_type: str, title: str, source: Path) -> str:
     return (
         "---\n"
         f"source_type: {source_type}\n"
-        f'title: "{title}"\n'
-        f'original_path: "{source}"\n'
+        f"title: {_yaml_scalar(title)}\n"
+        f"original_path: {_yaml_scalar(str(source))}\n"
         f"ingest_date: {_today()}\n"
         "---\n\n"
     )

@@ -54,6 +54,7 @@ from wiki import (  # noqa: E402
     build_index,
     collect_lint,
     collect_status,
+    clean_source_type,
     find_wiki,
     hash_file,
     init_wiki,
@@ -92,8 +93,6 @@ __all__ = [
     "slugify_title",
     "stage_source",
 ]
-
-SCRIPT = Path(__file__).name
 
 SCRIPT = Path(__file__).name
 
@@ -206,7 +205,9 @@ def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
 
 def cmd_init(start: Path, args: argparse.Namespace) -> int:
     """Create a knowledge base. The one command that runs without one existing."""
-    target = Path(args.wiki).expanduser() if args.wiki else start / configured_dirname(start)
+    target = (
+        Path(args.wiki).expanduser() if args.wiki else start / configured_dirname(start)
+    ).resolve()
     try:
         root = init_wiki(target, args.domain, args.audience, template=_schema_template())
     except WikiExistsError as exc:
@@ -316,7 +317,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return cmd_init(start, args)
 
-    root = find_wiki(start, explicit=args.wiki, dirname=configured_dirname(start))
+    # `--wiki` names the base outright, and `find_wiki` returns on it before
+    # looking at `dirname` — so skip the config load and `git rev-parse` here.
+    dirname = None if args.wiki else configured_dirname(start)
+    root = find_wiki(start, explicit=args.wiki, dirname=dirname)
     if root is None:
         where = args.wiki or args.directory
         print(

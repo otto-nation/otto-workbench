@@ -194,12 +194,8 @@ class Wiki:
         return [a for a in self.articles if a.is_draft]
 
     def _load_articles(self) -> list[Article]:
-        paths = [
-            path
-            for subdir in (ARTICLES_DIR, DRAFTS_DIR, ARCHIVE_DIR)
-            for path in sorted((self.root / subdir).rglob("*.md"))
-            if (self.root / subdir).is_dir()
-        ]
+        bases = [self.root / s for s in (ARTICLES_DIR, DRAFTS_DIR, ARCHIVE_DIR)]
+        paths = [p for base in bases if base.is_dir() for p in sorted(base.rglob("*.md"))]
         return [a for a in (self._read_article(p) for p in paths) if a is not None]
 
     def _read_article(self, path: Path) -> Article | None:

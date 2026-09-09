@@ -1,6 +1,14 @@
 """Layer 2 — knowledge base store. May import: core."""
 
-from .create import WikiExistsError, append_log, init_wiki, manifest_row, slugify_title, stage_source
+from .create import (
+    WikiExistsError,
+    append_log,
+    clean_source_type,
+    init_wiki,
+    manifest_row,
+    slugify_title,
+    stage_source,
+)
 from .model import Article, Source, Wiki
 from .paths import (
     ARCHIVE_DIR,
@@ -41,6 +49,7 @@ __all__ = [
     "WikiExistsError",
     "append_log",
     "build_index",
+    "clean_source_type",
     "collect_lint",
     "collect_status",
     "stage_source",

@@ -20,7 +20,7 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|[^\]]*?)?\]\]")
 
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
-_CONTRADICTION_RE = re.compile(r"\[CONTRADICTION\]", re.IGNORECASE)
+CONTRADICTION_RE = re.compile(r"\[CONTRADICTION\]", re.IGNORECASE)
 
 _LOG_UNPROCESSED_RE = re.compile(r"^\s*[-*]?\s*(SESSION_OBSERVATION|QUERY_GAP)\b")
 

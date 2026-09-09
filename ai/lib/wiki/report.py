@@ -4,11 +4,10 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 
 from .model import Article, Wiki
-from .parsing import _CONTRADICTION_RE
+from .parsing import CONTRADICTION_RE
 from .paths import LOG_FILE
 
 
@@ -84,7 +83,7 @@ def collect_lint(wiki: Wiki) -> list[dict]:
             add("stale-article", "warning", f"not updated in {age} days", article.rel)
 
     for article in wiki.articles:
-        if _CONTRADICTION_RE.search(article.body):
+        if CONTRADICTION_RE.search(article.body):
             add("contradiction", "error", "carries an unresolved contradiction block", article.rel)
 
     minimum = wiki.settings["min_article_words"]

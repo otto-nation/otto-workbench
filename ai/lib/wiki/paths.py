@@ -43,12 +43,6 @@ DEFAULT_SETTINGS = {
 
 
 
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-
 # ── Resolution ──────────────────────────────────────────────────────────────
 
 

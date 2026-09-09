@@ -35,79 +35,11 @@ _resolve_agent_file() {
   printf '%s' "$CLAUDE_AGENTS_SRC_DIR/${agent}.md"
 }
 
-# _skill_layer_target PATH — resolves a symlink's raw target to an absolute
-# path, lexically, without touching the filesystem.
-#
-# Reads the target with readlink rather than following it, so a dangling
-# symlink (what a retired skill leaves behind) resolves the same as a live
-# one. A relative target is joined against the symlink's own (real) directory
-# before "." and ".." components are collapsed — resolve_layers deals only in
-# absolute paths, so a target has to match one exactly, not merely look close
-# after shell defaulting.
-_skill_layer_target() {
-  local path="$1" target dir raw
-  target="$(readlink "$path")"
-  case "$target" in
-    /*) raw="$target" ;;
-    *)
-      dir="$(cd "$(dirname "$path")" && pwd)"
-      raw="$dir/$target"
-      ;;
-  esac
-  _normalize_path "$raw"
-}
-
-# _normalize_path PATH — collapses "." and ".." segments out of an absolute
-# path string, purely lexically (the input need not exist).
-_normalize_path() {
-  local input="$1" part
-  local -a segments stack
-  IFS='/' read -ra segments <<< "$input"
-  for part in "${segments[@]}"; do
-    case "$part" in
-      '' | '.') continue ;;
-      '..')
-        [[ ${#stack[@]} -eq 0 ]] && continue
-        unset "stack[$((${#stack[@]} - 1))]"
-        ;;
-      *) stack+=("$part") ;;
-    esac
-  done
-  [[ ${#stack[@]} -eq 0 ]] && { printf '/'; return; }
-  printf '/%s' "${stack[@]}"
-}
-
-# _skill_symlink_owned PATH — true when PATH is a symlink pointing at a skills
-# directory inside the workbench checkout or the user override root.
-#
-# install_symlink is the only thing that writes a symlink into a discovery
-# root, and every path it writes is a skills directory under the workbench
-# (rewritten through WORKBENCH_STABLE_DIR) or under the override root — so that
-# shape, not the two layer directories resolve_layers happens to read today, is
-# what ownership means. Testing the layer directories instead orphans every
-# symlink the workbench wrote from a source path that has since moved: the
-# links left behind by ai/claude/skills point inside the checkout and were
-# written by this step, yet would read as the operator's and be refused on
-# every sync forever. Any later move of the source tree lands in the same
-# place, so the test names the shape rather than the addresses.
-#
-# The skills/ component is what keeps that generality from swallowing the
-# checkout whole: a hand-placed link to a file elsewhere in the repo — a note,
-# a doc — is not something this step ever wrote, and is refused alongside a
-# link pointing outside the workbench entirely.
+# _skill_symlink_owned PATH — true when PATH is a symlink the workbench wrote
+# into a skills discovery root. See workbench_symlink_owned in lib/files.sh for
+# what ownership means and why it is a shape rather than a list of addresses.
 _skill_symlink_owned() {
-  local target root
-  target="$(_skill_layer_target "$1")"
-  case "$target" in
-    */skills/*) ;;
-    *) return 1 ;;
-  esac
-  for root in "$WORKBENCH_STABLE_DIR" "$WORKBENCH_DIR" "$USER_AI_DIR"; do
-    if [[ -n "$root" && "$target" == "$root"/* ]]; then
-      return 0
-    fi
-  done
-  return 1
+  workbench_symlink_owned "$1" skills
 }
 
 # _clear_skill_entry PATH — empties a discovery-root slot the workbench owns.

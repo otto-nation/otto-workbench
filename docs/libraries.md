@@ -293,6 +293,9 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 | `install_file SOURCE TARGET [LABEL]` | Copies SOURCE to TARGET if content differs. Removes stale symlinks at TARGET. Idempotent — no-op if file is already up to date. |
 | `copy_dir SRC DST [GLOB] [--strip-ext] [--prune]` | Copies all files matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. --strip-ext removes the file extension from the display label. --prune removes stale files (or symlinks) in DST whose source counterpart is gone. |
 | `symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]` | Symlinks all items matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. |
+| `normalize_path PATH` | collapses "." and ".." segments out of an absolute path string, purely lexically (the input need not exist). |
+| `symlink_raw_target PATH` | resolves a symlink's raw target to an absolute path, lexically, without touching the filesystem. |
+| `workbench_symlink_owned PATH COMPONENT` | true when PATH is a symlink pointing at a COMPONENT directory inside the workbench checkout or the override root. |
 | `sync_component_bin COMPONENT_DIR` | symlinks extensionless scripts from COMPONENT_DIR/bin/ into LOCAL_BIN_DIR. No-op if bin/ subdirectory is absent. |
 | `list_shell_scripts ROOT` | prints every file under ROOT whose *first* line is a shell or bats shebang, one per line, sorted. Skips .git, ignore/, __pycache__, node_modules/, and .py. |
 | `resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF` | Merges two directory layers into an associative array: basename -> source_path. User dir wins for same-named files. A .disabled sentinel in user dir suppresses both. RESULT_NAMEREF must be a declared associative array in the caller. |

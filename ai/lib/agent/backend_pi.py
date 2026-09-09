@@ -77,7 +77,14 @@ AGENTS_DIR = Path.home() / ".claude" / "agents"
 # Mirrors AGENTS_SKILLS_DIR in lib/constants.sh, where ai/skills/steps.sh installs.
 # tests/workbench_roots.bats fails when the two drift.
 AGENTS_SKILLS_DIR = Path.home() / ".agents" / "skills"
-REVIEW_EXTENSION = Path(__file__).resolve().parent.parent.parent / "pi" / "extensions" / "review-guard.ts"
+# extensions-cli/ rather than extensions/: ai/pi/steps.sh installs everything in
+# the latter into ~/.pi/agent/extensions, where Pi loads it in every session.
+# This one is passed with --extension for review and fix runs only, and gates
+# writes on REVIEW_WORKTREE_DIR — a variable no interactive session sets.
+REVIEW_EXTENSION = (
+    Path(__file__).resolve().parent.parent.parent
+    / "pi" / "extensions-cli" / "review-guard.ts"
+)
 
 
 def _read_agent_prompt(agent: str) -> str | None:

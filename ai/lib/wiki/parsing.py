@@ -22,7 +22,20 @@ _MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 CONTRADICTION_RE = re.compile(r"\[CONTRADICTION\]", re.IGNORECASE)
 
-_LOG_UNPROCESSED_RE = re.compile(r"^\s*[-*]?\s*(SESSION_OBSERVATION|QUERY_GAP)\b")
+# An unprocessed entry, in either spelling the log is written in: a bare bullet,
+# and the `[DATE] SESSION_OBSERVATION: ...` form the artifacts rule prescribes to
+# every session on the machine. The bracketed date was not optional here, so an
+# entry written exactly as documented counted for nothing — `wiki status` showed
+# no backlog and `wiki lint` reported nothing to process, which is indisting-
+# uishable from a log that is genuinely drained.
+# One optional bullet, then one optional bracketed date, then the keyword —
+# which admits `- SESSION_OBSERVATION:`, `[DATE] SESSION_OBSERVATION:` and the
+# two combined, and nothing looser. A second bracket group ahead of the bullet
+# would also match, but no writer produces that order and matching it would only
+# widen what counts as an entry.
+_LOG_UNPROCESSED_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:\[[^\]]*\]\s*)?(SESSION_OBSERVATION|QUERY_GAP)\b",
+)
 
 # Log lines open with a bracketed date, so the event keyword is matched on its own
 # word boundary rather than anchored: `[2024-01-01] COMPILE: ...`. Testing for the

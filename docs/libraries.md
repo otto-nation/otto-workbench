@@ -1030,4 +1030,5 @@ State set by its functions: `AI_RESPONSE`.
 
 ### ai/session-count.sh
 
-Session-counting helper for dream/promote cooldown checks.
+Session-counting and project-directory helpers for the Stop-hook cooldown
+gates, and for the completion scripts that reset them.

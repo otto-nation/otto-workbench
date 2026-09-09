@@ -258,6 +258,50 @@ def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
     assert mock_run.call_args[0][0][0] == "git"
 
 
+@patch("git.topology.subprocess.run")
+def test_default_branch_cached_asks_git_once_per_path(mock_run):
+    """The memo exists because callers need this once per file processed."""
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout="refs/remotes/origin/main\n",
+    )
+    git_topology.default_branch_cached.cache_clear()
+
+    assert git_topology.default_branch_cached(Path("/wt/a")) == "main"
+    assert git_topology.default_branch_cached(Path("/wt/a")) == "main"
+
+    assert mock_run.call_count == 1
+
+
+@patch("git.topology.subprocess.run")
+def test_default_branch_cached_keeps_two_worktrees_apart(mock_run):
+    """Keyed on the path, so one repo's answer is not served for another's."""
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="refs/remotes/origin/main\n"),
+        MagicMock(returncode=0, stdout="refs/remotes/origin/trunk\n"),
+    ]
+    git_topology.default_branch_cached.cache_clear()
+
+    assert git_topology.default_branch_cached(Path("/wt/a")) == "main"
+    assert git_topology.default_branch_cached(Path("/wt/b")) == "trunk"
+
+
+@patch("git.topology.subprocess.run")
+def test_the_uncached_resolver_is_still_uncached(mock_run):
+    """The memo is a separate name precisely so this stays true.
+
+    Every `pr` script imports this module, and a cache on the resolver itself
+    would outlive the tests that set up their own repos.
+    """
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout="refs/remotes/origin/main\n",
+    )
+
+    git_topology.default_branch("/wt/c")
+    git_topology.default_branch("/wt/c")
+
+    assert mock_run.call_count == 2
+
+
 # ── find_worktree_for_branch ──────────────────────────────────────────────
 
 

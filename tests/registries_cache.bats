@@ -46,6 +46,79 @@ EOF
   [ "$(reg_get "$f" tools 1 description)" = "second" ]
 }
 
+@test "reg_len fails on a collection that is not a list" {
+  # The silent-skip this module exists to prevent. Every entry loop is
+  # `for (( i=0; i<count; i++ ))`, so answering 0 for a `tools:` written as a
+  # mapping means no entry is examined and the file validates clean.
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+tools:
+  alpha:
+    permission: false
+  beta:
+    permission: false
+EOF
+)
+  reg_load "$f"
+  run reg_len "$f" tools
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [ "$(reg_type "$f" tools)" = "!!map" ]
+}
+
+@test "a map keyed by digits cannot impersonate a list entry" {
+  # yq renders a sequence index and a literal map key of the same digits
+  # identically in a path, so the index carries a marker. Without it a
+  # `tools: {0: {...}}` would answer a read written for a list, and the entry
+  # would be validated as though it were one.
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+tools:
+  0:
+    name: not-a-list-entry
+EOF
+)
+  reg_load "$f"
+  [ -z "$(reg_get "$f" tools 0 name)" ]
+  [ "$(reg_type "$f" tools)" = "!!map" ]
+}
+
+@test "a numeric index reads the list entry, not a same-named key" {
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+tools:
+  - name: from-the-list
+EOF
+)
+  reg_load "$f"
+  [ "$(reg_get "$f" tools 0 name)" = "from-the-list" ]
+  [ "$(reg_len "$f" tools)" = "1" ]
+}
+
+@test "a key holding a delimiter byte is rejected, not mis-parsed" {
+  # The record splits on \x01, so one inside a key lands the split mid-key and
+  # every field after it is garbage — the tag slot ends up holding part of the
+  # key, and reg_type answers something that is not a YAML tag at all.
+  local f="$TMPDIR/ctrl.yml"
+  printf 'meta:\n  "we\\x01ird": v\n' > "$f"
+  run reg_load "$f"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"delimiter byte"* ]]
+}
+
+@test "a file whose load failed is not marked loaded" {
+  # Marking on the way in would leave a failed file marked, and every later
+  # read of it would answer empty rather than re-reading or failing again.
+  local f="$TMPDIR/ctrl.yml"
+  printf 'meta:\n  "we\\x01ird": v\n' > "$f"
+  run reg_load "$f"
+  [ "$status" -ne 0 ]
+  # Repair the file; a second load must actually read it.
+  printf 'meta:\n  section: Fixed\n' > "$f"
+  reg_load "$f"
+  [ "$(reg_get "$f" meta section)" = "Fixed" ]
+}
+
 @test "reg_len is 0 for a sequence that is absent, not an error" {
   # `yq '.tools | length'` answered 0 for a registry with no tools, and the
   # entry loops are written as `for (( i=0; i<count; i++ ))` against it.

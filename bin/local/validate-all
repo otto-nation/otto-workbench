@@ -75,7 +75,15 @@ fi
 # rather than steady computation, so oversubscribing buys nothing the scheduler
 # does not already give us, and a pool the size of the machine keeps a laptop
 # usable while the hook runs.
+# Validated as a positive integer before it is used, because it reaches an
+# arithmetic context: bash evaluates a variable's contents there recursively, so
+# a non-numeric value would evaluate to 0 and silently remove the cap, and one
+# holding a command substitution would run it.
 JOBS="${VALIDATOR_JOBS:-}"
+if [[ -n "$JOBS" && ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  err "VALIDATOR_JOBS must be a positive integer, got: $JOBS"
+  exit 2
+fi
 if [[ -z "$JOBS" ]]; then
   JOBS=$(cpu_count) || JOBS=4
 fi
@@ -85,6 +93,10 @@ fi
 # exit: a validator killed mid-write leaves its buffer behind otherwise.
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/validate-all.XXXXXX")"
 trap 'rm -rf "$RUN_DIR"' EXIT
+# An interrupt otherwise leaves the validators running as orphans: the EXIT trap
+# reaps the directory but the children are in this shell's process group and
+# never see the signal. `kill 0` signals the group, then the EXIT trap follows.
+trap 'kill 0' INT TERM
 
 # The count is tracked here rather than read from `jobs`: that builtin reports
 # the job table of the shell it runs in, and `$(jobs -pr)` runs in a subshell

@@ -22,6 +22,15 @@ if [[ -z "${WORKBENCH_STATE_DIR:-}" ]]; then
   . "$(dirname "${BASH_SOURCE[0]}")/roots.sh"
 fi
 
+# reg_load reports an unreadable registry with err(), and this module is sourced
+# on its own by tests and by callers that have not loaded the facade — without
+# this the failure path dies on "err: command not found" and the caller sees a
+# bare non-zero instead of the file that could not be read.
+if ! declare -F err >/dev/null; then
+  # shellcheck source=./output.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/output.sh"
+fi
+
 # Known tool entry fields — used by validate-registries to reject unknown keys
 # shellcheck disable=SC2034
 KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs brew_name commands auth"
@@ -51,10 +60,16 @@ is_installed() { command -v "$1" >/dev/null 2>&1; }
 # both would be behaviour changes. yq's own tags and `tostring` preserve each
 # exactly as the file spells it.
 #
-# `\x01` and `\x02` are the delimiters because a YAML scalar cannot hold a raw
-# control character without escaping it; `reg_load` rejects a value that does,
-# rather than mis-parsing it. Records are NUL-separated for the same reason, so
-# a multi-line block scalar survives intact.
+# `\x01` and `\x02` are the delimiters. A YAML scalar can hold either via a
+# `"\x01"` escape, and in a *key* that would corrupt the record — the path field
+# would absorb part of it and the tag slot would take the rest — so `reg_load`
+# rejects a file whose keys hold one instead of mis-parsing it. Records are
+# NUL-separated, so a multi-line block scalar survives intact.
+#
+# Sequence indices are prefixed with `#` in the key, so a sequence's element 0
+# and a map's literal key `0` are different cache entries. yq renders both as
+# the string "0" in a path, and without the marker `tools: {0: {name: x}}`
+# would answer a `reg_get FILE tools 0 name` written for a list.
 
 # The tag of each node, and the value of each node, keyed by "$file\x01$path".
 # A map's value is its keys joined by \x02, in document order; a sequence's is
@@ -73,12 +88,17 @@ _REG_PSEP=$'\x02'
 # lookup that built its key by hand would silently miss every time the
 # separator changed, and a miss reads as "absent", which is how a required-field
 # check stops firing.
+#
+# An all-digit segment is a sequence index and is written `#N`, matching what
+# `_reg_stream` emits for one. A map key that happens to be digits keeps its
+# bare spelling, so the two cannot be confused.
 _reg_key() {
   local file="$1"; shift
   local path=""
   local seg
   for seg in "$@"; do
     [[ -n "$path" ]] && path+="$_REG_PSEP"
+    [[ "$seg" =~ ^[0-9]+$ ]] && seg="#$seg"
     path+="$seg"
   done
   printf '%s' "$file$_REG_SEP$path"
@@ -113,11 +133,7 @@ reg_load() {
     return 1
   fi
 
-  for file in "${pending[@]}"; do
-    _REG_LOADED[$file]=1
-  done
-
-  local record rec_file rec_path rec_tag rec_val
+  local record rec_file rec_path rec_tag rec_val mangled=""
   while IFS= read -r -d '' record; do
     # A record is four \x01-separated fields, and only the value may itself be
     # empty or multi-line — so the three prefixes are peeled off in order
@@ -126,15 +142,33 @@ reg_load() {
     rec_path="${record%%"$_REG_SEP"*}"; record="${record#*"$_REG_SEP"}"
     rec_tag="${record%%"$_REG_SEP"*}"
     rec_val="${record#*"$_REG_SEP"}"
-    # A zero-byte file yields one record with an empty filename. Keying it
-    # would put a node under a file nobody named; the file is still marked
-    # loaded above, and reg_len answers 0 for it, which is what a per-field
-    # `yq '.tools | length'` answered too.
+    # A zero-byte file yields one record with an empty filename — there is no
+    # node to key, and the file is recorded as seen below either way.
     [[ -n "$rec_file" ]] || continue
+    # A tag slot holding something other than a YAML tag means a key held a raw
+    # \x01: the split landed mid-key and every field after it is garbage. Noted
+    # and reported after the loop, so the read finishes and the file is closed
+    # before it is removed.
+    if [[ "$rec_tag" != '!!'* ]]; then
+      mangled="$rec_file"
+      break
+    fi
     _REG_TAG[$rec_file$_REG_SEP$rec_path]="$rec_tag"
     _REG_VAL[$rec_file$_REG_SEP$rec_path]="$rec_val"
   done < "$tmp"
   rm -f "$tmp"
+
+  if [[ -n "$mangled" ]]; then
+    err "reg_load: $mangled has a key containing a delimiter byte — remove the control character"
+    return 1
+  fi
+
+  # Marked after parsing, not before: a file marked loaded on the way in would
+  # stay marked after a failure above, and every later read of it would answer
+  # empty rather than re-reading or failing.
+  for file in "${pending[@]}"; do
+    _REG_LOADED[$file]=1
+  done
 }
 
 # _reg_stream FILE... — the flat node stream for a set of files.
@@ -142,14 +176,35 @@ reg_load() {
 # A map emits its keys and a sequence its length, because `reg_keys` and
 # `reg_len` answer questions no scalar record can: which fields an entry has
 # (for unknown-key detection) and how many entries there are.
+# The last path segment is written `#N` where the node's parent is a sequence.
+# yq reports a sequence index and a numeric map key identically — both are
+# `!!int` in a path — so the parent is identified by collecting every sequence
+# path in the document first and testing the node's parent against that set.
+# `_reg_key` builds the same form from its arguments.
 _reg_stream() {
+  # $seqs is every sequence's path; a segment whose parent path is in it is an
+  # index and takes the `#` marker. yq has no jq-style `if/then/else`, so the
+  # choice is written as a `select(...) // fallback`.
+  local pathexpr="[ \$p | to_entries | .[]
+        | (.key) as \$i | (.value) as \$v
+        | (((\"#\" + \$v) | select([\$seqs[] | select(. == (\$p[:\$i] | join(\"$_REG_PSEP\")))] | length > 0)) // \$v)
+      ] | join(\"$_REG_PSEP\")"
+  # The sequence paths are filtered for non-empty: a document holding no
+  # sequence at all still yields one empty-string entry, which would match the
+  # empty parent path of every top-level key and mark them all as indices.
   yq -N -r -0 "
-    (.. | select(tag != \"!!map\" and tag != \"!!seq\")
-        | (filename + \"$_REG_SEP\" + ([path[]|tostring]|join(\"$_REG_PSEP\")) + \"$_REG_SEP\" + tag + \"$_REG_SEP\" + tostring)),
-    (.. | select(tag == \"!!map\")
-        | (filename + \"$_REG_SEP\" + ([path[]|tostring]|join(\"$_REG_PSEP\")) + \"$_REG_SEP!!map$_REG_SEP\" + ([keys[]|tostring]|join(\"$_REG_PSEP\")))),
-    (.. | select(tag == \"!!seq\")
-        | (filename + \"$_REG_SEP\" + ([path[]|tostring]|join(\"$_REG_PSEP\")) + \"$_REG_SEP!!seq$_REG_SEP\" + (length|tostring)))
+    [.. | select(tag == \"!!seq\") | [path[] | tostring] | join(\"$_REG_PSEP\") | select(. != \"\")] as \$seqs
+    | (.. | select((path | length) > 0)
+        | [path[] | tostring] as \$p
+        | ($pathexpr) as \$key
+        | (
+            (select(tag != \"!!map\" and tag != \"!!seq\")
+              | filename + \"$_REG_SEP\" + \$key + \"$_REG_SEP\" + tag + \"$_REG_SEP\" + tostring),
+            (select(tag == \"!!map\")
+              | filename + \"$_REG_SEP\" + \$key + \"$_REG_SEP!!map$_REG_SEP\" + ([keys[]|tostring]|join(\"$_REG_PSEP\"))),
+            (select(tag == \"!!seq\")
+              | filename + \"$_REG_SEP\" + \$key + \"$_REG_SEP!!seq$_REG_SEP\" + (length|tostring))
+          ))
   " "$@"
 }
 
@@ -211,14 +266,23 @@ reg_keys() {
   printf '%s\n' "${joined//$_REG_PSEP/$'\n'}"
 }
 
-# reg_len FILE PATH_SEGMENT... — the length of a sequence, or 0.
+# reg_len FILE PATH_SEGMENT... — the length of a sequence, or 0 when absent.
 #
-# 0 for a path that is absent or is not a sequence, matching what
-# `yq '.tools | length'` answered for a registry with no tools at all.
+# 0 for a path that does not exist, matching what `yq '.tools | length'`
+# answered for a registry with no tools at all.
+#
+# A path that exists but is not a sequence returns 1 and prints nothing. That
+# case is a `tools:` written as a mapping rather than a list, and answering 0
+# for it would be the silent-skip this module exists to prevent: every entry
+# loop is `for (( i=0; i<count; i++ ))`, so a count of nothing means no entry
+# is checked and the file passes clean. Callers under `set -e` abort on it;
+# `validate-registries` reports it as an error against the file.
 reg_len() {
-  local key
+  local key tag
   key=$(_reg_key "$@")
-  [[ "${_REG_TAG[$key]:-}" == "!!seq" ]] || { printf '0'; return 0; }
+  tag="${_REG_TAG[$key]:-}"
+  [[ -n "$tag" ]] || { printf '0'; return 0; }
+  [[ "$tag" == "!!seq" ]] || return 1
   printf '%s' "${_REG_VAL[$key]}"
 }
 

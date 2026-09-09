@@ -71,6 +71,21 @@ _env_label() {
   printf '%s' "${var:-[$2]}"
 }
 
+# _check_tools_shape FILE — fails when `tools` is present but not a list.
+#
+# The natural first way to write a registry is a mapping of name to fields.
+# Every check here iterates `tools` by index, so a mapping yields no entries
+# and the file passes with nothing examined.
+_check_tools_shape() {
+  local file="$1"
+  reg_has "$file" tools || return 0
+  local tag
+  tag=$(reg_type "$file" tools)
+  [[ "$tag" == "!!seq" || "$tag" == "!!null" ]] && return 0
+  _fail "$(basename "$file"): tools must be a list of entries (got $tag) — each entry starts with '- name:'"
+  return 1
+}
+
 # _tool_names FILE — every tool name in FILE, one per line.
 _tool_names() {
   local count i
@@ -578,6 +593,10 @@ main() {
       echo
       info "Schema: ${registry#"$REPO_ROOT/"}"
     fi
+    # A `tools:` that is not a list has no entries to walk, and every check
+    # below is a loop over them — so it would report the file clean rather
+    # than report the shape. Named here instead, and the rest skipped.
+    if ! _check_tools_shape "$registry"; then continue; fi
     _validate_schema "$registry"
     _validate_env_fields "$registry"
     _validate_auth_fields "$registry"

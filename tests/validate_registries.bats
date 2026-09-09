@@ -801,6 +801,26 @@ EOF
   [[ "$output" == *"missing required field: description"* ]]
 }
 
+@test "fails when tools is a mapping rather than a list" {
+  # The natural first way to write a registry. Every check iterates tools by
+  # index, so a mapping yields no entries — without this gate the file is
+  # reported clean with nothing examined.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools:
+  mytool:
+    permission: false
+    visibility: full
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"tools must be a list of entries"* ]]
+}
+
 @test "fails on a registry that cannot be parsed" {
   # Reading each field separately answered an empty count for a malformed
   # file, so the entry loop ran zero times and every check on it passed. The

@@ -45,7 +45,10 @@ exit 1
 FAKEGH
   chmod +x "$MOCK_BIN/gh"
 
-  export MOCK_BIN
+  # Resolved before the mock shadows it on PATH, so the schema contract test
+  # can ask the real worktrunk what shape it emits.
+  REAL_WT=$(command -v wt 2>/dev/null || echo "")
+  export MOCK_BIN REAL_WT
 }
 
 setup() {
@@ -82,9 +85,47 @@ _run_cleanup() {
   run main "$@"
 }
 
-# Helper: write worktree JSON
+# Helper: write worktree JSON.
+#
+# Cases describe a worktree in the concise form this suite has always used
+# (`is_main`, `main_state`, `symbols`, `working_tree`, epoch `commit.timestamp`)
+# and this translates it into the schema `wt list --format json` actually
+# emits. Keeping the mapping here rather than in each case means one edit
+# adopts the next schema bump — and `wt list schema matches the fixture shape`
+# below fails if this drifts from the real thing.
 _write_worktrees() {
-  cat > "$WT_JSON"
+  jq --argjson schema "$WT_LIST_SCHEMA" '
+    {
+      schema: $schema,
+      repo: { default_branch: "main" },
+      collected: { ci: false, summary: false },
+      items: map({
+        branch: .branch,
+        head: {
+          sha: "0000000000000000000000000000000000000000",
+          short_sha: "00000000",
+          subject: "fixture commit",
+          committed_at: (.commit.timestamp // 0 | todate)
+        },
+        worktree: {
+          path: (.path // "/nonexistent/\(.branch)"),
+          main: (.is_main // false),
+          current: (.is_current // false),
+          changes: ((.working_tree // {}) | {
+            staged:     (.staged // false),
+            modified:   (.modified // false),
+            untracked:  (.untracked // false),
+            renamed:    (.renamed // false),
+            deleted:    (.deleted // false),
+            conflicted: (.conflicted // false)
+          })
+        },
+        display: {
+          state: (.main_state // ""),
+          symbols: (.symbols // "")
+        }
+      })
+    }' > "$WT_JSON"
 }
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -792,4 +833,110 @@ JSON
   local log_file="$TMPDIR/logs/wt-cleanup.log"
   [ -f "$log_file" ]
   grep -q "SKIP-OPEN-PR branch=feat/logged-open" "$log_file"
+}
+
+# ── Schema compatibility ─────────────────────────────────────────────────────
+#
+# The schema this script reads is worktrunk's to change, and it has: the bump
+# to 2 moved every field wt-cleanup reads, and because `wt list` was called as
+# `... || return 0` the breakage surfaced as a silent no-op on every session
+# stop rather than an error. These cover both halves — refusing a schema we do
+# not know, and keeping the fixtures honest about the one we do.
+
+@test "an unrecognised wt list schema is refused, not indexed" {
+  jq -n '{schema: 99, repo: {}, collected: {}, items: []}' > "$WT_JSON"
+  _run_cleanup
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"schema 99 is not supported"* ]]
+}
+
+@test "a payload with no schema field is refused" {
+  echo '[]' > "$WT_JSON"
+  _run_cleanup
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not supported"* ]]
+}
+
+@test "a wt list failure is reported rather than exiting clean" {
+  # $MOCK_BIN lives in BATS_FILE_TMPDIR and is shared by every test in this
+  # file, so the failing stub is put back before returning — otherwise every
+  # later test runs against a `wt` that refuses to list.
+  local saved="$BATS_TEST_TMPDIR/wt.real-mock"
+  cp "$MOCK_BIN/wt" "$saved"
+  cat > "$MOCK_BIN/wt" <<'FAKEWT'
+#!/usr/bin/env bash
+[[ "$1" == "list" ]] && exit 1
+exit 0
+FAKEWT
+  chmod +x "$MOCK_BIN/wt"
+
+  _run_cleanup
+  local st="$status" out="$output"
+
+  cp "$saved" "$MOCK_BIN/wt"
+  chmod +x "$MOCK_BIN/wt"
+
+  [ "$st" -eq 1 ]
+  [[ "$out" == *"wt list --format json failed"* ]]
+}
+
+@test "wt list schema matches the fixture shape" {
+  [[ -n "$REAL_WT" && -x "$REAL_WT" ]] || skip "wt not installed"
+  local real
+  real=$("$REAL_WT" list --format json 2>/dev/null) || skip "wt list unavailable here"
+  [[ -n "$real" ]] || skip "wt list returned nothing here"
+
+  # The schema the script pins itself to is the one wt actually speaks.
+  [ "$(jq -r '.schema' <<< "$real")" = "$WT_LIST_SCHEMA" ]
+
+  # Every field wt-cleanup reads is present on a real row, so a future bump
+  # that moves one fails here instead of no-opping in production.
+  [ "$(jq -r '.items | type' <<< "$real")" = "array" ]
+  local row
+  row=$(jq -r '[.items[] | select(.worktree != null)][0]' <<< "$real")
+  [ "$row" != "null" ]
+  [ "$(jq -r '.branch | type' <<< "$row")" = "string" ]
+  [ "$(jq -r '.worktree.path | type' <<< "$row")" = "string" ]
+  [ "$(jq -r '.worktree.main | type' <<< "$row")" = "boolean" ]
+  [ "$(jq -r '.worktree.current | type' <<< "$row")" = "boolean" ]
+  [ "$(jq -r '.worktree.changes.staged | type' <<< "$row")" = "boolean" ]
+  [ "$(jq -r '.worktree.changes.conflicted | type' <<< "$row")" = "boolean" ]
+  [ "$(jq -r '.display.state | type' <<< "$row")" = "string" ]
+  [ "$(jq -r '.display.symbols | type' <<< "$row")" = "string" ]
+  [ "$(jq -r '.head.committed_at | type' <<< "$row")" = "string" ]
+
+  # The committed_at stamp is the format iso_to_epoch parses.
+  local stamp
+  stamp=$(jq -r '.head.committed_at' <<< "$row")
+  [ -n "$(iso_to_epoch "$stamp")" ]
+}
+
+@test "a branch row with no worktree is skipped" {
+  jq -n --argjson schema "$WT_LIST_SCHEMA" '
+    { schema: $schema, repo: {default_branch: "main"}, collected: {},
+      items: [{ branch: "feat/branch-only",
+                head: {committed_at: "2026-01-01T00:00:00Z"},
+                worktree: null,
+                display: {state: "integrated", symbols: "⊂"} }] }' > "$WT_JSON"
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+  [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+@test "an unparseable timestamp is not treated as an ancient worktree" {
+  jq -n --argjson schema "$WT_LIST_SCHEMA" '
+    { schema: $schema, repo: {default_branch: "main"}, collected: {},
+      items: [{ branch: "feat/bad-date",
+                head: {committed_at: "not-a-date"},
+                worktree: {path: "/nonexistent/feat/bad-date", main: false,
+                           current: false,
+                           changes: {staged: false, modified: false,
+                                     untracked: false, renamed: false,
+                                     deleted: false, conflicted: false}},
+                display: {state: "ahead", symbols: "↑3"} }] }' > "$WT_JSON"
+  _run_cleanup --age 30
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+  [ ! -s "$WT_REMOVE_LOG" ]
 }

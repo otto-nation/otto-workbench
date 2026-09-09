@@ -6,6 +6,11 @@ WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-
 . "$WORKBENCH_DIR/lib/branch_state.sh"
 
 GRACE_PERIOD_SECS=600
+# The `wt list --format json` schema this script reads. Worktrunk stamps its
+# payload with a `schema` number; an unrecognised one is refused rather than
+# indexed blindly, because the last bump moved every field this script reads
+# and the failure was a silent no-op on every session stop.
+WT_LIST_SCHEMA=2
 CLEANUP_LOG_DIR="${CLEANUP_LOG_DIR:-$WORKBENCH_STATE_DIR/logs}"
 CLEANUP_LOG="${CLEANUP_LOG:-$CLEANUP_LOG_DIR/wt-cleanup.log}"
 
@@ -54,7 +59,8 @@ _has_uncommitted_changes() {
   local idx="$1"
   local result
   result=$(echo "$worktrees" | jq -r "
-    .[$idx].working_tree | (.staged or .modified or .untracked or .renamed or .deleted)")
+    .items[$idx].worktree.changes
+    | (.staged or .modified or .untracked or .renamed or .deleted or .conflicted)")
   [[ "$result" == "true" ]]
 }
 
@@ -67,7 +73,7 @@ _log() {
 _describe_changes() {
   local idx="$1"
   echo "$worktrees" | jq -r "
-    .[$idx].working_tree | to_entries
+    .items[$idx].worktree.changes | to_entries
     | map(select(.value == true) | .key) | join(\", \")"
 }
 
@@ -270,14 +276,32 @@ main() {
     || git config init.defaultBranch 2>/dev/null \
     || echo "main")
 
-  worktrees=$(wt list --format json 2>/dev/null) || return 0
-  count=$(echo "$worktrees" | jq 'length')
+  # A failure here is reported rather than swallowed. `|| return 0` used to
+  # turn a broken read into a clean exit, so a schema change no-opped silently
+  # under the --quiet hook for as long as nobody ran the script by hand.
+  if ! worktrees=$(wt list --format json 2>/dev/null); then
+    err "wt list --format json failed"
+    return 1
+  fi
+
+  # `.schema` on a schema-1 payload is an error, not a null: jq refuses to
+  # index an array with a string. Both spellings of "not the schema we know"
+  # have to land on the same refusal, so the failure is swallowed here and
+  # becomes "none".
+  local schema
+  schema=$(echo "$worktrees" | jq -r '.schema // "none"' 2>/dev/null) || schema="none"
+  if [[ "$schema" != "$WT_LIST_SCHEMA" ]]; then
+    err "wt list schema $schema is not supported (expected $WT_LIST_SCHEMA) — wt-cleanup needs updating for this version of worktrunk"
+    return 1
+  fi
+
+  count=$(echo "$worktrees" | jq '.items | length')
 
   # The default branch's own checkout, which is where its ignore rules are asked
   # — see _default_ignores. Empty when the machine has none, and nothing is
   # forgiven then.
   default_wt=$(echo "$worktrees" | jq -r '
-    map(select(.is_main)) | .[0].path // ""')
+    .items | map(select(.worktree.main)) | .[0].worktree.path // ""')
 
   # One lookup for the whole repo, before the loop — asking per worktree cost a
   # sequential round trip each. Empty when no tracker is reachable, which leaves
@@ -290,14 +314,24 @@ main() {
   _log "START count=$count dry_run=$dry_run quiet=$quiet max_age=$max_age_days"
 
   for ((i = 0; i < count; i++)); do
-    is_main=$(echo "$worktrees" | jq -r ".[$i].is_main")
-    is_current=$(echo "$worktrees" | jq -r ".[$i].is_current")
-    branch=$(echo "$worktrees" | jq -r ".[$i].branch")
-    wt_path=$(echo "$worktrees" | jq -r ".[$i].path")
-    main_state=$(echo "$worktrees" | jq -r ".[$i].main_state")
-    symbols=$(echo "$worktrees" | jq -r ".[$i].symbols")
-    timestamp=$(echo "$worktrees" | jq -r ".[$i].commit.timestamp")
+    is_main=$(echo "$worktrees" | jq -r ".items[$i].worktree.main")
+    is_current=$(echo "$worktrees" | jq -r ".items[$i].worktree.current")
+    branch=$(echo "$worktrees" | jq -r ".items[$i].branch")
+    wt_path=$(echo "$worktrees" | jq -r ".items[$i].worktree.path")
+    main_state=$(echo "$worktrees" | jq -r ".items[$i].display.state")
+    symbols=$(echo "$worktrees" | jq -r ".items[$i].display.symbols")
+    # schema 2 reports an ISO 8601 stamp where schema 1 carried epoch seconds.
+    # An unparseable one must not read as the epoch: that is 50-odd years of
+    # apparent inactivity, so `--age` would remove the very worktree whose age
+    # could not be established. It becomes `now` instead, which no threshold
+    # treats as stale.
+    timestamp=$(iso_to_epoch "$(echo "$worktrees" | jq -r ".items[$i].head.committed_at")") \
+      || timestamp=$now
 
+    # A row with no worktree is a branch `wt list --branches` reported. This
+    # script removes worktrees, so there is nothing here to act on — and its
+    # removal path would otherwise run against the literal string "null".
+    [[ "$wt_path" == "null" || -z "$wt_path" ]] && continue
     [[ "$is_main" == "true" ]] && continue
     [[ "$branch" == "$default_branch" ]] && continue
     [[ "$is_current" == "true" ]] && continue

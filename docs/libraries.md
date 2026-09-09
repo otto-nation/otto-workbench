@@ -529,6 +529,7 @@ file_mtime PATH   # modification time, epoch seconds
 file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
 file_mode  PATH   # permission bits, octal — e.g. 644
 load_average      # one-minute load average, e.g. 3.72
+iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
 ```
 
 Each prints nothing and returns 1 when neither form resolves the value, so
@@ -544,6 +545,7 @@ ts=$(file_mtime "$f") || ts=0
 | `file_birth PATH` | birth (creation) time in epoch seconds. Prints 0 on filesystems that do not record one; callers must treat 0 as "unknown". |
 | `file_mode PATH` | permission bits as an octal string, e.g. 644. |
 | `load_average` | the machine's one-minute load average, as the kernel spells it. |
+| `iso_to_epoch TIMESTAMP` | an ISO 8601 UTC timestamp (`2026-09-09T16:15:52Z`) in epoch seconds. |
 
 Loaded via `ui.sh`.
 

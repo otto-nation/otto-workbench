@@ -143,3 +143,39 @@ teardown() {
   unset -f cat
   [ "$output" = "0.52" ]
 }
+
+@test "iso_to_epoch converts a UTC stamp to epoch seconds" {
+  run iso_to_epoch "2026-09-09T16:15:52Z"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1788970552" ]
+}
+
+@test "iso_to_epoch reads the stamp as UTC regardless of local zone" {
+  # Without -u the BSD form parses the stamp in local time, which moves the
+  # answer by the offset — the bug this asserts against.
+  TZ="America/New_York" run iso_to_epoch "2026-09-09T16:15:52Z"
+  [ "$output" = "1788970552" ]
+  TZ="Asia/Tokyo" run iso_to_epoch "2026-09-09T16:15:52Z"
+  [ "$output" = "1788970552" ]
+}
+
+@test "iso_to_epoch returns 1 and prints nothing for an unparseable stamp" {
+  run iso_to_epoch "not-a-date"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "iso_to_epoch returns 1 on an empty stamp" {
+  run iso_to_epoch ""
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "no stray stdout leaks in from the date form that fails" {
+  # Same hazard the stat and load helpers carry: GNU date rejects the BSD
+  # flags and prints its own usage, which a `$(A || B)` would concatenate
+  # onto the winning form's answer.
+  run iso_to_epoch "2026-09-09T16:15:52Z"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "$output" =~ ^[0-9]+$ ]]
+}

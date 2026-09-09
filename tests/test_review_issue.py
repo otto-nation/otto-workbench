@@ -456,6 +456,10 @@ def test_create_issue_unsupported_provider():
 
 # ── Labels ─────────────────────────────────────────────────────────
 
+# The production default, so these exercise the label a filing really carries
+# rather than one that happens to match it today.
+LABEL = workbench_config.FOLLOW_UP_LABEL
+
 
 def _linear_calls(existing_labels, create_label_ok=True):
     """Record every linear invocation, answering the label list with *existing*."""
@@ -481,23 +485,25 @@ def _linear_calls(existing_labels, create_label_ok=True):
 
 def _issue_create_cmd(calls):
     """The one call that filed the issue, out of the label traffic around it."""
-    return next(c for c in calls if "issue" in c and "create" in c)
+    create_cmd = next((c for c in calls if "issue" in c and "create" in c), None)
+    assert create_cmd is not None, f"no issue was filed; calls were {calls}"
+    return create_cmd
 
 
 def test_create_issue_carries_the_configured_labels(tmp_path):
     """The labels a repo declares reach the tracker's create command."""
-    calls, fake_run = _linear_calls(["follow-up"])
+    calls, fake_run = _linear_calls([LABEL])
 
     with patch("subprocess.run", side_effect=fake_run):
         result = create_issue(
             "linear", "ENG", "title", "description",
-            opts={"labels": ["follow-up"]},
+            opts={"labels": [LABEL]},
         )
 
     assert result.filed is True
     create_cmd = _issue_create_cmd(calls)
     assert "--label" in create_cmd
-    assert "follow-up" in create_cmd
+    assert LABEL in create_cmd
 
 
 def test_a_repo_that_declares_no_labels_files_an_unlabelled_issue():
@@ -518,22 +524,22 @@ def test_a_label_the_tracker_lacks_is_created_before_the_issue():
 
     with patch("subprocess.run", side_effect=fake_run):
         create_issue(
-            "linear", "ENG", "title", "description", opts={"labels": ["follow-up"]},
+            "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
 
     label_create = next(c for c in calls if "label" in c and "create" in c)
     assert "--name" in label_create
-    assert "follow-up" in label_create
+    assert LABEL in label_create
     assert "--team" in label_create
     assert calls.index(label_create) < calls.index(_issue_create_cmd(calls))
 
 
 def test_a_label_the_tracker_already_holds_is_not_created_again():
-    calls, fake_run = _linear_calls(["follow-up"])
+    calls, fake_run = _linear_calls([LABEL])
 
     with patch("subprocess.run", side_effect=fake_run):
         create_issue(
-            "linear", "ENG", "title", "description", opts={"labels": ["follow-up"]},
+            "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
 
     assert not [c for c in calls if "label" in c and "create" in c]
@@ -541,11 +547,11 @@ def test_a_label_the_tracker_already_holds_is_not_created_again():
 
 def test_a_label_matching_case_insensitively_is_not_created_again():
     """Both trackers resolve a label name case-insensitively, so `Follow-Up` is a hit."""
-    calls, fake_run = _linear_calls(["Follow-Up"])
+    calls, fake_run = _linear_calls([LABEL.title()])
 
     with patch("subprocess.run", side_effect=fake_run):
         create_issue(
-            "linear", "ENG", "title", "description", opts={"labels": ["follow-up"]},
+            "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
 
     assert not [c for c in calls if "label" in c and "create" in c]
@@ -557,11 +563,39 @@ def test_a_label_that_cannot_be_created_is_dropped_rather_than_failing_the_issue
 
     with patch("subprocess.run", side_effect=fake_run):
         result = create_issue(
-            "linear", "ENG", "title", "description", opts={"labels": ["follow-up"]},
+            "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
 
     assert result.filed is True
     assert "--label" not in _issue_create_cmd(calls)
+
+
+def test_a_label_created_without_output_is_still_created():
+    """A mutation is judged by its exit code: silent success is not failure.
+
+    `_run_issue_cli` reports a failure as empty stdout, so reading it for this
+    would drop a label that had just been created and warn that it had not.
+    """
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        r = MagicMock()
+        r.returncode = 0
+        if "label" in cmd and "list" in cmd:
+            r.stdout = "[]"
+        elif "label" in cmd and "create" in cmd:
+            r.stdout = ""
+        elif "issue" in cmd and "create" in cmd:
+            r.stdout = "Created ENG-456"
+        else:
+            r.stdout = '{"url": "https://linear.app/team/issue/ENG-456/slug"}'
+        return r
+
+    with patch("subprocess.run", side_effect=fake_run):
+        create_issue("linear", "ENG", "title", "description", opts={"labels": [LABEL]})
+
+    assert LABEL in _issue_create_cmd(calls)
 
 
 def test_github_labels_reach_the_create_command():
@@ -573,7 +607,7 @@ def test_github_labels_reach_the_create_command():
         r.returncode = 0
         r.stdout = ""
         if "label" in cmd and "list" in cmd:
-            r.stdout = json.dumps([{"name": "follow-up"}])
+            r.stdout = json.dumps([{"name": LABEL}])
         elif "issue" in cmd and "create" in cmd:
             r.stdout = "https://github.com/owner/repo/issues/42\n"
         return r
@@ -581,13 +615,13 @@ def test_github_labels_reach_the_create_command():
     with patch("subprocess.run", side_effect=fake_run):
         result = create_issue(
             "github", "", "title", "description", repo="owner/repo",
-            opts={"labels": ["follow-up"]},
+            opts={"labels": [LABEL]},
         )
 
     assert result.filed is True
     create_cmd = _issue_create_cmd(calls)
     assert "--label" in create_cmd
-    assert "follow-up" in create_cmd
+    assert LABEL in create_cmd
 
 
 def test_a_github_issue_is_assigned_to_whoever_filed_it():
@@ -612,17 +646,47 @@ def test_a_github_issue_is_assigned_to_whoever_filed_it():
 def test_the_configured_labels_reach_a_filing_from_the_repo_config(tmp_path):
     """The list survives the config round trip rather than arriving stringified."""
     (tmp_path / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: github\n  labels:\n    - follow-up\n",
+        f"issue_tracker:\n  provider: github\n  labels:\n    - {LABEL}\n",
     )
     info = load_issue_provider(str(tmp_path))
-    assert info.options["labels"] == ["follow-up"]
+    assert info.options["labels"] == [LABEL]
+
+
+def test_a_repo_config_opting_out_files_an_unlabelled_issue(tmp_path):
+    """`labels: []` survives the whole path, not just the two halves of it.
+
+    The options dict is built with a truthiness filter, so an explicit empty
+    list is dropped exactly as a missing key is, and `_configured_labels`
+    answers `[]` to both. That composition is what this covers: each half is
+    tested alone, and either could stop meaning "no labels" without failing.
+    """
+    (tmp_path / ".workbench.yml").write_text(
+        "issue_tracker:\n  provider: github\n  labels: []\n",
+    )
+    info = load_issue_provider(str(tmp_path))
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        r = MagicMock()
+        r.returncode = 0
+        r.stdout = "https://github.com/owner/repo/issues/42\n"
+        return r
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = create_issue(
+            info.name, "", "title", "description", repo="owner/repo",
+            opts=info.options,
+        )
+
+    assert result.filed is True
+    assert "--label" not in _issue_create_cmd(calls)
+    assert not [c for c in calls if "label" in c]
 
 
 def test_the_default_config_labels_a_filing_follow_up():
     """Every repo gets the label unless it says otherwise."""
-    assert workbench_config.IssueTrackerConfig().labels == [
-        workbench_config.FOLLOW_UP_LABEL,
-    ]
+    assert workbench_config.IssueTrackerConfig().labels == [LABEL]
 
 
 # ── update_issue ──────────────────────────────────────────────────────────

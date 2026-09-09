@@ -364,8 +364,29 @@ def extract_issue_id(provider: str, branch: str, pr_body: str = "") -> str | Non
     return None
 
 
+def _issue_cli_ok(cmd: list[str]) -> bool:
+    """Whether a tracker CLI command succeeded, by exit code alone.
+
+    For a mutation, where ``_run_issue_cli`` cannot answer: it reports failure
+    as empty stdout, which a command that succeeds without printing anything
+    is indistinguishable from. Reading that as failure would drop a label that
+    had in fact just been created, and say so in a warning.
+
+    ``gh_client.ok`` is this for the GitHub half; the tracker CLIs are optional
+    binaries, so a missing one is a failure rather than an exception.
+    """
+    try:
+        return proc.run(cmd, timeout=timeouts.NETWORK).ok
+    except FileNotFoundError:
+        return False
+
+
 def _run_issue_cli(cmd: list[str]) -> str:
     """Run a CLI command and return stripped stdout, or empty string on failure.
+
+    Only for a command whose *output* is the answer. A mutation judged by
+    whether it worked wants ``_issue_cli_ok``, since a success that prints
+    nothing arrives here as the empty string a failure does.
 
     A timeout arrives as a failed result rather than an exception, so only the
     missing-binary case still needs catching — the tracker CLI is optional.
@@ -465,7 +486,7 @@ def _ensure_linear_labels(labels: list[str], team: str) -> list[str]:
         if label.casefold() in existing:
             usable.append(label)
             continue
-        created = _run_issue_cli(
+        created = _issue_cli_ok(
             ["linear", "label", "create", "--name", label, "--team", team],
         )
         if created:

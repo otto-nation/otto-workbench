@@ -32,6 +32,8 @@ from core import report as core_report  # noqa: E402
 from rebase import inspect as rebase_inspect  # noqa: E402
 from rebase import conflicts as rebase_conflicts  # noqa: E402
 from rebase import resolve_ai as rebase_resolve  # noqa: E402
+from rebase import repo_regen  # noqa: E402
+from config import workbench_config  # noqa: E402
 from agent import invoke as agent_invoke  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
@@ -211,336 +213,6 @@ def test_conflict_report_structure(_m1, _m2, _m3):
 def test_conflict_report_custom_status(_m1, _m2, _m3):
     report = pr_rebase_cli.ConflictReport.from_repo("/fake", status="conflicts_resuming")
     assert report.status == "conflicts_resuming"
-
-
-# ── _find_regenerator ──────────────────────────────────────────────────────
-
-
-def test_find_regenerator_known_lockfile():
-    result = pr_rebase_cli._find_regenerator("pnpm-lock.yaml")
-    assert result is not None
-    assert result.cmd == ("pnpm", "install", "--lockfile-only")
-
-
-def test_find_regenerator_go_sum():
-    result = pr_rebase_cli._find_regenerator("go.sum")
-    assert result is not None
-    assert result.cmd == ("go", "mod", "tidy")
-    assert result.stage_dir is True
-
-
-def test_find_regenerator_nested_path():
-    """Lookup uses basename, not full path."""
-    result = pr_rebase_cli._find_regenerator("packages/web/pnpm-lock.yaml")
-    assert result is not None
-    assert result.cmd == ("pnpm", "install", "--lockfile-only")
-
-
-def test_find_regenerator_unknown_file():
-    result = pr_rebase_cli._find_regenerator("main.go")
-    assert result is None
-
-
-def test_find_regenerator_all_entries_have_cmd():
-    """Every registry entry must carry a non-empty command tuple."""
-    for name, entry in regen.LOCKFILE_REGENERATORS.items():
-        assert isinstance(entry.cmd, tuple) and len(entry.cmd) > 0, f"{name} has invalid cmd"
-
-
-def test_find_regenerator_all_keys_are_basenames():
-    """Lookup is by basename — a key with a path separator could never match."""
-    for name in regen.LOCKFILE_REGENERATORS:
-        assert os.path.basename(name) == name, f"{name} is not a bare basename"
-
-
-# ── _detect_mise ───────────────────────────────────────────────────────────
-
-
-def test_detect_mise_found(tmp_path):
-    (tmp_path / "mise.toml").write_text("[tools]\n")
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
-
-
-def test_detect_mise_tool_versions(tmp_path):
-    (tmp_path / ".tool-versions").write_text("nodejs 20\n")
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
-
-
-def test_detect_mise_dotted_toml(tmp_path):
-    """.mise.toml is as common as mise.toml and must be detected."""
-    (tmp_path / ".mise.toml").write_text("[tools]\n")
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
-
-
-@pytest.mark.parametrize("rel", [
-    ".config/mise.toml",
-    ".config/mise/config.toml",
-    ".mise/config.toml",
-    "mise/config.toml",
-    "mise.local.toml",
-    ".mise.local.toml",
-])
-def test_detect_mise_nested_config_layouts(tmp_path, rel):
-    cfg = tmp_path / rel
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text("[tools]\n")
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
-
-
-def test_detect_mise_dotted_toml_in_ancestor(tmp_path):
-    subdir = tmp_path / "ui-admin"
-    subdir.mkdir(parents=True)
-    (tmp_path / ".mise.toml").write_text("[tools]\n")
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(subdir), str(tmp_path)) is True
-
-
-def test_detect_mise_in_ancestor(tmp_path):
-    subdir = tmp_path / "packages" / "web"
-    subdir.mkdir(parents=True)
-    (tmp_path / "mise.toml").write_text("[tools]\n")
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(subdir), str(tmp_path)) is True
-
-
-def test_detect_mise_not_installed(tmp_path):
-    (tmp_path / "mise.toml").write_text("[tools]\n")
-    with mock.patch("shutil.which", return_value=None):
-        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
-
-
-def test_detect_mise_no_config(tmp_path):
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
-
-
-def test_detect_mise_stops_at_repo_root(tmp_path):
-    """Does not search above repo_root."""
-    repo = tmp_path / "repo"
-    subdir = repo / "packages" / "web"
-    subdir.mkdir(parents=True)
-    (tmp_path / "mise.toml").write_text("[tools]\n")  # above repo root
-    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        assert regen.detect_mise(str(subdir), str(repo)) is False
-
-
-# ── _run_regeneration ──────────────────────────────────────────────────────
-
-
-def test_run_regeneration_bare_command(tmp_path):
-    lockfile = tmp_path / "pnpm-lock.yaml"
-    lockfile.write_text("old content")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append((list(cmd), kwargs.get("cwd")))
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=False):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is True
-    cmds = [c[0] for c in calls]
-    assert ["pnpm", "install"] in cmds
-    assert ["git", "add", "pnpm-lock.yaml"] in cmds
-
-
-def test_run_regeneration_with_mise(tmp_path):
-    lockfile = tmp_path / "pnpm-lock.yaml"
-    lockfile.write_text("old content")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append((list(cmd), kwargs.get("cwd")))
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=True):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is True
-    cmds = [c[0] for c in calls]
-    assert ["mise", "exec", "--", "pnpm", "install"] in cmds
-
-
-def test_run_regeneration_bare_fails_retries_mise(tmp_path):
-    lockfile = tmp_path / "pnpm-lock.yaml"
-    lockfile.write_text("old content")
-    calls = []
-    run_count = [0]
-
-    def fake_run(cmd, **kwargs):
-        calls.append((list(cmd), kwargs.get("cwd")))
-        if cmd == ["pnpm", "install"]:
-            run_count[0] += 1
-            return subprocess.CompletedProcess(args=cmd, returncode=127, stdout="", stderr="command not found")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=False), \
-         mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is True
-    cmds = [c[0] for c in calls]
-    assert ["mise", "exec", "--", "pnpm", "install"] in cmds
-
-
-def test_run_regeneration_missing_binary_retries_mise(tmp_path):
-    """A binary absent from PATH raises FileNotFoundError, not exit 127."""
-    (tmp_path / "pnpm-lock.yaml").write_text("old content")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append((list(cmd), kwargs.get("cwd")))
-        if cmd == ["pnpm", "install"]:
-            raise FileNotFoundError(2, "No such file or directory: 'pnpm'")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=False), \
-         mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is True
-    cmds = [c[0] for c in calls]
-    assert ["mise", "exec", "--", "pnpm", "install"] in cmds
-
-
-def test_run_regeneration_missing_binary_without_mise_returns_false(tmp_path):
-    """Missing binary and no mise degrades to a stale file, never a crash."""
-    (tmp_path / "pnpm-lock.yaml").write_text("old content")
-
-    def fake_run(cmd, **kwargs):
-        if cmd[0] == "pnpm":
-            raise FileNotFoundError(2, "No such file or directory: 'pnpm'")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=False), \
-         mock.patch("shutil.which", return_value=None):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is False
-
-
-def test_run_regeneration_not_executable_returns_false(tmp_path):
-    """A present-but-unexecutable binary raises PermissionError, not 127."""
-    (tmp_path / "pnpm-lock.yaml").write_text("old content")
-
-    def fake_run(cmd, **kwargs):
-        if cmd[0] == "pnpm":
-            raise PermissionError(13, "Permission denied: 'pnpm'")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=False), \
-         mock.patch("shutil.which", return_value=None):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is False
-
-
-def test_run_regeneration_missing_binary_under_mise_returns_false(tmp_path):
-    """Defensive: a launch failure under mise must not propagate as a traceback.
-
-    _detect_mise gates on shutil.which, so this pairing is unreachable in
-    production; the test pins _run_regeneration's own error handling.
-    """
-    (tmp_path / "pnpm-lock.yaml").write_text("old content")
-
-    def fake_run(cmd, **kwargs):
-        if cmd[0] == "mise":
-            raise FileNotFoundError(2, "No such file or directory: 'mise'")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=True), \
-         mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is False
-
-
-def test_run_regeneration_stage_dir(tmp_path):
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append((list(cmd), kwargs.get("cwd")))
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=False):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("go", "mod", "tidy"),
-                stage_dir=True, files=["go.sum"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is True
-    cmds = [c[0] for c in calls]
-    assert ["git", "add", "-u", "."] in cmds
-
-
-def test_run_regeneration_failure_returns_false(tmp_path):
-    def fake_run(cmd, **kwargs):
-        if cmd[0] in ("pnpm", "mise"):
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(regen, "detect_mise", return_value=False), \
-         mock.patch("shutil.which", return_value=None):
-        result = pr_rebase_cli._run_regeneration(
-            pr_rebase_cli.RegenJob(
-                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
-            ),
-            cwd=str(tmp_path),
-        )
-
-    assert result is False
 
 
 # ── _is_binary ─────────────────────────────────────────────────────────────
@@ -817,6 +489,23 @@ def test_parse_resolved_content_allows_equals_mid_line():
 
 
 @contextlib.contextmanager
+def _repo_declaring(commands, *, root, mise_task=False):
+    """Stand in for the two sources ``repo_regen.repo_regenerators`` consults."""
+    repo_regen.clear_caches()
+    config = workbench_config.WorkbenchConfig(
+        rebase=workbench_config.RebaseConfig(regenerate=list(commands)),
+    )
+    try:
+        with mock.patch.object(workbench_config, "load_config_or_default",
+                               return_value=config), \
+             mock.patch.object(repo_regen.git_client, "out", return_value=str(root)), \
+             mock.patch.object(repo_regen, "mise_has_task", return_value=mise_task):
+            yield
+    finally:
+        repo_regen.clear_caches()
+
+
+@contextlib.contextmanager
 def _backend_answering(reply, *, available=True):
     """Stub both halves of the backend a rebase-assist helper reaches.
 
@@ -830,69 +519,6 @@ def _backend_answering(reply, *, available=True):
          mock.patch.object(pr_rebase_cli.ai_backend, "prompt",
                            return_value=reply):
         yield
-
-
-@contextlib.contextmanager
-def _repo_declaring(commands, *, root, mise_task=False):
-    """Stand in for the two sources ``_repo_regenerators`` consults."""
-    config = pr_rebase_cli.workbench_config.WorkbenchConfig(
-        rebase=pr_rebase_cli.workbench_config.RebaseConfig(regenerate=list(commands)),
-    )
-    with mock.patch.object(pr_rebase_cli.workbench_config, "load_config_or_default",
-                           return_value=config), \
-         mock.patch.object(pr_rebase_cli.git_client, "out", return_value=str(root)), \
-         mock.patch.object(pr_rebase_cli, "_mise_has_task", return_value=mise_task):
-        yield
-
-
-def test_repo_regenerators_prefers_the_declared_commands(tmp_path):
-    with _repo_declaring(["mise run generate", "mise run generate:i18n"],
-                         root=tmp_path, mise_task=True):
-        regens = pr_rebase_cli._repo_regenerators(str(tmp_path))
-
-    assert [r.cmd for r in regens] == [
-        ("mise", "run", "generate"),
-        ("mise", "run", "generate:i18n"),
-    ]
-
-
-def test_repo_regenerators_falls_back_to_the_conventional_task(tmp_path):
-    """No declaration, but the repo has a `generate` task — use it."""
-    with _repo_declaring([], root=tmp_path, mise_task=True):
-        regens = pr_rebase_cli._repo_regenerators(str(tmp_path))
-
-    assert [r.cmd for r in regens] == [("mise", "run", "generate")]
-
-
-def test_repo_regenerators_empty_when_nothing_declares_one(tmp_path):
-    """No key and no conventional task means the rebuild is unknown.
-
-    Guessing here would commit wrong generated output, so the caller reports
-    the file stale instead.
-    """
-    with _repo_declaring([], root=tmp_path, mise_task=False):
-        assert pr_rebase_cli._repo_regenerators(str(tmp_path)) == ()
-
-
-def test_queue_repo_regeneration_collapses_files_into_one_run(tmp_path):
-    """Four generated files must not become four regeneration runs."""
-    queue = pr_rebase_cli.RegenQueue()
-    with _repo_declaring(["mise run generate"], root=tmp_path):
-        for name in ("a_pb2.py", "b_pb.ts", "models.go", ".queries.hash"):
-            assert pr_rebase_cli._queue_repo_regeneration(name, str(tmp_path), queue)
-
-    jobs = list(queue)
-    assert len(jobs) == 1
-    assert jobs[0].cmd == ("mise", "run", "generate")
-    assert len(jobs[0].files) == 4
-
-
-def test_queue_repo_regeneration_false_when_unknown(tmp_path):
-    queue = pr_rebase_cli.RegenQueue()
-    with _repo_declaring([], root=tmp_path, mise_task=False):
-        assert not pr_rebase_cli._queue_repo_regeneration("x.gen", str(tmp_path), queue)
-
-    assert list(queue) == []
 
 
 class TestLedgerAttribution:
@@ -1115,7 +741,7 @@ def test_classify_conflict_known_lockfile(tmp_path):
     f = tmp_path / "pnpm-lock.yaml"
     f.write_text("content")
     with mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
-        plan = rebase_conflicts.classify_conflict("pnpm-lock.yaml", f, str(tmp_path), find_regenerator=regen.find_regenerator)
+        plan = rebase_conflicts.classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
     assert plan.regenerator.cmd == ("pnpm", "install", "--lockfile-only")
 
@@ -1124,7 +750,7 @@ def test_classify_conflict_go_sum(tmp_path):
     f = tmp_path / "go.sum"
     f.write_text("content")
     with mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
-        plan = rebase_conflicts.classify_conflict("go.sum", f, str(tmp_path), find_regenerator=regen.find_regenerator)
+        plan = rebase_conflicts.classify_conflict("go.sum", f, str(tmp_path))
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
     assert plan.regenerator.cmd == ("go", "mod", "tidy")
 
@@ -1137,7 +763,7 @@ def test_classify_conflict_generated_file(tmp_path):
              rebase_conflicts, "is_generated_file",
              return_value=pr_rebase_cli.GeneratedSignal.HEADER,
          ):
-        plan = rebase_conflicts.classify_conflict("service.pb.go", f, str(tmp_path), find_regenerator=regen.find_regenerator)
+        plan = rebase_conflicts.classify_conflict("service.pb.go", f, str(tmp_path))
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.ACCEPT_THEIRS
     assert plan.signal is pr_rebase_cli.GeneratedSignal.HEADER
 
@@ -1149,7 +775,7 @@ def test_classify_conflict_delete_conflict(tmp_path):
         rebase_conflicts, "detect_delete_conflict",
         return_value=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
     ):
-        plan = rebase_conflicts.classify_conflict("old.go", f, str(tmp_path), find_regenerator=regen.find_regenerator)
+        plan = rebase_conflicts.classify_conflict("old.go", f, str(tmp_path))
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.DELETE
     assert plan.delete_side is pr_rebase_cli.DeleteSide.THEIRS_DELETED
 
@@ -1159,7 +785,7 @@ def test_classify_conflict_binary_file(tmp_path):
     f.write_bytes(b"\x89PNG\x00\x00")
     with mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
          mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
-        plan = rebase_conflicts.classify_conflict("image.png", f, str(tmp_path), find_regenerator=regen.find_regenerator)
+        plan = rebase_conflicts.classify_conflict("image.png", f, str(tmp_path))
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.BINARY_ERROR
 
 
@@ -1168,7 +794,7 @@ def test_classify_conflict_text_file(tmp_path):
     f.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
     with mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
          mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
-        plan = rebase_conflicts.classify_conflict("main.go", f, str(tmp_path), find_regenerator=regen.find_regenerator)
+        plan = rebase_conflicts.classify_conflict("main.go", f, str(tmp_path))
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.AI_MERGE
 
 
@@ -1181,7 +807,7 @@ def test_classify_conflict_lockfile_takes_priority_over_generated(tmp_path):
              rebase_conflicts, "is_generated_file",
              return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
          ):
-        plan = rebase_conflicts.classify_conflict("pnpm-lock.yaml", f, str(tmp_path), find_regenerator=regen.find_regenerator)
+        plan = rebase_conflicts.classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
     assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
 
 
@@ -1197,7 +823,7 @@ def test_classify_delete_conflict_carries_side():
                  rebase_conflicts, "detect_delete_conflict",
                  return_value=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
              ):
-            plan = rebase_conflicts.classify_conflict(filepath, full_path, tmpdir, find_regenerator=regen.find_regenerator)
+            plan = rebase_conflicts.classify_conflict(filepath, full_path, tmpdir)
 
         assert plan.strategy is pr_rebase_cli.ConflictStrategy.DELETE
         assert plan.delete_side is pr_rebase_cli.DeleteSide.THEIRS_DELETED
@@ -1212,7 +838,7 @@ def test_classify_normal_conflict_as_ai_merge():
 
         with mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
              mock.patch.object(rebase_conflicts, "detect_delete_conflict", return_value=None):
-            plan = rebase_conflicts.classify_conflict(filepath, full_path, tmpdir, find_regenerator=regen.find_regenerator)
+            plan = rebase_conflicts.classify_conflict(filepath, full_path, tmpdir)
 
         assert plan.strategy is pr_rebase_cli.ConflictStrategy.AI_MERGE
 
@@ -1528,7 +1154,7 @@ def test_resolve_file_conflicts_handles_go_sum():
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
+             mock.patch.object(regen, "run_regeneration", return_value=True) as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["go.sum"], tmpdir, "abc123", "feat: deps",
                 target_ref=_TARGET,
@@ -1687,7 +1313,7 @@ def test_resolve_file_conflicts_go_mod_uses_ai_merge():
         with mock.patch.object(
             rebase_resolve, "resolve_single_file", return_value="go.mod",
         ) as mock_ai, \
-             mock.patch.object(pr_rebase_cli, "_run_regeneration") as mock_regen:
+             mock.patch.object(regen, "run_regeneration") as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["go.mod"], tmpdir, "abc123", "feat: deps",
                 target_ref=_TARGET,
@@ -1710,7 +1336,7 @@ def test_resolve_file_conflicts_regenerates_pnpm_lockfile():
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
+             mock.patch.object(regen, "run_regeneration", return_value=True) as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["pnpm-lock.yaml"], tmpdir, "abc123", "feat: deps",
                 target_ref=_TARGET,
@@ -1763,7 +1389,7 @@ def test_resolve_file_conflicts_regen_failure_warns():
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=False), \
+             mock.patch.object(regen, "run_regeneration", return_value=False), \
              mock.patch.object(pr_rebase_cli.log, "warn") as mock_warn:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["pnpm-lock.yaml"], tmpdir, "abc123", "feat: deps",
@@ -1794,7 +1420,7 @@ def test_resolve_file_conflicts_generated_without_regenerator_is_stale():
                 rebase_conflicts, "is_generated_file",
                 return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
-            mock.patch.object(pr_rebase_cli, "_repo_regenerators", return_value=()),
+            mock.patch.object(repo_regen, "repo_regenerators", return_value=()),
             mock.patch("subprocess.run", side_effect=fake_run),
         ):
             result = pr_rebase_cli._resolve_file_conflicts(
@@ -1811,7 +1437,7 @@ def test_resolve_file_conflicts_generated_with_regenerator_is_not_stale():
     with tempfile.TemporaryDirectory() as tmpdir:
         gen_file = Path(tmpdir) / "service.pb.go"
         gen_file.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
-        regen = pr_rebase_cli.Regenerator(("mise", "run", "generate"))
+        regenerator = pr_rebase_cli.Regenerator(("mise", "run", "generate"))
 
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
@@ -1821,8 +1447,8 @@ def test_resolve_file_conflicts_generated_with_regenerator_is_not_stale():
                 rebase_conflicts, "is_generated_file",
                 return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
-            mock.patch.object(pr_rebase_cli, "_repo_regenerators", return_value=(regen,)),
-            mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen,
+            mock.patch.object(repo_regen, "repo_regenerators", return_value=(regenerator,)),
+            mock.patch.object(regen, "run_regeneration", return_value=True) as mock_regen,
             mock.patch("subprocess.run", side_effect=fake_run),
         ):
             result = pr_rebase_cli._resolve_file_conflicts(
@@ -1832,7 +1458,7 @@ def test_resolve_file_conflicts_generated_with_regenerator_is_not_stale():
 
         assert result.files == ["service.pb.go"]
         assert result.stale == []
-        assert mock_regen.call_args[0][0].cmd == regen.cmd
+        assert mock_regen.call_args[0][0].cmd == regenerator.cmd
 
 
 # ── _is_empty_patch ──────────────────────────────────────────────────────
@@ -3669,7 +3295,7 @@ def test_fix_push_failures_regenerates_instead_of_prompting(tmp_path):
     with mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
          mock.patch.object(pr_rebase_cli, "_fix_one_file",
                            side_effect=lambda f, *a: prompted.append(f)), \
-         mock.patch.object(pr_rebase_cli, "_run_regeneration",
+         mock.patch.object(regen, "run_regeneration",
                            side_effect=lambda job, **kw: regenerated.append(job.cmd) or True), \
          mock.patch.object(pr_rebase_cli, "_stage_worktree", return_value=[]), \
          _repo_declaring(["mise run generate"], root=tmp_path):

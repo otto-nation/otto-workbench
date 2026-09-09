@@ -3008,6 +3008,16 @@ Everything in this module is a read — it inspects ``.git/rebase-merge/`` or
 ``.git/rebase-apply/`` to tell the caller what state the worktree is in, but
 never mutates it.
 
+### rebase/repo_regen.py
+
+The repo-specific half of regeneration — what *this* repo rebuilds, and how.
+
+``git.regenerate`` owns the repo-agnostic half: which command rebuilds a
+lockfile of a given kind. This module answers the question that needs a repo to
+answer it — what a repo declares under ``rebase.regenerate``, or what its task
+runner conventionally offers — which is why it sits at layer 6 with ``config``
+in reach rather than beside the registry at layer 2.
+
 ### rebase/resolve_ai.py
 
 AI-backed conflict resolution — prompts, parsing, dispatch.

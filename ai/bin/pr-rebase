@@ -28,20 +28,16 @@ Usage:
 """
 
 import argparse
-import shlex
-import shutil
 import sys
 import traceback
 from contextlib import nullcontext
 from dataclasses import asdict
-from functools import cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from agent import invoke as agent_invoke
 from agent import backend as ai_backend
-from config import workbench_config
 from gh import landed as branch_landed
 from gh import client as gh_client
 from git import client as git_client
@@ -50,6 +46,7 @@ from git import land
 from git import regenerate as regen
 from rebase import types as rebase_types
 from rebase import inspect as rebase_inspect
+from rebase import repo_regen
 from rebase import conflicts as rebase_conflicts
 from rebase import resolve_ai as rebase_resolve
 from core import conventions
@@ -58,7 +55,6 @@ from pr import context as pr_context
 from core import proc
 from core import publishing
 from git import push
-from core import timeouts
 from core.phases import Phase
 from pr.domains import RebaseStatus, RebaseSummary
 from core.proc import CmdResult
@@ -116,7 +112,6 @@ ConflictPlan = rebase_types.ConflictPlan
 Resolution = rebase_types.Resolution
 ResolutionTally = rebase_types.ResolutionTally
 Regenerator = rebase_types.Regenerator
-RegenJob = regen.RegenJob
 RegenQueue = regen.RegenQueue
 
 
@@ -135,92 +130,6 @@ RebaseOutcome = rebase_types.RebaseOutcome
 RefDivergence = rebase_types.RefDivergence
 GeneratedFix = rebase_types.GeneratedFix
 _is_empty_patch = rebase_inspect.is_empty_patch
-
-
-# The lockfile regenerator lookup lives in git.regenerate.
-_find_regenerator = regen.find_regenerator
-
-
-# ── Repo-level regeneration ────────────────────────────────────────────────
-
-# The conventional task name for "rebuild everything this repo generates".
-# Used when a repo declares no `rebase.regenerate`, which is most of them.
-_CONVENTIONAL_REGEN_TASK = "generate"
-
-
-@cache
-def _mise_has_task(repo_root: str, task: str) -> bool:
-    """Whether `mise tasks ls` in this repo lists a task by exactly this name.
-
-    Asked of mise rather than parsed out of a config file: a task can come from
-    a `[tasks.*]` table, a `tasks/` directory, or an included file, and only
-    mise knows which of those this repo uses.
-    """
-    if not shutil.which("mise"):
-        return False
-    r = regen.try_run(
-        ["mise", "tasks", "ls", "--no-header"],
-        cwd=repo_root, timeout=timeouts.QUICK,
-    )
-    if r is None or r.returncode != 0:
-        return False
-    return any(line.split()[:1] == [task] for line in r.stdout.splitlines() if line.strip())
-
-
-@cache
-def _repo_root(cwd: str) -> str:
-    """The toplevel of the repo `cwd` sits in, falling back to `cwd` itself."""
-    return git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
-
-
-@cache
-def _repo_regenerators(cwd: str) -> tuple[Regenerator, ...]:
-    """The commands that rebuild this repo's generated files, in order.
-
-    A declared `rebase.regenerate` wins outright — a repo whose generators are
-    not all reachable from one task is the case the key exists for, and a
-    convention cannot know that. Otherwise fall back to the conventional
-    `generate` task when the repo actually has one.
-
-    Empty means this repo has told us nothing and has no conventional task, so
-    a generated file's rebuild is unknown. The caller reports it stale rather
-    than guessing, because a wrong rebuild command silently commits wrong
-    generated output.
-
-    Cached for the same reason `_mise_has_task` is: this is asked once per
-    generated file, and neither `.workbench.yml` nor the repo's task list
-    changes under a rebase that is only replaying commits.
-    """
-    repo_root = _repo_root(cwd)
-
-    declared = workbench_config.load_config_or_default(repo_root).rebase.regenerate
-    if declared:
-        return tuple(Regenerator(tuple(shlex.split(cmd))) for cmd in declared)
-
-    if _mise_has_task(repo_root, _CONVENTIONAL_REGEN_TASK):
-        return (Regenerator(("mise", "run", _CONVENTIONAL_REGEN_TASK)),)
-
-    return ()
-
-
-def _queue_repo_regeneration(filepath: str, cwd: str, queue: RegenQueue) -> bool:
-    """Queue this repo's regeneration for a generated file. False if unknown.
-
-    Keyed on the repo root rather than the file's directory, so the dozen
-    generated files one rebase touches collapse into a single run of each
-    command — RegenQueue dedupes on (directory, command).
-    """
-    regenerators = _repo_regenerators(cwd)
-    if not regenerators:
-        return False
-    for regenerator in regenerators:
-        queue.add(Path(_repo_root(cwd)), filepath, regenerator.cmd, stage_dir=True)
-    return True
-
-
-def _run_regeneration(job: regen.RegenJob, *, cwd: str) -> bool:
-    """Run a regeneration command and stage the result. Returns success."""
-    return regen.run_regeneration(job, cwd=cwd, trail=_trail)
 
 
 # ── Conflict resolution (delegated to rebase.conflicts + rebase.resolve_ai) ──
@@ -395,7 +304,7 @@ def _regenerate_generated(targets: list[str], cwd: str) -> GeneratedFix:
         if _is_generated_file(filepath, Path(cwd) / filepath, cwd) is None:
             continue
         excluded.append(filepath)
-        if not _queue_repo_regeneration(filepath, cwd, queue):
+        if not repo_regen.queue_repo_regeneration(filepath, cwd, queue):
             stale.append(filepath)
 
     if stale:
@@ -407,7 +316,7 @@ def _regenerate_generated(targets: list[str], cwd: str) -> GeneratedFix:
 
     rebuilt = False
     for job in queue:
-        if _run_regeneration(job, cwd=cwd):
+        if regen.run_regeneration(job, cwd=cwd, trail=_trail):
             rebuilt = True
             continue
         stale.extend(f for f in job.files if f not in stale)
@@ -487,10 +396,7 @@ def _resolve_file_conflicts(
 ) -> Resolution | None:
     """Resolve conflicted files via classify → dispatch → deferred regen."""
     return rebase_resolve.resolve_file_conflicts(
-        conflicts_list, cwd, sha, subject, target_ref=target_ref,
-        trail=_trail, find_regenerator=_find_regenerator,
-        run_regeneration=_run_regeneration,
-        queue_repo_regeneration=_queue_repo_regeneration,
+        conflicts_list, cwd, sha, subject, target_ref=target_ref, trail=_trail,
     )
 
 

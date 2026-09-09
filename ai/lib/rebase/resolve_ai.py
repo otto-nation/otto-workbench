@@ -8,7 +8,6 @@ accepts a ``trail`` parameter for audit logging.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 
 from agent import invoke as agent_invoke
@@ -18,6 +17,7 @@ from core.trail import Trail, billed_to, terr, tfail, tinfo
 from git import regenerate as regen
 
 from . import conflicts
+from . import repo_regen
 from . import types as rebase_types
 
 ConflictBlock = rebase_types.ConflictBlock
@@ -293,7 +293,6 @@ def dispatch_accept_theirs(
     filepath: str, full_path: Path, cwd: str,
     signal: GeneratedSignal, queue: RegenQueue,
     *, trail: Trail | None = None,
-    queue_repo_regeneration: Callable[[str, str, RegenQueue], bool] | None = None,
 ) -> bool:
     """Handle the ACCEPT_THEIRS strategy. Returns False on failure.
 
@@ -302,9 +301,6 @@ def dispatch_accept_theirs(
     the moment it is staged. The queued regeneration is what actually resolves
     the file, and a repo that declares no way to rebuild leaves it stale — the
     honest report, and what the caller surfaces as ``files_stale``.
-
-    ``queue_repo_regeneration`` is injected so this module stays independent
-    of the config-dependent repo-level regeneration lookup.
     """
     if trail:
         trail.decision(
@@ -313,7 +309,7 @@ def dispatch_accept_theirs(
         )
     if not conflicts.accept_theirs_and_stage(filepath, cwd):
         return False
-    if queue_repo_regeneration is None or not queue_repo_regeneration(filepath, cwd, queue):
+    if not repo_regen.queue_repo_regeneration(filepath, cwd, queue):
         queue.mark_unrebuildable(filepath)
         log.warn(f"No regeneration command for {filepath} — staged stale")
         tinfo(
@@ -328,7 +324,6 @@ def dispatch_conflict(
     plan: ConflictPlan, sha: str, subject: str, queue: RegenQueue,
     *, target_ref: str,
     trail: Trail | None = None,
-    queue_repo_regeneration: Callable[[str, str, RegenQueue], bool] | None = None,
 ) -> bool:
     """Dispatch a single conflict by strategy. Returns False on fatal failure."""
     if plan.strategy is ConflictStrategy.REGENERATE:
@@ -337,8 +332,7 @@ def dispatch_conflict(
         )
     if plan.strategy is ConflictStrategy.ACCEPT_THEIRS:
         return dispatch_accept_theirs(
-            filepath, full_path, cwd, plan.signal, queue,
-            trail=trail, queue_repo_regeneration=queue_repo_regeneration,
+            filepath, full_path, cwd, plan.signal, queue, trail=trail,
         )
     if plan.strategy is ConflictStrategy.DELETE:
         return conflicts.resolve_delete_conflict(
@@ -363,48 +357,35 @@ def dispatch_conflict(
 
 
 def _run_deferred_regenerations(
-    queue: RegenQueue, cwd: str, run_regeneration,
+    queue: RegenQueue, cwd: str, *, trail: Trail | None,
 ) -> list[str]:
     """Run deferred regeneration jobs and return files that failed."""
     failed: list[str] = []
-    if run_regeneration is None:
-        return failed
     for job in queue:
-        if not run_regeneration(job, cwd=cwd):
+        if not regen.run_regeneration(job, cwd=cwd, trail=trail):
             failed.extend(job.files)
     return failed
 
 
 def resolve_file_conflicts(
     conflicts_list: list[str], cwd: str, sha: str, subject: str,
-    *, target_ref: str,
-    trail: Trail | None = None,
-    find_regenerator=None,
-    run_regeneration=None,
-    queue_repo_regeneration: Callable[[str, str, RegenQueue], bool] | None = None,
+    *, target_ref: str, trail: Trail | None = None,
 ) -> Resolution | None:
-    """Resolve conflicted files via classify → dispatch → deferred regen.
-
-    ``find_regenerator``, ``run_regeneration``, and ``queue_repo_regeneration``
-    are injected so this module stays independent of config-dependent lookups.
-    """
+    """Resolve conflicted files via classify → dispatch → deferred regen."""
     resolved = []
     queue = RegenQueue()
 
     for filepath in conflicts_list:
         full_path = Path(cwd) / filepath
-        plan = conflicts.classify_conflict(
-            filepath, full_path, cwd, find_regenerator=find_regenerator,
-        )
+        plan = conflicts.classify_conflict(filepath, full_path, cwd)
         if not dispatch_conflict(
             filepath, full_path, cwd, plan, sha, subject, queue,
             target_ref=target_ref, trail=trail,
-            queue_repo_regeneration=queue_repo_regeneration,
         ):
             return None
         resolved.append(filepath)
 
-    failed = _run_deferred_regenerations(queue, cwd, run_regeneration)
+    failed = _run_deferred_regenerations(queue, cwd, trail=trail)
 
     if failed:
         terr(trail, "regenerate", "regeneration failed", data={"files": failed})

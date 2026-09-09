@@ -44,6 +44,14 @@ _make_override() {
   printf 'export default function (pi) { /* override */ }\n' > "$dir/$entry"
 }
 
+# _make_handwritten NAME — an extension the operator wrote directly into Pi's
+# discovery root, which the workbench never installed and must never remove.
+_make_handwritten() {
+  local dir="$PI_EXT_DIR/$1"
+  mkdir -p "$dir"
+  printf 'export default function (pi) { /* mine */ }\n' > "$dir/index.ts"
+}
+
 # _run_step — sources the real libraries against the fake workbench.
 #
 # `set -e` matches every production caller, and WORKBENCH_STABLE_DIR is pinned
@@ -112,6 +120,8 @@ _run_step_from_worktree() {
 }
 
 @test "a directory with no entry point is skipped rather than installed" {
+  # What the skip itself does: the entry-less directory is not installed, and
+  # the step still succeeds rather than treating it as fatal.
   mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/empty"
   _make_extension real
   _run_step
@@ -121,6 +131,9 @@ _run_step_from_worktree() {
 }
 
 @test "a malformed extension does not stop the others installing" {
+  # What the skip does to the *loop*: `continue` rather than `return`, so
+  # extensions queued after the bad one are still reached. The test above
+  # would pass even if the loop aborted, since it has only one good entry.
   mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/empty"
   _make_extension one
   _make_extension two
@@ -224,8 +237,7 @@ _run_step_from_worktree() {
 @test "a hand-written extension directory survives a prune" {
   # ~/.pi/agent/extensions is where Pi's own docs tell an operator to put one,
   # so a real directory here is always theirs.
-  mkdir -p "$PI_EXT_DIR/mine"
-  printf 'export default function (pi) {}\n' > "$PI_EXT_DIR/mine/index.ts"
+  _make_handwritten mine
   _make_extension capture
   _run_step
   [ "$status" -eq 0 ]
@@ -233,8 +245,7 @@ _run_step_from_worktree() {
 }
 
 @test "a hand-written extension is reported rather than removed silently" {
-  mkdir -p "$PI_EXT_DIR/mine"
-  printf 'export default function (pi) {}\n' > "$PI_EXT_DIR/mine/index.ts"
+  _make_handwritten mine
   _make_extension capture
   _run_step
   [[ "$output" == *"was not installed by the workbench"* ]]

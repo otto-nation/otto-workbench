@@ -38,9 +38,18 @@ const WRITE_COMMAND_PATTERNS = [
   /\btee\b/,
   /\bdd\b/,
   /\btruncate\b/,
+  /\binstall\b/,
   /\bsed\s+-i/,
-  /\bgit\s+(?:commit|push|checkout|reset|clean|stash|rebase|merge)\b/,
-  />>?/,
+  /\bperl\s+[^|]*-i/,
+  /\b(?:curl|wget)\b[^|]*\s-[a-zA-Z]*[oO]\b/,
+  // `apply` and `am` write arbitrary file content straight out of a patch,
+  // which is the shape a fix pass reaches for when it wants a diff on disk.
+  /\bgit\s+(?:commit|push|checkout|switch|restore|reset|clean|stash|rebase|merge|apply|am|cherry-pick|revert)\b/,
+  // A redirect that names a destination, which `2>&1` and `2>/dev/null` do not.
+  // Matching a bare `>` instead caught every `cmd 2>&1` an agent writes while
+  // reading, and a guard that fires on ordinary reads is one whose refusals
+  // stop being read.
+  />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)\S/,
 ];
 
 /** True when `path` is inside `root` — the same directory, or below it. */

@@ -208,9 +208,13 @@ normalize_path() {
 #
 # Reads the target with readlink rather than following it, so a dangling symlink
 # (what a retired item leaves behind) resolves the same as a live one. A relative
-# target is joined against the symlink's own (real) directory before "." and
+# target is joined against the directory the symlink sits in before "." and
 # ".." components are collapsed — resolve_layers deals only in absolute paths, so
 # a target has to match one exactly, not merely look close after shell defaulting.
+#
+# That directory is `pwd`, not `pwd -P`: the paths compared against it come from
+# WORKBENCH_DIR and the discovery-root constants, which are themselves logical,
+# and resolving one side physically is what would make the two stop matching.
 symlink_raw_target() {
   local path="$1" target dir raw
   target="$(readlink "$path")"

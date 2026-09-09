@@ -19,7 +19,7 @@ from review.paths import (
     read_review_meta,
 )
 from review.document import ReviewDocument
-from review.state import build_failure_detail, read_pipeline_status
+from review.state import build_failure_detail, build_recoverable, read_pipeline_status
 from review.types import SEVERITIES, ReviewMeta
 from review.verdict import open_counts, resolve_review_verdict
 
@@ -57,6 +57,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
 
     status = read_pipeline_status(review_dir)
     failure_detail = build_failure_detail(review_dir)
+    recoverable = build_recoverable(review_dir)
 
     return {
         "repo": repo,
@@ -71,6 +72,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
         "verdict": verdict,
         "status": status,
         "failure_detail": failure_detail,
+        "recoverable": recoverable,
         "cost_usd": usage.cost,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,

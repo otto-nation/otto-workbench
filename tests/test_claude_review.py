@@ -599,6 +599,49 @@ def test_build_failure_detail_synthesis_failed(cr, tmp_path):
     assert "synthesis" in result.lower()
 
 
+def test_build_recoverable_no_dir(cr):
+    from review.state import build_recoverable
+    assert build_recoverable(None) is False
+
+
+def test_build_recoverable_no_failures(cr, tmp_path):
+    """A clean run has nothing to retry, so there is nothing to recover."""
+    from review.state import build_recoverable
+    (tmp_path / "pipeline.json").write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "done": ["synthesis"], "failed": {},
+        "groups_done": [1], "groups_failed": {},
+    }))
+    assert build_recoverable(tmp_path) is False
+
+
+def test_build_recoverable_agrees_with_the_review_document(cr, tmp_path):
+    """The summary and the Agent Failures hint answer the same question.
+
+    A consumer reading the state file must reach the verdict the review
+    document states, or the UI offers a Recover the CLI would refuse.
+    """
+    from review.state import build_failures_body, build_recoverable, PipelineState
+    for kind, detail, expected in [
+        ("agent_error", "Prompt is too long", False),
+        ("agent_error", "permission denied", False),
+        ("max_turns", "", True),
+    ]:
+        (tmp_path / "pipeline.json").write_text(json.dumps({
+            "head_sha": "abc", "group_names": ["g1"],
+            "done": ["synthesis"], "failed": {},
+            "groups_done": [],
+            "groups_failed": {"1": {
+                "kind": kind, "no_write_tool": False,
+                "detail": detail, "num_turns": 5,
+            }},
+        }))
+        assert build_recoverable(tmp_path) is expected, detail
+        state = PipelineState.load(tmp_path)
+        hinted = "pr review --recover" in build_failures_body(state)
+        assert hinted is expected, detail
+
+
 def test_build_failure_detail_all_groups_failed(cr, tmp_path):
     from review.state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"

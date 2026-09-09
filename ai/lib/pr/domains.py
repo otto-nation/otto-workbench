@@ -314,6 +314,10 @@ class ReviewSummary(Domain):
     verdict: str = ""
     status: str = ""
     failure_detail: str = ""
+    # Whether `pr review --recover` could do better than the run this describes.
+    # Some failures repeat identically however many times they are retried, so a
+    # degraded review is not on its own an invitation to resume one.
+    recoverable: bool = False
     cost_usd: float = 0.0
     total_tokens: int = 0
 

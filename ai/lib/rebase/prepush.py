@@ -47,6 +47,7 @@ REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
 FIX_ERROR_MAX_CHARS = 4000
 FALLBACK_FIX_SUBJECT = "fix: resolve pre-push check failures after rebase"
 
+
 def _generated_subject(reply: str) -> str:
     """The subject line out of a generation, stripped of fencing and quoting."""
     lines = reply.strip().splitlines()
@@ -100,10 +101,18 @@ def fix_one_file(
     """
     full_path = Path(cwd) / filepath
     if not full_path.exists():
+        tinfo(
+            trail, "fix_push_failures", f"skipped fix, file missing: {filepath}",
+            data={"filepath": filepath},
+        )
         return
     try:
         content = full_path.read_text()
-    except OSError:
+    except OSError as exc:
+        terr(
+            trail, "fix_push_failures", f"skipped fix, file unreadable: {filepath}",
+            data={"filepath": filepath, "error": str(exc)},
+        )
         return
 
     prompt = (

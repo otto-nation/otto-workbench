@@ -143,8 +143,10 @@ def _threads():
 def _full_body(rt):
     """One body reaching every branch that composes with the others.
 
-    Fourteen entries over every outcome bucket, rendering twelve rows — one is
-    held back by a hand edit and three are left to an earlier summary. Every
+    Fourteen entries over every outcome bucket, rendering thirteen rows: three
+    are left to an earlier summary and render as notes instead, one is held
+    back by a hand edit and renders as the published text rather than this
+    round's, and two more arrive already rendered as `carried_over`. Every
     count in the header line, all four notes, both singular and plural in each
     pair, and the round-chain footer. The raw comment sections are suppressed
     here (`has_comment_items=True` says triage already split those into rows)

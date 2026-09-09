@@ -1238,6 +1238,25 @@ good as both: *where does this link point*, and *is there anything there*.
 :func:`evidence_is_real` is the second, and it sits beside the linkers rather
 than beside triage because the thing it guards is the link.
 
+### pr/thread_context.py
+
+The code and history a reviewer's comment has to be read against.
+
+A review thread is a claim about a line, and neither triage nor a fix agent can
+judge one from the comment alone. Four readings answer that, and they are here
+together because they are the same subject — what the branch looks like around
+the thread — asked at two granularities:
+
+- :func:`code_context_for_thread` for one location, and
+  :func:`gather_code_context` for a whole triage round
+- :func:`diff_context_for_file` for what the PR changed there
+- :func:`branch_commit_log` for what earlier rounds already did
+
+The last one is not incidental. Triage reads code at current HEAD, which already
+contains fixes made in earlier rounds of the same cycle, so without the log it
+cannot tell a suggestion that was acted on from one that never applied — and it
+defaults to calling the reviewer wrong.
+
 ### pr/thread_models.py
 
 Typed domain objects for PR review thread processing.
@@ -1245,6 +1264,41 @@ Typed domain objects for PR review thread processing.
 Persistence-oriented structures live in pr.domains and pr.comments_fix;
 these model the runtime pipeline: triage, classification, tracking, and
 fix-pass results.
+
+### pr/triage.py
+
+One round of thread triage: ask the model, then refuse what it cannot back.
+
+The pass that decides what each review thread is — a suggestion, a question, an
+approval — and, for a suggestion, whether the code already does what it asks.
+Two of those verdicts are posted back to the reviewer as a claim about their
+code, so this module's second half exists to stop an unsupported one going out:
+:func:`downgrade_unsupported_verdicts` demotes any `already_addressed` or
+`invalid` whose cited line is not in the tree, because a claim with a link to
+nothing is worse than no claim.
+
+The prompt is `pr.triage_prompt`; the code and history it reads are
+`pr.thread_context`. What is here is the round — invoke, parse, assign ids,
+verify, record.
+
+### pr/triage_prompt.py
+
+The prompt that asks a model to triage a round of review threads.
+
+The second-largest prompt in the repo, and the only large one that was not in a
+module of its own — `review/prompt.py` and `review/prompt_sections.py` are the
+precedent. Nothing about it is CLI-specific: it takes the threads, the code
+around them, the branch log and any undecomposed top-level comments, and returns
+a string.
+
+Two things in it are load-bearing and easy to lose in an edit. The verdict
+definitions draw the line between `already_addressed` and `invalid` — the code
+context is current HEAD, so a suggestion that looks satisfied is usually one an
+earlier round of this same review already acted on, and calling that `invalid`
+tells the reviewer they were wrong when they were agreed with. And every verdict
+posted back to a reviewer must cite a line: a claim about their code with
+nothing to point at is not a claim, which is why `evidence_file` is required for
+exactly the two verdicts that are posted outward.
 
 ### review/issue.py
 

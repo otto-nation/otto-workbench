@@ -36,6 +36,9 @@ from git import client as git_client
 from git import topology as git_topology
 from git.land import CommitStatus
 from pr import attribution
+from pr import thread_context
+from pr import triage
+from pr import triage_prompt
 from pr import history_rewrite
 from pr import permalinks
 from pr.comments_fix import FixSummary
@@ -157,41 +160,41 @@ def _published(body: str):
 
 class TestExtractJson:
     def test_plain_json(self, rt):
-        assert rt._extract_json('{"a": 1}') == '{"a": 1}'
+        assert triage.extract_json('{"a": 1}') == '{"a": 1}'
 
     def test_json_fenced(self, rt):
         text = '```json\n{"a": 1}\n```'
-        assert rt._extract_json(text) == '{"a": 1}'
+        assert triage.extract_json(text) == '{"a": 1}'
 
     def test_bare_fence(self, rt):
         text = '```\n{"a": 1}\n```'
-        assert rt._extract_json(text) == '{"a": 1}'
+        assert triage.extract_json(text) == '{"a": 1}'
 
     def test_fence_with_surrounding_text(self, rt):
         text = 'Here is the result:\n```json\n{"a": 1}\n```\nDone.'
-        assert rt._extract_json(text) == '{"a": 1}'
+        assert triage.extract_json(text) == '{"a": 1}'
 
     def test_whitespace_stripped(self, rt):
-        assert rt._extract_json('  {"a": 1}  ') == '{"a": 1}'
+        assert triage.extract_json('  {"a": 1}  ') == '{"a": 1}'
 
     def test_multiline_json_in_fence(self, rt):
         text = '```json\n{\n  "threads": [],\n  "stats": {}\n}\n```'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"threads": [], "stats": {}}
 
     def test_preamble_before_bare_json(self, rt):
         text = 'Here is the classification:\n{"a": 1}'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"a": 1}
 
     def test_preamble_and_trailing_text(self, rt):
         text = 'Sure, here you go:\n{"threads": [], "stats": {}}\nHope this helps!'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"threads": [], "stats": {}}
 
     def test_multiline_preamble_before_json(self, rt):
         text = 'I analyzed the threads.\nHere are the results:\n{\n  "a": 1\n}'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"a": 1}
 
 
@@ -1798,9 +1801,9 @@ class TestFailedCommitIsNotReportedAsNoCommit:
                 return _git_ran(1, stderr="pre-commit hook failed\n")
             return _git_ran(0, stdout="aaa1111\n")
 
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
+        with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
-             patch.object(rt, "_diff_context_for_file", return_value=""), \
+             patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state") as persist, \
@@ -5027,12 +5030,12 @@ class TestBlockingReviewers:
 
 class TestDiffContextForFile:
     def test_empty_file_path(self, rt):
-        assert rt._diff_context_for_file("", Path("/wt")) == ""
+        assert thread_context.diff_context_for_file("", Path("/wt")) == ""
 
     @patch("git.client.run")
     def test_returns_diff(self, mock_run, rt):
         mock_run.return_value = _git_ran(0, stdout="+ added line\n- removed line\n")
-        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        result = thread_context.diff_context_for_file("src/foo.go", Path("/wt"))
         assert "```diff" in result
         assert "+ added line" in result
 
@@ -5040,13 +5043,13 @@ class TestDiffContextForFile:
     def test_truncates_long_diff(self, mock_run, rt):
         long_diff = "\n".join(f"+ line {i}" for i in range(200))
         mock_run.return_value = _git_ran(0, stdout=long_diff)
-        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        result = thread_context.diff_context_for_file("src/foo.go", Path("/wt"))
         assert "more lines" in result
 
     @patch("git.client.run")
     def test_git_failure_returns_empty(self, mock_run, rt):
         mock_run.return_value = _git_ran(1)
-        assert rt._diff_context_for_file("src/foo.go", Path("/wt")) == ""
+        assert thread_context.diff_context_for_file("src/foo.go", Path("/wt")) == ""
 
     @patch("git.client.run")
     def test_an_omitted_branch_is_resolved_not_assumed_to_be_main(self, mock_run, rt):
@@ -5058,7 +5061,7 @@ class TestDiffContextForFile:
         """
         mock_run.return_value = _git_ran(0, stdout="+ added line\n")
         with patch.object(git_topology, "default_branch_cached", return_value="trunk"):
-            rt._diff_context_for_file("src/foo.go", Path("/wt"))
+            thread_context.diff_context_for_file("src/foo.go", Path("/wt"))
 
         assert "origin/trunk" in mock_run.call_args[0]
 
@@ -5420,9 +5423,9 @@ class TestFixPassHoldsWhenContested:
                 commits.append(cmd)
             return _git_ran(0, stdout="abc1234\n")
 
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
+        with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
-             patch.object(rt, "_diff_context_for_file", return_value=""), \
+             patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
@@ -5479,23 +5482,23 @@ class TestTriagePromptVerificationValues:
     """The prompt must define every verification value it asks for."""
 
     def test_defines_all_four_values(self, rt):
-        prompt = rt._build_triage_prompt([], "diff")
+        prompt = triage_prompt.build_triage_prompt([], "diff")
         for value in ("valid", "already_addressed", "invalid", "needs_discussion"):
             assert f"- {value}:" in prompt
 
     def test_steers_away_from_invalid_for_satisfied_code(self, rt):
-        prompt = rt._build_triage_prompt([], "diff")
+        prompt = triage_prompt.build_triage_prompt([], "diff")
         assert "is NEVER invalid" in prompt
 
     def test_commit_log_included_when_present(self, rt):
-        prompt = rt._build_triage_prompt(
+        prompt = triage_prompt.build_triage_prompt(
             [], "diff", commit_log="abc1234 fix(logging): inject logger",
         )
         assert "abc1234 fix(logging): inject logger" in prompt
         assert "already_addressed, not invalid" in prompt
 
     def test_commit_log_omitted_when_empty(self, rt):
-        prompt = rt._build_triage_prompt([], "diff", commit_log="")
+        prompt = triage_prompt.build_triage_prompt([], "diff", commit_log="")
         assert "Commits already made on this branch" not in prompt
 
 
@@ -5527,7 +5530,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
             repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
             target_dir=tmp_path,
         )
-        with patch.object(rt, "_diff_context_for_file", return_value=""), \
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
@@ -7468,7 +7471,7 @@ class TestCommitLookupsUseDefaultBranch:
             patch.object(rt.git_client, "run") as run,
         ):
             run.return_value = _git_ran(0, stdout="abc1234 fix: thing\n")
-            assert rt._branch_commit_log(tmp_path) == "abc1234 fix: thing"
+            assert thread_context.branch_commit_log(tmp_path) == "abc1234 fix: thing"
         assert "origin/trunk..HEAD" in run.call_args[0]
 
     def test_find_addressing_commit_uses_resolved_branch(self, rt, tmp_path):
@@ -7481,7 +7484,7 @@ class TestCommitLookupsUseDefaultBranch:
         assert "origin/trunk..HEAD" in run.call_args[0]
 
     def test_branch_commit_log_without_worktree(self, rt):
-        assert rt._branch_commit_log(None) == ""
+        assert thread_context.branch_commit_log(None) == ""
 
 
 # ── shared thrash guard wiring ──────────────────────────────────────────────
@@ -7491,10 +7494,10 @@ class TestTriageThrashGuard:
     """Triage has no session log — an unparseable answer is the only signal."""
 
     def test_parses_as_json_accepts_a_fenced_object(self, rt):
-        assert rt._parses_as_json("```json\n{\"threads\": []}\n```")
+        assert triage.parses_as_json("```json\n{\"threads\": []}\n```")
 
     def test_parses_as_json_rejects_prose(self, rt):
-        assert not rt._parses_as_json("I was unable to complete the triage.")
+        assert not triage.parses_as_json("I was unable to complete the triage.")
 
     def test_unparseable_triage_output_earns_one_retry(self, rt, tmp_path):
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
@@ -7505,10 +7508,10 @@ class TestTriageThrashGuard:
             return ("not json", 0) if len(prompts) == 1 else ('{"threads": []}', 0)
 
         with (
-            patch.object(rt.agent_invoke.ai_backend, "prompt", side_effect=prompt),
-            patch.object(rt, "_branch_commit_log", return_value=""),
+            patch.object(triage.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(thread_context, "branch_commit_log", return_value=""),
         ):
-            result, rc = rt._run_triage(report, tmp_path, {})
+            result, rc = triage.run_triage(report, tmp_path, {})
 
         assert rc == 0
         assert result is not None
@@ -7524,10 +7527,10 @@ class TestTriageThrashGuard:
             return ("sorry, I cannot do that", 0)
 
         with (
-            patch.object(rt.agent_invoke.ai_backend, "prompt", side_effect=prompt),
-            patch.object(rt, "_branch_commit_log", return_value=""),
+            patch.object(triage.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(thread_context, "branch_commit_log", return_value=""),
         ):
-            result, rc = rt._run_triage(report, tmp_path, {}, trail)
+            result, rc = triage.run_triage(report, tmp_path, {}, trail)
 
         assert result is None
         assert rc == 1
@@ -7547,36 +7550,36 @@ class TestUnsupportedVerdictDowngrade:
 
     def test_uncited_invalid_becomes_needs_discussion(self, rt, tmp_path):
         item = self._item(complexity="low")
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
         assert item.complexity == ""
 
     def test_uncited_already_addressed_becomes_needs_discussion(self, rt, tmp_path):
         item = self._item(verification="already_addressed")
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
     def test_reason_is_recorded_so_the_author_knows_why(self, rt, tmp_path):
         item = self._item(reasoning="reviewer misread the guard")
-        rt._downgrade_unsupported_verdicts([item], tmp_path)
+        triage.downgrade_unsupported_verdicts([item], tmp_path)
         assert "reviewer misread the guard" in item.reasoning
         assert "cited no line" in item.reasoning
 
     def test_cited_verdict_that_exists_in_the_tree_survives(self, rt, tmp_path):
         (tmp_path / "app.py").write_text("x = 1\n")
         item = self._item(evidence_file="app.py", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
         assert item.verification == "invalid"
 
     def test_citation_to_a_file_that_does_not_exist_is_downgraded(self, rt, tmp_path):
         """A link to nothing is no better than no link."""
         item = self._item(evidence_file="ghost.py", evidence_line=3)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
     def test_valid_verdicts_are_left_alone(self, rt, tmp_path):
         item = self._item(verification="valid", complexity="low")
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
         assert item.complexity == "low"
 
     def test_an_absolute_citation_outside_the_repo_is_downgraded(self, rt, tmp_path):
@@ -7586,7 +7589,7 @@ class TestUnsupportedVerdictDowngrade:
         outside = tmp_path.parent / f"outside_abs_{tmp_path.name}.py"
         outside.write_text("secret = 1\n")
         item = self._item(evidence_file=str(outside), evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
     def test_a_traversal_out_of_the_repo_is_downgraded(self, rt, tmp_path):
@@ -7596,31 +7599,31 @@ class TestUnsupportedVerdictDowngrade:
         outside_name = f"outside_trav_{tmp_path.name}.py"
         (tmp_path.parent / outside_name).write_text("secret = 1\n")
         item = self._item(evidence_file=f"../{outside_name}", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
     def test_a_citation_past_the_end_of_the_file_is_downgraded(self, rt, tmp_path):
         """A permalink to a line the file does not have highlights nothing."""
         (tmp_path / "app.py").write_text("x = 1\n")
         item = self._item(evidence_file="app.py", evidence_line=99)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
     def test_the_last_line_of_a_file_is_still_inside_it(self, rt, tmp_path):
         (tmp_path / "app.py").write_text("a\nb\nc\n")
         item = self._item(evidence_file="app.py", evidence_line=3)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
 
     def test_a_nested_citation_inside_the_repo_survives(self, rt, tmp_path):
         (tmp_path / "pkg").mkdir()
         (tmp_path / "pkg" / "mod.py").write_text("x = 1\n")
         item = self._item(evidence_file="pkg/mod.py", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
 
     def test_a_citation_to_a_directory_is_downgraded(self, rt, tmp_path):
         (tmp_path / "pkg").mkdir()
         item = self._item(evidence_file="pkg", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
 
 
 class TestEvidencePermalinks:
@@ -7739,7 +7742,7 @@ class TestCommentTrackingRoundTrip:
             report=PRReport(repo="owner/repo", pr_number=42),
             fixable=list(threads), fixable_items=list(comment_items),
         )
-        with patch.object(rt, "_diff_context_for_file", return_value=""), \
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(git_topology, "default_branch_cached", return_value="main"):
             fix_tracking.write(
                 adapter.tracking_path, adapter.title, adapter.items(),

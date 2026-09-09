@@ -27,13 +27,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from core import log
-from agent import invoke as agent_invoke
 from fix import engine as fix_engine
 from fix import types as fix_types
 from git import client as git_client
 from git import topology as git_topology
 from git import land
 from pr import attribution
+from pr import thread_context
+from pr import triage
 from pr import comments as pc
 from pr import comments_fix as pr_comments_fix
 from pr import history_rewrite
@@ -43,7 +44,6 @@ from pr import domains as pr_domains
 from pr import permalinks
 from pr import state as pr_state
 from pr import sync as pr_sync
-from core import proc
 from core import run_lock
 from core import publishing
 from git import push
@@ -66,7 +66,6 @@ from pr.thread_models import (
     ReportThread,
     TrackingResult,
     TriageResult,
-    triage_result_from_dict,
 )
 from gh.pr_reads import fetch_pr_data
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
@@ -76,10 +75,9 @@ from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 
-TRIAGE_CONTEXT_LINES = 10
-DIFF_CONTEXT_MAX_LINES = 100
+thread_context.TRIAGE_CONTEXT_LINES = 10
+thread_context.DIFF_CONTEXT_MAX_LINES = 100
 
-_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 _SUMMARY_MARKER = "<!-- pr-comments:summary -->"
 _APPLIED_REPLY_PREFIX = "Applied"
 _ADDRESSED_REPLY_PREFIX = "Already addressed"
@@ -105,29 +103,6 @@ _GENERATED_FOLLOWUP_RE = re.compile(
 )
 
 
-def _extract_json(text: str) -> str:
-    """Strip markdown code fences or preamble from AI output before JSON parsing."""
-    m = _FENCE_RE.search(text)
-    if m:
-        return m.group(1).strip()
-    stripped = text.strip()
-    start = stripped.find("{")
-    if start > 0:
-        end = stripped.rfind("}")
-        if end > start:
-            return stripped[start:end + 1]
-    return stripped
-
-
-def _parses_as_json(text: str) -> bool:
-    """Whether triage output can be consumed. Drives the retry-once guard."""
-    try:
-        json.loads(_extract_json(text))
-    except (json.JSONDecodeError, TypeError):
-        return False
-    return True
-
-
 def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord]) -> int:
     """Resolve all verified threads on GitHub. Returns count resolved."""
     resolved = 0
@@ -141,363 +116,6 @@ def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord
         threads[tid] = dataclasses.replace(record, state=ThreadState.RESOLVED)
         resolved += 1
     return resolved
-
-
-def _gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
-    """Read surrounding source lines for each thread's file location."""
-    snippets = []
-    for t in threads:
-        file_path = t.file
-        line = int(t.line or 0)
-        if not file_path or line == 0:
-            continue
-        full_path = repo_dir / file_path
-        if not full_path.is_file():
-            continue
-        try:
-            lines = full_path.read_text().splitlines()
-        except OSError:
-            continue
-        start = max(0, line - 1 - TRIAGE_CONTEXT_LINES)
-        end = min(len(lines), line + TRIAGE_CONTEXT_LINES)
-        snippet = "\n".join(lines[start:end])
-        if snippet:
-            snippets.append(f"--- {file_path}:{start + 1}-{end} ---\n{snippet}\n---")
-    return "\n".join(snippets)
-
-
-def _branch_commit_log(wt_path: Path | None) -> str:
-    """Commit subjects on this branch, newest first.
-
-    Triage sees code context from current HEAD, which already contains fixes made
-    in earlier rounds of the same review cycle.  Without the log it cannot tell a
-    suggestion that was acted on from one that never applied, and defaults to
-    calling the reviewer wrong.
-    """
-    if not wt_path:
-        return ""
-    base = f"origin/{git_topology.default_branch_cached(wt_path)}"
-    return git_client.out("log", "--format=%h %s", f"{base}..HEAD", cwd=wt_path)
-
-
-def _build_triage_prompt(
-    non_resolved: list[ReportThread], code_context: str,
-    unseen_comments: list[dict] | None = None,
-    commit_log: str = "",
-) -> str:
-    """Build the AI classification prompt for thread triage."""
-    thread_json = json.dumps([dataclasses.asdict(t) for t in non_resolved], indent=2)
-    context_block = ""
-    if code_context:
-        context_block = f"\nCode context for referenced files:\n{code_context}\n"
-
-    history_block = ""
-    if commit_log:
-        history_block = (
-            "\nCommits already made on this branch (newest first). A commit whose "
-            "subject matches what a thread asks for means that thread was already "
-            "acted on — classify it already_addressed, not invalid:\n"
-            f"{commit_log}\n"
-        )
-
-    comments_block = ""
-    comment_items_schema = ""
-    if unseen_comments:
-        comments_json = json.dumps(unseen_comments, indent=2)
-        comments_block = f"""
-
-Additionally, analyze these top-level PR comments. Each comment may contain multiple
-actionable points — decompose them into individual items and classify each one separately.
-Non-actionable preamble (greetings, praise, general observations) should be skipped.
-
-Top-level comments:
-{comments_json}
-"""
-        comment_items_schema = """
-  "comment_items": [
-    {{
-      "source_id": "id from input comment",
-      "source_type": "issue_comment or review_body (from input)",
-      "index": 0,
-      "reviewer": "user from input comment",
-      "classification": "actionable_suggestion|question|approval|conflicting",
-      "verification": "valid|already_addressed|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
-      "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
-      "reasoning": "brief explanation",
-      "summary": "one-line summary of this specific item",
-      "file": "file path if referenced in the item (empty string if not)",
-      "line": 0,
-      "body": "relevant excerpt from the comment for this item",
-      "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
-      "evidence_line": 0
-    }}
-  ],"""
-
-    return f"""You are a code review triage assistant. Analyze these PR review threads and classify each one.
-
-For each thread, provide:
-1. classification: one of 'actionable_suggestion', 'question', 'approval', 'conflicting'
-2. verification (only for actionable_suggestion): one of 'valid', 'already_addressed',
-   'invalid', 'needs_discussion'
-   - valid: the suggestion is correct and the code does NOT yet do what it asks
-   - already_addressed: the code already does what the reviewer asks. The code context
-     below is current HEAD, which includes commits made earlier in this same review
-     cycle — so a suggestion that looks satisfied is usually one that was ALREADY ACTED
-     ON in response to this very thread. This is agreement with the reviewer, not
-     rejection of them.
-   - invalid: the reviewer's premise is factually wrong — they misread the code, or the
-     change they describe would break something. Use this ONLY when you can state the
-     specific mistake in `reasoning`. "The code already does this" is NEVER invalid; it
-     is already_addressed. When torn between invalid and any other value, do not pick
-     invalid.
-   - needs_discussion: a judgment call, tradeoff, or design decision the author must make
-3. complexity (only for actionable_suggestion with verification=valid): one of 'low', 'medium', 'high'
-   - low: rename, remove, import fix, guard/nil check, use existing helper
-   - medium: logic change within a single function or file
-   - high: cross-file refactor, design decision, or architectural change
-4. reasoning: one sentence explaining your classification/verification
-5. summary: one-line summary of the thread
-6. evidence_file / evidence_line: the file and 1-based line that prove your verdict.
-   REQUIRED for already_addressed and invalid — those verdicts get posted back to the
-   reviewer as a claim about their code, and a claim with no line to point at is not one
-   you can make. Cite the line that already does what the reviewer asked
-   (already_addressed) or the line that contradicts their premise (invalid). If you
-   cannot name one, the verdict is needs_discussion. Leave both empty otherwise.
-
-Thread data:
-{thread_json}
-{context_block}{history_block}{comments_block}
-Return JSON matching this exact schema:
-{{
-  "threads": [
-    {{
-      "id": "id from input",
-      "state": "state from input",
-      "classification": "actionable_suggestion|question|approval|conflicting",
-      "verification": "valid|already_addressed|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
-      "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
-      "reasoning": "brief explanation",
-      "file": "file from input",
-      "line": "line_from_input",
-      "reviewer": "reviewer from input",
-      "summary": "one-line summary",
-      "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
-      "evidence_line": 0
-    }}
-  ],{comment_items_schema}
-  "stats": {{
-    "total": "count of threads",
-    "actionable": "count of actionable threads",
-    "questions": "count of question threads",
-    "approvals": "count of approval threads",
-    "conflicting": "count of conflicting threads",
-    "valid": "count of valid threads",
-    "invalid": "count of invalid threads",
-    "already_addressed": "count of already-addressed threads",
-    "comment_items_total": "count of decomposed comment items (0 if none)",
-    "comment_items_actionable": "count of actionable comment items (0 if none)"
-  }}
-}}
-
-IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."""
-
-
-def _collect_unseen_comments(report: PRReport) -> list[dict]:
-    """Collect unseen issue and review body comments for triage decomposition."""
-    unseen = []
-    for c in report.issue_comments:
-        if not c.get("seen"):
-            unseen.append({
-                "id": c["id"],
-                "source_type": "issue_comment",
-                "user": c.get("user", ""),
-                "body": c.get("body", ""),
-            })
-    for c in report.review_body_comments:
-        if not c.get("seen"):
-            unseen.append({
-                "id": c["id"],
-                "source_type": "review_body",
-                "user": c.get("user", ""),
-                "body": c.get("body", ""),
-            })
-    return unseen
-
-
-def _assign_item_ids(comment_items: list[CommentItem]) -> None:
-    """Assign synthetic IDs to decomposed comment items in place."""
-    for item in comment_items:
-        prefix = "ic" if item.source_type == "issue_comment" else "rb"
-        item.id = f"{prefix}-{item.source_id}-{item.index}"
-
-
-_UNSUPPORTED_VERDICTS = ("already_addressed", "invalid")
-
-_DOWNGRADE_REASON = (
-    "downgraded from {verdict}: triage cited no line in this repo to back the claim"
-)
-
-
-def _downgrade_unsupported_verdicts(
-    entries: list[CommentItem], repo_dir: Path, trail: Trail | None = None,
-) -> int:
-    """Demote verdicts that cannot cite code to needs_discussion. Returns count.
-
-    `already_addressed` and `invalid` are posted back to the reviewer as claims
-    about their code, so each one has to point at a line.  A verdict whose cited
-    location does not exist in the tree is no better than one with no location:
-    the reader gets a link to nothing.  Rather than post an unsupported claim,
-    hand the thread to the author.
-    """
-    downgraded = 0
-    for entry in entries:
-        if entry.verification not in _UNSUPPORTED_VERDICTS:
-            continue
-        if permalinks.evidence_is_real(repo_dir, entry):
-            continue
-        reason = _DOWNGRADE_REASON.format(verdict=entry.verification)
-        if trail:
-            trail.info("triage_downgrade", reason, data={"thread": entry.id})
-        log.warn(f"{entry.id}: {reason} — routing to needs_discussion")
-        entry.verification = "needs_discussion"
-        entry.complexity = ""
-        entry.evidence_file = ""
-        entry.evidence_line = 0
-        entry.reasoning = f"{entry.reasoning} ({reason})".strip()
-        downgraded += 1
-    return downgraded
-
-
-def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
-                trail: Trail | None = None) -> tuple[TriageResult | None, int]:
-    """Classify non-resolved threads and decompose top-level comments via AI.
-
-    Returns (triage_result, exit_code). Caller handles stdout output.
-    """
-    non_resolved = [t for t in report.threads if t.state not in (ThreadState.RESOLVED, ThreadState.ADDRESSED)]
-    unseen_comments = _collect_unseen_comments(report)
-
-    if not non_resolved and not unseen_comments:
-        return TriageResult(), 0
-
-    code_context = _gather_code_context(non_resolved, repo_dir)
-    prompt = _build_triage_prompt(
-        non_resolved, code_context,
-        unseen_comments=unseen_comments or None,
-        commit_log=_branch_commit_log(repo_dir),
-    )
-
-    pr_number = ctx_args.get("pr_number")
-    answer = agent_invoke.run_prompt(
-        Phase.COMMENTS_TRIAGE, prompt,
-        cwd=repo_dir, usable=_parses_as_json, task="comment-triage",
-        repo=ctx_args.get("repo"), pr=str(pr_number) if pr_number else None,
-    )
-    if answer.exit_code != 0:
-        if trail:
-            trail.error("triage", "AI prompt failed",
-                        data={"exit_code": answer.exit_code})
-        log.error("ai prompt failed")
-        return None, 1
-
-    stdout = answer.text
-    try:
-        raw = json.loads(_extract_json(stdout))
-    except (json.JSONDecodeError, TypeError):
-        preview = (stdout or "")[:proc.DETAIL_LIMIT]
-        if trail:
-            trail.failure("triage", "AI returned non-JSON output",
-                          output=stdout or "")
-        log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
-        return None, 1
-
-    triage_result = triage_result_from_dict(raw)
-    _assign_item_ids(triage_result.comment_items)
-
-    downgraded = _downgrade_unsupported_verdicts(
-        triage_result.threads, repo_dir, trail,
-    ) + _downgrade_unsupported_verdicts(
-        triage_result.comment_items, repo_dir, trail,
-    )
-    if downgraded:
-        # The model's own count is stale once a verdict moves.
-        triage_result.stats.invalid = sum(
-            1 for t in triage_result.threads if t.verification == "invalid"
-        )
-
-    # Update triage state
-    try:
-        stats = triage_result.stats
-        st = pr_state.load_or_init(**ctx_args)
-        pr_state.apply(st, pr_domains.TriageSummary(
-            total=stats.total,
-            actionable=stats.actionable,
-            valid=stats.valid,
-            questions=stats.questions,
-            comment_items_total=stats.comment_items_total,
-            comment_items_actionable=stats.comment_items_actionable,
-            updated_at=pr_state.now_iso(),
-        ))
-        pr_state.save_state(ctx_args["target_dir"], st)
-    except Exception as exc:
-        if trail:
-            trail.error("triage", f"state update failed: {exc}")
-        log.error(f"triage state update failed: {exc}")
-
-    return triage_result, 0
-
-
-def _thread_comment_text(comments: list) -> str:
-    """Format a thread's comments as quoted conversation."""
-    parts = []
-    for c in comments:
-        author = c.get("author", {}).get("login", "unknown")
-        body = c.get("body", "").strip()
-        if body:
-            quoted = "\n".join(f"> {line}" for line in body.splitlines())
-            parts.append(f"**@{author}:**\n{quoted}")
-    return "\n\n".join(parts)
-
-
-def _code_context_for_thread(file_path: str, line: int | str, repo_dir: Path) -> str:
-    """Read surrounding source lines for a single thread's file location."""
-    line = int(line) if line else 0
-    if not file_path or line == 0:
-        return ""
-    full_path = repo_dir / file_path
-    if not full_path.is_file():
-        return ""
-    try:
-        lines = full_path.read_text().splitlines()
-    except OSError:
-        return ""
-    start = max(0, line - 1 - TRIAGE_CONTEXT_LINES)
-    end = min(len(lines), line + TRIAGE_CONTEXT_LINES)
-    snippet = "\n".join(lines[start:end])
-    return f"```\n{snippet}\n```" if snippet else ""
-
-
-def _diff_context_for_file(
-    file_path: str, wt_path: Path, default_branch: str | None = None,
-) -> str:
-    """Get the PR diff for a file, truncated to DIFF_CONTEXT_MAX_LINES.
-
-    An omitted default_branch is resolved rather than assumed to be "main", so a
-    caller that does not know the trunk gets the same answer as one that does
-    instead of an empty diff from `origin/main` in a `master` repository.
-    """
-    if not file_path:
-        return ""
-    default_branch = default_branch or git_topology.default_branch_cached(wt_path)
-    diff = git_client.out("diff", f"origin/{default_branch}", "--", file_path, cwd=wt_path)
-    if not diff:
-        return ""
-    lines = diff.splitlines()
-    total = len(lines)
-    if total > DIFF_CONTEXT_MAX_LINES:
-        lines = lines[:DIFF_CONTEXT_MAX_LINES]
-        lines.append(f"... ({total - DIFF_CONTEXT_MAX_LINES} more lines)")
-    return "```diff\n" + "\n".join(lines) + "\n```"
 
 
 def _fix_items(
@@ -518,9 +136,9 @@ def _fix_items(
     diff_cache: dict[str, str] = {}
 
     def _shared_context(file: str, line: int) -> str:
-        code_ctx = _code_context_for_thread(file, line, repo_dir) if file and line else ""
+        code_ctx = thread_context.code_context_for_thread(file, line, repo_dir) if file and line else ""
         if file and file not in diff_cache:
-            diff_cache[file] = _diff_context_for_file(file, repo_dir, default_branch)
+            diff_cache[file] = thread_context.diff_context_for_file(file, repo_dir, default_branch)
         diff_ctx = diff_cache.get(file, "")
         block = f"**Code context:**\n{code_ctx}\n\n" if code_ctx else ""
         return block + (f"**PR diff for this file:**\n{diff_ctx}\n\n" if diff_ctx else "")
@@ -528,7 +146,7 @@ def _fix_items(
     items: list[fix_types.FixItem] = []
     for thread in fixable:
         report_thread = threads_by_id.get(thread.id)
-        conversation = _thread_comment_text(report_thread.comments if report_thread else [])
+        conversation = thread_context.thread_comment_text(report_thread.comments if report_thread else [])
         body = f"**Summary:** {thread.summary}\n\n" if thread.summary else ""
         if conversation:
             body += f"**Conversation:**\n{conversation}\n\n"
@@ -4031,7 +3649,7 @@ def _run_threads(trail, args, ctx) -> None:
         trail.decision("triage_mode", f"running {triage_mode}",
                        reason="--fix flag" if args.fix else "--triage flag",
                        data={"fix": args.fix, "triage": args.triage})
-        triage_result, rc = _run_triage(report, toplevel, ctx_args, trail=trail)
+        triage_result, rc = triage.run_triage(report, toplevel, ctx_args, trail=trail)
         if rc != 0:
             sys.exit(rc)
 

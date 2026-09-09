@@ -61,6 +61,29 @@ common_setup() {
   # this call, pointing at a file it wrote — see lint_sweep.bats.
   export GIT_CONFIG_GLOBAL="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/gitconfig-global"
   export GIT_CONFIG_SYSTEM=/dev/null
+
+  # Pin mise's global config to the real one, for the same reason git gets a
+  # config of its own: a test that swaps HOME otherwise changes what mise
+  # considers global, and mise ignores `trusted_config_paths` in a config that
+  # is not global "for security reasons". The file then counts as untrusted,
+  # which mise treats as an error rather than a warning — so every jq and yq
+  # call in that test dies, because both resolve to mise shims on a machine
+  # that manages them.
+  #
+  # It fails as a parse error on stderr and a non-zero exit from the shim, not
+  # as anything naming mise, so the symptom is an assertion about YAML content
+  # failing for no visible reason. Exported because the tools under test are
+  # subprocesses.
+  #
+  # bin/local/run-tests exports this too, and is what pre-push, CI, and the
+  # Taskfile all go through — it has to, because setup_file() runs before any
+  # per-test setup and one file swaps HOME there, too early for this function
+  # to correct. The line is kept here as well so a developer running `bats
+  # tests/one.bats` by hand gets the same isolation.
+  #
+  # Only set when the caller has not: a test whose subject is mise's own config
+  # resolution points this elsewhere and keeps control.
+  export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
 }
 
 # common_teardown — call last in every test's teardown().
@@ -156,6 +179,28 @@ make_fake_binary() {
   mkdir -p "$dir"
   printf '#!/bin/bash\necho "fake output"\n' > "$dir/$name"
   chmod +x "$dir/$name"
+}
+
+# shim_untrap DIR — prints the PATH reassignment a passthrough shim in DIR must
+# run before handing its call to the real tool.
+#
+# A shim hands a call on by dropping its own directory from PATH and re-execing
+# the bare name, never by exec-ing the path `command -v` reported. Where a
+# version manager owns the tool, that path is itself a shim — mise installs its
+# own as symlinks to the mise binary — which re-resolves the tool through PATH,
+# finds this shim still in front of it, and execs it again. The recursion never
+# terminates, so the test hangs rather than fails: bats reports nothing and the
+# suite stalls until something outside it intervenes.
+#
+# The output must stay a single statement with no whitespace that would split:
+# callers interpolate it unquoted into a heredoc body.
+#
+# BATS_TEST_TIMEOUT cannot rescue a shim that gets this wrong. The runaway is a
+# chain of execs, each replacing the process image, so bats' watchdog loses the
+# pid it was told to kill.
+shim_untrap() {
+  # shellcheck disable=SC2016  # the expansion belongs to the generated shim, not to us
+  printf 'PATH="${PATH//"%s:"/}"' "$1"
 }
 
 # make_fake_task_dir REPO_ROOT — creates $TMPDIR/fake-task-config with a

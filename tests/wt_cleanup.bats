@@ -573,8 +573,7 @@ JSON
   printf 'real work\n' > "$FEAT_WT/notes.md"
   _write_merged_pair '{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}'
 
-  local real_git fake_bin
-  real_git="$(command -v git)"
+  local fake_bin
   fake_bin="$TMPDIR/fake-git-bin"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/git" <<EOF
@@ -582,7 +581,8 @@ JSON
 if [[ "\$1" == "-C" && "\$2" == "$FEAT_WT" && "\$3" == "status" ]]; then
   exit 1
 fi
-exec "$real_git" "\$@"
+$(shim_untrap "$fake_bin")
+exec git "\$@"
 EOF
   chmod +x "$fake_bin/git"
 

@@ -134,8 +134,25 @@ tools: []'
   local -a sources=() targets=()
   collect_claude_env_vars sources targets "$REPO_ROOT"
   printf '%s\n' "${sources[@]}" | grep -qx CLAUDE_CODE_USE_VERTEX
-  printf '%s\n' "${sources[@]}" | grep -qx ANTHROPIC_VERTEX_PROJECT_ID
+  printf '%s\n' "${sources[@]}" | grep -qx GOOGLE_CLOUD_PROJECT
   printf '%s\n' "${sources[@]}" | grep -qx CLOUD_ML_REGION
+}
+
+@test "the Vertex project id maps to Claude Code's own name" {
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$REPO_ROOT"
+  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_VERTEX_PROJECT_ID
+}
+
+@test "the Google location never reaches the allowlist" {
+  # GOOGLE_CLOUD_LOCATION is declared in its own registry without claude_env for
+  # two reasons: Claude Code reads CLOUD_ML_REGION and has no use for it, and a
+  # value mirrored into settings.json cannot be overridden from a shell
+  # afterwards — which would foreclose the divergence the split exists to allow.
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$REPO_ROOT"
+  run bash -c 'printf "%s\n" "$@" | grep -qx GOOGLE_CLOUD_LOCATION' _ "${sources[@]}" "${targets[@]}"
+  [ "$status" -ne 0 ]
 }
 
 @test "the model routing vars use generic AI_* names" {

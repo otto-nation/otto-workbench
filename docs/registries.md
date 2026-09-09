@@ -91,6 +91,7 @@ env:
     default: "linux/amd64"
     setup_url: https://...
     prefix: "linux/"
+    target: OTHER_NAME_FOR_IT        # optional — see below
 
 auth:
   env_var: CONTEXT7_API_KEY          # required within auth block
@@ -100,11 +101,21 @@ auth:
 
 Env var names must be unique across all registries — the validator enforces no duplicates.
 
+A var with a `default` is written into `~/.env.local` as an active export; one without is written commented out, as a reference the operator uncomments. Give a default only to a value that is right on every machine the registry applies to.
+
+`target` renames the variable on its way out to a consumer that spells it differently, and is read only by the [`claude_env`](#claude_env--variables-claude-code-needs-without-a-shell) mirror below — `~/.env.local` always carries `var`. Use it where one value has several names: `GOOGLE_CLOUD_PROJECT` is what gcloud, the Google SDKs and Pi read, and reaches Claude Code as `ANTHROPIC_VERTEX_PROJECT_ID` through a `target`. It cannot express two values that merely look alike — a `target` is one variable under two names, so if the two could ever legitimately differ, declare them separately instead. `ai/lib/vertex.env.yml` and `ai/lib/vertex-google.env.yml` are split along exactly that line.
+
+The validator checks `var` and ignores `target`, so a misspelled target fails silently — the variable simply never appears under the name its consumer reads.
+
 ### `claude_env` — variables Claude Code needs without a shell
 
 A Claude Code session started outside an interactive shell — the desktop app, a launchd job, an IDE extension — inherits nothing from `~/.env.local`, so a variable that decides how the CLI routes has to reach it through `~/.claude/settings.json` instead. `meta.claude_env: true` marks a registry whose `env[]` belongs in that file: on every sync, [`step_claude_settings`](../ai/claude/steps.sh) reads the values `~/.env.local` sets for those variables and writes them into the settings file's `env` block.
 
 The block is a mirror, not a merge. A variable dropped from `~/.env.local` is removed from the settings file too — settings.json wins over the environment in Claude Code, so an entry left behind could not be overridden from a shell afterwards. Variables under `env` that no flagged registry declares were put there by hand and are left alone, and a machine with no `~/.env.local` at all is left alone entirely.
+
+The managed set is keyed on `target` names, since those are what appear in the settings file. Changing a `target` therefore strands the old name there: only a name the registries still declare is ever removed. Renaming a `target` needs a migration; renaming a `var` does not.
+
+One read is not treated as a withdrawal: when *no* declared variable resolves, the block is left as it is. A total withdrawal in one sync is far rarer than a `~/.env.local` the run could not read as expected, and this is the direction that cannot be undone from a shell. To empty the block deliberately, drop the registry's flag.
 
 The flag is opt-in per registry because the two files have different audiences: `~/.env.local` holds API tokens and is the operator's alone, while `~/.claude/settings.json` is written world-readable. Set it only on a registry whose variables are all safe to publish there — routing, model selection, region — never on one declaring a credential. `~/.zshrc` is not a place for these either: the config layers are sourced before it, so a value exported there is invisible to them (see [Execution Flow](execution-flow.md)) and the mirror never sees it at all.
 

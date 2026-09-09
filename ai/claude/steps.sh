@@ -241,6 +241,9 @@ _claude_env_json() {
 # the environment in Claude Code, so a stale entry cannot be overridden from a
 # shell. Only variables a registry declared with `meta.claude_env: true` are in
 # scope; anything else under `.env` was put there by hand and stays.
+#
+# The one exception is an all-empty read, which is treated as a failure to read
+# rather than a wholesale withdrawal — see the guard below.
 _claude_mirror_env() {
   local result="$1"
 
@@ -261,6 +264,26 @@ _claude_mirror_env() {
 
   local env_json managed_json
   env_json=$(_claude_env_json "${entries[@]}")
+
+  # Not one declared variable resolved. Read literally that is every one of them
+  # withdrawn at once, and the sweep below would empty the block — but a machine
+  # turning off every harness variable in a single sync is far rarer than a
+  # ~/.env.local this run could not read as expected: a file half-written by an
+  # interrupted edit, or one whose variables have all been renamed at once.
+  #
+  # Withdrawal is what cannot be undone from a shell afterwards — settings.json
+  # wins over the environment — so the ambiguous case keeps what is already
+  # there. Emptying the block stays available by dropping the registry flag,
+  # which says so deliberately instead of by absence.
+  #
+  # This is a backstop, not the guard against a partial read: a rename that
+  # leaves some names resolving still withdraws the rest, which is why every
+  # entry point runs migrations before reaching here.
+  if [[ "$env_json" == '{}' ]]; then
+    printf '%s' "$result"
+    return 0
+  fi
+
   # The managed list uses target names — those are the keys that appear in the
   # env block and need to be tracked for cleanup when dropped from ~/.env.local.
   managed_json=$(printf '%s\n' "${targets[@]}" | jq -Rn '[inputs]')

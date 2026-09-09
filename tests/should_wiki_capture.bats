@@ -66,6 +66,13 @@ _run_gate() {
   run bash -c "cd '$REPO' && '$SHOULD_CAPTURE'"
 }
 
+# _stale_ts — a stamp comfortably past the gate's 24h interval, and _fresh_ts
+# one comfortably inside it. Named here so the relationship to
+# CAPTURE_INTERVAL_HOURS in should-wiki-capture.sh is stated once rather than
+# copied as a bare offset into every case.
+_stale_ts() { printf '%s' "$(( $(date +%s) - 25 * 3600 ))"; }
+_fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
+
 # ── Due ──────────────────────────────────────────────────────────────────────
 
 @test "a repo with a wiki, no stamp and enough sessions is due" {
@@ -75,13 +82,15 @@ _run_gate() {
 }
 
 @test "a stamp older than the interval is due" {
-  _make_sessions 3 "$(( $(date +%s) - 90000 ))"
+  # Session count well clear of the minimum, so only the interval is under test.
+  _make_sessions 10 "$(_stale_ts)"
   _run_gate
   [ "$status" -eq 0 ]
 }
 
 @test "exactly the minimum session count is due" {
-  _make_sessions 3 "$(( $(date +%s) - 90000 ))"
+  # MIN_SESSIONS is 3, and the boundary is inclusive.
+  _make_sessions 3 "$(_stale_ts)"
   _run_gate
   [ "$status" -eq 0 ]
 }
@@ -89,7 +98,7 @@ _run_gate() {
 # ── Not due ──────────────────────────────────────────────────────────────────
 
 @test "a stamp inside the interval is not due" {
-  _make_sessions 5 "$(( $(date +%s) - 3600 ))"
+  _make_sessions 10 "$(_fresh_ts)"
   _run_gate
   [ "$status" -eq 1 ]
 }
@@ -101,7 +110,7 @@ _run_gate() {
 }
 
 @test "sessions older than the stamp do not count toward the minimum" {
-  _make_sessions 5 "$(( $(date +%s) - 90000 ))" "202001010000"
+  _make_sessions 5 "$(_stale_ts)" "202001010000"
   _run_gate
   [ "$status" -eq 1 ]
 }
@@ -128,7 +137,7 @@ _run_gate() {
   printf '#!/usr/bin/env bash\ntouch "%s/wiki-was-called"\nexit 0\n' "$TEST_HOME" \
     > "$STUB_BIN/wiki"
   chmod +x "$STUB_BIN/wiki"
-  _make_sessions 5 "$(( $(date +%s) - 3600 ))"
+  _make_sessions 10 "$(_fresh_ts)"
   _run_gate
   [ "$status" -eq 1 ]
   [ ! -f "$TEST_HOME/wiki-was-called" ]
@@ -146,13 +155,13 @@ _run_gate() {
   local i
   for i in 1 2 3 4 5; do printf '{}\n' > "$other/session-$i.jsonl"; done
 
-  _make_sessions 5 "$(( $(date +%s) - 3600 ))"
+  _make_sessions 10 "$(_fresh_ts)"
   _run_gate
   [ "$status" -eq 1 ]
 }
 
 @test "the gate reads the stamp for the repo it was run from" {
-  _make_sessions 3 "$(( $(date +%s) - 90000 ))"
+  _make_sessions 10 "$(_stale_ts)"
   # A fresh stamp on a different repo must not suppress this one.
   local other
   other="$(_project_dir "$TEST_HOME/other-repo")"

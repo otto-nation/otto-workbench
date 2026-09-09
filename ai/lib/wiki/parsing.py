@@ -28,8 +28,13 @@ CONTRADICTION_RE = re.compile(r"\[CONTRADICTION\]", re.IGNORECASE)
 # entry written exactly as documented counted for nothing — `wiki status` showed
 # no backlog and `wiki lint` reported nothing to process, which is indisting-
 # uishable from a log that is genuinely drained.
+# One optional bullet, then one optional bracketed date, then the keyword —
+# which admits `- SESSION_OBSERVATION:`, `[DATE] SESSION_OBSERVATION:` and the
+# two combined, and nothing looser. A second bracket group ahead of the bullet
+# would also match, but no writer produces that order and matching it would only
+# widen what counts as an entry.
 _LOG_UNPROCESSED_RE = re.compile(
-    r"^\s*(?:\[[^\]]*\]\s*)?[-*]?\s*(?:\[[^\]]*\]\s*)?(SESSION_OBSERVATION|QUERY_GAP)\b",
+    r"^\s*(?:[-*]\s*)?(?:\[[^\]]*\]\s*)?(SESSION_OBSERVATION|QUERY_GAP)\b",
 )
 
 # Log lines open with a bracketed date, so the event keyword is matched on its own

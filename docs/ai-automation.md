@@ -258,7 +258,7 @@ Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale gi
 
 ### Manual triggers
 
-Every lifecycle skill can be run on demand by its invocation in the table above.
+Every lifecycle skill can be run on demand by its invocation in the Skill Reference above.
 
 ## Task Automation
 

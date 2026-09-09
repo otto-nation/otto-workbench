@@ -3031,12 +3031,12 @@ can act on — except for generated files, which are rebuilt rather than edited,
 because prompting one costs a whole call to produce what the generator emits in
 milliseconds.
 
-# ceiling: a fourth hand-rolled fix loop that has not adopted ``fix.engine`` —
-# it has no outcome records, no retry on unparsed output, and no tracking
-# artifact, all of which the engine already owns. Rewrite this module as a
-# ``PrePushFixAdapter`` when the engine grows a ``LandSpec.args`` to carry
-# ``--force-with-lease`` and a ``PhaseShape.FIX`` phase for pre-push work;
-# until both exist the adoption cannot preserve the force-push this needs.
+ceiling: a fourth hand-rolled fix loop that has not adopted ``fix.engine`` — it
+has no outcome records, no retry on unparsed output, and no tracking artifact,
+all of which the engine already owns. Rewrite this module as a
+``PrePushFixAdapter`` when the engine grows a ``LandSpec.args`` to carry
+``--force-with-lease`` and a ``PhaseShape.FIX`` phase for pre-push work; until
+both exist the adoption cannot preserve the force-push this needs.
 
 ### rebase/refusals.py
 

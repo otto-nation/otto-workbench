@@ -34,7 +34,6 @@ from core import report as core_report  # noqa: E402
 from rebase import inspect as rebase_inspect  # noqa: E402
 from rebase import prepush  # noqa: E402
 from rebase import types as rebase_types  # noqa: E402
-from pr import domains as pr_domains  # noqa: E402
 from rebase import conflicts as rebase_conflicts  # noqa: E402
 from rebase import resolve_ai as rebase_resolve  # noqa: E402
 from rebase import repo_regen  # noqa: E402

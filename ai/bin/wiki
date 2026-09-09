@@ -43,6 +43,7 @@ sys.path.insert(0, str(_BIN_DIR.parent / "lib"))
 from _version import version_string as _version_string  # noqa: E402
 from config.workbench_config import load_config_or_default  # noqa: E402
 from core import proc  # noqa: E402
+from git import client as git_client  # noqa: E402
 
 SCRIPT = Path(__file__).name
 
@@ -364,11 +365,19 @@ def is_wiki(path: Path) -> bool:
 def configured_dirname(start: Path) -> str:
     """The `wiki.dir` setting for *start*, or the default when unset.
 
+    Resolved against the repo root rather than *start*: ``project_config_path``
+    looks for `.workbench.yml` directly under the path it is given instead of
+    walking up, so passing the search start reads the project scope from a file
+    that is not there, and a `--project` setting is honoured only when the CLI
+    runs from the repo root itself. *start* stands in when there is no repo.
+
     Read through ``load_config_or_default`` so an unreadable config file leaves
     the knowledge base findable. Every other command here works without config;
     this one should not be the reason none of them run.
     """
-    configured = load_config_or_default(start).wiki.dir.strip()
+    toplevel = git_client.out("rev-parse", "--show-toplevel", cwd=start)
+    root = Path(toplevel) if toplevel else start
+    configured = load_config_or_default(root).wiki.dir.strip()
     return configured or DEFAULT_WIKI_DIRNAME
 
 

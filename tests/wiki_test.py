@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,6 +11,10 @@ from conftest import load_script
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 
 wiki = load_script("wiki_cli", BIN_DIR / "wiki")
+
+# `wiki` inserts `ai/lib` onto sys.path as a side effect of loading, which is
+# what makes this importable without a second sys.path.insert of its own.
+from config.workbench_config import WikiConfig, WorkbenchConfig  # noqa: E402
 
 # Comfortably past the 180-day `staleness_threshold_days` default, so a test
 # reading the default and one overriding it both turn on the same offset.
@@ -117,40 +122,76 @@ class TestResolution:
 
 
 class TestConfiguredDirectory:
-    """`wiki.dir` names the directory the walk looks for at each level."""
+    """The `dirname` parameter names the directory the walk looks for at each level."""
 
-    def test_default_is_wiki(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config(""))
-        root = make_wiki(tmp_path)
-        assert wiki.find_wiki(tmp_path) == root
-
-    def test_configured_name_is_found(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
+    def test_configured_name_is_found(self, tmp_path):
         root = make_wiki(tmp_path, dirname="knowledge")
-        assert wiki.find_wiki(tmp_path) == root
+        assert wiki.find_wiki(tmp_path, dirname="knowledge") == root
 
-    def test_configured_name_is_found_from_a_nested_directory(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
+    def test_configured_name_is_found_from_a_nested_directory(self, tmp_path):
         root = make_wiki(tmp_path, dirname="knowledge")
         nested = tmp_path / "src" / "deep"
         nested.mkdir(parents=True)
+        assert wiki.find_wiki(nested, dirname="knowledge") == root
+
+    def test_default_name_is_ignored_when_another_is_configured(self, tmp_path):
+        """Configuring a name means that name, not that name as well as `wiki/`."""
+        make_wiki(tmp_path)
+        assert wiki.find_wiki(tmp_path, dirname="knowledge") is None
+
+    def test_explicit_path_ignores_the_setting(self, tmp_path):
+        root = make_wiki(tmp_path, dirname="elsewhere")
+        assert wiki.find_wiki(tmp_path, explicit=str(root), dirname="knowledge") == root
+
+
+class TestConfiguredDirnameResolvesTheRepoRoot:
+    """`wiki.dir` is read from the repo root, whatever directory the walk starts in.
+
+    `project_config_path` looks for `.workbench.yml` directly under the path it
+    is handed rather than walking up, so passing the search-start directory read
+    the project scope from a file that is not there — and a `--project` setting
+    was honoured only when the CLI happened to run from the repo root itself.
+
+    These use a real git repo and a real config file rather than a stand-in,
+    because a monkeypatched `load_config_or_default` ignores the argument under
+    test and cannot fail this way.
+    """
+
+    def _repo(self, tmp_path: Path, dirname: str) -> Path:
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / ".workbench.yml").write_text(f"wiki:\n  dir: {dirname}\n", encoding="utf-8")
+        return tmp_path
+
+    def test_read_from_the_repo_root(self, tmp_path):
+        repo = self._repo(tmp_path, "knowledge")
+        assert wiki.configured_dirname(repo) == "knowledge"
+
+    def test_read_from_a_nested_directory(self, tmp_path):
+        repo = self._repo(tmp_path, "knowledge")
+        nested = repo / "src" / "deep"
+        nested.mkdir(parents=True)
+        assert wiki.configured_dirname(nested) == "knowledge"
+
+    def test_the_walk_honours_it_from_a_nested_directory(self, tmp_path):
+        """End to end: the setting reaches `find_wiki`, not just `configured_dirname`."""
+        repo = self._repo(tmp_path, "knowledge")
+        root = make_wiki(repo, dirname="knowledge")
+        nested = repo / "src" / "deep"
+        nested.mkdir(parents=True)
         assert wiki.find_wiki(nested) == root
 
-    def test_default_name_is_ignored_when_another_is_configured(self, tmp_path, monkeypatch):
-        """Configuring a name means that name, not that name as well as `wiki/`."""
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
-        make_wiki(tmp_path)
-        assert wiki.find_wiki(tmp_path) is None
+    def test_outside_a_repo_falls_back_to_the_start_directory(self, tmp_path):
+        """No git toplevel to resolve; the search start stands in for it."""
+        (tmp_path / ".workbench.yml").write_text("wiki:\n  dir: knowledge\n", encoding="utf-8")
+        assert wiki.configured_dirname(tmp_path) == "knowledge"
+
+
+class TestConfiguredDirname:
+    """`configured_dirname` reads `wiki.dir`, defaulting when it is unset or blank."""
 
     def test_blank_setting_falls_back_to_the_default(self, tmp_path, monkeypatch):
         monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("   "))
-        root = make_wiki(tmp_path)
-        assert wiki.find_wiki(tmp_path) == root
-
-    def test_explicit_path_ignores_the_setting(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
-        root = make_wiki(tmp_path, dirname="elsewhere")
-        assert wiki.find_wiki(tmp_path, explicit=str(root)) == root
+        assert wiki.configured_dirname(tmp_path) == wiki.DEFAULT_WIKI_DIRNAME
 
 
 class TestFrontmatter:
@@ -536,13 +577,6 @@ def _days_ago(days: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
 
 
-def _config(dirname: str):
-    """A stand-in for the merged workbench config, carrying just `wiki.dir`."""
-
-    class _Wiki:
-        dir = dirname
-
-    class _Config:
-        wiki = _Wiki()
-
-    return _Config()
+def _config(dirname: str) -> WorkbenchConfig:
+    """A merged workbench config carrying just `wiki.dir`."""
+    return WorkbenchConfig(wiki=WikiConfig(dir=dirname))

@@ -265,20 +265,15 @@ _claude_mirror_env() {
   local env_json managed_json
   env_json=$(_claude_env_json "${entries[@]}")
 
-  # Not one declared variable resolved. Read literally that is every one of them
-  # withdrawn at once, and the sweep below would empty the block — but a machine
-  # turning off every harness variable in a single sync is far rarer than a
-  # ~/.env.local this run could not read as expected: a file half-written by an
-  # interrupted edit, or one whose variables have all been renamed at once.
+  # Not one declared variable resolved, across every flagged registry. Far more
+  # often a ~/.env.local this run could not read as expected than a machine
+  # turning off every harness variable at once, and withdrawal is the direction
+  # that cannot be undone from a shell. Emptying the block stays available by
+  # dropping the registry flag.
   #
-  # Withdrawal is what cannot be undone from a shell afterwards — settings.json
-  # wins over the environment — so the ambiguous case keeps what is already
-  # there. Emptying the block stays available by dropping the registry flag,
-  # which says so deliberately instead of by absence.
-  #
-  # This is a backstop, not the guard against a partial read: a rename that
-  # leaves some names resolving still withdraws the rest, which is why every
-  # entry point runs migrations before reaching here.
+  # A backstop, not the guard against a partial read: a rename that leaves some
+  # names resolving still withdraws the rest, which is why every entry point
+  # runs migrations before reaching here.
   if [[ "$env_json" == '{}' ]]; then
     printf '%s' "$result"
     return 0

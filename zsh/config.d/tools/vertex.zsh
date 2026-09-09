@@ -45,9 +45,12 @@ _wb_vertex_pairs=(
 # function or by someone else — and 1 while a source is still missing and a
 # later attempt could still succeed.
 _wb_vertex_mirror() {
-  local pair source target settled=0
+  # `src` rather than `source`, which is the shell builtin: a local of that name
+  # shadows nothing a command lookup uses, but reading it back is needlessly
+  # ambiguous.
+  local pair src target pending=0
   for pair in $_wb_vertex_pairs; do
-    source="${pair%%:*}"
+    src="${pair%%:*}"
     target="${pair##*:}"
 
     # Already set: by the operator, by an earlier pass, or by another tool.
@@ -55,13 +58,13 @@ _wb_vertex_mirror() {
     if [[ -n "${(P)target:-}" ]]; then
       continue
     fi
-    if [[ -z "${(P)source:-}" ]]; then
-      settled=1
+    if [[ -z "${(P)src:-}" ]]; then
+      pending=1
       continue
     fi
-    export "$target=${(P)source}"
+    export "$target=${(P)src}"
   done
-  return $settled
+  return $pending
 }
 
 if _wb_vertex_mirror; then

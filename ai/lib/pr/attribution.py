@@ -172,7 +172,7 @@ def attribute_commit(
     Callers decide how to render an entry with no citation. They do not get to
     invent one.
     """
-    sha = getattr(entry, "commit_sha", "")
+    sha = entry.commit_sha
     pass_sha = cp.sha or ""
     published = cp.status == CommitStatus.PUSHED
     if sha and sha != pass_sha:
@@ -221,7 +221,7 @@ def stamp_pass_commit(fixed: list[CommentItem], sha: str) -> None:
     if not sha:
         return
     for entry in fixed:
-        if not getattr(entry, "commit_sha", ""):
+        if not entry.commit_sha:
             entry.commit_sha = sha
 
 
@@ -236,7 +236,7 @@ def stamp_read_sha(entries: list[CommentItem], sha: str) -> None:
     if not sha:
         return
     for entry in entries:
-        if not getattr(entry, "read_sha", ""):
+        if not entry.read_sha:
             entry.read_sha = sha
 
 
@@ -409,12 +409,10 @@ class AddressingHistory:
         # answers "when did it become true?". A stored outcome carries no
         # citation, so it falls back to the location GitHub anchored the thread
         # at.
-        evidence_file = getattr(entry, "evidence_file", "")
-        evidence_line = int(getattr(entry, "evidence_line", 0) or 0)
-        if evidence_file and evidence_line:
-            where = (evidence_file, evidence_line)
+        if entry.has_evidence():
+            where = (entry.evidence_file, entry.evidence_line)
         else:
-            where = (entry.file, int(entry.line or 0))
+            where = (entry.file, entry.line)
         if where not in self._commits:
             self._commits[where] = find_addressing_commit(self._wt_path, *where) or ""
         return self._commits[where]

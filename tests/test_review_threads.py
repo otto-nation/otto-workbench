@@ -31,18 +31,18 @@ from pr import state as pr_state
 from core import proc
 from core.proc import CmdResult
 from pr.comments_state import ThreadState
-from pr.comments_fix import FixSummary
-from pr.domains import SupersessionKind
-from git.land import CommitStatus
+from core import markdown
 from git import client as git_client
+from git import topology as git_topology
+from git.land import CommitStatus
 from pr import attribution
 from pr import history_rewrite
-from git import topology as git_topology
-from core import markdown
 from pr import permalinks
+from pr.comments_fix import FixSummary
+from pr.domains import SupersessionKind
 from pr.fix import (
-    RECONCILED_REASON, SETTLED_REASON,
-    FixOutcome, FixRecord, ItemOutcome, SettledBy,
+    FixOutcome, FixRecord, ItemOutcome, RECONCILED_REASON, SETTLED_REASON,
+    SettledBy,
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (

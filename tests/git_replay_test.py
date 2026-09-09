@@ -12,7 +12,6 @@ tested directly for the first time.
 """
 
 import sys
-from pathlib import Path
 
 from conftest import REPO_ROOT, git_in, git_out, run_checked
 

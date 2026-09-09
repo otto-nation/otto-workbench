@@ -21,7 +21,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, StrEnum
+from enum import Enum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -31,7 +31,6 @@ from agent import invoke as agent_invoke
 from fix import engine as fix_engine
 from fix import types as fix_types
 from git import client as git_client
-from git import replay
 from git import topology as git_topology
 from git import land
 from pr import attribution
@@ -3619,7 +3618,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
 
         `recover` because this agent edits a repo whose own conventions it
         follows, and a fix pass in a repo that commits its work leaves the
-        landing nothing to stage — see `replay.replayed_commit`, which is what finds
+        landing nothing to stage — see `git.replay.replayed_commit`, which is what finds
         that commit again after a rebase.
         """
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)

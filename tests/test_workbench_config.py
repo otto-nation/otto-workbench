@@ -843,6 +843,38 @@ def test_the_pyyaml_fallback_writes_the_same_types(roots, monkeypatch):
     assert cfg.agent.model == "sonnet"
 
 
+def test_a_list_key_refuses_the_scalar_this_writer_can_offer(roots):
+    """`serde` reads a string where a list belongs as `[]`, so a write would vanish."""
+    config_root, _ = roots
+    with pytest.raises(wc.ConfigValueError) as exc:
+        wcw.set_value(wc.ISSUE_LABELS_KEY, "follow-up")
+    assert wc.ISSUE_LABELS_KEY in str(exc.value)
+    assert not (config_root / wc.CONFIG_NAME).exists()
+
+
+def test_a_hand_written_list_still_loads(roots):
+    """The refusal is the writer's alone — the file itself holds a list fine."""
+    _, project = roots
+    _write(
+        project / wc.PROJECT_CONFIG_NAME,
+        "issue_tracker:\n  labels:\n    - follow-up\n    - needs-triage\n",
+    )
+    assert wc.load_config(project).issue_tracker.labels == ["follow-up", "needs-triage"]
+
+
+def test_labels_default_to_the_follow_up_label(roots):
+    """A repo that says nothing still labels what its automation files."""
+    _, project = roots
+    assert wc.load_config(project).issue_tracker.labels == [wc.FOLLOW_UP_LABEL]
+
+
+def test_an_empty_label_list_is_kept_as_the_opt_out_it_is(roots):
+    """`labels: []` has to outrank the default, or opting out is impossible."""
+    _, project = roots
+    _write(project / wc.PROJECT_CONFIG_NAME, "issue_tracker:\n  labels: []\n")
+    assert wc.load_config(project).issue_tracker.labels == []
+
+
 def test_a_numeric_field_is_parsed_into_the_number_it_names(monkeypatch):
     """No key on the surface is numeric yet, so the branch is reached by its type."""
     monkeypatch.setattr(wcw, "schema_type", lambda _: "integer")

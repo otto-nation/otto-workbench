@@ -258,6 +258,14 @@ def test_render_value_writes_what_a_config_file_would_hold():
     assert wcr.render_value(wc.ReuseLevel.FULL) == "full"
     assert wcr.render_value(None) == "—"
     assert wcr.render_value("") == "—"
+    assert wcr.render_value(["follow-up"]) == "[follow-up]"
+
+
+def test_a_mutable_default_is_reported_rather_than_read_as_none():
+    """`default_factory` leaves `default` MISSING, which read as no default at all."""
+    rows = dict((key, default) for key, _, default in
+                wcr._reference_rows(wc.IssueTrackerConfig))
+    assert rows["labels"] == f"`[{wc.FOLLOW_UP_LABEL}]`"
 
 
 def test_a_list_key_names_what_it_holds():
@@ -314,6 +322,7 @@ def test_every_written_key_resolves_to_a_field():
     assert wc.REUSE_LEVEL_KEY in keys
     assert wc.REUSE_DEFAULT_KEY in keys
     assert wc.ISSUE_PROVIDER_KEY in keys
+    assert wc.ISSUE_LABELS_KEY in keys
     assert wc.GITHUB_SSH_443_KEY in keys
 
 

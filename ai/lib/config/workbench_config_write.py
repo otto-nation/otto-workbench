@@ -180,6 +180,15 @@ def coerce_value(key: str, value: str) -> bool | int | float | str:
     the same direction ``schema_type`` and the key walk are.
     """
     wanted = schema_type(schema_at(surface_schema(), key) or {})
+    if wanted == "array":
+        # One key, one scalar is the whole shape of this writer, and a list
+        # field has no scalar spelling to accept. Refused rather than written,
+        # because serde restores a string where a list belongs as an empty
+        # list: the write would report success and the key would read back
+        # holding nothing.
+        raise ConfigValueError(
+            f"{key} is a list, and this writer sets one scalar — edit the file "
+            f"directly, or use `yq -i '.{key} += [\"{value}\"]'`")
     if wanted == "boolean":
         spelled = value.strip().lower()
         if spelled not in ("true", "false"):

@@ -8,8 +8,9 @@
 # there with `target:`. The neutral name is what the file carries.
 #
 # Deliberately not a rename of CLOUD_ML_REGION. That variable is where the
-# Anthropic models are provisioned, not where Google's are served — see
-# ai/lib/vertex-google.env.yml.
+# Anthropic models are provisioned, not where Google's are served — the two are
+# separate entries in ai/lib/vertex.env.yml for that reason, and are free to
+# differ.
 
 migration_20260909_vertex_project_to_google_name() {
   # Deferred rather than noop: a noop is recorded and never revisited, and

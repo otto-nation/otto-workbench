@@ -92,6 +92,7 @@ env:
     setup_url: https://...
     prefix: "linux/"
     target: OTHER_NAME_FOR_IT        # optional — see below
+    claude_env: false                # optional — see below
 
 auth:
   env_var: CONTEXT7_API_KEY          # required within auth block
@@ -103,9 +104,9 @@ Env var names must be unique across all registries — the validator enforces no
 
 A var with a `default` is written into `~/.env.local` as an active export; one without is written commented out, as a reference the operator uncomments. Give a default only to a value that is right on every machine the registry applies to.
 
-`target` renames the variable on its way out to a consumer that spells it differently, and is read only by the [`claude_env`](#claude_env--variables-claude-code-needs-without-a-shell) mirror below — `~/.env.local` always carries `var`. Use it where one value has several names: `GOOGLE_CLOUD_PROJECT` is what gcloud, the Google SDKs and Pi read, and reaches Claude Code as `ANTHROPIC_VERTEX_PROJECT_ID` through a `target`. It cannot express two values that merely look alike — a `target` is one variable under two names, so if the two could ever legitimately differ, declare them separately instead. `ai/lib/vertex.env.yml` and `ai/lib/vertex-google.env.yml` are split along exactly that line.
+`target` renames the variable on its way out to a consumer that spells it differently, and is read only by the [`claude_env`](#claude_env--variables-claude-code-needs-without-a-shell) mirror below — `~/.env.local` always carries `var`. Use it where one value has several names: `GOOGLE_CLOUD_PROJECT` is what gcloud, the Google SDKs and Pi read, and reaches Claude Code as `ANTHROPIC_VERTEX_PROJECT_ID` through a `target`. It cannot express two values that merely look alike — a `target` is one variable under two names, so if the two could ever legitimately differ, declare them separately instead. `ai/lib/vertex.env.yml` declares `CLOUD_ML_REGION` and `GOOGLE_CLOUD_LOCATION` as two entries for exactly that reason: the region the Anthropic models are provisioned in and the location Google's own are served from are equal on most machines and are not the same fact.
 
-The validator checks `var` and ignores `target`, so a misspelled target fails silently — the variable simply never appears under the name its consumer reads.
+Every field here is checked — `KNOWN_ENV_FIELDS` in [`lib/registries.sh`](../lib/registries.sh) is what an entry's keys are validated against, so a misspelled `target` or `claude_env` fails the build rather than being read as a variable that simply never appears under the name its consumer expects.
 
 ### `claude_env` — variables Claude Code needs without a shell
 
@@ -118,6 +119,10 @@ The managed set is keyed on `target` names, since those are what appear in the s
 One read is not treated as a withdrawal: when *no* declared variable resolves, the block is left as it is. A total withdrawal in one sync is far rarer than a `~/.env.local` the run could not read as expected, and this is the direction that cannot be undone from a shell. To empty the block deliberately, drop the registry's flag.
 
 The flag is opt-in per registry because the two files have different audiences: `~/.env.local` holds API tokens and is the operator's alone, while `~/.claude/settings.json` is written world-readable. Set it only on a registry whose variables are all safe to publish there — routing, model selection, region — never on one declaring a credential. `~/.zshrc` is not a place for these either: the config layers are sourced before it, so a value exported there is invisible to them (see [Execution Flow](execution-flow.md)) and the mirror never sees it at all.
+
+A single entry can then be held back with `claude_env: false` on the entry itself, so a registry describing one subsystem need not be split in two to keep one variable out of the settings file. `ai/lib/vertex.env.yml` uses it for `GOOGLE_CLOUD_LOCATION`: Claude Code reads `CLOUD_ML_REGION` and has no use for the Google-side name, and a value that reached the settings file could not be overridden from a shell afterwards — which is precisely the divergence that variable exists to permit.
+
+That field is an opt-**out**, deliberately. The audience question above is still answered once, for the whole file, and an entry that says nothing is mirrored — so a variable is never withheld by an omission. It only narrows a registry that has already opted in: on one without `meta.claude_env: true` it decides nothing, and the validator rejects it rather than letting it read as though it did.
 
 ## Cross-Validation Modes
 

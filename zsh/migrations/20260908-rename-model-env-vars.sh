@@ -13,7 +13,12 @@
 # under the new names.
 
 migration_20260908_rename_model_env_vars() {
-  [[ -f "$ENV_LOCAL_FILE" ]] || return "$MIGRATION_NOOP"
+  # A fresh machine has no ~/.env.local yet — step_env_local creates it later
+  # in this same sync. Returning MIGRATION_NOOP here would retire the rename
+  # against a file it never saw, so an operator who restores a personal
+  # ~/.env.local afterward, still carrying the old ANTHROPIC_* names, would
+  # never get it renamed and the new AI_* readers would silently see nothing.
+  [[ -f "$ENV_LOCAL_FILE" ]] || return "$MIGRATION_DEFERRED"
 
   local -A renames=(
     [ANTHROPIC_MODEL]=AI_MODEL
@@ -25,8 +30,8 @@ migration_20260908_rename_model_env_vars() {
   local changed=false old new
   for old in "${!renames[@]}"; do
     new="${renames[$old]}"
-    # Skip if old is absent or new already exists
-    grep -q "^export ${old}=" "$ENV_LOCAL_FILE" || continue
+    # Skip if old is absent (neither active nor commented) or new already exists
+    grep -qE "^(export |# export )${old}=" "$ENV_LOCAL_FILE" || continue
     if grep -q "^export ${new}=" "$ENV_LOCAL_FILE"; then
       continue
     fi

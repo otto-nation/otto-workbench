@@ -40,6 +40,8 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   . "$_ui_lib_dir/worktree.sh"
   # shellcheck source=portable.sh
   . "$_ui_lib_dir/portable.sh"
+  # shellcheck source=env.sh
+  . "$_ui_lib_dir/env.sh"
   # shellcheck source=prompts.sh
   . "$_ui_lib_dir/prompts.sh"
   # shellcheck source=files.sh

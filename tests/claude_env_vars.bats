@@ -246,10 +246,17 @@ tools: []'
 @test "model vars map to Claude Code's ANTHROPIC_* target names" {
   local -a sources=() targets=()
   collect_claude_env_vars sources targets "$REPO_ROOT"
-  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_MODEL
-  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_DEFAULT_OPUS_MODEL
-  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_DEFAULT_SONNET_MODEL
-  printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_DEFAULT_HAIKU_MODEL
+  # Assert each source is paired with the correct target at the same index,
+  # not just that both names appear somewhere in their arrays.
+  local i
+  for (( i=0; i<${#sources[@]}; i++ )); do
+    case "${sources[i]}" in
+      AI_MODEL)        [[ "${targets[i]}" == "ANTHROPIC_MODEL" ]] ;;
+      AI_OPUS_MODEL)   [[ "${targets[i]}" == "ANTHROPIC_DEFAULT_OPUS_MODEL" ]] ;;
+      AI_SONNET_MODEL) [[ "${targets[i]}" == "ANTHROPIC_DEFAULT_SONNET_MODEL" ]] ;;
+      AI_HAIKU_MODEL)  [[ "${targets[i]}" == "ANTHROPIC_DEFAULT_HAIKU_MODEL" ]] ;;
+    esac
+  done
 }
 
 @test "no credential the registries declare reaches the allowlist" {

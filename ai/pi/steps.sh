@@ -322,22 +322,6 @@ step_pi_extensions() {
   done
   return 0
 }
-
-# _pi_read_env_var VAR — reads a variable's value from ~/.env.local.
-# Prints the value (unquoted) or nothing if not set. Uses the same read strategy
-# as _claude_env_json: grep the file directly rather than the environment, so
-# launchd-driven syncs that inherit no env still resolve model config.
-_pi_read_env_var() {
-  local var="$1" line value
-  line=$(grep -m1 "^export ${var}=" "$ENV_LOCAL_FILE" 2>/dev/null) || return 0
-  value=${line#*=}
-  if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
-    value=${value:1:${#value}-2}
-  fi
-  [[ -n "$value" ]] && printf '%s' "$value"
-  return 0
-}
-
 # _pi_build_models — reads AI_MODEL / AI_*_MODEL env vars from ~/.env.local and
 # prints a JSON object with defaultModel + enabledModels, or {} if AI_MODEL is
 # unset. The provider prefix for enabledModels comes from the template.
@@ -348,7 +332,7 @@ _pi_build_models() {
   fi
 
   local default_model
-  default_model=$(_pi_read_env_var AI_MODEL)
+  default_model=$(read_env_local_var AI_MODEL)
   if [[ -z "$default_model" ]]; then
     printf '{}'
     return 0
@@ -358,10 +342,14 @@ _pi_build_models() {
   provider=$(jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC")
 
   local opus sonnet haiku
-  opus=$(_pi_read_env_var AI_OPUS_MODEL)
-  sonnet=$(_pi_read_env_var AI_SONNET_MODEL)
-  haiku=$(_pi_read_env_var AI_HAIKU_MODEL)
+  opus=$(read_env_local_var AI_OPUS_MODEL)
+  sonnet=$(read_env_local_var AI_SONNET_MODEL)
+  haiku=$(read_env_local_var AI_HAIKU_MODEL)
 
+  # Every set model is enabled; the default is always included even if it
+  # does not match one of the tier vars.  An unset tier var is omitted rather
+  # than emitting an empty entry, so a partially-configured ~/.env.local
+  # produces a shorter list instead of clobbering working entries.
   jq -n \
     --arg default "$default_model" \
     --arg provider "$provider" \
@@ -369,11 +357,12 @@ _pi_build_models() {
     --arg sonnet "${sonnet:-}" \
     --arg haiku "${haiku:-}" \
     '{ defaultModel: $default,
-       enabledModels: [
-         (if $opus   != "" then "\($provider)/\($opus)"   else empty end),
-         (if $sonnet != "" then "\($provider)/\($sonnet)" else empty end),
-         (if $haiku  != "" then "\($provider)/\($haiku)"  else empty end)
-       ] }'
+       enabledModels: ([
+         "\($provider)/\($default)",
+         (if $opus   != "" and $opus   != $default then "\($provider)/\($opus)"   else empty end),
+         (if $sonnet != "" and $sonnet != $default then "\($provider)/\($sonnet)" else empty end),
+         (if $haiku  != "" and $haiku  != $default then "\($provider)/\($haiku)"  else empty end)
+       ]) }'
 }
 
 # step_pi_settings — merges the workbench's managed keys into Pi's global settings.

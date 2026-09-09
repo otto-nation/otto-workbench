@@ -45,6 +45,17 @@ a binary into `on_no_match: "passthrough"` when it wants the real one — both
 all and no trace line is recorded for it, so a binary named as the leading token
 of any group needs an entry here or the group can never be satisfied or violated.
 
+Stub text may cite the fixture repo's own commit through `@@HEAD_SHORT@@` and
+`@@HEAD_SHA@@`, expanded when the shims are written. A case cannot spell that sha
+itself — the repo is built at run time — and a placeholder standing in for it is
+not inert: `pr-comments-publish` grades publishing, a model asked to publish
+replies citing a sha checked it, found no such commit, and declined, which is the
+care the skill asks for scored as a failure. Expansion is strict, so a misspelt
+name raises before a run is paid for rather than reinstating that. Manifest
+`requires`/`forbids` groups are *not* expanded: they are validated before the
+repo exists, and a group naming a placeholder would grade against the literal
+token.
+
 Two limits worth naming. The trace cannot see obligations that are text-only,
 such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
 regenerate those files by hand. And each case drives a single *user* turn, with
@@ -61,6 +72,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -68,8 +80,16 @@ from pathlib import Path
 
 from agent import backend as ai_backend
 from agent import usage as ai_usage
+from git import client as git_client
 from eval.scoring import RunOutcome, ScoringResult
-from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
+from eval.task import (
+    RunArtifacts,
+    RunOptions,
+    clean_env,
+    create_temp_repo,
+    fixture_head_sha,
+    outcome_for,
+)
 
 
 @dataclass(frozen=True)
@@ -295,7 +315,77 @@ sys.exit(NO_MATCH_EXIT)
 '''
 
 
-def _resolve_rules(name: str, rules: list[dict], case_dir: Path) -> list[dict]:
+# Doubled at-signs around an uppercase name: a shape no git, gh or pr output has
+# produced, so strict expansion cannot misread real stub text as a typo. Not
+# `{{NAME}}` — worktrunk config templates use that form, and a case stubbing `wt`
+# output holding one would be rejected as an unknown placeholder.
+_PLACEHOLDER = re.compile(r"@@([A-Z_]+)@@")
+
+
+def fixture_substitutions(repo_dir: str) -> dict[str, str]:
+    """The values a case may cite by placeholder, keyed by placeholder name.
+
+    Both widths, from one `rev-parse`. `HEAD_SHORT` is what the fixtures use:
+    `commit_sha` is documented as the short form and that is what the real
+    command persists, so a report citing the long one would not look like a
+    report. `HEAD_SHA` exists because the skill asks for blob permalinks pinned
+    to a full sha and JSON gives a fixture author no way to slice one.
+
+    `git_client.abbrev` rather than a slice: `_ABBREV` owns that width, so a
+    fixture stays consistent with the command it is standing in for.
+    """
+    head = fixture_head_sha(repo_dir)
+    return {"HEAD_SHA": head, "HEAD_SHORT": git_client.abbrev(head)}
+
+
+def _expand(name: str, text: str, substitutions: dict[str, str]) -> str:
+    """Replace every `@@NAME@@` in `text`, raising on one nobody offered.
+
+    Strict, for the reason every other guard here is strict: a fixture bug that
+    reads as a result costs more than one that reads as a crash. A placeholder
+    left to pass through is the bug this whole affordance exists to fix — stub
+    text citing a sha that resolves to nothing, a model that checks declining to
+    publish, and the case scoring that care as recall 0 with nothing in the
+    record naming why. An unavailable value and a misspelt name fail the same
+    way, since a caller offering no sha cannot honour the citation either.
+
+    This runs before the model is invoked, so a typo costs nothing.
+
+    ceiling: no escape for a literal `@@TOKEN@@` in stub text. The pattern is
+    narrow enough that no CLI this harness stubs has emitted one. Upgrade
+    trigger: when a case must stub output that legitimately contains that shape,
+    add an `@@@@` escape rather than letting an unknown name pass through.
+    """
+    def replace(m: re.Match) -> str:
+        key = m.group(1)
+        if key not in substitutions:
+            raise ValueError(
+                f"{name}: unknown substitution @@{key}@@; "
+                f"known: {sorted(substitutions)}")
+        return substitutions[key]
+
+    return _PLACEHOLDER.sub(replace, text)
+
+
+def _expand_value(name: str, value: object, substitutions: dict[str, str]) -> object:
+    """`value` with its placeholders expanded, for the two shapes a rule holds.
+
+    Strings and lists of them; anything else (a rule's `exit`) is returned as it
+    came. Split out from `_resolve_rules` so the caller stays one loop deep.
+    """
+    if isinstance(value, str):
+        return _expand(name, value, substitutions)
+    if isinstance(value, list):
+        return [
+            _expand(name, item, substitutions) if isinstance(item, str) else item
+            for item in value
+        ]
+    return value
+
+
+def _resolve_rules(
+    name: str, rules: list[dict], case_dir: Path, substitutions: dict[str, str],
+) -> list[dict]:
     """Inline every `stdout_file` so the shim never reads the case directory.
 
     A rule with no `match` key is a malformed fixture, not a catch-all. A
@@ -303,6 +393,17 @@ def _resolve_rules(name: str, rules: list[dict], case_dir: Path) -> list[dict]:
     of fixture bug in the other direction: `"push"` explodes to
     `['p','u','s','h']`, a rule that can never fire. To stub a binary purely so
     its calls are traced, give it no rules at all rather than an empty one.
+
+    Placeholders are expanded last, over every string the rule holds — including
+    the inlined file, which is where `commit_sha` lives and so the one that
+    matters most. Expanding after the read keeps the shim reading nothing
+    outside itself, and covering every string rather than an allowlist of keys
+    means a key added later needs no second decision.
+
+    Expanding `match` too lets a case stub a command that takes the sha as an
+    argument. The hazard there is width: a rule expanded to `HEAD_SHA` does not
+    fire on a session that passed the short form. Under `fail` that surfaces as
+    exit 97; under `passthrough` the call reaches the real binary instead.
     """
     resolved = []
     for rule in rules:
@@ -314,17 +415,23 @@ def _resolve_rules(name: str, rules: list[dict], case_dir: Path) -> list[dict]:
         if source:
             out["stdout"] = (case_dir / source).read_text()
         out["match"] = list(out["match"])
+        out = {k: _expand_value(name, v, substitutions) for k, v in out.items()}
         resolved.append(out)
     return resolved
 
 
 def write_shims(
     responses: dict, bin_dir: Path, case_dir: Path, trace_file: Path,
+    *, substitutions: dict[str, str] | None = None,
 ) -> None:
     """Write one recording shim per named binary into `bin_dir`.
 
     `fail` is the default policy on purpose. A stubbed CLI that quietly exits 0
     on a call nobody anticipated turns a fixture gap into a passing run.
+
+    `substitutions` is keyword-only so it cannot be mistaken for a fifth
+    positional, and defaults to none offered — under which any placeholder in a
+    rule raises rather than shipping the literal token to the model.
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
     for name, spec in responses.items():
@@ -336,7 +443,8 @@ def write_shims(
         shim.write_text(_SHIM.format(
             name=name,
             trace=str(trace_file),
-            rules=_resolve_rules(name, spec.get("rules", []), case_dir),
+            rules=_resolve_rules(
+                name, spec.get("rules", []), case_dir, substitutions or {}),
             policy=policy,
             no_match_exit=NO_MATCH_EXIT,
         ))
@@ -414,7 +522,10 @@ class SkillTask:
             responses = (
                 json.loads(responses_path.read_text()) if responses_path.is_file() else {}
             )
-            write_shims(responses, bin_dir, case_dir, trace_file)
+            write_shims(
+                responses, bin_dir, case_dir, trace_file,
+                substitutions=fixture_substitutions(repo_dir),
+            )
 
             env = clean_env()
             env["PATH"] = os.pathsep.join(

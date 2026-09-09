@@ -16,7 +16,7 @@
     "dismissed": [],
     "already_addressed": [],
     "deferred": [],
-    "commit_sha": "a1b2c3d",
+    "commit_sha": "@@HEAD_SHORT@@",
     "commit_status": "pushed",
     "replies_posted": 0,
     "summary_url": null,

@@ -4,7 +4,7 @@
     "rules": [
       {
         "match": ["rebase"],
-        "stdout": "{\"status\": \"conflicts\", \"files\": [\"src/auth.py\", \"tests/test_auth.py\"], \"rebase_head\": \"abc1234\", \"rebase_head_subject\": \"fix: auth token refresh\", \"remaining_commits\": 3}",
+        "stdout": "{\"status\": \"conflicts\", \"files\": [\"src/auth.py\", \"tests/test_auth.py\"], \"rebase_head\": \"@@HEAD_SHORT@@\", \"rebase_head_subject\": \"fix: auth token refresh\", \"remaining_commits\": 3}",
         "stderr": "rebase: 2 conflicted files\n",
         "exit": 3
       }

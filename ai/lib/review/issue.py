@@ -129,11 +129,14 @@ def adopt_project_review_yml(wt_path: str) -> bool:
         log.warn(f"{legacy} is unreadable ({exc}) — not converting it")
         return False
 
+    # The legacy file's own key, frozen: `.claude/review.yml` is a real file in
+    # consumer repos and its shape is history. The section it becomes is the
+    # current one, which is why the two names differ across these three lines.
     tracker = legacy_data.get("issue_tracker")
     if not isinstance(tracker, dict):
         return False
 
-    body = yaml_dump({"issue_tracker": tracker})
+    body = yaml_dump({"issues": tracker})
     try:
         # The modeline every other creator seeds, so a converted file gets the
         # same schema completion a file `set_value` created would.
@@ -157,7 +160,7 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     if wt_path:
         adopt_project_review_yml(wt_path)
     config = workbench_config.load_config_or_default(wt_path)
-    tracker = config.issue_tracker
+    tracker = config.issues
     # str() per scalar: asdict leaves an enum member as the member, and every
     # consumer of a scalar option reads it as a string. A None provider is
     # dropped by the same truthiness filter, so options never carries a "None"

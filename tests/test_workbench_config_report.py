@@ -84,10 +84,10 @@ def test_outside_a_repo_there_is_only_the_global_scope(roots):
 def test_a_value_names_the_file_that_supplied_it(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
-    _write(project / ".workbench.yml", "issue_tracker:\n  provider: github\n")
+    _write(project / ".workbench.yml", "issues:\n  provider: github\n")
     status = wcr.config_status(project)
     assert _row(status, "reuse.level").scope.name == wc.GLOBAL_SCOPE
-    assert _row(status, "issue_tracker.provider").scope.name == wc.PROJECT_SCOPE
+    assert _row(status, "issues.provider").scope.name == wc.PROJECT_SCOPE
 
 
 def test_an_overridden_value_names_the_file_that_won(roots):
@@ -147,7 +147,7 @@ def test_a_key_the_surface_does_not_have_is_reported_as_a_stray(roots):
     assert [(s.key, s.scope.name) for s in status.strays] == [
         ("review.issue_tracker.provider", wc.GLOBAL_SCOPE),
     ]
-    assert _row(status, "issue_tracker.provider").is_default
+    assert _row(status, "issues.provider").is_default
 
 
 def test_a_stray_key_does_not_make_the_report_a_failure(roots):
@@ -223,10 +223,10 @@ def test_a_value_the_loader_restores_is_not_a_dropped_one(roots):
     its own, which is the only way the two can agree about what survived.
     """
     config_root, project = roots
-    _write(config_root / "config.yml", "issue_tracker:\n  team: 42\n")
+    _write(config_root / "config.yml", "issues:\n  team: 42\n")
     status = wcr.config_status(project)
     assert status.dropped == []
-    assert _row(status, "issue_tracker.team").value == "42"
+    assert _row(status, "issues.team").value == "42"
 
 
 def test_a_dropped_value_is_reported_against_the_file_that_won(roots):
@@ -264,7 +264,7 @@ def test_render_value_writes_what_a_config_file_would_hold():
 def test_a_mutable_default_is_reported_rather_than_read_as_none():
     """`default_factory` leaves `default` MISSING, which read as no default at all."""
     rows = dict((key, default) for key, _, default in
-                wcr._reference_rows(wc.IssueTrackerConfig))
+                wcr._reference_rows(wc.IssuesConfig))
     assert rows["labels"] == f"`[{wc.FOLLOW_UP_LABEL}]`"
 
 

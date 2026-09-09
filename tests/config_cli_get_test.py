@@ -43,7 +43,7 @@ def _run(capsys, *argv) -> tuple[int, list[tuple[str, str, str]]]:
 
 def _declare(path: Path, provider: str) -> None:
     (path / wc.PROJECT_CONFIG_NAME).write_text(
-        f"issue_tracker:\n  provider: {provider}\n")
+        f"issues:\n  provider: {provider}\n")
 
 
 @pytest.fixture
@@ -145,7 +145,7 @@ def test_a_directory_that_is_gone_resolves_to_the_default(capsys, tmp_path):
 
 
 def test_an_unparseable_config_resolves_to_the_default(capsys, repo):
-    (repo / wc.PROJECT_CONFIG_NAME).write_text("issue_tracker:\n  provider: [unclosed\n")
+    (repo / wc.PROJECT_CONFIG_NAME).write_text("issues:\n  provider: [unclosed\n")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
     assert records == [(wc.DEFAULT_SCOPE, "", str(repo))]
@@ -155,7 +155,7 @@ def test_an_unparseable_config_resolves_to_the_default(capsys, repo):
 
 def test_a_bad_repo_costs_only_its_own_row(capsys, tmp_path):
     bad = seed_repo(tmp_path / "bad")
-    (bad / wc.PROJECT_CONFIG_NAME).write_text("issue_tracker:\n  provider: [unclosed\n")
+    (bad / wc.PROJECT_CONFIG_NAME).write_text("issues:\n  provider: [unclosed\n")
     good = seed_repo(tmp_path / "good")
     _declare(good, "github")
     gone = tmp_path / "gone"
@@ -217,7 +217,7 @@ def test_a_key_the_config_surface_does_not_define_is_refused(capsys, repo):
     the rule it was meant to turn on is not applying — which is the failure the
     whole config surface check exists to prevent.
     """
-    code = config_cli.main(["get", "issue_tracker.provdier", str(repo)])
+    code = config_cli.main(["get", "issues.provdier", str(repo)])
     captured = capsys.readouterr()
     assert code == 1
     assert captured.out == ""

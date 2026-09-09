@@ -152,10 +152,10 @@ Every key any of them accepts:
 | `agent.phases.<phase>.model` | string | — |
 | `agent.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
 | `review.effort` | `low`, `medium`, `high` | — |
-| `issue_tracker.provider` | `linear`, `github`, `jira` | — |
-| `issue_tracker.team` | string | — |
-| `issue_tracker.jira_url` | string | — |
-| `issue_tracker.labels` | list of string | `[follow-up]` |
+| `issues.provider` | `linear`, `github`, `jira` | — |
+| `issues.team` | string | — |
+| `issues.jira_url` | string | — |
+| `issues.labels` | list of string | `[follow-up]` |
 | `github.ssh_over_443` | boolean | `false` |
 | `rebase.regenerate` | list of string | `[]` |
 | `wiki.dir` | string | `wiki` |
@@ -166,7 +166,7 @@ Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value`
 in Python — and `yq -i` carries it through every later write, so completion and
 enum validation work while the file is hand-edited. A `.workbench.yml` that the
 workbench creates for you — recording an answer such as
-`issue_tracker.provider` — is seeded the same way; paste it in yourself at the
+`issues.provider` — is seeded the same way; paste it in yourself at the
 top of one you hand-author. A file that already exists is never seeded: the
 modeline is a courtesy on creation, not something sync re-imposes.
 

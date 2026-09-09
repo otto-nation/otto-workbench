@@ -82,7 +82,7 @@ profile_row() {
 
 @test "the machine profile reads each repo's issue tracker from the repo itself" {
   make_repo "$TMPDIR/alpha"
-  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/alpha/.workbench.yml"
+  printf 'issues:\n  provider: github\n' > "$TMPDIR/alpha/.workbench.yml"
   project_register "$TMPDIR/alpha"
 
   HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
@@ -100,7 +100,7 @@ profile_row() {
   printf 'seed\n' > "$TMPDIR/seed/README.md"
   make_container_seed "$TMPDIR/seed"
   make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
-  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/container/.workbench.yml"
+  printf 'issues:\n  provider: linear\n' > "$TMPDIR/container/.workbench.yml"
   project_register "$TMPDIR/container/main"
 
   HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
@@ -116,7 +116,7 @@ profile_row() {
   # not the repo's answer either, and a reader deciding whether the repo still
   # owes one has to be able to tell the two apart.
   mkdir -p "$WORKBENCH_CONFIG_DIR"
-  printf 'issue_tracker:\n  provider: github\n' > "$WORKBENCH_CONFIG_FILE"
+  printf 'issues:\n  provider: github\n' > "$WORKBENCH_CONFIG_FILE"
   make_repo "$TMPDIR/zeta"
   project_register "$TMPDIR/zeta"
 
@@ -141,10 +141,10 @@ profile_row() {
   # A config nobody can parse is one row's problem. The repo listed beside it is
   # what proves the degrade is scoped rather than a render that gave up.
   make_repo "$TMPDIR/gamma"
-  printf 'issue_tracker:\n  provider: [unclosed\n' > "$TMPDIR/gamma/.workbench.yml"
+  printf 'issues:\n  provider: [unclosed\n' > "$TMPDIR/gamma/.workbench.yml"
   project_register "$TMPDIR/gamma"
   make_repo "$TMPDIR/delta"
-  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/delta/.workbench.yml"
+  printf 'issues:\n  provider: linear\n' > "$TMPDIR/delta/.workbench.yml"
   project_register "$TMPDIR/delta"
 
   HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
@@ -158,7 +158,7 @@ profile_row() {
   # the pipes would split the row into columns the header has no names for and
   # garble every repo listed after it.
   make_repo "$TMPDIR/epsilon"
-  printf 'issue_tracker:\n  provider: "a | b"\n' > "$TMPDIR/epsilon/.workbench.yml"
+  printf 'issues:\n  provider: "a | b"\n' > "$TMPDIR/epsilon/.workbench.yml"
   project_register "$TMPDIR/epsilon"
 
   HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force

@@ -119,8 +119,8 @@ CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 # WorkbenchConfig and fails on a key no field answers to.
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"
-ISSUE_PROVIDER_KEY = "issue_tracker.provider"
-ISSUE_LABELS_KEY = "issue_tracker.labels"
+ISSUE_PROVIDER_KEY = "issues.provider"
+ISSUE_LABELS_KEY = "issues.labels"
 WIKI_DIR_KEY = "wiki.dir"
 # Read from bash rather than written: git/steps.sh asks for this one through
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
@@ -188,12 +188,17 @@ class PhaseOverride:
 
 
 @dataclass(frozen=True)
-class IssueTrackerConfig:
-    """Where a repo files its issues.
+class IssuesConfig:
+    """Where a repo files its issues, and what it labels them with.
 
     Top-level rather than under ``review``: where a repo files issues is a
     fact about the repo, read by the SessionStart context line and by every
     rule in ``issue-tracker.md``, of which only two callers are reviews.
+
+    Named for the issues rather than the tracker, because the section stopped
+    being only about which tracker is in use when ``labels`` arrived. The
+    field name is the YAML key, so the class name and the section are one
+    edit.
 
     ``provider`` has no default on purpose. A repo that has never said
     anything about its tracker is unknown, not Linear — the callers that
@@ -313,7 +318,7 @@ class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
-    issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
+    issues: IssuesConfig = field(default_factory=IssuesConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
     rebase: RebaseConfig = field(default_factory=RebaseConfig)
     wiki: WikiConfig = field(default_factory=WikiConfig)

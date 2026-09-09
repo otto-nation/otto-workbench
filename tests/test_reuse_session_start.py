@@ -30,7 +30,7 @@ def test_names_the_configured_tracker(rss, tmp_path, capsys):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: github\n",
+        "issues:\n  provider: github\n",
     )
     _run(rss, repo)
     assert "Issue tracker: github" in capsys.readouterr().out
@@ -56,14 +56,14 @@ def test_the_rule_quotes_both_lines_the_hook_emits(rss, tmp_path):
     configured = tmp_path / "configured"
     configured.mkdir()
     (configured / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: github\n",
+        "issues:\n  provider: github\n",
     )
     unconfigured = tmp_path / "unconfigured"
     unconfigured.mkdir()
 
     rule = ISSUE_TRACKER_RULE.read_text()
-    assert rss._issue_tracker_line(str(configured)) in rule
-    assert rss._issue_tracker_line(str(unconfigured)) in rule
+    assert rss._issues_line(str(configured)) in rule
+    assert rss._issues_line(str(unconfigured)) in rule
 
 
 class TestWhereTheSessionStarted:
@@ -78,7 +78,7 @@ class TestWhereTheSessionStarted:
 
     def test_a_worktree_rooted_session_gets_the_tracker(self, rss, container, monkeypatch, capsys):
         worktree = container / "main"
-        (worktree / ".workbench.yml").write_text("issue_tracker:\n  provider: github\n")
+        (worktree / ".workbench.yml").write_text("issues:\n  provider: github\n")
         monkeypatch.chdir(worktree)
         with patch.object(rss, "_ceiling_counts", return_value=None):
             rss.main()
@@ -94,7 +94,7 @@ class TestWhereTheSessionStarted:
         somewhere wrong.
         """
         (container / "main" / ".workbench.yml").write_text(
-            "issue_tracker:\n  provider: github\n",
+            "issues:\n  provider: github\n",
         )
         monkeypatch.chdir(container)
         with patch.object(rss, "_ceiling_counts", return_value=None):
@@ -113,9 +113,9 @@ class TestWhereTheSessionStarted:
         the way to tell the two apart.
         """
         (container / "main" / ".workbench.yml").write_text(
-            "issue_tracker:\n  provider: linear\n",
+            "issues:\n  provider: linear\n",
         )
-        (container / ".workbench.yml").write_text("issue_tracker:\n  provider: github\n")
+        (container / ".workbench.yml").write_text("issues:\n  provider: github\n")
         monkeypatch.chdir(container)
         with patch.object(rss, "_ceiling_counts", return_value=None):
             rss.main()

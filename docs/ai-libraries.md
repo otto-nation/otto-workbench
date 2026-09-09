@@ -3021,6 +3021,23 @@ the same loop, which advances a step at a time until git says the rebase is
 over and ``rebase_success`` lands what was replayed. Every exit is either that,
 a refusal, or an abort that leaves the branch where it started.
 
+### rebase/prepush.py
+
+Repairing the pre-push checks a rebased branch failed, then landing the fix.
+
+The second rung of ``land``'s recovery ladder: the hook rewrote what it could,
+pushed again, and still reported failures. What is left is a complaint an agent
+can act on — except for generated files, which are rebuilt rather than edited,
+because prompting one costs a whole call to produce what the generator emits in
+milliseconds.
+
+ceiling: a fourth hand-rolled fix loop that has not adopted ``fix.engine`` — it
+has no outcome records, no retry on unparsed output, and no tracking artifact,
+all of which the engine already owns. Rewrite this module as a
+``PrePushFixAdapter`` when the engine grows a ``LandSpec.args`` to carry
+``--force-with-lease`` and a ``PhaseShape.FIX`` phase for pre-push work; until
+both exist the adoption cannot preserve the force-push this needs.
+
 ### rebase/refusals.py
 
 Preflight refusals — the four questions asked before a branch is replayed.
@@ -3193,6 +3210,35 @@ Usage:
   pr-describe --force                 # revise regardless of HEAD
   pr-describe --dry-run               # print the revision, do not push it
   pr-describe --repo-dir <path>       # specify worktree directory
+
+### cli/pr_rebase.py
+
+Rebase current branch onto its base with conflict detection and AI resolution.
+
+The base is resolved per run, most authoritative source first: an explicit
+--onto, then the branch's PR base branch, then the repo's default branch.
+
+Manages the git rebase lifecycle: start, resume, abort, and force-push.
+With --fix, automatically resolves merge conflicts using AI.
+Outputs structured JSON on stdout and status messages on stderr.
+Updates local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
+on the run's target rather than on the checkout it was invoked from.
+
+Exit codes:
+  0  Success (clean rebase or operation completed)
+  1  Error (pre-flight failure, git error)
+  3  Conflicts detected (JSON report on stdout)
+  4  Branch already landed — refused before touching the remote (JSON on stdout)
+
+Usage:
+  pr-rebase                           # rebase and force-push
+  pr-rebase --no-push                 # rebase only, skip force-push
+  pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
+  pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
+  pr-rebase --force                   # rebase even when the branch already landed
+  pr-rebase --abort                   # abort in-progress rebase
+  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
+  pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/review_orchestrate.py
 

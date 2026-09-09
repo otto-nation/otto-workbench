@@ -13,6 +13,7 @@ from git import land
 from git import push
 from git.land import CommitStatus
 from rebase import land as rebase_land
+from rebase import prepush
 
 
 def _pushed(sha="1a2b3c4"):
@@ -30,11 +31,7 @@ def _refused(error="gofmt: server.go"):
 
 
 class TestCheckFailureSeam:
-    """The second rung runs only when there is something an agent could repair.
-
-    It is injected rather than imported while the pre-push fix loop is still in
-    the binary, so these pin that a caller passing nothing is not a crash.
-    """
+    """The second rung runs only when there is something an agent could repair."""
 
     @staticmethod
     def _owner_reports(result):
@@ -42,55 +39,42 @@ class TestCheckFailureSeam:
 
     def test_a_refusal_hands_the_output_to_the_fix(self):
         repaired = _pushed(sha="9f8e7d6")
-        fix = mock.Mock(return_value=repaired)
 
-        with self._owner_reports(_refused()):
-            got = rebase_land.land_rebased(
-                "/fake", resolved_files=["server.go"], on_check_failure=fix,
-            )
+        with self._owner_reports(_refused()), \
+             mock.patch.object(prepush, "fix_push_failures",
+                               return_value=repaired) as fix:
+            got = rebase_land.land_rebased("/fake", resolved_files=["server.go"])
 
         assert got is repaired
-        fix.assert_called_once_with("/fake", "gofmt: server.go", ["server.go"])
+        fix.assert_called_once_with(
+            "/fake", "gofmt: server.go", ["server.go"], trail=None)
 
     def test_a_fix_that_produced_nothing_leaves_the_refusal_standing(self):
         refusal = _refused()
-        with self._owner_reports(refusal):
-            got = rebase_land.land_rebased(
-                "/fake", resolved_files=["server.go"],
-                on_check_failure=mock.Mock(return_value=None),
-            )
+        with self._owner_reports(refusal), \
+             mock.patch.object(prepush, "fix_push_failures", return_value=None):
+            got = rebase_land.land_rebased("/fake", resolved_files=["server.go"])
         assert got is refusal
 
-    def test_no_fix_injected_leaves_the_refusal_standing(self):
-        """A caller with no repair to offer gets the push's own verdict back."""
-        refusal = _refused()
-        with self._owner_reports(refusal):
-            assert rebase_land.land_rebased(
-                "/fake", resolved_files=["server.go"],
-            ) is refusal
-
     def test_a_landed_push_never_reaches_the_fix(self):
-        fix = mock.Mock()
-        with self._owner_reports(_pushed()):
+        with self._owner_reports(_pushed()), \
+             mock.patch.object(prepush, "fix_push_failures") as fix:
             assert rebase_land.land_rebased(
-                "/fake", resolved_files=["server.go"], on_check_failure=fix,
-            ).ok
+                "/fake", resolved_files=["server.go"]).ok
         fix.assert_not_called()
 
     def test_no_resolved_files_skips_the_fix(self):
         """Nothing the AI resolved means nothing it has standing to repair."""
-        fix = mock.Mock()
-        with self._owner_reports(_refused()):
-            rebase_land.land_rebased("/fake", on_check_failure=fix)
+        with self._owner_reports(_refused()), \
+             mock.patch.object(prepush, "fix_push_failures") as fix:
+            rebase_land.land_rebased("/fake")
         fix.assert_not_called()
 
     def test_an_empty_complaint_skips_the_fix(self):
         """An empty complaint is not a prompt — the agent would be guessing."""
-        fix = mock.Mock()
-        with self._owner_reports(_refused(error="")):
-            rebase_land.land_rebased(
-                "/fake", resolved_files=["server.go"], on_check_failure=fix,
-            )
+        with self._owner_reports(_refused(error="")), \
+             mock.patch.object(prepush, "fix_push_failures") as fix:
+            rebase_land.land_rebased("/fake", resolved_files=["server.go"])
         fix.assert_not_called()
 
 

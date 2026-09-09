@@ -50,7 +50,6 @@ def drive_to_completion(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
     trail: Trail | None = None,
-    on_check_failure: rebase_land.CheckFailureFix | None = None,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
 
@@ -60,7 +59,6 @@ def drive_to_completion(
     with tspan(trail, "drive_to_completion"):
         return _drive_loop(
             cwd, ctx, mode, target_ref=target_ref, force=force, trail=trail,
-            on_check_failure=on_check_failure,
         )
 
 
@@ -68,7 +66,6 @@ def _drive_loop(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
     trail: Trail | None = None,
-    on_check_failure: rebase_land.CheckFailureFix | None = None,
 ) -> int:
     tally = ResolutionTally()
 
@@ -76,7 +73,6 @@ def _drive_loop(
         if not rebase_inspect.rebase_in_progress(cwd):
             return rebase_success(
                 cwd, ctx, mode, tally, target_ref=target_ref, trail=trail,
-                on_check_failure=on_check_failure,
             )
 
         rc, conflict_found = _drive_one_step(
@@ -224,7 +220,6 @@ def fresh(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str,
     trail: Trail | None = None,
-    on_check_failure: rebase_land.CheckFailureFix | None = None,
 ) -> int:
     """Start a fresh rebase onto the target ref."""
     default = git_topology.default_branch(cwd)
@@ -293,7 +288,6 @@ def fresh(
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
             cwd, ctx, mode, target_ref=target_ref, trail=trail,
-            on_check_failure=on_check_failure,
         )
 
     if not rebase_inspect.rebase_in_progress(cwd):
@@ -305,7 +299,6 @@ def fresh(
 
     return drive_to_completion(
         cwd, ctx, mode, target_ref=target_ref, force=force, trail=trail,
-        on_check_failure=on_check_failure,
     )
 
 
@@ -313,7 +306,6 @@ def rebase_success(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None, *, target_ref: str,
     trail: Trail | None = None,
-    on_check_failure: rebase_land.CheckFailureFix | None = None,
 ) -> int:
     """Handle rebase completion — update state and optionally force-push."""
     tally = tally or ResolutionTally()
@@ -341,7 +333,6 @@ def rebase_success(
             log.info(f"{label} — force-pushing...")
         landed = rebase_land.land_rebased(
             cwd, resolved_files=tally.files or None, trail=trail,
-            on_check_failure=on_check_failure,
         )
         if landed.ok:
             tinfo(trail, "force_push", "force-pushed to remote", data={"sha": landed.sha})

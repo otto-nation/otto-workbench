@@ -4,34 +4,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from core import log
 from core.trail import Trail
 from git import land
 from git import push
 
+from . import prepush
 from . import types as rebase_types
 
 FORCE_PUSH_ARGS = rebase_types.FORCE_PUSH_ARGS
 REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
 
-# Given the worktree, what the failing hook printed, and the files this run
-# resolved, repair the checks and land the repair — or None if it could not.
-CheckFailureFix = Callable[[str, str, list[str]], land.LandResult | None]
-
 
 def land_rebased(
     cwd: str, resolved_files: list[str] | None = None, *,
     trail: Trail | None = None,
-    on_check_failure: CheckFailureFix | None = None,
 ) -> land.LandResult:
     """Force-push the replayed branch, auto-recovering from a hook rejection.
 
     Two recoveries sit under this and only the second is the rebase's. `land`
     commits whatever the pre-push hook regenerated and pushes once more; when
-    that second run still reports check failures, the check-failure fix hands
-    them to the AI and lands the repair. A hook can both rewrite a file and fail
+    that second run still reports check failures, `prepush` hands them to the AI
+    and lands the repair. A hook can both rewrite a file and fail
     a check, so the two are a ladder rather than alternatives — collapsing them
     would make the AI fix unreachable on any repo whose hooks regenerate
     anything.
@@ -41,11 +35,6 @@ def land_rebased(
     `--no-push` comes back `held`, with the force-push command in `resume`,
     rather than as a failure or as a hand-written hint.
 
-    # ceiling: the second rung is injected rather than imported, because the
-    # pre-push fix loop is still in the pr-rebase binary and a module cannot
-    # import a binary. Retire the parameter and import fix.prepush directly —
-    # a downward layer-6-to-5 import, so it is already legal — once the
-    # pre-push fix adapter lands.
     """
     landed = land.land_head(
         cwd, gated=True, args=FORCE_PUSH_ARGS, trail=trail, regen=REGEN_MESSAGE,
@@ -56,9 +45,9 @@ def land_rebased(
     refused = landed.push is not None and landed.push.status is push.PushStatus.REFUSED
     if not refused or not resolved_files or not landed.error:
         return landed
-    if on_check_failure is None:
-        return landed
 
     log.info("Attempting to fix pre-push check failures...")
-    repaired = on_check_failure(cwd, landed.error, resolved_files)
+    repaired = prepush.fix_push_failures(
+        cwd, landed.error, resolved_files, trail=trail,
+    )
     return repaired if repaired is not None else landed

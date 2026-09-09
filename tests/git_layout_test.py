@@ -153,3 +153,52 @@ class TestWorktreeFor:
         resolved = git_layout.worktree_for(str(container))
         assert not resolved.ok
         assert resolved.status == git_layout.UNAVAILABLE
+
+
+class TestProjectRoot:
+    """The one entry point a reader uses: working tree first, container second.
+
+    The Python spelling of lib/worktree.sh's project_root, and the shape both
+    the SessionStart hook and `otto-workbench config get` now go through
+    instead of each writing the fallback out.
+    """
+
+    def test_a_worktree_names_itself(self, container):
+        worktree = container / "main"
+        assert git_layout.project_root(str(worktree)) == str(worktree)
+
+    def test_a_subdirectory_resolves_to_the_tree_it_is_in(self, container):
+        nested = container / "main" / "deep" / "deeper"
+        nested.mkdir(parents=True)
+        assert git_layout.project_root(str(nested)) == str(container / "main")
+
+    def test_a_container_resolves_to_its_default_branch_checkout(self, container):
+        assert git_layout.project_root(str(container)) == str(container / "main")
+
+    def test_a_container_with_no_worktree_is_none(self, tmp_path):
+        """No tree to read, and a guess is the thing exit 1 forbids."""
+        seed = seed_repo(tmp_path / "seed")
+        root = tmp_path / "container"
+        run_checked(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")])
+        assert git_layout.project_root(str(root)) is None
+
+    def test_outside_a_repo_is_none(self, tmp_path, monkeypatch):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        assert git_layout.project_root(str(plain)) is None
+
+    def test_an_inherited_git_dir_does_not_answer_for_another_repo(
+        self, container, tmp_path, monkeypatch,
+    ):
+        """GIT_DIR beats -C and beats discovery, so it must be cleared here too.
+
+        Clearing it only in the container fallback is not enough: the working-
+        tree call runs first, and with an inherited GIT_DIR naming a real
+        repository it answers confidently for the wrong one instead of falling
+        through.
+        """
+        other = seed_repo(tmp_path / "other")
+        monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+        assert git_layout.project_root(str(container / "main")) == str(container / "main")
+        assert git_layout.project_root(str(container)) == str(container / "main")

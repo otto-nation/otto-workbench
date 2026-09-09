@@ -94,7 +94,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -121,17 +120,8 @@ def _project_root() -> Path | None:
     said nothing.  A container naming no worktree stays ``None``: there is no
     checkout to read a config out of.
     """
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
-        )
-    except OSError:
-        return None
-    if result.returncode == 0 and result.stdout.strip():
-        return Path(result.stdout.strip())
-    resolved = git_layout.worktree_for(str(Path.cwd()))
-    return Path(resolved.path) if resolved.ok else None
+    root = git_layout.project_root()
+    return Path(root) if root else None
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

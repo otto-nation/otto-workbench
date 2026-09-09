@@ -111,6 +111,38 @@ def worktree_for(directory: str) -> Worktree:
     return Worktree(path, RESOLVED) if path else Worktree(None, UNRESOLVED)
 
 
+def project_root(directory: str | None = None) -> str | None:
+    """The working tree a caller in `directory` belongs to, container included.
+
+    The Python spelling of `lib/worktree.sh`'s `project_root`, and the one
+    entry point a reader should use: a working tree names itself, and only when
+    there is none is the container asked. `directory` defaults to the current
+    one.
+
+    None covers both the ordinary outside-a-repo case and a container naming no
+    checkout — neither has a tree to read, and the second must not be answered
+    with a guess.
+
+    The environment is cleared here too, not only in `worktree_for`. An
+    inherited `GIT_DIR` beats `-C` and beats discovery, so without it this first
+    call answers for whatever repository the environment names and returns a
+    confident wrong tree instead of falling through to the container lookup —
+    and the pre-push hook, which exports one, is exactly when a gate runs.
+    """
+    directory = directory or os.getcwd()
+    try:
+        result = subprocess.run(
+            ('git', '-C', directory, 'rev-parse', '--show-toplevel'),
+            capture_output=True, text=True, check=False,
+            env=git_env_clear(), timeout=_RESOLVE_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return worktree_for(directory).path
+
+
 def git(repo_root: str, *args: str) -> str | None:
     """Run a read-only git query in the repo, or None if git cannot answer.
 

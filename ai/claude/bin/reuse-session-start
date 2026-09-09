@@ -26,10 +26,13 @@ AI_BIN_DIR = BIN_DIR.parent.parent / "bin"
 # named the same in both belongs to the hook.
 sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(BIN_DIR))
-# lib/ at the workbench root, for the bare-repo layout this hook has to resolve.
+# lib/ at the workbench root, for the bare-repo layout this hook has to
+# resolve. Ahead of the two above only because nothing in it shares a name with
+# a module in either — it holds git_layout, gitenv and their neighbours, none of
+# which ai/lib or this directory define. A module added there that does collide
+# belongs behind them, like ai/lib already is.
 sys.path.insert(0, str(BIN_DIR.parents[2] / "lib"))
 
-from git import client as git_client  # noqa: E402
 from core import proc  # noqa: E402
 from core import timeouts  # noqa: E402
 from config import workbench_projects  # noqa: E402
@@ -62,17 +65,10 @@ def _repo_root() -> str | None:
     guessing a checkout is the one thing `resolve-worktree`'s exit 1 exists to
     prevent.
 
-    A timeout arrives as a failed result rather than an exception, so only the
-    missing-binary case still needs catching.
+    `git_layout` owns both halves of that resolution, so this asks it rather
+    than spelling the working-tree-then-container fallback out again.
     """
-    try:
-        result = git_client.run("rev-parse", "--show-toplevel")
-    except FileNotFoundError:
-        return None
-    if result.ok and result.stdout.strip():
-        return result.stdout.strip()
-    resolved = git_layout.worktree_for(str(Path.cwd()))
-    return resolved.path if resolved.ok else None
+    return git_layout.project_root()
 
 
 def _ceiling_counts(repo: str) -> dict | None:

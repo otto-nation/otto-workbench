@@ -127,13 +127,12 @@ _SPECS: tuple[PhaseSpec, ...] = (
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
-    # One phase, five ledger labels: pr-rebase asks for conflict resolutions,
-    # chunked resolutions, stash resolutions and lockfile commands. They are the
-    # same call sized the same way, and an operator moving the rebase model
-    # means all of them. Repairing the checks a rebased branch failed was the
-    # sixth until it became a fix pass of its own below — an agent editing in
-    # place is not one stateless call, and sizing it as one is what left it
-    # unbatched.
+    # One phase, three ledger labels: pr-rebase asks for conflict resolutions,
+    # chunked resolutions and stash resolutions. They are the same call sized
+    # the same way, and an operator moving the rebase model means all of them.
+    # Repairing the checks a rebased branch failed was a fourth until it became
+    # a fix pass of its own below — an agent editing in place is not one
+    # stateless call, and sizing it as one is what left it unbatched.
     PhaseSpec(
         Phase.REBASE, PhaseDomain.REBASE, "Rebase assist",
         shape=PhaseShape.PROMPT,

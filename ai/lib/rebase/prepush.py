@@ -333,14 +333,18 @@ def _land_rebuild(
     landed = land.land(
         cwd, message=REGEN_MESSAGE, gated=True, args=FORCE_PUSH_ARGS, trail=trail,
     )
+    # The files a generator actually rebuilt, not every file classified as
+    # generated: a stale one had no regeneration command or its command failed,
+    # and naming it here would report an unchanged file as part of the commit.
+    rebuilt = [f for f in generated.excluded if f not in generated.stale]
     if landed.sha:
         tinfo(
             trail, TRAIL_ACTION, "committed regenerated files",
-            data={"files": generated.excluded, "sha": landed.sha},
+            data={"files": rebuilt, "sha": landed.sha},
         )
     else:
         terr(
             trail, TRAIL_ACTION, "regenerated files did not commit",
-            data={"files": generated.excluded, "status": str(landed.status)},
+            data={"files": rebuilt, "status": str(landed.status)},
         )
     return landed

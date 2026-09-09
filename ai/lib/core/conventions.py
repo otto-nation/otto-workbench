@@ -2,8 +2,16 @@
 
 ``conventions.sh`` is the SSOT for the commit-type list and the header
 format; ``git.generated.md`` is generated from it.  This module is the
-only Python reader, so every layer can reach the same rules without
+Python door to it, so every layer can reach the same rules without
 duplicating the types or the path.
+
+No Python module reads it today — the pre-push fixer was the last one, and it
+stopped generating a commit subject when it became a ``fix.engine`` pass. It is
+kept rather than deleted because it is a bridge and not logic: the shell SSOT
+still has many readers, this is the layer-1 door through which any Python layer
+reaches the same rules, and the copy of the type list is exactly what the module
+exists to prevent. A module recreated later is a module recreated as that copy.
+It goes if a second release ships with no Python reader.
 """
 
 # doc-group: platform

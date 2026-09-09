@@ -2247,8 +2247,16 @@ Bridge to the repo's conventional-commit rules in lib/conventions.sh.
 
 ``conventions.sh`` is the SSOT for the commit-type list and the header
 format; ``git.generated.md`` is generated from it.  This module is the
-only Python reader, so every layer can reach the same rules without
+Python door to it, so every layer can reach the same rules without
 duplicating the types or the path.
+
+No Python module reads it today — the pre-push fixer was the last one, and it
+stopped generating a commit subject when it became a ``fix.engine`` pass. It is
+kept rather than deleted because it is a bridge and not logic: the shell SSOT
+still has many readers, this is the layer-1 door through which any Python layer
+reaches the same rules, and the copy of the type list is exactly what the module
+exists to prevent. A module recreated later is a module recreated as that copy.
+It goes if a second release ships with no Python reader.
 
 ### core/log.py
 
@@ -3045,12 +3053,28 @@ can act on — except for generated files, which are rebuilt rather than edited,
 because prompting one costs a whole call to produce what the generator emits in
 milliseconds.
 
-ceiling: a fourth hand-rolled fix loop that has not adopted ``fix.engine`` — it
-has no outcome records, no retry on unparsed output, and no tracking artifact,
-all of which the engine already owns. Rewrite this module as a
-``PrePushFixAdapter`` when the engine grows a ``LandSpec.args`` to carry
-``--force-with-lease`` and a ``PhaseShape.FIX`` phase for pre-push work; until
-both exist the adoption cannot preserve the force-push this needs.
+``fix.engine`` runs the pass and this says what a rebase hands it, the way
+``fix.ci`` does for CI. The adapter lives here rather than in ``fix/`` because
+it reads ``rebase.conflicts`` and ``rebase.repo_regen``, and an adapter's home
+is the lowest layer *its own* imports permit — ``fix.engine.run()`` takes the
+adapter as an argument, so nothing requires the two to sit together.
+
+**Two landings, and why they are not one.** An item is what the agent is
+*shown*, so a generated file cannot be one: the backend edits in place, and
+handing it a protobuf descriptor is the single outcome this module exists to
+prevent. A repair that is entirely a rebuild therefore has no items, and the
+engine correctly runs nothing — but the push was refused by a drift check and
+the rebuild *is* the repair, so withholding it leaves the branch unpushable and
+the operator holding a rebuilt tree with no commit carrying it. `fix_push_failures`
+lands that case itself. When there is also editable work, there is no second
+commit: the engine's landing is whole-tree, so the rebuilt artifacts ride in the
+agent's commit. That is deliberate rather than incidental — a pre-push hook
+validates the worktree and not the commits under it, so splitting the rebuild
+into a commit of its own would push a HEAD the green run never saw.
+
+The rebuild runs before the engine either way, so no turn of the agent's budget
+is spent on a file a generator owns and the tree it reads already holds correct
+artifacts.
 
 ### rebase/refusals.py
 

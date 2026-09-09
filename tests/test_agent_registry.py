@@ -52,6 +52,7 @@ class TestPhaseDomains:
             Phase.COMMENTS_TRIAGE: PhaseDomain.COMMENTS,
             Phase.CI_FIX: PhaseDomain.CI,
             Phase.REBASE: PhaseDomain.REBASE,
+            Phase.PREPUSH_FIX: PhaseDomain.REBASE,
             Phase.DESCRIBE: PhaseDomain.DESCRIBE,
         }
         assert {p: s.domain for p, s in PHASES.items()} == expected
@@ -88,6 +89,7 @@ class TestPhaseThinkingDefaults:
             # phases. Their default is still the backend's.
             Phase.COMMENTS_TRIAGE: None,
             Phase.REBASE: None,
+            Phase.PREPUSH_FIX: None,
             Phase.DESCRIBE: None,
         }
         assert {p: s.thinking for p, s in PHASES.items()} == expected
@@ -113,6 +115,7 @@ class TestPhaseMaxTurnsDefaults:
             Phase.FIX: 20,
             Phase.COMMENTS_FIX: 20,
             Phase.CI_FIX: 20,
+            Phase.PREPUSH_FIX: 20,
         }
         assert {
             p: s.max_turns for p, s in PHASES.items()
@@ -130,7 +133,7 @@ class TestPhaseBudgetDefaults:
 
     def test_only_the_non_review_phases_pin_a_budget(self):
         pinned = {p for p, s in PHASES.items() if s.max_budget is not None}
-        assert pinned == {Phase.COMMENTS_FIX, Phase.CI_FIX}
+        assert pinned == {Phase.COMMENTS_FIX, Phase.CI_FIX, Phase.PREPUSH_FIX}
 
     def test_preserves_current_caps(self):
         assert PHASES[Phase.COMMENTS_FIX].max_budget == 2.0
@@ -158,7 +161,9 @@ class TestPhaseShapes:
 
     def test_only_the_fix_phases_edit_the_workspace(self):
         editing = {p for p, s in PHASES.items() if s.shape is PhaseShape.FIX}
-        assert editing == {Phase.FIX, Phase.COMMENTS_FIX, Phase.CI_FIX}
+        assert editing == {
+            Phase.FIX, Phase.COMMENTS_FIX, Phase.CI_FIX, Phase.PREPUSH_FIX,
+        }
 
     def test_only_the_stateless_phases_are_prompts(self):
         stateless = {p for p, s in PHASES.items() if s.shape is PhaseShape.PROMPT}

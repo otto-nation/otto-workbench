@@ -331,6 +331,26 @@ def test_the_domain_s_spec_reaches_the_land_owner(tmp_path, landed, head):
     assert kwargs["gated"] is True
 
 
+def test_a_domain_that_rewrote_its_branch_pushes_with_its_own_args(tmp_path, landed, head):
+    """A replayed branch's push is non-fast-forward and has to say so.
+
+    The engine cannot know this for the domain: only the pass that rewrote the
+    branch knows the push needs a lease rather than an append.
+    """
+    adapter = StubAdapter(tmp_path, spec=fix_engine.LandSpec(
+        message="fix: the thing", args=("--force-with-lease",),
+    ))
+    _run(adapter)
+
+    assert landed.call_args.kwargs["args"] == ("--force-with-lease",)
+
+
+def test_a_domain_that_rewrote_nothing_adds_no_push_args(tmp_path, landed, head):
+    """The default is a no-op, so the three passes predating it are unchanged."""
+    _run(StubAdapter(tmp_path))
+    assert landed.call_args.kwargs["args"] == ()
+
+
 def test_the_commit_is_always_gated(tmp_path, landed, head):
     """Not a parameter: a fix pass may not publish what nobody approved."""
     _run(StubAdapter(tmp_path))

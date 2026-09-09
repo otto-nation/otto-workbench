@@ -28,7 +28,6 @@ from git import topology as git_topology  # noqa: E402
 from git import client as git_client  # noqa: E402
 from git import land  # noqa: E402
 from git import regenerate as regen  # noqa: E402
-from core import conventions  # noqa: E402
 from core import report as core_report  # noqa: E402
 from rebase import inspect as rebase_inspect  # noqa: E402
 from rebase import prepush  # noqa: E402
@@ -43,6 +42,7 @@ from rebase import stash as rebase_stash  # noqa: E402
 from rebase import target as rebase_target  # noqa: E402
 from config import workbench_config  # noqa: E402
 from agent import invoke as agent_invoke  # noqa: E402
+from fix import engine as fix_engine  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
@@ -513,22 +513,6 @@ def _repo_declaring(commands, *, root, mise_task=False):
         repo_regen.clear_caches()
 
 
-@contextlib.contextmanager
-def _backend_answering(reply, *, available=True):
-    """Stub both halves of the backend a rebase-assist helper reaches.
-
-    A helper asks ``ai_backend.is_available()`` itself but prompts through
-    ``agent_invoke``, which holds its own reference to the module — so these
-    patch the module's attributes rather than replacing a script's alias for it,
-    which would leave the prompt going to a live CLI.
-    """
-    with mock.patch.object(prepush.ai_backend, "is_available",
-                           return_value=available), \
-         mock.patch.object(prepush.ai_backend, "prompt",
-                           return_value=reply):
-        yield
-
-
 class TestLedgerAttribution:
     """A rebase-assist call bills to the PR the run is rebasing.
 
@@ -544,37 +528,33 @@ class TestLedgerAttribution:
         return trail
 
     @staticmethod
-    def _hand_written(tmp_path):
-        """A file the fixer will prompt about — generated ones never reach AI."""
-        target = tmp_path / "handler.go"
-        target.write_text("package main\n")
-        return target
+    def _resolving(tmp_path, trail, recorded):
+        """Drive one rebase-assist prompt and capture what it billed to."""
+        with mock.patch.object(rebase_conflicts, "get_ours_content", return_value=""), \
+             mock.patch.object(rebase_conflicts, "get_commit_diff", return_value=""), \
+             mock.patch.object(agent_invoke.ai_backend, "prompt",
+                               side_effect=lambda *a, **kw: (
+                                   recorded.update(kw) or ("", 1))):
+            rebase_resolve.resolve_full_file(
+                "a.py", tmp_path / "a.py", "<<<<<<< ours\n", "1a2b3c4d",
+                "subject", str(tmp_path), target_ref="origin/main", trail=trail,
+            )
 
     def test_the_runs_repo_and_pr_reach_the_ledger(self, tmp_path):
         recorded = {}
-        self._hand_written(tmp_path)
-        trail = self._trail_for(repo="org/repo", pr=7, branch="feat/x")
-        with mock.patch.object(prepush.ai_backend, "is_available",
-                               return_value=True), \
-             mock.patch.object(prepush.ai_backend, "prompt",
-                               side_effect=lambda *a, **kw: (
-                                   recorded.update(kw) or ("", 1))):
-            prepush.fix_one_file("handler.go", str(tmp_path), "check output",
-                                 trail=trail)
+        self._resolving(
+            tmp_path, self._trail_for(repo="org/repo", pr=7, branch="feat/x"),
+            recorded,
+        )
 
         assert (recorded["repo"], recorded["pr"]) == ("org/repo", "7")
 
     def test_a_branch_with_no_pr_bills_to_the_repo_alone(self, tmp_path):
         recorded = {}
-        self._hand_written(tmp_path)
-        trail = self._trail_for(repo="org/repo", pr=None, branch="feat/x")
-        with mock.patch.object(prepush.ai_backend, "is_available",
-                               return_value=True), \
-             mock.patch.object(prepush.ai_backend, "prompt",
-                               side_effect=lambda *a, **kw: (
-                                   recorded.update(kw) or ("", 1))):
-            prepush.fix_one_file("handler.go", str(tmp_path), "check output",
-                                 trail=trail)
+        self._resolving(
+            tmp_path, self._trail_for(repo="org/repo", pr=None, branch="feat/x"),
+            recorded,
+        )
 
         assert (recorded["repo"], recorded["pr"]) == ("org/repo", None)
 
@@ -623,19 +603,6 @@ class TestFailureRecording:
             "reason": f"{rebase_types.ParseFailure.MISSING_BLOCK_MARKERS}_1",
         }
 
-    def test_an_unparseable_push_fix_hands_over_the_whole_answer(self, tmp_path):
-        """`_fix_one_file` discarded the answer the same way before this migration."""
-        fake_trail = mock.MagicMock()
-        (tmp_path / "a.py").write_text("original\n")
-        answer = mock.Mock(exit_code=0, text="the model explained itself at length")
-        with mock.patch.object(prepush.agent_invoke, "run_prompt",
-                               return_value=answer):
-            prepush.fix_one_file("a.py", str(tmp_path), "check output",
-                                 trail=fake_trail)
-
-        kwargs = fake_trail.failure.call_args.kwargs
-        assert kwargs["output"] == answer.text
-        assert kwargs["data"]["filepath"] == "a.py"
 
 # ── _detect_delete_conflict ───────────────────────────────────────────────
 
@@ -3126,465 +3093,438 @@ def test_a_refusal_that_said_nothing_skips_the_ai_fix():
     mock_fix.assert_not_called()
 
 
-# ── _fix_commit_message ───────────────────────────────────────────────────
+# ── the pre-push fix pass ─────────────────────────────────────────────────
 
 
-def _diff_only(diff: str):
-    """subprocess.run stub where `git diff --cached` yields `diff`."""
-    def fake_run(cmd, **kwargs):
-        out = diff if _unconfigured(cmd)[:3] == ["git", "diff", "--cached"] else ""
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
-    return fake_run
+def _answering(adapter_box, *, tick="fixed", reason=""):
+    """A `run_fix` stub that answers the checklist the engine wrote.
 
-
-def test_commit_types_read_from_conventions():
-    """The type list comes from lib/conventions.sh, not a copy in the script."""
-    types = conventions.commit_types()
-    assert "fix" in types and "test" in types and "refactor" in types
-
-
-@pytest.mark.parametrize("subject,valid", [
-    ("test(review): drop the reviews_dir kwarg removed from ReviewJob", True),
-    ("fix: correct the import path", True),
-    ("nonsense(scope): not a real type", False),
-    ("no colon here at all", False),
-    ("fix: ", False),
-    ("fix: ends with a period.", False),
-    ("fix: " + "x" * 80, False),
-    ("", False),
-])
-def test_valid_commit_header(subject, valid):
-    assert conventions.valid_commit_header(subject) is valid
-
-
-def test_fix_commit_message_uses_ai_subject():
-    """A well-formed subject describes the change instead of the generic line."""
-    subject = "test(review): drop the reviews_dir kwarg removed from ReviewJob"
-
-    with mock.patch("subprocess.run", side_effect=_diff_only("-  reviews_dir=x\n")), \
-         mock.patch.object(prepush.ai_backend, "prompt", return_value=(f"`{subject}`\n", 0)):
-        assert prepush._fix_commit_message("/fake", ["a.py"]) == subject
-
-
-@pytest.mark.parametrize("reply,rc", [
-    ("wip(review): not an allowed type", 0),
-    ("Subject: fix the import path", 0),
-    ("I could not determine a good subject for this change.", 0),
-    ("", 0),
-    ("fix: fine subject but the call failed", 1),
-])
-def test_fix_commit_message_falls_back_on_unusable_reply(reply, rc):
-    with mock.patch("subprocess.run", side_effect=_diff_only("-  reviews_dir=x\n")), \
-         mock.patch.object(prepush.ai_backend, "prompt", return_value=(reply, rc)):
-        result = prepush._fix_commit_message("/fake", ["a.py"])
-
-    assert result == prepush.FALLBACK_FIX_SUBJECT
-
-
-def test_fix_commit_message_empty_diff_skips_the_prompt():
-    with mock.patch("subprocess.run", side_effect=_diff_only("")), \
-         mock.patch.object(prepush.ai_backend, "prompt") as mock_prompt:
-        result = prepush._fix_commit_message("/fake", ["a.py"])
-
-    assert result == prepush.FALLBACK_FIX_SUBJECT
-    mock_prompt.assert_not_called()
-
-
-# ── _fix_push_failures ────────────────────────────────────────────────────
-
-
-def _fix_lands(result: land.LandResult | None = None):
-    """Patch the owner the fix pass lands its repair through.
-
-    The pass stages the tree itself — the commit message is generated from the
-    staged diff — and hands the rest to `land`, whose own behaviour belongs to
-    `tests/land_test.py`.
+    The engine rewrites the tracking file immediately before each invocation,
+    so an answer written any earlier is thrown away before an agent would see
+    it. `adapter_box` is a one-element list the caller fills in once the
+    adapter exists, since the stub is installed before the pass constructs one.
     """
-    return mock.patch.object(
-        prepush.land, "land",
-        return_value=_pushed() if result is None else result,
-    )
+    def run_fix(_phase, prompt, **_kwargs):
+        _prompts.append(prompt)
+        tracking = adapter_box[0].tracking_path
+        box = f"- [ ] {tick}"
+        answer = f"- [x] {tick}" + (f" — {reason}" if reason else "")
+        tracking.write_text("\n".join(
+            answer if line.startswith(box) else line
+            for line in tracking.read_text().splitlines()
+        ) + "\n")
+        return agent_invoke.FixResult(0, None)
+    return run_fix
 
 
-def test_fix_push_failures_ai_fixes_file(tmp_path):
-    """AI returns fixed content — stages the tree and lands it."""
-    f = tmp_path / "server.go"
-    f.write_text("package main\n\nbad format\n")
+_prompts: list[str] = []
 
-    fixed_output = "<<<RESOLVED>>>\npackage main\n\ngood format\n<<<END_RESOLVED>>>\n"
-    landed = _pushed()
-    calls = []
 
-    def fake_run(cmd, **kwargs):
-        calls.append(_unconfigured(cmd))
-        if cmd[:3] == ["claude", "-p", "--bare"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=fixed_output, stderr="")
-        if _unconfigured(cmd)[:4] == ["git", "diff", "--cached", "--name-only"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="server.go\n", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+@contextlib.contextmanager
+def _fix_pass(*, tick="fixed", reason="", landed=None, available=True):
+    """Drive the pass with a stubbed agent and a stubbed landing owner.
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         _fix_lands(landed) as owner:
+    `land` is stubbed rather than run: what a landing does belongs to
+    `tests/land_test.py`, and what this pass asks for is the assertion here.
+    """
+    _prompts.clear()
+    box: list = [None]
+    real_init = prepush.PrePushFixAdapter.__init__
+
+    def capture(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        box[0] = self
+
+    result = landed or land.LandResult(land.CommitStatus.PUSHED, "abc1234")
+    with mock.patch.object(prepush.PrePushFixAdapter, "__init__", capture), \
+         mock.patch.object(prepush.ai_backend, "is_available", return_value=available), \
+         mock.patch.object(fix_engine.git_client, "head_sha", return_value="9999999"), \
+         mock.patch.object(fix_engine.land, "land", return_value=result) as owner, \
+         mock.patch.object(fix_engine.agent_invoke, "run_fix",
+                           side_effect=_answering(box, tick=tick, reason=reason)):
+        yield owner, box
+
+
+def test_the_pass_force_pushes_the_branch_it_repaired(tmp_path):
+    """A replayed branch's push is non-fast-forward; a plain one is rejected."""
+    (tmp_path / "server.go").write_text("package main\n")
+
+    with _fix_pass() as (owner, _):
         result = prepush.fix_push_failures(
             str(tmp_path), "gofmt: server.go needs formatting", ["server.go"],
         )
 
-    assert result is landed
-    assert f.read_text() == "package main\n\ngood format\n"
-    assert ["git", "add", "-A"] in calls
+    assert result.sha == "abc1234"
     kwargs = owner.call_args.kwargs
     assert kwargs["gated"] is True
     assert kwargs["args"] == ("--force-with-lease",)
 
 
-def test_fix_push_failures_commits_edits_outside_the_marker_protocol(tmp_path):
+def test_the_pass_commits_the_whole_tree(tmp_path):
     """Direct agent edits reach the commit instead of being stranded.
 
-    The backend runs with acceptEdits and Bash(*), so a fix can land in a file
-    the marker protocol never names — committing only the round-tripped file,
-    force-pushing, and leaving the real source fix uncommitted.
+    The backend runs with acceptEdits and Bash(*), so a repair can land in a
+    file the pass never named — committing a narrower set force-pushes without
+    the real source fix.
     """
-    f = tmp_path / "server_test.go"
-    unchanged = "package main\n"
-    f.write_text(unchanged)
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(_unconfigured(cmd))
-        if cmd[:3] == ["claude", "-p", "--bare"]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
-                stdout=f"<<<RESOLVED>>>\n{unchanged}<<<END_RESOLVED>>>\n", stderr="",
-            )
-        if _unconfigured(cmd)[:4] == ["git", "diff", "--cached", "--name-only"]:
-            # The agent edited server.go directly; nothing round-tripped.
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="server.go\n", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         _fix_lands() as owner:
-        result = prepush.fix_push_failures(
-            str(tmp_path), "NameError: name 'group_log' is not defined", ["server_test.go"],
-        )
-
-    assert result is not None
-    assert ["git", "add", "-A"] in calls
-    # No `paths`, so the owner commits the whole tree rather than the one file
-    # the marker protocol round-tripped.
-    assert owner.call_args.kwargs.get("paths") is None
-
-
-def test_fix_push_failures_staging_fails(tmp_path):
-    """`git add -A` fails — nothing is landed and the retry is not reached."""
     (tmp_path / "server.go").write_text("package main\n")
 
-    def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["claude", "-p", "--bare"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-        if _unconfigured(cmd)[:3] == ["git", "add", "-A"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="add failed")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    with _fix_pass() as (owner, _):
+        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         _fix_lands() as owner:
-        result = prepush.fix_push_failures(str(tmp_path), "errors", ["server.go"])
+    assert owner.call_args.kwargs["paths"] is None
+
+
+def test_the_pass_accounts_for_an_agent_that_committed_its_own_work(tmp_path):
+    """Otherwise the pass finds nothing to stage and reports a real fix as nothing."""
+    (tmp_path / "server.go").write_text("package main\n")
+
+    with _fix_pass() as (owner, _):
+        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+
+    assert owner.call_args.kwargs["recover_from"] == "9999999"
+
+
+def test_the_commit_body_carries_each_file_s_verdict(tmp_path):
+    """Squash-merged with COMMIT_MESSAGES, so this lands verbatim on main."""
+    (tmp_path / "server.go").write_text("package main\n")
+
+    with _fix_pass(tick="needs a person", reason="the resolution dropped a branch") as (owner, _):
+        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+
+    message = owner.call_args.kwargs["message"]
+    assert message.startswith(prepush.FIX_SUBJECT)
+    assert "0 fixed, 1 unresolved" in message
+    assert "- server.go — the resolution dropped a branch" in message
+
+
+def test_the_check_output_reaches_the_agent(tmp_path):
+    """The output is the oracle — a pass that withholds it asks for a guess."""
+    (tmp_path / "server.go").write_text("package main\n")
+
+    with _fix_pass():
+        prepush.fix_push_failures(
+            str(tmp_path), "gofmt: server.go needs formatting", ["server.go"],
+        )
+
+    assert "gofmt: server.go needs formatting" in _prompts[0]
+
+
+def test_the_pass_bills_to_the_run_s_repo_and_pr(tmp_path):
+    """A rebase-assist call attributes to the PR the run is rebasing."""
+    (tmp_path / "server.go").write_text("package main\n")
+    trail = mock.MagicMock()
+    trail.context = {"repo": "org/repo", "pr": 7, "branch": "feat/x"}
+
+    with _fix_pass() as (_, box):
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+        )
+
+    assert (box[0].repo, box[0].pr, box[0].branch) == ("org/repo", "7", "feat/x")
+
+
+def test_a_branch_with_no_pr_bills_to_the_repo_alone(tmp_path):
+    (tmp_path / "server.go").write_text("package main\n")
+    trail = mock.MagicMock()
+    trail.context = {"repo": "org/repo", "pr": None, "branch": "feat/x"}
+
+    with _fix_pass() as (_, box):
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+        )
+
+    assert (box[0].repo, box[0].pr) == ("org/repo", "")
+
+
+def test_the_tracking_file_sits_beside_the_rebase_s_other_leavings(tmp_path):
+    adapter = prepush.PrePushFixAdapter(str(tmp_path), ["a.py"], "output")
+    artifacts = tmp_path / "ignore" / "pr-rebase"
+
+    assert adapter.tracking_path == artifacts / "fix-tracking.md"
+    assert adapter.session_log == artifacts / "fix-session.jsonl"
+
+
+def test_the_pass_records_what_it_did_on_the_trail(tmp_path):
+    """The trail is the only durable record — no ctx here means no FixRecord."""
+    (tmp_path / "server.go").write_text("package main\n")
+    trail = mock.MagicMock()
+    trail.context = {}
+
+    with _fix_pass():
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+        )
+
+    entries = {c.args[1]: c.kwargs.get("data", {}) for c in trail.info.call_args_list}
+    assert "committed check-failure fixes" in entries
+    assert entries["committed check-failure fixes"]["files"] == ["server.go"]
+    assert entries["committed check-failure fixes"]["sha"] == "abc1234"
+
+
+def test_a_pass_that_committed_nothing_is_not_reported_as_a_commit(tmp_path):
+    """Otherwise the trail carries a fix no SHA stands behind."""
+    (tmp_path / "server.go").write_text("package main\n")
+    trail = mock.MagicMock()
+    trail.context = {}
+
+    with _fix_pass(landed=land.LandResult(land.CommitStatus.NO_CHANGES)):
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+        )
+
+    entries = [c.args[1] for c in trail.info.call_args_list]
+    assert "pre-push fix pass committed nothing" in entries
+    assert "committed check-failure fixes" not in entries
+
+
+def test_no_backend_attempts_nothing(tmp_path):
+    """The engine invokes unconditionally, so the guard stays outside it."""
+    (tmp_path / "file.go").write_text("package main\n")
+
+    with _fix_pass(available=False) as (owner, _), \
+         mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None):
+        result = prepush.fix_push_failures(str(tmp_path), "errors", ["file.go"])
 
     assert result is None
     owner.assert_not_called()
 
 
-def test_fix_push_failures_ai_unavailable(tmp_path):
-    """No backend and nothing to rebuild — returns None without attempting."""
-    (tmp_path / "file.go").write_text("package main\n")
-
-    with mock.patch.object(prepush, "ai_backend") as mock_ai, \
-         mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None):
-        mock_ai.is_available.return_value = False
-        result = prepush.fix_push_failures(str(tmp_path), "errors", ["file.go"])
-
-    assert result is None
+# ── generated files are rebuilt, never edited ─────────────────────────────
 
 
-def test_fix_push_failures_regenerates_instead_of_prompting(tmp_path):
+def test_a_generated_file_is_rebuilt_instead_of_prompted(tmp_path):
     """The bug this guard exists for: a generated file must never reach the AI.
 
     Hand-editing a protobuf descriptor or a hash manifest cannot produce the
     generator's output, so the drift check that refused the push refuses it
-    again — after spending a whole-file call per artifact.
+    again — after spending the agent's budget per artifact.
     """
     (tmp_path / "models.go").write_text("// Code generated by sqlc. DO NOT EDIT.\n")
-    prompted = []
     regenerated = []
 
-    with mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         mock.patch.object(prepush, "fix_one_file",
-                           side_effect=lambda f, *a, **kw: prompted.append(f)), \
+    with _fix_pass() as (owner, box), \
          mock.patch.object(regen, "run_regeneration",
                            side_effect=lambda job, **kw: regenerated.append(job.cmd) or True), \
-         mock.patch.object(prepush, "stage_worktree", return_value=[]), \
          _repo_declaring(["mise run generate"], root=tmp_path):
-        prepush.fix_push_failures(
-            str(tmp_path), "drift: models.go", ["models.go"],
-        )
+        prepush.fix_push_failures(str(tmp_path), "drift: models.go", ["models.go"])
 
-    assert prompted == []
+    assert box[0] is None, "a generated file was handed to the fix pass"
     assert regenerated == [("mise", "run", "generate")]
 
 
-def test_fix_push_failures_still_prompts_for_hand_written_files(tmp_path):
-    """The guard is scoped to generated files — normal fixes are untouched."""
-    (tmp_path / "handler.go").write_text("package main\n")
-    prompted = []
+def test_a_rebuild_with_nothing_else_to_fix_is_still_landed(tmp_path):
+    """The engine no-ops on an empty item set, but the rebuild is the repair.
 
-    with mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None), \
-         mock.patch.object(prepush, "fix_one_file",
-                           side_effect=lambda f, *a, **kw: prompted.append(f)), \
-         mock.patch.object(prepush, "stage_worktree", return_value=[]):
-        prepush.fix_push_failures(
-            str(tmp_path), "vet: handler.go", ["handler.go"],
+    Withholding it because no editable file was named leaves the branch
+    unpushable for the same drift the hook rejected.
+    """
+    (tmp_path / "models.go").write_text("// Code generated by sqlc. DO NOT EDIT.\n")
+
+    with _fix_pass(), \
+         mock.patch.object(regen, "run_regeneration", return_value=True), \
+         mock.patch.object(prepush.land, "land",
+                           return_value=land.LandResult(land.CommitStatus.PUSHED, "reb1234")) as owner, \
+         _repo_declaring(["mise run generate"], root=tmp_path):
+        result = prepush.fix_push_failures(
+            str(tmp_path), "drift: models.go", ["models.go"],
         )
 
-    assert prompted == ["handler.go"]
+    assert result.sha == "reb1234"
+    kwargs = owner.call_args.kwargs
+    assert kwargs["args"] == ("--force-with-lease",)
+    assert kwargs["gated"] is True
+    assert kwargs["message"] == prepush.REGEN_MESSAGE
 
 
-def test_fix_push_failures_generated_file_with_no_regenerator_is_left_alone(tmp_path):
+def test_a_rebuild_alongside_editable_work_is_swept_into_the_agent_s_commit(tmp_path):
+    """One commit, not two: a hook validates the worktree, not the commits under it.
+
+    Splitting the rebuild out would push a HEAD the green run never saw.
+    """
+    (tmp_path / "models.go").write_text("// Code generated by sqlc. DO NOT EDIT.\n")
+    (tmp_path / "server.go").write_text("package main\n")
+
+    with _fix_pass() as (owner, _), \
+         mock.patch.object(regen, "run_regeneration", return_value=True), \
+         _repo_declaring(["mise run generate"], root=tmp_path):
+        prepush.fix_push_failures(
+            str(tmp_path), "drift: models.go, vet: server.go",
+            ["models.go", "server.go"],
+        )
+
+    # `prepush.land` and `fix_engine.land` are one module, so the count is what
+    # distinguishes one commit from two — not which name the owner was reached
+    # through.
+    assert owner.call_count == 1
+    assert owner.call_args.kwargs["message"].startswith(prepush.FIX_SUBJECT)
+    assert owner.call_args.kwargs["paths"] is None
+
+
+def test_the_agent_is_asked_only_about_the_hand_written_files(tmp_path):
+    """The guard is scoped: a normal file alongside a generated one still gets fixed."""
+    (tmp_path / "models.go").write_text("// Code generated by sqlc. DO NOT EDIT.\n")
+    (tmp_path / "handler.go").write_text("package main\n")
+
+    with _fix_pass() as (_, box), \
+         mock.patch.object(regen, "run_regeneration", return_value=True), \
+         _repo_declaring(["mise run generate"], root=tmp_path):
+        prepush.fix_push_failures(
+            str(tmp_path), "drift: models.go, vet: handler.go",
+            ["models.go", "handler.go"],
+        )
+
+    assert [i.id for i in box[0].items()] == ["handler.go"]
+
+
+def test_a_generated_file_with_no_regenerator_is_left_alone(tmp_path):
     """Unable to rebuild is still not a licence to hand-edit."""
     (tmp_path / "x.gen").write_text("// @generated\n")
-    prompted = []
 
-    with mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         mock.patch.object(prepush, "fix_one_file",
-                           side_effect=lambda f, *a, **kw: prompted.append(f)), \
+    with _fix_pass() as (owner, box), \
          _repo_declaring([], root=tmp_path, mise_task=False):
         result = prepush.fix_push_failures(str(tmp_path), "drift: x.gen", ["x.gen"])
 
-    assert prompted == []
-    assert result is None
-
-
-def test_fix_push_failures_ai_prompt_fails(tmp_path):
-    """AI prompt fails — nothing was staged, so there is nothing to land."""
-    f = tmp_path / "server.go"
-    f.write_text("package main\n")
-
-    def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["claude", "-p", "--bare"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         _fix_lands() as owner:
-        result = prepush.fix_push_failures(
-            str(tmp_path), "errors", ["server.go"],
-        )
-
+    assert box[0] is None
     assert result is None
     owner.assert_not_called()
 
 
-def test_fix_push_failures_no_changes_needed(tmp_path):
-    """AI returns identical content — nothing staged, so nothing is landed."""
-    content = "package main\n\nfunc main() {}\n"
-    f = tmp_path / "server.go"
-    f.write_text(content)
+def test_only_the_files_actually_rebuilt_are_reported_as_committed(tmp_path):
+    """A generated file nobody could rebuild is not part of the commit.
 
-    unchanged_output = f"<<<RESOLVED>>>\n{content}<<<END_RESOLVED>>>\n"
+    `excluded` holds every file held back from the agent, rebuildable or not.
+    Reporting that list would put an unchanged file in the trail entry
+    `otto-log query` reads as the record of what the commit carried.
+    """
+    (tmp_path / "models.go").write_text("// Code generated by sqlc. DO NOT EDIT.\n")
+    (tmp_path / "x.gen").write_text("// @generated\n")
+    trail = mock.MagicMock()
+    trail.context = {}
 
-    def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["claude", "-p", "--bare"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=unchanged_output, stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    def only_models(filepath, cwd, queue):
+        if filepath != "models.go":
+            return False
+        queue.add(Path(cwd), filepath, ("mise", "run", "generate"))
+        return True
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
-         _fix_lands() as owner:
-        result = prepush.fix_push_failures(
-            str(tmp_path), "errors", ["server.go"],
-        )
-
-    assert result is None
-    owner.assert_not_called()
-
-
-def test_fix_push_failures_missing_file(tmp_path):
-    """File doesn't exist — skips it, and an empty index means nothing to land."""
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush, "ai_backend") as mock_ai, \
-         _fix_lands() as owner:
-        mock_ai.is_available.return_value = True
-        result = prepush.fix_push_failures(
-            str(tmp_path), "errors", ["nonexistent.go"],
-        )
-
-    assert result is None
-    owner.assert_not_called()
-
-
-def test_fix_push_failures_truncates_error_output(tmp_path):
-    """Long error output is truncated to _FIX_ERROR_MAX_CHARS."""
-    f = tmp_path / "server.go"
-    f.write_text("package main\n")
-    long_error = "x" * 10000
-
-    captured_prompt = []
-
-    def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["claude", "-p", "--bare"]:
-            captured_prompt.append(cmd[-1] if len(cmd) > 3 else kwargs.get("input", ""))
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True):
+    with _fix_pass(), \
+         mock.patch.object(prepush.repo_regen, "queue_repo_regeneration",
+                           side_effect=only_models), \
+         mock.patch.object(regen, "run_regeneration", return_value=True), \
+         mock.patch.object(prepush.land, "land",
+                           return_value=land.LandResult(land.CommitStatus.PUSHED, "reb1234")):
         prepush.fix_push_failures(
-            str(tmp_path), long_error, ["server.go"],
+            str(tmp_path), "drift: models.go, drift: x.gen",
+            ["models.go", "x.gen"], trail=trail,
         )
 
-    # The AI prompt should contain at most _FIX_ERROR_MAX_CHARS of the error
-    # We can't easily inspect the prompt via subprocess mock, but we verify
-    # the function doesn't crash on long input
-    assert True
+    entries = {c.args[1]: c.kwargs.get("data", {}) for c in trail.info.call_args_list}
+    assert entries["committed regenerated files"]["files"] == ["models.go"]
 
 
-def _prompted_files(tmp_path, error_output, resolved_files):
-    """Run the fix pass over stub files and report which ones were prompted for."""
-    prompts = []
+def test_a_rebuild_that_did_not_commit_is_recorded(tmp_path):
+    """A regeneration that lands nothing is the quiet failure worth a trail entry."""
+    (tmp_path / "models.go").write_text("// Code generated by sqlc. DO NOT EDIT.\n")
+    trail = mock.MagicMock()
+    trail.context = {}
 
-    def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["claude", "-p", "--bare"]:
-            prompts.append(kwargs.get("input", ""))
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    with _fix_pass(), \
+         mock.patch.object(regen, "run_regeneration", return_value=True), \
+         mock.patch.object(prepush.land, "land",
+                           return_value=land.LandResult(land.CommitStatus.NO_CHANGES)), \
+         _repo_declaring(["mise run generate"], root=tmp_path):
+        prepush.fix_push_failures(
+            str(tmp_path), "drift: models.go", ["models.go"], trail=trail,
+        )
+
+    assert "regenerated files did not commit" in [
+        c.args[1] for c in trail.error.call_args_list
+    ]
+
+
+# ── which files the pass is asked about ───────────────────────────────────
+
+
+def _targets(tmp_path, error_output, resolved_files):
+    """The files the pass would hand an agent, without running one."""
+    box: list = [None]
+    real_init = prepush.PrePushFixAdapter.__init__
+
+    def capture(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        box[0] = self
 
     for name in dict.fromkeys(resolved_files):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("stub\n")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True):
-        prepush.fix_push_failures(str(tmp_path), error_output, resolved_files)
+    with mock.patch.object(prepush.PrePushFixAdapter, "__init__", capture), \
+         mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
+         mock.patch.object(fix_engine, "run", return_value=fix_engine.FixRun()):
+        prepush.fix_push_failures(tmp_path.as_posix(), error_output, resolved_files)
 
-    return [
-        name for name in dict.fromkeys(resolved_files)
-        if any(f"File: {name}\n" in p for p in prompts)
-    ], len(prompts)
+    return box[0].editable if box[0] else []
 
 
-def test_fix_push_failures_only_prompts_for_files_the_check_names(tmp_path):
-    """A rebase resolves dozens of files; the fix pass touches the named ones.
+def test_only_the_files_the_check_names_are_handed_over(tmp_path):
+    """A rebase resolves dozens of files; the pass asks about the named ones.
 
-    Prompting for every resolved file spends a whole-file call per entry and
-    lets an agent with edit access rewrite a file the check never complained
-    about.
+    Handing over every resolved file spends budget per entry and gives an agent
+    with edit access a file the check never complained about.
     """
     resolved = ["bin/otto-workbench", "docs/libraries.md", "ai/lib/prompt.py"]
     error = "✗ bin/otto-workbench: nesting exceeds 2 levels\n      line 1304: depth 3\n"
 
-    prompted, total = _prompted_files(tmp_path, error, resolved)
-
-    assert prompted == ["bin/otto-workbench"]
-    assert total == 1
+    assert _targets(tmp_path, error, resolved) == ["bin/otto-workbench"]
 
 
-def test_fix_push_failures_deduplicates_resolved_files(tmp_path):
-    """A file that conflicted in several replayed commits is fixed once."""
+def test_a_file_resolved_in_several_commits_is_handed_over_once(tmp_path):
     resolved = ["ai/lib/review_issue.py"] * 4
     error = "ai/lib/review_issue.py:12: undefined name"
 
-    prompted, total = _prompted_files(tmp_path, error, resolved)
-
-    assert prompted == ["ai/lib/review_issue.py"]
-    assert total == 1
+    assert _targets(tmp_path, error, resolved) == ["ai/lib/review_issue.py"]
 
 
-def test_fix_push_failures_matches_a_basename_only_report(tmp_path):
-    """Checks that report a bare filename still scope to that file."""
+def test_a_basename_only_report_still_scopes_to_that_file(tmp_path):
+    resolved = ["pkg/server.go", "pkg/client.go"]
+    error = "gofmt: server.go needs formatting"
+
+    assert _targets(tmp_path, error, resolved) == ["pkg/server.go"]
+
+
+def test_check_output_naming_no_file_leaves_every_file_a_suspect(tmp_path):
     resolved = ["pkg/server.go", "pkg/client.go"]
 
-    prompted, total = _prompted_files(tmp_path, "gofmt: server.go needs formatting", resolved)
-
-    assert prompted == ["pkg/server.go"]
-    assert total == 1
+    assert _targets(tmp_path, "build failed: exit status 2", resolved) == resolved
 
 
-def test_fix_push_failures_falls_back_when_the_check_names_no_file(tmp_path):
-    """Check output with no path in it leaves every resolved file a suspect."""
-    resolved = ["pkg/server.go", "pkg/client.go"]
-
-    prompted, total = _prompted_files(tmp_path, "build failed: exit status 2", resolved)
-
-    assert prompted == resolved
-    assert total == 2
-
-
-def test_fix_push_failures_records_the_unscoped_fallback(tmp_path):
+def test_the_unscoped_fallback_is_recorded(tmp_path):
     """The expensive unscoped pass is visible in the trail, not just in spend."""
     (tmp_path / "server.go").write_text("stub\n")
-    fake_trail = mock.MagicMock()
+    trail = mock.MagicMock()
+    trail.context = {}
 
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+    with _fix_pass():
+        prepush.fix_push_failures(
+            str(tmp_path), "build failed", ["server.go"], trail=trail,
+        )
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(prepush.ai_backend, "is_available", return_value=True):
-        prepush.fix_push_failures(str(tmp_path), "build failed", ["server.go"],
-                                  trail=fake_trail)
-
-    actions = [c.args[0] for c in fake_trail.info.call_args_list]
-    assert "fix_push_failures" in actions
-
-
-def test_fix_one_file_survives_a_file_it_cannot_write(tmp_path):
-    """One unwritable file must not abort the whole pass.
-
-    The read is guarded the same way, and the loop above this is per-file — the
-    other files' fixes are still worth landing.
-    """
-    target = tmp_path / "server.go"
-    target.write_text("package main\n")
-    fixed = (f"{rebase_conflicts.RESOLVE_BEGIN}\nfixed\n"
-             f"{rebase_conflicts.RESOLVE_END}\n")
-    fake_trail = mock.MagicMock()
-
-    with mock.patch.object(prepush.agent_invoke, "run_prompt",
-                           return_value=mock.Mock(exit_code=0, text=fixed)), \
-         mock.patch.object(Path, "write_text",
-                           side_effect=OSError("Read-only file system")):
-        prepush.fix_one_file("server.go", str(tmp_path), "build failed",
-                             trail=fake_trail)
-
-    assert target.read_text() == "package main\n"
-    assert fake_trail.error.call_args.kwargs["data"]["filepath"] == "server.go"
+    assert "check output named no resolved file" in [
+        c.args[1] for c in trail.info.call_args_list
+    ]
 
 
-def test_fix_one_file_records_the_backend_exit_code(tmp_path):
-    """A failed fix carries its exit code into the trail.
-
-    The console line is the only other record, so a run that fails every fix
-    leaves nothing behind to explain why without this.
-    """
+def test_the_error_output_handed_over_is_truncated(tmp_path):
+    """A check can print megabytes; the prompt carries a bounded slice of it."""
     (tmp_path / "server.go").write_text("package main\n")
-    fake_trail = mock.MagicMock()
+    long_error = "server.go " + "x" * 10000
 
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+    with _fix_pass() as (_, box):
+        prepush.fix_push_failures(str(tmp_path), long_error, ["server.go"])
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
-        prepush.fix_one_file("server.go", str(tmp_path), "build failed",
-                             trail=fake_trail)
-
-    assert fake_trail.error.called
-    data = fake_trail.error.call_args.kwargs["data"]
-    assert data == {"filepath": "server.go", "exit_code": 1}
+    assert len(box[0].check_output) == prepush.FIX_ERROR_MAX_CHARS
 
 
 # ── _status_lines ──────────────────────────────────────────────────────────

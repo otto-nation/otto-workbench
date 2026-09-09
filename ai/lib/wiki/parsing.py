@@ -37,6 +37,25 @@ _LOG_UNPROCESSED_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(?:\[[^\]]*\]\s*)?(SESSION_OBSERVATION|QUERY_GAP)\b",
 )
 
+# The question a QUERY_GAP entry records, for clustering. Quoted when the
+# reference format was followed; the rest of the line when it was not. The
+# prefix matches `_LOG_UNPROCESSED_RE` exactly, so a line that counts as an
+# unprocessed entry is always one this can extract a question from.
+_QUERY_GAP_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:\[([^\]]*)\]\s*)?QUERY_GAP:\s*(.*)$"
+)
+
+# Words too common to say anything about what a gap is about.
+_GAP_STOPWORDS = frozenset(
+    """a an and are as at be but by can do does for from has have how i in is it its
+    of on or that the their there they this to was what when where which who why
+    will with not our we you your""".split()
+)
+
+# Shortest token that counts as a topic word. Two-letter tokens are almost all
+# stopwords already; three keeps `ci`, `go` out while letting `api`, `dns` in.
+GAP_TOKEN_MIN_LEN = 3
+
 # Log lines open with a bracketed date, so the event keyword is matched on its own
 # word boundary rather than anchored: `[2024-01-01] COMPILE: ...`. Testing for the
 # keyword anywhere in the line instead would let RECOMPILE answer for COMPILE.
@@ -157,6 +176,29 @@ def _parse_date(value) -> datetime | None:
     except ValueError:
         return None
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
+def parse_query_gap(line: str) -> tuple[str, str] | None:
+    """The date and question from a QUERY_GAP log line, or None if it is not one."""
+    match = _QUERY_GAP_RE.match(line)
+    if match is None:
+        return None
+    question = match.group(2).strip().strip("\"'").strip()
+    return (match.group(1) or "").strip(), question
+
+
+def gap_tokens(question: str) -> set[str]:
+    """The topic words in *question*, for grouping gaps that ask the same thing.
+
+    Deliberately crude: lowercase, split, drop stopwords and short tokens. The
+    clustering this feeds is a starting point for the model to read, not a
+    result anyone should act on unread — which is why the raw questions travel
+    alongside the counts rather than being replaced by them.
+    """
+    words = re.findall(r"[a-z0-9_-]+", question.lower())
+    return {
+        w for w in words if len(w) >= GAP_TOKEN_MIN_LEN and w not in _GAP_STOPWORDS
+    }
 
 
 def _slugify(text: str) -> str:

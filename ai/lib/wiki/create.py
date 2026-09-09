@@ -9,6 +9,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .model import Wiki
 from .parsing import hash_file
 from .paths import (
     ARCHIVE_DIR,
@@ -55,6 +56,24 @@ DEFAULT_SOURCE_TYPE = "file"
 
 class WikiExistsError(Exception):
     """A knowledge base is already there, and init will not write over it."""
+
+
+class ArticleNotFoundError(Exception):
+    """No article by that slug, so there is nothing to retire."""
+
+
+class ArticleReferencedError(Exception):
+    """Live articles still link here, and archiving would strand those links.
+
+    Carries the referring slugs so the caller can name them rather than making
+    the user go and find them.
+    """
+
+    def __init__(self, slug: str, referrers: list[str]):
+        self.slug = slug
+        self.referrers = referrers
+        joined = ", ".join(referrers)
+        super().__init__(f"{slug} is still linked from {joined}")
 
 
 def clean_source_type(source_type: str) -> str:
@@ -146,6 +165,42 @@ def stage_source(root: Path, source: Path, source_type: str = "file", title: str
         shutil.copy2(source, target)
 
     append_log(root, f"INGEST: {source} → {target.relative_to(root).as_posix()}")
+    return target
+
+
+def archive_article(wiki: Wiki, slug: str, force: bool = False) -> Path:
+    """Retire the article named *slug* to `archive/` and return where it landed.
+
+    Retiring is a move, not a delete: the article stays readable, keeps its
+    slug, and remains a valid wikilink target. What changes is that it leaves
+    the published set, so the index, staleness, orphan, and sparse checks stop
+    reporting on an article nobody is maintaining any more.
+
+    Refuses when a published article still links here, unless *force*. The
+    refusal is the point — an inbound link is the caller's signal that the
+    knowledge is still load-bearing somewhere, and the alternative to stopping
+    is a wiki whose live articles point at retired content without saying so.
+    With *force*, the link survives as a deliberate tombstone and `wiki lint`
+    reports it as `archived-link` from then on.
+    """
+    article = next((a for a in wiki.articles if a.slug == slug), None)
+    if article is None:
+        raise ArticleNotFoundError(slug)
+    if article.is_archived:
+        return article.path
+
+    referrers = sorted(
+        a.slug for a in wiki.published() if a.slug != slug and slug in a.links
+    )
+    if referrers and not force:
+        raise ArticleReferencedError(slug, referrers)
+
+    target = _unused_path(wiki.root / ARCHIVE_DIR / article.path.name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(article.path), str(target))
+
+    note = f" (still linked from {', '.join(referrers)})" if referrers else ""
+    append_log(wiki.root, f"ARCHIVED: {slug}{note}")
     return target
 
 

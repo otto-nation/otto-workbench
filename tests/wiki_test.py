@@ -27,7 +27,7 @@ def make_wiki(
     dirname: str = "wiki",
 ) -> Path:
     root = tmp_path / dirname
-    for sub in ("articles", "raw", "drafts", "meta"):
+    for sub in ("articles", "raw", "drafts", "archive", "meta"):
         (root / sub).mkdir(parents=True, exist_ok=True)
     (root / "SCHEMA.md").write_text(schema, encoding="utf-8")
     return root
@@ -874,3 +874,296 @@ class TestDomainSkipsNonProse:
         wiki.main(["init", str(tmp_path), "--domain", "Payments"])
         status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
         assert status["domain"] == "A knowledge base about Payments, for whoever works on it."
+
+
+def checks(findings: list[dict]) -> set[str]:
+    return {f["check"] for f in findings}
+
+
+class TestArchive:
+    def test_moves_the_article_and_keeps_it_readable(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="the old way", title="Old Flow")
+        target = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        assert target == root / "archive" / "old-flow.md"
+        assert not (root / "articles" / "old-flow.md").exists()
+        assert "the old way" in target.read_text(encoding="utf-8")
+
+    def test_archived_article_leaves_the_published_set(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        wiki.archive_article(wiki.Wiki(root), "old-flow")
+        store = wiki.Wiki(root)
+        assert [a.slug for a in store.published()] == []
+        assert [a.slug for a in store.articles if a.is_archived] == ["old-flow"]
+
+    def test_refuses_while_a_live_article_links_here(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        write_article(root, "current", body="see [[old-flow]]")
+        try:
+            wiki.archive_article(wiki.Wiki(root), "old-flow")
+        except wiki.ArticleReferencedError as exc:
+            assert exc.referrers == ["current"]
+        else:
+            raise AssertionError("expected ArticleReferencedError")
+        assert (root / "articles" / "old-flow.md").exists()
+
+    def test_force_archives_and_records_the_referrers(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        write_article(root, "current", body="see [[old-flow]]")
+        wiki.archive_article(wiki.Wiki(root), "old-flow", force=True)
+        assert (root / "archive" / "old-flow.md").exists()
+        assert "still linked from current" in (root / "_log.md").read_text(encoding="utf-8")
+
+    def test_a_draft_linking_here_does_not_block(self, tmp_path):
+        """Only published articles hold a slug back; a draft is not load-bearing."""
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        write_article(root, "sketch", body="see [[old-flow]]", subdir="drafts")
+        wiki.archive_article(wiki.Wiki(root), "old-flow")
+        assert (root / "archive" / "old-flow.md").exists()
+
+    def test_unknown_slug_is_an_error(self, tmp_path):
+        root = make_wiki(tmp_path)
+        try:
+            wiki.archive_article(wiki.Wiki(root), "nope")
+        except wiki.ArticleNotFoundError:
+            return
+        raise AssertionError("expected ArticleNotFoundError")
+
+    def test_archiving_twice_is_a_no_op(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        first = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        again = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        assert first == again
+
+    def test_name_collision_in_archive_keeps_both(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="second version")
+        (root / "archive" / "old-flow.md").write_text("first version\n", encoding="utf-8")
+        target = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        assert target.name == "old-flow-2.md"
+        assert "first version" in (root / "archive" / "old-flow.md").read_text(encoding="utf-8")
+
+    def test_cli_reports_the_refusal_with_the_referrers(self, tmp_path, capsys):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        write_article(root, "current", body="see [[old-flow]]")
+        assert wiki.main(["archive", "old-flow", "--wiki", str(root)]) == 1
+        assert "still linked from current" in capsys.readouterr().err
+
+    def test_cli_archives_on_force(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        write_article(root, "current", body="see [[old-flow]]")
+        assert wiki.main(["archive", "old-flow", "--force", "--wiki", str(root)]) == 0
+        assert (root / "archive" / "old-flow.md").exists()
+
+    def test_cli_takes_the_slug_then_the_directory(self, tmp_path):
+        """`wiki archive SLUG DIR` — the documented form every other subcommand takes."""
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        assert wiki.main(["archive", "old-flow", str(tmp_path)]) == 0
+        assert (root / "archive" / "old-flow.md").exists()
+
+    def test_cli_defaults_the_directory_when_only_a_slug_is_given(self, tmp_path, monkeypatch):
+        root = make_wiki(tmp_path)
+        write_article(root, "old-flow", body="body")
+        monkeypatch.chdir(tmp_path)
+        assert wiki.main(["archive", "old-flow"]) == 0
+        assert (root / "archive" / "old-flow.md").exists()
+
+
+class TestArchivedArticlesInLint:
+    def test_link_to_an_archived_article_warns_rather_than_breaking(self, tmp_path):
+        """A tombstone, not a broken link. Stripping it would lose the trail."""
+        root = make_wiki(tmp_path)
+        write_article(root, "current", body="superseded [[old-flow]]")
+        write_article(root, "old-flow", body="body", subdir="archive")
+        write_index(root, "current")
+        found = wiki.collect_lint(wiki.Wiki(root))
+        assert "broken-link" not in checks(found)
+        archived = [f for f in found if f["check"] == "archived-link"]
+        assert len(archived) == 1
+        assert archived[0]["severity"] == "warning"
+        assert archived[0]["where"] == "articles/current.md"
+
+    def test_archived_article_is_not_scanned_for_contradictions(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old", body="[CONTRADICTION] both sides", subdir="archive")
+        assert "contradiction" not in checks(wiki.collect_lint(wiki.Wiki(root)))
+
+    def test_archived_article_does_not_need_an_index_entry(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old", body="body", subdir="archive")
+        write_index(root)
+        assert "missing-index-entry" not in checks(wiki.collect_lint(wiki.Wiki(root)))
+
+    def test_archived_outbound_links_are_not_reported(self, tmp_path):
+        """A retired article pointing at something since deleted is not a live defect."""
+        root = make_wiki(tmp_path)
+        write_article(root, "old", body="see [[also-gone]]", subdir="archive")
+        assert "broken-link" not in checks(wiki.collect_lint(wiki.Wiki(root)))
+
+    def test_an_archived_inbound_link_does_not_rescue_an_orphan(self, tmp_path):
+        """Only live articles count as inbound; otherwise archiving hides orphans."""
+        root = make_wiki(tmp_path)
+        write_article(root, "current", body="body")
+        write_article(root, "old", body="see [[current]]", subdir="archive")
+        write_index(root, "current")
+        assert "orphan-article" in checks(wiki.collect_lint(wiki.Wiki(root)))
+
+    def test_index_omits_archived_articles(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old", body="body", subdir="archive", tags=["auth"])
+        assert "[[old]]" not in wiki.build_index(wiki.Wiki(root))
+
+
+def write_log(root: Path, *lines: str) -> None:
+    body = "# Activity Log\n\n" + "".join(f"{line}\n" for line in lines)
+    (root / "_log.md").write_text(body, encoding="utf-8")
+
+
+class TestQueryGapParsing:
+    def test_dated_entries_are_recognised(self, tmp_path):
+        """The documented format is date-prefixed, which the old anchor missed."""
+        root = make_wiki(tmp_path)
+        write_log(root, '[2026-01-05] QUERY_GAP: "how does token refresh work?"')
+        assert wiki.Wiki(root).unprocessed_log_entries() != []
+
+    def test_gap_question_and_date_are_extracted(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_log(root, '[2026-01-05] QUERY_GAP: "how does token refresh work?"')
+        assert wiki.Wiki(root).query_gaps() == [
+            ("2026-01-05", "how does token refresh work?")
+        ]
+
+    def test_undated_and_bulleted_entries_still_parse(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_log(root, "- QUERY_GAP: what signs a release?")
+        assert wiki.Wiki(root).query_gaps() == [("", "what signs a release?")]
+
+    def test_other_log_lines_are_ignored(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_log(root, "[2026-01-05] COMPILE: Processed 2 sources")
+        assert wiki.Wiki(root).query_gaps() == []
+
+
+class TestSignals:
+    def test_tag_table_counts_every_tag(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="body", tags=["auth", "api"])
+        write_article(root, "b", body="body", tags=["authentication"])
+        write_article(root, "c", body="body", tags=["auth"])
+        table = wiki.collect_signals(wiki.Wiki(root))["tags"]
+        assert [(r["tag"], r["count"]) for r in table] == [
+            ("auth", 2),
+            ("api", 1),
+            ("authentication", 1),
+        ]
+        assert table[0]["articles"] == ["a", "c"]
+
+    def test_tag_table_excludes_archived_articles(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "old", body="body", subdir="archive", tags=["retired"])
+        assert wiki.collect_signals(wiki.Wiki(root))["tags"] == []
+
+    def test_near_identical_articles_are_paired(self, tmp_path):
+        root = make_wiki(tmp_path)
+        shared = " ".join(f"word{i}" for i in range(60))
+        write_article(root, "a", body=shared)
+        write_article(root, "b", body=shared + " and one more clause here")
+        pairs = wiki.collect_signals(wiki.Wiki(root))["similar_articles"]
+        assert len(pairs) == 1
+        assert pairs[0]["articles"] == ["a", "b"]
+        assert pairs[0]["similarity"] > 0.8
+
+    def test_unrelated_articles_are_not_paired(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body=" ".join(f"alpha{i}" for i in range(60)))
+        write_article(root, "b", body=" ".join(f"beta{i}" for i in range(60)))
+        assert wiki.collect_signals(wiki.Wiki(root))["similar_articles"] == []
+
+    def test_short_articles_do_not_pair_on_nothing(self, tmp_path):
+        """Below one shingle there is no evidence, so emit none rather than 1.0."""
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="too short")
+        write_article(root, "b", body="also short")
+        assert wiki.collect_signals(wiki.Wiki(root))["similar_articles"] == []
+
+    def test_gaps_on_one_topic_cluster_together(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_log(
+            root,
+            '[2026-01-05] QUERY_GAP: "how does token refresh work"',
+            '[2026-01-06] QUERY_GAP: "does token refresh expire"',
+            '[2026-01-07] QUERY_GAP: "which database stores invoices"',
+        )
+        clusters = wiki.collect_signals(wiki.Wiki(root))["gap_clusters"]
+        assert [c["count"] for c in clusters] == [2, 1]
+        assert "token" in clusters[0]["topics"]
+        assert len(clusters[0]["gaps"]) == 2
+
+    def test_every_gap_question_survives_clustering(self, tmp_path):
+        """The grouping is a convenience; the questions are the evidence."""
+        root = make_wiki(tmp_path)
+        write_log(
+            root,
+            '[2026-01-05] QUERY_GAP: "alpha beta gamma"',
+            '[2026-01-06] QUERY_GAP: "delta epsilon zeta"',
+        )
+        clusters = wiki.collect_signals(wiki.Wiki(root))["gap_clusters"]
+        questions = {g["question"] for c in clusters for g in c["gaps"]}
+        assert questions == {"alpha beta gamma", "delta epsilon zeta"}
+
+    def test_draft_ages_are_reported_oldest_first(self, tmp_path):
+        root = make_wiki(tmp_path)
+        old = (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat()
+        recent = (datetime.now(timezone.utc) - timedelta(days=2)).date().isoformat()
+        write_article(root, "stale-draft", body="body", subdir="drafts", updated=old,
+                      origin="crystallized")
+        write_article(root, "fresh-draft", body="body", subdir="drafts", updated=recent)
+        drafts = wiki.collect_signals(wiki.Wiki(root))["drafts"]
+        assert [d["slug"] for d in drafts] == ["stale-draft", "fresh-draft"]
+        assert drafts[0]["age_days"] == 90
+        assert drafts[0]["origin"] == "crystallized"
+
+    def test_undated_drafts_sort_last_rather_than_crashing(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_article(root, "dated", body="body", subdir="drafts",
+                      updated=(datetime.now(timezone.utc) - timedelta(days=5)).date().isoformat())
+        write_article(root, "undated", body="body", subdir="drafts")
+        drafts = wiki.collect_signals(wiki.Wiki(root))["drafts"]
+        assert [d["slug"] for d in drafts] == ["dated", "undated"]
+        assert drafts[-1]["age_days"] is None
+
+
+class TestSignalsCLI:
+    def test_json_carries_all_four_signals(self, tmp_path, capsys):
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="body", tags=["auth"])
+        assert wiki.main(["signals", "--json", "--wiki", str(root)]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert set(payload["signals"]) == {"tags", "similar_articles", "gap_clusters", "drafts"}
+
+    def test_signals_exit_zero_even_with_findings(self, tmp_path, capsys):
+        """Signals are measurements, not defects, so they never fail a run."""
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="body", tags=["auth"])
+        write_article(root, "b", body="body", tags=["authentication"])
+        assert wiki.main(["signals", "--wiki", str(root)]) == 0
+
+    def test_lint_json_omits_signals_by_default(self, tmp_path, capsys):
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="body")
+        wiki.main(["lint", "--json", "--wiki", str(root)])
+        assert "signals" not in json.loads(capsys.readouterr().out)
+
+    def test_lint_signals_flag_includes_them(self, tmp_path, capsys):
+        root = make_wiki(tmp_path)
+        write_article(root, "a", body="body")
+        wiki.main(["lint", "--json", "--signals", "--wiki", str(root)])
+        assert "signals" in json.loads(capsys.readouterr().out)

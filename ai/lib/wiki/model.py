@@ -29,6 +29,7 @@ from .parsing import (
     _LOG_UNPROCESSED_RE,
     _LOG_EVENT_TEMPLATE,
     hash_file,
+    parse_query_gap,
     _normalise_source_path,
     _is_table_furniture,
     _parse_date,
@@ -269,6 +270,19 @@ class Wiki:
         if text is None:
             return []
         return [line.strip() for line in text.splitlines() if _LOG_UNPROCESSED_RE.match(line)]
+
+    def query_gaps(self) -> list[tuple[str, str]]:
+        """Every recorded QUERY_GAP as (date, question), oldest first.
+
+        These are what the wiki was asked and could not answer well. `lint`
+        counts them; this returns them, which is the difference between knowing
+        the wiki has gaps and knowing what they are about.
+        """
+        text = read_text(self.root / LOG_FILE)
+        if text is None:
+            return []
+        parsed = (parse_query_gap(line) for line in text.splitlines())
+        return [gap for gap in parsed if gap is not None and gap[1]]
 
     def last_log_event(self, kind: str) -> str | None:
         """The most recent `KIND:` line in the activity log."""

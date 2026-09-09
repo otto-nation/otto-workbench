@@ -62,7 +62,7 @@ tools:
   - name: wiki
     permission: true
     visibility: brief
-    description: "Mechanical operations over a compiled knowledge base — status, lint, source hashes, index"
+    description: "Mechanical operations over a compiled knowledge base — status, lint, signals, archive, source hashes, index"
 
   - name: workbench-reference
     permission: true

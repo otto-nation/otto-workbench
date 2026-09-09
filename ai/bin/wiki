@@ -5,10 +5,12 @@ Usage:
   wiki init   [--wiki DIR] [--domain TEXT] [--audience TEXT] [DIR]
   wiki path   [--wiki DIR] [DIR]
   wiki status [--wiki DIR] [--json] [DIR]
-  wiki lint   [--wiki DIR] [--json] [DIR]
+  wiki lint   [--wiki DIR] [--json] [--signals] [DIR]
+  wiki signals [--wiki DIR] [--json] [DIR]
   wiki sources [--wiki DIR] [--new] [--json] [DIR]
   wiki index  [--wiki DIR] [--check] [DIR]
   wiki ingest --stage SRC [--type T] [--title TEXT] [--wiki DIR] [DIR]
+  wiki archive SLUG [--force] [--wiki DIR] [DIR]
 
 A knowledge base is a directory holding SCHEMA.md, an `articles/` tree of compiled
 markdown, and a `raw/` tree of the immutable sources they were compiled from.
@@ -57,10 +59,14 @@ HASH_PREFIX_LEN = wiki_parsing.HASH_PREFIX_LEN
 INDEX_FILE = wiki_paths.INDEX_FILE
 MAX_PARENT_DEPTH = wiki_paths.MAX_PARENT_DEPTH
 SCHEMA_FILE = wiki_paths.SCHEMA_FILE
+ArticleNotFoundError = wiki_create.ArticleNotFoundError
+ArticleReferencedError = wiki_create.ArticleReferencedError
 Wiki = wiki_model.Wiki
 WikiExistsError = wiki_create.WikiExistsError
+archive_article = wiki_create.archive_article
 build_index = wiki_report.build_index
 collect_lint = wiki_report.collect_lint
+collect_signals = wiki_report.collect_signals
 collect_status = wiki_report.collect_status
 find_wiki = wiki_paths.find_wiki
 hash_file = wiki_parsing.hash_file
@@ -87,8 +93,10 @@ __all__ = [
     "HASH_PREFIX_LEN",
     "MAX_PARENT_DEPTH",
     "Wiki",
+    "archive_article",
     "build_index",
     "collect_lint",
+    "collect_signals",
     "collect_status",
     "configured_dirname",
     "find_wiki",
@@ -168,7 +176,10 @@ def cmd_status(wiki: Wiki, args: argparse.Namespace) -> int:
 def cmd_lint(wiki: Wiki, args: argparse.Namespace) -> int:
     findings = collect_lint(wiki)
     if args.json:
-        print(json.dumps({"path": str(wiki.root), "findings": findings}, indent=2))
+        report = {"path": str(wiki.root), "findings": findings}
+        if args.signals:
+            report["signals"] = collect_signals(wiki)
+        print(json.dumps(report, indent=2))
         return 1 if findings else 0
 
     if not findings:
@@ -185,6 +196,68 @@ def cmd_lint(wiki: Wiki, args: argparse.Namespace) -> int:
             where = f"{finding['where']}: " if finding["where"] else ""
             print(f"  {where}{finding['message']}")
     return 1
+
+
+def cmd_signals(wiki: Wiki, args: argparse.Namespace) -> int:
+    """Counted evidence for the judgements lint leaves to the reader.
+
+    Exit 0 whichever way it comes out: a tag table and a gap log are not
+    findings, and nothing here is a defect to be fixed.
+    """
+    signals = collect_signals(wiki)
+    if args.json:
+        print(json.dumps({"path": str(wiki.root), "signals": signals}, indent=2))
+        return 0
+
+    print(f"{wiki.root}")
+    print(f"\ntags ({len(signals['tags'])})")
+    for row in signals["tags"]:
+        print(f"  {row['count']:>3}  {row['tag']}")
+
+    pairs = signals["similar_articles"]
+    print(f"\nsimilar articles ({len(pairs)})")
+    for pair in pairs:
+        left, right = pair["articles"]
+        print(f"  {pair['similarity']:.2f}  {left} / {right}")
+
+    clusters = signals["gap_clusters"]
+    print(f"\nquery gap clusters ({len(clusters)})")
+    for cluster in clusters:
+        topics = ", ".join(cluster["topics"][:5]) or "(no topic words)"
+        print(f"  {cluster['count']:>3}  {topics}")
+        for gap in cluster["gaps"]:
+            print(f"       {gap['date'] or '—'}  {gap['question']}")
+
+    drafts = signals["drafts"]
+    print(f"\ndrafts ({len(drafts)})")
+    for draft in drafts:
+        age = "undated" if draft["age_days"] is None else f"{draft['age_days']}d"
+        origin = f"  {draft['origin']}" if draft["origin"] else ""
+        print(f"  {age:>8}  {draft['slug']}{origin}")
+    return 0
+
+
+def cmd_archive(wiki: Wiki, args: argparse.Namespace) -> int:
+    """Retire one article. The only `wiki` subcommand that moves content."""
+    try:
+        target = archive_article(wiki, args.slug, force=args.force)
+    except ArticleNotFoundError:
+        print(f"{SCRIPT}: no article named '{args.slug}'", file=sys.stderr)
+        return 1
+    except ArticleReferencedError as exc:
+        print(f"{SCRIPT}: {exc}", file=sys.stderr)
+        print(
+            "  remove those links first, or pass --force to keep them as tombstones",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as exc:
+        print(f"{SCRIPT}: cannot archive {args.slug}: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"{target.relative_to(wiki.root).as_posix()}: archived")
+    print("  run `wiki index` to drop it from the master index")
+    return 0
 
 
 def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
@@ -273,9 +346,11 @@ _COMMANDS = {
     "path": (cmd_path, "Print the resolved knowledge base directory"),
     "status": (cmd_status, "Counts, uncompiled sources, and recent activity"),
     "lint": (cmd_lint, "Mechanical health checks over articles and sources"),
+    "signals": (cmd_signals, "Counted evidence for the judgements lint leaves open"),
     "sources": (cmd_sources, "Raw sources with their hashes and compile state"),
     "index": (cmd_index, "Rebuild the master index from article frontmatter"),
     "ingest": (cmd_ingest, "Copy a source into raw/ with frontmatter and a real hash"),
+    "archive": (cmd_archive, "Retire an article to archive/, keeping it readable"),
 }
 
 
@@ -289,10 +364,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, (_, help_text) in _COMMANDS.items():
         sub = subparsers.add_parser(name, help=help_text)
+        # A subcommand's own required positional is registered before the optional
+        # trailing directory, so `wiki archive SLUG DIR` binds each to the right
+        # one. Registered the other way round, argparse gives the first word to
+        # `directory` and then has nothing left for the slug.
+        if name == "archive":
+            sub.add_argument("slug", help="Article to retire")
         sub.add_argument("directory", nargs="?", default=".", help="Where to start looking (default: cwd)")
         sub.add_argument("--wiki", metavar="DIR", help="Use this knowledge base instead of searching")
-        if name in ("status", "lint", "sources"):
+        if name in ("status", "lint", "signals", "sources"):
             sub.add_argument("--json", action="store_true", help="Emit JSON")
+        if name == "lint":
+            sub.add_argument(
+                "--signals",
+                action="store_true",
+                help="Include the counted signals in --json output",
+            )
+        if name == "archive":
+            sub.add_argument(
+                "--force",
+                action="store_true",
+                help="Archive even while live articles link to it",
+            )
         if name == "sources":
             sub.add_argument("--new", action="store_true", help="Only new or changed sources")
         if name == "index":

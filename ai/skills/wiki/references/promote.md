@@ -43,3 +43,6 @@ A draft that fails lint on promotion is not ready: fix the finding or put it bac
 
 Deleting a draft discards work. Confirm first, and prefer archiving anything that took real
 effort — `archive/` keeps it readable and out of the way.
+
+`wiki archive` retires a *published* article. A draft is not published, so move it to
+`archive/` directly and note it in `_log.md`.

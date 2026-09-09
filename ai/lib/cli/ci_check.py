@@ -50,6 +50,7 @@ from . import pr_rebase
 # changing the name in both places at once.
 SCRIPT = "ci-check"
 
+
 def _report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> ci_report.CIReport:
     """Turn a merged run payload into the report, and record it against the branch.
 

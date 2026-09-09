@@ -151,7 +151,18 @@ def fix_one_file(
     if fixed_content == content:
         return
 
-    full_path.write_text(fixed_content)
+    # One unwritable file must not abort the pass: the loop above this is
+    # per-file and the other files' fixes are still worth landing, so the
+    # failure is recorded and skipped the way an unreadable one is.
+    try:
+        full_path.write_text(fixed_content)
+    except OSError as exc:
+        terr(
+            trail, "fix_push_failures", f"cannot write fix for {filepath}",
+            data={"filepath": filepath, "error": str(exc)},
+        )
+        log.error(f"Cannot write fix for {filepath}: {exc}")
+        return
     log.ok(f"Fixed: {filepath}")
 
 

@@ -83,6 +83,7 @@ def test_rebase_if_behind_rebases_in_process_on_success():
 
     assert result is True
     trail.info.assert_called()
+    assert start.call_args[0][0] == "/tmp/wt"
     assert start.call_args[0][2] is ci_check.rebase_types.RunMode.FIX
     assert start.call_args.kwargs["target_ref"] == "origin/main"
     assert start.call_args.kwargs["trail"] is trail

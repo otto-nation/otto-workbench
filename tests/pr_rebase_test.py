@@ -3543,6 +3543,29 @@ def test_fix_push_failures_records_the_unscoped_fallback(tmp_path):
     assert "fix_push_failures" in actions
 
 
+def test_fix_one_file_survives_a_file_it_cannot_write(tmp_path):
+    """One unwritable file must not abort the whole pass.
+
+    The read is guarded the same way, and the loop above this is per-file — the
+    other files' fixes are still worth landing.
+    """
+    target = tmp_path / "server.go"
+    target.write_text("package main\n")
+    fixed = (f"{rebase_conflicts.RESOLVE_BEGIN}\nfixed\n"
+             f"{rebase_conflicts.RESOLVE_END}\n")
+    fake_trail = mock.MagicMock()
+
+    with mock.patch.object(prepush.agent_invoke, "run_prompt",
+                           return_value=mock.Mock(exit_code=0, text=fixed)), \
+         mock.patch.object(Path, "write_text",
+                           side_effect=OSError("Read-only file system")):
+        prepush.fix_one_file("server.go", str(tmp_path), "build failed",
+                             trail=fake_trail)
+
+    assert target.read_text() == "package main\n"
+    assert fake_trail.error.call_args.kwargs["data"]["filepath"] == "server.go"
+
+
 def test_fix_one_file_records_the_backend_exit_code(tmp_path):
     """A failed fix carries its exit code into the trail.
 

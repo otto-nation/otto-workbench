@@ -41,7 +41,9 @@ _BIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_BIN_DIR))
 sys.path.insert(0, str(_BIN_DIR.parent / "lib"))
 from _version import version_string as _version_string  # noqa: E402
+from config.workbench_config import load_config_or_default  # noqa: E402
 from core import proc  # noqa: E402
+from git import client as git_client  # noqa: E402
 
 SCRIPT = Path(__file__).name
 
@@ -360,13 +362,32 @@ def is_wiki(path: Path) -> bool:
     return (path / SCHEMA_FILE).is_file()
 
 
-def find_wiki(start: Path, explicit: str | None = None) -> Path | None:
+def configured_dirname(start: Path) -> str:
+    """The `wiki.dir` setting for *start*, or the default when unset.
+
+    Resolved against the repo root rather than *start*: ``project_config_path``
+    looks for `.workbench.yml` directly under the path it is given instead of
+    walking up, so passing the search start reads the project scope from a file
+    that is not there, and a `--project` setting is honoured only when the CLI
+    runs from the repo root itself. *start* stands in when there is no repo.
+
+    Read through ``load_config_or_default`` so an unreadable config file leaves
+    the knowledge base findable. Every other command here works without config;
+    this one should not be the reason none of them run.
+    """
+    toplevel = git_client.out("rev-parse", "--show-toplevel", cwd=start)
+    root = Path(toplevel) if toplevel else start
+    configured = load_config_or_default(root).wiki.dir.strip()
+    return configured or DEFAULT_WIKI_DIRNAME
+
+
+def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = None) -> Path | None:
     """Locate the knowledge base governing *start*.
 
-    Three steps, in order: an explicit path, then `wiki/` at each level from
-    *start* up to the repo root, then *start* itself if it is a wiki. An
-    explicit path that is not a wiki resolves to nothing rather than falling
-    back to the walk — it names one specific base, and silently using a
+    Three steps, in order: an explicit path, then the configured directory name
+    at each level from *start* up to the repo root, then *start* itself if it is
+    a wiki. An explicit path that is not a wiki resolves to nothing rather than
+    falling back to the walk — it names one specific base, and silently using a
     different one is how the wrong wiki gets written to.
 
     The plugin this replaces consulted a global registry as a fallback and
@@ -377,8 +398,8 @@ def find_wiki(start: Path, explicit: str | None = None) -> Path | None:
         candidate = Path(explicit).expanduser().resolve()
         return candidate if is_wiki(candidate) else None
 
-    name = DEFAULT_WIKI_DIRNAME
     start = start.resolve()
+    name = dirname if dirname is not None else configured_dirname(start)
     for depth, directory in enumerate([start, *start.parents]):
         if depth > MAX_PARENT_DEPTH:
             break

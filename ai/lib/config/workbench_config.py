@@ -120,6 +120,7 @@ CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"
 ISSUE_PROVIDER_KEY = "issue_tracker.provider"
+WIKI_DIR_KEY = "wiki.dir"
 # Read from bash rather than written: git/steps.sh asks for this one through
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
@@ -253,6 +254,23 @@ class GitHubConfig:
 
 
 @dataclass(frozen=True)
+class WikiConfig:
+    """Where this repo keeps its compiled knowledge base.
+
+    A directory name, resolved relative to each level the search walks, not a
+    path: the point of the walk is that a session anywhere under the repo finds
+    the same base, and an absolute path would fix it to one starting directory.
+
+    Configuration rather than detection because the name is the only part that
+    cannot be discovered. ``SCHEMA.md`` marks the directory once found, so a
+    repo keeping its base under ``docs/knowledge`` needs to say so exactly once,
+    and every harness reads the same answer.
+    """
+
+    dir: str = "wiki"
+
+
+@dataclass(frozen=True)
 class RebaseConfig:
     """How a rebase rebuilds this repo's generated files.
 
@@ -282,6 +300,7 @@ class WorkbenchConfig:
     issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
     rebase: RebaseConfig = field(default_factory=RebaseConfig)
+    wiki: WikiConfig = field(default_factory=WikiConfig)
 
 
 def global_config_path() -> Path:

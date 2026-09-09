@@ -1,0 +1,35 @@
+{
+  "pr": {
+    "on_no_match": "fail",
+    "rules": [
+      {
+        "match": ["comments", "--finish", "--post"],
+        "stdout": "{\"replies_posted\": 2, \"summary_url\": \"https://example.invalid/c/1\"}",
+        "stderr": "✓ Replied to T-1 (alice)\n✓ Replied to T-2 (bob)\n✓ Posted summary: https://example.invalid/c/1\n✓ Resolved 2 threads\n",
+        "exit": 0
+      },
+      {
+        "match": ["comments", "--finish"],
+        "stdout": "{\"replies_posted\": 0, \"summary_url\": \"\"}",
+        "stderr": "DRAFT (not published) — reply to T-1 (alice)\n  Fixed in a1b2c3d.\nDRAFT (not published) — reply to T-2 (bob)\n  Fixed in a1b2c3d.\nDRAFT (not published) — summary comment\n  Addressed both threads; nothing deferred.\n",
+        "exit": 0
+      },
+      {
+        "match": ["comments", "--fix"],
+        "stdout_file": "fix-report.json",
+        "stderr": "DRAFT (not published) reply to T-1 (alice): fixed in a1b2c3d\nDRAFT (not published) reply to T-2 (bob): fixed in a1b2c3d\n",
+        "exit": 0
+      }
+    ]
+  },
+  "gh": {"on_no_match": "fail", "rules": []},
+  "wt": {
+    "on_no_match": "fail",
+    "rules": [
+      {"match": ["switch"], "stdout": "{\"path\": \".\"}", "exit": 0}
+    ]
+  },
+  "git": {"on_no_match": "passthrough", "rules": [
+    {"match": ["push"], "stderr": "refusing: pushes are stubbed\n", "exit": 1}
+  ]}
+}

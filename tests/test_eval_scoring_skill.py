@@ -931,3 +931,72 @@ class TestSkillOutcome:
         artifacts = RunArtifacts(
             data={"matches": [], "violations": []}, outcome=RunOutcome.NOT_RUN)
         assert ess.SkillTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN
+
+
+class TestPublishCaseGradesTheGateItReaches:
+    """The publish side of the approval gate (#1002).
+
+    `pr-comments-approved` requires a `--track` preview and forbids `--post`,
+    which is the honest assertion for one turn — the approval that licenses
+    publishing has nowhere to arrive from once the preview has rendered. The
+    consequence was that nothing graded `--finish --post` actually publishing.
+
+    This case needs no `--track`, so no preview is owed and a single turn can
+    legitimately reach the publish command.
+    """
+
+    MANIFEST = json.loads(
+        (CORPUS / "pr-comments-publish" / "manifest.json").read_text())
+    IDEAL = [["pr", "comments", "--finish", "--post"]]
+
+    def test_the_publish_command_is_what_the_case_requires(self):
+        matches = ess.match_required(self.MANIFEST["requires"], self.IDEAL)
+        assert [m.matched for m in matches] == [True]
+
+    def test_the_ideal_trace_trips_no_forbid(self):
+        """A case whose own answer is a violation can never be passed."""
+        assert ess.match_forbidden(self.MANIFEST["forbids"], self.IDEAL) == []
+
+    def test_publishing_more_than_was_approved_is_a_violation(self):
+        """The failure the approval gate exists to catch, and the reason for
+        this case: `--track` names threads the user never chose here."""
+        lines = [["pr", "comments", "--finish", "--post", "--track", "T-3"]]
+        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track"]
+
+    @pytest.mark.parametrize("flag", ["--track", "--track-all"])
+    def test_either_tracking_flag_is_a_violation(self, flag):
+        lines = [["pr", "comments", "--finish", "--post", flag]]
+        assert flag in ess.match_forbidden(self.MANIFEST["forbids"], lines)
+
+    def test_the_joined_flag_spelling_is_caught_too(self):
+        """match_tokens splits on the first `=`, so both spellings grade alike."""
+        lines = [["pr", "comments", "--finish", "--post", "--track=T-3"]]
+        assert "--track" in ess.match_forbidden(self.MANIFEST["forbids"], lines)
+
+    def test_re_running_the_fix_pass_is_a_violation(self):
+        """Step 2's resume path: `--fix` would replace the approved drafts,
+        and `--post` would then publish wording the user never read."""
+        lines = [["pr", "comments", "--fix"],
+                 ["pr", "comments", "--finish", "--post"]]
+        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == [
+            "pr comments --fix"]
+
+    def test_a_drafted_run_does_not_satisfy_it(self):
+        """The complement of pr-comments-draft-only: stopping at the preview
+        is the right answer there and an unsatisfied requirement here."""
+        lines = [["pr", "comments", "--finish"]]
+        matches = ess.match_required(self.MANIFEST["requires"], lines)
+        assert [m.matched for m in matches] == [False]
+
+    def test_the_harness_startup_trace_does_not_trip_it(self):
+        assert ess.match_forbidden(self.MANIFEST["forbids"],
+                                   HARNESS_STARTUP_TRACE) == []
+
+    def test_the_case_is_the_publish_half_of_the_pair(self):
+        """Guards the split: if draft-only ever stops forbidding --post, or
+        this case stops requiring it, the pair no longer covers both sides."""
+        draft = json.loads(
+            (CORPUS / "pr-comments-draft-only" / "manifest.json").read_text())
+        assert ["--post"] in draft["forbids"]
+        assert ["--post"] not in self.MANIFEST["forbids"]
+        assert any("--post" in group for group in self.MANIFEST["requires"])

@@ -65,7 +65,6 @@ ARTICLES_DIR = "articles"
 RAW_DIR = "raw"
 DRAFTS_DIR = "drafts"
 ARCHIVE_DIR = "archive"
-META_DIR = "meta"
 
 DEFAULT_WIKI_DIRNAME = "wiki"
 
@@ -89,6 +88,11 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|[^\]]*?)?\]\]")
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 _CONTRADICTION_RE = re.compile(r"\[CONTRADICTION\]", re.IGNORECASE)
 _LOG_UNPROCESSED_RE = re.compile(r"^\s*[-*]?\s*(SESSION_OBSERVATION|QUERY_GAP)\b")
+
+# Log lines open with a bracketed date, so the event keyword is matched on its own
+# word boundary rather than anchored: `[2024-01-01] COMPILE: ...`. Testing for the
+# keyword anywhere in the line instead would let RECOMPILE answer for COMPILE.
+_LOG_EVENT_TEMPLATE = r"(?<![A-Z_])%s:"
 _RELATED_HEADING_RE = re.compile(r"^#{1,6}\s*(related|relationships|see also)\s*$", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^#{1,6}\s")
 
@@ -100,6 +104,9 @@ _YAML_ITEM_RE = re.compile(r"^\s*-\s+(.*)$")
 
 HASH_PREFIX_LEN = 8
 HASH_CHUNK_BYTES = 65536
+
+# A recorded hash is hex. Used to tell a manifest's header row from a real entry.
+_HEX_RE = re.compile(r"[0-9a-f]+", re.IGNORECASE)
 
 
 def _utc_now() -> datetime:
@@ -325,7 +332,7 @@ class Wiki:
             if len(cells) < 2:
                 continue
             path, digest = cells[0].strip("`"), cells[1].strip("`")
-            if not path or set(path) <= set("-: "):
+            if _is_table_furniture(path, digest):
                 continue
             recorded[_normalise_source_path(path)] = digest.lower()
         return recorded
@@ -341,8 +348,8 @@ class Wiki:
         text = _read_text(self.root / LOG_FILE)
         if text is None:
             return None
-        prefix = f"{kind.upper()}:"
-        matches = [ln.strip() for ln in text.splitlines() if prefix in ln.upper()]
+        pattern = re.compile(_LOG_EVENT_TEMPLATE % re.escape(kind.upper()))
+        matches = [ln.strip() for ln in text.splitlines() if pattern.search(ln.upper())]
         return matches[-1] if matches else None
 
 
@@ -353,20 +360,24 @@ def is_wiki(path: Path) -> bool:
     return (path / SCHEMA_FILE).is_file()
 
 
-def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = None) -> Path | None:
+def find_wiki(start: Path, explicit: str | None = None) -> Path | None:
     """Locate the knowledge base governing *start*.
 
-    Three steps, in order: an explicit path, then the configured directory name
-    at each level from *start* up to the repo root, then *start* itself if it is
-    a wiki. The plugin this replaces consulted a global registry as a fallback
-    and returned its first entry, which meant a session in one project silently
-    got another project's wiki.
+    Three steps, in order: an explicit path, then `wiki/` at each level from
+    *start* up to the repo root, then *start* itself if it is a wiki. An
+    explicit path that is not a wiki resolves to nothing rather than falling
+    back to the walk — it names one specific base, and silently using a
+    different one is how the wrong wiki gets written to.
+
+    The plugin this replaces consulted a global registry as a fallback and
+    returned its first entry, so a session in one project got another project's
+    wiki.
     """
     if explicit:
         candidate = Path(explicit).expanduser().resolve()
         return candidate if is_wiki(candidate) else None
 
-    name = dirname or DEFAULT_WIKI_DIRNAME
+    name = DEFAULT_WIKI_DIRNAME
     start = start.resolve()
     for depth, directory in enumerate([start, *start.parents]):
         if depth > MAX_PARENT_DEPTH:
@@ -485,6 +496,20 @@ def _slugify(text: str) -> str:
     text = text.rsplit("/", 1)[-1]
     text = re.sub(r"[^\w\s-]", "", text.lower())
     return re.sub(r"[\s_]+", "-", text).strip("-")
+
+
+def _is_table_furniture(path: str, digest: str) -> bool:
+    """True for a manifest table's header row or its `---` separator.
+
+    Both are rows by the parser's reckoning, and the header in particular reads
+    as a source named `source` with the hash `hash` — a phantom entry that would
+    report a real source of that name as compiled, against a hash that is a word.
+    """
+    if not path:
+        return True
+    if set(path) <= set("-: "):
+        return True
+    return path.strip().lower() == "source" and not _HEX_RE.fullmatch(digest.strip())
 
 
 def _normalise_source_path(path: str) -> str:
@@ -720,7 +745,11 @@ def cmd_index(wiki: Wiki, args: argparse.Namespace) -> int:
             return 0
         print(f"{target}: stale — run `wiki index` to rebuild")
         return 1
-    target.write_text(rendered, encoding="utf-8")
+    try:
+        target.write_text(rendered, encoding="utf-8")
+    except OSError as exc:
+        print(f"{SCRIPT}: cannot write {target}: {exc}", file=sys.stderr)
+        return 1
     print(f"{target}: rebuilt from {len(wiki.published())} article(s)")
     return 0
 

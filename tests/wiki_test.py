@@ -1,6 +1,7 @@
 """Tests for the wiki knowledge base CLI."""
 
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -9,6 +10,10 @@ from conftest import load_script
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 
 wiki = load_script("wiki_cli", BIN_DIR / "wiki")
+
+# Comfortably past the 180-day `staleness_threshold_days` default, so a test
+# reading the default and one overriding it both turn on the same offset.
+STALE_DAYS = wiki.DEFAULT_SETTINGS["staleness_threshold_days"] + 220
 
 
 def make_wiki(tmp_path: Path, schema: str = "# Schema\n\nTest knowledge base.\n") -> Path:
@@ -163,6 +168,28 @@ class TestSourceHashing:
         recorded = store.recorded_source_hashes()
         assert recorded[store.sources[0].rel] != store.sources[0].content_hash
 
+    def test_manifest_header_is_not_read_as_a_source(self, tmp_path):
+        """`| source | hash |` is table furniture, not an entry.
+
+        Read as one, it registers a source named `source` whose hash is the word
+        `hash`, and a real source of that name would then report as compiled
+        against a hash that is not one.
+        """
+        root = make_wiki(tmp_path)
+        write_source(root, "source", "content")
+        write_manifest(root, {})
+        store = wiki.Wiki(root)
+        assert store.recorded_source_hashes() == {}
+        assert findings_for(root, "orphan-source")
+
+    def test_a_source_named_source_is_still_recorded(self, tmp_path):
+        """Skipping the header must not skip a real entry that shares its name."""
+        root = make_wiki(tmp_path)
+        write_source(root, "source", "content")
+        write_manifest(root, {"raw/source": hash_of("content")})
+        store = wiki.Wiki(root)
+        assert store.recorded_source_hashes() == {"raw/source": hash_of("content")}
+
     def test_manifest_keys_match_the_source_path_they_record(self, tmp_path):
         """Every accepted spelling must land on the key lookups actually use.
 
@@ -226,14 +253,13 @@ class TestLint:
 
     def test_detects_stale_article(self, tmp_path):
         root = make_wiki(tmp_path)
-        old = (datetime.now(timezone.utc) - timedelta(days=400)).date().isoformat()
-        write_article(root, "a", updated=old)
+        write_article(root, "a", updated=_days_ago(STALE_DAYS))
         assert len(findings_for(root, "stale-article")) == 1
 
     def test_staleness_threshold_comes_from_schema(self, tmp_path):
-        root = make_wiki(tmp_path, "# Schema\n\nTest.\n\n- staleness_threshold_days: 3650\n")
-        old = (datetime.now(timezone.utc) - timedelta(days=400)).date().isoformat()
-        write_article(root, "a", updated=old)
+        threshold = STALE_DAYS + 1
+        root = make_wiki(tmp_path, f"# Schema\n\nTest.\n\n- staleness_threshold_days: {threshold}\n")
+        write_article(root, "a", updated=_days_ago(STALE_DAYS))
         assert findings_for(root, "stale-article") == []
 
     def test_article_without_date_is_not_stale(self, tmp_path):
@@ -331,13 +357,25 @@ class TestStatus:
     def test_reports_last_compile(self, tmp_path):
         root = make_wiki(tmp_path)
         (root / "_log.md").write_text(
-            "COMPILE: 2024-01-01 first\nCOMPILE: 2024-02-01 second\n", encoding="utf-8"
+            "[2024-01-01] COMPILE: first\n[2024-02-01] COMPILE: second\n", encoding="utf-8"
         )
         assert "second" in wiki.collect_status(wiki.Wiki(root))["last_compile"]
 
-    def test_json_output_is_valid(self, tmp_path, capsys):
-        import json
+    def test_longer_event_name_is_not_mistaken_for_the_event(self, tmp_path):
+        """RECOMPILE is its own event, and must not answer for COMPILE.
 
+        Substring matching made the most recent RECOMPILE line the reported
+        last compile. Anchoring at line start is not the fix either — real log
+        lines open with a bracketed date, not the keyword.
+        """
+        root = make_wiki(tmp_path)
+        (root / "_log.md").write_text(
+            "[2024-01-01] COMPILE: real\n[2024-02-01] RECOMPILE: different event\n",
+            encoding="utf-8",
+        )
+        assert "real" in wiki.collect_status(wiki.Wiki(root))["last_compile"]
+
+    def test_json_output_is_valid(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
         write_article(root, "a")
         assert wiki.main(["status", str(root), "--json"]) == 0
@@ -421,6 +459,37 @@ class TestPathCommand:
         assert wiki.main(["path", str(tmp_path)]) == 0
         assert capsys.readouterr().out.strip() == str(root)
 
+    def test_explicit_path_suppresses_the_walk_up(self, tmp_path):
+        """An explicit path names one base; falling back would use another."""
+        make_wiki(tmp_path)
+        nested = tmp_path / "src" / "deep"
+        nested.mkdir(parents=True)
+        assert wiki.find_wiki(nested, explicit=str(nested / "absent")) is None
+
+    def test_walk_up_stops_at_the_depth_limit(self, tmp_path):
+        root = make_wiki(tmp_path)
+        deep = tmp_path.joinpath(*[f"d{i}" for i in range(wiki.MAX_PARENT_DEPTH + 2)])
+        deep.mkdir(parents=True)
+        assert wiki.find_wiki(deep) is None
+        assert wiki.find_wiki(deep.parent.parent) == root
+
+
+class TestIndexWriteFailure:
+    def test_unwritable_index_reports_instead_of_raising(self, tmp_path, capsys, monkeypatch):
+        root = make_wiki(tmp_path)
+        write_article(root, "a")
+
+        def refuse(*_args, **_kwargs):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr(Path, "write_text", refuse)
+        assert wiki.main(["index", str(root)]) == 1
+        assert "cannot write" in capsys.readouterr().err
+
 
 def _today() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()

@@ -216,6 +216,113 @@ step_install_pi() {
   install_via_installer pi "$PI_INSTALL_URL" "Pi"
 }
 
+# _clear_pi_extension_entry PATH — empties an extension-root slot the workbench
+# owns, with the same tri-state contract as _clear_skill_entry.
+#
+# Returns 0 once the slot is empty — either it already was, or its content was
+# just removed. Returns 1 when the slot holds something the operator wrote and
+# is left untouched: a refusal, reported with warn(), not a failure. Returns 2
+# when the slot was the workbench's own but the removal itself failed.
+#
+# Only a symlink is ever the workbench's here, because this step only ever
+# writes symlinks — unlike skills, no content is generated on the fly, so there
+# is no marker file and nothing to distinguish a real directory from a
+# hand-written extension. ~/.pi/agent/extensions is exactly where Pi's own docs
+# tell an operator to put one, so a real directory is always theirs.
+_clear_pi_extension_entry() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    if ! workbench_symlink_owned "$path" extensions; then
+      warn "$path was not installed by the workbench — leaving it in place"
+      return 1
+    fi
+    rm -f "$path" || { err "Could not remove symlink $path"; return 2; }
+    return 0
+  fi
+  [[ -e "$path" ]] || return 0
+  warn "$path was not installed by the workbench — leaving it in place"
+  return 1
+}
+
+# _prune_pi_extensions TARGET_DIR LAYERS_VAR — removes workbench-installed
+# extensions the layers no longer name.
+#
+# Globs "$target"/* rather than "$target"/*/, because the trailing-slash form
+# only matches entries that *resolve* as directories — and a retired extension
+# leaves a dangling symlink, which is precisely what has to be visited.
+#
+# The nameref's __ prefix is mandatory: a local of the same name in this
+# function would shadow the caller's array rather than reference it.
+_prune_pi_extensions() {
+  local target="$1"
+  local -n __extension_layers=$2
+  local item entry name
+  for item in "$target"/*; do
+    entry="${item%/}"
+    [[ -L "$entry" || -d "$item" ]] || continue
+    name=$(basename "$item")
+    [[ -z "${__extension_layers[$name]+set}" ]] || continue
+
+    _clear_pi_extension_entry "$entry" || continue
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $name${NC}" || true
+  done
+  return 0
+}
+
+# step_pi_extensions — installs every workbench Pi extension into Pi's global
+# extension root.
+#
+# Pi auto-discovers ~/.pi/agent/extensions/<name>/index.ts and follows symlinks
+# when it does, so one source tree reaches Pi with no copy and no compile — it
+# loads the TypeScript through jiti. The same arrangement step_skills uses for
+# ~/.agents/skills.
+#
+# Directory-form rather than a flat <name>.ts for two mechanical reasons.
+# resolve_layers keys on the full basename, so a flat layout would spell the
+# override sentinel <name>.ts.disabled while every other override in the
+# workbench is <name>.disabled. And Pi reads a package.json inside the
+# directory, so an extension that later needs npm dependencies needs no move.
+#
+# Supports user overrides: overrides/ai/pi/extensions/<name>/ replaces the
+# default, overrides/ai/pi/extensions/<name>.disabled suppresses it.
+#
+# Only what the workbench installed is ever removed — see
+# _clear_pi_extension_entry. An extension an operator disabled through `pi
+# config` stays disabled across syncs: that writes an enablement flag into
+# settings, which nothing here touches, and operator intent should win.
+#
+# ai/pi/extensions-cli/ is deliberately not installed. What lives there is
+# passed with --extension by one pipeline and must not load in every session.
+step_pi_extensions() {
+  [[ -d "$PI_EXTENSIONS_SRC_DIR" ]] \
+    || { warn "No Pi extensions in $PI_EXTENSIONS_SRC_DIR — skipping"; return; }
+  mkdir -p "$PI_EXTENSIONS_DIR"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] \
+    && info "Installing Pi extensions to $PI_EXTENSIONS_DIR/" || true
+
+  local -A layers
+  resolve_layers "$PI_EXTENSIONS_SRC_DIR" "$USER_PI_EXTENSIONS_DIR" "*/" layers
+
+  _prune_pi_extensions "$PI_EXTENSIONS_DIR" layers
+
+  local name source
+  for name in "${!layers[@]}"; do
+    source="${layers[$name]}"
+
+    # Pi's own entry-point rule, checked here so a malformed override is named
+    # rather than silently discovered as nothing. Pi reads package.json first,
+    # then index.ts, then index.js.
+    if [[ ! -f "$source/index.ts" && ! -f "$source/index.js" \
+       && ! -f "$source/package.json" ]]; then
+      warn "No index.ts, index.js or package.json in $source — skipping $name"
+      continue
+    fi
+
+    install_symlink "$source" "$PI_EXTENSIONS_DIR/$name" "$name → pi"
+  done
+  return 0
+}
+
 # _pi_read_env_var VAR — reads a variable's value from ~/.env.local.
 # Prints the value (unquoted) or nothing if not set. Uses the same read strategy
 # as _claude_env_json: grep the file directly rather than the environment, so
@@ -327,14 +434,18 @@ sync_pi() {
   sync_header "pi settings → $PI_SETTINGS_FILE"
   step_pi_settings
 
+  sync_header "pi extensions → $PI_EXTENSIONS_DIR/"
+  step_pi_extensions
+
   sync_header "pi guidelines → $PI_CONTEXT_FILE"
   step_pi_guidelines
 }
 
 register_pi_steps() {
-  register_step "Install pi"    step_install_pi
-  register_step "Pi settings"   step_pi_settings
-  register_step "Pi guidelines" step_pi_guidelines
+  register_step "Install pi"     step_install_pi
+  register_step "Pi settings"    step_pi_settings
+  register_step "Pi extensions"  step_pi_extensions
+  register_step "Pi guidelines"  step_pi_guidelines
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

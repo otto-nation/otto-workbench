@@ -188,6 +188,10 @@ PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
 # AGENTS.override.md sorts ahead of it in Pi's candidate list, which gives the
 # operator an unmanaged escape hatch the workbench needs no code to support.
 PI_CONTEXT_FILE="$PI_AGENT_DIR/AGENTS.md"
+# Pi auto-discovers extensions here and follows symlinks when it does, so one
+# source tree reaches Pi with no copy and no compile step — it loads TypeScript
+# through jiti. The same arrangement ai/skills uses for ~/.agents/skills.
+PI_EXTENSIONS_DIR="$PI_AGENT_DIR/extensions"
 # Pi's own installer, which step_install_pi pipes to bash. It runs
 # `npm install -g` into npm's global prefix, so the launcher it produces is
 # `$(npm prefix -g)/bin/pi` — /opt/homebrew/bin/pi wherever Node came from
@@ -267,6 +271,11 @@ PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
 PI_CONTEXT_HEAD_SRC="$PI_SRC_DIR/AGENTS.head.md"
+# Extensions installed into every Pi session. A subdirectory here holding an
+# index.ts is installed; PI_CLI_EXTENSIONS_SRC_DIR next to it is for the ones a
+# pipeline passes with --extension instead, which must not load globally.
+PI_EXTENSIONS_SRC_DIR="$PI_SRC_DIR/extensions"
+PI_CLI_EXTENSIONS_SRC_DIR="$PI_SRC_DIR/extensions-cli"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
@@ -280,6 +289,8 @@ USER_AI_DIR="$WORKBENCH_CONFIG_DIR/overrides/ai"
 # Harness-neutral, matching ai/skills — the layer overrides a tree neither
 # harness owns.
 USER_SKILLS_DIR="$USER_AI_DIR/skills"
+USER_PI_DIR="$USER_AI_DIR/pi"
+USER_PI_EXTENSIONS_DIR="$USER_PI_DIR/extensions"
 USER_CLAUDE_DIR="$USER_AI_DIR/claude"
 USER_AGENTS_DIR="$USER_CLAUDE_DIR/agents"
 USER_RULES_DIR="$USER_AI_DIR/guidelines/rules"

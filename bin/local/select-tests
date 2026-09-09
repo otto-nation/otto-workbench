@@ -40,6 +40,7 @@ ALWAYS_RUN_TESTS=(
   install_components
   install_targeted
   migrations
+  pi_extensions
   run_tests
   skills_install
   validate_all

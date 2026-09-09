@@ -6,8 +6,14 @@ Create a knowledge base.
 /wiki init [path]
 ```
 
-Default path is `wiki/` in the current directory. Run `wiki path` first — if it resolves,
-one already exists; say where and stop.
+Default path is `wiki/` in the current directory, or whatever `wiki.dir` is set to. Run
+`wiki path` first — if it resolves, one already exists; say where and stop.
+
+To keep the base somewhere else, set the name once rather than passing a path every time:
+
+```bash
+otto-workbench config set wiki.dir docs/knowledge --project
+```
 
 ## 1. Ask two questions
 

@@ -16,8 +16,12 @@ wiki = load_script("wiki_cli", BIN_DIR / "wiki")
 STALE_DAYS = wiki.DEFAULT_SETTINGS["staleness_threshold_days"] + 220
 
 
-def make_wiki(tmp_path: Path, schema: str = "# Schema\n\nTest knowledge base.\n") -> Path:
-    root = tmp_path / "wiki"
+def make_wiki(
+    tmp_path: Path,
+    schema: str = "# Schema\n\nTest knowledge base.\n",
+    dirname: str = "wiki",
+) -> Path:
+    root = tmp_path / dirname
     for sub in ("articles", "raw", "drafts", "meta"):
         (root / sub).mkdir(parents=True, exist_ok=True)
     (root / "SCHEMA.md").write_text(schema, encoding="utf-8")
@@ -110,6 +114,43 @@ class TestResolution:
     def test_missing_wiki_exits_two(self, tmp_path, capsys):
         assert wiki.main(["status", str(tmp_path)]) == 2
         assert "no knowledge base found" in capsys.readouterr().err
+
+
+class TestConfiguredDirectory:
+    """`wiki.dir` names the directory the walk looks for at each level."""
+
+    def test_default_is_wiki(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config(""))
+        root = make_wiki(tmp_path)
+        assert wiki.find_wiki(tmp_path) == root
+
+    def test_configured_name_is_found(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
+        root = make_wiki(tmp_path, dirname="knowledge")
+        assert wiki.find_wiki(tmp_path) == root
+
+    def test_configured_name_is_found_from_a_nested_directory(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
+        root = make_wiki(tmp_path, dirname="knowledge")
+        nested = tmp_path / "src" / "deep"
+        nested.mkdir(parents=True)
+        assert wiki.find_wiki(nested) == root
+
+    def test_default_name_is_ignored_when_another_is_configured(self, tmp_path, monkeypatch):
+        """Configuring a name means that name, not that name as well as `wiki/`."""
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
+        make_wiki(tmp_path)
+        assert wiki.find_wiki(tmp_path) is None
+
+    def test_blank_setting_falls_back_to_the_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("   "))
+        root = make_wiki(tmp_path)
+        assert wiki.find_wiki(tmp_path) == root
+
+    def test_explicit_path_ignores_the_setting(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("knowledge"))
+        root = make_wiki(tmp_path, dirname="elsewhere")
+        assert wiki.find_wiki(tmp_path, explicit=str(root)) == root
 
 
 class TestFrontmatter:
@@ -493,3 +534,15 @@ def _today() -> str:
 
 def _days_ago(days: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+
+
+def _config(dirname: str):
+    """A stand-in for the merged workbench config, carrying just `wiki.dir`."""
+
+    class _Wiki:
+        dir = dirname
+
+    class _Config:
+        wiki = _Wiki()
+
+    return _Config()

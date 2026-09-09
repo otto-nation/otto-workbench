@@ -185,6 +185,14 @@
           }
         }
       }
+    },
+    "wiki": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string"
+        }
+      }
     }
   }
 }

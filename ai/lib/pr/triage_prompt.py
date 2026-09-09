@@ -27,7 +27,8 @@ from pr.thread_models import ReportThread
 
 
 def build_triage_prompt(
-    non_resolved: list[ReportThread], code_context: str,
+    non_resolved: list[ReportThread],
+    code_context: str,
     unseen_comments: list[dict] | None = None,
     commit_log: str = "",
 ) -> str:
@@ -124,7 +125,7 @@ Return JSON matching this exact schema:
       "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
       "reasoning": "brief explanation",
       "file": "file from input",
-      "line": "line_from_input",
+      "line": "line from input",
       "reviewer": "reviewer from input",
       "summary": "one-line summary",
       "evidence_file": "file proving the verdict (required for already_addressed/invalid)",

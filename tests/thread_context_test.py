@@ -8,7 +8,7 @@ cases below assert the window itself once and the two framings separately.
 
 import sys
 
-from conftest import REPO_ROOT, git_in, git_out, run_checked
+from conftest import REPO_ROOT, git_in, run_checked
 
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -60,9 +60,15 @@ class TestTheContextWindow:
         (tree / "pkg").mkdir()
         assert thread_context.code_context_for_thread("pkg", 1, tree) == ""
 
-    def test_undecodable_bytes_do_not_raise(self, tree):
+    def test_a_file_that_is_not_text_is_not_softened_into_a_snippet(self, tree):
+        """A thread cannot be anchored in a binary, and a snippet of
+
+        replacement characters reaching a model as "the code under discussion"
+        is worse than the read failing where it happened.
+        """
         (tree / "bin.py").write_bytes(b"ok\n\xff\xfe\nmore\n")
-        assert thread_context.code_context_for_thread("bin.py", 2, tree) != ""
+        with pytest.raises(UnicodeDecodeError):
+            thread_context.code_context_for_thread("bin.py", 2, tree)
 
 
 class TestTheTwoFramings:

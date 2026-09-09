@@ -75,8 +75,6 @@ from core.trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 
-thread_context.TRIAGE_CONTEXT_LINES = 10
-thread_context.DIFF_CONTEXT_MAX_LINES = 100
 
 _SUMMARY_MARKER = "<!-- pr-comments:summary -->"
 _APPLIED_REPLY_PREFIX = "Applied"

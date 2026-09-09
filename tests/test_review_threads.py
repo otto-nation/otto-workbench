@@ -159,40 +159,40 @@ def _published(body: str):
 # ── _extract_json ───────────────────────────────────────────────────────────
 
 class TestExtractJson:
-    def test_plain_json(self, rt):
+    def test_plain_json(self):
         assert triage.extract_json('{"a": 1}') == '{"a": 1}'
 
-    def test_json_fenced(self, rt):
+    def test_json_fenced(self):
         text = '```json\n{"a": 1}\n```'
         assert triage.extract_json(text) == '{"a": 1}'
 
-    def test_bare_fence(self, rt):
+    def test_bare_fence(self):
         text = '```\n{"a": 1}\n```'
         assert triage.extract_json(text) == '{"a": 1}'
 
-    def test_fence_with_surrounding_text(self, rt):
+    def test_fence_with_surrounding_text(self):
         text = 'Here is the result:\n```json\n{"a": 1}\n```\nDone.'
         assert triage.extract_json(text) == '{"a": 1}'
 
-    def test_whitespace_stripped(self, rt):
+    def test_whitespace_stripped(self):
         assert triage.extract_json('  {"a": 1}  ') == '{"a": 1}'
 
-    def test_multiline_json_in_fence(self, rt):
+    def test_multiline_json_in_fence(self):
         text = '```json\n{\n  "threads": [],\n  "stats": {}\n}\n```'
         result = json.loads(triage.extract_json(text))
         assert result == {"threads": [], "stats": {}}
 
-    def test_preamble_before_bare_json(self, rt):
+    def test_preamble_before_bare_json(self):
         text = 'Here is the classification:\n{"a": 1}'
         result = json.loads(triage.extract_json(text))
         assert result == {"a": 1}
 
-    def test_preamble_and_trailing_text(self, rt):
+    def test_preamble_and_trailing_text(self):
         text = 'Sure, here you go:\n{"threads": [], "stats": {}}\nHope this helps!'
         result = json.loads(triage.extract_json(text))
         assert result == {"threads": [], "stats": {}}
 
-    def test_multiline_preamble_before_json(self, rt):
+    def test_multiline_preamble_before_json(self):
         text = 'I analyzed the threads.\nHere are the results:\n{\n  "a": 1\n}'
         result = json.loads(triage.extract_json(text))
         assert result == {"a": 1}
@@ -1065,7 +1065,7 @@ class TestAttributeCommit:
     def _entry(**kw):
         return CommentItem(id="t1", summary="fix it", file="a.py", line=1, **kw)
 
-    def test_a_recorded_commit_outranks_the_running_pass(self, rt):
+    def test_a_recorded_commit_outranks_the_running_pass(self):
         """An earlier round's commit is the one that carries the change."""
         got = attribution.attribute_commit(
             self._entry(commit_sha=_ROUND_1_SHA),
@@ -1074,7 +1074,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.RECORDED
         assert got.sha == _ROUND_1_SHA
 
-    def test_an_entry_the_pass_landed_rides_the_pass_commit(self, rt):
+    def test_an_entry_the_pass_landed_rides_the_pass_commit(self):
         got = attribution.attribute_commit(
             self._entry(commit_sha=_PASS_SHA),
             attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
@@ -1082,7 +1082,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.PASS
         assert got.sha == _PASS_SHA
 
-    def test_an_unpublished_pass_commit_is_not_citable(self, rt):
+    def test_an_unpublished_pass_commit_is_not_citable(self):
         """A SHA the remote does not have would 404 for whoever clicks it."""
         got = attribution.attribute_commit(
             self._entry(commit_sha=_PASS_SHA),
@@ -1091,7 +1091,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.PASS
         assert got.cited is False
 
-    def test_an_entry_the_pass_never_recorded_claims_nothing(self, rt):
+    def test_an_entry_the_pass_never_recorded_claims_nothing(self):
         """The pass committed and this entry is not in that commit."""
         got = attribution.attribute_commit(
             self._entry(), attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
@@ -1099,7 +1099,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.UNRECORDED
         assert got.cited is False
 
-    def test_an_undetermined_pass_lends_nothing(self, rt):
+    def test_an_undetermined_pass_lends_nothing(self):
         """Commits landed outside the pass; none of them answers for a row."""
         got = attribution.attribute_commit(
             self._entry(),
@@ -1109,7 +1109,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.UNDETERMINED
         assert got.cited is False
 
-    def test_a_pass_with_no_commit_leaves_the_row_to_the_pass(self, rt):
+    def test_a_pass_with_no_commit_leaves_the_row_to_the_pass(self):
         """Nothing was committed by anyone, so there is nothing row-specific to say."""
         got = attribution.attribute_commit(
             self._entry(), attribution.CommitPushResult(None, "no_changes", ""),
@@ -1117,7 +1117,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.PASS
         assert got.cited is False
 
-    def test_the_pass_stamps_the_entries_it_landed(self, rt):
+    def test_the_pass_stamps_the_entries_it_landed(self):
         """The one write of thread → commit; every reader goes through the resolver."""
         fresh, earlier = self._entry(), self._entry(commit_sha=_ROUND_1_SHA)
         attribution.stamp_pass_commit([fresh, earlier], _PASS_SHA)
@@ -5029,7 +5029,7 @@ class TestBlockingReviewers:
 # ── _diff_context_for_file ─────────────────────────────────────────────────
 
 class TestDiffContextForFile:
-    def test_empty_file_path(self, rt):
+    def test_empty_file_path(self):
         assert thread_context.diff_context_for_file("", Path("/wt")) == ""
 
     @patch("git.client.run")
@@ -5481,23 +5481,23 @@ class TestFixPassHoldsWhenContested:
 class TestTriagePromptVerificationValues:
     """The prompt must define every verification value it asks for."""
 
-    def test_defines_all_four_values(self, rt):
+    def test_defines_all_four_values(self):
         prompt = triage_prompt.build_triage_prompt([], "diff")
         for value in ("valid", "already_addressed", "invalid", "needs_discussion"):
             assert f"- {value}:" in prompt
 
-    def test_steers_away_from_invalid_for_satisfied_code(self, rt):
+    def test_steers_away_from_invalid_for_satisfied_code(self):
         prompt = triage_prompt.build_triage_prompt([], "diff")
         assert "is NEVER invalid" in prompt
 
-    def test_commit_log_included_when_present(self, rt):
+    def test_commit_log_included_when_present(self):
         prompt = triage_prompt.build_triage_prompt(
             [], "diff", commit_log="abc1234 fix(logging): inject logger",
         )
         assert "abc1234 fix(logging): inject logger" in prompt
         assert "already_addressed, not invalid" in prompt
 
-    def test_commit_log_omitted_when_empty(self, rt):
+    def test_commit_log_omitted_when_empty(self):
         prompt = triage_prompt.build_triage_prompt([], "diff", commit_log="")
         assert "Commits already made on this branch" not in prompt
 
@@ -7321,7 +7321,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
     ):
         assert attribution.handled_outside(CommentItem(id="t1", settled_by=settled_by))
 
-    def test_the_pass_own_entry_is_not_one_of_them(self, rt):
+    def test_the_pass_own_entry_is_not_one_of_them(self):
         """Including one whose reason happens to read like the reconciler's."""
         assert not attribution.handled_outside(CommentItem(id="t1"))
         assert not attribution.handled_outside(
@@ -7483,7 +7483,7 @@ class TestCommitLookupsUseDefaultBranch:
             assert attribution.find_addressing_commit(tmp_path, "a.py", 10) == "deadbeef"
         assert "origin/trunk..HEAD" in run.call_args[0]
 
-    def test_branch_commit_log_without_worktree(self, rt):
+    def test_branch_commit_log_without_worktree(self):
         assert thread_context.branch_commit_log(None) == ""
 
 
@@ -7493,10 +7493,10 @@ class TestCommitLookupsUseDefaultBranch:
 class TestTriageThrashGuard:
     """Triage has no session log — an unparseable answer is the only signal."""
 
-    def test_parses_as_json_accepts_a_fenced_object(self, rt):
+    def test_parses_as_json_accepts_a_fenced_object(self):
         assert triage.parses_as_json("```json\n{\"threads\": []}\n```")
 
-    def test_parses_as_json_rejects_prose(self, rt):
+    def test_parses_as_json_rejects_prose(self):
         assert not triage.parses_as_json("I was unable to complete the triage.")
 
     def test_unparseable_triage_output_earns_one_retry(self, rt, tmp_path):
@@ -7629,11 +7629,11 @@ class TestUnsupportedVerdictDowngrade:
 class TestEvidencePermalinks:
     """Every claim links to the code at a pinned SHA."""
 
-    def test_permalink_pins_the_sha(self, rt):
+    def test_permalink_pins_the_sha(self):
         assert permalinks.blob_permalink("owner/repo", "abc123", "a/b.py", 7) == (
             "https://github.com/owner/repo/blob/abc123/a/b.py#L7")
 
-    def test_uncited_entry_renders_no_link(self, rt):
+    def test_uncited_entry_renders_no_link(self):
         entry = CommentItem(id="t1", summary="s")
         assert permalinks.evidence_link(entry, "owner/repo", "abc123") == ""
 

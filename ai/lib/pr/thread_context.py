@@ -44,6 +44,12 @@ def _window(file_path: str, line: int, repo_dir: Path) -> tuple[str, int, int]:
     Every failure to read is the same answer: no context. A file the comment
     names but the tree does not have is the ordinary case after a rename, not
     an error worth stopping a triage round for.
+
+    A file that is not text is deliberately *not* one of those answers. The
+    read is left bare, so a `UnicodeDecodeError` propagates rather than being
+    softened into a snippet of replacement characters — a review thread cannot
+    be anchored in a binary, and quietly returning something unreadable would
+    send that to a model as if it were the code under discussion.
     """
     if not file_path or line <= 0:
         return "", 0, 0
@@ -51,7 +57,7 @@ def _window(file_path: str, line: int, repo_dir: Path) -> tuple[str, int, int]:
     if not full_path.is_file():
         return "", 0, 0
     try:
-        lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = full_path.read_text().splitlines()
     except OSError:
         return "", 0, 0
     start = max(0, line - 1 - TRIAGE_CONTEXT_LINES)

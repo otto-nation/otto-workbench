@@ -358,6 +358,26 @@ EOF
   [[ "$output" == *"broken.yml"* ]]
 }
 
+@test "a failed batch names the file that could not be parsed" {
+  # The read is one yq over the whole set, so the failure is the batch's. The
+  # error has to name the broken file and not the two dozen that were merely
+  # along for the ride — the per-file reads this replaced always named it.
+  local good bad
+  good=$(_fixture good.yml <<'EOF'
+meta:
+  section: fine
+EOF
+)
+  bad=$(_fixture broken.yml <<'EOF'
+tools: [
+EOF
+)
+  run reg_load "$good" "$bad"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"broken.yml"* ]]
+  [[ "$output" != *"good.yml"* ]]
+}
+
 @test "a zero-byte registry loads and reads as empty" {
   local f="$TMPDIR/empty.yml"
   : > "$f"

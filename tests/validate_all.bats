@@ -176,6 +176,30 @@ EOF
   echo "$output" | grep -q "validate-suicidal"
 }
 
+@test "an interrupt kills the validators rather than orphaning them" {
+  # A validator that forks is the case a bare `kill $pid` misses: bash reports
+  # the subshell's pid, and the process it forked survives it. Each job runs in
+  # its own process group so the whole tree is signalled.
+  local i
+  for i in 1 2 3; do
+    _sleeping_validator "bin/local" "validate-slow-$i" 30
+  done
+  local buffers="$TMPDIR/buffers"
+  mkdir -p "$buffers"
+
+  VALIDATOR_ROOT="$TMPDIR" TMPDIR="$buffers" "$VALIDATE_ALL" --quiet >/dev/null 2>&1 &
+  local runner=$!
+  sleep 1
+  [ "$(pgrep -f 'validate-slow-' | wc -l | tr -d ' ')" -gt 0 ]
+
+  kill -TERM "$runner"
+  sleep 1
+  [ "$(pgrep -f 'validate-slow-' | wc -l | tr -d ' ')" -eq 0 ]
+  # And the buffers go with them — the signal path cleans up too, not just the
+  # normal exit.
+  [ -z "$(ls -A "$buffers")" ]
+}
+
 @test "the run leaves no buffer directory behind" {
   # A dedicated TMPDIR rather than the one setup() made: the buffers land
   # wherever TMPDIR points, and looking anywhere else would pass without

@@ -93,10 +93,37 @@ fi
 # exit: a validator killed mid-write leaves its buffer behind otherwise.
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/validate-all.XXXXXX")"
 trap 'rm -rf "$RUN_DIR"' EXIT
+
 # An interrupt otherwise leaves the validators running as orphans: the EXIT trap
-# reaps the directory but the children are in this shell's process group and
-# never see the signal. `kill 0` signals the group, then the EXIT trap follows.
-trap 'kill 0' INT TERM
+# reaps the directory, but the children never see a signal sent to this shell
+# alone and carry on against a tree the user has stopped waiting on.
+#
+# Each job is signalled as a process group, not as a single pid: the background
+# subshell forks the validator, which forks in turn, and killing only the pid
+# bash reports leaves those grandchildren running. `set -m` puts each job in its
+# own group so `kill -TERM -PGID` reaches all of it.
+#
+# Signalling by group id rather than `kill 0`, which would include this shell
+# and re-enter the handler — the trap fires hundreds of times and the exit
+# status is lost in the storm. Disarming the trap first makes it run once even
+# if something else signals us mid-cleanup.
+set -m
+RUNNING_PIDS=()
+# shellcheck disable=SC2329  # invoked by the trap below, not by name
+_abort() {
+  trap - INT TERM
+  local _p
+  for _p in "${RUNNING_PIDS[@]}"; do
+    # The negative pid is the job's process group. `|| true` because a job that
+    # already finished has no group left to signal, which is not a failure.
+    kill -TERM "-$_p" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+  rm -rf "$RUN_DIR"
+  # 128 + SIGINT, the shell's own convention for dying on a signal.
+  exit 130
+}
+trap _abort INT TERM
 
 # The count is tracked here rather than read from `jobs`: that builtin reports
 # the job table of the shell it runs in, and `$(jobs -pr)` runs in a subshell
@@ -120,6 +147,7 @@ for _i in "${!VALIDATORS[@]}"; do
     "${VALIDATORS[$_i]}" --quiet > "$RUN_DIR/$_i.out" 2>&1 || _status=$?
     echo "$_status" > "$RUN_DIR/$_i.status"
   ) &
+  RUNNING_PIDS+=("$!")
   RUNNING=$(( RUNNING + 1 ))
 done
 wait

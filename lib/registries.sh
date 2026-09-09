@@ -79,8 +79,15 @@ declare -gA _REG_VAL=()
 # Which files are in the cache, so a second reg_load can skip them.
 declare -gA _REG_LOADED=()
 
-_REG_SEP=$'\x01'
-_REG_PSEP=$'\x02'
+# readonly so a later assignment cannot desync the key format `_reg_key` builds
+# from the one `_reg_stream` emits — the two would stop meeting and every lookup
+# would miss, which reads as "absent" and is how a required-field check stops
+# firing. Guarded because several callers source this module twice, and
+# re-declaring a readonly is an error.
+if [[ -z "${_REG_SEP:-}" ]]; then
+  readonly _REG_SEP=$'\x01'
+  readonly _REG_PSEP=$'\x02'
+fi
 
 # _reg_key FILE PATH_SEGMENT... — the cache key for one node.
 #
@@ -90,8 +97,13 @@ _REG_PSEP=$'\x02'
 # check stops firing.
 #
 # An all-digit segment is a sequence index and is written `#N`, matching what
-# `_reg_stream` emits for one. A map key that happens to be digits keeps its
-# bare spelling, so the two cannot be confused.
+# `_reg_stream` emits for one. That is a deliberate asymmetry: the stream marks
+# a segment by its parent's tag, while here every digit segment is marked, so
+# these accessors cannot address a map whose key is a literal number. No caller
+# needs to — a digit segment is only ever passed when iterating a sequence
+# `reg_len` bounded — and the alternative is worse: a `tools: {0: {...}}` would
+# answer a read written for a list, which is the shadowing this marker exists
+# to prevent.
 _reg_key() {
   local file="$1"; shift
   local path=""
@@ -129,7 +141,7 @@ reg_load() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/reg-load.XXXXXX") || return 1
   if ! _reg_stream "${pending[@]}" > "$tmp"; then
     rm -f "$tmp"
-    err "reg_load: could not parse: ${pending[*]}"
+    _reg_report_unparseable "${pending[@]}"
     return 1
   fi
 
@@ -169,6 +181,25 @@ reg_load() {
   for file in "${pending[@]}"; do
     _REG_LOADED[$file]=1
   done
+}
+
+# _reg_report_unparseable FILE... — name the files in a failed batch that yq
+# cannot read, one error each.
+#
+# The batch read fails as a whole and yq's own message goes to stderr, so
+# without this the error would name all two dozen files in the set and leave
+# the reader to find the broken one. Re-reading them individually costs a fork
+# per file, which is affordable on a path that is already failing.
+_reg_report_unparseable() {
+  local file found=false
+  for file in "$@"; do
+    yq -N -r 'tag' "$file" >/dev/null 2>&1 && continue
+    err "reg_load: could not parse $file"
+    found=true
+  done
+  # No individual file failed, so the batch died on something else — yq's own
+  # message is on stderr above, and naming the set is the most that can be said.
+  $found || err "reg_load: could not read: $*"
 }
 
 # _reg_stream FILE... — the flat node stream for a set of files.

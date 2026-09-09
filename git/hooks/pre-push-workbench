@@ -149,12 +149,20 @@ _run_briefly() {
   local out pid waited=0
   out="$(mktemp)" || return 1
 
+  # `set -m` puts the child in a process group of its own, so the deadline can
+  # signal the group and reach anything it spawned. Signalling the pid alone
+  # reaps the direct child and leaves its descendants running, reparented to
+  # init — which is the stall this helper exists to prevent, just invisible.
+  set -m
   "$@" > "$out" 2> /dev/null &
   pid=$!
+  set +m
 
   while kill -0 "$pid" 2> /dev/null; do
     if [[ "$waited" -ge "$deadline" ]]; then
-      kill -TERM "$pid" 2> /dev/null
+      # Negative pid is the process group. Falls back to the bare pid on the
+      # off chance the group is already gone.
+      kill -TERM -- -"$pid" 2> /dev/null || kill -TERM "$pid" 2> /dev/null
       wait "$pid" 2> /dev/null
       rm -f "$out"
       return 1
@@ -196,7 +204,6 @@ _warn_if_pr_is_open() {
   fi
   return 0
 }
-
 
 # ── Generation ───────────────────────────────────────────────────────────────
 

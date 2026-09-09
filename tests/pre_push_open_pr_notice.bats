@@ -24,6 +24,8 @@ setup() {
   FIXTURE="$TMPDIR/repo"
   mkdir -p "$FIXTURE"
   git -C "$FIXTURE" init -q -b feat/thing .
+  git -C "$FIXTURE" config user.email test@example.com
+  git -C "$FIXTURE" config user.name Test
   git -C "$FIXTURE" commit -q --allow-empty -m "x"
   export REPO_ROOT="$FIXTURE"
   export GIT_REMOTE=origin
@@ -161,11 +163,15 @@ EOF
   [ "$((after - before))" -lt 20 ]
 }
 
-@test "the deadline kills the process it gave up on" {
-  # A stub that outlives the deadline must not be left running behind the push.
+@test "the deadline kills the whole process tree it gave up on" {
+  # Signalling the child alone reaps it and leaves its own children running,
+  # reparented to init — the push returns but the work behind it does not stop.
+  # So the assertion is on the grandchild, not on the helper's exit status:
+  # the earlier version of this test passed against code that leaked one.
   cat > "$STUB_BIN/gh" <<EOF
 #!/usr/bin/env bash
-sleep 300 & echo \$! > "$TMPDIR/child.pid"
+sleep 300 &
+echo \$! > "$TMPDIR/grandchild.pid"
 wait
 EOF
   chmod +x "$STUB_BIN/gh"
@@ -173,4 +179,14 @@ EOF
   run _run_briefly 2 gh pr list
   [ "$status" -ne 0 ]
   [ -z "$output" ]
+
+  local grandchild
+  grandchild="$(cat "$TMPDIR/grandchild.pid")"
+  [ -n "$grandchild" ]
+  sleep 1
+  if kill -0 "$grandchild" 2> /dev/null; then
+    kill -9 "$grandchild" 2> /dev/null
+    printf 'grandchild %s survived the deadline\n' "$grandchild" >&2
+    return 1
+  fi
 }

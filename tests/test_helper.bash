@@ -75,8 +75,14 @@ common_setup() {
   # failing for no visible reason. Exported because the tools under test are
   # subprocesses.
   #
+  # bin/local/run-tests exports this too, and is what pre-push, CI, and the
+  # Taskfile all go through — it has to, because setup_file() runs before any
+  # per-test setup and one file swaps HOME there, too early for this function
+  # to correct. The line is kept here as well so a developer running `bats
+  # tests/one.bats` by hand gets the same isolation.
+  #
   # Only set when the caller has not: a test whose subject is mise's own config
-  # resolution points this somewhere else and must keep it.
+  # resolution points this elsewhere and keeps control.
   export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
 }
 

@@ -30,20 +30,6 @@ _generator_under_test() {
 # check, so a shim that failed unconditionally would abort against any
 # implementation and discriminate nothing; each caller passes a fragment unique
 # to the single call it is targeting.
-
-# Every shim below hands its call on by dropping its own directory from PATH
-# and re-execing the bare name, never by exec-ing what `command -v` reported.
-# Under a version manager that path is itself a shim — mise's are symlinks to
-# the mise binary — which re-resolves the tool through PATH, finds this shim
-# still in front of it, and execs it again. The recursion never terminates, so
-# the test hangs until something kills it instead of failing. Re-resolving the
-# bare name against the trimmed PATH reaches the real binary whatever is
-# managing it, and needs no knowledge of which manager that is.
-_shim_untrap() {
-  # shellcheck disable=SC2016  # the expansion belongs to the generated shim, not to us
-  printf 'PATH="${PATH//"%s:"/}"' "$1"
-}
-
 _shim_failure() {
   local binary="$1" match="$2" message="$3"
   local fakebin="$TMPDIR/fakebin"
@@ -56,7 +42,7 @@ for a in "\$@"; do
     exit 1
   fi
 done
-$(_shim_untrap "$fakebin")
+$(shim_untrap "$fakebin")
 exec $binary "\$@"
 EOF
   chmod +x "$fakebin/$binary"
@@ -304,7 +290,7 @@ for a in "\$@"; do
   fi
   args+=("\$a")
 done
-$(_shim_untrap "$fakebin")
+$(shim_untrap "$fakebin")
 exec jq "\${args[@]}"
 EOF
   chmod +x "$fakebin/jq"

@@ -158,6 +158,28 @@ make_fake_binary() {
   chmod +x "$dir/$name"
 }
 
+# shim_untrap DIR — prints the PATH reassignment a passthrough shim in DIR must
+# run before handing its call to the real tool.
+#
+# A shim hands a call on by dropping its own directory from PATH and re-execing
+# the bare name, never by exec-ing the path `command -v` reported. Where a
+# version manager owns the tool, that path is itself a shim — mise installs its
+# own as symlinks to the mise binary — which re-resolves the tool through PATH,
+# finds this shim still in front of it, and execs it again. The recursion never
+# terminates, so the test hangs rather than fails: bats reports nothing and the
+# suite stalls until something outside it intervenes.
+#
+# The output must stay a single statement with no whitespace that would split:
+# callers interpolate it unquoted into a heredoc body.
+#
+# BATS_TEST_TIMEOUT cannot rescue a shim that gets this wrong. The runaway is a
+# chain of execs, each replacing the process image, so bats' watchdog loses the
+# pid it was told to kill.
+shim_untrap() {
+  # shellcheck disable=SC2016  # the expansion belongs to the generated shim, not to us
+  printf 'PATH="${PATH//"%s:"/}"' "$1"
+}
+
 # make_fake_task_dir REPO_ROOT — creates $TMPDIR/fake-task-config with a
 # `lib` symlink into REPO_ROOT, echoing the fake dir's path. Simulates the
 # ~/.config/task install layout: Taskfile.yml and lib/ are symlinks, and

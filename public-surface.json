@@ -54,6 +54,7 @@
     "config:github.ssh_over_443",
     "config:issue_tracker",
     "config:issue_tracker.jira_url",
+    "config:issue_tracker.labels",
     "config:issue_tracker.provider",
     "config:issue_tracker.provider=github",
     "config:issue_tracker.provider=jira",

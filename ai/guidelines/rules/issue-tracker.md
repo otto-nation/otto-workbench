@@ -21,6 +21,8 @@ description: "Issue trackers — how the provider resolves, and per-provider CLI
 - Prefer sub-issues over expanding a single issue's scope when the work has distinct deliverables. A parent issue should describe the initiative; sub-issues should each be independently completable. Don't nest sub-issues more than one level
 - Always assign the issue to its creator — unassigned issues get lost
 - Nothing is truly out of scope. Work a change defers is filed as its own issue, linked from the one deferring it, rather than described in a section and forgotten
+- An issue filed as follow-up work — deferred from a PR, split out of a plan's out-of-scope section, or carved off an issue whose scope grew — carries the labels in `issue_tracker.labels`, which is `follow-up` unless the repo says otherwise. Read the resolved list with `otto-workbench config get issue_tracker.labels`; a repo that has opted out spells it `labels: []` and you label nothing
+- Create the label when the tracker does not have one. Both CLIs resolve every label before they open the create call and fail the whole filing on one they cannot find, so an unknown label costs the issue rather than the label — `gh label list`/`gh label create`, `linear label list --all --json`/`linear label create --name X --team KEY`. The scripts do this themselves; it is only yours to do when you are filing by hand
 
 ## CLI patterns (any tracker)
 
@@ -42,6 +44,9 @@ Applies only when the resolved provider is `linear`.
 | `linear issue view <ID>` | View issue details |
 | `linear issue view <ID> --json` | JSON output — pipe through `head` before jq |
 | `linear issue create --team <KEY> --assignee self --title "..." --description "..."` | `--team` and `--assignee self` are required |
+| `linear issue create ... --label follow-up` | Repeat `--label` per label. Fails without filing when the label does not exist |
+| `linear label list --all --json` | Team and workspace labels — check before creating |
+| `linear label create --name follow-up --team <KEY>` | No upsert flag; always pass `--team`, or a duplicate name is ambiguous |
 | `linear issue relation add <ID> <type> <relatedID>` | Types: `blocks`, `blocked-by`, `related`, `duplicate`. Requires `write` OAuth scope |
 | `linear team list` | Rarely needed — team key is in the identifier |
 
@@ -60,6 +65,9 @@ Applies only when the resolved provider is `github`.
 |---------|-------|
 | `gh issue view <N> --repo <owner>/<repo> --json title,body,comments` | Pipe through `head` before jq |
 | `gh issue create --repo <owner>/<repo> --title "..." --body-file <path> --assignee @me` | `--body-file` for anything multi-line |
+| `gh issue create ... --label follow-up` | Repeatable or comma-separated. Fails without filing when the label does not exist |
+| `gh label list --repo <owner>/<repo> --limit 200 --json name` | Default limit is 30, which reads a label past it as missing |
+| `gh label create follow-up --repo <owner>/<repo>` | Exits non-zero when it already exists. Not `--force`: that overwrites colour and description |
 | `gh issue edit <N> --repo <owner>/<repo> --body-file <path>` | Replaces the body wholesale |
 | `gh issue list --repo <owner>/<repo> --state open --json number,title` | |
 

@@ -35,7 +35,7 @@ _LEGACY_CONFIG_FILE = "review.yml"
 
 @dataclass(frozen=True)
 class IssueProviderInfo:
-    """The resolved tracker: which provider, plus its settings as strings.
+    """The resolved tracker: which provider, plus its settings.
 
     Named apart from ``workbench_config.IssueProvider``, the enum of provider
     names this carries in ``name`` — the two are in scope together here.
@@ -43,6 +43,11 @@ class IssueProviderInfo:
     An empty ``name`` means no repo and no machine has said where issues go.
     Read ``resolved`` rather than testing the string, so a call site states
     what it is asking.
+
+    Every scalar in ``options`` is a string, so a call site reading one needs
+    no per-key type. ``labels`` is the exception the config forced — a list
+    field has no string spelling that survives the round trip — and
+    ``_configured_labels`` is where it is read back.
     """
 
     name: str = ""
@@ -153,10 +158,15 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
         adopt_project_review_yml(wt_path)
     config = workbench_config.load_config_or_default(wt_path)
     tracker = config.issue_tracker
-    # str() per value: asdict leaves an enum member as the member, and every
-    # consumer of options reads it as a string. A None provider is dropped by
-    # the same truthiness filter, so options never carries a "None" string.
-    options = {k: str(v) for k, v in dataclasses.asdict(tracker).items() if v}
+    # str() per scalar: asdict leaves an enum member as the member, and every
+    # consumer of a scalar option reads it as a string. A None provider is
+    # dropped by the same truthiness filter, so options never carries a "None"
+    # string. A list is carried through as itself — str() on one produces
+    # "['follow-up']", which is a label no tracker holds.
+    options = {
+        k: v if isinstance(v, list) else str(v)
+        for k, v in dataclasses.asdict(tracker).items() if v
+    }
     name = str(tracker.provider) if tracker.provider is not None else ""
     return IssueProviderInfo(name=name, options=options)
 
@@ -354,8 +364,29 @@ def extract_issue_id(provider: str, branch: str, pr_body: str = "") -> str | Non
     return None
 
 
+def _issue_cli_ok(cmd: list[str]) -> bool:
+    """Whether a tracker CLI command succeeded, by exit code alone.
+
+    For a mutation, where ``_run_issue_cli`` cannot answer: it reports failure
+    as empty stdout, which a command that succeeds without printing anything
+    is indistinguishable from. Reading that as failure would drop a label that
+    had in fact just been created, and say so in a warning.
+
+    ``gh_client.ok`` is this for the GitHub half; the tracker CLIs are optional
+    binaries, so a missing one is a failure rather than an exception.
+    """
+    try:
+        return proc.run(cmd, timeout=timeouts.NETWORK).ok
+    except FileNotFoundError:
+        return False
+
+
 def _run_issue_cli(cmd: list[str]) -> str:
     """Run a CLI command and return stripped stdout, or empty string on failure.
+
+    Only for a command whose *output* is the answer. A mutation judged by
+    whether it worked wants ``_issue_cli_ok``, since a success that prints
+    nothing arrives here as the empty string a failure does.
 
     A timeout arrives as a failed result rather than an exception, so only the
     missing-binary case still needs catching — the tracker CLI is optional.
@@ -435,11 +466,54 @@ def _description_file(description: str):
         os.unlink(path)
 
 
+def _ensure_linear_labels(labels: list[str], team: str) -> list[str]:
+    """The labels of *labels* that this team can file against.
+
+    ``linear issue create`` resolves every ``--label`` before it opens the
+    mutation and fails the whole creation on one it cannot find, so a label
+    that does not exist yet costs the issue rather than the label. Created
+    here instead, and dropped from the list when even that fails: a tracking
+    issue filed without its label is worth more than no issue at all.
+
+    ``--team`` on both calls because ``resolveLabelId`` refuses a name held by
+    more than one team when it cannot prompt, which is every run of this.
+    """
+    if not labels:
+        return []
+    existing = _linear_label_names(team)
+    usable = []
+    for label in labels:
+        if label.casefold() in existing:
+            usable.append(label)
+            continue
+        created = _issue_cli_ok(
+            ["linear", "label", "create", "--name", label, "--team", team],
+        )
+        if created:
+            log.ok(f"Created Linear label '{label}' for team {team}")
+            usable.append(label)
+        else:
+            log.warn(f"Could not create Linear label '{label}' — filing without it")
+    return usable
+
+
+def _linear_label_names(team: str) -> frozenset[str]:
+    """Every label this team can use, case-folded. Empty when the list fails.
+
+    Workspace-level labels are usable by every team, so ``--all`` rather than
+    the team's own: a name held at the workspace would otherwise read as
+    missing here and be re-created as a team label.
+    """
+    return _label_names(
+        _run_issue_cli(["linear", "label", "list", "--all", "--json"]), "Linear")
+
+
 def _create_linear(
     team: str,
     title: str,
     description: str,
     parent_id: str | None = None,
+    labels: list[str] | None = None,
 ) -> CreatedIssue | None:
     with _description_file(description) as desc_file:
         cmd = [
@@ -452,6 +526,8 @@ def _create_linear(
         ]
         if parent_id:
             cmd.extend(["--parent", parent_id])
+        for label in _ensure_linear_labels(labels or [], team):
+            cmd.extend(["--label", label])
         output = _run_issue_cli(cmd)
         if not output:
             return None
@@ -504,16 +580,97 @@ def _update_linear(issue_id: str, description: str) -> bool:
     return ok
 
 
+def _ensure_github_labels(labels: list[str], repo: str) -> list[str]:
+    """The labels of *labels* that *repo* can file against.
+
+    ``gh issue create`` maps every ``--label`` to an ID before it posts and
+    returns ``could not add label: '<name>' not found`` without creating the
+    issue, so a missing label has to be dealt with first.
+
+    Listed first rather than created blind. ``gh label create`` does fail on a
+    label that already exists, so its error could stand in for one — but it
+    fails the same way for a token without label-write scope, and reading that
+    as "exists" puts the label back on the command line and costs the issue.
+    One list answers for every label instead, and only a genuine gap is
+    created. Deliberately not ``--force``: that upserts colour and
+    description, so a repo that has styled its own ``follow-up`` would have it
+    overwritten on every filing.
+    """
+    if not labels:
+        return []
+    existing = _github_label_names(repo)
+    usable = []
+    for label in labels:
+        if label.casefold() in existing:
+            usable.append(label)
+            continue
+        if gh_client.ok("label", "create", label, "--repo", repo):
+            log.ok(f"Created GitHub label '{label}' in {repo}")
+            usable.append(label)
+        else:
+            log.warn(f"Could not create GitHub label '{label}' — filing without it")
+    return usable
+
+
+def _github_label_names(repo: str) -> frozenset[str]:
+    """Every label *repo* holds, case-folded. Empty when the list fails.
+
+    ``--limit`` because the default is 30 and a label past it would read as
+    missing, then fail to be created because it is not.
+    """
+    return _label_names(
+        gh_client.out(
+            "label", "list", "--repo", repo, "--limit", "200", "--json", "name",
+        ),
+        "GitHub",
+    )
+
+
+def _label_names(raw: str, tracker: str) -> frozenset[str]:
+    """The ``name`` of every entry in a label listing, case-folded.
+
+    Both trackers answer ``label list --json`` with the same shape, so one
+    reader serves both. Case-folded because both resolve a label name
+    case-insensitively: a repo holding ``Follow-Up`` can already file against
+    ``follow-up`` and must not have a second one created for it.
+
+    An unreadable listing is empty rather than fatal. The caller's next move
+    is to create what it thinks is missing, and a creation that turns out to
+    be a duplicate fails on its own and drops the label — so the worst an
+    empty answer costs is the label, never the issue.
+    """
+    if not raw:
+        return frozenset()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        log.dim(f"Could not parse the {tracker} label list — treating it as empty")
+        return frozenset()
+    if not isinstance(data, list):
+        return frozenset()
+    return frozenset(
+        str(item["name"]).casefold()
+        for item in data
+        if isinstance(item, dict) and item.get("name")
+    )
+
+
 def _create_github(
-    repo: str, title: str, description: str,
+    repo: str, title: str, description: str, labels: list[str] | None = None,
 ) -> CreatedIssue | None:
     with _description_file(description) as desc_file:
-        output = gh_client.out(
+        cmd = [
             "issue", "create",
             "--repo", repo,
             "--title", title,
             "--body-file", desc_file,
-        )
+            # Linear's creator has always self-assigned; this one had not, so
+            # every issue the workbench filed into GitHub arrived unowned.
+            "--assignee", "@me",
+        ]
+        for label in _ensure_github_labels(labels or [], repo):
+            cmd.extend(["--label", label])
+        output = gh_client.out(*cmd)
         if not output:
             return None
         url = output.strip().splitlines()[-1].strip()
@@ -532,6 +689,22 @@ def _update_github(repo: str, issue_id: str, description: str) -> bool:
     return ok
 
 
+def _configured_labels(opts: dict | None) -> list[str]:
+    """The labels to put on an issue this filing creates.
+
+    ``opts`` is ``IssueProviderInfo.options``, whose values are strings: the
+    list is dropped by the truthiness filter when empty — which is a repo
+    saying ``labels: []`` and must stay empty — and arrives as a list
+    otherwise. Falling back to the default here would relabel the repo that
+    opted out, so a missing key reads as no labels and the default lives in
+    the dataclass alone.
+    """
+    labels = (opts or {}).get("labels") or []
+    if isinstance(labels, str):
+        return [labels]
+    return [str(label) for label in labels]
+
+
 def create_issue(
     provider: str,
     team: str,
@@ -547,14 +720,20 @@ def create_issue(
     ``SKIPPED``, because the publishing gate declining a write is the gate
     working and leaves nothing owed, while a tracker that refused the write —
     or a provider that cannot create issues at all — is ``UNDELIVERED``.
+
+    Labels come from ``opts`` rather than a parameter: every caller already
+    passes the tracker's options, and which labels a repo puts on the issues
+    its automation files is a property of the repo, not of the call site.
     """
     if not publishing.enabled():
         publishing.draft(f"create {provider} issue: {title}", description)
         return IssueResult(IssueDelivery.SKIPPED)
+    labels = _configured_labels(opts)
     if provider == "linear":
-        return _creation_result(_create_linear(team, title, description, parent_id))
+        return _creation_result(
+            _create_linear(team, title, description, parent_id, labels))
     if provider == "github":
-        return _creation_result(_create_github(repo, title, description))
+        return _creation_result(_create_github(repo, title, description, labels))
     log.dim(f"Issue creation not supported for provider: {provider}")
     return IssueResult(IssueDelivery.UNDELIVERED)
 

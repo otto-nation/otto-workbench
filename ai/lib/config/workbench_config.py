@@ -120,11 +120,18 @@ CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"
 ISSUE_PROVIDER_KEY = "issue_tracker.provider"
+ISSUE_LABELS_KEY = "issue_tracker.labels"
 WIKI_DIR_KEY = "wiki.dir"
 # Read from bash rather than written: git/steps.sh asks for this one through
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
 GITHUB_SSH_443_KEY = "github.ssh_over_443"
+
+# The label the workbench puts on an issue its automation files, and the
+# default contents of ISSUE_LABELS_KEY. A value rather than a key: both
+# trackers' creators name it and issue-tracker.md documents it, so the default
+# and the prose cannot drift apart.
+FOLLOW_UP_LABEL = "follow-up"
 
 
 class ConfigError(ValueError):
@@ -192,11 +199,20 @@ class IssueTrackerConfig:
     anything about its tracker is unknown, not Linear — the callers that
     need one ask rather than guess, and the one that only enriches a
     review does without.
+
+    ``labels`` is the opposite: every repo wants the issues its automation
+    files to be findable as a class, so the default carries the label rather
+    than waiting to be asked for. A repo that wants none says ``labels: []``.
+    It declares what to apply, not what exists — whether a tracker holds a
+    label is the tracker's answer, resolved when an issue is filed. Config
+    that cached it would go stale the moment someone deleted the label, and
+    both CLIs refuse to file at all against a label they cannot resolve.
     """
 
     provider: IssueProvider | None = None
     team: str = ""
     jira_url: str = ""
+    labels: list[str] = field(default_factory=lambda: [FOLLOW_UP_LABEL])
 
 
 @dataclass(frozen=True)

@@ -108,7 +108,8 @@ def render_value(value) -> str:
     A bool is written the way YAML spells it rather than the way Python does,
     since the rendering is read as something to copy into a config file and
     ``True`` is a string there, not a boolean. An enum renders as its value for
-    the same reason: that is the spelling the file holds.
+    the same reason: that is the spelling the file holds. A list renders as the
+    inline YAML flow a reader can paste back, for the same reason again.
     """
     if value is None or value == "":
         return "—"
@@ -116,14 +117,26 @@ def render_value(value) -> str:
         return str(value).lower()
     if isinstance(value, Enum):
         return str(value.value)
+    if isinstance(value, list):
+        return "[" + ", ".join(render_value(item) for item in value) + "]"
     return str(value)
 
 
 def _default_column(f: dataclasses.Field) -> str:
-    """A field's default as the table writes it, or an em dash for no value."""
-    if f.default is dataclasses.MISSING:
+    """A field's default as the table writes it, or an em dash for no value.
+
+    A ``default_factory`` field leaves ``default`` as ``MISSING``, so reading
+    only that column reported every mutable default as no default at all. It
+    went unnoticed while every factory here produced an empty container, which
+    renders as the same em dash by another route.
+    """
+    if f.default is not dataclasses.MISSING:
+        default = f.default
+    elif f.default_factory is not dataclasses.MISSING:
+        default = f.default_factory()
+    else:
         return "—"
-    rendered = render_value(f.default)
+    rendered = render_value(default)
     return rendered if rendered == "—" else f"`{rendered}`"
 
 

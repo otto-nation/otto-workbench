@@ -2,6 +2,7 @@
 
 import json
 import sys
+import contextlib
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -59,29 +60,58 @@ def test_rebase_if_behind_skips_when_not_behind():
     trail.decision.assert_not_called()
 
 
-def test_rebase_if_behind_runs_rebase_on_success():
+@contextlib.contextmanager
+def _rebase_returning(rc, *, posting):
+    """Stand in for the rebase, with the gate in a known state.
+
+    `publishing` is a process-wide flag, so a test that opens it has to shut it
+    again or every later test in the session runs as if `--post` were given.
+    """
+    with patch.object(ci_check.rebase_target, "resolve_target_ref",
+                      return_value="origin/main"), \
+         patch.object(ci_check.pr_rebase, "cmd_start", return_value=rc) as start, \
+         patch.object(ci_check.publishing, "enabled", return_value=posting):
+        yield start
+
+
+def test_rebase_if_behind_rebases_in_process_on_success():
+    """The rebase is a call, not a spawn — so it answers this run's gate."""
     trail = MagicMock()
-    report = _report(behind_main=5)
-    mock_run = MagicMock()
-    mock_run.returncode = 0
-    with patch("cli.ci_check.subprocess.run", return_value=mock_run) as mock_subrun:
-        result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
+    with _rebase_returning(0, posting=True) as start:
+        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+                                            _mock_ctx())
+
     assert result is True
     trail.info.assert_called()
-    called_cmd = mock_subrun.call_args[0][0]
-    assert "--fix" in called_cmd
-    assert "--repo-dir" in called_cmd
-    assert "--branch" in called_cmd
+    assert start.call_args[0][0] == "/tmp/wt"
+    assert start.call_args[0][2] is ci_check.rebase_types.RunMode.FIX
+    assert start.call_args.kwargs["target_ref"] == "origin/main"
+    assert start.call_args.kwargs["trail"] is trail
+
+
+def test_a_draft_run_rebases_but_does_not_move_the_remote():
+    """The behaviour this decomposition changes.
+
+    The old spawn force-pushed whatever this run was told, because the gate is
+    a process-wide flag and a child process never saw it. In-process, the
+    rebase's own push drafts, and the caller must not then report a moved HEAD
+    to a pass that would fix CI against it.
+    """
+    trail = MagicMock()
+    with _rebase_returning(0, posting=False) as start:
+        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+                                            _mock_ctx())
+
+    start.assert_called_once()
+    assert result is False
+    assert "drafted" in trail.info.call_args[0][1]
 
 
 def test_rebase_if_behind_continues_on_failure():
     trail = MagicMock()
-    report = _report(behind_main=10)
-    mock_run = MagicMock()
-    mock_run.returncode = 1
-    mock_run.stderr = "conflict\n"
-    with patch("cli.ci_check.subprocess.run", return_value=mock_run):
-        result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
+    with _rebase_returning(1, posting=True):
+        result = ci_check._rebase_if_behind(trail, _report(behind_main=10),
+                                            _mock_ctx())
     assert result is False
     trail.warn.assert_called()
 

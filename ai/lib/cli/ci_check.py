@@ -21,15 +21,12 @@ Usage:
 
 from __future__ import annotations
 
-import subprocess
 import sys
-from pathlib import Path
 
 from core import log
 from core import publishing
 from core import report as core_report
 from core import run_lock
-from core import timeouts
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 from fix import ci as fix_ci
@@ -43,13 +40,15 @@ from pr import ci_wait
 from pr import context as pr_context
 from pr import domains as pr_domains
 from pr import state as pr_state
+from rebase import target as rebase_target
+from rebase import types as rebase_types
+
+from . import pr_rebase
 
 # The binary a user runs and the trail records, which is not this module's own
 # name. Spelled out rather than derived, so the shim can be renamed only by
 # changing the name in both places at once.
 SCRIPT = "ci-check"
-
-_BIN_DIR = Path(__file__).resolve().parent.parent.parent / "bin"
 
 
 def _report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> ci_report.CIReport:
@@ -173,7 +172,13 @@ def _run_ci_wait(trail, args, ctx) -> ci_report.CIReport:
 
 
 def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
-    """Rebase onto origin/main if branch is behind. Returns True if rebased and pushed."""
+    """Rebase onto origin/main if branch is behind. Returns True if rebased and pushed.
+
+    Called in-process rather than spawned, so this run's publishing gate is the
+    one the rebase's push asks. A draft run therefore rebases locally and drafts
+    the force-push, where the subprocess used to perform it — the gate is a
+    process-wide flag, and a child process was never told about it.
+    """
     behind = report.behind_main
     if behind <= 0:
         return False
@@ -185,17 +190,22 @@ def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
     )
     log.info(f"Branch is {behind} commit(s) behind main — rebasing first...")
 
-    cmd = [str(_BIN_DIR / "pr-rebase"), "--fix",
-           "--repo-dir", str(ctx.require_worktree())]
-    if ctx.branch:
-        cmd += ["--branch", ctx.branch]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeouts.UNBOUNDED)
+    cwd = str(ctx.require_worktree())
+    target_ref = rebase_target.resolve_target_ref(cwd, ctx, None, trail=trail)
+    rc = pr_rebase.cmd_start(
+        cwd, ctx, rebase_types.RunMode.FIX, target_ref=target_ref, trail=trail,
+    )
 
-    if r.returncode != 0:
-        trail.warn("rebase_failed", f"rebase failed (exit {r.returncode})")
+    if rc != 0:
+        trail.warn("rebase_failed", f"rebase failed (exit {rc})")
         log.warn("Rebase failed — continuing with CI fixes on current base")
-        if r.stderr.strip():
-            log.dim(r.stderr.strip())
+        return False
+
+    # `cmd_start` in FIX mode lands through the same gate this run opened, so a
+    # draft run reports what it would have pushed rather than pushing it.
+    if not publishing.enabled():
+        trail.info("rebase_done", "rebased; force-push drafted")
+        log.ok("Rebased onto main — force-push drafted, pass --post to send it")
         return False
 
     trail.info("rebase_done", "rebased and force-pushed")
@@ -226,12 +236,6 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
     # Rebase before the pass, not before the report — the original run has the
     # failures we need to fix, but the branch should be current before applying
     # fixes.
-    #
-    # ceiling: the publishing gate is process-wide and this is a subprocess, so
-    # `pr-rebase` force-pushes whether or not this run was given `--post`. A
-    # draft run therefore still moves the remote here, which is the one place it
-    # can. Upgrade trigger: when `pr-rebase` takes a `--post` of its own,
-    # forward this run's.
     _rebase_if_behind(trail, report, ctx)
 
     trail.info("fix_start", f"{len(adapter.fixable)} fixable failure(s)")

@@ -47,7 +47,7 @@ FAKEGH
 
   # Resolved before the mock shadows it on PATH, so the schema contract test
   # can ask the real worktrunk what shape it emits.
-  REAL_WT=$(command -v wt 2>/dev/null || echo "")
+  REAL_WT="${REAL_WT-$(command -v wt 2>/dev/null || echo "")}"
   export MOCK_BIN REAL_WT
 }
 
@@ -881,10 +881,23 @@ FAKEWT
 }
 
 @test "wt list schema matches the fixture shape" {
-  [[ -n "$REAL_WT" && -x "$REAL_WT" ]] || skip "wt not installed"
-  local real
-  real=$("$REAL_WT" list --format json 2>/dev/null) || skip "wt list unavailable here"
-  [[ -n "$real" ]] || skip "wt list returned nothing here"
+  # CI installs worktrunk precisely so this runs there — a skip in CI would
+  # make the whole check decorative, which is the failure mode this test
+  # exists to prevent. Only a developer machine without `wt` may skip, and
+  # `skip` has to be the statement itself: called inside an `if` body it sets
+  # the skip but does not stop the test, which then runs on an empty payload.
+  local real=""
+  [[ -n "$REAL_WT" && -x "$REAL_WT" ]] \
+    && real=$("$REAL_WT" list --format json 2>/dev/null) || true
+
+  if [[ -z "$real" && -n "${CI:-}" ]]; then
+    echo "wt list produced nothing in CI — the schema contract is unchecked" >&2
+    return 1
+  fi
+  if [[ -z "$real" ]]; then
+    skip "wt unavailable here"
+    return 0
+  fi
 
   # The schema the script pins itself to is the one wt actually speaks.
   [ "$(jq -r '.schema' <<< "$real")" = "$WT_LIST_SCHEMA" ]
@@ -938,5 +951,36 @@ FAKEWT
   _run_cleanup --age 30
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]
+  [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+@test "a worktree stopped mid-merge is never removed as clean" {
+  # A conflicted file is the least safe residue there is: the worktree holds a
+  # half-finished merge and nothing else records it. _change_kind names the
+  # code "conflicted", but the ordering loop that builds the returned string
+  # once omitted that word, so the whole state was dropped and the worktree
+  # read as clean — merged, disposable, force-removed.
+  _make_worktrees
+  git -C "$FEAT_WT" checkout -q -b conflicting
+  printf 'theirs\n' > "$FEAT_WT/list.txt"
+  git -C "$FEAT_WT" commit -qam theirs
+  printf 'ours\n' > "$MAIN_WT/list.txt"
+  git -C "$MAIN_WT" commit -qam ours
+  git -C "$FEAT_WT" merge main >/dev/null 2>&1 || true
+  # Guard the premise: the fixture must really be mid-merge.
+  git -C "$FEAT_WT" status --porcelain | grep -q '^UU' || \
+    skip "could not stage a conflict in this git"
+
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"conflicting","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false,"conflicted":true}}
+]
+JSON
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"removing: conflicting"* ]]
+  [[ "$output" == *"conflicted"* ]]
   [ ! -s "$WT_REMOVE_LOG" ]
 }

@@ -199,7 +199,10 @@ _live_changes() {
   done < "$tmp_status"
   rm -f "$tmp_status"
 
-  for kind in staged modified untracked renamed deleted; do
+  # `conflicted` leads: a worktree stopped mid-merge is the least safe thing to
+  # remove, and _change_kind emits the word, so leaving it out of this list
+  # dropped it on the floor and reported the worktree clean.
+  for kind in conflicted staged modified untracked renamed deleted; do
     if [[ "$kinds " == *" $kind "* ]]; then
       ordered="${ordered:+$ordered, }$kind"
     fi

@@ -94,11 +94,11 @@ def _ceiling_counts(repo: str) -> dict | None:
         return None
 
 
-def _issue_tracker_line(repo: str) -> str:
+def _issues_line(repo: str) -> str:
     """Where this repo files issues, as a line the agent reads in context.
 
     Emitted in both states, unlike the reuse level. A rule that says "go look
-    up issue_tracker.provider" is a rule that gets skipped, so the resolved
+    up issues.provider" is a rule that gets skipped, so the resolved
     answer goes into context instead of behind a lookup — and "nobody has
     said" is the state the agent most needs to act on.
 
@@ -107,7 +107,7 @@ def _issue_tracker_line(repo: str) -> str:
     worktree in front of it happens to use; the command is what checks that
     name against the workbench doing the reading.
     """
-    provider = workbench_config.load_config_or_default(repo).issue_tracker.provider
+    provider = workbench_config.load_config_or_default(repo).issues.provider
     if provider is None:
         return (
             "Issue tracker: not configured — ask before filing, then record the"
@@ -136,7 +136,7 @@ def main() -> None:
         )
 
     if repo:
-        lines.append(_issue_tracker_line(repo))
+        lines.append(_issues_line(repo))
 
     if lines:
         print("\n".join(lines))

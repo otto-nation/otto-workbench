@@ -97,9 +97,9 @@ _make_project() {
   printf 'seed\n' > "$TMPDIR/seed/README.md"
   make_container_seed "$TMPDIR/seed"
   make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
-  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/container/.workbench.yml"
+  printf 'issues:\n  provider: linear\n' > "$TMPDIR/container/.workbench.yml"
   cd "$TMPDIR/container/main" || return 1
-  run wb_config_get "issue_tracker.provider"
+  run wb_config_get "issues.provider"
   [ "$status" -eq 0 ]
   [ "$output" = "linear" ]
 }

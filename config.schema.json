@@ -142,7 +142,7 @@
         }
       }
     },
-    "issue_tracker": {
+    "issues": {
       "type": "object",
       "properties": {
         "provider": {

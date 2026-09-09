@@ -127,7 +127,7 @@ WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHE
 # names above are: workbench_config.py holds the other spelling, and
 # tests/config.bats fails when a pair drifts.
 GITHUB_SSH_443_CONFIG_KEY="github.ssh_over_443"
-ISSUE_PROVIDER_CONFIG_KEY="issue_tracker.provider"
+ISSUE_PROVIDER_CONFIG_KEY="issues.provider"
 
 # The name `otto-workbench config get` prints for the machine-wide scope. A
 # report over other people's repos distinguishes an answer a repo gave from one

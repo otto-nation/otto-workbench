@@ -1897,7 +1897,7 @@ def test_pr_review_reads_the_tracker_from_the_repo_config(cr, tmp_path, monkeypa
     declares its tracker in .workbench.yml would review as if none were set.
     """
     (tmp_path / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: github\n",
+        "issues:\n  provider: github\n",
     )
     monkeypatch.setattr(cr, "_find_repo_root", lambda repo, repo_dir="": str(tmp_path))
     # Only the PR lookup is stubbed — the config reader still shells out to yq.

@@ -96,7 +96,7 @@ def test_load_issue_provider_is_unresolved_without_config(tmp_path):
 
 def test_load_issue_provider_reads_the_project_config(tmp_path):
     (tmp_path / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: github\n  team: ENG\n",
+        "issues:\n  provider: github\n  team: ENG\n",
     )
     result = load_issue_provider(str(tmp_path))
     assert result.name == "github"
@@ -109,7 +109,7 @@ def test_load_issue_provider_falls_back_to_the_global_config(tmp_path, monkeypat
     config_dir.mkdir()
     monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
     (config_dir / "config.yml").write_text(
-        "issue_tracker:\n  provider: jira\n  jira_url: https://j.example\n",
+        "issues:\n  provider: jira\n  jira_url: https://j.example\n",
     )
     result = load_issue_provider(str(tmp_path / "elsewhere"))
     assert result.name == "jira"
@@ -138,7 +138,7 @@ def test_needs_team_key_is_false_for_jira():
 
 def test_ensure_issue_provider_returns_a_declared_provider_without_asking(tmp_path):
     (tmp_path / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: github\n",
+        "issues:\n  provider: github\n",
     )
     with patch("review.issue.prompt.ask") as asked:
         result = ensure_issue_provider(str(tmp_path))
@@ -167,7 +167,7 @@ def test_ensure_issue_provider_names_both_scopes_without_a_tty(tmp_path, capsys)
 def test_ensure_issue_provider_reports_a_broken_project_config(tmp_path, capsys):
     """A typo is not an unset provider — recording over it would be shadowed."""
     (tmp_path / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: gihtub\n",
+        "issues:\n  provider: gihtub\n",
     )
     with patch("review.issue.prompt.interactive", return_value=True), \
          patch("review.issue.prompt.ask") as asked:
@@ -646,7 +646,7 @@ def test_a_github_issue_is_assigned_to_whoever_filed_it():
 def test_the_configured_labels_reach_a_filing_from_the_repo_config(tmp_path):
     """The list survives the config round trip rather than arriving stringified."""
     (tmp_path / ".workbench.yml").write_text(
-        f"issue_tracker:\n  provider: github\n  labels:\n    - {LABEL}\n",
+        f"issues:\n  provider: github\n  labels:\n    - {LABEL}\n",
     )
     info = load_issue_provider(str(tmp_path))
     assert info.options["labels"] == [LABEL]
@@ -661,7 +661,7 @@ def test_a_repo_config_opting_out_files_an_unlabelled_issue(tmp_path):
     tested alone, and either could stop meaning "no labels" without failing.
     """
     (tmp_path / ".workbench.yml").write_text(
-        "issue_tracker:\n  provider: github\n  labels: []\n",
+        "issues:\n  provider: github\n  labels: []\n",
     )
     info = load_issue_provider(str(tmp_path))
     calls = []
@@ -686,7 +686,7 @@ def test_a_repo_config_opting_out_files_an_unlabelled_issue(tmp_path):
 
 def test_the_default_config_labels_a_filing_follow_up():
     """Every repo gets the label unless it says otherwise."""
-    assert workbench_config.IssueTrackerConfig().labels == [LABEL]
+    assert workbench_config.IssuesConfig().labels == [LABEL]
 
 
 # ── update_issue ──────────────────────────────────────────────────────────

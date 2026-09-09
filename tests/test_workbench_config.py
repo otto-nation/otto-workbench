@@ -60,7 +60,7 @@ def test_missing_files_give_built_in_defaults(roots):
     assert cfg.reuse.level is None
     assert cfg.agent.model is None
     assert cfg.agent.phases == {}
-    assert cfg.issue_tracker.provider is None
+    assert cfg.issues.provider is None
 
 
 def test_global_config_is_typed(roots):
@@ -96,7 +96,7 @@ def test_project_config_does_not_discard_global_siblings(roots):
 agent:
   model: sonnet
   thinking: medium
-issue_tracker:
+issues:
   provider: github
   team: ENG
 """)
@@ -104,8 +104,8 @@ issue_tracker:
     cfg = wc.load_config(project)
     assert cfg.agent.model == "sonnet"
     assert cfg.agent.thinking is Thinking.MEDIUM
-    assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
-    assert cfg.issue_tracker.team == "ENG"
+    assert cfg.issues.provider is wc.IssueProvider.GITHUB
+    assert cfg.issues.team == "ENG"
     assert cfg.agent.phases[Phase.FIX].model == "opus"
 
 
@@ -225,13 +225,13 @@ def test_the_container_does_not_discard_global_siblings(roots, container):
 
 
 def test_a_container_value_names_the_container_in_the_report(roots, container):
-    _write(container / wc.PROJECT_CONFIG_NAME, "issue_tracker:\n  provider: github\n")
+    _write(container / wc.PROJECT_CONFIG_NAME, "issues:\n  provider: github\n")
     status = wcr.config_status(container / "main")
-    assert _row(status, "issue_tracker.provider").scope.name == wc.CONTAINER_SCOPE
+    assert _row(status, "issues.provider").scope.name == wc.CONTAINER_SCOPE
 
 
 def test_set_container_value_writes_above_the_worktrees(roots, container):
-    wcw.set_container_value("issue_tracker.provider", "github", container / "main")
+    wcw.set_container_value("issues.provider", "github", container / "main")
     assert not (container / "main" / wc.PROJECT_CONFIG_NAME).exists()
     assert "github" in (container / wc.PROJECT_CONFIG_NAME).read_text()
 
@@ -239,9 +239,9 @@ def test_set_container_value_writes_above_the_worktrees(roots, container):
 def test_a_sibling_worktree_reads_what_the_container_recorded(roots, container):
     """The reason the scope exists: `wt switch -c` cuts a checkout holding
     nothing, and a worktree file would have to be copied into it by hand."""
-    wcw.set_container_value("issue_tracker.provider", "github", container / "main")
+    wcw.set_container_value("issues.provider", "github", container / "main")
     feature = add_worktree(container, "feature")
-    assert wc.load_config(feature).issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert wc.load_config(feature).issues.provider is wc.IssueProvider.GITHUB
 
 
 def test_set_container_value_refuses_a_plain_clone(roots, tmp_path):
@@ -249,13 +249,13 @@ def test_set_container_value_refuses_a_plain_clone(roots, tmp_path):
     that file is deleted by `wt remove` and unseen by every sibling checkout."""
     clone = seed_repo(tmp_path / "clone")
     with pytest.raises(wc.ConfigError, match="container"):
-        wcw.set_container_value("issue_tracker.provider", "github", clone)
+        wcw.set_container_value("issues.provider", "github", clone)
     assert not (clone / wc.PROJECT_CONFIG_NAME).exists()
 
 
 def test_set_container_value_refuses_the_same_keys(roots, container):
     with pytest.raises(wc.ConfigKeyError):
-        wcw.set_container_value("issue_tracker.providr", "github", container / "main")
+        wcw.set_container_value("issues.providr", "github", container / "main")
 
 
 # ── The key surface ─────────────────────────────────────────────────────────
@@ -505,8 +505,8 @@ def test_adopt_converts_a_project_review_yml(roots):
     assert review_issue.adopt_project_review_yml(str(project)) is True
 
     cfg = wc.load_config(project)
-    assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
-    assert cfg.issue_tracker.team == "ENG"
+    assert cfg.issues.provider is wc.IssueProvider.GITHUB
+    assert cfg.issues.team == "ENG"
 
 
 def test_adopt_writes_the_top_level_key_not_the_legacy_nesting(roots):
@@ -550,10 +550,10 @@ def test_adopt_is_a_no_op_when_workbench_yml_exists(roots):
     _, project = roots
     (project / ".claude").mkdir()
     _write(project / ".claude" / "review.yml", "issue_tracker:\n  provider: github\n")
-    _write(project / ".workbench.yml", "issue_tracker:\n  provider: jira\n")
+    _write(project / ".workbench.yml", "issues:\n  provider: jira\n")
 
     assert review_issue.adopt_project_review_yml(str(project)) is False
-    assert wc.load_config(project).issue_tracker.provider is wc.IssueProvider.JIRA
+    assert wc.load_config(project).issues.provider is wc.IssueProvider.JIRA
 
 
 def test_adopt_is_a_no_op_without_an_old_file(roots):
@@ -617,17 +617,17 @@ def test_reuse_reader_survives_a_bad_config(reuse_levels, roots):
 def test_a_declared_issue_provider_is_still_read(roots):
     _, project = roots
     _write(project / wc.PROJECT_CONFIG_NAME, """
-issue_tracker:
+issues:
   provider: github
 """)
-    assert wc.load_config(project).issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert wc.load_config(project).issues.provider is wc.IssueProvider.GITHUB
 
 
 def test_set_project_value_writes_the_repo_config(roots):
     _, project = roots
     wcw.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     cfg = wc.load_config(project)
-    assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert cfg.issues.provider is wc.IssueProvider.GITHUB
 
 
 def test_set_project_value_preserves_hand_written_comments(roots):
@@ -635,12 +635,12 @@ def test_set_project_value_preserves_hand_written_comments(roots):
     _, project = roots
     _write(project / wc.PROJECT_CONFIG_NAME, """
 # we file on GitHub, not Linear
-issue_tracker:
+issues:
   team: ENG
 """)
     wcw.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     assert "# we file on GitHub, not Linear" in (project / wc.PROJECT_CONFIG_NAME).read_text()
-    assert wc.load_config(project).issue_tracker.team == "ENG"
+    assert wc.load_config(project).issues.team == "ENG"
 
 
 def test_set_project_value_seeds_the_schema_modeline(roots):
@@ -666,7 +666,7 @@ def test_set_project_value_does_not_touch_the_global_config(roots):
 
 @pytest.fixture
 def stale_install(tmp_path, monkeypatch):
-    """Point ``check_key`` at an installed schema that lacks ``issue_tracker``.
+    """Point ``check_key`` at an installed schema that lacks ``issues``.
 
     The incident with the two checkouts swapped: there the writing checkout was
     the stale one, and here it is this checkout that knows the key the install
@@ -676,8 +676,8 @@ def stale_install(tmp_path, monkeypatch):
     whatever this checkout ships.
     """
     schema = json.loads(wcr.schema_json())
-    tracker = schema["properties"].pop("issue_tracker")
-    schema["properties"]["review"]["properties"]["issue_tracker"] = tracker
+    tracker = schema["properties"].pop("issues")
+    schema["properties"]["review"]["properties"]["issues"] = tracker
     path = tmp_path / "installed" / wc.SCHEMA_PATH
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(schema))
@@ -699,6 +699,19 @@ def test_set_value_refuses_the_shape_the_key_moved_off(roots):
         wcw.set_value("review.issue_tracker.provider", "github")
 
 
+def test_set_value_refuses_the_section_the_key_left(roots):
+    """`issue_tracker` is the name the section had before it became `issues`.
+
+    The migration moves what is on disk, but an agent working from a rule it
+    read last week writes the old name by hand. `serde` drops it silently, so
+    the refusal at write time is the only place it is still visible.
+    """
+    config_root, _ = roots
+    with pytest.raises(wc.ConfigKeyError):
+        wcw.set_value("issue_tracker.provider", "github")
+    assert not (config_root / wc.CONFIG_NAME).exists()
+
+
 def test_a_refused_key_is_a_config_error_too(roots):
     """A caller that only handles the general failure still catches this one."""
     assert issubclass(wc.ConfigKeyError, wc.ConfigError)
@@ -710,7 +723,7 @@ def test_set_project_value_refuses_the_same_keys(roots):
     """A repo file is committed, so a dead key travels to everyone who clones."""
     _, project = roots
     with pytest.raises(wc.ConfigKeyError):
-        wcw.set_project_value("issue_tracker.provdier", "github", project)
+        wcw.set_project_value("issues.provdier", "github", project)
     assert not (project / wc.PROJECT_CONFIG_NAME).exists()
 
 
@@ -732,7 +745,7 @@ def test_no_installed_workbench_leaves_the_local_surface(roots, monkeypatch):
     """CI and a fresh clone have no install, and still have to be able to write."""
     monkeypatch.setattr(wcw, "installed_schema_path", lambda: None)
     wcw.set_value(wc.ISSUE_PROVIDER_KEY, "github")
-    assert wc.load_config().issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert wc.load_config().issues.provider is wc.IssueProvider.GITHUB
 
 
 def test_an_unreadable_installed_schema_leaves_the_local_surface(roots, tmp_path, monkeypatch):
@@ -741,7 +754,7 @@ def test_an_unreadable_installed_schema_leaves_the_local_surface(roots, tmp_path
     broken.write_text("{not json")
     monkeypatch.setattr(wcw, "installed_schema_path", lambda: broken)
     wcw.set_value(wc.ISSUE_PROVIDER_KEY, "github")
-    assert wc.load_config().issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert wc.load_config().issues.provider is wc.IssueProvider.GITHUB
 
 
 def test_an_enum_keyed_section_is_writable_by_its_declared_keys(roots):
@@ -828,8 +841,8 @@ def test_a_refused_value_is_not_a_refused_key(roots):
 def test_a_string_key_is_written_as_the_string_it_was_given(roots):
     """A value that looks like a bool under a string field stays a string."""
     _, project = roots
-    wcw.set_project_value("issue_tracker.team", "true", project)
-    assert wc.load_config(project).issue_tracker.team == "true"
+    wcw.set_project_value("issues.team", "true", project)
+    assert wc.load_config(project).issues.team == "true"
 
 
 @needs_yaml
@@ -857,22 +870,22 @@ def test_a_hand_written_list_still_loads(roots):
     _, project = roots
     _write(
         project / wc.PROJECT_CONFIG_NAME,
-        "issue_tracker:\n  labels:\n    - follow-up\n    - needs-triage\n",
+        "issues:\n  labels:\n    - follow-up\n    - needs-triage\n",
     )
-    assert wc.load_config(project).issue_tracker.labels == ["follow-up", "needs-triage"]
+    assert wc.load_config(project).issues.labels == ["follow-up", "needs-triage"]
 
 
 def test_labels_default_to_the_follow_up_label(roots):
     """A repo that says nothing still labels what its automation files."""
     _, project = roots
-    assert wc.load_config(project).issue_tracker.labels == [wc.FOLLOW_UP_LABEL]
+    assert wc.load_config(project).issues.labels == [wc.FOLLOW_UP_LABEL]
 
 
 def test_an_empty_label_list_is_kept_as_the_opt_out_it_is(roots):
     """`labels: []` has to outrank the default, or opting out is impossible."""
     _, project = roots
-    _write(project / wc.PROJECT_CONFIG_NAME, "issue_tracker:\n  labels: []\n")
-    assert wc.load_config(project).issue_tracker.labels == []
+    _write(project / wc.PROJECT_CONFIG_NAME, "issues:\n  labels: []\n")
+    assert wc.load_config(project).issues.labels == []
 
 
 def test_a_numeric_field_is_parsed_into_the_number_it_names(monkeypatch):

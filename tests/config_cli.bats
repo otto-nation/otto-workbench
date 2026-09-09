@@ -35,7 +35,7 @@ install_launcher() {
   [[ ":$PATH:" == *":$TMPDIR/bin:"* ]] || PATH="$TMPDIR/bin:$PATH"
 }
 
-# make_stale_checkout DIR — a checkout whose schema still nests issue_tracker
+# make_stale_checkout DIR — a checkout whose schema still nests issues
 # under review, which is where the key lived before it was lifted to the top
 # level. Only the two files the resolution touches: a launcher to resolve
 # through, and the schema beside it.
@@ -46,8 +46,8 @@ make_stale_checkout() {
   python3 -c '
 import json, sys
 schema = json.load(open(sys.argv[1]))
-tracker = schema["properties"].pop("issue_tracker")
-schema["properties"]["review"]["properties"]["issue_tracker"] = tracker
+tracker = schema["properties"].pop("issues")
+schema["properties"]["review"]["properties"]["issues"] = tracker
 json.dump(schema, open(sys.argv[2], "w"))
 ' "$REPO_ROOT/config.schema.json" "$1/config.schema.json"
 }
@@ -104,7 +104,7 @@ json.dump(schema, open(sys.argv[2], "w"))
   cd "$TMPDIR/repo" || return 1
   _assert_not_real_repo || return 1
 
-  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github --project
+  run "$REPO_ROOT/bin/otto-workbench" config set issues.provider github --project
   [ "$status" -eq 0 ]
   [[ "$output" == *".workbench.yml"* ]]
 
@@ -134,7 +134,7 @@ _make_container() {
 @test "set --container writes above the worktrees, not into the checkout" {
   _make_container
 
-  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github --container
+  run "$REPO_ROOT/bin/otto-workbench" config set issues.provider github --container
   [ "$status" -eq 0 ]
   [[ "$output" == *"$TMPDIR/container/.workbench.yml"* ]]
   [[ "$output" == *"every worktree"* ]]
@@ -148,7 +148,7 @@ _make_container() {
 @test "set --container in a plain clone refuses instead of writing the worktree" {
   _make_repo
 
-  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github --container
+  run "$REPO_ROOT/bin/otto-workbench" config set issues.provider github --container
   [ "$status" -eq 1 ]
   [[ "$output" == *"no container"* ]]
   [ ! -f "$TMPDIR/repo/.workbench.yml" ]
@@ -206,12 +206,12 @@ _make_repo() {
 
 @test "status names the container as the source of a value it set" {
   _make_container
-  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github --container
+  run "$REPO_ROOT/bin/otto-workbench" config set issues.provider github --container
   [ "$status" -eq 0 ]
 
   run "$REPO_ROOT/bin/otto-workbench" config status
   [ "$status" -eq 0 ]
-  [[ "$output" == *"issue_tracker.provider"*"github"*"container"* ]]
+  [[ "$output" == *"issues.provider"*"github"*"container"* ]]
 }
 
 @test "status marks a scope with no file" {
@@ -308,9 +308,9 @@ _make_repo() {
 
 @test "get prints one record for the repo the caller is standing in" {
   _make_repo
-  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
+  printf 'issues:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
 
-  run "$REPO_ROOT/bin/otto-workbench" config get issue_tracker.provider
+  run "$REPO_ROOT/bin/otto-workbench" config get issues.provider
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf 'project\tgithub\t%s' "$TMPDIR/repo")" ]
 }
@@ -318,9 +318,9 @@ _make_repo() {
 @test "get prints one record per named repo, in the order given" {
   _make_repo
   git init --quiet "$TMPDIR/other"
-  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/other/.workbench.yml"
+  printf 'issues:\n  provider: linear\n' > "$TMPDIR/other/.workbench.yml"
 
-  run "$REPO_ROOT/bin/otto-workbench" config get issue_tracker.provider \
+  run "$REPO_ROOT/bin/otto-workbench" config get issues.provider \
     "$TMPDIR/other" "$TMPDIR/repo"
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "$(printf 'project\tlinear\t%s' "$TMPDIR/other")" ]
@@ -345,11 +345,11 @@ _make_repo() {
   # and a branch whose own tests could not read its own new key could not test
   # it at all.
   _make_repo
-  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
+  printf 'issues:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
   make_stale_checkout "$TMPDIR/installed"
   install_launcher "$TMPDIR/installed"
 
-  run "$REPO_ROOT/bin/otto-workbench" config get issue_tracker.provider
+  run "$REPO_ROOT/bin/otto-workbench" config get issues.provider
   [ "$status" -eq 0 ]
   [[ "$output" == *"github"* ]]
 }
@@ -368,9 +368,9 @@ _make_repo() {
   make_stale_checkout "$TMPDIR/installed"
   install_launcher "$TMPDIR/installed"
 
-  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github
+  run "$REPO_ROOT/bin/otto-workbench" config set issues.provider github
   [ "$status" -eq 1 ]
-  [[ "$output" == *"issue_tracker.provider"* ]]
+  [[ "$output" == *"issues.provider"* ]]
   [[ "$output" == *"$TMPDIR/installed/config.schema.json"* ]]
   [ ! -f "$CONFIG" ]
 }
@@ -380,9 +380,9 @@ _make_repo() {
   cd "$TMPDIR/repo" || return 1
   _assert_not_real_repo || return 1
 
-  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provdier github --project
+  run "$REPO_ROOT/bin/otto-workbench" config set issues.provdier github --project
   [ "$status" -eq 1 ]
-  [[ "$output" == *"issue_tracker.provdier"* ]]
+  [[ "$output" == *"issues.provdier"* ]]
   [ ! -f "$TMPDIR/repo/.workbench.yml" ]
 }
 

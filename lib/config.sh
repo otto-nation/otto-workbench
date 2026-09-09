@@ -38,7 +38,7 @@
 # in Python — and `yq -i` carries it through every later write, so completion and
 # enum validation work while the file is hand-edited. A `.workbench.yml` that the
 # workbench creates for you — recording an answer such as
-# `issue_tracker.provider` — is seeded the same way; paste it in yourself at the
+# `issues.provider` — is seeded the same way; paste it in yourself at the
 # top of one you hand-author. A file that already exists is never seeded: the
 # modeline is a courtesy on creation, not something sync re-imposes.
 #

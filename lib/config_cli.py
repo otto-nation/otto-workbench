@@ -131,7 +131,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(required=True, metavar="command")
     setter = sub.add_parser("set", help="write one dotted key")
-    setter.add_argument("key", help="dotted key, e.g. issue_tracker.provider")
+    setter.add_argument("key", help="dotted key, e.g. issues.provider")
     setter.add_argument("value", help="the value to record")
     scope = setter.add_mutually_exclusive_group()
     scope.add_argument(
@@ -150,7 +150,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     reader = sub.add_parser(
         "get", help="resolve one dotted key, for this repo or for each named one",
     )
-    reader.add_argument("key", help="dotted key, e.g. issue_tracker.provider")
+    reader.add_argument("key", help="dotted key, e.g. issues.provider")
     reader.add_argument(
         "dir", nargs="*", metavar="DIR",
         help="a repo's work-tree root; defaults to the caller's own",

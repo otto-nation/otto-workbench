@@ -2027,3 +2027,225 @@ agent_section_in_fake() {
   [ "$(yq -r '.agent.model' "$FAKE_CONFIG/config.yml")" = "opus" ]
   [ "$(yq -r '.review.effort' "$FAKE_CONFIG/config.yml")" = "high" ]
 }
+
+# ─── Issue tracker section rename ────────────────────────────────────────────
+
+rename_key_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$REPO_ROOT/lib/constants.sh"
+    # For the status names the migration body returns, as in lift_in_fake above.
+    . "$REPO_ROOT/lib/migrations.sh"
+    . "$REPO_ROOT/bin/migrations/20260909-rename-issue-tracker-key.sh"
+    migration_20260909_rename_issue_tracker_key
+  )
+}
+
+@test "rename defers while there is no config.yml" {
+  run rename_key_in_fake
+  [ "$status" -eq 4 ]
+  [ ! -f "$FAKE_CONFIG/config.yml" ]
+}
+
+@test "rename is a no-op when the section is already issues" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issues:\n  provider: github\n' > "$FAKE_CONFIG/config.yml"
+
+  run rename_key_in_fake
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+}
+
+@test "rename picks up a config.yml written after an earlier sync deferred it" {
+  run rename_key_in_fake
+  [ "$status" -eq 4 ]
+
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issue_tracker:\n  provider: github\n' > "$FAKE_CONFIG/config.yml"
+
+  run rename_key_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+}
+
+@test "rename moves the whole mapping across" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issue_tracker:\n  provider: github\n  team: ENG\n  labels:\n    - follow-up\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_key_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+  [ "$(yq -r '.issues.team' "$FAKE_CONFIG/config.yml")" = "ENG" ]
+  [ "$(yq -r '.issues.labels[0]' "$FAKE_CONFIG/config.yml")" = "follow-up" ]
+  [ "$(yq -r '.issue_tracker // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "rename keeps a value already written against the new schema" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issue_tracker:\n  provider: jira\nissues:\n  provider: github\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_key_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+  [ "$(yq -r '.issue_tracker // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "rename leaves the other sections alone" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  level: ultra\nissue_tracker:\n  provider: jira\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_key_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
+}
+
+@test "rename preserves the schema modeline and hand-written comments" {
+  mkdir -p "$FAKE_CONFIG"
+  printf '# yaml-language-server: $schema=https://example/config.schema.json\n# we file on GitHub\nissue_tracker:\n  provider: github\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_key_in_fake
+  [ "$status" -eq 0 ]
+  run head -1 "$FAKE_CONFIG/config.yml"
+  [[ "$output" == "# yaml-language-server: \$schema="* ]]
+  grep -q "# we file on GitHub" "$FAKE_CONFIG/config.yml"
+}
+
+@test "rename re-run after a move is a no-op" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issue_tracker:\n  provider: github\n' > "$FAKE_CONFIG/config.yml"
+
+  run rename_key_in_fake
+  [ "$status" -eq 0 ]
+  run rename_key_in_fake
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+}
+
+# ─── Issue tracker rename: the container file ────────────────────────────────
+
+rename_container_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    # The real tree, not the fake root the ui.sh stub pins: constants.sh derives
+    # BIN_SRC_DIR from it, and this migration shells out to bin/resolve-worktree.
+    WORKBENCH_DIR="$REPO_ROOT"
+    . "$REPO_ROOT/lib/constants.sh"
+    . "$REPO_ROOT/lib/gitenv.sh"
+    . "$REPO_ROOT/lib/git_layout.sh"
+    . "$REPO_ROOT/lib/migrations.sh"
+    . "$REPO_ROOT/bin/migrations/20260909-rename-issue-tracker-container.sh"
+    migration_20260909_rename_issue_tracker_container "$1"
+  )
+}
+
+@test "the container rename rewrites the file beside the worktrees" {
+  register_fake_repo_worktrees container
+  printf 'issue_tracker:\n  provider: linear\n  team: ENG\n' \
+    > "$FAKE_CONTAINER/.workbench.yml"
+
+  run rename_container_in_fake "$FAKE_CONTAINER/main"
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONTAINER/.workbench.yml")" = "linear" ]
+  [ "$(yq -r '.issues.team' "$FAKE_CONTAINER/.workbench.yml")" = "ENG" ]
+  [ "$(yq -r '.issue_tracker // "absent"' "$FAKE_CONTAINER/.workbench.yml")" = "absent" ]
+}
+
+@test "the container rename leaves a worktree's own config alone" {
+  # The whole reason this scope exists: a repo's .workbench.yml is tracked, and
+  # rewriting one would put an uncommitted diff in somebody's checkout.
+  register_fake_repo_worktrees container
+  printf 'issue_tracker:\n  provider: linear\n' > "$FAKE_CONTAINER/.workbench.yml"
+  printf 'issue_tracker:\n  provider: github\n' > "$FAKE_CONTAINER/main/.workbench.yml"
+
+  run rename_container_in_fake "$FAKE_CONTAINER/main"
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONTAINER/main/.workbench.yml")" = "github" ]
+}
+
+@test "the container rename is a no-op when the container has no config" {
+  register_fake_repo_worktrees container
+
+  run rename_container_in_fake "$FAKE_CONTAINER/main"
+  [ "$status" -eq 3 ]
+}
+
+@test "the container rename is a no-op when the key is already issues" {
+  register_fake_repo_worktrees container
+  printf 'issues:\n  provider: linear\n' > "$FAKE_CONTAINER/.workbench.yml"
+
+  run rename_container_in_fake "$FAKE_CONTAINER/main"
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONTAINER/.workbench.yml")" = "linear" ]
+}
+
+@test "the container rename is a no-op outside the worktree layout" {
+  # An ordinary clone has no container, and the parent of its .git is the
+  # checkout itself — which must not be mistaken for one and rewritten.
+  mkdir -p "$TMPDIR/plain"
+  git -C "$TMPDIR/plain" init -q
+  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/plain/.workbench.yml"
+
+  run rename_container_in_fake "$TMPDIR/plain"
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.issue_tracker.provider' "$TMPDIR/plain/.workbench.yml")" = "github" ]
+}
+
+@test "the container rename keeps a value already written against the new schema" {
+  register_fake_repo_worktrees container
+  printf 'issue_tracker:\n  provider: jira\nissues:\n  provider: linear\n' \
+    > "$FAKE_CONTAINER/.workbench.yml"
+
+  run rename_container_in_fake "$FAKE_CONTAINER/main"
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONTAINER/.workbench.yml")" = "linear" ]
+  [ "$(yq -r '.issue_tracker // "absent"' "$FAKE_CONTAINER/.workbench.yml")" = "absent" ]
+}
+
+# ─── Issue tracker rename: the repo file is reported, not rewritten ──────────
+
+warn_project_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$REPO_ROOT/lib/constants.sh"
+    . "$REPO_ROOT/lib/migrations.sh"
+    . "$REPO_ROOT/bin/migrations/20260909-warn-issue-tracker-project.sh"
+    migration_20260909_warn_issue_tracker_project "$1"
+  )
+}
+
+@test "a repo config holding the old key is reported and left untouched" {
+  mkdir -p "$TMPDIR/repo"
+  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
+
+  run warn_project_in_fake "$TMPDIR/repo"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"still names issue_tracker"* ]]
+  # Untouched is the point — the fix belongs in a commit its owner makes.
+  [ "$(yq -r '.issue_tracker.provider' "$TMPDIR/repo/.workbench.yml")" = "github" ]
+  [ "$(yq -r '.issues // "absent"' "$TMPDIR/repo/.workbench.yml")" = "absent" ]
+}
+
+@test "a repo config already on the new key says nothing" {
+  mkdir -p "$TMPDIR/repo"
+  printf 'issues:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
+
+  run warn_project_in_fake "$TMPDIR/repo"
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+}
+
+@test "a repo with no config at all says nothing" {
+  mkdir -p "$TMPDIR/repo"
+
+  run warn_project_in_fake "$TMPDIR/repo"
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+}

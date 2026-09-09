@@ -122,6 +122,31 @@ EOF
   [ -z "$(reg_get "$f" tools 0 description)" ]
 }
 
+@test "every spelling of null reads empty, not as its own text" {
+  # This is what the !!null arm in reg_get is for, and it is not redundant:
+  # `~` stringifies to "~" and `null` to "null". Either would satisfy an
+  # `[[ -n "$x" ]]` required-field guard — the tilde would satisfy the
+  # `!= "null"` half too — so a missing field would read as a present one.
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+tools:
+  - name: a
+    bare:
+    tilde: ~
+    word: null
+    quoted: "null"
+EOF
+)
+  reg_load "$f"
+  local field
+  for field in bare tilde word; do
+    [ "$(reg_type "$f" tools 0 "$field")" = "!!null" ]
+    [ -z "$(reg_get "$f" tools 0 "$field")" ]
+  done
+  # A quoted "null" is a string a registry meant to write, and survives.
+  [ "$(reg_get "$f" tools 0 quoted)" = "null" ]
+}
+
 @test "an absent field is absent, and reads empty too" {
   local f
   f=$(_fixture reg.yml <<'EOF'

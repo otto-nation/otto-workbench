@@ -730,6 +730,88 @@ EOF
   [[ "$output" == *"permission must be boolean, string, or array"* ]]
 }
 
+@test "the reported permission type is the YAML tag, not a JSON approximation" {
+  # The error names the tag it rejected, so !!float has to survive the read as
+  # itself. A JSON round trip has one number type and would report !!int here.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools:
+  - name: mytool
+    permission: 1.10
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool --help"
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"got !!float"* ]]
+}
+
+@test "an unquoted yes stays a string, as YAML 1.2 reads it" {
+  # A YAML 1.1 reader calls this a bool and lets it through the !!bool arm.
+  # yq is 1.2, so it is a string, and an empty-string permission is the thing
+  # the string arm rejects. A reader swap that changed this would silently
+  # turn a malformed permission into a valid one.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools:
+  - name: mytool
+    permission: yes
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool --help"
+EOF
+
+  run main
+  # A non-empty string is a valid permission, so this passes — what matters is
+  # that it took the !!str arm and was not read as the boolean true.
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"permission must be boolean"* ]]
+}
+
+@test "a field present but empty still fails the required-field check" {
+  # `description:` with no value is present and null. reg_has says it is there
+  # and reg_get says it is empty; the check keys on the second. Collapsing the
+  # two would make this registry pass.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: full
+    description:
+    when_to_use: "When needed"
+    usage: "mytool --help"
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: description"* ]]
+}
+
+@test "fails on a registry that cannot be parsed" {
+  # Reading each field separately answered an empty count for a malformed
+  # file, so the entry loop ran zero times and every check on it passed. The
+  # batch read fails by name instead.
+  printf 'meta:\n  section: [\n' > "$TMPDIR/bin/registry.yml"
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"registry.yml"* ]]
+}
+
 @test "fails when permission is missing" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:

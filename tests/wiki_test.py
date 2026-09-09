@@ -59,6 +59,11 @@ def write_source(root: Path, name: str, content: str = "raw content") -> Path:
     return path
 
 
+def write_log(root: Path, *lines: str) -> None:
+    body = "# Activity Log\n\n" + "".join(f"{line}\n" for line in lines)
+    (root / "_log.md").write_text(body, encoding="utf-8")
+
+
 def write_manifest(root: Path, entries: dict[str, str]) -> None:
     lines = ["| source | hash |", "| --- | --- |"]
     lines += [f"| {path} | {digest} |" for path, digest in entries.items()]
@@ -1032,11 +1037,6 @@ class TestArchivedArticlesInLint:
         root = make_wiki(tmp_path)
         write_article(root, "old", body="body", subdir="archive", tags=["auth"])
         assert "[[old]]" not in wiki.build_index(wiki.Wiki(root))
-
-
-def write_log(root: Path, *lines: str) -> None:
-    body = "# Activity Log\n\n" + "".join(f"{line}\n" for line in lines)
-    (root / "_log.md").write_text(body, encoding="utf-8")
 
 
 class TestQueryGapParsing:

@@ -78,6 +78,8 @@ SCRIPT = Path(__file__).name
 
 
 _SUMMARY_MARKER = "<!-- pr-comments:summary -->"
+
+
 def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord]) -> int:
     """Resolve all verified threads on GitHub. Returns count resolved."""
     resolved = 0

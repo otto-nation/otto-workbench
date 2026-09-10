@@ -51,7 +51,7 @@ _LEGACY_RECORD_KEYS = ("commit_sha", "commit_status", "head_sha")
 
 
 def count_line(
-    by_outcome: Mapping[FixOutcome | str, int], extra: Sequence[str] = (),
+    by_outcome: Mapping[FixOutcome, int], extra: Sequence[str] = (),
 ) -> str:
     """The "**2 fixed** · 1 deferred" line, from a count per outcome.
 

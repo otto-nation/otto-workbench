@@ -67,6 +67,36 @@ _join() {
   printf '%s' "$result"
 }
 
+# _sorted_names OUTVAR SUFFIX PATHS... — fills OUTVAR with the basenames of
+# PATHS, SUFFIX stripped, in byte order. Paths that do not exist are skipped,
+# so an unmatched glob passes through as nothing rather than as its own pattern.
+#
+# The sort is on names, never on the glob's own output. A glob of directories
+# yields a trailing slash, and `/` (0x2F) sorts after `-` (0x2D), so
+# `wiki-capture/` lands ahead of `wiki/` while the names sort the other way.
+# A `*.md` glob has the same inversion on `.` (0x2E): `reviewer-lite.md` ahead
+# of `reviewer.md`. Sorting the paths and stripping afterwards reproduces both.
+#
+# LC_ALL=C pins byte order so a glibc UTF-8 locale in CI agrees with macOS's
+# always-C BSD sort, the same reason generate-public-surface pins it.
+_sorted_names() {
+  local -n __names=$1
+  local suffix="$2"; shift 2
+  local path name
+  __names=()
+  for path in "$@"; do
+    [[ -e "$path" ]] || continue
+    name="$(basename "${path%/}")"
+    __names+=("${name%"$suffix"}")
+  done
+  [[ ${#__names[@]} -gt 0 ]] || return 0
+  local sorted=()
+  while IFS= read -r name; do
+    sorted+=("$name")
+  done < <(printf '%s\n' "${__names[@]}" | LC_ALL=C sort)
+  __names=("${sorted[@]}")
+}
+
 # _iter_tools FILE CALLBACK
 # Calls CALLBACK name description when_to_use usage docs FILE INDEX for each tool in FILE.
 #
@@ -311,13 +341,13 @@ _emit_ai_installs() {
   # installs it to Pi's discovery root only, and Claude Code loads the same
   # protocol from the agent file in the table below — naming it here would
   # advertise a Claude skill that is never installed.
-  local skill_names=()
-  for d in "$skills_src"/*/; do
-    [[ -d "$d" ]] || continue
-    if [[ -n "$(skill_agent "$d/SKILL.md")" ]]; then
+  local skill_names=() all_skills=() name
+  _sorted_names all_skills "" "$skills_src"/*/
+  for name in "${all_skills[@]}"; do
+    if [[ -n "$(skill_agent "$skills_src/$name/SKILL.md")" ]]; then
       continue
     fi
-    skill_names+=("$(basename "$d")")
+    skill_names+=("$name")
   done
   if [[ ${#skill_names[@]} -gt 0 ]]; then
     # shellcheck disable=SC2016  # backticks are markdown literals
@@ -326,8 +356,10 @@ _emit_ai_installs() {
   fi
 
   # Agents table with descriptions from agent .md frontmatter
-  local has_agents=false
-  for f in "$claude_agents_src"/*.md; do
+  local has_agents=false agent_names=() f
+  _sorted_names agent_names .md "$claude_agents_src"/*.md
+  for name in "${agent_names[@]}"; do
+    f="$claude_agents_src/$name.md"
     [[ -f "$f" ]] || continue
     if [[ "$has_agents" == false ]]; then
       printf '\n**Agents:**\n\n'
@@ -335,11 +367,10 @@ _emit_ai_installs() {
       printf '|-------|-------------|\n'
       has_agents=true
     fi
-    local agent_name agent_desc
-    agent_name="$(basename "${f%.md}")"
+    local agent_desc
     agent_desc="$(frontmatter_field "$f" description)"
     [[ -z "$agent_desc" ]] && agent_desc="—"
-    printf '| %s | %s |\n' "$agent_name" "$agent_desc"
+    printf '| %s | %s |\n' "$name" "$agent_desc"
   done
 
   # MCPs
@@ -385,8 +416,10 @@ _emit_skill_reference() {
 
   printf '## Skill Reference\n'
 
-  for d in "$skills_src"/*/; do
-    [[ -d "$d" ]] || continue
+  local all_skills=() name d
+  _sorted_names all_skills "" "$skills_src"/*/
+  for name in "${all_skills[@]}"; do
+    d="$skills_src/$name"
     local skill_file="$d/SKILL.md"
     [[ -f "$skill_file" ]] || continue
     # Agent-backed skills carry no invocation because there is no command to
@@ -398,7 +431,7 @@ _emit_skill_reference() {
     fi
 
     local skill_name skill_desc invocation output cadence trigger skip output_tool
-    skill_name="$(basename "$d")"
+    skill_name="$name"
     skill_desc="$(frontmatter_field "$skill_file" description)"
     invocation="$(frontmatter_field "$skill_file" invocation)"
     output="$(frontmatter_field "$skill_file" output)"

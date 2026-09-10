@@ -604,6 +604,20 @@ _write_skill() {
   } > "$AI_DIR/skills/$name/SKILL.md"
 }
 
+# _write_agent NAME — writes a minimal agent .md into the fake AI tree.
+_write_agent() {
+  local name="$1"
+  mkdir -p "$AI_DIR/claude/agents"
+  {
+    echo "---"
+    echo "name: $name"
+    echo "description: \"Does $name things.\""
+    echo "---"
+    echo ""
+    echo "# $name"
+  } > "$AI_DIR/claude/agents/$name.md"
+}
+
 @test "the Claude Code skills list names an ordinary skill" {
   _write_skill anatomy
 
@@ -630,6 +644,38 @@ _write_skill() {
   [[ "$skills_line" != *"reviewer"* ]]
 }
 
+# A name that is a strict prefix of another is the case the glob gets wrong.
+# `foo/` vs `foo-bar/` compares `/` (0x2F) against `-` (0x2D), so iterating
+# `"$skills_src"/*/` yields the hyphen first; the names sort the other way.
+# Sorting the globbed paths instead of the names still fails this.
+#
+# Fixture names rather than the real wiki/wiki-capture pair, so the test keeps
+# testing the ordering rule after either skill is renamed or removed.
+@test "the Claude Code skills list is in lexicographic order by name" {
+  _write_skill foo-bar
+  _write_skill foo
+
+  run main --emit ai-installs
+  [ "$status" -eq 0 ]
+  local skills_line
+  skills_line="$(printf '%s\n' "$output" | grep '^\*\*Skills:\*\*')"
+  [[ "$skills_line" == *"foo, foo-bar"* ]]
+}
+
+# The agents glob has the same inversion on `.` (0x2E) rather than `/`:
+# `reviewer-lite.md` sorts ahead of `reviewer.md` while the names do not.
+@test "the Agents table is in lexicographic order by name" {
+  _write_agent foo-bar
+  _write_agent foo
+
+  run main --emit ai-installs
+  [ "$status" -eq 0 ]
+  local rows
+  rows="$(printf '%s\n' "$output" | grep -c '^| foo')"
+  [ "$rows" -eq 2 ]
+  [[ "$output" == *"| foo | "*"| foo-bar | "* ]]
+}
+
 @test "the Skill Reference documents an ordinary skill's invocation" {
   _write_skill anatomy
 
@@ -652,4 +698,13 @@ _write_skill() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'### `/anatomy`'* ]]
   [[ "$output" != *'### `/reviewer`'* ]]
+}
+
+@test "the Skill Reference sections are in lexicographic order by name" {
+  _write_skill foo-bar
+  _write_skill foo
+
+  run main --emit skill-reference
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'### `/foo`'*'### `/foo-bar`'* ]]
 }

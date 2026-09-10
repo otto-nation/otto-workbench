@@ -45,7 +45,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, wiki-capture, wiki — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, wiki, wiki-capture — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -57,8 +57,8 @@ This creates `~/.config/task/taskfile.env` with:
 | explain | Fast text-in/text-out explainer. Answers questions from provided input without exploring files or suggesting edits. |
 | incident | Structured production incident investigation. Read-only triage — gathers symptoms, checks recent changes, forms ranked hypotheses. Never modifies anything. |
 | migrate | Analyze codebases for migration tasks and produce phased upgrade plans. Read-only — plans changes but does not apply them. |
-| reviewer-lite | Lightweight code reviewer for group and angles phases. Receives pre-collected data — no context gathering needed. Produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 | reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
+| reviewer-lite | Lightweight code reviewer for group and angles phases. Receives pre-collected data — no context gathering needed. Produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 
 **MCP Servers:** otto-workbench
 
@@ -219,6 +219,18 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
 
+### `/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]`
+
+Build and maintain a compiled knowledge base — ingest sources, compile them into interlinked articles, query them, and keep them healthy. TRIGGER when: user wants a knowledge base, asks to ingest or compile a source, queries compiled knowledge, or asks about wiki health. SKIP: one-off questions answerable from the codebase; project docs that belong in docs/.
+
+```
+/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]
+```
+
+**Output:** `articles in the knowledge base directory; reports to stdout`
+**Trigger:** wiki, knowledge base, ingest a source, compile articles, query the wiki, wiki health
+**Skip:** Questions answerable directly from the codebase; documentation that belongs in the project's own docs/
+
 ### `/wiki-capture`
 
 Reviews the session that just ended for anything worth keeping and logs it to the knowledge base, without writing articles. TRIGGER when: a session ends in a repo with a knowledge base and a capture is due. SKIP: writing or editing articles (use wiki compile); one-off answers already in the codebase.
@@ -231,18 +243,6 @@ Reviews the session that just ended for anything worth keeping and logs it to th
 **Auto-trigger:** 24h (via Stop hook)
 **Trigger:** Auto-triggers at session end, at most once every 24h per repo, in repos that have a knowledge base.
 **Skip:** Never writes or edits an article — /wiki compile processes what this logs, deliberately.
-
-### `/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]`
-
-Build and maintain a compiled knowledge base — ingest sources, compile them into interlinked articles, query them, and keep them healthy. TRIGGER when: user wants a knowledge base, asks to ingest or compile a source, queries compiled knowledge, or asks about wiki health. SKIP: one-off questions answerable from the codebase; project docs that belong in docs/.
-
-```
-/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]
-```
-
-**Output:** `articles in the knowledge base directory; reports to stdout`
-**Trigger:** wiki, knowledge base, ingest a source, compile articles, query the wiki, wiki health
-**Skip:** Questions answerable directly from the codebase; documentation that belongs in the project's own docs/
 
 ## Session Lifecycle
 

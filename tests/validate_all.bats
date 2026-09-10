@@ -243,8 +243,11 @@ EOF
   local buffers="$TMPDIR/buffers" root="$TMPDIR"
   mkdir -p "$buffers"
 
-  # root captured first: on one line, VALIDATOR_ROOT="$TMPDIR" expands before
-  # TMPDIR is reassigned, so the two would disagree about which is which.
+  # The root is bound to its own name because the same prefix list reassigns
+  # TMPDIR. Bash expands the prefix against the pre-assignment value, so
+  # VALIDATOR_ROOT="$TMPDIR" would in fact read the outer one — but nothing on
+  # the line says so, and shellcheck reads it as the bug it looks like. Spelling
+  # the two apart makes which directory is which answerable by reading it.
   VALIDATOR_ROOT="$root" TMPDIR="$buffers" "$VALIDATE_ALL" --quiet >/dev/null 2>&1 &
   local runner=$!
   # Polled rather than slept: on a loaded runner the validators may take longer
@@ -271,7 +274,7 @@ EOF
   _fixture_validator "bin/local" "validate-good" 0
   _fixture_validator "bin/local" "validate-bad" 1
 
-  # root captured first, for the reason the interrupt test above gives.
+  # Bound to its own name for the reason the interrupt test above gives.
   VALIDATOR_ROOT="$root" TMPDIR="$buffers" run "$VALIDATE_ALL" --quiet
   [ "$status" -eq 1 ]
   [ -z "$(ls -A "$buffers")" ]

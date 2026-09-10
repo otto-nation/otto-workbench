@@ -497,6 +497,7 @@ env:
     setup_url: https://example.com
     prefix: "pre_"
     claude_env: false
+    role: model-tier
 
 tools: []
 EOF
@@ -545,6 +546,58 @@ EOF
   run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"requires meta.claude_env: true"* ]]
+}
+
+@test "fails on an unknown role value" {
+  # Checked strictly, unlike claude_env's lenient read: a role that excluded
+  # would silently drop a tier from every harness, surfacing only as a model
+  # quietly missing from a menu.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  validation: none
+
+env:
+  - var: MY_VAR
+    role: model-defualt
+
+tools: []
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"role must be one of"* ]]
+}
+
+@test "fails when two registries both claim model-default" {
+  # The winner would otherwise depend on registry iteration order, so the
+  # machine gets a default nobody chose and each file looks correct alone.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  validation: none
+
+env:
+  - var: FIRST_MODEL
+    role: model-default
+
+tools: []
+EOF
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Bin"
+  validation: none
+
+env:
+  - var: SECOND_MODEL
+    role: model-default
+
+tools: []
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"more than one env var declares role: model-default"* ]]
 }
 
 @test "fails on duplicate env var across registries" {

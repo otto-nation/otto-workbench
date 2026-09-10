@@ -303,6 +303,7 @@ read_env_local_var AI_MODEL
 | Function | Purpose |
 |----------|---------|
 | `read_env_local_var VAR` | prints the value ~/.env.local exports for VAR, or nothing if VAR is not exported there. |
+| `env_local_has_var VAR` | returns 0 when ~/.env.local carries an active export for VAR, whatever its value. |
 
 Loaded via `ui.sh`.
 
@@ -898,9 +899,10 @@ Registry discovery, install-check gating, and env/auth iteration.
 
 The schema these functions read — the meta block, the tool entry fields, the
 `*.env.yml` shape, and the cross-validation modes — is documented once, in
-[Registries](registries.md#schema). `KNOWN_TOOL_FIELDS` and
-`KNOWN_COMMAND_FIELDS` below are what `validate-registries` rejects unknown
-keys against.
+[Registries](registries.md#schema). `KNOWN_TOOL_FIELDS`,
+`KNOWN_COMMAND_FIELDS` and `KNOWN_ENV_FIELDS` below are what
+`validate-registries` rejects unknown keys against, and `MODEL_ROLES` is the
+vocabulary it checks a `role` value against.
 
 Sourced directly by its consumers — `bin/local/generate-tool-context`,
 `bin/local/validate-registries`, `brew/summary.sh`, `summary.sh`, and
@@ -925,6 +927,7 @@ the caller has not already sourced `constants.sh`, since an
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
 | `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
 | `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
+| `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |
 
 ### summary.sh
 

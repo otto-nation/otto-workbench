@@ -7,6 +7,8 @@
 #   - No unknown fields in tools[] or env[] entries (see KNOWN_TOOL_FIELDS and
 #     KNOWN_ENV_FIELDS in lib/registries.sh)
 #   - No duplicate tool names
+#   - Any env[] `role` names a known model role, and exactly one entry across
+#     every registry claims model-default
 #   - Cross-file check based on meta.validation:
 #       brewfile      — every tool name (or brew_name override) exists in meta.source Brewfile
 #       bindir        — every tool name exists as a file in meta.source directory
@@ -415,9 +417,37 @@ _check_env_claude_env() {
   fi
 }
 
+# _check_env_role FILE INDEX
+# Validates an env[] entry's optional `role`: the value must be one of the ones
+# MODEL_ROLES names. A model-default entry is recorded in ALL_MODEL_DEFAULTS
+# for the cross-registry check below.
+#
+# Checked strictly, unlike claude_env's lenient read, because the two fields
+# fail in opposite directions. A malformed claude_env that included would
+# publish a variable; a malformed role that included would only offer a
+# non-model as a model, while a malformed role that *excluded* silently drops a
+# tier from every harness — which is the failure this field exists to prevent,
+# and it would show up as a model quietly missing from a menu.
+_check_env_role() {
+  local file="$1" i="$2"
+  reg_has "$file" env "$i" role || return 0
+
+  local var value
+  var=$(_env_label "$file" "$i")
+  value=$(reg_get "$file" env "$i" role)
+  if [[ " $MODEL_ROLES " != *" $value "* ]]; then
+    _fail "$(basename "$file") env '$var': role must be one of: $MODEL_ROLES — got '$value'"
+    return 0
+  fi
+
+  if [[ "$value" == "model-default" ]]; then
+    ALL_MODEL_DEFAULTS+=("$var:${file#"$REPO_ROOT/"}")
+  fi
+}
+
 # _validate_env_fields FILE
 # Validates the optional top-level env[] array: var is present, valid format, no
-# dupes, no unknown fields, and any claude_env opt-out is well formed.
+# dupes, no unknown fields, and any claude_env opt-out or role is well formed.
 _validate_env_fields() {
   local file="$1"
   reg_has "$file" env || return 0
@@ -445,6 +475,7 @@ _validate_env_fields() {
     seen_vars+=("$var")
     _check_unknown_env_fields "$file" "$i"
     _check_env_claude_env "$file" "$i"
+    _check_env_role "$file" "$i"
     # Track for cross-registry duplicate check (use relative path for readability)
     ALL_ENV_VARS+=("$var:${file#"$REPO_ROOT/"}")
     i=$(( i + 1 ))
@@ -557,6 +588,17 @@ _check_cross_registry_dupes() {
   done
 }
 
+# Cross-registry model-default check: exactly one env entry may claim
+# model-default, since it is what a harness resolves defaultModel from.
+#
+# Two would make the winner depend on registry iteration order — filesystem
+# order, in effect — so the machine would get a default nobody chose and the
+# two files would each look correct on their own.
+_check_single_model_default() {
+  (( ${#ALL_MODEL_DEFAULTS[@]} > 1 )) || return 0
+  _fail "more than one env var declares role: model-default — ${ALL_MODEL_DEFAULTS[*]}"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 main() {
@@ -569,6 +611,7 @@ main() {
   ERRORS=0
   REGISTRIES_CHECKED=0
   declare -a ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
+  declare -a ALL_MODEL_DEFAULTS=()  # same shape, for the single-model-default check
 
   if ! command -v yq >/dev/null 2>&1; then
     err "yq not found — run: brew install yq"
@@ -621,6 +664,7 @@ main() {
   if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then
     _check_cross_registry_dupes
   fi
+  _check_single_model_default
 
   echo
   if [[ "$ERRORS" -gt 0 ]]; then

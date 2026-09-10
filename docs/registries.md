@@ -93,6 +93,7 @@ env:
     prefix: "linux/"
     target: OTHER_NAME_FOR_IT        # optional — see below
     claude_env: false                # optional — see below
+    role: model-tier                 # optional — see below
 
 auth:
   env_var: CONTEXT7_API_KEY          # required within auth block
@@ -106,7 +107,7 @@ A var with a `default` is written into `~/.env.local` as an active export; one w
 
 `target` renames the variable on its way out to a consumer that spells it differently, and is read only by the [`claude_env`](#claude_env--variables-claude-code-needs-without-a-shell) mirror below — `~/.env.local` always carries `var`. Use it where one value has several names: `GOOGLE_CLOUD_PROJECT` is what gcloud, the Google SDKs and Pi read, and reaches Claude Code as `ANTHROPIC_VERTEX_PROJECT_ID` through a `target`. It cannot express two values that merely look alike — a `target` is one variable under two names, so if the two could ever legitimately differ, declare them separately instead. `ai/lib/vertex.env.yml` declares `CLOUD_ML_REGION` and `GOOGLE_CLOUD_LOCATION` as two entries for exactly that reason: the region the Anthropic models are provisioned in and the location Google's own are served from are equal on most machines and are not the same fact.
 
-Every field here is checked — `KNOWN_ENV_FIELDS` in [`lib/registries.sh`](../lib/registries.sh) is what an entry's keys are validated against, so a misspelled `target` or `claude_env` fails the build rather than being read as a variable that simply never appears under the name its consumer expects.
+Every field here is checked — `KNOWN_ENV_FIELDS` in [`lib/registries.sh`](../lib/registries.sh) is what an entry's keys are validated against, so a misspelled `target`, `claude_env` or `role` fails the build rather than being read as a variable that simply never appears under the name its consumer expects.
 
 ### `claude_env` — variables Claude Code needs without a shell
 
@@ -123,6 +124,14 @@ The flag is opt-in per registry because the two files have different audiences: 
 A single entry can then be held back with `claude_env: false` on the entry itself, so a registry describing one subsystem need not be split in two to keep one variable out of the settings file. `ai/lib/vertex.env.yml` uses it for `GOOGLE_CLOUD_LOCATION`: Claude Code reads `CLOUD_ML_REGION` and has no use for the Google-side name, and a value that reached the settings file could not be overridden from a shell afterwards — which is precisely the divergence that variable exists to permit.
 
 That field is an opt-**out**, deliberately. The audience question above is still answered once, for the whole file, and an entry that says nothing is mirrored — so a variable is never withheld by an omission. It only narrows a registry that has already opted in: on one without `meta.claude_env: true` it decides nothing, and the validator rejects it rather than letting it read as though it did.
+
+### `role` — what a variable is, as against where it may go
+
+`role` marks an entry as carrying a model id. `model-default` is the one a harness resolves its default model from; `model-tier` is one of the aliases a session can switch to. `MODEL_ROLES` in [`lib/registries.sh`](../lib/registries.sh) is the vocabulary, and `collect_model_env_vars` beside it is what both harness syncs read — Claude Code writes the values into `~/.claude/settings.json` under their `target` names, Pi turns them into `defaultModel` and `enabledModels`. Adding a tier is an edit to [`ai/models.env.yml`](../ai/models.env.yml) and nothing else; neither harness names a model variable in code.
+
+This is a separate field from `claude_env` above rather than a reuse of it because the two answer different questions: `role` says what a variable *is*, `claude_env` says where it may be *published*. Nothing stops one entry carrying both, and `ai/models.env.yml`'s do. Keying the model list on the mirror flag instead would be actively wrong — `ai/lib/vertex.env.yml` is flagged for the mirror, so Pi would offer `GOOGLE_CLOUD_PROJECT`'s value as a model to run a session on.
+
+No registry-level flag gates it, unlike `meta.claude_env`. A `role` is a claim about one entry and reads the same wherever it appears, so there is no once-per-file question for it to force. The value is validated strictly, again unlike `claude_env`'s lenient read, because these two fail in opposite directions: a malformed `claude_env` that included would leak a variable into a world-readable file, while a malformed `role` that excluded would silently drop a tier from every harness, surfacing only as a model quietly missing from a menu. Exactly one entry across every registry may claim `model-default` — two would make the winner depend on registry iteration order, and each file would look correct on its own.
 
 ## Cross-Validation Modes
 

@@ -266,8 +266,9 @@ AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 # PI_SETTINGS_SRC carries only non-model scalars (provider, thinking level,
-# packages). Model config is derived at sync time from the AI_MODEL / AI_*_MODEL
-# env vars in ~/.env.local — the same SSOT Claude Code reads.
+# packages). Model config is derived at sync time from the env vars
+# ai/models.env.yml declares with a model role, read out of ~/.env.local — the
+# same SSOT Claude Code reads.
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
 PI_CONTEXT_HEAD_SRC="$PI_SRC_DIR/AGENTS.head.md"

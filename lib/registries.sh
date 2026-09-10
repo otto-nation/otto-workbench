@@ -4,9 +4,10 @@
 #
 # The schema these functions read — the meta block, the tool entry fields, the
 # `*.env.yml` shape, and the cross-validation modes — is documented once, in
-# [Registries](registries.md#schema). `KNOWN_TOOL_FIELDS` and
-# `KNOWN_COMMAND_FIELDS` below are what `validate-registries` rejects unknown
-# keys against.
+# [Registries](registries.md#schema). `KNOWN_TOOL_FIELDS`,
+# `KNOWN_COMMAND_FIELDS` and `KNOWN_ENV_FIELDS` below are what
+# `validate-registries` rejects unknown keys against, and `MODEL_ROLES` is the
+# vocabulary it checks a `role` value against.
 #
 # Sourced directly by its consumers — `bin/local/generate-tool-context`,
 # `bin/local/validate-registries`, `brew/summary.sh`, `summary.sh`, and
@@ -39,7 +40,12 @@ KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs
 KNOWN_COMMAND_FIELDS="name description scope when detail"
 # Known env entry fields (within a registry's env[] array), same purpose
 # shellcheck disable=SC2034
-KNOWN_ENV_FIELDS="var target comment default setup_url prefix claude_env"
+KNOWN_ENV_FIELDS="var target comment default setup_url prefix claude_env role"
+# Values `role` may take. Owned here rather than in the validator so the
+# vocabulary the collector below matches on and the one validate-registries
+# enforces cannot drift apart.
+# shellcheck disable=SC2034
+MODEL_ROLES="model-default model-tier"
 
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }
@@ -670,6 +676,56 @@ collect_claude_env_vars() {
       [[ -z "$target" || "$target" == "null" ]] && target="$var"
       __sources_out+=("$var")
       __targets_out+=("$target")
+    done
+  done
+}
+
+# collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [BREW_DIR]
+# Populates two caller arrays (via nameref) with the env vars every registry
+# declares as carrying a model id, in declaration order, and the `role` each one
+# was declared with.
+#
+# `role` says what a variable *is*; `claude_env` above says where it may be
+# published. The two are orthogonal, and reusing the latter for this would be
+# wrong rather than merely loose: `ai/lib/vertex.env.yml` is flagged for the
+# mirror, so a collector keyed on that flag would report GOOGLE_CLOUD_PROJECT
+# and CLOUD_ML_REGION as models and a sync would offer a GCP project id as
+# something to run a session on.
+#
+# No registry-level flag gates this, because a `role` is a claim about one
+# entry and reads the same wherever it appears — unlike the audience question
+# `meta.claude_env` exists to force once per file. Install checks are not
+# consulted, for the reason collect_claude_env_vars gives: what a harness ends
+# up with is decided by what ~/.env.local actually sets.
+#
+# Cross-registry duplicates are validate-registries' job (env var names are
+# unique across every registry), so nothing is deduplicated here.
+collect_model_env_vars() {
+  local -n __vars_out=$1
+  local -n __roles_out=$2
+  local scan_dir="$3"
+  local brew_dir="${4:-$scan_dir/brew}"
+
+  __vars_out=()
+  __roles_out=()
+  local -a registries=()
+  collect_registries registries "$scan_dir" "$brew_dir"
+  # Invalidated first, for the reason collect_registry_permissions gives.
+  (( ${#registries[@]} > 0 )) && { reg_invalidate "${registries[@]}"; reg_load "${registries[@]}" || return 1; }
+
+  local file count i var role
+  for file in "${registries[@]}"; do
+    [[ -f "$file" ]] || continue
+    count=$(reg_len "$file" env)
+    [[ "$count" -gt 0 ]] || continue
+
+    for (( i=0; i<count; i++ )); do
+      role=$(reg_get "$file" env "$i" role)
+      [[ " $MODEL_ROLES " == *" $role "* ]] || continue
+      var=$(reg_get "$file" env "$i" var)
+      [[ -n "$var" && "$var" != "null" ]] || continue
+      __vars_out+=("$var")
+      __roles_out+=("$role")
     done
   done
 }

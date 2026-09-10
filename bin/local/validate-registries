@@ -4,7 +4,8 @@
 # Checks performed per registry:
 #   - Required fields present: name, description, permission, visibility
 #     (when_to_use + usage required when visibility: full; forbidden otherwise)
-#   - No unknown fields (see KNOWN_TOOL_FIELDS in lib/registries.sh)
+#   - No unknown fields in tools[] or env[] entries (see KNOWN_TOOL_FIELDS and
+#     KNOWN_ENV_FIELDS in lib/registries.sh)
 #   - No duplicate tool names
 #   - Cross-file check based on meta.validation:
 #       brewfile      — every tool name (or brew_name override) exists in meta.source Brewfile
@@ -104,21 +105,30 @@ _check_permission_seq() {
   done
 }
 
+# _check_unknown_keys FILE YQ_PATH LABEL ALLOWED
+# Rejects any key under YQ_PATH that ALLOWED — a space-separated field list —
+# does not name. LABEL prefixes the failure so the reader is told which entry of
+# which array is at fault.
+_check_unknown_keys() {
+  local file="$1" path="$2" label="$3" allowed="$4"
+  local key
+  while IFS= read -r key; do
+    local known=false field
+    for field in $allowed; do
+      if [[ "$key" == "$field" ]]; then known=true; break; fi
+    done
+    if ! $known; then
+      _fail "$(basename "$file") $label: unknown field '$key'"
+    fi
+  done < <(yq "$path | keys | .[]" "$file")
+}
+
 # _check_unknown_fields FILE INDEX
 _check_unknown_fields() {
   local file="$1" i="$2"
   local name
   name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
-  local key
-  while IFS= read -r key; do
-    local known=false field
-    for field in $KNOWN_TOOL_FIELDS; do
-      if [[ "$key" == "$field" ]]; then known=true; break; fi
-    done
-    if ! $known; then
-      _fail "$(basename "$file") entry '$name': unknown field '$key'"
-    fi
-  done < <(yq ".tools[$i] | keys | .[]" "$file")
+  _check_unknown_keys "$file" ".tools[$i]" "entry '$name'" "$KNOWN_TOOL_FIELDS"
 }
 
 # _check_permission_field FILE INDEX
@@ -300,8 +310,58 @@ _validate_against_zsh() {
   done
 }
 
+# _check_unknown_env_fields FILE INDEX
+# Rejects keys in an env[] entry that KNOWN_ENV_FIELDS does not name.
+#
+# The tools[] equivalent has existed since the schema did; env[] went without,
+# and every field added to it since inherited the gap. A misspelled `target` was
+# accepted in silence and the variable simply never appeared under the name its
+# consumer read — the sort of failure that surfaces as a tool behaving as though
+# it were unconfigured, nowhere near the file holding the typo.
+_check_unknown_env_fields() {
+  local file="$1" i="$2"
+  local var
+  var=$(yq ".env[$i].var // \"[$i]\"" "$file")
+  _check_unknown_keys "$file" ".env[$i]" "env '$var'" "$KNOWN_ENV_FIELDS"
+}
+
+# _check_env_claude_env FILE INDEX
+# Validates an env[] entry's optional `claude_env` opt-out: the value must be a
+# literal true or false, and the registry must already carry
+# `meta.claude_env: true`.
+#
+# Both rules exist because collect_claude_env_vars excludes on an exact `false`
+# and includes on anything else. That direction keeps a registry doing what its
+# own meta flag says when a value is malformed, but it means a typo would
+# publish a variable to a world-readable settings.json rather than withhold one.
+# The check is what makes the lenient read safe.
+#
+# The field narrows a file that has opted in; it cannot opt one in. On a
+# registry without the meta flag it decides nothing, and reads as though it
+# does — so it is an error rather than a no-op.
+_check_env_claude_env() {
+  local file="$1" i="$2"
+  local has
+  has=$(yq ".env[$i] | has(\"claude_env\")" "$file")
+  [[ "$has" == "true" ]] || return 0
+
+  local var value
+  var=$(yq ".env[$i].var // \"[$i]\"" "$file")
+  value=$(yq ".env[$i].claude_env" "$file")
+  if [[ "$value" != "true" && "$value" != "false" ]]; then
+    _fail "$(basename "$file") env '$var': claude_env must be true or false, got '$value'"
+  fi
+
+  local flagged
+  flagged=$(yq '.meta.claude_env // false' "$file")
+  if [[ "$flagged" != "true" ]]; then
+    _fail "$(basename "$file") env '$var': claude_env on an entry requires meta.claude_env: true"
+  fi
+}
+
 # _validate_env_fields FILE
-# Validates the optional top-level env[] array: var is present, valid format, no dupes.
+# Validates the optional top-level env[] array: var is present, valid format, no
+# dupes, no unknown fields, and any claude_env opt-out is well formed.
 _validate_env_fields() {
   local file="$1"
   local has_env
@@ -329,6 +389,8 @@ _validate_env_fields() {
       break
     done
     seen_vars+=("$var")
+    _check_unknown_env_fields "$file" "$i"
+    _check_env_claude_env "$file" "$i"
     # Track for cross-registry duplicate check (use relative path for readability)
     ALL_ENV_VARS+=("$var:${file#"$REPO_ROOT/"}")
     i=$(( i + 1 ))

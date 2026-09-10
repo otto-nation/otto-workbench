@@ -460,6 +460,93 @@ EOF
   [[ "$output" == *"duplicate env var: MY_VAR"* ]]
 }
 
+@test "fails on an unknown field in an env entry" {
+  # The gap this closes: env[] had no unknown-field check, so a misspelled
+  # `target` was accepted and the variable never appeared under the name its
+  # consumer read.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  validation: none
+  claude_env: true
+
+env:
+  - var: MY_VAR
+    targett: OTHER_NAME
+
+tools: []
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"env 'MY_VAR': unknown field 'targett'"* ]]
+}
+
+@test "accepts every field KNOWN_ENV_FIELDS names" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  validation: none
+  claude_env: true
+
+env:
+  - var: MY_VAR
+    target: OTHER_NAME
+    comment: "a comment"
+    default: "a default"
+    setup_url: https://example.com
+    prefix: "pre_"
+    claude_env: false
+
+tools: []
+EOF
+
+  run main
+  [ "$status" -eq 0 ]
+}
+
+@test "fails on a non-boolean claude_env in an env entry" {
+  # collect_claude_env_vars excludes on an exact `false` and includes on
+  # anything else, so an unrejected typo publishes a variable to a
+  # world-readable settings.json rather than withholding one.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  validation: none
+  claude_env: true
+
+env:
+  - var: MY_VAR
+    claude_env: flase
+
+tools: []
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"claude_env must be true or false, got 'flase'"* ]]
+}
+
+@test "fails on claude_env in an entry when the registry is not flagged" {
+  # The field narrows a registry that has opted in; it cannot opt one in. Here
+  # it decides nothing while reading as though it does.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  validation: none
+
+env:
+  - var: MY_VAR
+    claude_env: false
+
+tools: []
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires meta.claude_env: true"* ]]
+}
+
 @test "fails on duplicate env var across registries" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:

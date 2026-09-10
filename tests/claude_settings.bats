@@ -1362,13 +1362,14 @@ _seed_env_local() {
   local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
   _seed_env_local "$home" \
     'export CLAUDE_CODE_USE_VERTEX=1' \
-    "export ANTHROPIC_VERTEX_PROJECT_ID='proj-x'" \
+    "export GOOGLE_CLOUD_PROJECT='proj-x'" \
     'export AI_MODEL="claude-opus-5"'
   _sync_run "$home" "$state"
 
   # Quoting is the shell file's business; the settings file carries the value.
   run jq -r '.env.CLAUDE_CODE_USE_VERTEX' "$home/.claude/settings.json"
   [ "$output" = "1" ]
+  # GOOGLE_CLOUD_PROJECT in ~/.env.local is mapped to the name Claude Code reads.
   run jq -r '.env.ANTHROPIC_VERTEX_PROJECT_ID' "$home/.claude/settings.json"
   [ "$output" = "proj-x" ]
   # AI_MODEL in ~/.env.local is mapped to ANTHROPIC_MODEL in the env block.
@@ -1469,6 +1470,34 @@ _seed_env_local() {
   _sync_run "$home" "$state"
   run jq -e 'has("env")' "$home/.claude/settings.json"
   [ "$status" -ne 0 ]
+}
+
+@test "env mirror: an all-empty read keeps the block rather than emptying it" {
+  # Not one declared source resolving reads as every variable withdrawn at once,
+  # and the sweep would clear the block. It is far likelier a ~/.env.local this
+  # run could not read as expected, and withdrawal is the direction that cannot
+  # be undone from a shell afterwards — so the ambiguous case keeps what is
+  # there. Emptying the block deliberately is still available by dropping the
+  # registry's claude_env flag.
+  #
+  # This is defense in depth rather than cover for a specific bug: a partial read
+  # is not caught here, which is why `otto-workbench ai sync` runs migrations
+  # before it reaches this code.
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _seed_env_local "$home" \
+    'export CLAUDE_CODE_USE_VERTEX=1' \
+    'export GOOGLE_CLOUD_PROJECT=proj-x'
+  _sync_run "$home" "$state"
+  run jq -r '.env.ANTHROPIC_VERTEX_PROJECT_ID' "$home/.claude/settings.json"
+  [ "$output" = "proj-x" ]
+
+  # A file carrying content, none of it a name any flagged registry declares.
+  _seed_env_local "$home" 'export SOMETHING_ELSE=1'
+  _sync_run "$home" "$state"
+  run jq -r '.env.ANTHROPIC_VERTEX_PROJECT_ID' "$home/.claude/settings.json"
+  [ "$output" = "proj-x" ]
+  run jq -r '.env.CLAUDE_CODE_USE_VERTEX' "$home/.claude/settings.json"
+  [ "$output" = "1" ]
 }
 
 @test "env mirror: a second sync reproduces the block byte for byte" {

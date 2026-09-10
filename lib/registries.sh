@@ -28,6 +28,9 @@ KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs
 # Known command entry fields (within a tool's commands[] array)
 # shellcheck disable=SC2034
 KNOWN_COMMAND_FIELDS="name description scope when detail"
+# Known env entry fields (within a registry's env[] array), same purpose
+# shellcheck disable=SC2034
+KNOWN_ENV_FIELDS="var target comment default setup_url prefix claude_env"
 
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }
@@ -259,7 +262,9 @@ collect_registry_permissions() {
 #   sources — the canonical names in ~/.env.local (e.g. AI_MODEL)
 #   targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL)
 # When a registry entry has no `target:` field, the target defaults to the source
-# name (backward compatible with registries that predate the mapping).
+# name (backward compatible with registries that predate the mapping). An entry
+# carrying `claude_env: false` is skipped, so a flagged registry can hold one
+# variable back without being split in two.
 #
 # The flag is opt-in per registry rather than a sweep of every declaration
 # because the two files have different audiences: `~/.env.local` holds API keys
@@ -268,6 +273,19 @@ collect_registry_permissions() {
 # volunteered crosses over. Install checks are deliberately not consulted — what
 # reaches the settings file is decided by what `~/.env.local` actually sets, so a
 # registry gated on a tool this machine lacks contributes nothing anyway.
+#
+# The entry-level field runs the other way, as an opt-out, so that the audience
+# question the registry-level flag forces — is every variable here safe to
+# publish? — is still answered once for the whole file. An entry that says
+# nothing is mirrored, so a variable is never withheld by an omission.
+#
+# It is read as an exact `false` rather than through yq's `// true`, which cannot
+# tell a declared `false` from an absent key and would report every entry as
+# opted in. Reading it this way means a value the validator would reject —
+# `"flase"`, a misspelled key — includes rather than excludes, which is the
+# direction that keeps a registry doing what its own flag says. What makes that
+# safe is `KNOWN_ENV_FIELDS`: validate-registries rejects the unknown key and the
+# non-boolean value, so neither reaches a sync.
 collect_claude_env_vars() {
   local -n __sources_out=$1
   local -n __targets_out=$2
@@ -279,7 +297,7 @@ collect_claude_env_vars() {
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
 
-  local file flagged count i var target
+  local file flagged count i var target opted_out
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
     flagged=$(yq '.meta.claude_env // false' "$file" 2>/dev/null) || continue
@@ -291,6 +309,8 @@ collect_claude_env_vars() {
     for (( i=0; i<count; i++ )); do
       var=$(yq ".env[$i].var // \"\"" "$file")
       [[ -n "$var" && "$var" != "null" ]] || continue
+      opted_out=$(yq ".env[$i].claude_env" "$file")
+      [[ "$opted_out" != "false" ]] || continue
       target=$(yq ".env[$i].target // \"\"" "$file")
       [[ -z "$target" || "$target" == "null" ]] && target="$var"
       __sources_out+=("$var")

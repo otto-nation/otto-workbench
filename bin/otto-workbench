@@ -540,6 +540,16 @@ EOF
 
   title "AI sync"
   echo
+
+  # Migrations first, the same as `otto-workbench sync`. The AI syncs read
+  # ~/.env.local by variable name — step_claude_settings mirrors it into
+  # settings.json, step_pi_settings derives Pi's model config from it — so a
+  # pending rename that has not run yet is a file this sync reads under names it
+  # no longer carries. Skipping them here made this the one path that could act
+  # on a half-migrated machine.
+  run_all_migrations
+  echo
+
   sync_ai
   echo
   success "AI sync complete!"

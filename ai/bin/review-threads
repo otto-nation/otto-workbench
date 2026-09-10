@@ -667,7 +667,7 @@ def _resolve_fixed_threads(
 
     The prior buckets rather than a count, because every caller resolves threads
     after the persisted tally was written and has to tell it which buckets these
-    left — see `_record_resolutions`.
+    left — see `CommentsSummary.move_to_resolved`.
     """
     priors: list[ThreadState] = []
     for entry in fixed:
@@ -687,42 +687,6 @@ def _resolve_fixed_threads(
     if priors:
         log.info(f"Resolved {len(priors)} fixed thread(s)")
     return priors
-
-
-def _record_resolutions(
-    state: pr_state.PRState,
-    priors: list[ThreadState],
-) -> None:
-    """Move threads just resolved on GitHub into the persisted tally.
-
-    The comment counts are written from a snapshot taken at fetch time, before
-    either the fix pass or the closeout resolves anything. Every thread they
-    settle would otherwise stay filed under whichever bucket it arrived in, so
-    `pr status` reports a drained PR as still holding open threads. Applied as a
-    delta rather than re-fetched: the buckets are already in hand, and a second
-    round trip could only disagree with what we just wrote.
-    """
-    by_state = state.comments.by_state
-    moved = 0
-    for prior in priors:
-        if prior == ThreadState.RESOLVED:
-            continue
-        # Clamped rather than allowed to go negative: a count below zero would
-        # be read as a real tally by everything downstream, where a floor is at
-        # worst an undercount. It means the snapshot and the threads we resolved
-        # disagree, so say so instead of absorbing it.
-        if by_state.get(prior, 0) > 0:
-            by_state[prior] -= 1
-        else:
-            log.warn(
-                f"Thread tally has no {prior} left to move — "
-                "counts were snapshotted against a different thread set"
-            )
-        moved += 1
-    if not moved:
-        return
-    by_state[ThreadState.RESOLVED] = by_state.get(ThreadState.RESOLVED, 0) + moved
-    state.comments.updated_at = pr_state.now_iso()
 
 
 def _build_deferred_issue_body(
@@ -2324,7 +2288,7 @@ def _post_pending_fix_replies(
             dismissed, threads_by_id, repo, pr_number, wt_path,
         )
 
-    _record_resolutions(state, resolved)
+    state.comments.move_to_resolved(resolved, updated_at=pr_state.now_iso())
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     if publishing.enabled():
@@ -2561,7 +2525,7 @@ def _persist_fix_state(
             worktree_root=str(wt_path),
         )
         pr_state.apply(st, fix_summary)
-        _record_resolutions(st, resolved or [])
+        st.comments.move_to_resolved(resolved or [], updated_at=pr_state.now_iso())
         pr_state.save_state(ctx.target_dir, st)
     except Exception as exc:
         if trail:

@@ -27,6 +27,35 @@ npm --prefix site test         # run the site's remark plugin tests
 npm --prefix site run build    # static-export the site to site/out (what CI's Site job runs)
 ```
 
+**Do not run a whole suite by hand before pushing.** The pre-push hook already runs
+`bin/local/validate-all` and both suites, selecting the bats files your diff affects, so a
+manual whole-suite run beforehand buys nothing and costs twice. Push and read what the hook
+reports. Run a *single* file (`bats tests/one.bats`, `pytest tests/one.py`) while iterating
+on it — that is the loop this rule leaves alone.
+
+The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine
+is not already using — the sizing described below — so a hand-started suite racing the hook's
+own oversubscribes the box and produces exactly those contention failures, in arbitrary tests
+that never repeat. Worse, a suite killed part-way (a timeout, an impatient Ctrl-C) leaves
+orphaned `bats` processes holding cores, and the next run inherits a machine that is already
+losing subprocesses. Two such piles, one of them hours old, are what prompted this rule.
+
+When you must clean orphans up, scope the kill to a process tree you own. Find the roots — the
+listing names each one's worktree, which is what tells yours from someone else's — then kill
+the whole subtree under it:
+
+```bash
+ps -eo pid,etime,command | grep '[b]ats-exec'   # candidate roots, with age and worktree
+
+# Every descendant, deepest first: bats nests suite → file → test, and the test's own
+# forks are the processes actually holding a core. `pkill -P` is one level and leaves them.
+killtree() { local p; for p in $(pgrep -P "$1"); do killtree "$p"; done; kill "$1" 2>/dev/null; }
+killtree <root-pid>
+```
+
+Never `pkill -f bats`: it matches by pattern across the whole machine and kills suites running
+in other worktrees, which is not recoverable for whoever was running them.
+
 Pre-push and CI run three gates independently — `bin/local/validate-all`,
 `bin/local/run-tests --bats`, and `bin/local/run-tests --pytest`. Passing one is not
 passing the gate. The runner owns the parallelism for both suites, so a whole-suite run

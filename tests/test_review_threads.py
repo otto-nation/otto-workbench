@@ -36,6 +36,9 @@ from git import client as git_client
 from git import topology as git_topology
 from git.land import CommitStatus
 from pr import attribution
+from pr import thread_context
+from pr import triage
+from pr import triage_prompt
 from pr import history_rewrite
 from pr import permalinks
 from pr.comments_fix import FixSummary
@@ -153,45 +156,45 @@ def _published(body: str):
         True, 11, body, url="https://github.com/owner/repo/pull/1#issuecomment-11"))
 
 
-# ── _extract_json ───────────────────────────────────────────────────────────
+# ── triage.extract_json ───────────────────────────────────────────────────────────
 
 class TestExtractJson:
-    def test_plain_json(self, rt):
-        assert rt._extract_json('{"a": 1}') == '{"a": 1}'
+    def test_plain_json(self):
+        assert triage.extract_json('{"a": 1}') == '{"a": 1}'
 
-    def test_json_fenced(self, rt):
+    def test_json_fenced(self):
         text = '```json\n{"a": 1}\n```'
-        assert rt._extract_json(text) == '{"a": 1}'
+        assert triage.extract_json(text) == '{"a": 1}'
 
-    def test_bare_fence(self, rt):
+    def test_bare_fence(self):
         text = '```\n{"a": 1}\n```'
-        assert rt._extract_json(text) == '{"a": 1}'
+        assert triage.extract_json(text) == '{"a": 1}'
 
-    def test_fence_with_surrounding_text(self, rt):
+    def test_fence_with_surrounding_text(self):
         text = 'Here is the result:\n```json\n{"a": 1}\n```\nDone.'
-        assert rt._extract_json(text) == '{"a": 1}'
+        assert triage.extract_json(text) == '{"a": 1}'
 
-    def test_whitespace_stripped(self, rt):
-        assert rt._extract_json('  {"a": 1}  ') == '{"a": 1}'
+    def test_whitespace_stripped(self):
+        assert triage.extract_json('  {"a": 1}  ') == '{"a": 1}'
 
-    def test_multiline_json_in_fence(self, rt):
+    def test_multiline_json_in_fence(self):
         text = '```json\n{\n  "threads": [],\n  "stats": {}\n}\n```'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"threads": [], "stats": {}}
 
-    def test_preamble_before_bare_json(self, rt):
+    def test_preamble_before_bare_json(self):
         text = 'Here is the classification:\n{"a": 1}'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"a": 1}
 
-    def test_preamble_and_trailing_text(self, rt):
+    def test_preamble_and_trailing_text(self):
         text = 'Sure, here you go:\n{"threads": [], "stats": {}}\nHope this helps!'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"threads": [], "stats": {}}
 
-    def test_multiline_preamble_before_json(self, rt):
+    def test_multiline_preamble_before_json(self):
         text = 'I analyzed the threads.\nHere are the results:\n{\n  "a": 1\n}'
-        result = json.loads(rt._extract_json(text))
+        result = json.loads(triage.extract_json(text))
         assert result == {"a": 1}
 
 
@@ -1062,7 +1065,7 @@ class TestAttributeCommit:
     def _entry(**kw):
         return CommentItem(id="t1", summary="fix it", file="a.py", line=1, **kw)
 
-    def test_a_recorded_commit_outranks_the_running_pass(self, rt):
+    def test_a_recorded_commit_outranks_the_running_pass(self):
         """An earlier round's commit is the one that carries the change."""
         got = attribution.attribute_commit(
             self._entry(commit_sha=_ROUND_1_SHA),
@@ -1071,7 +1074,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.RECORDED
         assert got.sha == _ROUND_1_SHA
 
-    def test_an_entry_the_pass_landed_rides_the_pass_commit(self, rt):
+    def test_an_entry_the_pass_landed_rides_the_pass_commit(self):
         got = attribution.attribute_commit(
             self._entry(commit_sha=_PASS_SHA),
             attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
@@ -1079,7 +1082,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.PASS
         assert got.sha == _PASS_SHA
 
-    def test_an_unpublished_pass_commit_is_not_citable(self, rt):
+    def test_an_unpublished_pass_commit_is_not_citable(self):
         """A SHA the remote does not have would 404 for whoever clicks it."""
         got = attribution.attribute_commit(
             self._entry(commit_sha=_PASS_SHA),
@@ -1088,7 +1091,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.PASS
         assert got.cited is False
 
-    def test_an_entry_the_pass_never_recorded_claims_nothing(self, rt):
+    def test_an_entry_the_pass_never_recorded_claims_nothing(self):
         """The pass committed and this entry is not in that commit."""
         got = attribution.attribute_commit(
             self._entry(), attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
@@ -1096,7 +1099,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.UNRECORDED
         assert got.cited is False
 
-    def test_an_undetermined_pass_lends_nothing(self, rt):
+    def test_an_undetermined_pass_lends_nothing(self):
         """Commits landed outside the pass; none of them answers for a row."""
         got = attribution.attribute_commit(
             self._entry(),
@@ -1106,7 +1109,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.UNDETERMINED
         assert got.cited is False
 
-    def test_a_pass_with_no_commit_leaves_the_row_to_the_pass(self, rt):
+    def test_a_pass_with_no_commit_leaves_the_row_to_the_pass(self):
         """Nothing was committed by anyone, so there is nothing row-specific to say."""
         got = attribution.attribute_commit(
             self._entry(), attribution.CommitPushResult(None, "no_changes", ""),
@@ -1114,7 +1117,7 @@ class TestAttributeCommit:
         assert got.claim is attribution.CommitClaim.PASS
         assert got.cited is False
 
-    def test_the_pass_stamps_the_entries_it_landed(self, rt):
+    def test_the_pass_stamps_the_entries_it_landed(self):
         """The one write of thread → commit; every reader goes through the resolver."""
         fresh, earlier = self._entry(), self._entry(commit_sha=_ROUND_1_SHA)
         attribution.stamp_pass_commit([fresh, earlier], _PASS_SHA)
@@ -1798,9 +1801,9 @@ class TestFailedCommitIsNotReportedAsNoCommit:
                 return _git_ran(1, stderr="pre-commit hook failed\n")
             return _git_ran(0, stdout="aaa1111\n")
 
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
+        with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
-             patch.object(rt, "_diff_context_for_file", return_value=""), \
+             patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state") as persist, \
@@ -2391,7 +2394,7 @@ class TestFollowHistoryRewrite:
                                    commit_sha=repo.held, read_sha=repo.held)],
         ))
 
-    def test_a_rebased_commit_is_followed_to_its_replay(self, rt, tmp_path):
+    def test_a_rebased_commit_is_followed_to_its_replay(self, tmp_path):
         repo = _held_fix_branch(tmp_path)
         state = self._state(repo)
         history_rewrite.follow_history_rewrite(state, repo.path)
@@ -2429,7 +2432,7 @@ class TestFollowHistoryRewrite:
         assert saved.fix.fix.commit_sha == repo.replay
         assert saved.fix.fix.commit_status == CommitStatus.PUSHED
 
-    def test_two_rounds_each_reach_their_own_replay(self, rt, tmp_path):
+    def test_two_rounds_each_reach_their_own_replay(self, tmp_path):
         """Every fix pass commits under one static subject, so identity is content.
 
         A snapshot spans rounds — a thread fixed two commits ago still cites the
@@ -4868,7 +4871,7 @@ class TestReplyEvidence:
         assert "ENG-456" in body
         assert "owner/repo/blob/cafe123/src/app.py#L12" in body
 
-    def test_code_link_prefers_a_citation_that_resolves(self, rt, tmp_path):
+    def test_code_link_prefers_a_citation_that_resolves(self, tmp_path):
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("a\nb\nc\n")
         entry = CommentItem(id="t1", file="other.py", line=1,
@@ -4877,20 +4880,20 @@ class TestReplyEvidence:
         link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/src/app.py#L2" in link
 
-    def test_code_link_falls_back_when_the_citation_is_not_in_the_tree(self, rt, tmp_path):
+    def test_code_link_falls_back_when_the_citation_is_not_in_the_tree(self, tmp_path):
         entry = CommentItem(id="t1", file="other.py", line=7,
                             evidence_file="src/gone.py", evidence_line=2,
                             read_sha="cafe123")
         link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/other.py#L7" in link
 
-    def test_code_link_drops_an_anchor_it_cannot_vouch_for(self, rt, tmp_path):
+    def test_code_link_drops_an_anchor_it_cannot_vouch_for(self, tmp_path):
         """A line with no recorded tree is a number, not a location."""
         entry = CommentItem(id="t1", file="other.py", line=7)
         link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert link == "[`other.py`](https://github.com/owner/repo/blob/cafe123/other.py)"
 
-    def test_code_link_is_empty_with_nothing_to_point_at(self, rt, tmp_path):
+    def test_code_link_is_empty_with_nothing_to_point_at(self, tmp_path):
         assert permalinks.code_link(CommentItem(id="t1"), "owner/repo", "cafe123", tmp_path) == ""
         assert permalinks.code_link(
             CommentItem(id="t1", file="a.py", line=1), "owner/repo", "", tmp_path,
@@ -5023,33 +5026,33 @@ class TestBlockingReviewers:
         assert self._extract_blocking([]) == []
 
 
-# ── _diff_context_for_file ─────────────────────────────────────────────────
+# ── thread_context.diff_context_for_file ─────────────────────────────────────────────────
 
 class TestDiffContextForFile:
-    def test_empty_file_path(self, rt):
-        assert rt._diff_context_for_file("", Path("/wt")) == ""
+    def test_empty_file_path(self):
+        assert thread_context.diff_context_for_file("", Path("/wt")) == ""
 
     @patch("git.client.run")
-    def test_returns_diff(self, mock_run, rt):
+    def test_returns_diff(self, mock_run):
         mock_run.return_value = _git_ran(0, stdout="+ added line\n- removed line\n")
-        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        result = thread_context.diff_context_for_file("src/foo.go", Path("/wt"))
         assert "```diff" in result
         assert "+ added line" in result
 
     @patch("git.client.run")
-    def test_truncates_long_diff(self, mock_run, rt):
+    def test_truncates_long_diff(self, mock_run):
         long_diff = "\n".join(f"+ line {i}" for i in range(200))
         mock_run.return_value = _git_ran(0, stdout=long_diff)
-        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        result = thread_context.diff_context_for_file("src/foo.go", Path("/wt"))
         assert "more lines" in result
 
     @patch("git.client.run")
-    def test_git_failure_returns_empty(self, mock_run, rt):
+    def test_git_failure_returns_empty(self, mock_run):
         mock_run.return_value = _git_ran(1)
-        assert rt._diff_context_for_file("src/foo.go", Path("/wt")) == ""
+        assert thread_context.diff_context_for_file("src/foo.go", Path("/wt")) == ""
 
     @patch("git.client.run")
-    def test_an_omitted_branch_is_resolved_not_assumed_to_be_main(self, mock_run, rt):
+    def test_an_omitted_branch_is_resolved_not_assumed_to_be_main(self, mock_run):
         """The signature used to default to the literal "main".
 
         Every production caller passes the resolved trunk, so the literal only
@@ -5058,7 +5061,7 @@ class TestDiffContextForFile:
         """
         mock_run.return_value = _git_ran(0, stdout="+ added line\n")
         with patch.object(git_topology, "default_branch_cached", return_value="trunk"):
-            rt._diff_context_for_file("src/foo.go", Path("/wt"))
+            thread_context.diff_context_for_file("src/foo.go", Path("/wt"))
 
         assert "origin/trunk" in mock_run.call_args[0]
 
@@ -5420,9 +5423,9 @@ class TestFixPassHoldsWhenContested:
                 commits.append(cmd)
             return _git_ran(0, stdout="abc1234\n")
 
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
+        with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
-             patch.object(rt, "_diff_context_for_file", return_value=""), \
+             patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
@@ -5478,24 +5481,24 @@ class TestFixPassHoldsWhenContested:
 class TestTriagePromptVerificationValues:
     """The prompt must define every verification value it asks for."""
 
-    def test_defines_all_four_values(self, rt):
-        prompt = rt._build_triage_prompt([], "diff")
+    def test_defines_all_four_values(self):
+        prompt = triage_prompt.build_triage_prompt([], "diff")
         for value in ("valid", "already_addressed", "invalid", "needs_discussion"):
             assert f"- {value}:" in prompt
 
-    def test_steers_away_from_invalid_for_satisfied_code(self, rt):
-        prompt = rt._build_triage_prompt([], "diff")
+    def test_steers_away_from_invalid_for_satisfied_code(self):
+        prompt = triage_prompt.build_triage_prompt([], "diff")
         assert "is NEVER invalid" in prompt
 
-    def test_commit_log_included_when_present(self, rt):
-        prompt = rt._build_triage_prompt(
+    def test_commit_log_included_when_present(self):
+        prompt = triage_prompt.build_triage_prompt(
             [], "diff", commit_log="abc1234 fix(logging): inject logger",
         )
         assert "abc1234 fix(logging): inject logger" in prompt
         assert "already_addressed, not invalid" in prompt
 
-    def test_commit_log_omitted_when_empty(self, rt):
-        prompt = rt._build_triage_prompt([], "diff", commit_log="")
+    def test_commit_log_omitted_when_empty(self):
+        prompt = triage_prompt.build_triage_prompt([], "diff", commit_log="")
         assert "Commits already made on this branch" not in prompt
 
 
@@ -5527,7 +5530,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
             repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
             target_dir=tmp_path,
         )
-        with patch.object(rt, "_diff_context_for_file", return_value=""), \
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
@@ -6738,17 +6741,17 @@ class TestAddressingCommitIsPerLine:
         return SimpleNamespace(path=worktree, first=first,
                                second=self._sha(worktree, "HEAD"))
 
-    def test_each_line_resolves_to_the_commit_that_changed_it(self, rt, branch):
+    def test_each_line_resolves_to_the_commit_that_changed_it(self, branch):
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert attribution.find_addressing_commit(branch.path, "a.py", 1) == branch.first
             assert attribution.find_addressing_commit(branch.path, "a.py", 2) == branch.second
 
-    def test_a_thread_with_no_line_claims_no_commit(self, rt, branch):
+    def test_a_thread_with_no_line_claims_no_commit(self, branch):
         """A file-wide thread has no line history to read, so it cites nothing."""
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert attribution.find_addressing_commit(branch.path, "a.py", 0) is None
 
-    def test_a_line_past_the_end_of_the_file_claims_no_commit(self, rt, branch):
+    def test_a_line_past_the_end_of_the_file_claims_no_commit(self, branch):
         """git refuses the range rather than answering — nothing is invented."""
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert attribution.find_addressing_commit(branch.path, "a.py", 99) is None
@@ -6820,28 +6823,28 @@ class TestLineAnchorsAreTreeScoped:
         return SimpleNamespace(path=worktree, read=read,
                                fixed=self._sha(worktree, "HEAD"))
 
-    def test_a_line_in_an_untouched_file_keeps_its_anchor(self, rt, trees):
+    def test_a_line_in_an_untouched_file_keeps_its_anchor(self, trees):
         entry = CommentItem(id="t1", file="still.py", line=2, read_sha=trees.read)
         assert permalinks.anchored_line(
             entry, "still.py", 2, trees.fixed, trees.path) == 2
 
-    def test_a_line_in_a_rewritten_file_loses_its_anchor(self, rt, trees):
+    def test_a_line_in_a_rewritten_file_loses_its_anchor(self, trees):
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
         assert permalinks.anchored_line(
             entry, "moved.py", 1, trees.fixed, trees.path) == 0
 
-    def test_the_same_tree_needs_no_comparison(self, rt, trees):
+    def test_the_same_tree_needs_no_comparison(self, trees):
         """The triage replies go out before the fix commit, so this is the common case."""
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
         assert permalinks.anchored_line(
             entry, "moved.py", 1, trees.read, trees.path) == 1
 
-    def test_an_unrecorded_tree_loses_the_anchor(self, rt, trees):
+    def test_an_unrecorded_tree_loses_the_anchor(self, trees):
         entry = CommentItem(id="t1", file="still.py", line=2)
         assert permalinks.anchored_line(
             entry, "still.py", 2, trees.fixed, trees.path) == 0
 
-    def test_a_reply_drafted_after_the_fix_commit_links_the_file(self, rt, trees):
+    def test_a_reply_drafted_after_the_fix_commit_links_the_file(self, trees):
         """End to end: the shape that sent reviewers to unrelated code."""
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
         link = permalinks.code_link(entry, "owner/repo", trees.fixed, trees.path)
@@ -7318,7 +7321,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
     ):
         assert attribution.handled_outside(CommentItem(id="t1", settled_by=settled_by))
 
-    def test_the_pass_own_entry_is_not_one_of_them(self, rt):
+    def test_the_pass_own_entry_is_not_one_of_them(self):
         """Including one whose reason happens to read like the reconciler's."""
         assert not attribution.handled_outside(CommentItem(id="t1"))
         assert not attribution.handled_outside(
@@ -7468,7 +7471,7 @@ class TestCommitLookupsUseDefaultBranch:
             patch.object(rt.git_client, "run") as run,
         ):
             run.return_value = _git_ran(0, stdout="abc1234 fix: thing\n")
-            assert rt._branch_commit_log(tmp_path) == "abc1234 fix: thing"
+            assert thread_context.branch_commit_log(tmp_path) == "abc1234 fix: thing"
         assert "origin/trunk..HEAD" in run.call_args[0]
 
     def test_find_addressing_commit_uses_resolved_branch(self, rt, tmp_path):
@@ -7480,8 +7483,8 @@ class TestCommitLookupsUseDefaultBranch:
             assert attribution.find_addressing_commit(tmp_path, "a.py", 10) == "deadbeef"
         assert "origin/trunk..HEAD" in run.call_args[0]
 
-    def test_branch_commit_log_without_worktree(self, rt):
-        assert rt._branch_commit_log(None) == ""
+    def test_branch_commit_log_without_worktree(self):
+        assert thread_context.branch_commit_log(None) == ""
 
 
 # ── shared thrash guard wiring ──────────────────────────────────────────────
@@ -7490,13 +7493,13 @@ class TestCommitLookupsUseDefaultBranch:
 class TestTriageThrashGuard:
     """Triage has no session log — an unparseable answer is the only signal."""
 
-    def test_parses_as_json_accepts_a_fenced_object(self, rt):
-        assert rt._parses_as_json("```json\n{\"threads\": []}\n```")
+    def test_parses_as_json_accepts_a_fenced_object(self):
+        assert triage.parses_as_json("```json\n{\"threads\": []}\n```")
 
-    def test_parses_as_json_rejects_prose(self, rt):
-        assert not rt._parses_as_json("I was unable to complete the triage.")
+    def test_parses_as_json_rejects_prose(self):
+        assert not triage.parses_as_json("I was unable to complete the triage.")
 
-    def test_unparseable_triage_output_earns_one_retry(self, rt, tmp_path):
+    def test_unparseable_triage_output_earns_one_retry(self, tmp_path):
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []
 
@@ -7505,17 +7508,17 @@ class TestTriageThrashGuard:
             return ("not json", 0) if len(prompts) == 1 else ('{"threads": []}', 0)
 
         with (
-            patch.object(rt.agent_invoke.ai_backend, "prompt", side_effect=prompt),
-            patch.object(rt, "_branch_commit_log", return_value=""),
+            patch.object(triage.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(thread_context, "branch_commit_log", return_value=""),
         ):
-            result, rc = rt._run_triage(report, tmp_path, {})
+            result, rc = triage.run_triage(report, tmp_path, {})
 
         assert rc == 0
         assert result is not None
         assert len(prompts) == 2
         assert prompts[1].startswith(agent_retry.BLANK_RESPONSE_HINT)
 
-    def test_non_json_triage_output_is_kept_whole(self, rt, tmp_path):
+    def test_non_json_triage_output_is_kept_whole(self, tmp_path):
         """The old record kept a 500-character preview and no way to the rest."""
         trail = MagicMock()
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
@@ -7524,10 +7527,10 @@ class TestTriageThrashGuard:
             return ("sorry, I cannot do that", 0)
 
         with (
-            patch.object(rt.agent_invoke.ai_backend, "prompt", side_effect=prompt),
-            patch.object(rt, "_branch_commit_log", return_value=""),
+            patch.object(triage.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(thread_context, "branch_commit_log", return_value=""),
         ):
-            result, rc = rt._run_triage(report, tmp_path, {}, trail)
+            result, rc = triage.run_triage(report, tmp_path, {}, trail)
 
         assert result is None
         assert rc == 1
@@ -7545,92 +7548,92 @@ class TestUnsupportedVerdictDowngrade:
         kw.setdefault("verification", "invalid")
         return CommentItem(id="t1", summary="s", **kw)
 
-    def test_uncited_invalid_becomes_needs_discussion(self, rt, tmp_path):
+    def test_uncited_invalid_becomes_needs_discussion(self, tmp_path):
         item = self._item(complexity="low")
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
         assert item.complexity == ""
 
-    def test_uncited_already_addressed_becomes_needs_discussion(self, rt, tmp_path):
+    def test_uncited_already_addressed_becomes_needs_discussion(self, tmp_path):
         item = self._item(verification="already_addressed")
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_reason_is_recorded_so_the_author_knows_why(self, rt, tmp_path):
+    def test_reason_is_recorded_so_the_author_knows_why(self, tmp_path):
         item = self._item(reasoning="reviewer misread the guard")
-        rt._downgrade_unsupported_verdicts([item], tmp_path)
+        triage.downgrade_unsupported_verdicts([item], tmp_path)
         assert "reviewer misread the guard" in item.reasoning
         assert "cited no line" in item.reasoning
 
-    def test_cited_verdict_that_exists_in_the_tree_survives(self, rt, tmp_path):
+    def test_cited_verdict_that_exists_in_the_tree_survives(self, tmp_path):
         (tmp_path / "app.py").write_text("x = 1\n")
         item = self._item(evidence_file="app.py", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
         assert item.verification == "invalid"
 
-    def test_citation_to_a_file_that_does_not_exist_is_downgraded(self, rt, tmp_path):
+    def test_citation_to_a_file_that_does_not_exist_is_downgraded(self, tmp_path):
         """A link to nothing is no better than no link."""
         item = self._item(evidence_file="ghost.py", evidence_line=3)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_valid_verdicts_are_left_alone(self, rt, tmp_path):
+    def test_valid_verdicts_are_left_alone(self, tmp_path):
         item = self._item(verification="valid", complexity="low")
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
         assert item.complexity == "low"
 
-    def test_an_absolute_citation_outside_the_repo_is_downgraded(self, rt, tmp_path):
+    def test_an_absolute_citation_outside_the_repo_is_downgraded(self, tmp_path):
         """Joining a repo dir with an absolute path discards the repo dir."""
         # Use a name unique to this test's tmp_path to avoid colliding with the
         # traversal test when both run in the same session directory.
         outside = tmp_path.parent / f"outside_abs_{tmp_path.name}.py"
         outside.write_text("secret = 1\n")
         item = self._item(evidence_file=str(outside), evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_a_traversal_out_of_the_repo_is_downgraded(self, rt, tmp_path):
+    def test_a_traversal_out_of_the_repo_is_downgraded(self, tmp_path):
         """`..` reaching a file that really exists still is not this repo's code."""
         # Use a name unique to this test's tmp_path to avoid colliding with the
         # absolute-citation test when both run in the same session directory.
         outside_name = f"outside_trav_{tmp_path.name}.py"
         (tmp_path.parent / outside_name).write_text("secret = 1\n")
         item = self._item(evidence_file=f"../{outside_name}", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_a_citation_past_the_end_of_the_file_is_downgraded(self, rt, tmp_path):
+    def test_a_citation_past_the_end_of_the_file_is_downgraded(self, tmp_path):
         """A permalink to a line the file does not have highlights nothing."""
         (tmp_path / "app.py").write_text("x = 1\n")
         item = self._item(evidence_file="app.py", evidence_line=99)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_the_last_line_of_a_file_is_still_inside_it(self, rt, tmp_path):
+    def test_the_last_line_of_a_file_is_still_inside_it(self, tmp_path):
         (tmp_path / "app.py").write_text("a\nb\nc\n")
         item = self._item(evidence_file="app.py", evidence_line=3)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
 
-    def test_a_nested_citation_inside_the_repo_survives(self, rt, tmp_path):
+    def test_a_nested_citation_inside_the_repo_survives(self, tmp_path):
         (tmp_path / "pkg").mkdir()
         (tmp_path / "pkg" / "mod.py").write_text("x = 1\n")
         item = self._item(evidence_file="pkg/mod.py", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
 
-    def test_a_citation_to_a_directory_is_downgraded(self, rt, tmp_path):
+    def test_a_citation_to_a_directory_is_downgraded(self, tmp_path):
         (tmp_path / "pkg").mkdir()
         item = self._item(evidence_file="pkg", evidence_line=1)
-        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
 
 
 class TestEvidencePermalinks:
     """Every claim links to the code at a pinned SHA."""
 
-    def test_permalink_pins_the_sha(self, rt):
+    def test_permalink_pins_the_sha(self):
         assert permalinks.blob_permalink("owner/repo", "abc123", "a/b.py", 7) == (
             "https://github.com/owner/repo/blob/abc123/a/b.py#L7")
 
-    def test_uncited_entry_renders_no_link(self, rt):
+    def test_uncited_entry_renders_no_link(self):
         entry = CommentItem(id="t1", summary="s")
         assert permalinks.evidence_link(entry, "owner/repo", "abc123") == ""
 
@@ -7739,7 +7742,7 @@ class TestCommentTrackingRoundTrip:
             report=PRReport(repo="owner/repo", pr_number=42),
             fixable=list(threads), fixable_items=list(comment_items),
         )
-        with patch.object(rt, "_diff_context_for_file", return_value=""), \
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(git_topology, "default_branch_cached", return_value="main"):
             fix_tracking.write(
                 adapter.tracking_path, adapter.title, adapter.items(),

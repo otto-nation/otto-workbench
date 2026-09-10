@@ -259,6 +259,14 @@ reg_invalidate() {
   # survives, and a stale node answering after an invalidate is worse than the
   # cost of the copy. Both arrays are walked from _REG_TAG's keys, which the
   # loader keeps in step with _REG_VAL's.
+  #
+  # ceiling: the rebuild is O(cached keys × files invalidated), and the two
+  # callers invalidate a whole directory scan each time. At the current size —
+  # around a thousand keys over two dozen files — it is a few milliseconds
+  # against the 26 seconds of forking this cache removed. Upgrade trigger: if
+  # the registry set grows enough for a scan to invalidate more than a few
+  # thousand keys, key the cache by file so a file's nodes can be dropped
+  # without walking everything else's.
   local -A kept_tag=() kept_val=()
   local keep
   for key in "${!_REG_TAG[@]}"; do

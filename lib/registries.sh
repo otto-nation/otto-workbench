@@ -339,22 +339,26 @@ reg_keys() {
   printf '%s\n' "${joined//$_REG_PSEP/$'\n'}"
 }
 
-# reg_len FILE PATH_SEGMENT... — the length of a sequence, or 0 when absent.
+# reg_len FILE PATH_SEGMENT... — the length of a sequence, or 0 when it holds
+# nothing.
 #
-# 0 for a path that does not exist, matching what `yq '.tools | length'`
-# answered for a registry with no tools at all.
+# 0 both for a path that does not exist and for one written with no value
+# (`tools:` on its own, tag `!!null`). Neither has entries to walk, and
+# `yq '.tools | length'` answered 0 for both — a registry that declares an
+# empty collection is not malformed.
 #
-# A path that exists but is not a sequence returns 1 and prints nothing. That
-# case is a `tools:` written as a mapping rather than a list, and answering 0
-# for it would be the silent-skip this module exists to prevent: every entry
-# loop is `for (( i=0; i<count; i++ ))`, so a count of nothing means no entry
-# is checked and the file passes clean. Callers under `set -e` abort on it;
-# `validate-registries` reports it as an error against the file.
+# A path that exists and holds something that is not a sequence returns 1 and
+# prints nothing. That case is a `tools:` written as a mapping rather than a
+# list, and answering 0 for it would be the silent-skip this module exists to
+# prevent: every entry loop is `for (( i=0; i<count; i++ ))`, so a count of
+# nothing means no entry is checked and the file passes clean. Callers under
+# `set -e` abort on it, so a caller that can meet the shape checks it first —
+# `validate-registries` does, and reports it against the file by name.
 reg_len() {
   local key tag
   key=$(_reg_key "$@")
   tag="${_REG_TAG[$key]:-}"
-  [[ -n "$tag" ]] || { printf '0'; return 0; }
+  [[ -n "$tag" && "$tag" != "!!null" ]] || { printf '0'; return 0; }
   [[ "$tag" == "!!seq" ]] || return 1
   printf '%s' "${_REG_VAL[$key]}"
 }

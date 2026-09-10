@@ -275,16 +275,22 @@ EOF
 }
 
 @test "a Python doc-group line below the imports does not declare a group" {
-  cat > "$AI_LIB_DIR/trail.py" << 'EOF'
+  # In a package directory, like the sibling above: the ai-lib set's glob is
+  # ai/lib/*/*.py, and a module written straight into ai/lib is scanned by
+  # nobody — the assertion would hold whether or not the scanner correctly
+  # ignores a marker this far down the file.
+  mkdir -p "$AI_LIB_DIR/core"
+  cat > "$AI_LIB_DIR/core/trail.py" << 'EOF'
 """Structured trail logging."""
 
 import re
 
 # doc-group: platform
 EOF
-  run _file_group ai-lib "$AI_LIB_DIR/trail.py" ""
+  _load_groups ai-lib
+  run _file_group ai-lib "$AI_LIB_DIR/core/trail.py" ""
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/trail.py declares no group"* ]]
+  [[ "$output" == *"ai/lib/core/trail.py declares no group"* ]]
 }
 
 @test "--groups lists every declared key once" {

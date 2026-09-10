@@ -71,18 +71,24 @@ _env_label() {
   printf '%s' "${var:-[$2]}"
 }
 
-# _check_tools_shape FILE — fails when `tools` is present but not a list.
+# _check_list_shape FILE FIELD — fails when FIELD is present but not a list.
 #
-# The natural first way to write a registry is a mapping of name to fields.
-# Every check here iterates `tools` by index, so a mapping yields no entries
-# and the file passes with nothing examined.
-_check_tools_shape() {
-  local file="$1"
-  reg_has "$file" tools || return 0
+# The natural first way to write a collection is a mapping of name to fields.
+# Every check that reads one iterates it by index, so a mapping yields no
+# entries and the file passes with nothing examined. It also has to be caught
+# before those checks run rather than by them: `reg_len` refuses a non-sequence,
+# and a bare `count=$(reg_len ...)` under errexit would abort the whole run with
+# no output instead of reporting this file.
+#
+# A field with no value at all is a declared-empty collection, not a malformed
+# one, and passes.
+_check_list_shape() {
+  local file="$1" field="$2"
+  reg_has "$file" "$field" || return 0
   local tag
-  tag=$(reg_type "$file" tools)
+  tag=$(reg_type "$file" "$field")
   [[ "$tag" == "!!seq" || "$tag" == "!!null" ]] && return 0
-  _fail "$(basename "$file"): tools must be a list of entries (got $tag) — each entry starts with '- name:'"
+  _fail "$(basename "$file"): $field must be a list of entries (got $tag) — each entry starts with '- '"
   return 1
 }
 
@@ -600,13 +606,15 @@ main() {
     # shape. Those are skipped when it fails; the meta-only checks below do not
     # read `tools` and still run, so one malformed collection does not hide
     # every other problem in the same file until it is fixed.
-    if _check_tools_shape "$registry"; then
+    if _check_list_shape "$registry" tools; then
       _validate_schema "$registry"
       _validate_auth_fields "$registry"
       _validate_install_check_command "$registry"
       _validate_registry "$registry"
     fi
-    _validate_env_fields "$registry"
+    if _check_list_shape "$registry" env; then
+      _validate_env_fields "$registry"
+    fi
     _validate_meta_scope "$registry"
   done
 

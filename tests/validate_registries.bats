@@ -842,6 +842,56 @@ EOF
   [[ "$output" == *"meta.scope 'BAD SCOPE!'"* ]]
 }
 
+@test "a declared-empty tools is valid, not a crash" {
+  # `tools:` with no value is a registry saying it has none. reg_len answers 0
+  # for it as the `yq '.tools | length'` it replaced did — refusing it would
+  # abort the run inside a bare `count=$(reg_len ...)` under errexit, with no
+  # output at all rather than an error naming the file.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools:
+EOF
+
+  run main
+  [ "$status" -eq 0 ]
+}
+
+@test "a declared-empty env is valid too" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools: []
+env:
+EOF
+
+  run main
+  [ "$status" -eq 0 ]
+}
+
+@test "fails when env is a mapping rather than a list" {
+  # The same shape error as tools, and for the same reason — the entry loop
+  # would examine nothing. Reported against the file, not raised as an abort.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools: []
+env:
+  MY_VAR:
+    comment: "a var"
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"env must be a list of entries"* ]]
+}
+
 @test "an explicit empty validation is reported, not defaulted to none" {
   # `// "none"` substituted on null, not on an empty string, so a registry that
   # writes one names a cross-check that does not exist and is told so. Only an

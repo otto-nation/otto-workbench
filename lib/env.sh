@@ -35,3 +35,14 @@ read_env_local_var() {
   [[ -n "$value" ]] && printf '%s' "$value"
   return 0
 }
+
+# env_local_has_var VAR — returns 0 when ~/.env.local carries an active export
+# for VAR, whatever its value.
+#
+# A presence check, and deliberately not read_env_local_var above. The two
+# disagree on `export FOO=`: an operator who blanked a variable has already
+# decided about it, so the setup summary must not offer it again, while a
+# caller after the value has nothing to work with. Each wants its own answer.
+env_local_has_var() {
+  grep -q "^export ${1}=" "$ENV_LOCAL_FILE" 2>/dev/null
+}

@@ -61,8 +61,14 @@ SCRIPT
 # back unknown. jq is symlinked in because the step needs it either way, and
 # bash because /bin/bash on macOS is 3.2 and has no namerefs — a PATH narrow
 # enough to lose gh would otherwise run the step under a shell it predates.
+#
+# yq for the same reason as jq: _pi_build_models reads the registries through
+# collect_model_env_vars. Both tests here reach the {} return before that,
+# since ENV_LOCAL_FILE defaults to /dev/null — the symlink is so a reordering
+# fails on its merits rather than on a PATH accident.
 _hide_gh() {
   ln -sf "$(command -v jq)" "$BIN/jq"
+  ln -sf "$(command -v yq)" "$BIN/yq"
   ln -sf "$BASH" "$BIN/bash"
   PATH="$BIN:/usr/bin:/bin"
 }
@@ -81,6 +87,10 @@ _run_step() {
     PI_SETTINGS_SRC="$3"
     PI_SYNC_SETTINGS_JQ="$1/ai/pi/sync-settings.jq"
     ENV_LOCAL_FILE="${ENV_LOCAL_FILE:-/dev/null}"
+    LIB_SRC_DIR="$1/lib"
+    # The registry root _pi_build_models collects models from. Overridable so a
+    # test can point it at a fixture tree instead of the repo.
+    WORKBENCH_STABLE_DIR="${WORKBENCH_STABLE_DIR:-$1}"
     . "$1/lib/env.sh"
     . "$1/ai/pi/steps.sh"
     step_pi_settings
@@ -346,4 +356,80 @@ _teardown_env_local() {
   [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
   [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-sonnet-5" ]
   _teardown_env_local
+}
+
+# ── the model list comes from the registries, not from ai/pi/steps.sh ─────────
+
+# _seed_registry_tree ENTRIES_YAML — a scan root holding one *.env.yml with
+# ENTRIES_YAML as its env[], for pointing WORKBENCH_STABLE_DIR at.
+_seed_registry_tree() {
+  mkdir -p "$TMPDIR/registries"
+  cat > "$TMPDIR/registries/models.env.yml" << YAML
+meta:
+  section: "test models"
+  validation: none
+env:
+$1
+YAML
+  export WORKBENCH_STABLE_DIR="$TMPDIR/registries"
+}
+
+_teardown_registry_tree() {
+  unset WORKBENCH_STABLE_DIR
+}
+
+@test "a tier added to a registry reaches Pi with no change to the step" {
+  # The point of the role field: ai/pi/steps.sh names no model variable, so a
+  # fifth tier is a registry edit and nothing else. AI_FAST_MODEL exists in no
+  # shipped registry — only in the fixture below.
+  _seed_registry_tree '  - var: AI_MODEL
+    role: model-default
+  - var: AI_FAST_MODEL
+    role: model-tier'
+  _seed_env_local \
+    'export AI_MODEL=claude-opus-5' \
+    "export AI_FAST_MODEL='claude-fast-1'"
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.enabledModels | length')" = "2" ]
+  [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-fast-1" ]
+  _teardown_env_local
+  _teardown_registry_tree
+}
+
+@test "a var carrying no role is not a model" {
+  # The guard against keying the list on claude_env instead: ai/lib/vertex.env.yml
+  # is flagged for the settings.json mirror, and its GOOGLE_CLOUD_PROJECT would
+  # otherwise be offered as something to run a session on.
+  _seed_registry_tree '  - var: AI_MODEL
+    role: model-default
+  - var: GOOGLE_CLOUD_PROJECT
+    claude_env: true'
+  _seed_env_local \
+    'export AI_MODEL=claude-opus-5' \
+    'export GOOGLE_CLOUD_PROJECT=some-gcp-project'
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.enabledModels | length')" = "1" ]
+  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
+  _teardown_env_local
+  _teardown_registry_tree
+}
+
+@test "no model-default declared leaves model keys alone" {
+  _seed_registry_tree '  - var: AI_OPUS_MODEL
+    role: model-tier'
+  _seed_env_local "export AI_OPUS_MODEL='claude-opus-5'"
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  # Template's defaultModel survives; no enabledModels was built.
+  [ "$(_live '.defaultModel')" = "claude-opus-4-6" ]
+  _teardown_env_local
+  _teardown_registry_tree
 }

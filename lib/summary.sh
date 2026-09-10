@@ -41,21 +41,11 @@ _env_print_var() {
   fi
 }
 
-# _env_is_configured VAR — returns 0 if VAR has an active export in ~/.env.local.
-# Returns non-zero when not configured — callers must guard with && or if.
-_env_is_configured() {
-  local var="$1"
-  if [[ -f "$ENV_LOCAL_FILE" ]]; then
-    if grep -q "^export ${var}=" "$ENV_LOCAL_FILE" 2>/dev/null; then return 0; fi
-  fi
-  return 1
-}
-
 # _env_setup_entry — callback for iter_registry_env.
 # Skips vars that are already configured in ~/.env.local.
 _env_setup_entry() {
   local var="$1" _comment="$2" default_val="$3" setup_url="$4" prefix="$5"
-  _env_is_configured "$var" && return 0
+  env_local_has_var "$var" && return 0
   _env_print_var "$var" "$prefix" "$default_val" "$setup_url"
 }
 
@@ -63,7 +53,7 @@ _env_setup_entry() {
 # Skips vars that are already configured in ~/.env.local.
 _env_setup_auth_entry() {
   local _name="$1" env_var="$2" setup_url="$3" prefix="$4"
-  _env_is_configured "$env_var" && return 0
+  env_local_has_var "$env_var" && return 0
   _env_print_var "$env_var" "$prefix" "" "$setup_url"
 }
 

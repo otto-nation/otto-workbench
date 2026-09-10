@@ -322,34 +322,64 @@ step_pi_extensions() {
   done
   return 0
 }
-# _pi_build_models — reads AI_MODEL / AI_*_MODEL env vars from ~/.env.local and
-# prints a JSON object with defaultModel + enabledModels, or {} if AI_MODEL is
-# unset. The provider prefix for enabledModels comes from the template.
+
+# _pi_build_models — reads the model env vars the registries declare out of
+# ~/.env.local and prints a JSON object with defaultModel + enabledModels, or {}
+# when there is no default to build around. The provider prefix comes from the
+# template.
+#
+# Which variables carry models is not written here: ai/models.env.yml declares
+# them with a `role`, and collect_model_env_vars reads it, so a tier added there
+# reaches Pi without this function changing. Claude Code's sync reads the same
+# file through collect_claude_env_vars.
 _pi_build_models() {
+  # Before the registry read, so a machine with no ~/.env.local answers without
+  # yq — there are no model values to be had either way, and this is the one
+  # path through the function that needs nothing beyond jq.
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
     printf '{}'
     return 0
   fi
 
-  local default_model
-  default_model=$(read_env_local_var AI_MODEL)
+  # Lazily, because ai/steps.sh sources this file on every CLI invocation and
+  # registries.sh is not in the ui.sh facade. WORKBENCH_STABLE_DIR rather than
+  # WORKBENCH_DIR so a sync run from a feature worktree reads the same
+  # registries Claude Code's step does — divergence between the two is what
+  # this indirection exists to remove.
+  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
+    # shellcheck source=../../lib/registries.sh
+    . "$LIB_SRC_DIR/registries.sh"
+  fi
+
+  local -a model_vars=() model_roles=()
+  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR"
+
+  local default_model="" i value
+  local -a values=()
+  for (( i=0; i<${#model_vars[@]}; i++ )); do
+    value=$(read_env_local_var "${model_vars[i]}")
+    values+=("$value")
+    if [[ "${model_roles[i]}" == model-default ]]; then
+      default_model="$value"
+    fi
+  done
+
   if [[ -z "$default_model" ]]; then
     printf '{}'
     return 0
   fi
 
-  local provider
+  local provider values_json='[]'
   provider=$(jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC")
+  # Guarded because bash 4.3 treats "${arr[@]}" on an empty array as unbound.
+  if (( ${#values[@]} > 0 )); then
+    values_json=$(printf '%s\n' "${values[@]}" | jq -Rn '[inputs]')
+  fi
 
-  local opus sonnet haiku
-  opus=$(read_env_local_var AI_OPUS_MODEL)
-  sonnet=$(read_env_local_var AI_SONNET_MODEL)
-  haiku=$(read_env_local_var AI_HAIKU_MODEL)
-
-  # Every set model is enabled; the default is always included even if it
-  # does not match one of the tier vars.  An unset tier var is omitted rather
-  # than emitting an empty entry, so a partially-configured ~/.env.local
-  # produces a shorter list instead of clobbering working entries.
+  # Every set model is enabled, and the default leads whatever order the
+  # registry declared. An unset var is dropped rather than emitting an empty
+  # entry, so a partially-configured ~/.env.local produces a shorter list
+  # instead of clobbering working entries.
   #
   # Deduplicated on the way out, because two tiers may name one model — opus
   # and sonnet both pointed at the same id is a normal way to pin a machine to
@@ -358,16 +388,12 @@ _pi_build_models() {
   jq -n \
     --arg default "$default_model" \
     --arg provider "$provider" \
-    --arg opus "${opus:-}" \
-    --arg sonnet "${sonnet:-}" \
-    --arg haiku "${haiku:-}" \
+    --argjson values "$values_json" \
     '{ defaultModel: $default,
-       enabledModels: ([
-         "\($provider)/\($default)",
-         (if $opus   != "" and $opus   != $default then "\($provider)/\($opus)"   else empty end),
-         (if $sonnet != "" and $sonnet != $default then "\($provider)/\($sonnet)" else empty end),
-         (if $haiku  != "" and $haiku  != $default then "\($provider)/\($haiku)"  else empty end)
-       ] | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }'
+       enabledModels: ([$default] + $values
+         | map(select(. != ""))
+         | map("\($provider)/\(.)")
+         | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }'
 }
 
 # step_pi_settings — merges the workbench's managed keys into Pi's global settings.
@@ -375,8 +401,9 @@ _pi_build_models() {
 # Merged rather than copied because Pi writes to the same file: `pi install`,
 # `pi config` and Ctrl+S in /model all land in ~/.pi/agent/settings.json.
 # Template scalars override the live file on every sync so the workbench stays
-# authoritative. Model config is derived from ~/.env.local — the same SSOT
-# Claude Code reads — and applied after template scalars so it always wins.
+# authoritative. Model config is derived from the vars the registries declare
+# with a model role, read out of ~/.env.local — the same SSOT Claude Code reads
+# — and applied after template scalars so it always wins.
 step_pi_settings() {
   mkdir -p "$PI_AGENT_DIR"
 

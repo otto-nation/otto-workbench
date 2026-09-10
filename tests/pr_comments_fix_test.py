@@ -81,7 +81,44 @@ def test_every_verdict_has_a_word_on_the_status_line():
     Swept over the enum rather than listed: the label table is in one module and
     the vocabulary in another, so a new verdict lands nowhere near this.
     """
-    assert set(pr_comments_fix._STATUS_LABELS) == set(FixOutcome)
+    assert set(pr_comments_fix.STATUS_LABELS) == set(FixOutcome)
+
+
+class TestCountLine:
+    """The one renderer both the dashboard and the summary comment print through.
+
+    They spelled the same six verdicts separately before this existed, so a
+    reword changed one surface and not the other — and a reworded summary cell
+    is a changed row identity, because the next round re-parses the comment it
+    published.
+    """
+
+    def test_only_what_happened_is_named(self):
+        line = pr_comments_fix.count_line({
+            FixOutcome.FIXED: 2, FixOutcome.DEFERRED: 0,
+        })
+        assert line == "**2 fixed**"
+
+    def test_the_order_is_the_published_one(self):
+        """Pinned because it is already on every open PR."""
+        line = pr_comments_fix.count_line({
+            FixOutcome.NEEDS_HUMAN: 1, FixOutcome.FIXED: 1,
+            FixOutcome.DEFERRED: 1, FixOutcome.ALREADY_ADDRESSED: 1,
+        })
+        assert line == (
+            "**1 fixed** · 1 already addressed · 1 deferred · 1 need discussion")
+
+    def test_extras_are_appended_after_the_verdicts(self):
+        """The summary counts two things no `FixOutcome` names."""
+        line = pr_comments_fix.count_line(
+            {FixOutcome.FIXED: 1}, ["2 hand-written", "1 carried over"])
+        assert line == "**1 fixed** · 2 hand-written · 1 carried over"
+
+    def test_nothing_at_all_renders_nothing(self):
+        assert pr_comments_fix.count_line({}) == ""
+
+    def test_extras_alone_still_render(self):
+        assert pr_comments_fix.count_line({}, ["1 carried over"]) == "1 carried over"
 
 
 def test_the_status_line_counts_every_verdict_it_was_handed():

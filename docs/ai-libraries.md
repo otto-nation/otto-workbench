@@ -1265,6 +1265,26 @@ Persistence-oriented structures live in pr.domains and pr.comments_fix;
 these model the runtime pipeline: triage, classification, tracking, and
 fix-pass results.
 
+### pr/thread_replies.py
+
+Our standing reply on a review thread, and whether we may still write it.
+
+One reply per thread, replaced in place each round rather than appended to — a
+thread accumulating a comment per round is unreadable, and the newest verdict is
+the only one that is true. :func:`upsert_thread_reply` is that replacement.
+
+The constraint the module is built around is that a human may have rewritten
+what we wrote. `--fix` re-drains every fixed thread on later rounds, so without
+a check the three-line template would overwrite reasoning somebody typed, with
+no undo but the edit history. :func:`is_generated_reply` measures divergence
+against the template rather than tracking a round number, because the round a
+reply was written in says nothing about whether it is still ours.
+
+Four builders sit on one driver. They look alike and are not: each reads a
+different field, links through a different permalink helper with a different
+fallback, and words its log line differently. The differences are load-bearing
+and are named where they occur.
+
 ### pr/triage.py
 
 One round of thread triage: ask the model, then refuse what it cannot back.

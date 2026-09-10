@@ -36,6 +36,17 @@ def blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
     return f"{url}#L{line}" if line else url
 
 
+def commit_permalink(repo: str, sha: str) -> str:
+    """The URL of one commit.
+
+    Trivial, and worth owning anyway: three surfaces claim a fix landed — the
+    summary's status cell, the fixed reply, and the addressed reply — and each
+    had built this string itself. A commit link that 404s is the one thing a
+    reviewer reads as the tool lying to them, so the shape has one spelling.
+    """
+    return f"https://github.com/{repo}/commit/{sha}"
+
+
 def anchored_line(
     entry: CommentItem,
     filepath: str, line: int, sha: str, wt_path: Path | None,

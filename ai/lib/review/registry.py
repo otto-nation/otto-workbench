@@ -122,7 +122,7 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     rendered = agent_templates.render(template_name, **template_vars)
     prompt = _log_prompt_size(
         template_name, rendered, template_vars, job,
-        label=built.label, cuts=built.builder.cuts,
+        label=built.label, cuts=built.builder.cuts, phase=phase,
     )
     if len(prompt.encode()) > MAX_PROMPT_BYTES:
         raise PromptTooLarge(template_name, len(prompt.encode()))

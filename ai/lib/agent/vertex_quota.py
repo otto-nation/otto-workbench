@@ -112,6 +112,28 @@ def resolve_vertex_model_id(model: str) -> str:
     return model
 
 
+# The two variables that together say "this machine talks to Anthropic through
+# Vertex, as this project, in this region". Read in one place because two
+# readers that disagree about which of them is required is how a run ends up
+# addressing an endpoint it has no credentials for.
+_VERTEX_ENV_KEYS = ("ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION")
+
+
+def vertex_env() -> tuple[str, str] | None:
+    """The configured Vertex ``(project, region)``, or None if not on Vertex.
+
+    None covers both ways the answer can be absent: the backend is not pointed
+    at Vertex at all, or it is but the configuration is incomplete. Neither is
+    an error here — a caller decides whether a missing endpoint blocks it, and
+    the two callers today differ, one warning and one proceeding quietly.
+    """
+    if os.environ.get("CLAUDE_CODE_USE_VERTEX") != "1":
+        return None
+    if any(not os.environ.get(key) for key in _VERTEX_ENV_KEYS):
+        return None
+    return os.environ[_VERTEX_ENV_KEYS[0]], os.environ[_VERTEX_ENV_KEYS[1]]
+
+
 def _get_access_token() -> str | None:
     if _HAS_GOOGLE_AUTH:
         try:
@@ -298,18 +320,15 @@ def run_preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     if os.environ.get("CLAUDE_CODE_USE_VERTEX") != "1":
         return True
 
-    missing = [
-        key for key in ("ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION")
-        if not os.environ.get(key)
-    ]
-    if missing:
+    env = vertex_env()
+    if not env:
+        missing = [key for key in _VERTEX_ENV_KEYS if not os.environ.get(key)]
         log.warn(f"Vertex quota check skipped — missing env: {', '.join(missing)}")
         trail.info("vertex_quota", "skipped — missing env vars",
                    data={"missing": missing})
         return True
 
-    project = os.environ["ANTHROPIC_VERTEX_PROJECT_ID"]
-    region = os.environ["CLOUD_ML_REGION"]
+    project, region = env
 
     skipped = sorted(m for m in models if not is_checkable(m))
     if skipped:

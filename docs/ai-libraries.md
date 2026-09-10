@@ -2004,6 +2004,28 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
+### agent/token_count.py
+
+Exact input-token counts for a prompt, where the platform can give them.
+
+A byte count cannot bound a token count: the same 480KB is 242k tokens of
+ordinary review prose and 457k of base64, and only the content decides which.
+This module is how a caller stops guessing — it asks the model's own tokenizer
+what a string costs, and says plainly when nothing can answer.
+
+`count_tokens` returns `None` rather than an estimate when no counter is
+reachable, because a caller that cannot tell a measurement from a guess will
+spend a guess as though it were a measurement. Every reason for that `None` is
+ordinary: a machine on the first-party API has no Vertex credentials, and a
+model shorthand never resolves to something the endpoint accepts.
+
+Two properties of the endpoint are load-bearing and easy to get wrong. It
+counts the system prompt and tool schemas when they are passed, which is how
+the ~25k tokens a prompt is charged beyond its own text become measurable
+rather than reserved-for. And it is tokenizer-specific: `claude-sonnet-5`
+counts the same text ~27% denser than `claude-sonnet-4-5`, so a count is only
+meaningful against the model that will actually serve the request.
+
 ### agent/usage.py
 
 AI usage accounting.

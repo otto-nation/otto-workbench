@@ -27,6 +27,7 @@ issue it had accumulated rather than resuming from an empty one.
 
 # doc-group: pr-state
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 
 from pr.domains import Domain, Readiness
@@ -48,17 +49,47 @@ _REPLY_OUTCOMES = frozenset({
 # The record fields a pre-fold state file wrote at the top level of this domain.
 _LEGACY_RECORD_KEYS = ("commit_sha", "commit_status", "head_sha")
 
-# How the status line spells each verdict, in the order it prints them. Every
-# `FixOutcome` member has an entry — a verdict with none is silently dropped
-# from the count, so the domain would report fewer threads than it holds.
-_STATUS_LABELS: dict[FixOutcome, str] = {
+
+def count_line(
+    by_outcome: Mapping[FixOutcome | str, int], extra: Sequence[str] = (),
+) -> str:
+    """The "**2 fixed** · 1 deferred" line, from a count per outcome.
+
+    `extra` is appended verbatim, for a surface that counts something no
+    `FixOutcome` names. The summary comment has two — rows a human rewrote and
+    rows carried over from a round this checkout cannot account for — and they
+    are the reason this takes a sequence rather than growing the enum with two
+    members no fix pass can ever produce.
+
+    An outcome counted zero times contributes nothing, so the line names only
+    what happened.
+    """
+    parts = [tmpl.format(n=by_outcome[outcome])
+             for outcome, tmpl in STATUS_LABELS.items() if by_outcome.get(outcome, 0)]
+    return " · ".join([*parts, *extra])
+
+
+# How a verdict is spelled wherever a count of them is printed, in the order
+# they print — which is the summary comment's order, because that one is
+# published and the dashboard's is re-rendered from state every run. Every
+# `FixOutcome` member has an entry — a verdict with none is
+# silently dropped from the count, so the domain would report fewer threads
+# than it holds.
+#
+# Public because two surfaces print this line: `render_status` below, and the
+# published summary comment's header. They were written separately and six of
+# the wordings were byte-identical in both, so a reword in one place changed
+# what a reader saw in one surface and not the other — and in the summary's
+# case a changed wording is also a changed row identity, because the next
+# round re-parses the comment it published. `count_line` is the one renderer.
+STATUS_LABELS: dict[FixOutcome, str] = {
     FixOutcome.FIXED: "**{n} fixed**",
+    FixOutcome.ALREADY_ADDRESSED: "{n} already addressed",
+    FixOutcome.DISMISSED: "{n} dismissed",
+    FixOutcome.SETTLED_ELSEWHERE: "{n} settled elsewhere",
     FixOutcome.DEFERRED: "{n} deferred",
     FixOutcome.NEEDS_HUMAN: "{n} need discussion",
     FixOutcome.DECLINED: "{n} declined",
-    FixOutcome.DISMISSED: "{n} dismissed",
-    FixOutcome.ALREADY_ADDRESSED: "{n} already addressed",
-    FixOutcome.SETTLED_ELSEWHERE: "{n} settled elsewhere",
     FixOutcome.SKIPPED: "{n} skipped",
 }
 
@@ -266,9 +297,7 @@ class FixSummary(Domain):
         by_outcome: dict[str, int] = {}
         for o in self.fix.items:
             by_outcome[o.outcome] = by_outcome.get(o.outcome, 0) + 1
-        parts = [tmpl.format(n=by_outcome[outcome])
-                 for outcome, tmpl in _STATUS_LABELS.items() if by_outcome.get(outcome, 0)]
-        summary = " · ".join(parts) if parts else "no threads"
+        summary = count_line(by_outcome) or "no threads"
         lines = [f"**Fix**: {summary}"]
         if self.fix.commit_sha:
             lines[0] += f" (commit: {self.fix.commit_sha}, {self.fix.commit_status})"

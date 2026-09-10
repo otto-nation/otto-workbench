@@ -81,7 +81,7 @@ def test_every_verdict_has_a_word_on_the_status_line():
     Swept over the enum rather than listed: the label table is in one module and
     the vocabulary in another, so a new verdict lands nowhere near this.
     """
-    assert set(pr_comments_fix._STATUS_LABELS) == set(FixOutcome)
+    assert set(pr_comments_fix.STATUS_LABELS) == set(FixOutcome)
 
 
 def test_the_status_line_counts_every_verdict_it_was_handed():

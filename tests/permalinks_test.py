@@ -45,6 +45,35 @@ class TestBlobPermalink:
         assert "/blob/main/" not in url
 
 
+class TestCommitPermalink:
+    def test_it_names_the_commit(self):
+        assert permalinks.commit_permalink(_REPO, _SHA) == (
+            f"https://github.com/{_REPO}/commit/{_SHA}")
+
+    def test_no_caller_still_builds_the_url_by_hand(self):
+        """The summary cell, the fixed reply and the addressed reply.
+
+        Each built this URL itself before it had an owner. A reviewer reads a
+        404 here as the tool lying about a fix, so a fourth hand-rolled copy
+        should fail rather than drift.
+        """
+        import pr.thread_replies
+        from pathlib import Path as _Path
+
+        # permalinks.py itself is the owner and is where the literal belongs.
+        lib = _Path(pr.thread_replies.__file__).parent
+        sources = [lib / "thread_replies.py",
+                   lib.parent.parent / "bin" / "review-threads"]
+        for src in sources:
+            text = src.read_text(encoding="utf-8")
+            hand_rolled = [
+                line for line in text.splitlines()
+                if "/commit/" in line and "commit_permalink" not in line
+                and not line.lstrip().startswith("#")
+            ]
+            assert hand_rolled == [], f"{src.name}: {hand_rolled}"
+
+
 class TestAnchoredLineWithoutARepository:
     """The four answers that need no worktree to reach."""
 

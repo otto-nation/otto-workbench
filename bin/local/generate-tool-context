@@ -170,7 +170,10 @@ _collect_registry() {
 
   local section
   section=$(reg_get "$file" meta section)
-  section="${section:-Tools}"
+  # Only an absent key defaults, matching the `// "Tools"` read this replaced:
+  # yq substitutes on null, not on an explicit empty string, and a registry
+  # that writes one has named a section heading of its own.
+  reg_has "$file" meta section || section="Tools"
 
   local full_content brief_content
   full_content=$(_iter_tools_by_visibility "$file" "full" _tool_md_entry)
@@ -464,7 +467,10 @@ _render_readme_registry() {
 
   local section
   section=$(reg_get "$file" meta section)
-  section="${section:-Tools}"
+  # Only an absent key defaults, matching the `// "Tools"` read this replaced:
+  # yq substitutes on null, not on an explicit empty string, and a registry
+  # that writes one has named a section heading of its own.
+  reg_has "$file" meta section || section="Tools"
 
   local content
   content=$(_iter_tools "$file" _tool_readme_table_row)

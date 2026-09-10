@@ -512,9 +512,11 @@ _validate_registry() {
   local file="$1"
   local validation source
   validation=$(reg_get "$file" meta validation)
-  # The `none` default is spelled here rather than in the read: an absent
-  # meta.validation means schema-only, and the case below has no empty arm.
-  validation="${validation:-none}"
+  # Only an absent key defaults to `none`. An explicit `validation: ""` is a
+  # value someone wrote, and it names no cross-check — it falls through to the
+  # `*)` arm below and is reported, which is what the `// "none"` read this
+  # replaced did too: yq substitutes on null, not on an empty string.
+  reg_has "$file" meta validation || validation="none"
   source=$(reg_get "$file" meta source)
 
   case "$validation" in
@@ -594,15 +596,18 @@ main() {
       info "Schema: ${registry#"$REPO_ROOT/"}"
     fi
     # A `tools:` that is not a list has no entries to walk, and every check
-    # below is a loop over them — so it would report the file clean rather
-    # than report the shape. Named here instead, and the rest skipped.
-    if ! _check_tools_shape "$registry"; then continue; fi
-    _validate_schema "$registry"
+    # that iterates them would report the file clean rather than report the
+    # shape. Those are skipped when it fails; the meta-only checks below do not
+    # read `tools` and still run, so one malformed collection does not hide
+    # every other problem in the same file until it is fixed.
+    if _check_tools_shape "$registry"; then
+      _validate_schema "$registry"
+      _validate_auth_fields "$registry"
+      _validate_install_check_command "$registry"
+      _validate_registry "$registry"
+    fi
     _validate_env_fields "$registry"
-    _validate_auth_fields "$registry"
-    _validate_install_check_command "$registry"
     _validate_meta_scope "$registry"
-    _validate_registry "$registry"
   done
 
   if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then

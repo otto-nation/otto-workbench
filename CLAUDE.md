@@ -33,17 +33,23 @@ manual whole-suite run beforehand buys nothing and costs twice. Push and read wh
 reports. Run a *single* file (`bats tests/one.bats`, `pytest tests/one.py`) while iterating
 on it — that is the loop this rule leaves alone.
 
-The cost is not merely the wasted minutes. The runner sizes itself from the cores the
-machine is not already using, so a hand-started suite racing the hook's suite oversubscribes
-the box and produces exactly the contention failures described below — in arbitrary tests
+The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine
+is not already using — the sizing described below — so a hand-started suite racing the hook's
+own oversubscribes the box and produces exactly those contention failures, in arbitrary tests
 that never repeat. Worse, a suite killed part-way (a timeout, an impatient Ctrl-C) leaves
 orphaned `bats` processes holding cores, and the next run inherits a machine that is already
 losing subprocesses. Two such piles, one of them hours old, are what prompted this rule.
 
-When you must clean orphans up, scope the kill to a process tree you own — walk `pgrep -P`
-down from a known root. Never `pkill -f bats`: it matches by pattern across the whole
-machine and will kill suites running in other people's worktrees, which is not recoverable
-for them.
+When you must clean orphans up, scope the kill to a process tree you own. Find the roots and
+walk down from one:
+
+```bash
+ps -eo pid,etime,command | grep '[b]ats-exec-file'   # candidate roots, with age
+pkill -P <root-pid>                                  # children of the one you started
+```
+
+Never `pkill -f bats`: it matches by pattern across the whole machine and kills suites running
+in other worktrees, which is not recoverable for whoever was running them.
 
 Pre-push and CI run three gates independently — `bin/local/validate-all`,
 `bin/local/run-tests --bats`, and `bin/local/run-tests --pytest`. Passing one is not

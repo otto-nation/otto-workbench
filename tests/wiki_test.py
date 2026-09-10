@@ -1196,3 +1196,15 @@ class TestSignalsCLI:
         root = make_wiki(tmp_path)
         write_article(root, "a", body="see [[nowhere]]")
         assert wiki.main(["lint", "--signals", "--wiki", str(root)]) == 1
+
+
+class TestPackageSurface:
+    def test_every_public_name_is_importable(self):
+        """`__all__` is the package's advertised surface, so a name listed
+        there but never imported is a promise the package cannot keep — the
+        CLI reaches types through their own modules and so never notices."""
+        import importlib
+
+        pkg = importlib.import_module("wiki")
+        missing = [name for name in pkg.__all__ if not hasattr(pkg, name)]
+        assert missing == []

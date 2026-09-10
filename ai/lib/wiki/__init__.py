@@ -30,7 +30,14 @@ from .paths import (
     find_wiki,
     is_wiki,
 )
-from .parsing import HASH_PREFIX_LEN, gap_tokens, hash_file, parse_query_gap, read_text
+from .parsing import (
+    HASH_PREFIX_LEN,
+    QueryGap,
+    gap_tokens,
+    hash_file,
+    parse_query_gap,
+    read_text,
+)
 from .report import build_index, collect_lint, collect_signals, collect_status
 
 __all__ = [

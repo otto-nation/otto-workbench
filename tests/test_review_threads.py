@@ -5527,7 +5527,14 @@ class TestTheSchemaExampleIsValidJson:
 
     @staticmethod
     def _schema(prompt: str) -> dict:
+        """The schema example, parsed.
+
+        Asserting on the marker rather than letting `index` raise: the prompt
+        owns that wording and may reword it, and a bare `ValueError` from the
+        slice would read as a brace regression rather than as the rename it is.
+        """
         marker = "Return JSON matching this exact schema:"
+        assert marker in prompt, f"prompt no longer says {marker!r} — retarget this test"
         tail = prompt[prompt.index(marker) + len(marker):]
         return json.loads(tail[tail.index("{"):tail.rindex("}") + 1])
 

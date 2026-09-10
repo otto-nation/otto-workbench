@@ -32,6 +32,56 @@ _sleeping_validator() {
   chmod +x "$TMPDIR/$1/$2"
 }
 
+# _slow_validators_running — how many _sleeping_validator processes are alive.
+_slow_validators_running() {
+  pgrep -f 'validate-slow-' | wc -l | tr -d ' '
+}
+
+_slow_validators_started() { [[ "$(_slow_validators_running)" -gt 0 ]]; }
+_slow_validators_stopped() { [[ "$(_slow_validators_running)" -eq 0 ]]; }
+
+# _tracked_validator DIR NAME — a validator that records when it entered and
+# left its own body, so a test can count how many overlapped.
+#
+# The two marks bracket a short sleep, which is only there to widen the window
+# enough for an overlap to be observable at all; nothing asserts its length.
+_tracked_validator() {
+  mkdir -p "$TMPDIR/$1"
+  cat > "$TMPDIR/$1/$2" <<EOF
+#!/usr/bin/env bash
+echo "+" >> "$TMPDIR/marks"
+sleep 0.5
+echo "-" >> "$TMPDIR/marks"
+EOF
+  chmod +x "$TMPDIR/$1/$2"
+}
+
+# _peak_concurrency — the most validators that were running at any one moment.
+#
+# Read off the marks as a running total: every `+` is one entering its body and
+# every `-` one leaving, so the high-water mark of the sum is the peak. Appends
+# of a single short line under O_APPEND do not interleave, so the file is a
+# faithful ordering of the events even with several writers.
+_peak_concurrency() {
+  [[ -f "$TMPDIR/marks" ]] || { echo 0; return; }
+  awk '/\+/ { n++; if (n > peak) peak = n } /-/ { n-- } END { print peak + 0 }' "$TMPDIR/marks"
+}
+
+# _wait_until SECONDS COMMAND... — poll until COMMAND succeeds, or give up.
+#
+# A fixed `sleep` has to be either long enough for the slowest runner or short
+# enough not to pad the suite, and cannot be both. Polling takes the time it
+# actually needs and only spends the whole budget when the assertion is
+# genuinely going to fail.
+_wait_until() {
+  local deadline=$(( SECONDS + $1 )); shift
+  while (( SECONDS < deadline )); do
+    "$@" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 @test "validate-all discovers validators in both bin and bin/local" {
   _fixture_validator "bin" "validate-top" 0
   _fixture_validator "bin/local" "validate-nested" 0
@@ -92,37 +142,43 @@ _sleeping_validator() {
 }
 
 @test "validators run concurrently" {
-  # Four one-second validators in a pool of four finish in about a second. The
-  # ceiling is set well under the serial four so a loaded runner cannot make a
-  # genuinely parallel run look serial.
+  # Peak overlap, not elapsed time. A wall-clock bound has to assume how long
+  # the work takes on the slowest runner the suite will ever meet; counting how
+  # many validators were inside their own body at once is the same claim made
+  # directly, and a loaded machine only makes the overlap longer.
   local i
   for i in 1 2 3 4; do
-    _sleeping_validator "bin/local" "validate-sleep-$i" 1
+    _tracked_validator "bin/local" "validate-sleep-$i"
   done
 
-  local start elapsed
-  start=$SECONDS
   VALIDATOR_ROOT="$TMPDIR" VALIDATOR_JOBS=4 run "$VALIDATE_ALL" --quiet
-  elapsed=$(( SECONDS - start ))
   [ "$status" -eq 0 ]
-  [ "$elapsed" -lt 3 ]
+  [ "$(_peak_concurrency)" -gt 1 ]
 }
 
 @test "VALIDATOR_JOBS caps how many run at once" {
-  # The same four seconds of work through a pool of one is a serial run, and
-  # must take at least as long as the work does. This is the throttle's only
-  # observable: without it the pool would launch all four immediately.
+  # The cap's only observable. With a pool of one no two validators may ever be
+  # inside their body together, however the scheduler orders them — an
+  # assertion that cannot be weakened by the machine being fast or slow.
   local i
   for i in 1 2 3 4; do
-    _sleeping_validator "bin/local" "validate-sleep-$i" 1
+    _tracked_validator "bin/local" "validate-sleep-$i"
   done
 
-  local start elapsed
-  start=$SECONDS
   VALIDATOR_ROOT="$TMPDIR" VALIDATOR_JOBS=1 run "$VALIDATE_ALL" --quiet
-  elapsed=$(( SECONDS - start ))
   [ "$status" -eq 0 ]
-  [ "$elapsed" -ge 3 ]
+  [ "$(_peak_concurrency)" -eq 1 ]
+}
+
+@test "the pool fills to the cap and no further" {
+  local i
+  for i in 1 2 3 4 5 6; do
+    _tracked_validator "bin/local" "validate-sleep-$i"
+  done
+
+  VALIDATOR_ROOT="$TMPDIR" VALIDATOR_JOBS=2 run "$VALIDATE_ALL" --quiet
+  [ "$status" -eq 0 ]
+  [ "$(_peak_concurrency)" -eq 2 ]
 }
 
 @test "results are reported in discovery order, not completion order" {
@@ -189,12 +245,15 @@ EOF
 
   VALIDATOR_ROOT="$TMPDIR" TMPDIR="$buffers" "$VALIDATE_ALL" --quiet >/dev/null 2>&1 &
   local runner=$!
-  sleep 1
-  [ "$(pgrep -f 'validate-slow-' | wc -l | tr -d ' ')" -gt 0 ]
+  # Polled rather than slept: on a loaded runner the validators may take longer
+  # than a fixed window to spawn, and waiting a fixed window for them to die
+  # would report a slow signal as an orphan.
+  _wait_until 15 _slow_validators_started
+  [ "$(_slow_validators_running)" -gt 0 ]
 
   kill -TERM "$runner"
-  sleep 1
-  [ "$(pgrep -f 'validate-slow-' | wc -l | tr -d ' ')" -eq 0 ]
+  _wait_until 15 _slow_validators_stopped
+  [ "$(_slow_validators_running)" -eq 0 ]
   # And the buffers go with them — the signal path cleans up too, not just the
   # normal exit.
   [ -z "$(ls -A "$buffers")" ]

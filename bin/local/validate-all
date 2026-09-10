@@ -108,22 +108,34 @@ trap 'rm -rf "$RUN_DIR"' EXIT
 # status is lost in the storm. Disarming the trap first makes it run once even
 # if something else signals us mid-cleanup.
 set -m
-RUNNING_PIDS=()
-# shellcheck disable=SC2329  # invoked by the trap below, not by name
+# Every job launched, not only the ones still running: `wait -n` does not say
+# which job it reaped, so pruning would mean probing each pid on every launch to
+# save signalling a handful of groups that no longer exist — and signalling a
+# finished group is already a silent no-op.
+LAUNCHED_PIDS=()
+# _abort SIGNAL — stop every running validator and exit as that signal.
+#
+# The signal is passed in rather than assumed, so the exit status distinguishes
+# the two: 130 for INT and 143 for TERM, which is what a supervisor or a
+# `timeout` wrapper reads to tell a user's Ctrl-C from its own deadline.
+# shellcheck disable=SC2329  # invoked by the traps below, not by name
 _abort() {
+  local signal="$1"
   trap - INT TERM
   local _p
-  for _p in "${RUNNING_PIDS[@]}"; do
+  for _p in "${LAUNCHED_PIDS[@]}"; do
     # The negative pid is the job's process group. `|| true` because a job that
     # already finished has no group left to signal, which is not a failure.
     kill -TERM "-$_p" 2>/dev/null || true
   done
   wait 2>/dev/null || true
   rm -rf "$RUN_DIR"
-  # 128 + SIGINT, the shell's own convention for dying on a signal.
-  exit 130
+  # 128 + the signal number, the shell's own convention for dying on one.
+  [[ "$signal" == "INT" ]] && exit 130
+  exit 143
 }
-trap _abort INT TERM
+trap '_abort INT' INT
+trap '_abort TERM' TERM
 
 # The count is tracked here rather than read from `jobs`: that builtin reports
 # the job table of the shell it runs in, and `$(jobs -pr)` runs in a subshell
@@ -147,7 +159,7 @@ for _i in "${!VALIDATORS[@]}"; do
     "${VALIDATORS[$_i]}" --quiet > "$RUN_DIR/$_i.out" 2>&1 || _status=$?
     echo "$_status" > "$RUN_DIR/$_i.status"
   ) &
-  RUNNING_PIDS+=("$!")
+  LAUNCHED_PIDS+=("$!")
   RUNNING=$(( RUNNING + 1 ))
 done
 wait

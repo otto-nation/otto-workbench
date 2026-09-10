@@ -41,6 +41,11 @@ def _window(file_path: str, line: int, repo_dir: Path) -> tuple[str, int, int]:
     for a whole round — and differed in nothing else, which is how one of them
     could have drifted to a different window than the other.
 
+    A non-positive line is no location. The two readers this replaces guarded
+    on `== 0`, which passed a negative line through to the slice arithmetic
+    below; nothing produces one, since GitHub numbers lines from 1, but the
+    bound is stated rather than assumed.
+
     Every failure to read is the same answer: no context. A file the comment
     names but the tree does not have is the ordinary case after a rename, not
     an error worth stopping a triage round for.

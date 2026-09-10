@@ -708,3 +708,29 @@ _write_agent() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'### `/foo`'*'### `/foo-bar`'* ]]
 }
+
+# The displayed name comes from inside the JSON, so it need not match the
+# filename. Ordering the filenames would leave the rendered list unsorted.
+@test "the MCP list is in lexicographic order by displayed name" {
+  mkdir -p "$AI_DIR/claude/mcps"
+  echo '{"name": "foo-bar"}' > "$AI_DIR/claude/mcps/01-first.json"
+  echo '{"name": "foo"}' > "$AI_DIR/claude/mcps/02-second.json"
+
+  run main --emit ai-installs
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"**MCP Servers:** foo, foo-bar"* ]]
+}
+
+# Names are backticked for display, and a backtick (0x60) also sorts above
+# `-` (0x2D) — so sorting after wrapping reproduces the same inversion the
+# glob caused. This fails if the sort moves below the wrap.
+@test "core components are in lexicographic order by name, not by rendered cell" {
+  local root="$TMPDIR/components"
+  mkdir -p "$root/foo-bar" "$root/foo"
+  echo '#!/usr/bin/env bash' > "$root/foo-bar/steps.sh"
+  echo '#!/usr/bin/env bash' > "$root/foo/steps.sh"
+
+  REPO_ROOT="$root" run main --emit core-components
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'`foo`, `foo-bar`'* ]]
+}

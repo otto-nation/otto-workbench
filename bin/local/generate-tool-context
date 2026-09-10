@@ -81,20 +81,38 @@ _join() {
 # always-C BSD sort, the same reason generate-public-surface pins it.
 _sorted_names() {
   local -n __names=$1
-  local suffix="$2"; shift 2
-  local path name
+  local __suffix="$2"; shift 2
+  local __path __base
   __names=()
-  for path in "$@"; do
-    [[ -e "$path" ]] || continue
-    name="$(basename "${path%/}")"
-    __names+=("${name%"$suffix"}")
+  for __path in "$@"; do
+    [[ -e "$__path" ]] || continue
+    __base="$(basename "${__path%/}")"
+    __names+=("${__base%"$__suffix"}")
   done
-  [[ ${#__names[@]} -gt 0 ]] || return 0
-  local sorted=()
-  while IFS= read -r name; do
-    sorted+=("$name")
-  done < <(printf '%s\n' "${__names[@]}" | LC_ALL=C sort)
-  __names=("${sorted[@]}")
+  _sort_names __names
+}
+
+# _sort_names OUTVAR — sorts OUTVAR's elements in place, in byte order.
+#
+# Split from _sorted_names for the two callers whose display string is not a
+# basename: one reads a name out of each file's JSON, the other wraps names in
+# backticks. Both have to sort the names themselves — sorting the paths, or
+# sorting after wrapping, reintroduces the inversion on a different byte
+# (a backtick is 0x60, also above `-`).
+#
+# Both take the outvar by nameref, per this repo's convention for returning a
+# value, with the `__` prefix that keeps a caller's array from aliasing one of
+# these locals. The prefix narrows that collision rather than closing it: an
+# outvar literally named `__names` or `__sorted` would still self-reference.
+# Every call site here passes an unprefixed name, so the guard holds.
+_sort_names() {
+  local -n __unsorted=$1
+  [[ ${#__unsorted[@]} -gt 0 ]] || return 0
+  local __sorted=() __line
+  while IFS= read -r __line; do
+    __sorted+=("$__line")
+  done < <(printf '%s\n' "${__unsorted[@]}" | LC_ALL=C sort)
+  __unsorted=("${__sorted[@]}")
 }
 
 # _iter_tools FILE CALLBACK
@@ -373,13 +391,15 @@ _emit_ai_installs() {
     printf '| %s | %s |\n' "$name" "$agent_desc"
   done
 
-  # MCPs
+  # MCPs. Sorted on the name inside each file rather than on the filename,
+  # which is what the reader sees and need not match it.
   local mcps=()
   for f in "$claude_mcps_src"/*.json; do
     if [[ -f "$f" ]]; then
       mcps+=("$(jq -r '.name // ""' "$f")")
     fi
   done
+  _sort_names mcps
   if [[ ${#mcps[@]} -gt 0 ]]; then
     printf '\n**MCP Servers:** %s\n' "$(_join ', ' "${mcps[@]}")"
   fi
@@ -546,16 +566,22 @@ _emit_after_install() {
 
 # _emit_core_components — discovers core components (steps.sh without setup.conf).
 _emit_core_components() {
-  local names=()
+  local names=() rendered=() name
   for steps in "$REPO_ROOT"/*/steps.sh; do
     [[ -f "$steps" ]] || continue
     local dir
     dir=$(dirname "$steps")
     # Core = has steps.sh but no setup.conf (not an optional component)
     [[ -f "$dir/setup.conf" ]] && continue
-    names+=("\`$(basename "$dir")\`")
+    names+=("$(basename "$dir")")
   done
-  printf '**Existing core components:** %s\n' "$(_join ', ' "${names[@]}")"
+  # Sorted before the backticks go on, not after: a backtick (0x60) sorts
+  # above `-` (0x2D), so wrapping first would put `docs-site` ahead of `docs`.
+  _sort_names names
+  for name in "${names[@]}"; do
+    rendered+=("\`$name\`")
+  done
+  printf '**Existing core components:** %s\n' "$(_join ', ' "${rendered[@]}")"
 }
 
 # _emit_optional_components — lists optional components from install.components with sync info.

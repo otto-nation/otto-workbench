@@ -285,11 +285,7 @@ cmd_install() {
   update_path_in_shell_rc
 
   # Run pending migrations after core sync, before optional components.
-  #
-  # No phase label. run_all_migrations prints nothing at all when every
-  # migration is already recorded, which is every run after the first, and names
-  # the migration itself when one does apply. A header announces a phase whose
-  # output is usually empty, and it was the only phase label in this function.
+  sync_header "Migrations"
   run_all_migrations
 
   echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
@@ -319,6 +315,7 @@ cmd_sync() {
   export WORKBENCH_INSTALL_LOG
   trap 'rm -f "$WORKBENCH_INSTALL_LOG"' EXIT
 
+  sync_header "Migrations"
   run_all_migrations
 
   # Sync components — respects installation state when a state file exists.
@@ -550,10 +547,7 @@ EOF
   # pending rename that has not run yet is a file this sync reads under names it
   # no longer carries. Skipping them here made this the one path that could act
   # on a half-migrated machine.
-  #
-  # Unseparated from what follows, for the same reason the other two call sites
-  # carry no label: a settled machine prints nothing here, and a blank line on
-  # each side of nothing is two blank lines under the title.
+  sync_header "Migrations"
   run_all_migrations
 
   sync_ai

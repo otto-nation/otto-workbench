@@ -40,12 +40,17 @@ that never repeat. Worse, a suite killed part-way (a timeout, an impatient Ctrl-
 orphaned `bats` processes holding cores, and the next run inherits a machine that is already
 losing subprocesses. Two such piles, one of them hours old, are what prompted this rule.
 
-When you must clean orphans up, scope the kill to a process tree you own. Find the roots and
-walk down from one:
+When you must clean orphans up, scope the kill to a process tree you own. Find the roots — the
+listing names each one's worktree, which is what tells yours from someone else's — then kill
+the whole subtree under it:
 
 ```bash
-ps -eo pid,etime,command | grep '[b]ats-exec-file'   # candidate roots, with age
-pkill -P <root-pid>                                  # children of the one you started
+ps -eo pid,etime,command | grep '[b]ats-exec'   # candidate roots, with age and worktree
+
+# Every descendant, deepest first: bats nests suite → file → test, and the test's own
+# forks are the processes actually holding a core. `pkill -P` is one level and leaves them.
+killtree() { local p; for p in $(pgrep -P "$1"); do killtree "$p"; done; kill "$1" 2>/dev/null; }
+killtree <root-pid>
 ```
 
 Never `pkill -f bats`: it matches by pattern across the whole machine and kills suites running

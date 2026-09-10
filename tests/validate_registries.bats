@@ -821,6 +821,56 @@ EOF
   [[ "$output" == *"tools must be a list of entries"* ]]
 }
 
+@test "a bad tools shape does not hide the other problems in the file" {
+  # Only the checks that iterate entries are skipped. The meta-only ones do not
+  # read tools, and skipping them would mean the shape has to be fixed and the
+  # validator re-run before anything else in the file is even reported.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+  scope: "BAD SCOPE!"
+
+tools:
+  mytool:
+    permission: false
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"tools must be a list of entries"* ]]
+  [[ "$output" == *"meta.scope 'BAD SCOPE!'"* ]]
+}
+
+@test "an explicit empty validation is reported, not defaulted to none" {
+  # `// "none"` substituted on null, not on an empty string, so a registry that
+  # writes one names a cross-check that does not exist and is told so. Only an
+  # absent key means schema-only.
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: ""
+
+tools: []
+EOF
+
+  run main
+  [[ "$output" == *"unknown validation type"* ]]
+}
+
+@test "an absent validation is schema-only and says nothing" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+
+tools: []
+EOF
+
+  run main
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"unknown validation type"* ]]
+}
+
 @test "fails on a registry that cannot be parsed" {
   # Reading each field separately answered an empty count for a malformed
   # file, so the entry loop ran zero times and every check on it passed. The

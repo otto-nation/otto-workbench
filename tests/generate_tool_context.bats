@@ -138,6 +138,24 @@ EOF
   grep -q "## Shell Aliases" "$TOOL_CONTEXT_OUTPUT"
 }
 
+@test "a registry with no meta.section falls back to Tools" {
+  cat > "$BIN_REGISTRY" << 'EOF'
+meta:
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: brief
+    description: "A test tool"
+EOF
+
+  main
+  grep -q "## Tools" "$TOOL_CONTEXT_OUTPUT"
+}
+
+
+
 # ── Tool entry fields ─────────────────────────────────────────────────────────
 
 @test "renders tool name as H3" {

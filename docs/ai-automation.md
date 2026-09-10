@@ -588,22 +588,22 @@ template default never reaches a machine that already has the key. Delete the ke
 there to be re-seeded.
 
 `packages` is reconciled instead, because a list gains an entry without
-displacing one. The template declares `git:github.com/usemaximum/pi-extensions`,
-private to its org, so the sync asks GitHub whether this machine's account is an
-active member first. The answer is three-valued and only two of the three act:
+displacing one. Before declaring one, the sync asks GitHub whether this machine
+can fetch it — `gh api repos/<owner>/<repo>`. Three answers, two of which act:
 
 | Verdict | What the sync does |
 |---|---|
-| active member | declares the package |
-| refused, or an invitation still pending | withdraws it, so Pi stops retrying a clone it cannot complete |
+| the repo answers | declares the package |
+| a definitive 404 | withdraws it, so Pi stops retrying a clone it cannot complete |
 | no `gh`, no auth, no network | leaves the entry however the live file has it |
 
 The third row is why the check is not a boolean: a sync run offline must neither
-install a package it could not verify nor strip one that already works. What the
-extensions then expose to a run is a separate decision, made in
-[`agent/backend_pi.py`](ai-libraries.md#agentbackend_pipy); how an entry already in
-the file is recognised is one [`sync-settings.jq`](../ai/pi/sync-settings.jq)
-documents at the top.
+install a package it could not verify nor strip one that already works. It asks
+about the repo rather than the owning org because a user account's public repo
+has no org, and a restricted repo in one this machine belongs to still cannot be
+cloned. What extensions expose to a run is decided in
+[`agent/backend_pi.py`](ai-libraries.md#agentbackend_pipy); how an existing entry
+is recognised is one [`sync-settings.jq`](../ai/pi/sync-settings.jq) documents.
 
 ### Five shared foundations under `ai/`
 

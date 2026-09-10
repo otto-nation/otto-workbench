@@ -24,7 +24,7 @@
 # appears in neither and its current state is left untouched, so an offline sync
 # neither installs a package it cannot verify nor strips one that already works.
 #
-# Withdrawal is therefore a membership verdict, not a diff against the template.
+# Withdrawal is therefore a reachability verdict, not a diff against the template.
 # A package the template stops declaring is left in the live file, because
 # nothing here can tell it from one the operator installed — ai/claude's
 # equivalent answers that with a manifest recording what it managed, kept in a

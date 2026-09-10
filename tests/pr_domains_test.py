@@ -1,4 +1,10 @@
-"""Tests for what each domain says about itself — render_status and readiness."""
+"""Tests for what each domain says about itself, and the one transition it owns.
+
+Mostly render_status and readiness. `CommentsSummary.move_to_resolved` is the
+exception: it is the only place a domain changes its own counts, and the tally
+it maintains is what `pr status` reports, so the arithmetic is pinned here
+rather than only through the pass that calls it.
+"""
 
 import sys
 from pathlib import Path
@@ -13,6 +19,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr import domains as pr_domains
 from pr import state as pr_state
+from pr.comments_state import ThreadState
 from core.proc import CmdResult
 
 # When the run being described happened. Any non-empty stamp means "written",
@@ -283,6 +290,75 @@ def test_comments_readiness_blocking_reviewers():
 def test_comments_readiness_clean():
     c = pr_domains.CommentsSummary(total_threads=3, updated_at="t")
     assert c.readiness() == pr_domains.Readiness()
+
+
+# ── CommentsSummary.move_to_resolved ──────────────────────────────────────
+
+
+def _tallied(**by_state):
+    return pr_domains.CommentsSummary(by_state=dict(by_state), updated_at="before")
+
+
+def test_a_resolved_thread_leaves_the_bucket_it_arrived_in():
+    c = _tallied(new=2, resolved=1)
+    c.move_to_resolved([ThreadState.NEW], updated_at="after")
+    assert c.by_state == {"new": 1, "resolved": 2}
+
+
+def test_threads_from_several_buckets_all_land_in_one():
+    c = _tallied(new=1, contested=1, addressed=1)
+    c.move_to_resolved(
+        [ThreadState.NEW, ThreadState.CONTESTED, ThreadState.ADDRESSED],
+        updated_at="after",
+    )
+    assert c.by_state == {"new": 0, "contested": 0, "addressed": 0, "resolved": 3}
+
+
+def test_a_prior_of_resolved_is_not_counted_twice():
+    """The caller can name a thread that was already resolved when it arrived.
+
+    Such a thread carries its post-resolve state and its pre-resolve
+    `is_resolved`, so the resolve pass sees it as unresolved and reports it.
+    Counting it would credit one resolution twice.
+    """
+    c = _tallied(resolved=1)
+    c.move_to_resolved([ThreadState.RESOLVED], updated_at="after")
+    assert c.by_state == {"resolved": 1}
+    assert c.updated_at == "before"
+
+
+def test_the_stamp_is_applied_only_when_something_moved():
+    c = _tallied(new=1)
+    c.move_to_resolved([], updated_at="after")
+    assert c.updated_at == "before"
+    c.move_to_resolved([ThreadState.NEW], updated_at="after")
+    assert c.updated_at == "after"
+
+
+def test_a_bucket_with_nothing_left_warns_rather_than_going_negative():
+    c = _tallied(new=0)
+    with patch("pr.domains.log.warn") as warn:
+        c.move_to_resolved([ThreadState.NEW], updated_at="after")
+    assert c.by_state == {"new": 0, "resolved": 1}
+    assert "no new left to move" in warn.call_args[0][0]
+
+
+def test_a_bucket_the_snapshot_never_had_warns_too():
+    c = _tallied()
+    with patch("pr.domains.log.warn") as warn:
+        c.move_to_resolved([ThreadState.NEW], updated_at="after")
+    assert c.by_state == {"resolved": 1}
+    assert warn.called
+
+
+def test_the_move_reads_back_through_render_status():
+    c = pr_domains.CommentsSummary(
+        total_threads=2, by_state={"new": 2}, updated_at="before",
+    )
+    c.move_to_resolved([ThreadState.NEW, ThreadState.NEW], updated_at="after")
+    lines = c.render_status()
+    assert any("new: 0" in l for l in lines)
+    assert any("resolved: 2" in l for l in lines)
 
 
 # ── TriageSummary ─────────────────────────────────────────────────────────

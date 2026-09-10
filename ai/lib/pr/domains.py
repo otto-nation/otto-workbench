@@ -75,6 +75,7 @@ there is one waiver mechanism rather than two.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -85,7 +86,9 @@ from pathlib import Path
 # keeps this acyclic.
 from pr.ci_failures import RunState
 
+from core import log
 from git import client as git_client
+from pr.comments_state import ThreadState
 from pr.fix import FixRecord
 
 
@@ -378,6 +381,56 @@ class CommentsSummary(Domain):
     has_approvals: bool = False
     seen_issue_comment_ids: list[int] = field(default_factory=list)
     seen_review_body_comment_ids: list[int] = field(default_factory=list)
+
+    def move_to_resolved(
+        self, priors: Sequence[ThreadState], *, updated_at: str,
+    ) -> None:
+        """Move threads just resolved on GitHub into the persisted tally.
+
+        The counts are written from a snapshot taken at fetch time, before
+        either the fix pass or the closeout resolves anything. Every thread they
+        settle would otherwise stay filed under whichever bucket it arrived in,
+        so `pr status` reports a drained PR as still holding open threads.
+        Applied as a delta rather than re-fetched: the buckets are already in
+        hand, and a second round trip could only disagree with what we just
+        wrote.
+
+        The only code that moves a thread between buckets — not the only code
+        that writes ``by_state``, which a fetch also does by constructing this
+        domain outright. Both writes happen here together because a tally moved
+        without its stamp reads as a tally nobody touched.
+
+        A prior of RESOLVED is skipped rather than counted, and that is
+        load-bearing rather than defensive: a thread resolved before the report
+        was built carries its post-resolve state but its pre-resolve
+        ``is_resolved``, so the caller re-resolves it and names it here a second
+        time. Counting it would credit one resolution twice.
+
+        ``updated_at`` is passed in for the reason ``Domain`` gives, and applied
+        only when something moved: a call that resolved nothing is not a write.
+        """
+        moved = 0
+        for prior in priors:
+            if prior == ThreadState.RESOLVED:
+                continue
+            # Clamped rather than allowed to go negative: a count below zero
+            # would be read as a real tally by everything downstream, where a
+            # floor is at worst an undercount. It means the snapshot and the
+            # threads we resolved disagree, so say so instead of absorbing it.
+            if self.by_state.get(prior, 0) > 0:
+                self.by_state[prior] -= 1
+            else:
+                log.warn(
+                    f"Thread tally has no {prior} left to move — "
+                    "counts were snapshotted against a different thread set"
+                )
+            moved += 1
+        if not moved:
+            return
+        self.by_state[ThreadState.RESOLVED] = (
+            self.by_state.get(ThreadState.RESOLVED, 0) + moved
+        )
+        self.updated_at = updated_at
 
     def render_status(self) -> list[str]:
         if not self.updated_at:

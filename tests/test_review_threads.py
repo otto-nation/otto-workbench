@@ -42,7 +42,11 @@ from pr import triage
 from pr import triage_prompt
 from pr import history_rewrite
 from pr import permalinks
-from pr.comments_fix import FixSummary
+from pr import comments as pr_comments
+from pr import settlement
+from pr.comments_fix import (
+    RECONCILED_STATUS_TEXT, UNATTRIBUTED_STATUS_TEXT, FixSummary,
+)
 from pr.domains import SupersessionKind
 from pr.fix import (
     FixOutcome, FixRecord, ItemOutcome, RECONCILED_REASON, SETTLED_REASON,
@@ -1040,7 +1044,7 @@ class TestFixedStatusText:
         """"Fixed" and "nothing committed" cannot both be true."""
         cp = attribution.CommitPushResult(None, "no_changes", "")
         text = rt._fixed_status_text(cp, "owner/repo")
-        assert text == rt._UNATTRIBUTED_STATUS_TEXT
+        assert text == UNATTRIBUTED_STATUS_TEXT
         assert "no commit needed" not in text
 
     def test_commit_failed(self, rt):
@@ -1151,7 +1155,7 @@ class TestBuildSummaryBody:
         body = rt._build_summary_body(
             content(fixed=[self._fixed_entry()]), cp, "owner/repo", 1, {},
         )
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         assert "no commit needed" not in body
 
     def test_commit_failed_shows_precommit_hint(self, rt, content):
@@ -1690,7 +1694,7 @@ class TestSummaryUsesPerThreadCommit:
             id="t1", summary="fix regex", file="p.py", line=10,
             outcome=FixOutcome.FIXED,
         ))
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
 
     def test_each_round_keeps_its_own_attribution(self, rt):
         """The failure: one pass's envelope SHA relabelled every round."""
@@ -1736,7 +1740,7 @@ class TestSummaryUsesPerThreadCommit:
                           reason=RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
         assert "fixed**" not in body
         assert "1 settled elsewhere" in body
 
@@ -1754,7 +1758,7 @@ class TestSummaryUsesPerThreadCommit:
                           outcome=FixOutcome.FIXED),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         assert "Fixed in" not in body
         assert "/blob/def5678/a.py" in body
 
@@ -1862,7 +1866,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         assert "Fixed in" not in body
         assert "no commit needed" not in body
         # Where to look stays knowable even when who landed it does not: the
@@ -1882,7 +1886,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
         assert "bbb2222" not in body
 
     def test_a_still_unmoved_head_keeps_the_failure(self, rt):
@@ -1961,7 +1965,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         warned = int(re.search(
             r"(\d+) fixed row\(s\) have no commit", capsys.readouterr().err,
         ).group(1))
-        assert warned == body.count(rt._UNATTRIBUTED_STATUS_TEXT)
+        assert warned == body.count(UNATTRIBUTED_STATUS_TEXT)
 
     def test_the_folded_row_is_neither_counted_nor_rendered(self, rt, capsys):
         body = self._publish(rt, self._threads(rt))
@@ -1974,8 +1978,8 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         # Three rows carry no commit link; only two of them claim nothing. The
         # third says where its fix went, which is why "uncited" is the wrong
         # test and the rendered cell is the right one.
-        assert body.count(rt._RECONCILED_STATUS_TEXT) == 1
-        assert body.count(rt._UNATTRIBUTED_STATUS_TEXT) == 2
+        assert body.count(RECONCILED_STATUS_TEXT) == 1
+        assert body.count(UNATTRIBUTED_STATUS_TEXT) == 2
         assert "2 fixed row(s) have no commit" in err
 
     def test_a_table_with_nothing_to_report_stays_quiet(self, rt, capsys):
@@ -1983,7 +1987,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         body = self._publish(rt, [
             self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION),
         ])
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
         assert "no commit to attribute" not in capsys.readouterr().err
 
 
@@ -2481,7 +2485,7 @@ class TestFollowHistoryRewrite:
         logged = []
         with patch.object(rt.log, "info", side_effect=logged.append), \
                 patch.object(thread_replies, "reply_to_fixed", return_value=1) as reply, \
-                patch.object(rt, "_resolve_fixed_threads"):
+                patch.object(settlement, "resolve_fixed_threads"):
             history_rewrite.follow_history_rewrite(state, repo.path)
             rt._post_pending_fix_replies(state, "owner/repo", 42, {})
         assert not any("Push still pending" in m for m in logged)
@@ -2548,7 +2552,7 @@ class TestDeliverPrBody:
     """
 
     def _draft(self, rt, wt_path, body="A rewritten description.\n"):
-        path = rt._pr_body_draft(wt_path)
+        path = pr_comments.pr_body_draft(wt_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body)
         return path
@@ -2560,18 +2564,18 @@ class TestDeliverPrBody:
 
         draft = self._draft(rt, worktree)
         with patch("core.proc.subprocess.run", boom):
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is True
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is True
         assert draft.exists(), "the undelivered rewrite must survive for --finish"
 
     def test_the_gate_is_checked_at_the_write_not_by_the_caller(self, rt, worktree):
         """No `publishing.enabled()` guard here — the client refuses on its own.
 
-        `_deliver_pr_body` is called unconditionally by the fix pass. If the gate
+        `pc.deliver_pr_body` is called unconditionally by the fix pass. If the gate
         lived at the call site instead, this call would publish.
         """
         self._draft(rt, worktree)
         with patch.object(rt.pc, "_gh_post", return_value=CmdResult(1)) as post:
-            rt._deliver_pr_body(worktree, "owner/repo", 42)
+            pr_comments.deliver_pr_body(worktree, "owner/repo", 42)
         post.assert_called_once()
 
     def test_post_sends_it_through_the_pulls_endpoint(self, rt, worktree, publishing_on):
@@ -2581,7 +2585,7 @@ class TestDeliverPrBody:
             "core.proc.subprocess.run",
             lambda *a, **kw: calls.append(a[0]) or _make_completed(0),
         ):
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is False
         assert calls == [[
             "gh", "api", "repos/owner/repo/pulls/42",
             "--method", "PATCH", "--input", "-",
@@ -2590,18 +2594,18 @@ class TestDeliverPrBody:
     def test_a_delivered_rewrite_is_not_sent_twice(self, rt, worktree, publishing_on):
         draft = self._draft(rt, worktree)
         with patch.object(rt.pc, "update_pr_body", return_value=True):
-            rt._deliver_pr_body(worktree, "owner/repo", 42)
+            pr_comments.deliver_pr_body(worktree, "owner/repo", 42)
         assert not draft.exists()
 
     def test_the_fix_prompt_names_the_file_the_delivery_reads(self, rt, worktree):
-        """One path, two ends: the agent writes where `_deliver_pr_body` looks."""
+        """One path, two ends: the agent writes where `pc.deliver_pr_body` looks."""
         adapter = _fix_adapter(rt, worktree)
         adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
         adapter.tracking_path.write_text("")
         with patch.object(rt, "_find_and_update_main_worktree", return_value=None):
             prompt = fix_engine._prompt(adapter, 10)
 
-        assert str(rt._pr_body_draft(worktree)) in prompt
+        assert str(pr_comments.pr_body_draft(worktree)) in prompt
         assert "${pr_body_file}" not in prompt
 
     def test_no_draft_owes_nothing(self, rt, worktree):
@@ -2609,14 +2613,14 @@ class TestDeliverPrBody:
             raise AssertionError(f"a subprocess ran with nothing to send: {a}")
 
         with patch("core.proc.subprocess.run", boom):
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is False
 
     def test_an_empty_draft_is_discarded_rather_than_sent(self, rt, worktree,
                                                           publishing_on):
         """Sending it would blank the description the reviewer is reading."""
         draft = self._draft(rt, worktree, body="   \n")
         with patch.object(rt.pc, "update_pr_body") as update:
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is False
         update.assert_not_called()
         assert not draft.exists()
 
@@ -3665,7 +3669,7 @@ class TestFinishDeferredWork:
         self, rt, worktree, publishing_on,
     ):
         self._save(worktree, pr_body_pending=True)
-        draft = rt._pr_body_draft(worktree)
+        draft = pr_comments.pr_body_draft(worktree)
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_text("A rewritten description.\n")
         with patch.object(rt.pc, "update_pr_body", return_value=True) as update, \
@@ -3680,7 +3684,7 @@ class TestFinishDeferredWork:
 
     def test_a_description_nobody_drafted_is_not_looked_for(self, rt, worktree):
         self._save(worktree)
-        with patch.object(rt, "_deliver_pr_body") as deliver, \
+        with patch.object(rt.pc, "deliver_pr_body") as deliver, \
                 patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
@@ -3724,7 +3728,7 @@ class TestReconcileFixSnapshot:
         state = self._state()
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_reconciled_row_records_who_settled_it(self, rt):
@@ -3732,14 +3736,14 @@ class TestReconcileFixSnapshot:
         state = self._state()
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
-        rt._reconcile_fix_snapshot(state, threads)
+        settlement.reconcile_fix_snapshot(state, threads)
         assert state.fix.fix.items[0].settled_by is SettledBy.RECONCILIATION
 
     def test_an_addressed_thread_is_settled_but_not_claimed_as_fixed(self, rt):
         """Lifecycle state alone says as little as the resolve button does."""
         state = self._state()
         threads = {"t1": self._thread([{"body": "x"}], state=ThreadState.ADDRESSED)}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
     def test_thread_with_a_fix_reply_is_reclaimed_even_if_unresolved(self, rt):
@@ -3749,13 +3753,13 @@ class TestReconcileFixSnapshot:
             {"body": "please rename this"},
             {"body": "Applied: renamed the guard\n\nFixed in `abc1234`."},
         ])}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
     def test_genuinely_open_thread_stays_deferred(self, rt):
         state = self._state()
         threads = {"t1": self._thread([{"body": "please rename this"}])}
-        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.DEFERRED
 
     def test_a_deferred_reply_is_not_evidence_of_a_fix(self, rt):
@@ -3765,7 +3769,7 @@ class TestReconcileFixSnapshot:
             {"body": "please rename this"},
             {"body": "Deferred: rename the guard\n\nTracked in ENG-3021."},
         ])}
-        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.DEFERRED
 
     def test_a_thread_absent_from_github_stays_deferred(self, rt):
@@ -3776,7 +3780,7 @@ class TestReconcileFixSnapshot:
         and TestCommentItemsSettleThroughTheirSource covers what does settle it.
         """
         state = self._state()
-        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 0
+        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.DEFERRED
 
     def test_a_needs_human_thread_settled_by_hand_is_reclaimed(self, rt):
@@ -3791,7 +3795,7 @@ class TestReconcileFixSnapshot:
         ]))
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_needs_human_thread_still_open_is_left_alone(self, rt):
@@ -3799,7 +3803,7 @@ class TestReconcileFixSnapshot:
             ItemOutcome(id="t1", outcome=FixOutcome.NEEDS_HUMAN, reason="contested"),
         ]))
         threads = {"t1": self._thread([{"body": "why not do it the other way?"}])}
-        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
     def test_a_declined_thread_settled_by_hand_is_reclaimed(self, rt):
@@ -3814,7 +3818,7 @@ class TestReconcileFixSnapshot:
         ]))
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
         assert "reconciled" in state.fix.fix.items[0].reason
 
@@ -3824,7 +3828,7 @@ class TestReconcileFixSnapshot:
                           reason="the premise does not hold"),
         ]))
         threads = {"t1": self._thread([{"body": "why not do it the other way?"}])}
-        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.DECLINED
 
     def test_settled_outcomes_are_left_alone(self, rt):
@@ -3845,14 +3849,14 @@ class TestReconcileFixSnapshot:
                                   state=ThreadState.RESOLVED, is_resolved=True)
             for i in range(len(settled))
         }
-        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
         assert [t.outcome for t in state.fix.fix.items] == list(settled)
 
     def test_the_reason_records_why_it_flipped(self, rt):
         state = self._state()
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
-        rt._reconcile_fix_snapshot(state, threads)
+        settlement.reconcile_fix_snapshot(state, threads)
         assert "reconciled" in state.fix.fix.items[0].reason
 
 
@@ -4234,24 +4238,24 @@ class TestSettleFlagValidation:
     """A flag the recorded outcome will never read is refused, not ignored."""
 
     def test_a_dismissal_needs_its_reason(self, rt):
-        assert "--reason" in rt._settle_flag_error(FixOutcome.DISMISSED, "", "")
+        assert "--reason" in settlement.settle_flag_error(FixOutcome.DISMISSED, "", "")
 
     def test_a_dismissal_that_gives_the_reviewer_something_to_answer_passes(self, rt):
-        assert rt._settle_flag_error(FixOutcome.DISMISSED, "not our layer", "") == ""
+        assert settlement.settle_flag_error(FixOutcome.DISMISSED, "not our layer", "") == ""
 
     @pytest.mark.parametrize("kind", [FixOutcome.FIXED, FixOutcome.ALREADY_ADDRESSED])
     def test_a_reason_no_reply_renders_is_refused(self, rt, kind):
-        assert "--reason is only read" in rt._settle_flag_error(kind, "because", "")
+        assert "--reason is only read" in settlement.settle_flag_error(kind, "because", "")
 
     @pytest.mark.parametrize("kind,reason", [
         (FixOutcome.DISMISSED, "not our layer"),
         (FixOutcome.ALREADY_ADDRESSED, ""),
     ])
     def test_a_commit_no_row_cites_is_refused(self, rt, kind, reason):
-        assert "--commit is only read" in rt._settle_flag_error(kind, reason, "abc1234")
+        assert "--commit is only read" in settlement.settle_flag_error(kind, reason, "abc1234")
 
     def test_a_fix_may_name_the_commit_that_carries_it(self, rt):
-        assert rt._settle_flag_error(FixOutcome.FIXED, "", "abc1234") == ""
+        assert settlement.settle_flag_error(FixOutcome.FIXED, "", "abc1234") == ""
 
 
 class TestSettleTargets:
@@ -4265,23 +4269,23 @@ class TestSettleTargets:
         ])
 
     def test_resolves_the_named_outcomes(self, rt):
-        picked = rt._settle_targets(self._record(), ["t3", "t1"])
+        picked = settlement.settle_targets(self._record(), ["t3", "t1"])
         assert [o.id for o in picked] == ["t3", "t1"]
 
     def test_one_unknown_id_settles_none_of_them(self, rt, capsys):
         """"Settled nothing" and "settled the thread you meant" read alike."""
-        assert rt._settle_targets(self._record(), ["t1", "typo"]) is None
+        assert settlement.settle_targets(self._record(), ["t1", "typo"]) is None
         assert "typo" in capsys.readouterr().err
 
     def test_the_error_names_the_threads_still_waiting_on_a_person(self, rt, capsys):
-        rt._settle_targets(self._record(), ["typo"])
+        settlement.settle_targets(self._record(), ["typo"])
         err = capsys.readouterr().err
         assert "t1, t3" in err
         assert "t2" not in err
 
     def test_a_snapshot_with_nothing_left_to_settle_says_so(self, rt, capsys):
         record = FixRecord(items=[ItemOutcome(id="t2", outcome=FixOutcome.FIXED)])
-        assert rt._settle_targets(record, ["typo"]) is None
+        assert settlement.settle_targets(record, ["typo"]) is None
         assert "No thread in the fix snapshot is waiting" in capsys.readouterr().err
 
 
@@ -4294,31 +4298,31 @@ class TestRecordSettlement:
     def test_a_dismissal_carries_the_operators_own_words(self, rt):
         """Its reply is the one a reviewer may argue with, so it is theirs to write."""
         outcome = self._outcome()
-        assert rt._record_settlement(outcome, FixOutcome.DISMISSED, "not our layer", "")
+        assert settlement.record_settlement(outcome, FixOutcome.DISMISSED, "not our layer", "")
         assert outcome.outcome is FixOutcome.DISMISSED
         assert outcome.reason == "not our layer"
 
     def test_a_fix_records_where_the_settlement_came_from(self, rt):
         outcome = self._outcome()
-        assert rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
         assert outcome.reason == SETTLED_REASON
         assert outcome.commit_sha == "abc1234"
 
     def test_saying_the_same_thing_twice_is_a_no_op(self, rt):
         outcome = self._outcome()
-        rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
-        assert rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234") is False
+        settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234") is False
 
     def test_a_commit_that_has_since_become_resolvable_is_a_change(self, rt):
         """Reporting it as a no-op would leave a row uncited that can now cite."""
         outcome = self._outcome()
-        rt._record_settlement(outcome, FixOutcome.FIXED, "", "")
-        assert rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        settlement.record_settlement(outcome, FixOutcome.FIXED, "", "")
+        assert settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
 
     def test_an_earlier_attribution_survives_a_re_settle_that_found_none(self, rt):
         outcome = self._outcome()
-        rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
-        rt._record_settlement(outcome, FixOutcome.FIXED, "", "")
+        settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        settlement.record_settlement(outcome, FixOutcome.FIXED, "", "")
         assert outcome.commit_sha == "abc1234"
 
     @pytest.mark.parametrize("kind,reason", [
@@ -4330,8 +4334,8 @@ class TestRecordSettlement:
     ):
         """"Dismissed, fixed in abc1234" is not a state the operator can have meant."""
         outcome = self._outcome()
-        rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
-        assert rt._record_settlement(outcome, kind, reason, "")
+        settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert settlement.record_settlement(outcome, kind, reason, "")
         assert outcome.commit_sha == ""
 
 
@@ -4345,7 +4349,7 @@ class TestResolveSettledCommit:
     def test_infers_the_commit_that_changed_the_threads_own_line(self, rt, tmp_path):
         repo = _hand_fixed(tmp_path)
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
-            resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "")
+            resolved = settlement.resolve_settled_commit(repo.path, self._outcome(), "")
         assert resolved.ok
         assert resolved.sha == repo.sha[:7]
 
@@ -4353,27 +4357,27 @@ class TestResolveSettledCommit:
         """A link into a commit the remote never saw is a 404 for the reviewer."""
         repo = _hand_fixed(tmp_path, pushed=False)
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
-            resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "")
+            resolved = settlement.resolve_settled_commit(repo.path, self._outcome(), "")
         assert resolved.ok
         assert resolved.sha == ""
 
     def test_a_thread_with_no_line_cites_nothing_and_is_no_error(self, rt, tmp_path):
         repo = _hand_fixed(tmp_path)
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
-            resolved = rt._resolve_settled_commit(repo.path, self._outcome(line=0), "")
+            resolved = settlement.resolve_settled_commit(repo.path, self._outcome(line=0), "")
         assert resolved.ok
         assert resolved.sha == ""
 
     def test_a_commit_this_worktree_does_not_have_stops_the_run(self, rt, tmp_path):
         repo = _hand_fixed(tmp_path)
-        resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "nosuchref")
+        resolved = settlement.resolve_settled_commit(repo.path, self._outcome(), "nosuchref")
         assert not resolved.ok
         assert "nosuchref" in resolved.error
 
     def test_an_unpushed_commit_the_operator_named_stops_the_run(self, rt, tmp_path):
         """They asked for this citation, so declining it quietly is the wrong answer."""
         repo = _hand_fixed(tmp_path, pushed=False)
-        resolved = rt._resolve_settled_commit(repo.path, self._outcome(), repo.sha)
+        resolved = settlement.resolve_settled_commit(repo.path, self._outcome(), repo.sha)
         assert not resolved.ok
         assert "404" in resolved.error
 
@@ -4381,7 +4385,7 @@ class TestResolveSettledCommit:
         """The point of --commit: a fix that landed away from the anchored line."""
         repo = _hand_fixed(tmp_path)
         with patch.object(attribution, "find_addressing_commit") as infer:
-            resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "HEAD")
+            resolved = settlement.resolve_settled_commit(repo.path, self._outcome(), "HEAD")
         infer.assert_not_called()
         assert resolved.sha == repo.sha[:7]
 
@@ -4406,13 +4410,13 @@ class TestRunSettle:
         return pr_state.load_state(ctx.target_dir).fix
 
     def _resolves_to(self, rt, sha):
-        return patch.object(rt, "_resolve_settled_commit",
-                            return_value=rt._SettledCommit(sha=sha))
+        return patch.object(settlement, "resolve_settled_commit",
+                            return_value=settlement.SettledCommit(sha=sha))
 
     def test_a_settled_thread_rejoins_the_ordinary_closeout(self, rt, tmp_path):
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human())
-        assert rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "") == 0
+        assert settlement.run_settle(ctx, ["t1"], "dismissed", "not our layer", "") == 0
         fix = self._reload(ctx)
         assert fix.fix.items[0].outcome is FixOutcome.DISMISSED
         assert fix.fix.items[0].reason == "not our layer"
@@ -4425,7 +4429,7 @@ class TestRunSettle:
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human())
         with self._resolves_to(rt, "abc1234"):
-            assert rt._run_settle(ctx, ["t1"], "fixed", "", "") == 0
+            assert settlement.run_settle(ctx, ["t1"], "fixed", "", "") == 0
         outcome = self._reload(ctx).fix.items[0]
         assert outcome.outcome is FixOutcome.FIXED
         assert outcome.commit_sha == "abc1234"
@@ -4435,25 +4439,25 @@ class TestRunSettle:
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human())
         with patch("core.proc.subprocess.run") as run:
-            assert rt._run_settle(ctx, ["t1"], "already_addressed", "", "") == 0
+            assert settlement.run_settle(ctx, ["t1"], "already_addressed", "", "") == 0
         run.assert_not_called()
         assert rt.pr_comments_fix.CLOSEOUT_COMMAND in capsys.readouterr().err
 
     def test_a_dismissal_with_no_reason_writes_nothing(self, rt, tmp_path):
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human())
-        assert rt._run_settle(ctx, ["t1"], "dismissed", "", "") == 1
+        assert settlement.run_settle(ctx, ["t1"], "dismissed", "", "") == 1
         assert self._reload(ctx).fix.items[0].outcome is FixOutcome.NEEDS_HUMAN
 
     def test_no_fix_snapshot_names_the_pass_that_makes_one(self, rt, tmp_path, capsys):
-        assert rt._run_settle(self._ctx(tmp_path), ["t1"], "fixed", "", "") == 1
+        assert settlement.run_settle(self._ctx(tmp_path), ["t1"], "fixed", "", "") == 1
         assert "pr comments --fix" in capsys.readouterr().err
 
     def test_an_unknown_id_leaves_every_other_thread_alone(self, rt, tmp_path):
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human("t1"), self._needs_human("t2"))
         with self._resolves_to(rt, "abc1234"):
-            assert rt._run_settle(ctx, ["t1", "typo"], "fixed", "", "") == 1
+            assert settlement.run_settle(ctx, ["t1", "typo"], "fixed", "", "") == 1
         assert [o.outcome for o in self._reload(ctx).fix.items] == \
             [FixOutcome.NEEDS_HUMAN] * 2
 
@@ -4461,10 +4465,10 @@ class TestRunSettle:
         """Half a run recorded is the state surgery this command exists to replace."""
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human("t1"), self._needs_human("t2"))
-        answers = [rt._SettledCommit(sha="abc1234"),
-                   rt._SettledCommit(error="--commit names no commit")]
-        with patch.object(rt, "_resolve_settled_commit", side_effect=answers):
-            assert rt._run_settle(ctx, ["t1", "t2"], "fixed", "", "") == 1
+        answers = [settlement.SettledCommit(sha="abc1234"),
+                   settlement.SettledCommit(error="--commit names no commit")]
+        with patch.object(settlement, "resolve_settled_commit", side_effect=answers):
+            assert settlement.run_settle(ctx, ["t1", "t2"], "fixed", "", "") == 1
         assert [o.outcome for o in self._reload(ctx).fix.items] == \
             [FixOutcome.NEEDS_HUMAN] * 2
 
@@ -4473,11 +4477,11 @@ class TestRunSettle:
     ):
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human())
-        rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "")
+        settlement.run_settle(ctx, ["t1"], "dismissed", "not our layer", "")
         state_file = ctx.target_dir / pr_state.STATE_FILE
         before = state_file.read_text()
         capsys.readouterr()
-        assert rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "") == 0
+        assert settlement.run_settle(ctx, ["t1"], "dismissed", "not our layer", "") == 0
         assert "already recorded as dismissed" in capsys.readouterr().err
         assert state_file.read_text() == before
 
@@ -4486,10 +4490,10 @@ class TestRunSettle:
     ):
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human())
-        rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "")
+        settlement.run_settle(ctx, ["t1"], "dismissed", "not our layer", "")
         capsys.readouterr()
         with self._resolves_to(rt, "abc1234"):
-            assert rt._run_settle(ctx, ["t1"], "fixed", "", "") == 0
+            assert settlement.run_settle(ctx, ["t1"], "fixed", "", "") == 0
         assert "(was dismissed)" in capsys.readouterr().err
         assert self._reload(ctx).fix.items[0].outcome is FixOutcome.FIXED
 
@@ -4499,9 +4503,9 @@ class TestRunSettle:
         ctx = self._ctx(tmp_path)
         self._save(ctx, self._needs_human())
         with self._resolves_to(rt, ""):
-            assert rt._run_settle(ctx, ["t1"], "fixed", "", "") == 0
+            assert settlement.run_settle(ctx, ["t1"], "fixed", "", "") == 0
         err = capsys.readouterr().err
-        assert rt._RECONCILED_STATUS_TEXT in err
+        assert RECONCILED_STATUS_TEXT in err
         assert "--commit" in err
 
 
@@ -4533,7 +4537,7 @@ class TestSettleIsNotAPublishingPhase:
         """Nothing here was ever going to be posted, drafted or otherwise."""
         with patch.object(sys, "argv", ["review-threads", "--settle", "t1"]), \
              patch.object(rt.pr_context, "resolve", return_value=make_ctx()), \
-             patch.object(rt, "_run_settle", return_value=0) as settle, \
+             patch.object(settlement, "run_settle", return_value=0) as settle, \
              pytest.raises(SystemExit) as exc:
             rt.main()
         assert exc.value.code == 0
@@ -4549,8 +4553,8 @@ class TestSettledRowsAreNotCreditedToThePass:
                             settled_by=SettledBy.OPERATOR)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = rt._fixed_status_for(entry, cp, "owner/repo")
-        assert cell == rt._RECONCILED_STATUS_TEXT
-        assert cell != rt._UNATTRIBUTED_STATUS_TEXT
+        assert cell == RECONCILED_STATUS_TEXT
+        assert cell != UNATTRIBUTED_STATUS_TEXT
 
     def test_a_settled_row_that_resolved_a_commit_cites_that_one(self, rt):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
@@ -4571,7 +4575,7 @@ class TestSettledRowsAreNotCreditedToThePass:
                             reason=RECONCILED_REASON)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         assert rt._fixed_status_for(entry, cp, "owner/repo") == (
-            rt._UNATTRIBUTED_STATUS_TEXT
+            UNATTRIBUTED_STATUS_TEXT
         )
 
 
@@ -4901,7 +4905,7 @@ class TestReplyEvidence:
         ) == ""
 
 
-# ── _resolve_fixed_threads ────────────────────────────────────────────────
+# ── settlement.resolve_fixed_threads ──────────────────────────────────────
 
 
 class TestResolveFixedThreads:
@@ -4913,7 +4917,7 @@ class TestResolveFixedThreads:
             "t2": ReportThread(id="t2", state=ThreadState.ADDRESSED, is_resolved=False),
         }
         with patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
-            resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
+            resolved = settlement.resolve_fixed_threads(fixed, threads_by_id)
         assert resolved == [ThreadState.NEW, ThreadState.ADDRESSED]
         assert mock_resolve.call_count == 2
 
@@ -4921,7 +4925,7 @@ class TestResolveFixedThreads:
         fixed = [CommentItem(id="t1")]
         threads_by_id = {"t1": ReportThread(id="t1", is_resolved=True)}
         with patch("pr.comments.resolve_thread") as mock_resolve:
-            resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
+            resolved = settlement.resolve_fixed_threads(fixed, threads_by_id)
         assert resolved == []
         mock_resolve.assert_not_called()
 
@@ -4934,7 +4938,7 @@ class TestResolveFixedThreads:
         """
         fixed = [CommentItem(id="ic-123")]
         with patch("pr.comments.resolve_thread") as mock_resolve:
-            resolved = rt._resolve_fixed_threads(fixed, {})
+            resolved = settlement.resolve_fixed_threads(fixed, {})
         assert resolved == []
         mock_resolve.assert_not_called()
 
@@ -4950,7 +4954,7 @@ class TestResolveFixedThreads:
             "t2": ReportThread(id="t2", state=ThreadState.ADDRESSED),
         }
         with patch("pr.comments.resolve_thread", side_effect=[True, False]):
-            resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
+            resolved = settlement.resolve_fixed_threads(fixed, threads_by_id)
         assert resolved == [ThreadState.NEW]
 
     def test_a_second_pass_over_the_same_threads_moves_nothing(self, rt):
@@ -4967,8 +4971,8 @@ class TestResolveFixedThreads:
             "t2": ReportThread(id="t2", state=ThreadState.ADDRESSED),
         }
         with patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
-            first = rt._resolve_fixed_threads(fixed, threads_by_id)
-            second = rt._resolve_fixed_threads(fixed, threads_by_id)
+            first = settlement.resolve_fixed_threads(fixed, threads_by_id)
+            second = settlement.resolve_fixed_threads(fixed, threads_by_id)
         assert first == [ThreadState.NEW, ThreadState.ADDRESSED]
         assert second == []
         assert mock_resolve.call_count == 2
@@ -4982,7 +4986,7 @@ class TestResolveFixedThreads:
         fixed = [CommentItem(id="t1")]
         threads_by_id = {"t1": ReportThread(id="t1", state=ThreadState.NEW)}
         with patch("pr.comments.resolve_thread", return_value=False):
-            rt._resolve_fixed_threads(fixed, threads_by_id)
+            settlement.resolve_fixed_threads(fixed, threads_by_id)
         assert threads_by_id["t1"].is_resolved is False
 
 
@@ -6002,7 +6006,7 @@ class TestActionCellOutcome:
         wordings, because one round resolved a commit and the next did not."""
         cited = rt._fixed_in_cell("9f2e1a0", "owner/repo")
         assert rt._action_outcome(cited) is rt._action_outcome(
-            rt._UNATTRIBUTED_STATUS_TEXT)
+            UNATTRIBUTED_STATUS_TEXT)
 
     def test_every_human_reason_prose_reads_as_open(self, rt):
         for reason in rt.HumanReason:
@@ -7262,7 +7266,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
 
     def test_a_settled_row_declines_it_too(self, rt, content, hand_landed_branch):
         """`--settle` already promises this cell when no commit resolves."""
@@ -7272,7 +7276,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
 
     def test_the_reply_declines_the_commit_the_table_declined(
         self, rt, hand_landed_branch,
@@ -7465,7 +7469,7 @@ class TestOneHandLandedCommitIsStillAskedOfEachRow:
             {"t3": _reviewed("t3", 333)},
         )
         assert "Fixed in [`" not in body
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         # Where to look stays knowable even when who landed it does not: the
         # file cell pins the tree that holds the work.
         assert f"/blob/{branch.landed[:7]}/a.py" in body
@@ -7486,7 +7490,7 @@ class TestOneHandLandedCommitIsStillAskedOfEachRow:
         )
         body = _summary_over(rt, content, branch, [entry], {})
         assert "Fixed in [`" not in body
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
 
     def test_the_reply_names_the_commit_the_table_names(
         self, rt, one_hand_landed_commit,
@@ -7766,7 +7770,7 @@ class TestWorktreeGuard:
     def test_settle_exits_before_reading_the_snapshot(self, rt, capsys):
         """A settled fix is attributed to a commit, which needs a checkout to find."""
         assert_no_worktree_exit(capsys, "isaac/feat/x",
-                                rt._run_settle, self._ctx(), ["t1"], "fixed", "", "")
+                                settlement.run_settle, self._ctx(), ["t1"], "fixed", "", "")
 
 
 class TestCommentTrackingRoundTrip:
@@ -7996,51 +8000,51 @@ class TestAnsweredCommentSources:
 
     def test_our_handled_reply_marks_its_source_answered(self, rt):
         with _fetches([_our_reply("#issuecomment-77")]):
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset({"77"})
 
     def test_the_listing_is_asked_to_keep_our_own_comments(self, rt):
         """The reply being looked for is ours, so the self filter has to be off."""
         with _fetches([_our_reply("#issuecomment-77")]) as fetch:
-            rt._answered_comment_sources(self._outcomes(), "owner/repo", 42, "me")
+            settlement.answered_comment_sources(self._outcomes(), "owner/repo", 42, "me")
         assert fetch.call_args.kwargs["include_self"] is True
 
     def test_a_review_body_is_answered_through_its_own_anchor(self, rt):
         with _fetches([_our_reply("#pullrequestreview-88")]):
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 self._outcomes(iid="rb-88-1"), "owner/repo", 42, "me")
         assert answered == frozenset({"88"})
 
     def test_the_login_match_ignores_case(self, rt):
         with _fetches([_our_reply("#issuecomment-77", user="Me")]):
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset({"77"})
 
     def test_the_reviewer_restating_their_point_is_not_an_answer(self, rt):
         with _fetches([_our_reply("#issuecomment-77", user="kgn")]):
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset()
 
     def test_a_deferred_reply_says_the_opposite(self, rt):
         """Same carve-out the thread evidence makes — it is not a settlement."""
         with _fetches([_our_reply("#issuecomment-77", prefix="Deferred:")]):
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset()
 
     def test_a_reply_that_cites_nothing_settles_nothing(self, rt):
         with _fetches([{"user": "me", "body": "Applied: drop the retry"}]):
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset()
 
     def test_a_non_comment_item_is_not_worth_a_listing(self, rt):
         """`t1` is open, but a thread-shaped id has no source comment to read."""
         with _fetches([]) as fetch:
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 [ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED)],
                 "owner/repo", 42, "me")
         assert answered == frozenset()
@@ -8048,13 +8052,13 @@ class TestAnsweredCommentSources:
 
     def test_a_settled_item_is_not_worth_a_listing_either(self, rt):
         with _fetches([]) as fetch:
-            rt._answered_comment_sources(
+            settlement.answered_comment_sources(
                 self._outcomes(outcome=FixOutcome.FIXED), "owner/repo", 42, "me")
         fetch.assert_not_called()
 
     def test_without_our_login_no_reply_can_be_called_ours(self, rt):
         with _fetches([_our_reply("#issuecomment-77")]) as fetch:
-            answered = rt._answered_comment_sources(
+            answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "")
         assert answered == frozenset()
         fetch.assert_not_called()
@@ -8072,28 +8076,28 @@ class TestCommentItemsSettleThroughTheirSource:
 
     def test_an_answered_item_reconciles_to_fixed(self, rt):
         state = self._state()
-        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
+        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
         assert "reconciled" in state.fix.fix.items[0].reason
 
     def test_a_deferred_item_reconciles_the_same_way(self, rt):
         state = self._state(outcome=FixOutcome.DEFERRED)
-        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
+        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
     def test_a_review_body_item_reconciles_through_its_review(self, rt):
         state = self._state(iid="rb-88-1")
-        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"88"})) == 1
+        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"88"})) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
     def test_an_answer_to_another_comment_is_not_this_items_answer(self, rt):
         state = self._state()
-        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"99"})) == 0
+        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"99"})) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
     def test_an_unanswered_item_still_holds_the_summary_back(self, rt, content):
         state = self._state()
-        assert rt._reconcile_fix_snapshot(state, {}, frozenset()) == 0
+        assert settlement.reconcile_fix_snapshot(state, {}, frozenset()) == 0
         needs_human = [t for t in state.fix.fix.items
                        if t.outcome == FixOutcome.NEEDS_HUMAN]
         assert needs_human
@@ -8112,7 +8116,7 @@ class TestCommentItemsSettleThroughTheirSource:
             id="t1", file="a.go", line=7, reviewer="kgn",
             state=ThreadState.RESOLVED, is_resolved=True, comments=[{"body": "x"}],
         )}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
     def test_an_item_restating_a_thread_we_replied_to_inherits_the_fix(self, rt):
@@ -8123,7 +8127,7 @@ class TestCommentItemsSettleThroughTheirSource:
             state=ThreadState.NEW, is_resolved=False,
             comments=[{"body": "Applied: dropped the retry\n\nFixed in `abc1234`."}],
         )}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
     @pytest.mark.parametrize("resolved_first", [True, False])
@@ -8147,7 +8151,7 @@ class TestCommentItemsSettleThroughTheirSource:
         )
         pair = [resolved, answered] if resolved_first else [answered, resolved]
         threads = {t.id: t for t in pair}
-        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert settlement.reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
     def test_an_item_restating_an_open_thread_stays_open(self, rt):
@@ -8157,7 +8161,7 @@ class TestCommentItemsSettleThroughTheirSource:
             state=ThreadState.NEW, is_resolved=False,
             comments=[{"body": "why not the other way?"}],
         )}
-        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
     def test_a_settled_thread_elsewhere_settles_nothing_here(self, rt):
@@ -8166,7 +8170,7 @@ class TestCommentItemsSettleThroughTheirSource:
             id="t1", file="b.go", line=3, reviewer="kgn",
             state=ThreadState.RESOLVED, is_resolved=True, comments=[{"body": "x"}],
         )}
-        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
 

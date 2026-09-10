@@ -46,6 +46,14 @@ GENERATED_REPLY_PREFIXES = (
     DISMISSED_REPLY_PREFIX,
     DEFERRED_REPLY_PREFIX,
 )
+# The subset that says the thread was handled. DEFERRED_REPLY_PREFIX is
+# deliberately absent: it says the opposite, and counting it would make every
+# thread reconcile itself on the second --finish. Derived rather than listed,
+# so a fifth generated opening joins this set instead of silently missing it.
+HANDLED_REPLY_PREFIXES = tuple(
+    prefix for prefix in GENERATED_REPLY_PREFIXES
+    if prefix != DEFERRED_REPLY_PREFIX
+)
 # Every trailing paragraph a generated reply can have: one sentence naming a
 # commit, a file, or an issue. Kept in step with the four body_fn builders
 # below — a new trailing line there needs its opening added here, or the reply

@@ -269,7 +269,7 @@ def finding_location(entry: CommentItem | ReportThread) -> str:
     # dropped from the carried-over set rather than preserved.
     # Upgrade trigger: once a reviewer's separate findings on a single line are
     # seen collapsing, compare the summaries too rather than the location alone.
-    line = getattr(entry, "line", 0) or 0
+    line = entry.line or 0
     if not entry.file or not line:
         return ""
     return f"{entry.reviewer}|{entry.file}:{line}"

@@ -30,9 +30,6 @@ from pr.comments_state import ThreadState  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
-_REPO = "owner/repo"
-_PR = 42
-
 
 def _thread(
     *, tid="t1", state=ThreadState.NEW, is_resolved=False, bodies=(),

@@ -64,7 +64,15 @@ _AGENT_ERROR_PREFIX = "agent error:"
 # so no amount of retrying or recovery helps. Matched against `Diagnosis.detail`
 # the way `_TRANSIENT_ERROR_MARKERS` is — the error text is free-form, and these
 # are the fragments of it that carry a verdict.
-_NON_RECOVERABLE_ERROR_MARKERS = ("permission denied",)
+#
+# "prompt is too long" is the API rejecting a prompt the local budget passed.
+# The two disagree because the budget counts bytes at an assumed four per token
+# while real review content — CSV fixtures, dense source — runs closer to two
+# and a half, so a prompt inside the byte ceiling can be well past the token
+# one. It is the same verdict as `PROMPT_TOO_LARGE` below and earns the same
+# answer: recovery re-renders the same phase from the same commit and produces
+# a prompt the API rejects identically.
+_NON_RECOVERABLE_ERROR_MARKERS = ("permission denied", "prompt is too long")
 
 _DIAGNOSIS_MESSAGES = {
     DiagnosisKind.QUOTA_EXHAUSTED: "quota exhausted (429)",

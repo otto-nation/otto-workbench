@@ -271,6 +271,9 @@ def _update_review_state(summary_data: dict,
         verdict=summary_data.get("verdict", ""),
         status=summary_data.get("status", pr_domains.ReviewStatus.COMPLETED.value),
         failure_detail=summary_data.get("failure_detail", ""),
+        # No default: a summary with no verdict is unknown, not "not
+        # recoverable", and only an explicit False suppresses the recover hint.
+        recoverable=summary_data.get("recoverable"),
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),
     ))

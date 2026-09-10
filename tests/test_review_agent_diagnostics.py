@@ -217,6 +217,24 @@ class TestDiagnosisRecoverable:
     def test_turn_exhaustion_is_recoverable(self):
         assert Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS).recoverable
 
+    def test_prompt_rejected_by_the_api_is_not_recoverable(self):
+        """The API's own refusal reads the same as the local budget's.
+
+        A prompt inside the byte ceiling can still exceed the token limit, so
+        this arrives as a backend error rather than as `PROMPT_TOO_LARGE`.
+        Recovery re-renders the same phase from the same commit, so it is the
+        same prompt and the same refusal.
+        """
+        diagnosis = Diagnosis(
+            DiagnosisKind.AGENT_ERROR, detail="API Error: Prompt is too long",
+        )
+        assert not diagnosis.recoverable
+
+    def test_local_budget_refusal_is_not_recoverable(self):
+        assert not Diagnosis(
+            DiagnosisKind.PROMPT_TOO_LARGE, detail="group prompt is 512KB",
+        ).recoverable
+
 
 class TestSinglePassRead:
     def test_diagnosis_reads_the_log_once(self, tmp_path, monkeypatch):

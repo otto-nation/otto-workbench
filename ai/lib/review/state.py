@@ -209,6 +209,26 @@ def build_failure_detail(review_dir: Path | None) -> str:
     return "; ".join(parts)
 
 
+def _any_recoverable(state: "PipelineState") -> bool:
+    """Whether any of *state*'s failures is worth another attempt."""
+    return any(
+        d.recoverable
+        for d in list(state.groups_failed.values()) + list(state.failed.values())
+    )
+
+
+def build_recoverable(review_dir: Path | None) -> bool:
+    """Whether `pr review --recover` could do better than the run in *review_dir*.
+
+    The same question `build_failures_body` answers when it decides whether to
+    print the recover hint, exposed for the state file so a consumer that reads
+    the summary rather than the review document gets the identical verdict. A
+    run with nothing failed answers False: there is nothing to retry.
+    """
+    state = PipelineState.load(review_dir)
+    return _any_recoverable(state) if state else False
+
+
 # ── Persistence and recovery ─────────────────────────────────────────────────
 
 
@@ -307,11 +327,7 @@ def build_failures_body(state: "PipelineState") -> str:
     for agent, reason, status in rows:
         lines.append(f"| {agent} | {reason} | {status} |")
 
-    recoverable = [
-        d.recoverable
-        for d in list(state.groups_failed.values()) + list(state.failed.values())
-    ]
-    if any(recoverable):
+    if _any_recoverable(state):
         lines.append("")
         lines.append("Run `pr review --recover` to retry failed agents.")
 

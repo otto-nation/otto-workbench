@@ -285,8 +285,7 @@ cmd_install() {
   update_path_in_shell_rc
 
   # Run pending migrations after core sync, before optional components.
-  echo
-  info "Migrations"
+  sync_header "Migrations"
   run_all_migrations
 
   echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
@@ -316,6 +315,7 @@ cmd_sync() {
   export WORKBENCH_INSTALL_LOG
   trap 'rm -f "$WORKBENCH_INSTALL_LOG"' EXIT
 
+  sync_header "Migrations"
   run_all_migrations
 
   # Sync components — respects installation state when a state file exists.
@@ -547,8 +547,8 @@ EOF
   # pending rename that has not run yet is a file this sync reads under names it
   # no longer carries. Skipping them here made this the one path that could act
   # on a half-migrated machine.
+  sync_header "Migrations"
   run_all_migrations
-  echo
 
   sync_ai
   echo

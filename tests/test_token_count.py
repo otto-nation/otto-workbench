@@ -38,6 +38,17 @@ def _response(payload: dict):
     return _Resp(json.dumps(payload).encode())
 
 
+def _capturing_urlopen(tokens: int = 7):
+    """A urlopen stand-in and the dict it records the request body into."""
+    captured: dict = {}
+
+    def _capture(req, **kwargs):
+        captured["body"] = json.loads(req.data)
+        return _response({"input_tokens": tokens})
+
+    return captured, _capture
+
+
 # ── access_token ───────────────────────────────────────────────────────
 
 
@@ -134,14 +145,9 @@ class TestCountTokens:
     def test_system_and_tools_are_counted_when_given(self, monkeypatch):
         """The overhead a prompt is charged beyond its own text is measurable."""
         _on_vertex(monkeypatch)
-        captured = {}
-
-        def _capture(req, **kwargs):
-            captured["body"] = json.loads(req.data)
-            return _response({"input_tokens": 7})
-
+        captured, urlopen = _capturing_urlopen()
         with patch("agent.token_count.access_token", return_value="tok"), \
-             patch("urllib.request.urlopen", side_effect=_capture):
+             patch("urllib.request.urlopen", side_effect=urlopen):
             tc.count_tokens(
                 "text", "claude-sonnet-5",
                 system="You review code.",
@@ -154,14 +160,9 @@ class TestCountTokens:
     def test_omits_system_and_tools_when_absent(self, monkeypatch):
         """An empty system prompt is not the same as one worth counting."""
         _on_vertex(monkeypatch)
-        captured = {}
-
-        def _capture(req, **kwargs):
-            captured["body"] = json.loads(req.data)
-            return _response({"input_tokens": 7})
-
+        captured, urlopen = _capturing_urlopen()
         with patch("agent.token_count.access_token", return_value="tok"), \
-             patch("urllib.request.urlopen", side_effect=_capture):
+             patch("urllib.request.urlopen", side_effect=urlopen):
             tc.count_tokens("text", "claude-sonnet-5")
         assert "system" not in captured["body"]
         assert "tools" not in captured["body"]

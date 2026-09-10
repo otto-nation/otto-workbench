@@ -619,6 +619,15 @@ class TestPromptTokenTelemetry:
         assert "prompt_tokens" not in stats
         assert "bytes_per_token" not in stats
 
+    def test_a_zero_count_records_no_density(self, tmp_path, monkeypatch):
+        """Zero is a count, but it is not a density — and must not divide."""
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        with patch("review.prompt.count_tokens", return_value=0):
+            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        stats = self._stats(tmp_path)
+        assert stats["prompt_tokens"] == 0
+        assert "bytes_per_token" not in stats
+
     def test_counts_against_the_model_the_phase_will_use(self, tmp_path, monkeypatch):
         """A count against another tokenizer is worse than no count at all."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")

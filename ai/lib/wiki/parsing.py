@@ -34,14 +34,20 @@ CONTRADICTION_RE = re.compile(r"\[CONTRADICTION\]", re.IGNORECASE)
 # two combined, and nothing looser. A second bracket group ahead of the bullet
 # would also match, but no writer produces that order and matching it would only
 # widen what counts as an entry.
+# A marker is only an entry when it carries the colon the reference format
+# writes (`[{DATE}] QUERY_GAP: "{question}"`). `\b` alone would also match
+# prose that merely mentions the word, and — because `_QUERY_GAP_RE` below
+# does require the colon — a bare mention would be counted as unprocessed by
+# `wiki lint` while `wiki signals` could extract no question from it, leaving
+# the two commands reporting different numbers for the same log.
 _LOG_UNPROCESSED_RE = re.compile(
-    r"^\s*(?:[-*]\s*)?(?:\[[^\]]*\]\s*)?(SESSION_OBSERVATION|QUERY_GAP)\b",
+    r"^\s*(?:[-*]\s*)?(?:\[[^\]]*\]\s*)?(SESSION_OBSERVATION|QUERY_GAP):",
 )
 
 # The question a QUERY_GAP entry records, for clustering. Quoted when the
 # reference format was followed; the rest of the line when it was not. The
-# prefix matches `_LOG_UNPROCESSED_RE` exactly, so a line that counts as an
-# unprocessed entry is always one this can extract a question from.
+# prefix matches `_LOG_UNPROCESSED_RE`, colon included, so a line that counts
+# as an unprocessed entry is always one this can extract a question from.
 _QUERY_GAP_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(?:\[([^\]]*)\]\s*)?QUERY_GAP:\s*(.*)$"
 )

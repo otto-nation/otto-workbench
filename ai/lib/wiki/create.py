@@ -197,6 +197,12 @@ def archive_article(wiki: Wiki, slug: str, force: bool = False) -> ArchiveResult
     is a wiki whose live articles point at retired content without saying so.
     With *force*, the link survives as a deliberate tombstone and `wiki lint`
     reports it as `archived-link` from then on.
+
+    Only published articles block the move; a draft linking here does not.
+    A draft is not yet a claim anyone relies on, so it should not stop the
+    author retiring something. `wiki lint`'s `archived-link` check is the
+    wider net and does scan drafts, so the link is still reported — later,
+    and as a warning rather than a refusal.
     """
     article = next((a for a in wiki.articles if a.slug == slug), None)
     if article is None:

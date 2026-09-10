@@ -1040,6 +1040,20 @@ class TestArchivedArticlesInLint:
 
 
 class TestQueryGapParsing:
+    def test_a_marker_without_its_colon_is_not_an_entry(self, tmp_path):
+        """`wiki lint` counts unprocessed entries and `wiki signals` extracts
+        questions from them; if one accepted a bare marker the other rejects,
+        the two commands would report different numbers for the same log."""
+        root = make_wiki(tmp_path)
+        write_log(root, "- QUERY_GAP no colon here")
+        assert wiki.Wiki(root).unprocessed_log_entries() == []
+        assert wiki.Wiki(root).query_gaps() == []
+
+    def test_prose_mentioning_a_marker_is_not_an_entry(self, tmp_path):
+        root = make_wiki(tmp_path)
+        write_log(root, "we should log a QUERY_GAP for this someday")
+        assert wiki.Wiki(root).unprocessed_log_entries() == []
+
     def test_dated_entries_are_recognised(self, tmp_path):
         """The documented format is date-prefixed, which the old anchor missed."""
         root = make_wiki(tmp_path)

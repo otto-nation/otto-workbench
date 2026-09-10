@@ -108,10 +108,11 @@ def slugify_title(title: str) -> str:
 def init_wiki(root: Path, domain: str = "", audience: str = "", template: Path | None = None) -> Path:
     """Create the knowledge base at *root* and return it.
 
-    Raises ``WikiExistsError`` when one is already there. Init is otherwise
-    idempotent in the sense that matters: it writes only files that do not
-    exist, so a base half-created by an interrupted run completes rather than
-    losing what it already had.
+    Raises ``WikiExistsError`` when a ``SCHEMA.md`` is already there — any
+    ``SCHEMA.md``, whether or not a knowledge base surrounds it. Init is
+    otherwise idempotent in the sense that matters: it writes only files that do
+    not exist, so a base half-created by an interrupted run completes rather
+    than losing what it already had.
     """
     # Not `is_wiki`: that answers whether a *knowledge base* is here, and a
     # directory holding an unrelated SCHEMA.md is not one. Init must still

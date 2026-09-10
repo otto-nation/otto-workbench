@@ -530,6 +530,7 @@ file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
 file_mode  PATH   # permission bits, octal — e.g. 644
 load_average      # one-minute load average, e.g. 3.72
 iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
+cpu_count         # CPUs the machine reports, e.g. 18
 ```
 
 Each prints nothing and returns 1 when neither form resolves the value, so
@@ -546,6 +547,7 @@ ts=$(file_mtime "$f") || ts=0
 | `file_mode PATH` | permission bits as an octal string, e.g. 644. |
 | `load_average` | the machine's one-minute load average, as the kernel spells it. |
 | `iso_to_epoch TIMESTAMP` | an ISO 8601 UTC timestamp (`2026-09-09T16:15:52Z`) in epoch seconds. |
+| `cpu_count` | how many CPUs the machine reports, as a decimal string. |
 
 Loaded via `ui.sh`.
 
@@ -884,6 +886,13 @@ the caller has not already sourced `constants.sh`, since an
 | Function | Purpose |
 |----------|---------|
 | `is_installed NAME` | returns 0 if NAME is found in PATH |
+| `reg_load FILE...` | read every node of each FILE into the cache. |
+| `reg_invalidate FILE...` | drop each FILE from the cache so the next read of it parses the file again. |
+| `reg_has FILE PATH_SEGMENT...` | 0 when a node exists at that path. |
+| `reg_type FILE PATH_SEGMENT...` | the YAML tag at that path, e.g. `!!str`. |
+| `reg_get FILE PATH_SEGMENT...` | the scalar at that path, or empty. |
+| `reg_keys FILE PATH_SEGMENT...` | the child keys of a map, one per line. |
+| `reg_len FILE PATH_SEGMENT...` | the length of a sequence, or 0 when it holds nothing. |
 | `collect_component_registries ARRAY_REF SCAN_DIR` | the component `registry.yml` files under a root. ARRAY_REF names the caller's array, which is replaced with the paths found one and two directories below SCAN_DIR, in glob order. SCAN_DIR is the root those globs are anchored at; a root holding none of them leaves the array empty rather than filling it with unexpanded patterns. |
 | `collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
 | `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. Checks meta.install_check and meta.install_check_command. |

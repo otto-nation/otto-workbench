@@ -179,3 +179,38 @@ teardown() {
   [ "${#lines[@]}" -eq 1 ]
   [[ "$output" =~ ^[0-9]+$ ]]
 }
+
+@test "cpu_count answers this machine with a positive integer" {
+  run cpu_count
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[0-9]+$ ]]
+  [ "$output" -ge 1 ]
+}
+
+@test "cpu_count falls back to nproc where there is no sysctl" {
+  sysctl() { return 1; }
+  nproc() { echo "8"; }
+  run cpu_count
+  unset -f nproc
+  [ "$status" -eq 0 ]
+  [ "$output" = "8" ]
+}
+
+@test "cpu_count returns 1 and prints nothing when neither source reads" {
+  # A caller sizing a job pool supplies its own default. Inventing one here
+  # would have it size the pool from a count nobody took.
+  sysctl() { return 1; }
+  nproc() { return 1; }
+  run cpu_count
+  unset -f nproc
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "no stray stdout leaks in from the CPU source that fails" {
+  sysctl() { echo "sysctl: unknown oid 'hw.ncpu'"; return 1; }
+  nproc() { echo "8"; }
+  run cpu_count
+  unset -f nproc
+  [ "$output" = "8" ]
+}

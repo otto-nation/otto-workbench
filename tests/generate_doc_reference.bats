@@ -234,6 +234,9 @@ EOF
 
 @test "a declared group marker overrides the directory default" {
   printf '#!/usr/bin/env bash\n# doc-group: registry\n# Registries.\n' > "$LIB_DIR/registries.sh"
+  # _load_groups first: _file_group reads the cache rather than scanning the
+  # file itself, and the emit paths populate it before their loop.
+  _load_groups lib
   run _file_group lib "$LIB_DIR/registries.sh" core
   [ "$output" = "registry" ]
 }
@@ -246,12 +249,17 @@ info() { :; }
 
 # The convention is a header line reading: # doc-group: registry
 EOF
+  _load_groups lib
   run _file_group lib "$LIB_DIR/output.sh" core
   [ "$output" = "core" ]
 }
 
 @test "a Python module declares its group below the docstring" {
-  cat > "$AI_LIB_DIR/trail.py" << 'EOF'
+  # In a package directory, because the ai-lib set's glob is ai/lib/*/*.py —
+  # a module written straight into ai/lib is in no source set, so the group it
+  # declares is never read.
+  mkdir -p "$AI_LIB_DIR/core"
+  cat > "$AI_LIB_DIR/core/trail.py" << 'EOF'
 """Structured trail logging.
 
 Every script appends to one root.
@@ -261,21 +269,28 @@ Every script appends to one root.
 
 from __future__ import annotations
 EOF
-  run _file_group ai-lib "$AI_LIB_DIR/trail.py" ""
+  _load_groups ai-lib
+  run _file_group ai-lib "$AI_LIB_DIR/core/trail.py" ""
   [ "$output" = "platform" ]
 }
 
 @test "a Python doc-group line below the imports does not declare a group" {
-  cat > "$AI_LIB_DIR/trail.py" << 'EOF'
+  # In a package directory, like the sibling above: the ai-lib set's glob is
+  # ai/lib/*/*.py, and a module written straight into ai/lib is scanned by
+  # nobody — the assertion would hold whether or not the scanner correctly
+  # ignores a marker this far down the file.
+  mkdir -p "$AI_LIB_DIR/core"
+  cat > "$AI_LIB_DIR/core/trail.py" << 'EOF'
 """Structured trail logging."""
 
 import re
 
 # doc-group: platform
 EOF
-  run _file_group ai-lib "$AI_LIB_DIR/trail.py" ""
+  _load_groups ai-lib
+  run _file_group ai-lib "$AI_LIB_DIR/core/trail.py" ""
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/trail.py declares no group"* ]]
+  [[ "$output" == *"ai/lib/core/trail.py declares no group"* ]]
 }
 
 @test "--groups lists every declared key once" {

@@ -152,17 +152,19 @@ _set_entries() {
 #
 # A line further down the file that happens to read `# doc-group: x` — inside a
 # code example, say — describes the convention rather than declaring a group.
+# Takes any number of files and prints "path<TAB>group" for each that declares
+# one, so a whole set is one fork rather than one per module.
 # shellcheck disable=SC2016  # awk program, not shell expansion
 _hash_group() {
   awk '
-    NR == 1 { next }
-    !/^#/ { exit }
+    FNR == 1 { next }
+    !/^#/ { nextfile }
     /^#[[:space:]]*doc-group:/ {
       sub(/^#[[:space:]]*doc-group:[[:space:]]*/, "")
-      print
-      exit
+      print FILENAME "\t" $0
+      nextfile
     }
-  ' "$1"
+  ' "$@"
 }
 
 # _docstring_group FILE — the group a Python module declares.
@@ -173,9 +175,12 @@ _hash_group() {
 #
 # State 0 is the shebang and any coding comment above the docstring, 1 is inside
 # it, 2 is the region the marker may appear in.
+# Batched over any number of files, like _hash_group. The state machine resets
+# at each file's first line rather than running once for the whole stream.
 # shellcheck disable=SC2016  # awk program, not shell expansion
 _docstring_group() {
   awk '
+    FNR == 1 { state = 0 }
     state == 0 {
       if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^#/) next
       if ($0 !~ /^"""/) { state = 2 }
@@ -191,11 +196,45 @@ _docstring_group() {
     /^#/ {
       if ($0 !~ /^#[[:space:]]*doc-group:/) next
       sub(/^#[[:space:]]*doc-group:[[:space:]]*/, "")
-      print
-      exit
+      print FILENAME "\t" $0
+      nextfile
     }
-    { exit }
-  ' "$1"
+    { nextfile }
+  ' "$@"
+}
+
+# The group each module declares, keyed by path, and the sets already scanned.
+declare -gA _GROUP_OF=()
+declare -gA _GROUPS_LOADED=()
+
+# _load_groups KEY — read every module's declared group in the set, in one pass.
+#
+# Callers must invoke this before the loop that reads the groups, not from
+# inside it: `_file_group` is called in a `$(...)`, and a cache populated in
+# that subshell is discarded when it exits — so a lazy load there would rescan
+# the whole set once per module and be far slower than the per-file form it
+# replaced. Populating it in the parent is what the subshells inherit.
+_load_groups() {
+  [[ -n "${_GROUPS_LOADED[$1]:-}" ]] && return 0
+  _GROUPS_LOADED[$1]=1
+  local -a entries=()
+  _set_entries "$1" entries
+  (( ${#entries[@]} > 0 )) || return 0
+
+  local -a files=()
+  local entry
+  for entry in "${entries[@]}"; do
+    files+=("${entry%%$'\t'*}")
+  done
+
+  # The scanners print nothing for a module that declares no group, so an
+  # absent key is exactly the case `_file_group` falls back to the set's
+  # default for, and errors on when the set has none.
+  local path group
+  while IFS=$'\t' read -r path group; do
+    [[ -n "$path" ]] || continue
+    _GROUP_OF[$path]="$group"
+  done < <("_${SET_COMMENT[$1]}_group" "${files[@]}")
 }
 
 # _file_group KEY FILE DEFAULT — the group FILE belongs to: the one it declares,
@@ -207,7 +246,7 @@ _docstring_group() {
 # group the whole of adding a module.
 _file_group() {
   local declared rel
-  declared="$("_${SET_COMMENT[$1]}_group" "$2")"
+  declared="${_GROUP_OF[$2]:-}"
   declared="${declared:-$3}"
   if [[ -z "$declared" ]]; then
     # Relative to the set's base, not the basename: a bare basename is
@@ -459,6 +498,7 @@ _emit_group() {
   local key="$1" group="$2" entry file default rel declared found=false
   local -a entries=() facade=()
   _set_entries "$key" entries
+  _load_groups "$key"
   _facade_members "$key" facade
   for entry in "${entries[@]}"; do
     file="${entry%%$'\t'*}"
@@ -481,6 +521,7 @@ _emit_groups() {
   local key="$1" entry file default group
   local -a entries=() declared=()
   _set_entries "$key" entries
+  _load_groups "$key"
   for entry in "${entries[@]}"; do
     file="${entry%%$'\t'*}"
     default="${entry#*$'\t'}"

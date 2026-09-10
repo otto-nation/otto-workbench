@@ -49,13 +49,73 @@ _fail() {
   ERRORS=$(( ERRORS + 1 ))
 }
 
+# _tool_label FILE INDEX — how an entry is named in an error message.
+#
+# The entry's own name, or `[INDEX]` for one that has none: an unnamed entry
+# still has to be findable in the file by whoever reads the failure. This is the
+# `// "[$i]"` fallback the yq reads spelled, kept in one place now that the
+# accessor answers empty rather than taking a default.
+_tool_label() {
+  local name
+  name=$(reg_get "$1" tools "$2" name)
+  printf '%s' "${name:-[$2]}"
+}
+
+# _env_label FILE INDEX — how an env entry is named in an error message.
+#
+# The entry's own var, or `[INDEX]` for one that has none — the same shape
+# _tool_label gives a tool, and the `// "[$i]"` fallback the yq read spelled.
+_env_label() {
+  local var
+  var=$(reg_get "$1" env "$2" var)
+  printf '%s' "${var:-[$2]}"
+}
+
+# _check_list_shape FILE FIELD — fails when FIELD is present but not a list.
+#
+# The natural first way to write a collection is a mapping of name to fields.
+# Every check that reads one iterates it by index, so a mapping yields no
+# entries and the file passes with nothing examined. It also has to be caught
+# before those checks run rather than by them: `reg_len` refuses a non-sequence,
+# and a bare `count=$(reg_len ...)` under errexit would abort the whole run with
+# no output instead of reporting this file.
+#
+# A field with no value at all is a declared-empty collection, not a malformed
+# one, and passes.
+_check_list_shape() {
+  local file="$1" field="$2"
+  reg_has "$file" "$field" || return 0
+  local tag
+  tag=$(reg_type "$file" "$field")
+  [[ "$tag" == "!!seq" || "$tag" == "!!null" ]] && return 0
+  _fail "$(basename "$file"): $field must be a list of entries (got $tag) — each entry starts with '- '"
+  return 1
+}
+
+# _tool_names FILE — every tool name in FILE, one per line.
+_tool_names() {
+  local count i
+  count=$(reg_len "$1" tools)
+  for (( i=0; i<count; i++ )); do
+    printf '%s\n' "$(reg_get "$1" tools "$i" name)"
+  done
+}
+
+# _command_names FILE TOOL_INDEX COUNT — a tool's command names, one per line.
+_command_names() {
+  local j
+  for (( j=0; j<$3; j++ )); do
+    printf '%s\n' "$(reg_get "$1" tools "$2" commands "$j" name)"
+  done
+}
+
 # _check_required_fields FILE INDEX
 _check_required_fields() {
   local file="$1" i="$2"
   local name description visibility
-  name=$(yq ".tools[$i].name // \"\"" "$file")
-  description=$(yq ".tools[$i].description // \"\"" "$file")
-  visibility=$(yq ".tools[$i].visibility // \"\"" "$file")
+  name=$(reg_get "$file" tools "$i" name)
+  description=$(reg_get "$file" tools "$i" description)
+  visibility=$(reg_get "$file" tools "$i" visibility)
 
   [[ -n "$name" && "$name" != "null" ]]               || _fail "$(basename "$file") [$i]: missing required field: name"
   [[ -n "$description" && "$description" != "null" ]]  || _fail "$(basename "$file") entry '$name': missing required field: description"
@@ -66,11 +126,11 @@ _check_required_fields() {
   fi
 
   local when_to_use usage
-  when_to_use=$(yq ".tools[$i].when_to_use // \"\"" "$file")
-  usage=$(yq ".tools[$i].usage // \"\"" "$file")
+  when_to_use=$(reg_get "$file" tools "$i" when_to_use)
+  usage=$(reg_get "$file" tools "$i" usage)
   local has_wtu has_usage
-  has_wtu=$(yq ".tools[$i] | has(\"when_to_use\")" "$file")
-  has_usage=$(yq ".tools[$i] | has(\"usage\")" "$file")
+  has_wtu=$(reg_has "$file" tools "$i" when_to_use && echo true || echo false)
+  has_usage=$(reg_has "$file" tools "$i" usage && echo true || echo false)
 
   if [[ "$visibility" == "full" ]]; then
     [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use (required when visibility: full)"
@@ -85,7 +145,7 @@ _check_required_fields() {
 _check_no_duplicates() {
   local file="$1"
   local dupes
-  dupes=$(yq '.tools[].name' "$file" | sort | uniq -d)
+  dupes=$(_tool_names "$file" | sort | uniq -d)
   if [[ -n "$dupes" ]]; then
     while IFS= read -r name; do
       _fail "$(basename "$file"): duplicate tool name: $name"
@@ -97,20 +157,22 @@ _check_no_duplicates() {
 _check_permission_seq() {
   local file="$1" i="$2" name="$3"
   local j arr_len entry
-  arr_len=$(yq ".tools[$i].permission | length" "$file")
+  arr_len=$(reg_len "$file" tools "$i" permission)
   [[ "$arr_len" -gt 0 ]] || _fail "$(basename "$file") entry '$name': permission array must not be empty"
   for (( j=0; j<arr_len; j++ )); do
-    entry=$(yq ".tools[$i].permission[$j]" "$file")
+    entry=$(reg_get "$file" tools "$i" permission "$j")
     [[ "$entry" =~ ^Bash\(.+\)$ ]] || _fail "$(basename "$file") entry '$name': permission array entry '$entry' must match Bash(...) pattern"
   done
 }
 
-# _check_unknown_keys FILE YQ_PATH LABEL ALLOWED
-# Rejects any key under YQ_PATH that ALLOWED — a space-separated field list —
-# does not name. LABEL prefixes the failure so the reader is told which entry of
-# which array is at fault.
+# _check_unknown_keys FILE LABEL ALLOWED PATH_SEGMENT...
+# Rejects any key at PATH that ALLOWED — a space-separated field list — does
+# not name. LABEL prefixes the failure so the reader is told which entry of
+# which array is at fault. The path is trailing segments rather than a leading
+# argument because it is variadic: reg_keys addresses a node by its path parts.
 _check_unknown_keys() {
-  local file="$1" path="$2" label="$3" allowed="$4"
+  local file="$1" label="$2" allowed="$3"
+  shift 3
   local key
   while IFS= read -r key; do
     local known=false field
@@ -120,38 +182,36 @@ _check_unknown_keys() {
     if ! $known; then
       _fail "$(basename "$file") $label: unknown field '$key'"
     fi
-  done < <(yq "$path | keys | .[]" "$file")
+  done < <(reg_keys "$file" "$@")
 }
 
 # _check_unknown_fields FILE INDEX
 _check_unknown_fields() {
   local file="$1" i="$2"
   local name
-  name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
-  _check_unknown_keys "$file" ".tools[$i]" "entry '$name'" "$KNOWN_TOOL_FIELDS"
+  name=$(_tool_label "$file" "$i")
+  _check_unknown_keys "$file" "entry '$name'" "$KNOWN_TOOL_FIELDS" tools "$i"
 }
 
 # _check_permission_field FILE INDEX
 _check_permission_field() {
   local file="$1" i="$2"
-  local has_perm
-  has_perm=$(yq ".tools[$i] | has(\"permission\")" "$file")
-  if [[ "$has_perm" != "true" ]]; then
+  if ! reg_has "$file" tools "$i" permission; then
     local name
-    name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
+    name=$(_tool_label "$file" "$i")
     _fail "$(basename "$file") entry '$name': missing required field: permission (use false for internal tools)"
     return 0
   fi
 
   local name perm_tag
-  name=$(yq ".tools[$i].name" "$file")
-  perm_tag=$(yq ".tools[$i].permission | tag" "$file")
+  name=$(reg_get "$file" tools "$i" name)
+  perm_tag=$(reg_type "$file" tools "$i" permission)
 
   case "$perm_tag" in
     '!!bool') ;;
     '!!str')
       local perm_str
-      perm_str=$(yq ".tools[$i].permission" "$file")
+      perm_str=$(reg_get "$file" tools "$i" permission)
       [[ -n "$perm_str" ]] || _fail "$(basename "$file") entry '$name': permission string must be non-empty"
       ;;
     '!!seq')
@@ -178,8 +238,8 @@ _check_known_command_field() {
 _check_single_command() {
   local file="$1" i="$2" j="$3" name="$4"
   local cmd_name cmd_desc
-  cmd_name=$(yq ".tools[$i].commands[$j].name // \"\"" "$file")
-  cmd_desc=$(yq ".tools[$i].commands[$j].description // \"\"" "$file")
+  cmd_name=$(reg_get "$file" tools "$i" commands "$j" name)
+  cmd_desc=$(reg_get "$file" tools "$i" commands "$j" description)
 
   [[ -n "$cmd_name" && "$cmd_name" != "null" ]] || _fail "$(basename "$file") entry '$name' commands[$j]: missing required field: name"
   [[ -n "$cmd_desc" && "$cmd_desc" != "null" ]] || _fail "$(basename "$file") entry '$name' command '$cmd_name': missing required field: description"
@@ -187,19 +247,17 @@ _check_single_command() {
   local key
   while IFS= read -r key; do
     _check_known_command_field "$key" "$file" "$name" "$cmd_name"
-  done < <(yq ".tools[$i].commands[$j] | keys | .[]" "$file")
+  done < <(reg_keys "$file" tools "$i" commands "$j")
 }
 
 # _check_commands_field FILE INDEX
 _check_commands_field() {
   local file="$1" i="$2"
-  local has_commands
-  has_commands=$(yq ".tools[$i] | has(\"commands\")" "$file")
-  [[ "$has_commands" == "true" ]] || return 0
+  reg_has "$file" tools "$i" commands || return 0
 
   local name visibility
-  name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
-  visibility=$(yq ".tools[$i].visibility // \"\"" "$file")
+  name=$(_tool_label "$file" "$i")
+  visibility=$(reg_get "$file" tools "$i" visibility)
 
   if [[ "$visibility" != "full" ]]; then
     _fail "$(basename "$file") entry '$name': field 'commands' is not allowed when visibility: $visibility"
@@ -207,14 +265,14 @@ _check_commands_field() {
   fi
 
   local cmd_count j
-  cmd_count=$(yq ".tools[$i].commands | length" "$file")
+  cmd_count=$(reg_len "$file" tools "$i" commands)
 
   for (( j=0; j<cmd_count; j++ )); do
     _check_single_command "$file" "$i" "$j" "$name"
   done
 
   local dupes
-  dupes=$(yq ".tools[$i].commands[].name" "$file" | sort | uniq -d)
+  dupes=$(_command_names "$file" "$i" "$cmd_count" | sort | uniq -d)
   if [[ -n "$dupes" ]]; then
     while IFS= read -r dup; do
       _fail "$(basename "$file") entry '$name': duplicate command name: $dup"
@@ -228,7 +286,7 @@ _validate_schema() {
   local file="$1"
   [[ -f "$file" ]] || { warn "$(basename "$file") not found — skipping"; return; }
   local count i=0
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   while [[ "$i" -lt "$count" ]]; do
     _check_required_fields "$file" "$i"
     _check_permission_field "$file" "$i"
@@ -245,10 +303,10 @@ _validate_against_brewfile() {
   local file="$1" brewfile="$2"
   [[ -f "$brewfile" ]] || { warn "$(basename "$brewfile") not found — skipping cross-check"; return; }
   local count i=0 name brew_name check_name
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   while [[ "$i" -lt "$count" ]]; do
-    name=$(yq ".tools[$i].name" "$file")
-    brew_name=$(yq ".tools[$i].brew_name // \"\"" "$file")
+    name=$(reg_get "$file" tools "$i" name)
+    brew_name=$(reg_get "$file" tools "$i" brew_name)
     check_name="${brew_name:-$name}"
     if ! grep -qE "^(brew|cask) [\"']?${check_name}[\"']?" "$brewfile"; then
       _fail "$(basename "$file"): '$name' not found in ${brewfile#"$REPO_ROOT/"}"
@@ -262,9 +320,9 @@ _validate_against_brewfile() {
 _validate_against_bindir() {
   local file="$1" dir="$2"
   local count i=0 name
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   while [[ "$i" -lt "$count" ]]; do
-    name=$(yq ".tools[$i].name" "$file")
+    name=$(reg_get "$file" tools "$i" name)
     if [[ ! -f "$dir/$name" ]]; then
       _fail "$(basename "$file"): '$name' not found in ${dir#"$REPO_ROOT/"}/"
     fi
@@ -280,7 +338,7 @@ _validate_bindir_reverse() {
   local name
   while IFS= read -r name; do
     registered[$name]=1
-  done < <(yq '.tools[].name' "$file")
+  done < <(_tool_names "$file")
 
   local item basename
   for item in "$dir"/*; do
@@ -299,9 +357,9 @@ _validate_bindir_reverse() {
 _validate_against_zsh() {
   local file="$1" dir="$2"
   local count i=0 name keyword
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   while [[ "$i" -lt "$count" ]]; do
-    name=$(yq ".tools[$i].name" "$file")
+    name=$(reg_get "$file" tools "$i" name)
     keyword=$(echo "$name" | cut -d' ' -f1)
     if ! grep -rqi "# ${keyword}" "$dir" 2>/dev/null; then
       _fail "$(basename "$file"): '$name' — no matching comment found in ${dir#"$REPO_ROOT/"}/ for keyword '${keyword}'"
@@ -321,8 +379,8 @@ _validate_against_zsh() {
 _check_unknown_env_fields() {
   local file="$1" i="$2"
   local var
-  var=$(yq ".env[$i].var // \"[$i]\"" "$file")
-  _check_unknown_keys "$file" ".env[$i]" "env '$var'" "$KNOWN_ENV_FIELDS"
+  var=$(_env_label "$file" "$i")
+  _check_unknown_keys "$file" "env '$var'" "$KNOWN_ENV_FIELDS" env "$i"
 }
 
 # _check_env_claude_env FILE INDEX
@@ -341,19 +399,17 @@ _check_unknown_env_fields() {
 # does — so it is an error rather than a no-op.
 _check_env_claude_env() {
   local file="$1" i="$2"
-  local has
-  has=$(yq ".env[$i] | has(\"claude_env\")" "$file")
-  [[ "$has" == "true" ]] || return 0
+  reg_has "$file" env "$i" claude_env || return 0
 
   local var value
-  var=$(yq ".env[$i].var // \"[$i]\"" "$file")
-  value=$(yq ".env[$i].claude_env" "$file")
+  var=$(_env_label "$file" "$i")
+  value=$(reg_get "$file" env "$i" claude_env)
   if [[ "$value" != "true" && "$value" != "false" ]]; then
     _fail "$(basename "$file") env '$var': claude_env must be true or false, got '$value'"
   fi
 
   local flagged
-  flagged=$(yq '.meta.claude_env // false' "$file")
+  flagged=$(reg_get "$file" meta claude_env)
   if [[ "$flagged" != "true" ]]; then
     _fail "$(basename "$file") env '$var': claude_env on an entry requires meta.claude_env: true"
   fi
@@ -364,16 +420,14 @@ _check_env_claude_env() {
 # dupes, no unknown fields, and any claude_env opt-out is well formed.
 _validate_env_fields() {
   local file="$1"
-  local has_env
-  has_env=$(yq '. | has("env")' "$file")
-  [[ "$has_env" == "true" ]] || return 0
+  reg_has "$file" env || return 0
 
   local count i=0
-  count=$(yq '.env | length' "$file")
+  count=$(reg_len "$file" env)
   local -a seen_vars=()
   while [[ "$i" -lt "$count" ]]; do
     local var
-    var=$(yq ".env[$i].var // \"\"" "$file")
+    var=$(reg_get "$file" env "$i" var)
     if [[ -z "$var" || "$var" == "null" ]]; then
       _fail "$(basename "$file") env[$i]: missing required field: var"
       i=$(( i + 1 ))
@@ -403,14 +457,14 @@ _validate_env_fields() {
 _validate_install_check_command() {
   local file="$1"
   local install_check install_check_command tools_count
-  install_check=$(yq '.meta.install_check // false' "$file")
+  install_check=$(reg_get "$file" meta install_check)
   [[ "$install_check" == "true" ]] || return 0
 
-  install_check_command=$(yq '.meta.install_check_command // ""' "$file")
-  tools_count=$(yq '.tools | length' "$file")
+  install_check_command=$(reg_get "$file" meta install_check_command)
+  tools_count=$(reg_len "$file" tools)
 
   local install_check_symlink
-  install_check_symlink=$(yq '.meta.install_check_symlink // ""' "$file")
+  install_check_symlink=$(reg_get "$file" meta install_check_symlink)
 
   if [[ "$tools_count" -eq 0 ]] \
      && [[ -z "$install_check_command" || "$install_check_command" == "null" ]] \
@@ -424,7 +478,7 @@ _validate_install_check_command() {
 _validate_meta_scope() {
   local file="$1"
   local scope
-  scope=$(yq '.meta.scope // ""' "$file")
+  scope=$(reg_get "$file" meta scope)
   [[ -z "$scope" || "$scope" == "null" ]] && return 0
   if [[ "$scope" =~ [^a-z0-9-] ]]; then
     _fail "$(basename "$file"): meta.scope '$scope' must be lowercase alphanumeric with hyphens"
@@ -436,18 +490,16 @@ _validate_meta_scope() {
 _validate_auth_fields() {
   local file="$1"
   local count i=0
-  count=$(yq '.tools | length' "$file")
+  count=$(reg_len "$file" tools)
   while [[ "$i" -lt "$count" ]]; do
-    local has_auth
-    has_auth=$(yq ".tools[$i] | has(\"auth\")" "$file")
-    if [[ "$has_auth" != "true" ]]; then
+    if ! reg_has "$file" tools "$i" auth; then
       i=$(( i + 1 ))
       continue
     fi
     local name env_var setup_url
-    name=$(yq ".tools[$i].name" "$file")
-    env_var=$(yq ".tools[$i].auth.env_var // \"\"" "$file")
-    setup_url=$(yq ".tools[$i].auth.setup_url // \"\"" "$file")
+    name=$(reg_get "$file" tools "$i" name)
+    env_var=$(reg_get "$file" tools "$i" auth env_var)
+    setup_url=$(reg_get "$file" tools "$i" auth setup_url)
     if [[ -z "$env_var" || "$env_var" == "null" ]]; then
       _fail "$(basename "$file") entry '$name': auth block missing required field: env_var"
     else
@@ -465,8 +517,13 @@ _validate_auth_fields() {
 _validate_registry() {
   local file="$1"
   local validation source
-  validation=$(yq '.meta.validation // "none"' "$file")
-  source=$(yq '.meta.source // ""' "$file")
+  validation=$(reg_get "$file" meta validation)
+  # Only an absent key defaults to `none`. An explicit `validation: ""` is a
+  # value someone wrote, and it names no cross-check — it falls through to the
+  # `*)` arm below and is reported, which is what the `// "none"` read this
+  # replaced did too: yq substitutes on null, not on an empty string.
+  reg_has "$file" meta validation || validation="none"
+  source=$(reg_get "$file" meta source)
 
   case "$validation" in
     brewfile)
@@ -527,6 +584,14 @@ main() {
     return 0
   fi
 
+  # One read for the whole set, before any check runs. A registry yq cannot
+  # parse fails here by name instead of reaching the checks as a file that
+  # reads empty and therefore passes everything.
+  if ! reg_load "${all_registries[@]}"; then
+    err "Could not read every registry — fix the YAML above and re-run"
+    return 1
+  fi
+
   $QUIET || echo "→ Validating registries..."
 
   local registry
@@ -536,12 +601,21 @@ main() {
       echo
       info "Schema: ${registry#"$REPO_ROOT/"}"
     fi
-    _validate_schema "$registry"
-    _validate_env_fields "$registry"
-    _validate_auth_fields "$registry"
-    _validate_install_check_command "$registry"
+    # A `tools:` that is not a list has no entries to walk, and every check
+    # that iterates them would report the file clean rather than report the
+    # shape. Those are skipped when it fails; the meta-only checks below do not
+    # read `tools` and still run, so one malformed collection does not hide
+    # every other problem in the same file until it is fixed.
+    if _check_list_shape "$registry" tools; then
+      _validate_schema "$registry"
+      _validate_auth_fields "$registry"
+      _validate_install_check_command "$registry"
+      _validate_registry "$registry"
+    fi
+    if _check_list_shape "$registry" env; then
+      _validate_env_fields "$registry"
+    fi
     _validate_meta_scope "$registry"
-    _validate_registry "$registry"
   done
 
   if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then

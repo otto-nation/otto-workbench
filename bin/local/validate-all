@@ -5,6 +5,17 @@
 # both call this script, so a newly added validate-* is enforced the moment it
 # lands instead of waiting for someone to remember two hardcoded lists.
 #
+# They run concurrently, one background job per validator, up to JOBS at a time.
+# What licenses that is a property every validator already has: each one reads
+# the working tree and writes nothing back, so no two can race. A future
+# validator that needs to write must write beneath its own mktemp directory —
+# one writing into the repo would be visible to whichever validators happen to
+# be mid-flight, and the failure would come and go with the scheduling.
+#
+# Output is buffered per validator and replayed in discovery order once the run
+# finishes, so the report reads the same as it did serially: interleaving two
+# failures live would make neither readable.
+#
 # Usage: bin/local/validate-all [--quiet]
 # Exit code: 0 if every validator passes, 1 if any fail.
 
@@ -32,6 +43,7 @@ Options:
 
 Environment:
   VALIDATOR_ROOT  Tree to scan for validators (default: the repo root)
+  VALIDATOR_JOBS  How many validators to run at once (default: CPU count)
 EOF
 }
 
@@ -59,16 +71,112 @@ if $LIST; then
   exit 0
 fi
 
-FAILED=()
-for _v in "${VALIDATORS[@]}"; do
-  name="$(basename "$_v")"
-  if output=$("$_v" --quiet 2>&1); then
-    $QUIET || echo -e "  ${GREEN}✓${NC} $name"
-  else
-    FAILED+=("$name")
-    echo -e "  ${RED}✗${NC} $name" >&2
-    echo "$output" >&2
+# One CPU per validator. The work is a mix of process spawning and file reads
+# rather than steady computation, so oversubscribing buys nothing the scheduler
+# does not already give us, and a pool the size of the machine keeps a laptop
+# usable while the hook runs.
+# Validated as a positive integer before it is used, because it reaches an
+# arithmetic context: bash evaluates a variable's contents there recursively, so
+# a non-numeric value would evaluate to 0 and silently remove the cap, and one
+# holding a command substitution would run it.
+JOBS="${VALIDATOR_JOBS:-}"
+if [[ -n "$JOBS" && ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  err "VALIDATOR_JOBS must be a positive integer, got: $JOBS"
+  exit 2
+fi
+if [[ -z "$JOBS" ]]; then
+  JOBS=$(cpu_count) || JOBS=4
+fi
+
+# Each validator's combined output goes to its own file, named by index so the
+# replay below can walk them in discovery order. A single directory removed on
+# exit: a validator killed mid-write leaves its buffer behind otherwise.
+RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/validate-all.XXXXXX")"
+trap 'rm -rf "$RUN_DIR"' EXIT
+
+# An interrupt otherwise leaves the validators running as orphans: the EXIT trap
+# reaps the directory, but the children never see a signal sent to this shell
+# alone and carry on against a tree the user has stopped waiting on.
+#
+# Each job is signalled as a process group, not as a single pid: the background
+# subshell forks the validator, which forks in turn, and killing only the pid
+# bash reports leaves those grandchildren running. `set -m` puts each job in its
+# own group so `kill -TERM -PGID` reaches all of it.
+#
+# Signalling by group id rather than `kill 0`, which would include this shell
+# and re-enter the handler — the trap fires hundreds of times and the exit
+# status is lost in the storm. Disarming the trap first makes it run once even
+# if something else signals us mid-cleanup.
+set -m
+# Every job launched, not only the ones still running: `wait -n` does not say
+# which job it reaped, so pruning would mean probing each pid on every launch to
+# save signalling a handful of groups that no longer exist — and signalling a
+# finished group is already a silent no-op.
+LAUNCHED_PIDS=()
+# _abort SIGNAL — stop every running validator and exit as that signal.
+#
+# The signal is passed in rather than assumed, so the exit status distinguishes
+# the two: 130 for INT and 143 for TERM, which is what a supervisor or a
+# `timeout` wrapper reads to tell a user's Ctrl-C from its own deadline.
+# shellcheck disable=SC2329  # invoked by the traps below, not by name
+_abort() {
+  local signal="$1"
+  trap - INT TERM
+  local _p
+  for _p in "${LAUNCHED_PIDS[@]}"; do
+    # The negative pid is the job's process group. `|| true` because a job that
+    # already finished has no group left to signal, which is not a failure.
+    kill -TERM "-$_p" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+  rm -rf "$RUN_DIR"
+  # 128 + the signal number, the shell's own convention for dying on one.
+  [[ "$signal" == "INT" ]] && exit 130
+  exit 143
+}
+trap '_abort INT' INT
+trap '_abort TERM' TERM
+
+# The count is tracked here rather than read from `jobs`: that builtin reports
+# the job table of the shell it runs in, and `$(jobs -pr)` runs in a subshell
+# whose table is empty — the pool would never throttle.
+RUNNING=0
+for _i in "${!VALIDATORS[@]}"; do
+  # `wait -n` returns as soon as any one job finishes, so the pool refills at
+  # the rate work completes rather than in lockstep batches. Its exit status is
+  # the finished job's and is deliberately discarded — pass or fail is read off
+  # the status file below, for every validator by the same route.
+  if (( RUNNING >= JOBS )); then
+    wait -n || true
+    RUNNING=$(( RUNNING - 1 ))
   fi
+  # The `|| status=$?` is what keeps the status file written: errexit is in
+  # force inside the subshell too, so a bare call would abort it the moment a
+  # validator failed and every failure would replay as the "died before writing
+  # a status" case below.
+  (
+    _status=0
+    "${VALIDATORS[$_i]}" --quiet > "$RUN_DIR/$_i.out" 2>&1 || _status=$?
+    echo "$_status" > "$RUN_DIR/$_i.status"
+  ) &
+  LAUNCHED_PIDS+=("$!")
+  RUNNING=$(( RUNNING + 1 ))
+done
+wait
+
+FAILED=()
+for _i in "${!VALIDATORS[@]}"; do
+  name="$(basename "${VALIDATORS[$_i]}")"
+  # A missing status file means the subshell died before it could write one —
+  # count that as a failure rather than reading an absent file as success.
+  status=$(cat "$RUN_DIR/$_i.status" 2>/dev/null) || status=1
+  if [[ "$status" == "0" ]]; then
+    $QUIET || echo -e "  ${GREEN}✓${NC} $name"
+    continue
+  fi
+  FAILED+=("$name")
+  echo -e "  ${RED}✗${NC} $name" >&2
+  cat "$RUN_DIR/$_i.out" >&2 || true
 done
 
 echo

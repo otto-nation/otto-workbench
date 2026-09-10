@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Validate that this machine's yq is no older than the one CI pins.
+
+Usage: bin/local/validate-yq-version [--quiet]
+
+Every registry read in the repo goes through one `yq` expression, and yq's
+expression language gains constructs between releases without the older parser
+degrading gracefully.  A newer construct does not warn on an old yq and does not
+fail on the one node that uses it — it fails to parse the whole expression, so
+every registry read in every validator dies at once with a message naming
+nothing:
+
+    Error: '|' expects 2 args but there is 1
+
+That is what a `$p[:$i]` variable slice — a 4.45 construct — did on the 4.44.3
+CI pins, after passing every local run on a newer release.  The gap is invisible
+until CI reports it, because a developer machine has whatever Homebrew last
+installed and nothing compares the two.
+
+This closes that: the version CI installs is read out of the workflow action
+rather than restated here, and a local yq older than it is reported before a
+push spends a CI run finding out.  A newer local yq is fine — the risk runs one
+way, since CI is the older of the two.
+
+Exit code: 0 when the local yq is at least the pinned version, 1 when it is
+older or cannot be read, 2 on a usage error.
+"""
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+# The composite action is the single owner of the pinned version. Reading it
+# here rather than repeating the number keeps the two from drifting: a bump to
+# the action is a bump to this check, with nothing to remember.
+ACTION = os.path.join(_WORKBENCH_DIR, '.github', 'actions', 'install-yq', 'action.yml')
+PIN_RE = re.compile(r'^\s*YQ_VERSION:\s*v?([0-9]+(?:\.[0-9]+)*)\s*$', re.M)
+VERSION_RE = re.compile(r'version\s+v?([0-9]+(?:\.[0-9]+)*)')
+
+
+def _pinned_version() -> str | None:
+    """The version the CI action installs, or None when it cannot be read."""
+    try:
+        with open(ACTION, encoding='utf-8') as f:
+            match = PIN_RE.search(f.read())
+    except OSError:
+        return None
+    return match.group(1) if match else None
+
+
+def _local_version() -> str | None:
+    """The version of the yq on PATH, or None when there is none to ask."""
+    if not shutil.which('yq'):
+        return None
+    try:
+        out = subprocess.run(
+            ['yq', '--version'], capture_output=True, text=True, timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = VERSION_RE.search(out)
+    return match.group(1) if match else None
+
+
+def _as_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split('.'))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--quiet', action='store_true')
+    parser.add_argument('-h', '--help', action='store_true')
+    args = parser.parse_args()
+
+    if args.help:
+        print(__doc__.strip())
+        return 0
+
+    pinned = _pinned_version()
+    if pinned is None:
+        print(f'{RED}✗{NC} cannot read the pinned yq version from '
+              f'.github/actions/install-yq/action.yml', file=sys.stderr)
+        return 1
+
+    local = _local_version()
+    if local is None:
+        print(f'{RED}✗{NC} yq not found or unreadable — run: brew install yq', file=sys.stderr)
+        return 1
+
+    if _as_tuple(local) < _as_tuple(pinned):
+        print(f'{RED}✗{NC} yq {local} is older than the {pinned} CI installs.\n'
+              f'    An expression this yq cannot parse fails every registry read at once,\n'
+              f'    and it would pass here and fail in CI. Run: brew upgrade yq',
+              file=sys.stderr)
+        return 1
+
+    if not args.quiet:
+        print(f'{GREEN}✓{NC} yq {local} is at least the pinned {pinned} '
+              f'{DIM}(CI installs {pinned}){NC}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

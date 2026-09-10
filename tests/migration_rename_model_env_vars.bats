@@ -53,8 +53,8 @@ EOF
   # Non-model vars are untouched
   grep -qx "export COLIMA_CPU=10" "$ENV_FILE"
   # Old names are gone
-  ! grep -q 'ANTHROPIC_MODEL' "$ENV_FILE"
-  ! grep -q 'ANTHROPIC_DEFAULT' "$ENV_FILE"
+  run ! grep -q 'ANTHROPIC_MODEL' "$ENV_FILE"
+  run ! grep -q 'ANTHROPIC_DEFAULT' "$ENV_FILE"
 }
 
 @test "renames commented-out template lines alongside active exports" {

@@ -93,8 +93,8 @@ class TestResolution:
         nested.mkdir(parents=True)
         assert wiki.find_wiki(nested) == root
 
-    def test_schema_is_the_existence_marker(self, tmp_path):
-        """An index alone is not a wiki: it is generated and can be rebuilt.
+    def test_an_index_alone_is_not_a_wiki(self, tmp_path):
+        """The index is generated and can be rebuilt; the schema is authored.
 
         The plugin this replaces probed _index.md in one place and SCHEMA.md in
         another, so a half-built wiki answered differently depending on caller.
@@ -124,6 +124,53 @@ class TestResolution:
     def test_missing_wiki_exits_two(self, tmp_path, capsys):
         assert wiki.main(["status", str(tmp_path)]) == 2
         assert "no knowledge base found" in capsys.readouterr().err
+
+
+class TestIsWiki:
+    """What identifies a directory as a knowledge base.
+
+    SCHEMA.md is a generic filename — an unrelated library shipping a schema
+    reference under that name made every directory holding one answer as a
+    knowledge base to every subcommand, so the trees a base exists for are
+    required too.
+    """
+
+    def test_the_full_layout_is_a_wiki(self, tmp_path):
+        assert wiki.is_wiki(make_wiki(tmp_path))
+
+    def test_a_foreign_schema_alone_is_not_a_wiki(self, tmp_path):
+        foreign = tmp_path / "lib-schema"
+        foreign.mkdir()
+        (foreign / "SCHEMA.md").write_text("# Database Schema\n", encoding="utf-8")
+        assert not wiki.is_wiki(foreign)
+
+    def test_a_foreign_schema_does_not_resolve_from_within(self, tmp_path, capsys):
+        """The reported repro: cwd inside the foreign directory itself."""
+        foreign = tmp_path / "lib-schema"
+        foreign.mkdir()
+        (foreign / "SCHEMA.md").write_text("# Database Schema\n", encoding="utf-8")
+        assert wiki.find_wiki(foreign) is None
+        assert wiki.main(["path", str(foreign)]) == 2
+        assert "no knowledge base found" in capsys.readouterr().err
+
+    def test_articles_alone_is_not_enough(self, tmp_path):
+        root = tmp_path / "wiki"
+        (root / "articles").mkdir(parents=True)
+        (root / "SCHEMA.md").write_text("# Wiki Schema\n", encoding="utf-8")
+        assert not wiki.is_wiki(root)
+
+    def test_raw_alone_is_not_enough(self, tmp_path):
+        root = tmp_path / "wiki"
+        (root / "raw").mkdir(parents=True)
+        (root / "SCHEMA.md").write_text("# Wiki Schema\n", encoding="utf-8")
+        assert not wiki.is_wiki(root)
+
+    def test_a_file_named_articles_does_not_count(self, tmp_path):
+        root = tmp_path / "wiki"
+        (root / "raw").mkdir(parents=True)
+        (root / "articles").write_text("", encoding="utf-8")
+        (root / "SCHEMA.md").write_text("# Wiki Schema\n", encoding="utf-8")
+        assert not wiki.is_wiki(root)
 
 
 class TestConfiguredDirectory:
@@ -672,6 +719,20 @@ class TestInit:
         assert wiki.main(["init", str(tmp_path)]) == 0
         assert "kept" in (root / "_log.md").read_text(encoding="utf-8")
         assert (root / "SCHEMA.md").is_file()
+
+    def test_refuses_a_directory_holding_a_foreign_schema(self, tmp_path, capsys):
+        """Init guards on the schema file, not on `is_wiki`.
+
+        A foreign SCHEMA.md is the one file init would leave alone, so building
+        the layout around it would yield a base reading someone else's settings.
+        """
+        target = tmp_path / "lib-schema"
+        target.mkdir()
+        (target / "SCHEMA.md").write_text("# Database Schema\n", encoding="utf-8")
+        assert wiki.main(["init", str(tmp_path), "--wiki", str(target)]) == 1
+        assert "already exists" in capsys.readouterr().err
+        assert (target / "SCHEMA.md").read_text(encoding="utf-8") == "# Database Schema\n"
+        assert not (target / "articles").exists()
 
 
 class TestIngestStage:

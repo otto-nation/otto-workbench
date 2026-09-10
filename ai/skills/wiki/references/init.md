@@ -44,8 +44,9 @@ wiki status    # should report zero articles and zero sources
 wiki lint      # should be clean
 ```
 
-If `wiki path` does not resolve, `SCHEMA.md` is missing or misplaced. Fix that before
-going further — every other operation depends on it.
+If `wiki path` does not resolve, one of `SCHEMA.md`, `articles/`, or `raw/` is missing or
+misplaced — all three identify the base. Fix that before going further; every other
+operation depends on it.
 
 ## 4. Report
 

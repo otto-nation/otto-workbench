@@ -156,7 +156,7 @@ def _published(body: str):
         True, 11, body, url="https://github.com/owner/repo/pull/1#issuecomment-11"))
 
 
-# ── _extract_json ───────────────────────────────────────────────────────────
+# ── triage.extract_json ───────────────────────────────────────────────────────────
 
 class TestExtractJson:
     def test_plain_json(self):
@@ -2394,7 +2394,7 @@ class TestFollowHistoryRewrite:
                                    commit_sha=repo.held, read_sha=repo.held)],
         ))
 
-    def test_a_rebased_commit_is_followed_to_its_replay(self, rt, tmp_path):
+    def test_a_rebased_commit_is_followed_to_its_replay(self, tmp_path):
         repo = _held_fix_branch(tmp_path)
         state = self._state(repo)
         history_rewrite.follow_history_rewrite(state, repo.path)
@@ -2432,7 +2432,7 @@ class TestFollowHistoryRewrite:
         assert saved.fix.fix.commit_sha == repo.replay
         assert saved.fix.fix.commit_status == CommitStatus.PUSHED
 
-    def test_two_rounds_each_reach_their_own_replay(self, rt, tmp_path):
+    def test_two_rounds_each_reach_their_own_replay(self, tmp_path):
         """Every fix pass commits under one static subject, so identity is content.
 
         A snapshot spans rounds — a thread fixed two commits ago still cites the
@@ -4871,7 +4871,7 @@ class TestReplyEvidence:
         assert "ENG-456" in body
         assert "owner/repo/blob/cafe123/src/app.py#L12" in body
 
-    def test_code_link_prefers_a_citation_that_resolves(self, rt, tmp_path):
+    def test_code_link_prefers_a_citation_that_resolves(self, tmp_path):
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("a\nb\nc\n")
         entry = CommentItem(id="t1", file="other.py", line=1,
@@ -4880,20 +4880,20 @@ class TestReplyEvidence:
         link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/src/app.py#L2" in link
 
-    def test_code_link_falls_back_when_the_citation_is_not_in_the_tree(self, rt, tmp_path):
+    def test_code_link_falls_back_when_the_citation_is_not_in_the_tree(self, tmp_path):
         entry = CommentItem(id="t1", file="other.py", line=7,
                             evidence_file="src/gone.py", evidence_line=2,
                             read_sha="cafe123")
         link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/other.py#L7" in link
 
-    def test_code_link_drops_an_anchor_it_cannot_vouch_for(self, rt, tmp_path):
+    def test_code_link_drops_an_anchor_it_cannot_vouch_for(self, tmp_path):
         """A line with no recorded tree is a number, not a location."""
         entry = CommentItem(id="t1", file="other.py", line=7)
         link = permalinks.code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert link == "[`other.py`](https://github.com/owner/repo/blob/cafe123/other.py)"
 
-    def test_code_link_is_empty_with_nothing_to_point_at(self, rt, tmp_path):
+    def test_code_link_is_empty_with_nothing_to_point_at(self, tmp_path):
         assert permalinks.code_link(CommentItem(id="t1"), "owner/repo", "cafe123", tmp_path) == ""
         assert permalinks.code_link(
             CommentItem(id="t1", file="a.py", line=1), "owner/repo", "", tmp_path,
@@ -5026,7 +5026,7 @@ class TestBlockingReviewers:
         assert self._extract_blocking([]) == []
 
 
-# ── _diff_context_for_file ─────────────────────────────────────────────────
+# ── thread_context.diff_context_for_file ─────────────────────────────────────────────────
 
 class TestDiffContextForFile:
     def test_empty_file_path(self):
@@ -6741,17 +6741,17 @@ class TestAddressingCommitIsPerLine:
         return SimpleNamespace(path=worktree, first=first,
                                second=self._sha(worktree, "HEAD"))
 
-    def test_each_line_resolves_to_the_commit_that_changed_it(self, rt, branch):
+    def test_each_line_resolves_to_the_commit_that_changed_it(self, branch):
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert attribution.find_addressing_commit(branch.path, "a.py", 1) == branch.first
             assert attribution.find_addressing_commit(branch.path, "a.py", 2) == branch.second
 
-    def test_a_thread_with_no_line_claims_no_commit(self, rt, branch):
+    def test_a_thread_with_no_line_claims_no_commit(self, branch):
         """A file-wide thread has no line history to read, so it cites nothing."""
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert attribution.find_addressing_commit(branch.path, "a.py", 0) is None
 
-    def test_a_line_past_the_end_of_the_file_claims_no_commit(self, rt, branch):
+    def test_a_line_past_the_end_of_the_file_claims_no_commit(self, branch):
         """git refuses the range rather than answering — nothing is invented."""
         with patch.object(git_topology, "default_branch_cached", return_value="main"):
             assert attribution.find_addressing_commit(branch.path, "a.py", 99) is None
@@ -6823,28 +6823,28 @@ class TestLineAnchorsAreTreeScoped:
         return SimpleNamespace(path=worktree, read=read,
                                fixed=self._sha(worktree, "HEAD"))
 
-    def test_a_line_in_an_untouched_file_keeps_its_anchor(self, rt, trees):
+    def test_a_line_in_an_untouched_file_keeps_its_anchor(self, trees):
         entry = CommentItem(id="t1", file="still.py", line=2, read_sha=trees.read)
         assert permalinks.anchored_line(
             entry, "still.py", 2, trees.fixed, trees.path) == 2
 
-    def test_a_line_in_a_rewritten_file_loses_its_anchor(self, rt, trees):
+    def test_a_line_in_a_rewritten_file_loses_its_anchor(self, trees):
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
         assert permalinks.anchored_line(
             entry, "moved.py", 1, trees.fixed, trees.path) == 0
 
-    def test_the_same_tree_needs_no_comparison(self, rt, trees):
+    def test_the_same_tree_needs_no_comparison(self, trees):
         """The triage replies go out before the fix commit, so this is the common case."""
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
         assert permalinks.anchored_line(
             entry, "moved.py", 1, trees.read, trees.path) == 1
 
-    def test_an_unrecorded_tree_loses_the_anchor(self, rt, trees):
+    def test_an_unrecorded_tree_loses_the_anchor(self, trees):
         entry = CommentItem(id="t1", file="still.py", line=2)
         assert permalinks.anchored_line(
             entry, "still.py", 2, trees.fixed, trees.path) == 0
 
-    def test_a_reply_drafted_after_the_fix_commit_links_the_file(self, rt, trees):
+    def test_a_reply_drafted_after_the_fix_commit_links_the_file(self, trees):
         """End to end: the shape that sent reviewers to unrelated code."""
         entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
         link = permalinks.code_link(entry, "owner/repo", trees.fixed, trees.path)
@@ -7499,7 +7499,7 @@ class TestTriageThrashGuard:
     def test_parses_as_json_rejects_prose(self):
         assert not triage.parses_as_json("I was unable to complete the triage.")
 
-    def test_unparseable_triage_output_earns_one_retry(self, rt, tmp_path):
+    def test_unparseable_triage_output_earns_one_retry(self, tmp_path):
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []
 
@@ -7518,7 +7518,7 @@ class TestTriageThrashGuard:
         assert len(prompts) == 2
         assert prompts[1].startswith(agent_retry.BLANK_RESPONSE_HINT)
 
-    def test_non_json_triage_output_is_kept_whole(self, rt, tmp_path):
+    def test_non_json_triage_output_is_kept_whole(self, tmp_path):
         """The old record kept a 500-character preview and no way to the rest."""
         trail = MagicMock()
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
@@ -7548,41 +7548,41 @@ class TestUnsupportedVerdictDowngrade:
         kw.setdefault("verification", "invalid")
         return CommentItem(id="t1", summary="s", **kw)
 
-    def test_uncited_invalid_becomes_needs_discussion(self, rt, tmp_path):
+    def test_uncited_invalid_becomes_needs_discussion(self, tmp_path):
         item = self._item(complexity="low")
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
         assert item.complexity == ""
 
-    def test_uncited_already_addressed_becomes_needs_discussion(self, rt, tmp_path):
+    def test_uncited_already_addressed_becomes_needs_discussion(self, tmp_path):
         item = self._item(verification="already_addressed")
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_reason_is_recorded_so_the_author_knows_why(self, rt, tmp_path):
+    def test_reason_is_recorded_so_the_author_knows_why(self, tmp_path):
         item = self._item(reasoning="reviewer misread the guard")
         triage.downgrade_unsupported_verdicts([item], tmp_path)
         assert "reviewer misread the guard" in item.reasoning
         assert "cited no line" in item.reasoning
 
-    def test_cited_verdict_that_exists_in_the_tree_survives(self, rt, tmp_path):
+    def test_cited_verdict_that_exists_in_the_tree_survives(self, tmp_path):
         (tmp_path / "app.py").write_text("x = 1\n")
         item = self._item(evidence_file="app.py", evidence_line=1)
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
         assert item.verification == "invalid"
 
-    def test_citation_to_a_file_that_does_not_exist_is_downgraded(self, rt, tmp_path):
+    def test_citation_to_a_file_that_does_not_exist_is_downgraded(self, tmp_path):
         """A link to nothing is no better than no link."""
         item = self._item(evidence_file="ghost.py", evidence_line=3)
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_valid_verdicts_are_left_alone(self, rt, tmp_path):
+    def test_valid_verdicts_are_left_alone(self, tmp_path):
         item = self._item(verification="valid", complexity="low")
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
         assert item.complexity == "low"
 
-    def test_an_absolute_citation_outside_the_repo_is_downgraded(self, rt, tmp_path):
+    def test_an_absolute_citation_outside_the_repo_is_downgraded(self, tmp_path):
         """Joining a repo dir with an absolute path discards the repo dir."""
         # Use a name unique to this test's tmp_path to avoid colliding with the
         # traversal test when both run in the same session directory.
@@ -7592,7 +7592,7 @@ class TestUnsupportedVerdictDowngrade:
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_a_traversal_out_of_the_repo_is_downgraded(self, rt, tmp_path):
+    def test_a_traversal_out_of_the_repo_is_downgraded(self, tmp_path):
         """`..` reaching a file that really exists still is not this repo's code."""
         # Use a name unique to this test's tmp_path to avoid colliding with the
         # absolute-citation test when both run in the same session directory.
@@ -7602,25 +7602,25 @@ class TestUnsupportedVerdictDowngrade:
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_a_citation_past_the_end_of_the_file_is_downgraded(self, rt, tmp_path):
+    def test_a_citation_past_the_end_of_the_file_is_downgraded(self, tmp_path):
         """A permalink to a line the file does not have highlights nothing."""
         (tmp_path / "app.py").write_text("x = 1\n")
         item = self._item(evidence_file="app.py", evidence_line=99)
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
-    def test_the_last_line_of_a_file_is_still_inside_it(self, rt, tmp_path):
+    def test_the_last_line_of_a_file_is_still_inside_it(self, tmp_path):
         (tmp_path / "app.py").write_text("a\nb\nc\n")
         item = self._item(evidence_file="app.py", evidence_line=3)
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
 
-    def test_a_nested_citation_inside_the_repo_survives(self, rt, tmp_path):
+    def test_a_nested_citation_inside_the_repo_survives(self, tmp_path):
         (tmp_path / "pkg").mkdir()
         (tmp_path / "pkg" / "mod.py").write_text("x = 1\n")
         item = self._item(evidence_file="pkg/mod.py", evidence_line=1)
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 0
 
-    def test_a_citation_to_a_directory_is_downgraded(self, rt, tmp_path):
+    def test_a_citation_to_a_directory_is_downgraded(self, tmp_path):
         (tmp_path / "pkg").mkdir()
         item = self._item(evidence_file="pkg", evidence_line=1)
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1

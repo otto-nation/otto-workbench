@@ -60,6 +60,11 @@ Non-actionable preamble (greetings, praise, general observations) should be skip
 Top-level comments:
 {comments_json}
 """
+        # Not an f-string, unlike the outer template it is substituted into.
+        # The doubled braces below are therefore literal, and reach the model as
+        # `{{` beside single-braced `threads` and `stats` blocks — see #1210.
+        # Left as-is here: this module is a verbatim move, and changing the
+        # prompt is a behaviour change with its own evaluation.
         comment_items_schema = """
   "comment_items": [
     {{

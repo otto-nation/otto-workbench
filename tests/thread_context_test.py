@@ -61,10 +61,10 @@ class TestTheContextWindow:
         assert thread_context.code_context_for_thread("pkg", 1, tree) == ""
 
     def test_a_file_that_is_not_text_is_not_softened_into_a_snippet(self, tree):
-        """A thread cannot be anchored in a binary, and a snippet of
+        """A binary is not code a thread can be anchored in.
 
-        replacement characters reaching a model as "the code under discussion"
-        is worse than the read failing where it happened.
+        A snippet of replacement characters reaching a model as "the code under
+        discussion" is worse than the read failing where it happened.
         """
         (tree / "bin.py").write_bytes(b"ok\n\xff\xfe\nmore\n")
         with pytest.raises(UnicodeDecodeError):

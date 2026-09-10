@@ -474,7 +474,7 @@ def _post_already_addressed_replies(
             parts = [f"{_APPLIED_REPLY_PREFIX}: {entry.summary}"]
         else:
             parts = [f"{_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
-        # No evidence check: _downgrade_unsupported_verdicts already refused to
+        # No evidence check: triage.downgrade_unsupported_verdicts already refused to
         # let an already_addressed verdict through without a citation that
         # resolves. Checking again here would only overrule it with a weaker
         # link.

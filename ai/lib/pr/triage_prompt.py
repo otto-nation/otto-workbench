@@ -60,14 +60,13 @@ Non-actionable preamble (greetings, praise, general observations) should be skip
 Top-level comments:
 {comments_json}
 """
-        # Not an f-string, unlike the outer template it is substituted into.
-        # The doubled braces below are therefore literal, and reach the model as
-        # `{{` beside single-braced `threads` and `stats` blocks — see #1210.
-        # Left as-is here: this module is a verbatim move, and changing the
-        # prompt is a behaviour change with its own evaluation.
+        # Single braces, unlike the outer f-string this is substituted into.
+        # Nothing collapses them on the way through, so they are already what
+        # the model sees, and must match the `threads` and `stats` blocks the
+        # outer template renders beside them.
         comment_items_schema = """
   "comment_items": [
-    {{
+    {
       "source_id": "id from input comment",
       "source_type": "issue_comment or review_body (from input)",
       "index": 0,
@@ -82,7 +81,7 @@ Top-level comments:
       "body": "relevant excerpt from the comment for this item",
       "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
       "evidence_line": 0
-    }}
+    }
   ],"""
 
     return f"""You are a code review triage assistant. Analyze these PR review threads and classify each one.

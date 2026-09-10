@@ -5507,6 +5507,67 @@ class TestTriagePromptVerificationValues:
         assert "Commits already made on this branch" not in prompt
 
 
+class TestTheSchemaExampleIsValidJson:
+    """The prompt closes with "Return ONLY the JSON object", so the shape it
+    shows has to be one.
+
+    The `comment_items` block is assembled as a separate non-f-string and
+    spliced into an f-string template, so its braces are not collapsed by the
+    same pass that collapses the rest. Doubling them there once put `{{` in
+    front of the model beside single-braced `threads` and `stats`.
+
+    Parsing the block is what makes this hold for any brace mistake rather than
+    for the doubled pair alone.
+    """
+
+    COMMENTS = [
+        {
+            "id": "c1",
+            "body": "rename the flag",
+            "user": "kgn",
+            "source_type": "issue_comment",
+        },
+    ]
+
+    @staticmethod
+    def _schema(prompt: str) -> dict:
+        """The schema example, parsed.
+
+        Asserting on the marker rather than letting `index` raise: the prompt
+        owns that wording and may reword it, and a bare `ValueError` from the
+        slice would read as a brace regression rather than as the rename it is.
+        """
+        marker = "Return JSON matching this exact schema:"
+        assert marker in prompt, f"prompt no longer says {marker!r} — retarget this test"
+        tail = prompt[prompt.index(marker) + len(marker):]
+        return json.loads(tail[tail.index("{"):tail.rindex("}") + 1])
+
+    def test_the_schema_parses_with_decomposed_comments(self):
+        prompt = triage_prompt.build_triage_prompt(
+            [], "diff", unseen_comments=self.COMMENTS,
+        )
+        assert set(self._schema(prompt)) == {"threads", "comment_items", "stats"}
+
+    def test_the_schema_parses_without_them(self):
+        """Pairs with the case above: the branch that omits the block was the
+        only one under test, so its passing said nothing about the other."""
+        assert set(self._schema(triage_prompt.build_triage_prompt([], "diff"))) == {
+            "threads",
+            "stats",
+        }
+
+    def test_the_comment_item_fields_survive_the_splice(self):
+        """Guards the repair as well as the defect: single-bracing by deleting
+        the block would also make the prompt parse."""
+        schema = self._schema(
+            triage_prompt.build_triage_prompt(
+                [], "diff", unseen_comments=self.COMMENTS,
+            ),
+        )
+        assert "source_id" in schema["comment_items"][0]
+        assert "classification" in schema["comment_items"][0]
+
+
 class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
     """The reported drop, driven through `_run_comment_fix` itself.
 

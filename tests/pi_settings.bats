@@ -80,6 +80,8 @@ _run_step() {
     PI_SETTINGS_FILE="$2/settings.json"
     PI_SETTINGS_SRC="$3"
     PI_SYNC_SETTINGS_JQ="$1/ai/pi/sync-settings.jq"
+    ENV_LOCAL_FILE="${ENV_LOCAL_FILE:-/dev/null}"
+    . "$1/lib/env.sh"
     . "$1/ai/pi/steps.sh"
     step_pi_settings
   ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE"
@@ -261,4 +263,87 @@ _live() {
   [ "$status" -ne 0 ]
   run jq -e 'has("enabledModels")' "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -ne 0 ]
+}
+
+# ── model injection from ~/.env.local ────────────────────────────────────────────
+
+_seed_env_local() {
+  printf '%s\n' "$@" > "$TMPDIR/.env.local"
+  export ENV_LOCAL_FILE="$TMPDIR/.env.local"
+}
+
+_teardown_env_local() {
+  unset ENV_LOCAL_FILE
+}
+
+@test "env vars set defaultModel and enabledModels" {
+  _seed_env_local \
+    'export AI_MODEL=claude-opus-5' \
+    "export AI_OPUS_MODEL='claude-opus-5'" \
+    "export AI_SONNET_MODEL='claude-sonnet-5'" \
+    "export AI_HAIKU_MODEL='claude-haiku-4-5@20251001'"
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.defaultModel')" = "claude-opus-5" ]
+  [ "$(_live '.enabledModels | length')" = "3" ]
+  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
+  [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-sonnet-5" ]
+  [ "$(_live '.enabledModels[2]')" = "google-vertex-claude/claude-haiku-4-5@20251001" ]
+  _teardown_env_local
+}
+
+@test "partial env — only AI_MODEL set builds a one-entry enabledModels" {
+  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.defaultModel')" = "claude-opus-5" ]
+  [ "$(_live '.enabledModels | length')" = "1" ]
+  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
+  _teardown_env_local
+}
+
+@test "no AI_MODEL leaves model keys to whatever the template or live file had" {
+  _seed_env_local '# nothing set'
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  # Template has defaultModel from _write_template
+  [ "$(_live '.defaultModel')" = "claude-opus-4-6" ]
+  _teardown_env_local
+}
+
+@test "env-derived models override stale live values" {
+  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  _write_live '{"defaultModel": "claude-opus-4-6", "enabledModels": ["google-vertex-claude/claude-opus-4-6"]}'
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.defaultModel')" = "claude-opus-5" ]
+  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
+  _teardown_env_local
+}
+
+@test "two tiers naming one model list it once" {
+  # Pinning a machine to a single model by pointing several tiers at it is a
+  # normal configuration, and enabledModels is a set — the same id twice is
+  # not a second model to enable.
+  _seed_env_local \
+    'export AI_MODEL=claude-opus-5' \
+    "export AI_OPUS_MODEL='claude-sonnet-5'" \
+    "export AI_SONNET_MODEL='claude-sonnet-5'"
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.enabledModels | length')" = "2" ]
+  # defaultModel leads, then the one distinct tier value.
+  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
+  [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-sonnet-5" ]
+  _teardown_env_local
 }

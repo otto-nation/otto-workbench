@@ -281,6 +281,31 @@ Sourced directly by `lib/ai/core.sh` and the git generation scripts
 | `has_breaking_footer MSG` | true when MSG declares a breaking change in its body. |
 | `declared_footers MSG` | every declaration footer line in MSG, in order. |
 
+### env.sh
+
+Reading a single variable's value out of ~/.env.local.
+
+Both harness sync paths (ai/claude/steps.sh, ai/pi/steps.sh) resolve model
+config the same way: grep the file directly for `export VAR=` rather than the
+ambient environment, because the sync that matters most cannot see one —
+maintenance/bin/otto-workbench-maintenance runs `otto-workbench sync` from
+launchd with nothing but PATH set, so an environment-derived value would be
+blanked on every unattended run and restored by hand the next time someone
+synced from a terminal.
+
+It has no dependencies beyond ENV_LOCAL_FILE (from lib/constants.sh), so a
+caller that has not loaded the facade can source it on its own:
+
+```bash
+read_env_local_var AI_MODEL
+```
+
+| Function | Purpose |
+|----------|---------|
+| `read_env_local_var VAR` | prints the value ~/.env.local exports for VAR, or nothing if VAR is not exported there. |
+
+Loaded via `ui.sh`.
+
 ### files.sh
 
 File operations with idempotency: symlinks, copies, directory operations,

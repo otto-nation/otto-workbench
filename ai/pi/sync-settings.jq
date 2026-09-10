@@ -9,6 +9,9 @@
 #
 # Scalar keys from the template and model config override the live file on every
 # sync, so the workbench stays authoritative over extensions and `pi config`.
+# This is deliberate: every template scalar (defaultProvider, defaultThinkingLevel,
+# enableInstallTelemetry) is workbench-managed and must not drift because an
+# extension or a one-off `pi config` edit set it first.
 # Model keys come from ~/.env.local — the same SSOT Claude Code reads — and are
 # applied after template scalars so they always win.
 #

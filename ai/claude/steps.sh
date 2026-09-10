@@ -195,14 +195,15 @@ step_claude_rules() {
 # source from ~/.env.local, output under target key). Variables the file does
 # not export are absent from the object rather than present and empty.
 #
-# The file is read directly instead of the ambient environment because the sync
-# that matters most cannot see one: maintenance/bin/otto-workbench-maintenance
-# runs `otto-workbench sync` from launchd with nothing but PATH set, so an
-# environment-derived block would be blanked on every unattended run and restored
-# by hand the next time someone synced from a terminal.
+# Reading goes through read_env_local_var (lib/env.sh) rather than the ambient
+# environment because the sync that matters most cannot see one:
+# maintenance/bin/otto-workbench-maintenance runs `otto-workbench sync` from
+# launchd with nothing but PATH set, so an environment-derived block would be
+# blanked on every unattended run and restored by hand the next time someone
+# synced from a terminal.
 _claude_env_json() {
   local -a pairs=()
-  local entry source key line value
+  local entry source key value
   for entry in "$@"; do
     if [[ "$entry" == *$'\t'* ]]; then
       source="${entry%%$'\t'*}"
@@ -211,14 +212,7 @@ _claude_env_json() {
       source="$entry"
       key="$entry"
     fi
-    line=$(grep -m1 "^export ${source}=" "$ENV_LOCAL_FILE") || continue
-    value=${line#*=}
-    # A shell file quotes what needs quoting; settings.json carries the value.
-    # Only a matched pair comes off — a lone quote is part of a line nothing here
-    # can read confidently, and it travels intact rather than half-stripped.
-    if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
-      value=${value:1:${#value}-2}
-    fi
+    value=$(read_env_local_var "$source")
     [[ -n "$value" ]] || continue
     pairs+=("$key"$'\t'"$value")
   done

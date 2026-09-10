@@ -23,9 +23,11 @@ decides what happened and records it; the surfaces read the record.
 # the comment and permalink readers while --settle reaches for git and the
 # worktree. A reader asking how a thread can end should see both endings
 # together, which is worth the disjoint imports at this size.
-# Upgrade trigger: once this file passes ~600 lines, split it into
-# `reconciliation.py` and `settle.py` and leave the shared outcome sets here —
-# the import sets already name the seam.
+# Upgrade trigger: once either half grows an import the other has no use for,
+# or this file trips the source size cap, split it into `reconciliation.py` and
+# `settle.py` and leave the shared outcome sets here. The import sets already
+# name the seam; the line count is only a proxy for it, and the cap owns that
+# number so this marker does not restate it.
 
 # doc-group: publishing
 

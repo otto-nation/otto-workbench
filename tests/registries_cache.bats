@@ -347,6 +347,47 @@ EOF
   [ "$(reg_get "$f" tools 0 name)" = "a" ]
 }
 
+@test "reg_invalidate makes the next read parse the file again" {
+  # The cache never expires, which is right inside one operation and wrong
+  # across two: a process that outlives a registry being rewritten — a sync
+  # step, or a test that writes a fixture twice — would keep answering from the
+  # version it first read.
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+tools:
+  - name: first
+EOF
+)
+  reg_load "$f"
+  [ "$(reg_get "$f" tools 0 name)" = "first" ]
+
+  printf 'tools:\n  - name: second\n' > "$f"
+  reg_load "$f"
+  [ "$(reg_get "$f" tools 0 name)" = "first" ]
+
+  reg_invalidate "$f"
+  reg_load "$f"
+  [ "$(reg_get "$f" tools 0 name)" = "second" ]
+}
+
+@test "reg_invalidate drops a file's nodes, not another file's" {
+  local a b
+  a=$(_fixture a.yml <<'EOF'
+tools:
+  - name: from-a
+EOF
+)
+  b=$(_fixture b.yml <<'EOF'
+tools:
+  - name: from-b
+EOF
+)
+  reg_load "$a" "$b"
+  reg_invalidate "$a"
+  [ -z "$(reg_get "$a" tools 0 name)" ]
+  [ "$(reg_get "$b" tools 0 name)" = "from-b" ]
+}
+
 @test "reg_load fails loudly on a file yq cannot parse" {
   # Stricter than the per-field reads it replaces, deliberately: those returned
   # an empty count for a malformed file, the entry loop ran zero times, and

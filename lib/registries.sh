@@ -239,6 +239,48 @@ _reg_stream() {
   " "$@"
 }
 
+# reg_invalidate FILE... — drop each FILE from the cache so the next read of it
+# parses the file again.
+#
+# The cache is keyed by path and never expires, which is right inside one
+# operation — a function handed a single file must not re-parse what its caller
+# already loaded — and wrong across two. A process that outlives a registry
+# being rewritten (a sync step, a test) would otherwise keep answering from the
+# version it first read. The entry points that scan a directory call this, so
+# each starts from what is on disk now.
+reg_invalidate() {
+  local file key
+  for file in "$@"; do
+    unset "_REG_LOADED[$file]"
+  done
+
+  # Rebuilt rather than unset key by key. `unset 'arr[$k]'` re-parses the
+  # subscript, and every key here holds a \x01 the parser mangles — the entry
+  # survives, and a stale node answering after an invalidate is worse than the
+  # cost of the copy. Both arrays are walked from _REG_TAG's keys, which the
+  # loader keeps in step with _REG_VAL's.
+  local -A kept_tag=() kept_val=()
+  local keep
+  for key in "${!_REG_TAG[@]}"; do
+    keep=true
+    for file in "$@"; do
+      [[ "$key" == "$file$_REG_SEP"* ]] || continue
+      keep=false
+      break
+    done
+    $keep || continue
+    kept_tag[$key]="${_REG_TAG[$key]}"
+    kept_val[$key]="${_REG_VAL[$key]}"
+  done
+
+  _REG_TAG=()
+  _REG_VAL=()
+  for key in "${!kept_tag[@]}"; do
+    _REG_TAG[$key]="${kept_tag[$key]}"
+    _REG_VAL[$key]="${kept_val[$key]}"
+  done
+}
+
 # reg_has FILE PATH_SEGMENT... — 0 when a node exists at that path.
 #
 # Presence, not truthiness: an explicit `key:` with no value is present and has
@@ -529,7 +571,9 @@ collect_registry_permissions() {
   __perms_out=()
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
-  (( ${#registries[@]} > 0 )) && { reg_load "${registries[@]}" || return 1; }
+  # Invalidated first: this is a directory scan, so it answers for the tree as
+  # it is now, not as some earlier call in the same process found it.
+  (( ${#registries[@]} > 0 )) && { reg_invalidate "${registries[@]}"; reg_load "${registries[@]}" || return 1; }
 
   local file count i
   for file in "${registries[@]}"; do
@@ -583,7 +627,8 @@ collect_claude_env_vars() {
   __targets_out=()
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
-  (( ${#registries[@]} > 0 )) && { reg_load "${registries[@]}" || return 1; }
+  # Invalidated first, for the reason collect_registry_permissions gives.
+  (( ${#registries[@]} > 0 )) && { reg_invalidate "${registries[@]}"; reg_load "${registries[@]}" || return 1; }
 
   local file flagged count i var target opted_out
   for file in "${registries[@]}"; do

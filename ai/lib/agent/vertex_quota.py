@@ -5,8 +5,10 @@ configured Vertex AI project/region before any agent is spawned.  Catches
 misconfigured model ids (nothing the project can serve, not even the model's
 family) within ~1s instead of burning ~6 minutes on retries.
 
-Reached through ``agent.backend.preflight()`` — nothing outside the Claude
-backend should import this module.
+Reached through ``agent.backend.preflight()``. The quota check itself is the
+Claude backend's alone, but two things here describe the Vertex endpoint rather
+than the check — ``vertex_env`` and ``access_token`` — and ``agent.token_count``
+reads both. Anything else in this module stays behind the preflight.
 """
 
 # doc-group: backend
@@ -112,7 +114,58 @@ def resolve_vertex_model_id(model: str) -> str:
     return model
 
 
-def _get_access_token() -> str | None:
+# The two variables that together say "this machine talks to Anthropic through
+# Vertex, as this project, in this region". Read in one place because two
+# readers that disagree about which of them is required is how a run ends up
+# addressing an endpoint it has no credentials for.
+_VERTEX_ENV_KEYS = ("ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION")
+
+
+def vertex_env() -> tuple[str, str] | None:
+    """The configured Vertex ``(project, region)``, or None if not on Vertex.
+
+    None covers both ways the answer can be absent: the backend is not pointed
+    at Vertex at all, or it is but the configuration is incomplete. Neither is
+    an error here — a caller decides whether a missing endpoint blocks it, and
+    the two callers today differ, one warning and one proceeding quietly.
+    """
+    if os.environ.get("CLAUDE_CODE_USE_VERTEX") != "1":
+        return None
+    if any(not os.environ.get(key) for key in _VERTEX_ENV_KEYS):
+        return None
+    return os.environ[_VERTEX_ENV_KEYS[0]], os.environ[_VERTEX_ENV_KEYS[1]]
+
+
+# An application-default token is minted with about an hour to live. Held for a
+# fraction of that: the cost being avoided is one credential round trip per
+# call — a google-auth refresh, or a `gcloud` subprocess — and a short window
+# buys nearly all of it while leaving a token that outlives its usefulness no
+# room to be handed out. In-process only, so nothing is written to disk and a
+# new run always mints its own.
+_TOKEN_TTL_SECS = 300
+_token_cache: tuple[str, float] | None = None
+
+
+def access_token() -> str | None:
+    """A bearer token for the Vertex endpoint, or None if none can be obtained.
+
+    Cached for `_TOKEN_TTL_SECS` because the callers are loops: a review that
+    measures its prompts asks once per phase, and every ask would otherwise
+    re-resolve credentials before spending the request it came for.
+
+    None is every way the answer can be absent — no google-auth, no `gcloud`,
+    no configured credentials — and none of them is an error here. A caller
+    decides what to do without one.
+    """
+    global _token_cache
+    if _token_cache and time.time() - _token_cache[1] < _TOKEN_TTL_SECS:
+        return _token_cache[0]
+    token = _mint_access_token()
+    _token_cache = (token, time.time()) if token else None
+    return token
+
+
+def _mint_access_token() -> str | None:
     if _HAS_GOOGLE_AUTH:
         try:
             creds, _ = _google_auth_default(
@@ -223,7 +276,7 @@ def check_quota(model: str, project: str, region: str) -> VertexQuotaResult:
     if cached is not None:
         return _verdict(base_model, cached, project, region)
 
-    token = _get_access_token()
+    token = access_token()
     if not token:
         log.warn("Vertex quota check skipped — could not obtain access token")
         return VertexQuotaResult(QuotaVerdict.UNKNOWN, base_model)
@@ -298,18 +351,15 @@ def run_preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     if os.environ.get("CLAUDE_CODE_USE_VERTEX") != "1":
         return True
 
-    missing = [
-        key for key in ("ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION")
-        if not os.environ.get(key)
-    ]
-    if missing:
+    env = vertex_env()
+    if not env:
+        missing = [key for key in _VERTEX_ENV_KEYS if not os.environ.get(key)]
         log.warn(f"Vertex quota check skipped — missing env: {', '.join(missing)}")
         trail.info("vertex_quota", "skipped — missing env vars",
                    data={"missing": missing})
         return True
 
-    project = os.environ["ANTHROPIC_VERTEX_PROJECT_ID"]
-    region = os.environ["CLOUD_ML_REGION"]
+    project, region = env
 
     skipped = sorted(m for m in models if not is_checkable(m))
     if skipped:

@@ -252,6 +252,14 @@ Each pipeline phase resolves its model as **`--model` flag > `WORKBENCH_AI_<PHAS
 
 Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` when those are set; otherwise the alias is passed to the CLI as-is.
 
+#### Prompt token measurement
+
+Set `WORKBENCH_AI_MEASURE_TOKENS=1` to record each rendered prompt's exact input-token count in `prompt-stats.json`, alongside the model it was counted against and the resulting bytes-per-token. Off by default: counting a large prompt is a round trip of a second or more, and a multi-phase review renders many.
+
+The count comes from the model's own tokenizer, so it is only meaningful against the model that will serve the request — `claude-sonnet-5` counts the same text around 27% denser than `claude-sonnet-4-5`. It needs the same Vertex configuration and application-default credentials as the quota preflight below; without them the run proceeds and records no count rather than recording a guess.
+
+It counts the rendered prompt alone. The system prompt and tool schemas that `claude -p` assembles internally are charged to the same request and are not visible to the review, so the request costs more than `prompt_tokens` reports — measured against session logs, between 9.5k and 48.8k tokens more: around 26k for a full review phase, around 11k for a lighter one.
+
 #### Vertex AI quota preflight
 
 When the Claude backend is pointed at Vertex AI, the review aborts before spending anything if a model it would use has no provisioned quota in the target project. The env vars are declared in [`ai/lib/vertex.env.yml`](../ai/lib/vertex.env.yml) and scaffolded into `~/.env.local`.

@@ -23,6 +23,8 @@ from review.types import (
 from core.phases import Effort, Mode, Phase
 from dataclasses import asdict
 
+from unittest.mock import patch
+
 from review.grammar import parse_ledger_line
 from review.prompt import BudgetLever, Cut, _build_common_sections, _fit_budget
 from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
@@ -567,6 +569,72 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         prompt = build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         assert len(prompt.encode()) <= MAX_PROMPT_BYTES
         assert "Incremental review context" in prompt
+
+
+# ── Token telemetry in the prompt stats ─────────────────────────────────────
+
+
+class TestPromptTokenTelemetry:
+    """What `prompt-stats.json` records about a prompt's real token cost.
+
+    The counter is a network round trip, so it is patched here; what these
+    hold is the contract around it — that it is off unless asked for, that an
+    unavailable count leaves no trace rather than a wrong one, and that a count
+    is never recorded without the tokenizer it was measured against.
+    """
+
+    def _job(self, tmp_path):
+        job = _make_job(_make_preflight())
+        job.review_file = str(tmp_path / "review.md")
+        return job
+
+    def _stats(self, tmp_path):
+        return json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
+
+    def test_no_token_count_unless_asked_for(self, tmp_path, monkeypatch):
+        """Counting a large prompt costs seconds; it stays opt-in."""
+        monkeypatch.delenv("WORKBENCH_AI_MEASURE_TOKENS", raising=False)
+        with patch("review.prompt.count_tokens") as counter:
+            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        counter.assert_not_called()
+        assert "prompt_tokens" not in self._stats(tmp_path)
+
+    def test_records_count_model_and_density_when_measured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        with patch("review.prompt.count_tokens", return_value=1000):
+            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        stats = self._stats(tmp_path)
+        assert stats["prompt_tokens"] == 1000
+        # A density without its tokenizer is not interpretable: sonnet-5 counts
+        # the same text ~27% denser than sonnet-4-5.
+        assert stats["token_model"]
+        assert stats["bytes_per_token"] == round(stats["prompt_bytes"] / 1000, 3)
+
+    def test_an_unavailable_count_records_nothing(self, tmp_path, monkeypatch):
+        """None is not zero — a missing measurement must leave no density behind."""
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        with patch("review.prompt.count_tokens", return_value=None):
+            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        stats = self._stats(tmp_path)
+        assert "prompt_tokens" not in stats
+        assert "bytes_per_token" not in stats
+
+    def test_a_zero_count_records_no_density(self, tmp_path, monkeypatch):
+        """Zero is a count, but it is not a density — and must not divide."""
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        with patch("review.prompt.count_tokens", return_value=0):
+            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        stats = self._stats(tmp_path)
+        assert stats["prompt_tokens"] == 0
+        assert "bytes_per_token" not in stats
+
+    def test_counts_against_the_model_the_phase_will_use(self, tmp_path, monkeypatch):
+        """A count against another tokenizer is worse than no count at all."""
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        with patch("review.prompt.count_tokens", return_value=10) as counter:
+            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        model = counter.call_args.args[1]
+        assert model == self._stats(tmp_path)["token_model"]
 
 
 # ── The prior findings handed to synthesis to settle ────────────────────────

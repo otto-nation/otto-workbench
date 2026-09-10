@@ -29,10 +29,13 @@ from pathlib import Path
 
 from git import client as git_client
 import json
+import os
 from core import log
+from agent.token_count import count_tokens
+from agent import phases as agent_phases
 from agent.templates import build_output_block
 from agent.types import EFFORT_PRESETS
-from core.phases import Mode
+from core.phases import Mode, Phase
 from pr.domains import ReviewVerdict
 from review.budget import (
     FileFit, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
@@ -372,9 +375,41 @@ def _fit_budget(
     )
 
 
+# Counting a 370KB prompt costs a 2.5s round trip, and a multi-phase review
+# renders a dozen of them. Nothing enforces a budget against these numbers yet;
+# they exist so the ceiling can be calibrated against real reviews rather than a
+# synthetic corpus. Off unless a run asks to pay for them.
+_MEASURE_TOKENS_ENV = "WORKBENCH_AI_MEASURE_TOKENS"
+
+
+def _measured_tokens(
+    prompt: str, job: ReviewJob, phase: Phase | None,
+) -> tuple[int, str] | None:
+    """The prompt's exact token count and the model it was counted against.
+
+    The two travel together because a density is uninterpretable without its
+    tokenizer, and resolving the model twice is how the recorded count and the
+    recorded model come to disagree.
+
+    This is the rendered prompt only. The system prompt and tool schemas the
+    CLI adds are charged to the same request and are not visible from here, so
+    the request costs more than this says — see `agent.token_count`, which
+    carries the observed margin.
+
+    None means no measurement was taken or none was available, and the two are
+    deliberately not distinguished here: both leave the stats record without a
+    token count, which is the only thing a reader can act on.
+    """
+    if os.environ.get(_MEASURE_TOKENS_ENV) != "1" or phase is None:
+        return None
+    model = agent_phases.phase_model(phase, job.model, job.config)
+    counted = count_tokens(prompt, model)
+    return (counted, model) if counted is not None else None
+
+
 def _log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
-    label: str = "", cuts: tuple[Cut, ...] = (),
+    label: str = "", cuts: tuple[Cut, ...] = (), phase: Phase | None = None,
 ) -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
@@ -411,6 +446,20 @@ def _log_prompt_size(
         "sections": section_sizes,
         "cuts": [asdict(c) for c in cuts],
     }
+    measured = _measured_tokens(prompt, job, phase)
+    if measured:
+        # Both the count and the model are recorded: a density is meaningless
+        # without the tokenizer it was measured against, and sonnet-5 counts the
+        # same text ~27% denser than sonnet-4-5.
+        counted, model = measured
+        stats["prompt_tokens"] = counted
+        stats["token_model"] = model
+        # A zero-token prompt has no density to report, and dividing by it would
+        # fail the render over a statistic. Unreachable for a real prompt; the
+        # guard is here because the field's absence is already how a reader is
+        # told there is no density, and that path is worth keeping honest.
+        if counted:
+            stats["bytes_per_token"] = round(prompt_bytes / counted, 3)
     if job.preflight:
         pf = job.preflight
         stats["file_contents"] = {

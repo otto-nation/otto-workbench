@@ -196,7 +196,7 @@ _live() {
 }
 
 @test "withdraws the package when the repo cannot be reached" {
-  # A repo this token cannot see \u2014 deleted, renamed, private, or restricted \u2014
+  # A repo this token cannot see — deleted, renamed, private, or restricted —
   # cannot be cloned, so leaving the entry in place buys a failing clone on
   # every Pi startup.
   _write_live_packages "$PKG"

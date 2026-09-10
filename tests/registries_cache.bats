@@ -1,4 +1,7 @@
 #!/usr/bin/env bats
+# shellcheck shell=bats
+bats_require_minimum_version 1.5.0
+
 # Tests for the reg_* read cache in lib/registries.sh — the batched YAML reader
 # that replaced a yq fork per field.
 #
@@ -228,7 +231,7 @@ tools:
 EOF
 )
   reg_load "$f"
-  ! reg_has "$f" tools 0 description
+  run ! reg_has "$f" tools 0 description
   [ -z "$(reg_get "$f" tools 0 description)" ]
   [ -z "$(reg_type "$f" tools 0 description)" ]
 }
@@ -429,7 +432,7 @@ EOF
   [ "$status" -eq 0 ]
   reg_load "$f"
   [ "$(reg_len "$f" tools)" = "0" ]
-  ! reg_has "$f" meta
+  run ! reg_has "$f" meta
 }
 
 @test "a comment-only registry loads and reads as empty" {

@@ -240,10 +240,12 @@ EOF
   for i in 1 2 3; do
     _sleeping_validator "bin/local" "validate-slow-$i" 30
   done
-  local buffers="$TMPDIR/buffers"
+  local buffers="$TMPDIR/buffers" root="$TMPDIR"
   mkdir -p "$buffers"
 
-  VALIDATOR_ROOT="$TMPDIR" TMPDIR="$buffers" "$VALIDATE_ALL" --quiet >/dev/null 2>&1 &
+  # root captured first: on one line, VALIDATOR_ROOT="$TMPDIR" expands before
+  # TMPDIR is reassigned, so the two would disagree about which is which.
+  VALIDATOR_ROOT="$root" TMPDIR="$buffers" "$VALIDATE_ALL" --quiet >/dev/null 2>&1 &
   local runner=$!
   # Polled rather than slept: on a loaded runner the validators may take longer
   # than a fixed window to spawn, and waiting a fixed window for them to die
@@ -264,12 +266,13 @@ EOF
   # wherever TMPDIR points, and looking anywhere else would pass without
   # observing anything. A failing validator too — the trap has to fire on the
   # exit path that reports failures, not only the clean one.
-  local buffers="$TMPDIR/buffers"
+  local buffers="$TMPDIR/buffers" root="$TMPDIR"
   mkdir -p "$buffers"
   _fixture_validator "bin/local" "validate-good" 0
   _fixture_validator "bin/local" "validate-bad" 1
 
-  VALIDATOR_ROOT="$TMPDIR" TMPDIR="$buffers" run "$VALIDATE_ALL" --quiet
+  # root captured first, for the reason the interrupt test above gives.
+  VALIDATOR_ROOT="$root" TMPDIR="$buffers" run "$VALIDATE_ALL" --quiet
   [ "$status" -eq 1 ]
   [ -z "$(ls -A "$buffers")" ]
 }

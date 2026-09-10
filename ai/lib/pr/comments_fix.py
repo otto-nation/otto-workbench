@@ -70,10 +70,11 @@ def count_line(
 
 
 # How a verdict is spelled wherever a count of them is printed, in the order
-# they print — which is the summary comment's order, because that one is
-# published and the dashboard's is re-rendered from state every run. Every
-# `FixOutcome` member has an entry — a verdict with none is
-# silently dropped from the count, so the domain would report fewer threads
+# they print. That order is the summary comment's, because the summary is
+# published and the dashboard is re-rendered from state every run.
+#
+# Every `FixOutcome` member needs an entry here. A verdict with none is
+# silently dropped from the count, and the domain then reports fewer threads
 # than it holds.
 #
 # Public because two surfaces print this line: `render_status` below, and the

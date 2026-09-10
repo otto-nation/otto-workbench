@@ -1238,6 +1238,27 @@ good as both: *where does this link point*, and *is there anything there*.
 :func:`evidence_is_real` is the second, and it sits beside the linkers rather
 than beside triage because the thing it guards is the link.
 
+### pr/settlement.py
+
+How a review thread ends when the fix pass is not what ended it.
+
+Two ways in, one vocabulary. Reconciliation asks GitHub what became of the
+threads a snapshot still calls unsettled — a reply of ours naming the verdict, a
+resolve button pressed by someone else — and rewrites the rows GitHub
+contradicts. `--settle` is the operator stating an ending outright, for work
+they did by hand where nothing the tool can read was left behind.
+
+Both write the same outcomes onto the same records, and both have to agree on
+what evidence counts, which is why they are one module rather than two. The
+grade of the evidence is the thing they share: a standing reply of ours names a
+verdict and supports FIXED, a resolve button on its own settles the thread
+without saying anybody fixed anything and supports only SETTLED_ELSEWHERE.
+Getting that wrong publishes a false claim about someone's code.
+
+What is not here: the summary that renders these endings, the replies that
+announce them, and the argparse layer that spells `--settle`. This module
+decides what happened and records it; the surfaces read the record.
+
 ### pr/thread_context.py
 
 The code and history a reviewer's comment has to be read against.

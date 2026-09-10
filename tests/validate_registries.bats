@@ -855,6 +855,9 @@ tools: []
 EOF
 
   run main
+  # A warning, not an error — the cross-check is skipped, and the run still
+  # passes. Pinned so it reads the same way as the absent-key sibling below.
+  [ "$status" -eq 0 ]
   [[ "$output" == *"unknown validation type"* ]]
 }
 

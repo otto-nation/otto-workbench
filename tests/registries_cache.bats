@@ -256,6 +256,9 @@ EOF
 }
 
 @test "a value holding a tab survives the field delimiter" {
+  # Written with printf rather than through _fixture: the fixture bodies are
+  # heredocs, and a literal tab in one is at the mercy of whatever strips
+  # whitespace between here and the file. This test is about that exact byte.
   local f
   f=$(printf 'tools:\n  - name: "has\ttab"\n' > "$TMPDIR/reg.yml"; printf '%s' "$TMPDIR/reg.yml")
   reg_load "$f"

@@ -154,8 +154,6 @@ EOF
   grep -q "## Tools" "$TOOL_CONTEXT_OUTPUT"
 }
 
-
-
 # ── Tool entry fields ─────────────────────────────────────────────────────────
 
 @test "renders tool name as H3" {

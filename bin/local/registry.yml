@@ -104,6 +104,11 @@ tools:
     visibility: brief
     description: "Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe"
 
+  - name: validate-yq-version
+    permission: false
+    visibility: brief
+    description: "Fails when this machine's yq is older than the one CI pins — an expression the older parser rejects fails every registry read at once"
+
   - name: validate-eval-baselines
     permission: false
     visibility: brief

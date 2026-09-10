@@ -214,12 +214,22 @@ _reg_report_unparseable() {
 # `_reg_key` builds the same form from its arguments.
 _reg_stream() {
   # $seqs is every sequence's path; a segment whose parent path is in it is an
-  # index and takes the `#` marker. yq has no jq-style `if/then/else`, so the
-  # choice is written as a `select(...) // fallback`.
-  local pathexpr="[ \$p | to_entries | .[]
-        | (.key) as \$i | (.value) as \$v
-        | (((\"#\" + \$v) | select([\$seqs[] | select(. == (\$p[:\$i] | join(\"$_REG_PSEP\")))] | length > 0)) // \$v)
-      ] | join(\"$_REG_PSEP\")"
+  # index and takes the `#` marker.
+  #
+  # The parent path is accumulated with `ireduce` rather than read off a
+  # `$p[:$i]` slice. A variable slice is a 4.45+ construct, and CI pins 4.44.3,
+  # where it fails the whole expression with "'|' expects 2 args but there is
+  # 1" — every registry read, on every validator. The reduce carries the prefix
+  # forward a segment at a time and works on both.
+  #
+  # yq has no jq-style `if/then/else` either, so each choice is written as a
+  # `select(...) // fallback`.
+  local pathexpr="\$p[] as \$v ireduce ({\"pre\": \"\", \"out\": []};
+          (.pre) as \$pre
+          | (((\$pre + \"$_REG_PSEP\" + \$v) | select(\$pre != \"\")) // \$v) as \$next
+          | {\"pre\": \$next,
+             \"out\": (.out + [ ((\"#\" + \$v) | select([\$seqs[] | select(. == \$pre)] | length > 0)) // \$v ])}
+        ) | .out | join(\"$_REG_PSEP\")"
   # The sequence paths are filtered for non-empty: a document holding no
   # sequence at all still yields one empty-string entry, which would match the
   # empty parent path of every top-level key and mark them all as indices.

@@ -35,11 +35,9 @@ migration_20260908_rename_model_env_vars() {
     if grep -q "^export ${new}=" "$ENV_LOCAL_FILE"; then
       continue
     fi
-    # Rename active exports and commented-out template lines
-    sed -i '' \
-      -e "s/^export ${old}=/export ${new}=/" \
-      -e "s/^# export ${old}=/# export ${new}=/" \
-      "$ENV_LOCAL_FILE"
+    # Renames the active export and the commented-out template line in one
+    # pass; the optional group carries whichever prefix the line had.
+    sed -i '' -E "s/^(# )?export ${old}=/\1export ${new}=/" "$ENV_LOCAL_FILE"
     changed=true
   done
 

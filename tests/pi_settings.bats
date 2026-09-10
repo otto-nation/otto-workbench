@@ -328,3 +328,22 @@ _teardown_env_local() {
   [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
   _teardown_env_local
 }
+
+@test "two tiers naming one model list it once" {
+  # Pinning a machine to a single model by pointing several tiers at it is a
+  # normal configuration, and enabledModels is a set — the same id twice is
+  # not a second model to enable.
+  _seed_env_local \
+    'export AI_MODEL=claude-opus-5' \
+    "export AI_OPUS_MODEL='claude-sonnet-5'" \
+    "export AI_SONNET_MODEL='claude-sonnet-5'"
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.enabledModels | length')" = "2" ]
+  # defaultModel leads, then the one distinct tier value.
+  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
+  [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-sonnet-5" ]
+  _teardown_env_local
+}

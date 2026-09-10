@@ -350,6 +350,11 @@ _pi_build_models() {
   # does not match one of the tier vars.  An unset tier var is omitted rather
   # than emitting an empty entry, so a partially-configured ~/.env.local
   # produces a shorter list instead of clobbering working entries.
+  #
+  # Deduplicated on the way out, because two tiers may name one model — opus
+  # and sonnet both pointed at the same id is a normal way to pin a machine to
+  # one model. `unique` would sort, and the list reads defaultModel-first, so
+  # the fold below keeps first-seen order instead.
   jq -n \
     --arg default "$default_model" \
     --arg provider "$provider" \
@@ -362,7 +367,7 @@ _pi_build_models() {
          (if $opus   != "" and $opus   != $default then "\($provider)/\($opus)"   else empty end),
          (if $sonnet != "" and $sonnet != $default then "\($provider)/\($sonnet)" else empty end),
          (if $haiku  != "" and $haiku  != $default then "\($provider)/\($haiku)"  else empty end)
-       ]) }'
+       ] | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }'
 }
 
 # step_pi_settings — merges the workbench's managed keys into Pi's global settings.

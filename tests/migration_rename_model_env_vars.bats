@@ -24,6 +24,10 @@ _run_migration() {
     LIB_SRC_DIR="$2/lib"
     LEGACY_WORKBENCH_ROOT="$3/.unused-legacy"
     ENV_LOCAL_FILE="$3/.env.local"
+    # output.sh carries sed_i, the portable in-place edit the migration uses.
+    # A real sync has it through the ui.sh facade; sourced directly here so
+    # the harness exercises the same function rather than a bare `sed -i`.
+    . "$WORKBENCH_DIR/lib/output.sh"
     . "$WORKBENCH_DIR/lib/migrations.sh"
     . "$1"
     migration_20260908_rename_model_env_vars

@@ -37,7 +37,11 @@ migration_20260908_rename_model_env_vars() {
     fi
     # Renames the active export and the commented-out template line in one
     # pass; the optional group carries whichever prefix the line had.
-    sed -i '' -E "s/^(# )?export ${old}=/\1export ${new}=/" "$ENV_LOCAL_FILE"
+    #
+    # Through sed_i rather than `sed -i ''`, which is BSD-only: GNU reads the
+    # empty string as the script and edits nothing, so the rename silently
+    # does not happen on Linux.
+    sed_i -E "s/^(# )?export ${old}=/\1export ${new}=/" "$ENV_LOCAL_FILE"
     changed=true
   done
 

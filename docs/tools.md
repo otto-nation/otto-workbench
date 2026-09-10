@@ -21,7 +21,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `dream-verify` | Verify dream memory file integrity across all projects |
 | `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
-| `wiki` | Mechanical operations over a compiled knowledge base — status, lint, source hashes, index |
+| `wiki` | Mechanical operations over a compiled knowledge base — status, lint, signals, archive, source hashes, index |
 | `workbench-reference` | Reference card — lists all workbench skills, agents, and reuse modes |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `pr-rebase` | Rebase current branch onto its base with conflict detection and force-push |

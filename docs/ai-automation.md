@@ -232,12 +232,12 @@ Reviews the session that just ended for anything worth keeping and logs it to th
 **Trigger:** Auto-triggers at session end, at most once every 24h per repo, in repos that have a knowledge base.
 **Skip:** Never writes or edits an article — /wiki compile processes what this logs, deliberately.
 
-### `/wiki [init|ingest|compile|status|lint|promote] [args]`
+### `/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]`
 
 Build and maintain a compiled knowledge base — ingest sources, compile them into interlinked articles, query them, and keep them healthy. TRIGGER when: user wants a knowledge base, asks to ingest or compile a source, queries compiled knowledge, or asks about wiki health. SKIP: one-off questions answerable from the codebase; project docs that belong in docs/.
 
 ```
-/wiki [init|ingest|compile|status|lint|promote] [args]
+/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]
 ```
 
 **Output:** `articles in the knowledge base directory; reports to stdout`

@@ -1,8 +1,12 @@
 """Layer 2 — knowledge base store. May import: core."""
 
 from .create import (
+    ArchiveResult,
+    ArticleNotFoundError,
+    ArticleReferencedError,
     WikiExistsError,
     append_log,
+    archive_article,
     clean_source_type,
     init_wiki,
     manifest_row,
@@ -26,13 +30,23 @@ from .paths import (
     find_wiki,
     is_wiki,
 )
-from .parsing import HASH_PREFIX_LEN, hash_file, read_text
-from .report import build_index, collect_lint, collect_status
+from .parsing import (
+    HASH_PREFIX_LEN,
+    QueryGap,
+    gap_tokens,
+    hash_file,
+    parse_query_gap,
+    read_text,
+)
+from .report import build_index, collect_lint, collect_signals, collect_status
 
 __all__ = [
     "ARCHIVE_DIR",
     "ARTICLES_DIR",
+    "ArchiveResult",
     "Article",
+    "ArticleNotFoundError",
+    "ArticleReferencedError",
     "DEFAULT_SETTINGS",
     "DEFAULT_WIKI_DIRNAME",
     "DRAFTS_DIR",
@@ -41,6 +55,7 @@ __all__ = [
     "LOG_FILE",
     "MAX_PARENT_DEPTH",
     "META_DIR",
+    "QueryGap",
     "RAW_DIR",
     "SCHEMA_FILE",
     "SOURCES_FILE",
@@ -48,15 +63,19 @@ __all__ = [
     "Wiki",
     "WikiExistsError",
     "append_log",
+    "archive_article",
     "build_index",
     "clean_source_type",
     "collect_lint",
+    "collect_signals",
     "collect_status",
     "find_wiki",
+    "gap_tokens",
     "hash_file",
     "init_wiki",
     "is_wiki",
     "manifest_row",
+    "parse_query_gap",
     "read_text",
     "slugify_title",
     "stage_source",

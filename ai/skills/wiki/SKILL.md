@@ -2,7 +2,7 @@
 name: wiki
 description: "Build and maintain a compiled knowledge base — ingest sources, compile them into interlinked articles, query them, and keep them healthy. TRIGGER when: user wants a knowledge base, asks to ingest or compile a source, queries compiled knowledge, or asks about wiki health. SKIP: one-off questions answerable from the codebase; project docs that belong in docs/."
 source: otto-workbench/ai/skills/wiki/SKILL.md
-invocation: "/wiki [init|ingest|compile|status|lint|promote] [args]"
+invocation: "/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]"
 trigger: "wiki, knowledge base, ingest a source, compile articles, query the wiki, wiki health"
 skip: "Questions answerable directly from the codebase; documentation that belongs in the project's own docs/"
 output: "articles in the knowledge base directory; reports to stdout"
@@ -31,8 +31,10 @@ The division of labour that follows from that:
 | `/wiki ingest <source>` | Read `references/ingest.md` |
 | `/wiki compile` | Read `references/compile.md` |
 | `/wiki status` | Run `wiki status`. Print it. Nothing else |
-| `/wiki lint` | Run `wiki lint`, then read `references/lint.md` for the three checks it cannot make |
+| `/wiki lint` | Run `wiki lint`, then read `references/lint.md` for the checks it cannot make |
+| `/wiki signals` | Run `wiki signals`. Print it, then read `references/signals.md` |
 | `/wiki promote` | Read `references/promote.md` |
+| `/wiki archive <slug>` | Confirm with the user, then `wiki archive`. Read `references/archive.md` |
 | anything else | A question. Read `references/query.md` |
 
 Locate the knowledge base with `wiki path`. It takes an explicit `--wiki DIR`, otherwise
@@ -47,10 +49,12 @@ Run these instead of deriving the answer:
 wiki init                # create a knowledge base
 wiki ingest --stage FILE # copy a source into raw/ with a real hash
 wiki status              # counts, uncompiled sources, recent activity
-wiki lint                # nine mechanical health checks
+wiki lint                # eleven mechanical health checks
 wiki lint --json         # the same, for filtering
+wiki signals             # tag table, similar pairs, gap clusters, draft ages
 wiki sources --new       # sources that are new or changed since last compile
 wiki index               # rebuild the master index from article frontmatter
+wiki archive <slug>      # retire an article to archive/, keeping it readable
 ```
 
 `wiki sources` computes each source's sha256. **Never write a hash you did not get from
@@ -93,11 +97,16 @@ with `wiki index` rather than editing it.
 
 ## Safety
 
-- Three `wiki` subcommands write, and only where they say: `init` creates the base,
-  `ingest --stage` adds to `raw/` and `_log.md`, `index` rewrites `_index.md`. `path`,
-  `status`, `lint`, and `sources` read only.
+- Four `wiki` subcommands write, and only where they say: `init` creates the base,
+  `ingest --stage` adds to `raw/` and `_log.md`, `index` rewrites `_index.md`, and
+  `archive` moves one article into `archive/`. `path`, `status`, `lint`, `signals`, and
+  `sources` read only.
+- `wiki archive` is the only one that moves existing content. Confirm with the user before
+  running it, and never pass `--force` on their behalf — the refusal it overrides is the
+  check that live articles are not left pointing at retired content.
 - `wiki init` refuses to write over an existing base. If it reports one exists, that is the
   answer — do not pass `--wiki` at a different path to get around it.
 - Never edit anything in `raw/`. Sources are immutable; re-ingest instead.
-- Never delete an article to resolve a lint finding. Fix the finding or archive the article.
+- Never delete an article to resolve a lint finding. Fix the finding, or `wiki archive` the
+  article — archiving keeps it readable, deleting loses what was once believed and why.
 - Report the counts `wiki status` gives. Do not estimate them from a directory listing.

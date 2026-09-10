@@ -5,8 +5,10 @@ configured Vertex AI project/region before any agent is spawned.  Catches
 misconfigured model ids (nothing the project can serve, not even the model's
 family) within ~1s instead of burning ~6 minutes on retries.
 
-Reached through ``agent.backend.preflight()`` — nothing outside the Claude
-backend should import this module.
+Reached through ``agent.backend.preflight()``. The quota check itself is the
+Claude backend's alone, but two things here describe the Vertex endpoint rather
+than the check — ``vertex_env`` and ``access_token`` — and ``agent.token_count``
+reads both. Anything else in this module stays behind the preflight.
 """
 
 # doc-group: backend
@@ -134,7 +136,36 @@ def vertex_env() -> tuple[str, str] | None:
     return os.environ[_VERTEX_ENV_KEYS[0]], os.environ[_VERTEX_ENV_KEYS[1]]
 
 
-def _get_access_token() -> str | None:
+# An application-default token is minted with about an hour to live. Held for a
+# fraction of that: the cost being avoided is one credential round trip per
+# call — a google-auth refresh, or a `gcloud` subprocess — and a short window
+# buys nearly all of it while leaving a token that outlives its usefulness no
+# room to be handed out. In-process only, so nothing is written to disk and a
+# new run always mints its own.
+_TOKEN_TTL_SECS = 300
+_token_cache: tuple[str, float] | None = None
+
+
+def access_token() -> str | None:
+    """A bearer token for the Vertex endpoint, or None if none can be obtained.
+
+    Cached for `_TOKEN_TTL_SECS` because the callers are loops: a review that
+    measures its prompts asks once per phase, and every ask would otherwise
+    re-resolve credentials before spending the request it came for.
+
+    None is every way the answer can be absent — no google-auth, no `gcloud`,
+    no configured credentials — and none of them is an error here. A caller
+    decides what to do without one.
+    """
+    global _token_cache
+    if _token_cache and time.time() - _token_cache[1] < _TOKEN_TTL_SECS:
+        return _token_cache[0]
+    token = _mint_access_token()
+    _token_cache = (token, time.time()) if token else None
+    return token
+
+
+def _mint_access_token() -> str | None:
     if _HAS_GOOGLE_AUTH:
         try:
             creds, _ = _google_auth_default(
@@ -245,7 +276,7 @@ def check_quota(model: str, project: str, region: str) -> VertexQuotaResult:
     if cached is not None:
         return _verdict(base_model, cached, project, region)
 
-    token = _get_access_token()
+    token = access_token()
     if not token:
         log.warn("Vertex quota check skipped — could not obtain access token")
         return VertexQuotaResult(QuotaVerdict.UNKNOWN, base_model)

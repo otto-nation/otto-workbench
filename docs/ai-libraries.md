@@ -2021,10 +2021,18 @@ model shorthand never resolves to something the endpoint accepts.
 
 Two properties of the endpoint are load-bearing and easy to get wrong. It
 counts the system prompt and tool schemas when they are passed, which is how
-the ~25k tokens a prompt is charged beyond its own text become measurable
-rather than reserved-for. And it is tokenizer-specific: `claude-sonnet-5`
-counts the same text ~27% denser than `claude-sonnet-4-5`, so a count is only
-meaningful against the model that will actually serve the request.
+the tokens a prompt is charged beyond its own text become measurable rather
+than reserved-for. And it is tokenizer-specific: `claude-sonnet-5` counts the
+same text ~27% denser than `claude-sonnet-4-5`, so a count is only meaningful
+against the model that will actually serve the request.
+
+The `system` and `tools` arguments exist for that first property and no caller
+supplies them yet. `claude -p` assembles both inside the CLI, so a review has
+no handle on the text its agent will actually be sent; a count taken here is
+the prompt alone. Measured against session logs, a real request runs 9.5k to
+48.8k tokens above it — roughly 26k for a full review phase and 11k for a
+lighter one. A caller comparing a count against a context window owes itself
+that margin until the two are wired together.
 
 ### agent/usage.py
 
@@ -2062,8 +2070,10 @@ configured Vertex AI project/region before any agent is spawned.  Catches
 misconfigured model ids (nothing the project can serve, not even the model's
 family) within ~1s instead of burning ~6 minutes on retries.
 
-Reached through ``agent.backend.preflight()`` — nothing outside the Claude
-backend should import this module.
+Reached through ``agent.backend.preflight()``. The quota check itself is the
+Claude backend's alone, but two things here describe the Vertex endpoint rather
+than the check — ``vertex_env`` and ``access_token`` — and ``agent.token_count``
+reads both. Anything else in this module stays behind the preflight.
 
 ## Evaluation
 

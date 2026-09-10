@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import time
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -37,6 +38,36 @@ def _response(payload: dict):
     return _Resp(json.dumps(payload).encode())
 
 
+# ── access_token ───────────────────────────────────────────────────────
+
+
+class TestAccessToken:
+    """The token is resolved once per window, not once per call."""
+
+    def setup_method(self):
+        vq._token_cache = None
+
+    def teardown_method(self):
+        vq._token_cache = None
+
+    def test_reuses_a_token_across_calls(self):
+        with patch("agent.vertex_quota._mint_access_token", return_value="tok") as mint:
+            assert [vq.access_token() for _ in range(4)] == ["tok"] * 4
+        assert mint.call_count == 1
+
+    def test_mints_again_once_the_window_passes(self):
+        with patch("agent.vertex_quota._mint_access_token", side_effect=["a", "b"]):
+            assert vq.access_token() == "a"
+            vq._token_cache = ("a", time.time() - vq._TOKEN_TTL_SECS - 1)
+            assert vq.access_token() == "b"
+
+    def test_a_failure_is_not_cached(self):
+        """A missing credential now must not mean a missing one for five minutes."""
+        with patch("agent.vertex_quota._mint_access_token", side_effect=[None, "tok"]):
+            assert vq.access_token() is None
+            assert vq.access_token() == "tok"
+
+
 # ── vertex_env ───────────────────────────────────────────────────────────────
 
 
@@ -63,7 +94,7 @@ class TestVertexEnv:
 class TestCountTokens:
     def test_returns_the_endpoint_count(self, monkeypatch):
         _on_vertex(monkeypatch)
-        with patch("agent.token_count._get_access_token", return_value="tok"), \
+        with patch("agent.token_count.access_token", return_value="tok"), \
              patch("urllib.request.urlopen", return_value=_response({"input_tokens": 4242})):
             assert tc.count_tokens("some prompt", "claude-sonnet-5") == 4242
 
@@ -82,7 +113,7 @@ class TestCountTokens:
 
     def test_none_when_no_credentials(self, monkeypatch):
         _on_vertex(monkeypatch)
-        with patch("agent.token_count._get_access_token", return_value=None), \
+        with patch("agent.token_count.access_token", return_value=None), \
              patch("urllib.request.urlopen") as urlopen:
             assert tc.count_tokens("some prompt", "claude-sonnet-5") is None
         urlopen.assert_not_called()
@@ -90,13 +121,13 @@ class TestCountTokens:
     def test_transport_failure_is_none_not_an_exception(self, monkeypatch):
         """An uncounted prompt is a missing measurement, never a failed review."""
         _on_vertex(monkeypatch)
-        with patch("agent.token_count._get_access_token", return_value="tok"), \
+        with patch("agent.token_count.access_token", return_value="tok"), \
              patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
             assert tc.count_tokens("some prompt", "claude-sonnet-5") is None
 
     def test_malformed_response_is_none(self, monkeypatch):
         _on_vertex(monkeypatch)
-        with patch("agent.token_count._get_access_token", return_value="tok"), \
+        with patch("agent.token_count.access_token", return_value="tok"), \
              patch("urllib.request.urlopen", return_value=_response({"unexpected": 1})):
             assert tc.count_tokens("some prompt", "claude-sonnet-5") is None
 
@@ -109,7 +140,7 @@ class TestCountTokens:
             captured["body"] = json.loads(req.data)
             return _response({"input_tokens": 7})
 
-        with patch("agent.token_count._get_access_token", return_value="tok"), \
+        with patch("agent.token_count.access_token", return_value="tok"), \
              patch("urllib.request.urlopen", side_effect=_capture):
             tc.count_tokens(
                 "text", "claude-sonnet-5",
@@ -129,7 +160,7 @@ class TestCountTokens:
             captured["body"] = json.loads(req.data)
             return _response({"input_tokens": 7})
 
-        with patch("agent.token_count._get_access_token", return_value="tok"), \
+        with patch("agent.token_count.access_token", return_value="tok"), \
              patch("urllib.request.urlopen", side_effect=_capture):
             tc.count_tokens("text", "claude-sonnet-5")
         assert "system" not in captured["body"]

@@ -13,10 +13,18 @@ model shorthand never resolves to something the endpoint accepts.
 
 Two properties of the endpoint are load-bearing and easy to get wrong. It
 counts the system prompt and tool schemas when they are passed, which is how
-the ~25k tokens a prompt is charged beyond its own text become measurable
-rather than reserved-for. And it is tokenizer-specific: `claude-sonnet-5`
-counts the same text ~27% denser than `claude-sonnet-4-5`, so a count is only
-meaningful against the model that will actually serve the request.
+the tokens a prompt is charged beyond its own text become measurable rather
+than reserved-for. And it is tokenizer-specific: `claude-sonnet-5` counts the
+same text ~27% denser than `claude-sonnet-4-5`, so a count is only meaningful
+against the model that will actually serve the request.
+
+The `system` and `tools` arguments exist for that first property and no caller
+supplies them yet. `claude -p` assembles both inside the CLI, so a review has
+no handle on the text its agent will actually be sent; a count taken here is
+the prompt alone. Measured against session logs, a real request runs 9.5k to
+48.8k tokens above it — roughly 26k for a full review phase and 11k for a
+lighter one. A caller comparing a count against a context window owes itself
+that margin until the two are wired together.
 """
 
 # doc-group: backend
@@ -29,7 +37,7 @@ import urllib.request
 
 from core import log
 from core import timeouts
-from agent.vertex_quota import _get_access_token, is_checkable, vertex_env
+from agent.vertex_quota import access_token, is_checkable, vertex_env
 
 # The endpoint speaks the Anthropic message schema through Vertex's rawPredict
 # shim, which pins its own version string rather than the API's date header.
@@ -64,7 +72,8 @@ def count_tokens(
     by the endpoint, so it is refused here instead of spending a round trip to
     learn it. `system` and `tools` are counted alongside the text when given,
     which is what makes the non-prompt overhead a measurement rather than a
-    reserve.
+    reserve; omitting them counts the text alone, which is less than the
+    request will cost.
 
     Returns None for every condition that leaves the answer unknown: not on
     Vertex, no credentials, a shorthand model, a transport error. None is not
@@ -79,7 +88,7 @@ def count_tokens(
         return None
     project, region = env
 
-    token = _get_access_token()
+    token = access_token()
     if not token:
         return None
 

@@ -391,6 +391,11 @@ def _measured_tokens(
     tokenizer, and resolving the model twice is how the recorded count and the
     recorded model come to disagree.
 
+    This is the rendered prompt only. The system prompt and tool schemas the
+    CLI adds are charged to the same request and are not visible from here, so
+    the request costs more than this says — see `agent.token_count`, which
+    carries the observed margin.
+
     None means no measurement was taken or none was available, and the two are
     deliberately not distinguished here: both leave the stats record without a
     token count, which is the only thing a reader can act on.
@@ -399,7 +404,7 @@ def _measured_tokens(
         return None
     model = agent_phases.phase_model(phase, job.model, job.config)
     counted = count_tokens(prompt, model)
-    return (counted, model) if counted else None
+    return (counted, model) if counted is not None else None
 
 
 def _log_prompt_size(
@@ -449,7 +454,12 @@ def _log_prompt_size(
         counted, model = measured
         stats["prompt_tokens"] = counted
         stats["token_model"] = model
-        stats["bytes_per_token"] = round(prompt_bytes / counted, 3)
+        # A zero-token prompt has no density to report, and dividing by it would
+        # fail the render over a statistic. Unreachable for a real prompt; the
+        # guard is here because the field's absence is already how a reader is
+        # told there is no density, and that path is worth keeping honest.
+        if counted:
+            stats["bytes_per_token"] = round(prompt_bytes / counted, 3)
     if job.preflight:
         pf = job.preflight
         stats["file_contents"] = {

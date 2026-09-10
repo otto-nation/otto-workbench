@@ -220,7 +220,7 @@ class TestCoveringBucket:
 
 class TestCheckQuota:
     @patch("agent.vertex_quota._fetch_provisioned_models")
-    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota.access_token", return_value="tok")
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_model_found_ok(self, _cache, _token, mock_fetch):
         mock_fetch.return_value = {"anthropic-claude-sonnet-4-6": "2000000"}
@@ -230,7 +230,7 @@ class TestCheckQuota:
         assert result.model == "anthropic-claude-sonnet-4-6"
 
     @patch("agent.vertex_quota._fetch_provisioned_models")
-    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota.access_token", return_value="tok")
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_model_not_found_fails(self, _cache, _token, mock_fetch):
         """No bucket for the version and none for the family either."""
@@ -244,7 +244,7 @@ class TestCheckQuota:
         assert "anthropic-claude-sonnet-4-5" in result.available_models
 
     @patch("agent.vertex_quota._fetch_provisioned_models")
-    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota.access_token", return_value="tok")
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_a_new_version_passes_on_the_family_bucket(self, _cache, _token, mock_fetch):
         """A model newer than the project's per-version buckets must not block.
@@ -261,7 +261,7 @@ class TestCheckQuota:
         assert result.ok
         assert result.verdict is vq.QuotaVerdict.PROVISIONED
 
-    @patch("agent.vertex_quota._get_access_token", return_value=None)
+    @patch("agent.vertex_quota.access_token", return_value=None)
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_no_token_degrades_gracefully(self, _cache, _token):
         result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
@@ -279,7 +279,7 @@ class TestCheckQuota:
         assert not vq.check_quota("claude-sonnet-5", "proj", "us-east5").ok
 
     @patch("agent.vertex_quota._fetch_provisioned_models", side_effect=urllib.error.URLError("network"))
-    @patch("agent.vertex_quota._get_access_token", return_value="tok")
+    @patch("agent.vertex_quota.access_token", return_value="tok")
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_api_error_degrades_gracefully(self, _cache, _token, _fetch):
         result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")

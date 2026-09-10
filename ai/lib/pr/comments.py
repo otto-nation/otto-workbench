@@ -49,6 +49,7 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from gh import client as gh_client
 from core import log
@@ -229,6 +230,41 @@ def update_pr_body(repo: str, pr_number: int, body: str) -> bool:
     `{"body": …}` payload fits it unchanged.
     """
     return _gh_post(f"repos/{repo}/pulls/{pr_number}", body, method="PATCH").ok
+
+
+def pr_body_draft(wt_path: Path) -> Path:
+    """Where the fix agent leaves a PR description it was asked to rewrite.
+
+    A reviewer comment is sometimes answered by editing the PR description
+    rather than the code. That is a GitHub write, and every GitHub write in
+    this tool waits for `--post`, so the agent writes the new description to a
+    file and `deliver_pr_body` sends it through the gated client. Alongside
+    the tracking file, so one directory holds everything a fix pass produced.
+    """
+    return wt_path / "ignore" / "pr-comments" / "pr-description.md"
+
+
+def deliver_pr_body(wt_path: Path, repo: str, pr_number: int) -> bool:
+    """Send the PR description the fix agent drafted. True when still owed.
+
+    The gate is not consulted here: `update_pr_body` asks `publishing` at the
+    write, and reports the draft as a failure to deliver, so a run without
+    `--post` leaves the file on disk for `--finish --post` to pick up. A caller
+    that forgot to check would therefore still publish nothing.
+    """
+    draft_file = pr_body_draft(wt_path)
+    if not draft_file.exists():
+        return False
+    body = draft_file.read_text().strip()
+    if not body:
+        # An empty draft would blank the description; discard it instead.
+        draft_file.unlink()
+        return False
+    if not update_pr_body(repo, pr_number, body):
+        return True
+    log.info("Updated the PR description")
+    draft_file.unlink()
+    return False
 
 
 @dataclass(frozen=True)

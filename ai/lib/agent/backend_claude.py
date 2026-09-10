@@ -121,8 +121,8 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # `--post` that edits the PR has published something nobody approved, and left no
 # draft record of it either. Denied at the tool call so the fix templates' rule is
 # enforced rather than trusted. A comment answered by rewriting the PR description
-# is drafted to a file instead; `_deliver_pr_body` in review-threads sends it
-# through the gated client.
+# is drafted to a file instead; `pr.comments.deliver_pr_body` sends it through
+# the gated client.
 FIX_DENIED_TOOLS = "Bash(gh:*)"
 
 

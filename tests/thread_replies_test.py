@@ -33,6 +33,33 @@ def _thread(*, db_id=111, comments=None, my_login="me"):
     return ReportThread(id="t1", my_login=my_login, comments=comments)
 
 
+class TestHandledPrefixesTrackTheGeneratedSet:
+    """The handled subset is derived, so a fifth opening cannot miss it.
+
+    Reconciliation reads a thread as handled when our standing reply opens with
+    one of these. That set was listed by hand in `review-threads`, which meant a
+    new generated opening added here was recognised as ours everywhere except
+    reconciliation — where the thread would then stay open for the life of the
+    PR. Deriving it makes the omission impossible; these tests pin the one
+    exclusion that is deliberate.
+    """
+
+    def test_the_deferred_opening_is_the_only_one_excluded(self):
+        assert set(thread_replies.GENERATED_REPLY_PREFIXES) - set(
+            thread_replies.HANDLED_REPLY_PREFIXES,
+        ) == {thread_replies.DEFERRED_REPLY_PREFIX}
+
+    def test_every_handled_opening_is_a_generated_one(self):
+        assert set(thread_replies.HANDLED_REPLY_PREFIXES) <= set(
+            thread_replies.GENERATED_REPLY_PREFIXES,
+        )
+
+    def test_deferring_is_not_handling(self):
+        assert thread_replies.DEFERRED_REPLY_PREFIX not in (
+            thread_replies.HANDLED_REPLY_PREFIXES
+        )
+
+
 class TestTheFollowupPatternKnowsEveryLead:
     """The pattern must recognise every body a builder actually writes.
 

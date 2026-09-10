@@ -250,6 +250,31 @@ class ReportThread:
     my_login: str = ""
 
 
+def finding_location(entry: CommentItem | ReportThread) -> str:
+    """Reviewer and code location of an entry, or "" when it has neither.
+
+    The join key between a review thread and a decomposed comment item that
+    restates it. Both halves are required: a file on its own is too coarse to
+    call two findings the same point, and two reviewers writing about one line
+    are writing about two different things.
+
+    Every use of the heuristic reads the tradeoff below: `_duplicate_item_ids`
+    folds the pair out of a fresh render, and `_row_location_key` recovers the
+    same key from an already-rendered row so `_carried_over_rows` does not
+    reinstate a row this render folded.
+    """
+    # ceiling: reviewer plus file:line is the whole test for "the same point",
+    # so two distinct findings by one reviewer on one line fold into one row —
+    # and, read off a published row instead of an entry, a colliding row is
+    # dropped from the carried-over set rather than preserved.
+    # Upgrade trigger: once a reviewer's separate findings on a single line are
+    # seen collapsing, compare the summaries too rather than the location alone.
+    line = getattr(entry, "line", 0) or 0
+    if not entry.file or not line:
+        return ""
+    return f"{entry.reviewer}|{entry.file}:{line}"
+
+
 @dataclass
 class PRReport:
     """Assembled PR report passed between pipeline stages."""

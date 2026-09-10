@@ -42,7 +42,10 @@ from pr import triage
 from pr import triage_prompt
 from pr import history_rewrite
 from pr import permalinks
-from pr.comments_fix import FixSummary
+from pr import comments as pr_comments
+from pr.comments_fix import (
+    RECONCILED_STATUS_TEXT, UNATTRIBUTED_STATUS_TEXT, FixSummary,
+)
 from pr.domains import SupersessionKind
 from pr.fix import (
     FixOutcome, FixRecord, ItemOutcome, RECONCILED_REASON, SETTLED_REASON,
@@ -1040,7 +1043,7 @@ class TestFixedStatusText:
         """"Fixed" and "nothing committed" cannot both be true."""
         cp = attribution.CommitPushResult(None, "no_changes", "")
         text = rt._fixed_status_text(cp, "owner/repo")
-        assert text == rt._UNATTRIBUTED_STATUS_TEXT
+        assert text == UNATTRIBUTED_STATUS_TEXT
         assert "no commit needed" not in text
 
     def test_commit_failed(self, rt):
@@ -1151,7 +1154,7 @@ class TestBuildSummaryBody:
         body = rt._build_summary_body(
             content(fixed=[self._fixed_entry()]), cp, "owner/repo", 1, {},
         )
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         assert "no commit needed" not in body
 
     def test_commit_failed_shows_precommit_hint(self, rt, content):
@@ -1690,7 +1693,7 @@ class TestSummaryUsesPerThreadCommit:
             id="t1", summary="fix regex", file="p.py", line=10,
             outcome=FixOutcome.FIXED,
         ))
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
 
     def test_each_round_keeps_its_own_attribution(self, rt):
         """The failure: one pass's envelope SHA relabelled every round."""
@@ -1736,7 +1739,7 @@ class TestSummaryUsesPerThreadCommit:
                           reason=RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
         assert "fixed**" not in body
         assert "1 settled elsewhere" in body
 
@@ -1754,7 +1757,7 @@ class TestSummaryUsesPerThreadCommit:
                           outcome=FixOutcome.FIXED),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         assert "Fixed in" not in body
         assert "/blob/def5678/a.py" in body
 
@@ -1862,7 +1865,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         assert "Fixed in" not in body
         assert "no commit needed" not in body
         # Where to look stays knowable even when who landed it does not: the
@@ -1882,7 +1885,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
         assert "bbb2222" not in body
 
     def test_a_still_unmoved_head_keeps_the_failure(self, rt):
@@ -1961,7 +1964,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         warned = int(re.search(
             r"(\d+) fixed row\(s\) have no commit", capsys.readouterr().err,
         ).group(1))
-        assert warned == body.count(rt._UNATTRIBUTED_STATUS_TEXT)
+        assert warned == body.count(UNATTRIBUTED_STATUS_TEXT)
 
     def test_the_folded_row_is_neither_counted_nor_rendered(self, rt, capsys):
         body = self._publish(rt, self._threads(rt))
@@ -1974,8 +1977,8 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         # Three rows carry no commit link; only two of them claim nothing. The
         # third says where its fix went, which is why "uncited" is the wrong
         # test and the rendered cell is the right one.
-        assert body.count(rt._RECONCILED_STATUS_TEXT) == 1
-        assert body.count(rt._UNATTRIBUTED_STATUS_TEXT) == 2
+        assert body.count(RECONCILED_STATUS_TEXT) == 1
+        assert body.count(UNATTRIBUTED_STATUS_TEXT) == 2
         assert "2 fixed row(s) have no commit" in err
 
     def test_a_table_with_nothing_to_report_stays_quiet(self, rt, capsys):
@@ -1983,7 +1986,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         body = self._publish(rt, [
             self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION),
         ])
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
         assert "no commit to attribute" not in capsys.readouterr().err
 
 
@@ -2548,7 +2551,7 @@ class TestDeliverPrBody:
     """
 
     def _draft(self, rt, wt_path, body="A rewritten description.\n"):
-        path = rt._pr_body_draft(wt_path)
+        path = pr_comments.pr_body_draft(wt_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body)
         return path
@@ -2560,18 +2563,18 @@ class TestDeliverPrBody:
 
         draft = self._draft(rt, worktree)
         with patch("core.proc.subprocess.run", boom):
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is True
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is True
         assert draft.exists(), "the undelivered rewrite must survive for --finish"
 
     def test_the_gate_is_checked_at_the_write_not_by_the_caller(self, rt, worktree):
         """No `publishing.enabled()` guard here — the client refuses on its own.
 
-        `_deliver_pr_body` is called unconditionally by the fix pass. If the gate
+        `pc.deliver_pr_body` is called unconditionally by the fix pass. If the gate
         lived at the call site instead, this call would publish.
         """
         self._draft(rt, worktree)
         with patch.object(rt.pc, "_gh_post", return_value=CmdResult(1)) as post:
-            rt._deliver_pr_body(worktree, "owner/repo", 42)
+            pr_comments.deliver_pr_body(worktree, "owner/repo", 42)
         post.assert_called_once()
 
     def test_post_sends_it_through_the_pulls_endpoint(self, rt, worktree, publishing_on):
@@ -2581,7 +2584,7 @@ class TestDeliverPrBody:
             "core.proc.subprocess.run",
             lambda *a, **kw: calls.append(a[0]) or _make_completed(0),
         ):
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is False
         assert calls == [[
             "gh", "api", "repos/owner/repo/pulls/42",
             "--method", "PATCH", "--input", "-",
@@ -2590,18 +2593,18 @@ class TestDeliverPrBody:
     def test_a_delivered_rewrite_is_not_sent_twice(self, rt, worktree, publishing_on):
         draft = self._draft(rt, worktree)
         with patch.object(rt.pc, "update_pr_body", return_value=True):
-            rt._deliver_pr_body(worktree, "owner/repo", 42)
+            pr_comments.deliver_pr_body(worktree, "owner/repo", 42)
         assert not draft.exists()
 
     def test_the_fix_prompt_names_the_file_the_delivery_reads(self, rt, worktree):
-        """One path, two ends: the agent writes where `_deliver_pr_body` looks."""
+        """One path, two ends: the agent writes where `pc.deliver_pr_body` looks."""
         adapter = _fix_adapter(rt, worktree)
         adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
         adapter.tracking_path.write_text("")
         with patch.object(rt, "_find_and_update_main_worktree", return_value=None):
             prompt = fix_engine._prompt(adapter, 10)
 
-        assert str(rt._pr_body_draft(worktree)) in prompt
+        assert str(pr_comments.pr_body_draft(worktree)) in prompt
         assert "${pr_body_file}" not in prompt
 
     def test_no_draft_owes_nothing(self, rt, worktree):
@@ -2609,14 +2612,14 @@ class TestDeliverPrBody:
             raise AssertionError(f"a subprocess ran with nothing to send: {a}")
 
         with patch("core.proc.subprocess.run", boom):
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is False
 
     def test_an_empty_draft_is_discarded_rather_than_sent(self, rt, worktree,
                                                           publishing_on):
         """Sending it would blank the description the reviewer is reading."""
         draft = self._draft(rt, worktree, body="   \n")
         with patch.object(rt.pc, "update_pr_body") as update:
-            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+            assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is False
         update.assert_not_called()
         assert not draft.exists()
 
@@ -3665,7 +3668,7 @@ class TestFinishDeferredWork:
         self, rt, worktree, publishing_on,
     ):
         self._save(worktree, pr_body_pending=True)
-        draft = rt._pr_body_draft(worktree)
+        draft = pr_comments.pr_body_draft(worktree)
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_text("A rewritten description.\n")
         with patch.object(rt.pc, "update_pr_body", return_value=True) as update, \
@@ -3680,7 +3683,7 @@ class TestFinishDeferredWork:
 
     def test_a_description_nobody_drafted_is_not_looked_for(self, rt, worktree):
         self._save(worktree)
-        with patch.object(rt, "_deliver_pr_body") as deliver, \
+        with patch.object(rt.pc, "deliver_pr_body") as deliver, \
                 patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
@@ -4501,7 +4504,7 @@ class TestRunSettle:
         with self._resolves_to(rt, ""):
             assert rt._run_settle(ctx, ["t1"], "fixed", "", "") == 0
         err = capsys.readouterr().err
-        assert rt._RECONCILED_STATUS_TEXT in err
+        assert RECONCILED_STATUS_TEXT in err
         assert "--commit" in err
 
 
@@ -4549,8 +4552,8 @@ class TestSettledRowsAreNotCreditedToThePass:
                             settled_by=SettledBy.OPERATOR)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = rt._fixed_status_for(entry, cp, "owner/repo")
-        assert cell == rt._RECONCILED_STATUS_TEXT
-        assert cell != rt._UNATTRIBUTED_STATUS_TEXT
+        assert cell == RECONCILED_STATUS_TEXT
+        assert cell != UNATTRIBUTED_STATUS_TEXT
 
     def test_a_settled_row_that_resolved_a_commit_cites_that_one(self, rt):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
@@ -4571,7 +4574,7 @@ class TestSettledRowsAreNotCreditedToThePass:
                             reason=RECONCILED_REASON)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         assert rt._fixed_status_for(entry, cp, "owner/repo") == (
-            rt._UNATTRIBUTED_STATUS_TEXT
+            UNATTRIBUTED_STATUS_TEXT
         )
 
 
@@ -6002,7 +6005,7 @@ class TestActionCellOutcome:
         wordings, because one round resolved a commit and the next did not."""
         cited = rt._fixed_in_cell("9f2e1a0", "owner/repo")
         assert rt._action_outcome(cited) is rt._action_outcome(
-            rt._UNATTRIBUTED_STATUS_TEXT)
+            UNATTRIBUTED_STATUS_TEXT)
 
     def test_every_human_reason_prose_reads_as_open(self, rt):
         for reason in rt.HumanReason:
@@ -7262,7 +7265,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
 
     def test_a_settled_row_declines_it_too(self, rt, content, hand_landed_branch):
         """`--settle` already promises this cell when no commit resolves."""
@@ -7272,7 +7275,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert rt._RECONCILED_STATUS_TEXT in body
+        assert RECONCILED_STATUS_TEXT in body
 
     def test_the_reply_declines_the_commit_the_table_declined(
         self, rt, hand_landed_branch,
@@ -7465,7 +7468,7 @@ class TestOneHandLandedCommitIsStillAskedOfEachRow:
             {"t3": _reviewed("t3", 333)},
         )
         assert "Fixed in [`" not in body
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
         # Where to look stays knowable even when who landed it does not: the
         # file cell pins the tree that holds the work.
         assert f"/blob/{branch.landed[:7]}/a.py" in body
@@ -7486,7 +7489,7 @@ class TestOneHandLandedCommitIsStillAskedOfEachRow:
         )
         body = _summary_over(rt, content, branch, [entry], {})
         assert "Fixed in [`" not in body
-        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert UNATTRIBUTED_STATUS_TEXT in body
 
     def test_the_reply_names_the_commit_the_table_names(
         self, rt, one_hand_landed_commit,

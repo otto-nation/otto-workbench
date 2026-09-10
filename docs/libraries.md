@@ -887,6 +887,7 @@ the caller has not already sourced `constants.sh`, since an
 |----------|---------|
 | `is_installed NAME` | returns 0 if NAME is found in PATH |
 | `reg_load FILE...` | read every node of each FILE into the cache. |
+| `reg_invalidate FILE...` | drop each FILE from the cache so the next read of it parses the file again. |
 | `reg_has FILE PATH_SEGMENT...` | 0 when a node exists at that path. |
 | `reg_type FILE PATH_SEGMENT...` | the YAML tag at that path, e.g. `!!str`. |
 | `reg_get FILE PATH_SEGMENT...` | the scalar at that path, or empty. |

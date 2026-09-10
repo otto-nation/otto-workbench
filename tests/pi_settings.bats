@@ -428,8 +428,10 @@ _teardown_registry_tree() {
 
   run _run_step
   [ "$status" -eq 0 ]
-  # Template's defaultModel survives; no enabledModels was built.
+  # Template's defaultModel survives, and no enabledModels was built from the
+  # lone tier — a list with no default in it is not one Pi could select from.
   [ "$(_live '.defaultModel')" = "claude-opus-4-6" ]
+  [ "$(_live 'has("enabledModels")')" = "false" ]
   _teardown_env_local
   _teardown_registry_tree
 }

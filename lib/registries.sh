@@ -710,17 +710,19 @@ collect_model_env_vars() {
   __roles_out=()
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
+  # Invalidated first, for the reason collect_registry_permissions gives.
+  (( ${#registries[@]} > 0 )) && { reg_invalidate "${registries[@]}"; reg_load "${registries[@]}" || return 1; }
 
   local file count i var role
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
-    count=$(yq '.env | length' "$file" 2>/dev/null) || continue
+    count=$(reg_len "$file" env)
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
-      role=$(yq ".env[$i].role // \"\"" "$file")
+      role=$(reg_get "$file" env "$i" role)
       [[ " $MODEL_ROLES " == *" $role "* ]] || continue
-      var=$(yq ".env[$i].var // \"\"" "$file")
+      var=$(reg_get "$file" env "$i" var)
       [[ -n "$var" && "$var" != "null" ]] || continue
       __vars_out+=("$var")
       __roles_out+=("$role")

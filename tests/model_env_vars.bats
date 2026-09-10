@@ -147,6 +147,9 @@ tools: []'
 }
 
 @test "the shipped registries declare one default and three tiers" {
+  # Reads the real tree, so adding or retiring a tier is expected to change
+  # these counts — update them with the registry edit. What it is here to catch
+  # is the counts changing when nobody edited a registry.
   local -a vars=() roles=()
   collect_model_env_vars vars roles "$REPO_ROOT"
 

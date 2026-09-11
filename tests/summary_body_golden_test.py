@@ -66,7 +66,9 @@ from git.land import CommitStatus  # noqa: E402
 from pr import attribution  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
-from pr import summary_model  # noqa: E402
+from pr import summary_model
+from pr import summary_rounds
+from pr import summary_scope  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN_FULL = FIXTURES / "summary_body_full.md"
@@ -236,7 +238,7 @@ def _full_body(rt):
                     file="m.py", line=9),
     ])
     quiet = ["#discussion_r109", "#discussion_r110", "#discussion_r113"]
-    scope = rt.RoundScope(
+    scope = summary_rounds.RoundScope(
         since=_SCOPE_SINCE,
         published_keys=frozenset(quiet),
         published_outcomes={
@@ -283,10 +285,10 @@ def _full_body(rt):
         }),
         scope=scope,
         chain=[
-            rt.SummaryRound(
+            summary_rounds.SummaryRound(
                 number=1,
                 url="https://github.com/owner/repo/pull/42#issuecomment-11"),
-            rt.SummaryRound(
+            summary_rounds.SummaryRound(
                 number=2,
                 url="https://github.com/owner/repo/pull/42#issuecomment-12"),
         ],

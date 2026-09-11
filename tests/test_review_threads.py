@@ -43,6 +43,8 @@ from pr import triage_prompt
 from pr import history_rewrite
 from pr import permalinks
 from pr import summary_model
+from pr import summary_rounds
+from pr import summary_scope
 from pr import summary_row
 from pr import comments as pr_comments
 from pr import settlement
@@ -5829,25 +5831,25 @@ class TestSummaryRowKey:
     """Two renders of one thread must key the same, across rounds."""
 
     def test_anchor_identifies_the_row(self, rt):
-        assert rt._summary_row_key(ROUND_ONE_ROW) == "#discussion_r111"
+        assert summary_scope.row_key(ROUND_ONE_ROW) == "#discussion_r111"
 
     def test_action_and_sha_may_change(self, rt):
         later = ROUND_ONE_ROW.replace("9f2e1a0", "bbbbbbb").replace("aaaaaaa", "ccccccc")
-        assert rt._summary_row_key(later) == rt._summary_row_key(ROUND_ONE_ROW)
+        assert summary_scope.row_key(later) == summary_scope.row_key(ROUND_ONE_ROW)
 
     def test_comment_item_anchors_do_not_collide_with_threads(self, rt):
         thread = "| [x](https://x/pull/1#discussion_r7) | @a | `f.go` | Fixed |"
         item = "| [x](https://x/pull/1#issuecomment-7) | @a | `f.go` | Fixed |"
-        assert rt._summary_row_key(thread) != rt._summary_row_key(item)
+        assert summary_scope.row_key(thread) != summary_scope.row_key(item)
 
     def test_falls_back_to_the_row_text_without_a_permalink(self, rt):
         row = "| plain summary | @kgn | `f.go:2` | Fixed in `abc` |"
-        assert rt._summary_row_key(row) == "plain summary | @kgn | f.go:2"
+        assert summary_scope.row_key(row) == "plain summary | @kgn | f.go:2"
 
     def test_the_fallback_ignores_the_action_cell(self, rt):
         row = "| plain summary | @kgn | `f.go:2` | Deferred |"
         later = "| plain summary | @kgn | `f.go:2` | Fixed in `abc` |"
-        assert rt._summary_row_key(row) == rt._summary_row_key(later)
+        assert summary_scope.row_key(row) == summary_scope.row_key(later)
 
 
 class TestPipesStayInTheirCell:
@@ -5868,17 +5870,17 @@ class TestPipesStayInTheirCell:
     def test_the_fallback_key_survives_a_summary_pipe(self, rt):
         deferred = self._row(rt, "use a | b", status="Deferred")
         fixed = self._row(rt, "use a | b", status="Fixed in `abc`")
-        assert rt._summary_row_key(deferred) == rt._summary_row_key(fixed)
-        assert rt._carried_over_rows(
+        assert summary_scope.row_key(deferred) == summary_scope.row_key(fixed)
+        assert summary_scope.carried_over_rows(
             _published_summary(rt, deferred), _published_summary(rt, fixed)) == []
 
 
 class TestSummaryTableRows:
     def test_header_and_divider_are_not_rows(self, rt):
-        assert rt._summary_table_rows(_published_summary(rt, ROUND_ONE_ROW)) == [ROUND_ONE_ROW]
+        assert summary_scope.table_rows(_published_summary(rt, ROUND_ONE_ROW)) == [ROUND_ONE_ROW]
 
     def test_a_body_without_a_table_has_no_rows(self, rt):
-        assert rt._summary_table_rows("## Review Comments Addressed\n\nnothing yet\n") == []
+        assert summary_scope.table_rows("## Review Comments Addressed\n\nnothing yet\n") == []
 
 
 class TestCarriedOverRows:
@@ -5887,14 +5889,14 @@ class TestCarriedOverRows:
             rt,
             "| [new work](https://github.com/owner/repo/pull/1#discussion_r222) "
             "| @kgn | `new.go:1` | Fixed in `bbbbbbb` |")
-        assert rt._carried_over_rows(_published_summary(rt, ROUND_ONE_ROW), fresh) == [ROUND_ONE_ROW]
+        assert summary_scope.carried_over_rows(_published_summary(rt, ROUND_ONE_ROW), fresh) == [ROUND_ONE_ROW]
 
     def test_a_row_state_still_holds_is_not_duplicated(self, rt):
         fresh = _published_summary(rt, ROUND_ONE_ROW.replace("Fixed in", "Deferred —"))
-        assert rt._carried_over_rows(_published_summary(rt, ROUND_ONE_ROW), fresh) == []
+        assert summary_scope.carried_over_rows(_published_summary(rt, ROUND_ONE_ROW), fresh) == []
 
     def test_nothing_published_carries_nothing(self, rt):
-        assert rt._carried_over_rows("", _published_summary(rt, ROUND_ONE_ROW)) == []
+        assert summary_scope.carried_over_rows("", _published_summary(rt, ROUND_ONE_ROW)) == []
 
 
 class TestPublishedRowsSurviveTheEdit:
@@ -6034,8 +6036,8 @@ class TestGeneratedActionCell:
             rt,
             "| [new work](https://github.com/owner/repo/pull/1#discussion_r222) "
             "| @kgn | `new.go:1` | Fixed in `bbbbbbb` |")
-        assert rt._hand_written_rows([published], fresh) == []
-        assert rt._carried_over_rows(published, fresh) == [HAND_EDITED_ROW]
+        assert summary_scope.hand_written_rows([published], fresh) == []
+        assert summary_scope.carried_over_rows(published, fresh) == [HAND_EDITED_ROW]
 
 
 class TestTheTwoOursVocabulariesAgree:
@@ -6176,39 +6178,39 @@ class TestActionCellOutcome:
         """A shape this renderer no longer produces is repaired, not frozen."""
         stub = "| [drop the guard](https://github.com/owner/repo/pull/1#discussion_r111) |"
         fresh = _published_summary(rt, ROUND_ONE_ROW)
-        assert rt._hand_written_rows([_published_summary(rt, stub)], fresh) == []
+        assert summary_scope.hand_written_rows([_published_summary(rt, stub)], fresh) == []
 
     def test_the_held_row_names_both_halves(self, rt):
         fresh = _published_summary(
             rt, ROUND_ONE_ROW.replace(_GENERATED_ACTION_CELL, "Conflicting reviewer feedback"))
-        held = rt._hand_written_rows([_published_summary(rt, HAND_EDITED_ROW)], fresh)
+        held = summary_scope.hand_written_rows([_published_summary(rt, HAND_EDITED_ROW)], fresh)
         assert [h.key for h in held] == ["#discussion_r111"]
-        assert rt._row_action_cell(held[0].published) == _HAND_WRITTEN_ACTION_CELL
-        assert rt._row_action_cell(held[0].replaced_by) == "Conflicting reviewer feedback"
+        assert summary_scope.row_action_cell(held[0].published) == _HAND_WRITTEN_ACTION_CELL
+        assert summary_scope.row_action_cell(held[0].replaced_by) == "Conflicting reviewer feedback"
 
     def test_an_edit_on_an_older_comment_is_still_found(self, rt):
         """Once a round posts its own comment, the edited cell is on one no
         later round targets — reading only the newest hands the row back."""
         fresh = _published_summary(rt, ROUND_ONE_ROW)
-        held = rt._hand_written_rows(
+        held = summary_scope.hand_written_rows(
             [_published_summary(rt, HAND_EDITED_ROW),
              _published_summary(rt, "| [other](https://x/pull/1#discussion_r9) "
                                     "| @kgn | `b.go:1` | Fixed |")],
             fresh)
-        assert [rt._row_action_cell(h.published) for h in held] == [
+        assert [summary_scope.row_action_cell(h.published) for h in held] == [
             _HAND_WRITTEN_ACTION_CELL]
 
     def test_the_newest_comment_wins_the_row(self, rt):
         """Restoring a generated cell on the newest comment hands the row back."""
         fresh = _published_summary(rt, ROUND_ONE_ROW)
-        assert rt._hand_written_rows(
+        assert summary_scope.hand_written_rows(
             [_published_summary(rt, HAND_EDITED_ROW),
              _published_summary(rt, ROUND_ONE_ROW)], fresh) == []
 
     def test_a_later_hand_edit_supersedes_the_generated_cell(self, rt):
         """The mirror case — proves the newest-wins rule is not just first-wins."""
         fresh = _published_summary(rt, ROUND_ONE_ROW)
-        held = rt._hand_written_rows(
+        held = summary_scope.hand_written_rows(
             [_published_summary(rt, ROUND_ONE_ROW),
              _published_summary(rt, HAND_EDITED_ROW)], fresh)
         assert [h.published for h in held] == [HAND_EDITED_ROW]
@@ -6336,27 +6338,27 @@ class TestSiblingItemsKeyApart:
         return summary_row.render_row(summary_row.row_cells_for(item, status, {}, "owner/repo", 1, sha))
 
     def test_each_sibling_gets_its_own_key(self, rt):
-        keys = {rt._summary_row_key(self._row(rt, i)) for i in _SIBLING_ITEMS}
+        keys = {summary_scope.row_key(self._row(rt, i)) for i in _SIBLING_ITEMS}
         assert len(keys) == len(_SIBLING_ITEMS)
 
     def test_the_anchor_is_still_half_the_key(self, rt):
         """Two comments raising the same point are two rows, not one."""
         elsewhere = CommentItem(id="ic-901-0", summary="drop the guard",
                                 reviewer="kgn", file="old.go", line=4)
-        assert (rt._summary_row_key(self._row(rt, _SIBLING_ITEMS[0]))
-                != rt._summary_row_key(self._row(rt, elsewhere)))
+        assert (summary_scope.row_key(self._row(rt, _SIBLING_ITEMS[0]))
+                != summary_scope.row_key(self._row(rt, elsewhere)))
 
     def test_a_sibling_keys_the_same_across_rounds(self, rt):
         first = self._row(rt, _SIBLING_ITEMS[0], status="Deferred", sha="aaaaaaa")
         later = self._row(rt, _SIBLING_ITEMS[0], status="Fixed in `bbbbbbb`",
                           sha="ccccccc")
-        assert rt._summary_row_key(first) == rt._summary_row_key(later)
+        assert summary_scope.row_key(first) == summary_scope.row_key(later)
 
     def test_a_thread_row_keys_on_its_anchor_alone(self, rt):
         """A thread renders one row, so its summary must stay out of the key —
         a reworded summary is the same finding, not a new one."""
         reworded = ROUND_ONE_ROW.replace("drop the guard", "remove the guard")
-        assert rt._summary_row_key(reworded) == rt._summary_row_key(ROUND_ONE_ROW)
+        assert summary_scope.row_key(reworded) == summary_scope.row_key(ROUND_ONE_ROW)
 
 
 class TestEveryItemReachesTheTable:
@@ -6372,7 +6374,7 @@ class TestEveryItemReachesTheTable:
 
     def test_three_items_render_three_rows(self, rt, content):
         body = self._render(rt, content, _published_summary(rt, *_sibling_rows(rt)))
-        assert len(rt._summary_table_rows(body)) == len(_SIBLING_ITEMS)
+        assert len(summary_scope.table_rows(body)) == len(_SIBLING_ITEMS)
 
     def test_a_held_row_stands_in_for_its_own_row_only(self, rt, content):
         published = _published_summary(rt, *_sibling_rows(rt, hand_written="ic-900-1"))
@@ -6384,13 +6386,13 @@ class TestEveryItemReachesTheTable:
     def test_the_counts_match_the_rows(self, rt, content):
         published = _published_summary(rt, *_sibling_rows(rt, hand_written="ic-900-1"))
         body = self._render(rt, content, published)
-        assert len(rt._summary_table_rows(body)) == len(_SIBLING_ITEMS)
+        assert len(summary_scope.table_rows(body)) == len(_SIBLING_ITEMS)
         assert f"**{len(_SIBLING_ITEMS) - 1} fixed**" in body
         assert "1 hand-written" in body
 
     def test_nothing_published_counts_every_row_as_fixed(self, rt, content):
         body = self._render(rt, content)
-        assert len(rt._summary_table_rows(body)) == len(_SIBLING_ITEMS)
+        assert len(summary_scope.table_rows(body)) == len(_SIBLING_ITEMS)
         assert f"**{len(_SIBLING_ITEMS)} fixed**" in body
         assert "hand-written" not in body
 
@@ -6408,7 +6410,7 @@ class TestEveryItemReachesTheTable:
             rt._post_fix_summary(
                 content(fixed=[_SIBLING_ITEMS[0]]), cp, "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert len(rt._summary_table_rows(body)) == 3
+        assert len(summary_scope.table_rows(body)) == 3
         assert "2 carried over" in body
 
 
@@ -8044,7 +8046,7 @@ class TestHumanReason:
             ]),
             cp, "owner/repo", 1, {},
         )
-        rows = rt._summary_table_rows(body)
+        rows = summary_scope.table_rows(body)
         assert len(rows) == 1
         return markdown.row_cells(rows[0])[-1]
 
@@ -8102,7 +8104,7 @@ class TestHumanReason:
         ))
         body = rt._build_summary_body(
             content(needs_human=[entry]), cp, "owner/repo", 1, {})
-        rows = rt._summary_table_rows(body)
+        rows = summary_scope.table_rows(body)
         assert markdown.row_cells(rows[0])[-1] == summary_model.HumanReason.CONTESTED.prose
 
 
@@ -8368,7 +8370,7 @@ class TestDuplicateFindingRendersOnce:
 
     def test_the_item_folds_into_the_thread_it_restates(self, rt, content):
         body = self._body(rt, content, [self._thread()], [self._item()])
-        assert len(rt._summary_table_rows(body)) == 1
+        assert len(summary_scope.table_rows(body)) == 1
         assert "#issuecomment-77" not in body
         assert "#discussion_r5" in body
 
@@ -8379,16 +8381,16 @@ class TestDuplicateFindingRendersOnce:
 
     def test_another_line_is_another_finding(self, rt, content):
         body = self._body(rt, content, [self._thread()], [self._item(line=9)])
-        assert len(rt._summary_table_rows(body)) == 2
+        assert len(summary_scope.table_rows(body)) == 2
 
     def test_an_item_naming_no_line_is_never_folded(self, rt, content):
         """Without a line there is nothing precise enough to call it the same point."""
         body = self._body(rt, content, [self._thread()], [self._item(line=0)])
-        assert len(rt._summary_table_rows(body)) == 2
+        assert len(summary_scope.table_rows(body)) == 2
 
     def test_another_reviewers_point_is_another_finding(self, rt, content):
         body = self._body(rt, content, [self._thread()], [self._item(reviewer="amp")])
-        assert len(rt._summary_table_rows(body)) == 2
+        assert len(summary_scope.table_rows(body)) == 2
 
     def test_two_real_threads_are_never_folded_together(self, rt, content):
         threads = self._threads()
@@ -8399,11 +8401,11 @@ class TestDuplicateFindingRendersOnce:
             [self._thread(id="t2", summary="and rename it")],
             threads,
         )
-        assert len(rt._summary_table_rows(body)) == 2
+        assert len(summary_scope.table_rows(body)) == 2
 
     def test_an_item_with_no_thread_to_fold_into_still_renders(self, rt, content):
         body = self._body(rt, content, [], [self._item()], {})
-        rows = rt._summary_table_rows(body)
+        rows = summary_scope.table_rows(body)
         assert len(rows) == 1
         assert "#issuecomment-77" in body
 
@@ -8435,7 +8437,7 @@ class TestDuplicateFindingRendersOnce:
             content(fixed=[self._thread()], declined=[self._item()]),
             cp, "owner/repo", 42, self._threads(),
         )
-        assert len(rt._summary_table_rows(body)) == 1
+        assert len(summary_scope.table_rows(body)) == 1
         assert "#issuecomment-77" not in body
 
 
@@ -8456,19 +8458,19 @@ class TestFoldedRowsAreNotCarriedBack:
 
     def test_the_published_duplicate_is_accounted_for(self, rt):
         published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
-        assert rt._carried_over_rows(published, self.THREAD_ROW, folded=self.FOLDED) == []
+        assert summary_scope.carried_over_rows(published, self.THREAD_ROW, folded=self.FOLDED) == []
 
     def test_an_item_row_elsewhere_is_still_carried(self, rt):
         elsewhere = self.ITEM_ROW.replace("a.go:7", "b.go:3")
         published = f"{self.THREAD_ROW}\n{elsewhere}"
-        assert rt._carried_over_rows(
+        assert summary_scope.carried_over_rows(
             published, self.THREAD_ROW, folded=self.FOLDED) == [elsewhere]
 
     def test_a_published_thread_row_is_carried_as_before(self, rt):
         """Only comment items fold; a thread row this render lost is still a loss."""
         other = self.THREAD_ROW.replace("discussion_r5", "discussion_r9")
         published = f"{self.THREAD_ROW}\n{other}"
-        assert rt._carried_over_rows(
+        assert summary_scope.carried_over_rows(
             published, self.THREAD_ROW, folded=self.FOLDED) == [other]
 
     def test_a_dropped_line_anchor_still_accounts_for_the_duplicate(self, rt):
@@ -8480,21 +8482,21 @@ class TestFoldedRowsAreNotCarriedBack:
         restating the thread was carried forward and the duplicate came back.
         """
         published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
-        assert rt._carried_over_rows(
+        assert summary_scope.carried_over_rows(
             published, self.UNANCHORED_THREAD_ROW, folded=self.FOLDED) == []
 
     def test_the_reviewer_cell_keys_without_its_at_sign(self, rt):
-        """`_row_location_key` and `finding_location` must spell the reviewer alike.
+        """`row_location_key` and `finding_location` must spell the reviewer alike.
 
         The rendered cell is `@kgn` and the typed key is `kgn`; the two are
         compared against each other, so a key keeping the `@` matches nothing.
         """
-        assert rt._row_location_key(self.ITEM_ROW) == "kgn|a.go:7"
+        assert summary_scope.row_location_key(self.ITEM_ROW) == "kgn|a.go:7"
 
     def test_nothing_folded_carries_everything(self, rt):
         """A round with no fold to report leaves the published rows alone."""
         published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
-        assert rt._carried_over_rows(published, self.THREAD_ROW) == [self.ITEM_ROW]
+        assert summary_scope.carried_over_rows(published, self.THREAD_ROW) == [self.ITEM_ROW]
 
     def test_the_publish_path_folds_without_a_placeable_line(self, rt, content):
         """End to end: the fix pass posting against an unfetched SHA.
@@ -8519,7 +8521,7 @@ class TestFoldedRowsAreNotCarriedBack:
         body = post.call_args[0][2]
         assert "#issuecomment-77" not in body
         assert "carried over" not in body
-        assert len(rt._summary_table_rows(body)) == 1
+        assert len(summary_scope.table_rows(body)) == 1
 
 
 def _filed(issue_id: str, url: str) -> IssueResult:

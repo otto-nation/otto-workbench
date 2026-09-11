@@ -1303,6 +1303,24 @@ the table is rendered (`pr.summary_render`), how a published body is read back
 (`pr.summary_scope`), and which rows a round may leave to an earlier comment
 (`pr.summary_rounds`).
 
+### pr/summary_rounds.py
+
+Which already-published rows a round's summary may leave to an earlier one.
+
+A cycle used to keep one comment and restate every thread it had ever covered,
+so the newest summary was always the complete one — and unreadable past a
+handful of threads, re-notifying every reviewer with mostly stale rows. A round
+now describes itself and links back through the footer chain.
+
+Leaving a row out is only safe while the record still holds it somewhere, so
+this module is the arithmetic of that safety: what every summary comment on the
+PR holds, what the comment being edited alone holds, what each row last reported,
+and when a reviewer last spoke on the surface behind it.
+
+What is not here: reading rows out of a body (`pr.summary_scope`), and deciding
+whether to edit or post fresh (`pr.summary_publish`) — this is handed that
+decision because it changes what the round may omit.
+
 ### pr/summary_row.py
 
 One row of the summary table: its cells, and the Action cell that grades it.
@@ -1318,6 +1336,25 @@ functions that spell what happened to a thread. What that cell *reports* once
 published is `summary_model.action_outcome`'s to say: the wordings are written
 here and parsed there, and the two are kept in step by a sweep test until
 #1252 gives each wording one owner.
+
+### pr/summary_scope.py
+
+Reading a published summary back: which rows it holds, and which are a person's.
+
+The summary comment is one comment edited across a review cycle, and the
+replacement body is built entirely from local state — which is per-target and
+per-worktree, and routinely absent for a round the comment already covers.
+Treating state as authoritative would silently delete rounds nobody can recover,
+so the published comment is read as the record it is and anything this render
+cannot account for is kept verbatim.
+
+That reading is this module. It parses rows out of a rendered body, decides
+which of them a fresh render did not reproduce, and decides which carry an
+Action cell a human wrote and must not be overwritten.
+
+What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`
+owns that, and both this path and the freshly-rendered one go through it), and
+which rows a round may leave to an earlier comment (`pr.summary_rounds`).
 
 ### pr/thread_context.py
 

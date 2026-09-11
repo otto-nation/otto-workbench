@@ -18,7 +18,7 @@ make_fake_provider() {
   local value="$1"
   mkdir -p "$TMPDIR/bin"
   cat > "$TMPDIR/bin/python3" << SCRIPT
-#!/bin/bash
+#!/usr/bin/env bash
 [ -n "$value" ] || exit 1
 printf 'project\t%s\t/tmp/repo\n' "$value"
 SCRIPT
@@ -223,4 +223,26 @@ Closes #941"
   make_fake_provider "linear"
   run parse_pr_flags "--closes eng-123"
   [ "$status" -eq 1 ]
+}
+
+@test "the same ref passed twice is staged once" {
+  parse_pr_flags "--closes 941 --closes 941"
+  [ "${#PR_CLOSES[@]}" -eq 1 ]
+}
+
+@test "two spellings of the same ref are staged once" {
+  parse_pr_flags "--closes 941 --closes #941"
+  [ "${#PR_CLOSES[@]}" -eq 1 ]
+}
+
+@test "a duplicated ref produces one line in the body" {
+  PR_DESCRIPTION="body"
+  parse_pr_flags "--closes 941 --closes 941"
+  _pr_append_issue_link
+  [ "$(printf '%s' "$PR_DESCRIPTION" | grep -c 'Closes #941')" -eq 1 ]
+}
+
+@test "distinct refs are still both staged" {
+  parse_pr_flags "--closes 941 --closes 942"
+  [ "${#PR_CLOSES[@]}" -eq 2 ]
 }

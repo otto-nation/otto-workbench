@@ -293,7 +293,14 @@ tasks:
         load_pr "$_CLI_ARGS" || exit 1
 
         echo "→ Checking for existing PR..."
-        PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
+        # Number and body in one call: the body is needed further down to carry
+        # closing references across the regeneration, and asking twice is a
+        # second round trip for something this call already has. A tab
+        # separator survives a body containing anything but a tab; @tsv would
+        # escape the newlines and the refs are matched line-wise.
+        PR_VIEW=$(gh pr view --json number,body -q '(.number|tostring) + "\t" + (.body // "")' 2>/dev/null)
+        PR_NUMBER="${PR_VIEW%%$'\t'*}"
+        EXISTING_BODY="${PR_VIEW#*$'\t'}"
 
         if [ -z "$PR_NUMBER" ]; then
           echo "✗ No PR found for branch: $BRANCH"
@@ -309,7 +316,6 @@ tasks:
         # closing reference already on the PR would be dropped here — and
         # dropping it silently un-links an issue somebody linked on purpose.
         # Carry every keyword the old body carried over to the new one.
-        EXISTING_BODY=$(gh pr view "$PR_NUMBER" --json body -q .body 2>/dev/null || true)
         pr_preserve_close_refs "$EXISTING_BODY"
 
         echo "✓ Content ready"

@@ -37,6 +37,7 @@ Applies only when the resolved provider is `linear`.
 
 - Create the issue before creating the branch — the branch naming convention requires the issue ID prefix, so the issue must exist first
 - Assign with `--assignee self`
+- Pass `--closes ENG-123` to `pr:create` to auto-close on merge — Linear acts on the same keywords GitHub does, so the key goes in the PR body. The flag accepts a tracker key only where `issues.provider` is `linear`, and refuses it elsewhere rather than opening a PR with a link that will never fire
 - Team key is always the prefix of the issue identifier. Pass it explicitly where required:
 
 | Command | Notes |

@@ -363,6 +363,21 @@ _pr_issue_provider() {
   return 0
 }
 
+# _pr_stage_close_ref REF
+# Adds REF to PR_CLOSES unless it is already there. Deduplicating on the way in
+# rather than on the way out covers every reading of the array at once, and
+# `--closes 941 --closes #941` normalise to one entry before they get here.
+_pr_stage_close_ref() {
+  local ref="$1" existing
+  for existing in ${PR_CLOSES[@]+"${PR_CLOSES[@]}"}; do
+    if [ "$existing" = "$ref" ]; then
+      return 0
+    fi
+  done
+  PR_CLOSES+=("$ref")
+  return 0
+}
+
 # _pr_add_close_ref ID
 # Appends one validated closing reference to PR_CLOSES. Accepts a GitHub issue
 # number (941 or #941) anywhere, and a tracker key (ENG-123) only where it can
@@ -374,7 +389,7 @@ _pr_add_close_ref() {
 
   case "$raw" in
     ''|*[!0-9]*) ;;
-    *) PR_CLOSES+=("#$raw"); return 0 ;;
+    *) _pr_stage_close_ref "#$raw"; return 0 ;;
   esac
 
   # Anchored, and matched with grep rather than a case glob: a glob's `*` would
@@ -387,7 +402,7 @@ _pr_add_close_ref() {
         "$raw" "${provider:-unset}"
       return 1
     fi
-    PR_CLOSES+=("$raw")
+    _pr_stage_close_ref "$raw"
     return 0
   fi
 

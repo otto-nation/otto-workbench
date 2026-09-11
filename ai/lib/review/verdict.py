@@ -146,6 +146,10 @@ BUDGET_SUMMARY = (
     "Findings below are from individual group reviews."
 )
 CLEAN_SUMMARY = "Synthesis did not run — no group reported a finding."
+NO_CHANGES_SUMMARY = (
+    "No agent ran — the author has committed nothing since the prior review. "
+    "Its findings are carried forward below unchanged."
+)
 
 
 def build_mechanical_body(
@@ -178,13 +182,18 @@ def build_mechanical_body(
     counts = ReviewDocument(body=merged_content).open_counts
     total = sum(counts.values())
     count_summary = f"{total} finding{plural(total)}" if total else "No findings"
-    if file_count:
-        scope = f"across {file_count} file{plural(file_count)} in {group_count} groups"
+    # A run that grouped nothing states no scope. `group_count` of 0 is the path
+    # that never reached the group phase at all, where "across 120 files in 0
+    # groups" would report a surface this run did not look at.
+    if not group_count:
+        scope = ""
+    elif file_count:
+        scope = f" across {file_count} file{plural(file_count)} in {group_count} groups"
     else:
-        scope = f"across {group_count} groups"
+        scope = f" across {group_count} groups"
     body = (
         f"## {SECTION_SUMMARY}\n"
-        f"{count_summary} {scope}. "
+        f"{count_summary}{scope}. "
         f"{summary_note}\n\n"
         f"{merged_content}\n"
     )

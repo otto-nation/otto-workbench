@@ -45,7 +45,7 @@ from review.document import ReviewHeader
 from review.grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
-from review.types import PreflightData, ReviewJob
+from review.types import DeltaAttribution, PreflightData, ReviewJob
 
 
 # ── Git reads ────────────────────────────────────────────────────────────────
@@ -345,12 +345,13 @@ class DeltaScope:
     list is a gate, where naming a file the author never touched costs an agent
     call per group holding it.
 
-    `proven_empty` is the difference between "the author changed nothing" and
-    "this run could not tell". Only the ancestry walk sets it, and only once
-    every guard it depends on has held; every fallback leaves it false. A
-    caller skipping work on an empty delta has to read this rather than
-    `not files`, because an unresolvable base ref, a git failure and a genuine
-    no-op all produce the same empty list.
+    `attribution` is what separates "the author changed nothing" from "this run
+    could not tell". Only the ancestry walk reports `ATTRIBUTED`, and only once
+    every guard it depends on has held; every fallback leaves it
+    `UNATTRIBUTED`, whose `files` is the whole range and whose `lines` is
+    unknown. A caller acting on an empty `files` has to read this first,
+    because an unresolvable base ref, a git failure and a genuine no-op all
+    produce the same empty list.
     """
 
     diff: str = ""
@@ -358,7 +359,12 @@ class DeltaScope:
     files: list[str] = field(default_factory=list)
     lines: int = 0
     prior_sha: str = ""
-    proven_empty: bool = False
+    attribution: DeltaAttribution = DeltaAttribution.NONE
+
+    @property
+    def proven_empty(self) -> bool:
+        """The author committed nothing, established rather than assumed."""
+        return self.attribution is DeltaAttribution.ATTRIBUTED and not self.files
 
 
 # git escapes a non-ASCII path unless told otherwise, and `git.client` only
@@ -512,7 +518,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
     base's commits as its own re-runs every group they touch.
 
     Self-review keeps the whole range: its surface is the working tree, which
-    has no commits to attribute, and it is never reported as proven empty.
+    has no commits to attribute, so its delta is never attributed.
     """
     prior_sha = _prior_sha_for_delta(job)
     if not prior_sha:
@@ -530,7 +536,10 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
                 f"origin/{base} not resolvable — the delta covers every commit "
                 "since the prior review, the base's included")
         files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
-        return DeltaScope(delta_diff, delta_log, files, 0, prior_sha)
+        return DeltaScope(
+            delta_diff, delta_log, files, 0, prior_sha,
+            DeltaAttribution.UNATTRIBUTED,
+        )
 
     authored = _author_delta(job.wt_path, prior_sha, base_ref)
     if authored is None:
@@ -543,6 +552,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
         return DeltaScope(
             delta_diff, _delta_log(job, prior_sha, ""), files, 0, prior_sha,
+            DeltaAttribution.UNATTRIBUTED,
         )
 
     # One path can come back from both walks — a commit editing a file, then a
@@ -553,11 +563,13 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
     span = f"{git_client.abbrev(prior_sha)}..{git_client.abbrev(job.pr.head_sha)}"
     if not files:
         log.info(f"Incremental review: no author changes since prior review ({span})")
-        return DeltaScope(delta_diff, delta_log, [], 0, prior_sha, proven_empty=True)
-    log.info(
-        f"Incremental review: {len(files)} files changed since prior review ({span})"
+    else:
+        log.info(
+            f"Incremental review: {len(files)} files changed since prior review ({span})"
+        )
+    return DeltaScope(
+        delta_diff, delta_log, files, lines, prior_sha, DeltaAttribution.ATTRIBUTED,
     )
-    return DeltaScope(delta_diff, delta_log, files, lines, prior_sha)
 
 
 def _collect_git_data(
@@ -695,7 +707,7 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         delta_commit_log=delta.commit_log,
         delta_files=delta.files,
         delta_lines=delta.lines,
-        delta_proven_empty=delta.proven_empty,
+        delta_attribution=delta.attribution,
         prior_head_sha=delta.prior_sha,
     )
 

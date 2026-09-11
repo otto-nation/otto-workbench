@@ -24,6 +24,7 @@ import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.trail import Trail, add_trail_args
@@ -63,9 +64,14 @@ from review.paths import (
     FILENAME_SESSION, review_artifact_path, stamp_reviewed,
 )
 from core.tool_parser import enum_arg
+# The function rather than the module: `git.client` binds `run` and `ok`, which
+# `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
+# means two things. `abbrev` is pure formatting of a sha already in hand.
+from git.client import abbrev
 from review.collect import collect_preflight_data
+from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
-from review.types import Pipeline, ReviewJob, ViewerRole
+from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
@@ -131,6 +137,71 @@ def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_p
     }
 
 
+def _is_no_op_rereview(job) -> bool:
+    """Whether this run has nothing to review and can say so without an agent.
+
+    Three things have to hold, and the middle one is the point: this is a
+    re-review, the delta walk *proved* the author committed nothing, and there
+    is a prior review whose findings can be carried forward in place of the one
+    this run is not going to write.
+
+    An *attributed* empty delta rather than an empty file list, because those
+    are not the same claim. An unresolvable base ref, a git read that failed,
+    and a self-review all produce no files without establishing that none
+    changed — and acting on that would skip the review of real work, advance
+    the marker past it, and leave the next run measuring from a commit nobody
+    read. There is no later pass that would catch it: the change would simply
+    never be reviewed. `review.collect` reports `ATTRIBUTED` at one place,
+    after every guard it has; everything else leaves it `UNATTRIBUTED`.
+    """
+    return bool(
+        _rpsec._is_incremental(job)
+        and job.preflight.delta_proven_empty
+        and job.prior_review
+    )
+
+
+@dataclass(frozen=True)
+class ReviewScale:
+    """How much work a run has in front of it, and which count says so.
+
+    `basis` is on the record rather than inferred by the reader because it is
+    what the trail reports: a pipeline choice that looks wrong for the PR is
+    read entirely differently once it says it sized itself by the delta.
+    """
+
+    files: int
+    lines: int
+    basis: str
+
+
+def _review_scale(job) -> ReviewScale:
+    """How much work this run has in front of it: files, lines, and whose count.
+
+    A re-review is sized by its own delta rather than by the PR, because the
+    two can differ by orders of magnitude: one fix commit on a large reviewed
+    PR is a single-agent job, and sizing it by the whole PR bought the
+    multi-phase pipeline's group plan and fan-out to review one line. The delta
+    is the author's work by ancestry, so a merge of the base does not inflate
+    it.
+
+    Only an *attributed* delta is used. An unattributed one is the whole range
+    since the prior review with no line count behind it, and reading that as a
+    size would put a run whose delta could not be measured on the pipeline
+    meant for a small one — sizing down on the strength of a failure. A
+    first-pass review has no delta at all. Both fall back to the PR's own
+    stats, which is the only measure of them there is.
+    """
+    pf = job.preflight
+    attributed = (
+        _rpsec._is_incremental(job)
+        and pf.delta_attribution is DeltaAttribution.ATTRIBUTED
+    )
+    if attributed:
+        return ReviewScale(len(pf.delta_files), pf.delta_lines, "delta")
+    return ReviewScale(job.pr.changed_files, job.pr.total_lines, "pr")
+
+
 def _run_phases(trail, args, job) -> Pipeline:
     """Every phase of one run, in order, returning the pipeline it chose.
 
@@ -139,21 +210,37 @@ def _run_phases(trail, args, job) -> Pipeline:
     function does, and a phase added here is swept without anyone remembering
     to sweep it.
     """
-    pr = job.pr
+    if _is_no_op_rereview(job):
+        trail.decision(
+            "empty_delta", "no agent ran",
+            reason="the author has committed nothing since the prior review",
+            data={"prior_sha": job.preflight.prior_head_sha, "head_sha": job.pr.head_sha},
+        )
+        log.warn(
+            "No author changes since the prior review — carrying its findings "
+            f"forward ({abbrev(job.preflight.prior_head_sha)}.."
+            f"{abbrev(job.pr.head_sha)})")
+        write_unchanged_review(job)
+        return Pipeline.SINGLE
+
     preset = EFFORT_PRESETS[job.effort]
     line_threshold = preset.multi_phase_line_threshold
     file_threshold = preset.multi_phase_file_threshold
+    scale = _review_scale(job)
     is_large = (
-        pr.total_lines > line_threshold
-        or pr.changed_files > file_threshold
+        scale.lines > line_threshold
+        or scale.files > file_threshold
     )
     pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
 
     trail.decision(
         "select_pipeline",
         f"chose {pipeline}",
-        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={file_threshold} lines={line_threshold})",
-        data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
+        reason=f"{scale.basis}: files={scale.files} lines={scale.lines} thresholds=(files={file_threshold} lines={line_threshold})",
+        data={
+            "pipeline": pipeline, "changed_files": scale.files,
+            "total_lines": scale.lines, "basis": scale.basis,
+        },
     )
 
     if is_large:

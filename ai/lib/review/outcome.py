@@ -21,8 +21,9 @@ from pathlib import Path
 
 from pr.domains import ReviewStatus
 from review.document import (
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, ReviewHeader, review_title, set_head_sha,
+    ReviewDocument, ReviewHeader, review_title, set_head_sha, strip_sections,
 )
 from review.paths import write_review_meta
 from review.prompt_sections import _is_incremental
@@ -30,7 +31,7 @@ from review.reconcile import record_prior_findings
 from review.state import PipelineState, pipeline_status, set_failures_section
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
-    CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY,
+    CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
     build_mechanical_body, states_verdict,
 )
 from review.verify import post_process_findings
@@ -175,6 +176,42 @@ def _reconcile_and_verify(job: ReviewJob) -> None:
     job.verification = post_process_findings(job.review_file, job.wt_path)
 
 
+# What a prior review states about the run that produced it rather than about
+# the code: its own framing, and the bookkeeping its groups wrote. A body
+# reusing its findings states all of this itself, so carrying these over would
+# be the new document making the old document's claims twice.
+_SUPERSEDED_SECTIONS = frozenset({
+    SECTION_SUMMARY.lower(),
+    SECTION_VERDICT.lower(),
+    SECTION_FILE_TRIAGE.lower(),
+    SECTION_PRIOR_FINDINGS.lower(),
+    SECTION_STATIC_ANALYSIS.lower(),
+})
+
+
+def _carried_findings(prior_review: str) -> str:
+    """`prior_review`'s findings, ready to be some other document's body.
+
+    The findings alone: the title and metadata header go with `ReviewDocument`'s
+    own parse, and every section stating something about the prior *run* is
+    dropped. What is left is the claims about the code, which nothing has
+    addressed and which therefore still stand.
+
+    Not `prompt_prior._strip_internal_sections`, which keeps `## Summary` and
+    `## Verdict` because a prompt wants a re-review to see the call its
+    predecessor reached. Embedding those in a new body gives the document two
+    of each, and both `section_span` and `ReviewDocument.verdict` read the
+    first — so the review reports the prior run's verdict while carrying a
+    fresh one below it, which inverts the answer when the prior run approved
+    and the carried findings do not.
+    """
+    if not prior_review:
+        return ""
+    return strip_sections(
+        ReviewDocument.parse(prior_review).body, _SUPERSEDED_SECTIONS,
+    ).strip()
+
+
 def _post_process_review(job: ReviewJob) -> None:
     """The review file finished, for the paths where an agent wrote all of it.
 
@@ -240,4 +277,39 @@ def _write_clean_review(
     _document(
         job, body, skipped_groups=skipped_groups, total_groups=group_count,
     ).write(job.review_file)
+    _write_review_sidecar(job)
+
+
+def write_unchanged_review(job: ReviewJob) -> None:
+    """The review a re-review ships when the author has committed nothing.
+
+    Merging the base into a branch moves its HEAD without adding to it, so a
+    re-review can have a prior review, a new commit to point at, and nothing to
+    read. Every phase would skip its own way to that conclusion — the scan is
+    skipped on any incremental run, every group carries forward for want of a
+    delta file — but synthesis would still spend an agent call restating the
+    prior review's findings, and the disprove gate would weigh them again.
+
+    The prior review's findings are carried forward whole rather than
+    re-derived: nothing addressed them, so they stand exactly as they were.
+    Only the internal sections go, since a coverage table describing the prior
+    run's groups would be read as this one's.
+
+    The verdict follows those carried findings rather than approving. A prior
+    review that asked for changes is still asking; the author has not answered
+    it yet.
+
+    Written through `_document` like every other agentless path, so the header
+    states this run's head SHA — which is the point of doing it at all. The
+    next re-review measures its delta from here, so the merge that prompted
+    this run is behind it rather than being walked again.
+    """
+    body = build_mechanical_body(
+        _carried_findings(job.prior_review),
+        group_count=0,
+        summary_note=NO_CHANGES_SUMMARY,
+        include_verdict=states_verdict(job.mode),
+        file_count=job.pr.changed_files,
+    )
+    _document(job, body).write(job.review_file)
     _write_review_sidecar(job)

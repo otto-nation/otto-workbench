@@ -27,7 +27,7 @@ from review import budget as review_budget
 from review import collect as rc
 from gh.types import PRContext, PRMetadata
 from review.collect import fetch_branch_metadata
-from review.types import PreflightData, ReviewJob
+from review.types import DeltaAttribution, PreflightData, ReviewJob
 
 
 def _job(tmp_path: Path, files: list[dict], **overrides) -> ReviewJob:
@@ -687,9 +687,10 @@ class TestCollectDeltaSameSha:
         job = _delta_job(head_sha="abc123", prior_review="no sha marker here")
         assert rc._collect_delta(job) == rc.DeltaScope()
 
-    def test_a_full_review_is_never_reported_as_proven_empty(self):
-        job = _delta_job(head_sha="abc123", prior_review="")
-        assert rc._collect_delta(job).proven_empty is False
+    def test_a_full_review_has_no_delta_to_attribute(self):
+        delta = rc._collect_delta(_delta_job(head_sha="abc123", prior_review=""))
+        assert delta.attribution is DeltaAttribution.NONE
+        assert delta.proven_empty is False
 
 
 class TestCollectDeltaMode:
@@ -757,6 +758,7 @@ class TestCollectDeltaMode:
         capsys.readouterr()
 
         assert delta.files == []
+        assert delta.attribution is DeltaAttribution.UNATTRIBUTED
         assert delta.proven_empty is False
 
 
@@ -825,6 +827,7 @@ class TestCollectDeltaSurface:
         delta = rc._collect_delta(job)
         capsys.readouterr()
         assert delta.files == ["mine.go"]
+        assert delta.attribution is DeltaAttribution.UNATTRIBUTED
         assert delta.proven_empty is False
 
 
@@ -913,6 +916,7 @@ class TestCollectDeltaAncestry:
     def test_a_merge_of_main_is_a_proven_empty_delta(self, tmp_path, capsys):
         delta = rc._collect_delta(self._merged(tmp_path, ["mine.go", "shared.go"]))
         capsys.readouterr()
+        assert delta.attribution is DeltaAttribution.ATTRIBUTED
         assert delta.proven_empty is True
 
     def test_author_work_on_top_of_a_merge_is_kept(self, tmp_path, capsys):
@@ -1056,6 +1060,7 @@ class TestCollectDeltaAncestry:
             lambda args: args and args[0] in {"log", "show"} and "--numstat" in args,
         )
 
+        assert delta.attribution is DeltaAttribution.UNATTRIBUTED
         assert delta.proven_empty is False
         assert delta.files, "a failed walk falls back to the whole range"
         # The log describes the same range the file list does, rather than the
@@ -1068,6 +1073,7 @@ class TestCollectDeltaAncestry:
             tmp_path, capsys, lambda args: args and args[0] == "rev-list",
         )
 
+        assert delta.attribution is DeltaAttribution.UNATTRIBUTED
         assert delta.proven_empty is False
         assert delta.files, "a failed walk falls back to the whole range"
 

@@ -2632,7 +2632,16 @@ class TestCleanupScope:
             ro, "fetch_metadata",
             lambda *a, **k: ro.RunContext(pr, ro.PRContext(), None),
         )
-        monkeypatch.setattr(ro, "collect_preflight_data", lambda job: MagicMock())
+        # A real record rather than a mock: `_run_phases` sizes the run off
+        # the preflight's delta fields, which a mock answers with objects that
+        # do not compare against the thresholds.
+        monkeypatch.setattr(
+            ro, "collect_preflight_data",
+            lambda job: ro.PreflightData(
+                diff="", commit_log="", file_contents={}, file_permissions={},
+                claude_md="", architecture_md="",
+            ),
+        )
         monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)
         monkeypatch.setattr(ro, "run_static_analysis", lambda *a, **k: [])
         monkeypatch.setattr(ro, "run_fix_pass", _fix)

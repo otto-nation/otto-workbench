@@ -62,6 +62,7 @@ NO_REFS_TESTS=(
   load_gh_token
   load_pr_context
   parse_pr_flags
+  pi_skill_override
   pr_issue_link
   push_branch
   run_ai

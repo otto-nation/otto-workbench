@@ -124,7 +124,7 @@ def test_a_command_prefix_assignment_pins_nothing_after_it(tmp_path):
     """TMPDIR=x cmd scopes to that command only; the next line is unpinned again."""
     source = '@test "a" {\n  TMPDIR="$scratch" some_cmd\n  echo x > "$TMPDIR/f"\n}\n'
     offenders = _check(tmp_path, source)
-    assert 3 in [line for line, _ in offenders]
+    assert [line for line, _ in offenders] == [3]
 
 
 # ── comments ─────────────────────────────────────────────────────────────

@@ -443,7 +443,7 @@ _pr_append_issue_link() {
       echo "✓ Already linked: Closes $ref"
       continue
     fi
-    pending="${pending}Closes ${ref}"$'\n'
+    pending="${pending}Closes ${ref}"$'\n\n'
   done
 
   if [ -z "$pending" ]; then
@@ -451,10 +451,11 @@ _pr_append_issue_link() {
   fi
 
   # The command substitution strips trailing newlines, so the blank line below
-  # is exactly one however the generated body happened to end.
-  PR_DESCRIPTION="$(printf '%s' "$PR_DESCRIPTION")"$'\n\n'"${pending%$'\n'}"
-  local staged="${pending%$'\n'}"
-  echo "✓ Linked for auto-close on merge: ${staged//$'\n'/ }"
+  # is exactly one however the generated body happened to end. Multiple refs
+  # are separated by a full blank line too, matching pr_preserve_close_refs.
+  PR_DESCRIPTION="$(printf '%s' "$PR_DESCRIPTION")"$'\n\n'"${pending%$'\n\n'}"
+  local staged="${pending%$'\n\n'}"
+  echo "✓ Linked for auto-close on merge: ${staged//$'\n\n'/ }"
   return 0
 }
 

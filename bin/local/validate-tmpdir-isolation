@@ -81,8 +81,30 @@ def strip_comments(line: str) -> str:
     return '' if COMMENT.match(line) else line
 
 
+def _strip_inline_comment(value: str) -> str:
+    """Cut a trailing shell comment from an already-captured assignment value.
+
+    ASSIGN/OTHER_ASSIGN capture to end of line, so a value like
+    '"/tmp/foo"  # not using mktemp here' still carries the comment text. A
+    bare substring check against that text would misread the comment's words
+    as the value's. An unquoted '#' preceded by whitespace (or at the very
+    start) starts a bash comment; anything past it is discarded.
+    """
+    in_single = in_double = False
+    for i, ch in enumerate(value):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == '#' and not in_single and not in_double:
+            if i == 0 or value[i - 1].isspace():
+                return value[:i]
+    return value
+
+
 def _is_safe_value(value: str, safe_vars: set[str]) -> bool:
     """Whether an assigned value resolves to per-test or per-file scratch."""
+    value = _strip_inline_comment(value)
     if 'mktemp' in value:
         return True
     if any(root in value for root in SAFE_ROOTS):
@@ -106,8 +128,15 @@ def _pin_lines(lines: list[str]) -> dict[int, bool]:
             pins[lineno] = _is_safe_value(assign.group(1), safe_vars)
             continue
         other = OTHER_ASSIGN.match(line)
-        if other and _is_safe_value(other.group(2), safe_vars):
-            safe_vars.add(other.group(1))
+        if other:
+            var = other.group(1)
+            if _is_safe_value(other.group(2), safe_vars):
+                safe_vars.add(var)
+            else:
+                # A later reassignment to an unsafe value must revoke the
+                # earlier safety: otherwise a stale, now-unsafe var still
+                # reads as safe for the rest of the file.
+                safe_vars.discard(var)
     return pins
 
 

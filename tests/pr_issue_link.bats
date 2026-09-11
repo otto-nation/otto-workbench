@@ -162,8 +162,6 @@ Closes #12"
 }
 
 @test "_pr_resolve_issue reads nothing from stdin when the branch has no key" {
-  # shellcheck disable=SC2034  # read by _pr_resolve_issue in the sourced lib
-  SKIP_ISSUE=false
   run _pr_resolve_issue "isaac/fix/no_key_here" < /dev/null
   [ "$status" -eq 0 ]
   [ -z "$PR_ISSUE" ]

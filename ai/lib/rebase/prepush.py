@@ -34,6 +34,7 @@ artifacts.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -42,7 +43,6 @@ from core import log
 from core.phases import Phase
 from core.trail import Trail, terr, tinfo
 from fix import engine as fix_engine
-from fix import scope as fix_scope
 from fix import types as fix_types
 from git import land
 from git import regenerate as regen
@@ -169,18 +169,34 @@ def _artifacts_dir(workdir: Path) -> Path:
     Under the state root, keyed by what the worktree targets, rather than
     inside the worktree itself: a pre-push repair runs in whatever repo is
     being pushed, and one that does not gitignore the path would have the
-    pass's own bookkeeping committed alongside the repair.
+    pass's own bookkeeping committed alongside the repair — and, since the
+    commit is now scoped to the files that appeared while the agent ran, these
+    files are exactly the kind that would appear.
 
-    A checkout with no ``origin`` or a detached HEAD has no key to file under —
-    `target_dir_for_checkout` says so by returning None — and falls back to the
-    worktree path. That is the old behaviour, kept for the one case where
-    nothing better can be derived, and it is a hook running in a repo the
-    operator is pushing from rather than an unattended pass.
+    A checkout with no ``origin`` or a detached HEAD has no target key to file
+    under — `target_dir_for_checkout` says so by returning None. It still does
+    not fall back to the worktree, which would reintroduce the whole defect for
+    the one case nothing else covers: the worktree path itself is a stable
+    enough name to key a directory under the state root, so the artifacts stay
+    outside the repo either way.
     """
     target = pr_target.target_dir_for_checkout(workdir)
     if target is None:
-        return workdir / "ignore" / "pr-rebase"
+        target = pr_target.targets_root() / _unkeyed_slug(workdir)
     return target / "pr-rebase"
+
+
+def _unkeyed_slug(workdir: Path) -> str:
+    """A path component naming a checkout that has no repo-and-branch key.
+
+    A readable tail and a digest of the absolute path, on the same reasoning as
+    `pr.target._key_for`: the digest is what stops two checkouts colliding, and
+    the tail is what makes the directory legible to whoever finds it. Prefixed
+    so it cannot be mistaken for a real target key.
+    """
+    resolved = str(workdir.resolve())
+    digest = hashlib.sha256(resolved.encode()).hexdigest()[:12]
+    return f"unkeyed-{pr_target.slug(workdir.name)}-{digest}"
 
 
 class PrePushFixAdapter(fix_engine.FixAdapter):
@@ -284,8 +300,6 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         if outcomes:
             message += f"\n\n{fixed} fixed, {len(outcomes) - fixed} unresolved"
             message += "\n\n" + "\n".join(_outcome_line(o) for o in outcomes)
-        if changed is None:
-            fix_scope.report_unattributable(self.workdir)
         # An unattributable pass commits nothing at all — not even the rebuild,
         # which would otherwise be force-pushed as though it were the repair.
         scope = set() if changed is None else changed | set(self.rebuilt)

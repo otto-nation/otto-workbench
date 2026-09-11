@@ -40,7 +40,6 @@ import sys
 from pathlib import Path
 
 from fix import engine as fix_engine
-from fix import scope as fix_scope
 from fix import types as fix_types
 from core import log
 from core.phases import Phase
@@ -249,10 +248,11 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         A pass whose work could not be attributed re-renders nothing. The
         document still describing every finding as open is what sends the next
         round back over them — which is the right outcome, because the commit
-        that would have made them done never happened.
+        that would have made them done never happened. The engine has already
+        said so on the operator's terminal; what is decided here is only
+        whether the deliverable gets rewritten.
         """
         if self.changed is None:
-            fix_scope.report_unattributable(self.workdir)
             return
         if self.summary:
             log.info("Fix summary:")

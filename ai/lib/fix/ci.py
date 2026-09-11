@@ -14,7 +14,6 @@ from dataclasses import dataclass
 
 from agent import retry as agent_retry
 from fix import engine as fix_engine
-from fix import scope as fix_scope
 from fix import types as fix_types
 from pr import ci_failures as ci
 from pr import ci_report
@@ -139,8 +138,6 @@ class CIFixAdapter(fix_engine.FixAdapter):
         The push is gated, so a run without `--post` commits the fixes and
         drafts the push instead of making it.
         """
-        if changed is None:
-            fix_scope.report_unattributable(self.workdir)
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         msg = "fix: address CI failures"
         if fixed:

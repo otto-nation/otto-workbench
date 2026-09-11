@@ -224,7 +224,9 @@ class FixAdapter(ABC):
         None is not an empty set. Empty says the agent changed nothing; None
         says the worktree could not be read, and a domain that scopes its
         commit must answer that with an empty scope rather than with the whole
-        tree — see `fix.scope`.
+        tree — see `fix.scope`. The engine has already told the operator where
+        the work was left by the time this is called, so a domain handles the
+        commit and not the reporting.
         """
 
     @abstractmethod
@@ -479,6 +481,12 @@ def run(adapter: FixAdapter, *, trail: Trail | None = None) -> FixRun:
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.
     changed = fix_scope.agent_changed(adapter.workdir, dirty_before)
+    if changed is None:
+        # Reported here rather than by each adapter. Every one of them owes the
+        # operator this line — the fixes are loose in the worktree and only
+        # this says so — and four copies of it is four chances for the next
+        # adapter to be the one that stays quiet.
+        fix_scope.report_unattributable(adapter.workdir)
     spec = adapter.landing(settled.outcomes, changed)
     landed = land.land(
         adapter.workdir,

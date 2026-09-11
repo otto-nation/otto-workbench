@@ -387,6 +387,30 @@ def test_an_unreadable_second_snapshot_reaches_the_domain_as_none(
     assert adapter.landing_scope is None
 
 
+def test_the_engine_says_where_unattributable_work_was_left(
+    tmp_path, landed, head, snapshots, capsys,
+):
+    """Reported once here, not once per adapter.
+
+    The fixes are loose in the worktree and this line is the only thing that
+    says so. Leaving it to each domain is four chances for the next one to be
+    the adapter that stays quiet.
+    """
+    snapshots.side_effect = [set(), None]
+    _run(StubAdapter(tmp_path))
+
+    assert "could not read what the fix pass changed" in capsys.readouterr().err
+
+
+def test_an_attributable_pass_reports_nothing_of_the_kind(
+    tmp_path, landed, head, snapshots, capsys,
+):
+    snapshots.side_effect = [set(), {"a.py"}]
+    _run(StubAdapter(tmp_path))
+
+    assert "could not read what the fix pass changed" not in capsys.readouterr().err
+
+
 def test_an_unreadable_baseline_stops_the_pass_before_the_agent_runs(
     tmp_path, landed, head, snapshots,
 ):

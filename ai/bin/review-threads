@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from core import log
 from fix import engine as fix_engine
-from fix import scope as fix_scope
 from fix import types as fix_types
 from git import client as git_client
 from git import topology as git_topology
@@ -2534,8 +2533,6 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         leaves an empty scope, which is the same nothing-to-stage the recovery
         already answers.
         """
-        if changed is None:
-            fix_scope.report_unattributable(self.workdir)
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         deferred = sum(1 for o in outcomes if o.outcome is FixOutcome.DEFERRED)
         msg = "fix: address review comments"

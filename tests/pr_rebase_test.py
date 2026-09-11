@@ -46,6 +46,7 @@ from fix import engine as fix_engine  # noqa: E402
 from pr import context as pr_context  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
+from pr import target as pr_target  # noqa: E402
 from git import push  # noqa: E402
 from core import timeouts  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
@@ -3262,10 +3263,38 @@ def test_a_branch_with_no_pr_bills_to_the_repo_alone(tmp_path):
 
 def test_the_tracking_file_sits_beside_the_rebase_s_other_leavings(tmp_path):
     adapter = prepush.PrePushFixAdapter(str(tmp_path), ["a.py"], "output")
-    artifacts = tmp_path / "ignore" / "pr-rebase"
+    artifacts = adapter.artifacts
 
     assert adapter.tracking_path == artifacts / "fix-tracking.md"
     assert adapter.session_log == artifacts / "fix-session.jsonl"
+
+
+def test_the_artifacts_are_never_written_into_the_worktree(tmp_path):
+    """Including for a checkout with no target key to file under.
+
+    `tmp_path` is not a repo, so `target_dir_for_checkout` returns None — the
+    detached-HEAD and no-origin case. Falling back to the worktree there would
+    reintroduce the whole defect for the one case nothing else covers, and the
+    scoped commit would then sweep the pass's own bookkeeping in: these files
+    are written before the post-agent snapshot, so they read as the agent's.
+    """
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    adapter = prepush.PrePushFixAdapter(str(worktree), ["a.py"], "output")
+
+    assert worktree not in adapter.artifacts.parents
+    assert adapter.artifacts.is_relative_to(pr_target.targets_root())
+
+
+def test_two_unkeyed_checkouts_do_not_share_a_directory(tmp_path):
+    """The digest is what keeps one checkout's pass out of another's."""
+    one = tmp_path / "wt"
+    two = tmp_path / "other" / "wt"
+    two.mkdir(parents=True)
+    one.mkdir()
+
+    assert (prepush.PrePushFixAdapter(str(one), ["a.py"], "o").artifacts
+            != prepush.PrePushFixAdapter(str(two), ["a.py"], "o").artifacts)
 
 
 def test_the_pass_records_what_it_did_on_the_trail(tmp_path):

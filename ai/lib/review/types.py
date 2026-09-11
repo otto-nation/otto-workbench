@@ -170,6 +170,27 @@ class ReviewType(StrEnum):
         return cls.INCREMENTAL if incremental else cls.FULL
 
 
+class DeltaAttribution(StrEnum):
+    """How far a re-review got in working out what the author changed.
+
+    The delta drives two decisions — whether to run at all, and at what size —
+    and they need different things from it. Skipping the run needs to know the
+    author changed nothing; sizing the run needs to know the file count means
+    anything. An empty list satisfies the first only if it is `ATTRIBUTED`, and
+    a bare boolean could not tell the second which case it was in.
+
+    `ATTRIBUTED` is the ancestry walk having run and answered. `UNATTRIBUTED`
+    is the walk not having been possible — an unresolvable base ref, a git read
+    that failed, a self-review, whose delta is the whole range since the prior
+    review and whose emptiness proves nothing. `NONE` is a full review, which
+    has no delta to attribute.
+    """
+
+    NONE = "none"
+    ATTRIBUTED = "attributed"
+    UNATTRIBUTED = "unattributed"
+
+
 class Pipeline(StrEnum):
     """Which of the two shapes a run took.
 
@@ -481,17 +502,11 @@ class PreflightData:
     delta_diff: str = ""
     delta_commit_log: str = ""
     delta_files: list[str] = field(default_factory=list)
-    # Recorded by the ancestry walk and not yet read: the pipeline still sizes
-    # itself from the whole PR's stats and still decides what to skip from
-    # `delta_files` alone. Both are the measurements those two decisions need —
-    # a re-review's own size, and whether an empty delta was proved or merely
-    # computed — and neither can be taken later, since only the walk that
-    # produced the file list can say how it came by it.
     delta_lines: int = 0
-    # Whether `delta_files` being empty means the author changed nothing, as
-    # opposed to this run not having been able to tell. Only the ancestry walk
-    # in `review.collect` sets it; see `DeltaScope`.
-    delta_proven_empty: bool = False
+    # Whether `delta_files` and `delta_lines` are the author's work or merely
+    # everything in the range — which decides whether either can be acted on.
+    # Only the ancestry walk in `review.collect` reports `ATTRIBUTED`.
+    delta_attribution: DeltaAttribution = DeltaAttribution.NONE
     prior_head_sha: str = ""
 
 

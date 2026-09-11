@@ -146,6 +146,10 @@ BUDGET_SUMMARY = (
     "Findings below are from individual group reviews."
 )
 CLEAN_SUMMARY = "Synthesis did not run — no group reported a finding."
+NO_CHANGES_SUMMARY = (
+    "No agent ran — the author has committed nothing since the prior review. "
+    "Its findings are carried forward below unchanged."
+)
 
 
 def build_mechanical_body(

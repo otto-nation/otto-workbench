@@ -29,8 +29,9 @@ from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
 from review.state import PipelineState, pipeline_status, set_failures_section
 from review.types import ReviewJob, ReviewMeta, ReviewType
+from review.prompt_prior import _strip_internal_sections
 from review.verdict import (
-    CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY,
+    CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
     build_mechanical_body, states_verdict,
 )
 from review.verify import post_process_findings
@@ -240,4 +241,40 @@ def _write_clean_review(
     _document(
         job, body, skipped_groups=skipped_groups, total_groups=group_count,
     ).write(job.review_file)
+    _write_review_sidecar(job)
+
+
+def write_unchanged_review(job: ReviewJob) -> None:
+    """The review a re-review ships when the author has committed nothing.
+
+    Merging the base into a branch moves its HEAD without adding to it, so a
+    re-review can have a prior review, a new commit to point at, and nothing to
+    read. Every phase would skip its own way to that conclusion — the scan is
+    skipped on any incremental run, every group carries forward for want of a
+    delta file — but synthesis would still spend an agent call restating the
+    prior review's findings, and the disprove gate would weigh them again.
+
+    The prior review's findings are carried forward whole rather than
+    re-derived: nothing addressed them, so they stand exactly as they were.
+    Only the internal sections go, since a coverage table describing the prior
+    run's groups would be read as this one's.
+
+    The verdict follows those carried findings rather than approving. A prior
+    review that asked for changes is still asking; the author has not answered
+    it yet.
+
+    Written through `_document` like every other agentless path, so the header
+    states this run's head SHA — which is the point of doing it at all. The
+    next re-review measures its delta from here, so the merge that prompted
+    this run is behind it rather than being walked again.
+    """
+    carried = _strip_internal_sections(job.prior_review)
+    body = build_mechanical_body(
+        carried,
+        group_count=0,
+        summary_note=NO_CHANGES_SUMMARY,
+        include_verdict=states_verdict(job.mode),
+        file_count=job.pr.changed_files,
+    )
+    _document(job, body).write(job.review_file)
     _write_review_sidecar(job)

@@ -35,7 +35,7 @@ drafts the body and reports the draft, and only `--post` sends it.
 Some comments are answered by rewriting the PR description rather than the code.
 That is a GitHub write like any other, so the fix agent does not make it: it is
 barred from running `gh` at all, and instead writes the replacement description
-to `ignore/pr-comments/pr-description.md` in the worktree. The fix pass sends it
+to `pr-description.md` in the pass's artifact directory. The fix pass sends it
 through the same gated client the replies use, which means a run without
 `--post` records the intended edit and performs none. The undelivered
 description is owed in `pr status` alongside the replies

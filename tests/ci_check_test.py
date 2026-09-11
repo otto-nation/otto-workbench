@@ -214,7 +214,7 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
 
     Returns (the exit code, the invoke mock, the Trail mock).
     """
-    artifacts = tmp_path / "ignore" / "ci-failures"
+    artifacts = tmp_path / "ci-failures"
     artifacts.mkdir(parents=True)
     write_thrash_log(artifacts / "fix-session.jsonl")
     tracking = artifacts / "fix-tracking.md"
@@ -232,6 +232,7 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
          patch("cli.ci_check.fix_engine.land.land",
                return_value=landed or land.LandResult(CommitStatus.NO_CHANGES)), \
          patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
+         patch("cli.ci_check.fix_engine.fix_scope.changed_files", return_value=set()), \
          patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix",
                side_effect=invoke) as inv:
         rc = ci_check._run_fix(
@@ -266,7 +267,7 @@ def test_the_fix_prompt_names_the_failure_and_the_tracking_file(tmp_path):
     text = inv.call_args.args[0].prompt
     assert "src/main.go:3" in text
     assert "compilation failed" in text
-    assert str(tmp_path / "ignore" / "ci-failures" / "fix-tracking.md") in text
+    assert str(tmp_path / "ci-failures" / "fix-tracking.md") in text
 
 
 def test_a_refused_commit_fails_the_fix_run(tmp_path):
@@ -294,12 +295,13 @@ def test_a_backend_that_exits_non_zero_fails_the_fix_run(tmp_path):
 def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
     """`land` reports a refused commit to the trail — with none, nothing records it."""
     trail = MagicMock()
-    artifacts = tmp_path / "ignore" / "ci-failures"
+    artifacts = tmp_path / "ci-failures"
     artifacts.mkdir(parents=True)
     with patch("cli.ci_check._rebase_if_behind", return_value=False), \
          patch("cli.ci_check.fix_engine.land.land",
                return_value=land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
          patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
+         patch("cli.ci_check.fix_engine.fix_scope.changed_files", return_value=set()), \
          patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
             trail, _report(failures=_ONE_FAILURE, run_number=1),
@@ -314,6 +316,7 @@ def test_the_fix_pass_commits_gated_and_asks_for_the_recovery(tmp_path):
          patch("cli.ci_check.fix_engine.land.land",
                return_value=land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
          patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
+         patch("cli.ci_check.fix_engine.fix_scope.changed_files", return_value=set()), \
          patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
         ci_check._run_fix(
             MagicMock(), _report(failures=_ONE_FAILURE, run_number=1),

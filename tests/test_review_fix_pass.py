@@ -201,7 +201,7 @@ class TestTheWorkSet:
     def test_an_item_is_labelled_with_its_severity_section(self, git_wt, tmp_path):
         """The agent orders its work by severity, so the section has to reach it."""
         job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `a.py:1` — Style\n")
-        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")], set())
+        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.items()[0].label == review_types.severity_by_key("N").section
 
@@ -246,7 +246,7 @@ class TestWhatTheReviewLendsTheAgentCall:
         a `--fix` pass would leave its session log behind in a finished review.
         """
         job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `src.py:1` — Style\n")
-        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")], set())
+        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.session_log == Path(
             review_paths.phase_log_path(job.review_file, Phase.FIX),
@@ -258,7 +258,7 @@ class TestWhatTheReviewLendsTheAgentCall:
     ):
         """The tracking file lives there, not in the worktree under review."""
         job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `src.py:1` — Style\n")
-        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")], set())
+        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.tracking_path.parent in adapter.add_dirs()
         assert adapter.workdir in adapter.add_dirs()
@@ -268,18 +268,22 @@ class TestWhatTheReviewLendsTheAgentCall:
 
 
 class TestTheCommitScope:
-    """`landing` names the paths; `land_test.py` holds what git does with them."""
+    """What `landing` does with the scope; `fix_scope_test.py` holds the snapshot.
 
-    def _adapter(self, git_wt, tmp_path, before=frozenset()):
+    The engine takes the two readings and hands over the difference, so what is
+    left for the adapter to answer is which of them reaches `LandSpec.paths`
+    and what it says when there is no answer at all.
+    """
+
+    def _adapter(self, git_wt, tmp_path):
         job = _make_job(git_wt, tmp_path, "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n")
-        return review_fix.ReviewFixAdapter(job, [_finding("M1")], set(before))
+        return review_fix.ReviewFixAdapter(job, [_finding("M1")])
 
-    def test_the_scope_is_what_the_agent_added_to_the_dirty_set(
+    def test_the_scope_is_what_the_engine_attributed_to_the_agent(
         self, git_wt, tmp_path,
     ):
         adapter = self._adapter(git_wt, tmp_path)
-        (git_wt / "helper.py").write_text("def helper(): pass\n")
-        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)])
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"helper.py"})
 
         assert spec.paths == {"helper.py"}
 
@@ -288,11 +292,18 @@ class TestTheCommitScope:
     ):
         """An empty scope commits nothing; `None` would commit the whole tree."""
         adapter = self._adapter(git_wt, tmp_path)
-        (git_wt / ".git" / "index").write_bytes(b"garbage")
-        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)])
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], None)
 
         assert spec.paths == set()
         assert adapter.changed is None
+
+    def test_an_agent_that_changed_nothing_scopes_the_commit_to_nothing(
+        self, git_wt, tmp_path,
+    ):
+        adapter = self._adapter(git_wt, tmp_path)
+        spec = adapter.landing([_outcome("M1", FixOutcome.DECLINED, "by design")], set())
+
+        assert spec.paths == set()
 
     def test_the_message_counts_what_the_pass_settled(self, git_wt, tmp_path):
         adapter = self._adapter(git_wt, tmp_path)
@@ -300,14 +311,15 @@ class TestTheCommitScope:
             _outcome("M1", FixOutcome.FIXED),
             _outcome("M2", FixOutcome.NEEDS_HUMAN, "needs design"),
             _outcome("M3", FixOutcome.DEFERRED),
-        ])
+        ], {"a.py"})
 
         assert spec.message.startswith("fix: self-review findings")
         assert "1 fixed, 2 skipped" in spec.message
 
     def test_a_pass_that_fixed_nothing_omits_the_count(self, git_wt, tmp_path):
         adapter = self._adapter(git_wt, tmp_path)
-        spec = adapter.landing([_outcome("M1", FixOutcome.DECLINED, "by design")])
+        spec = adapter.landing(
+            [_outcome("M1", FixOutcome.DECLINED, "by design")], set())
 
         assert "fixed," not in spec.message
         assert "Declined:" in spec.message
@@ -317,7 +329,7 @@ class TestTheCommitScope:
         spec = adapter.landing([
             _outcome("M1", FixOutcome.FIXED),
             _outcome("S1", FixOutcome.NEEDS_HUMAN, "needs design"),
-        ])
+        ], {"a.py"})
 
         assert "[M1] body" in spec.message
         assert "[S1] needs design" in spec.message
@@ -711,67 +723,6 @@ class TestRunFixPassWhenTheSnapshotFails:
         _run(job, {"M1": "fixed"}, work=agent_run)
 
         assert Path(job.review_file).read_text() == self.REVIEW
-
-
-# ── the snapshot itself ─────────────────────────────────────────────────────
-
-
-class TestChangedSourceFiles:
-    @patch("review.fix.git_client.run")
-    def test_includes_untracked_files(self, mock_run):
-        """A fix that only adds a new test file still fixed the finding."""
-        mock_run.side_effect = [
-            CmdResult(0, "src/auth.go\n"),
-            CmdResult(0, "tests/run_ai.bats\n"),
-        ]
-        assert review_fix._changed_source_files("/wt") == {
-            "src/auth.go", "tests/run_ai.bats",
-        }
-
-    @patch("review.fix.git_client.run")
-    def test_untracked_query_excludes_ignored_files(self, mock_run):
-        mock_run.side_effect = [CmdResult(), CmdResult()]
-        review_fix._changed_source_files("/wt")
-        assert "--exclude-standard" in mock_run.call_args_list[1].args
-
-    @patch("review.fix.git_client.run")
-    def test_a_failed_diff_is_not_a_partial_snapshot(self, mock_run):
-        """Half a snapshot omits the tracked edits, silently and permanently.
-
-        The untracked half answering is not a reason to keep going: every path
-        the failed half would have named is a path the pass never commits.
-        """
-        mock_run.side_effect = [
-            CmdResult(128),
-            CmdResult(0, "tests/new.bats\n"),
-        ]
-        assert review_fix._changed_source_files("/wt") is None
-
-    @patch("review.fix.git_client.run")
-    def test_a_failed_untracked_listing_is_not_a_partial_snapshot(self, mock_run):
-        mock_run.side_effect = [
-            CmdResult(0, "src/auth.go\n"),
-            CmdResult(128),
-        ]
-        assert review_fix._changed_source_files("/wt") is None
-
-    @patch("review.fix.git_client.run")
-    def test_a_killed_snapshot_is_not_an_empty_one(self, mock_run):
-        mock_run.side_effect = [CmdResult(TIMEOUT_RETURNCODE, "", "")]
-        assert review_fix._changed_source_files("/wt") is None
-
-    def test_a_path_that_is_not_a_repo_has_no_snapshot(self, tmp_path):
-        assert review_fix._changed_source_files(str(tmp_path)) is None
-
-    def test_gitignored_paths_are_in_neither_snapshot(self, git_wt):
-        (git_wt / "build.cache").write_text("artifact\n")
-        (git_wt / "real.py").write_text("x = 1\n")
-        assert review_fix._changed_source_files(str(git_wt)) == {"real.py"}
-
-    def test_an_unchanged_worktree_is_an_empty_delta_not_a_failed_one(self, git_wt):
-        """Empty says the agent changed nothing; None says the pass cannot tell."""
-        before = review_fix._changed_source_files(str(git_wt))
-        assert review_fix._agent_changed(str(git_wt), before) == set()
 
 
 # ── the parsers the pass reads its work set through ─────────────────────────

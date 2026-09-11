@@ -34,6 +34,7 @@ artifacts.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from agent import backend as ai_backend
@@ -41,9 +42,11 @@ from core import log
 from core.phases import Phase
 from core.trail import Trail, terr, tinfo
 from fix import engine as fix_engine
+from fix import scope as fix_scope
 from fix import types as fix_types
 from git import land
 from git import regenerate as regen
+from pr import target as pr_target
 from pr.fix import ItemOutcome
 
 from . import conflicts as rebase_conflicts
@@ -149,6 +152,37 @@ def _outcome_line(outcome: ItemOutcome) -> str:
     return f"- {where} — {outcome.reason}" if outcome.reason else f"- {where}"
 
 
+def _rebuilt_files(generated: GeneratedFix) -> list[str]:
+    """The generated files a regeneration actually rebuilt.
+
+    Not every file classified as generated: a stale one had no regeneration
+    command or its command failed, so naming it would report an unchanged file
+    as part of the commit — and, now that the commit is scoped, would ask git
+    to stage a path with nothing to stage.
+    """
+    return [f for f in generated.excluded if f not in generated.stale]
+
+
+def _artifacts_dir(workdir: Path) -> Path:
+    """Where this pass writes its tracking file and session log.
+
+    Under the state root, keyed by what the worktree targets, rather than
+    inside the worktree itself: a pre-push repair runs in whatever repo is
+    being pushed, and one that does not gitignore the path would have the
+    pass's own bookkeeping committed alongside the repair.
+
+    A checkout with no ``origin`` or a detached HEAD has no key to file under —
+    `target_dir_for_checkout` says so by returning None — and falls back to the
+    worktree path. That is the old behaviour, kept for the one case where
+    nothing better can be derived, and it is a hook running in a repo the
+    operator is pushing from rather than an unattended pass.
+    """
+    target = pr_target.target_dir_for_checkout(workdir)
+    if target is None:
+        return workdir / "ignore" / "pr-rebase"
+    return target / "pr-rebase"
+
+
 class PrePushFixAdapter(fix_engine.FixAdapter):
     """A rebase's half of a fix pass: the named files, the commit, the record.
 
@@ -170,12 +204,18 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
 
     def __init__(
         self, cwd: str, editable: list[str], check_output: str, *,
+        rebuilt: Sequence[str] = (),
         repo: str = "", pr: str = "", branch: str = "",
         trail: Trail | None = None,
     ) -> None:
         self.workdir = Path(cwd)
-        self.artifacts = self.workdir / "ignore" / "pr-rebase"
+        self.artifacts = _artifacts_dir(self.workdir)
         self.editable = editable
+        # Regenerated before the pass starts, so they are already dirty when
+        # the engine takes its baseline and fall outside the agent's delta.
+        # They are still this commit's: one commit is what the hook validated,
+        # and splitting the rebuild out pushes a HEAD the green run never saw.
+        self.rebuilt = list(rebuilt)
         self.check_output = check_output
         self.repo = repo
         self.pr = pr
@@ -203,22 +243,36 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         """The check output, which is this domain's whole statement of the work."""
         return {"check_output": self.check_output}
 
-    def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:
-        """Commit the whole tree and force-push it.
+    def landing(
+        self, outcomes: list[ItemOutcome], changed: set[str] | None,
+    ) -> fix_engine.LandSpec:
+        """Commit everything the pass touched, and force-push it.
 
         Three things this domain needs that a fix pass does not always:
 
         `args` carries the lease. The branch under this commit was replayed, so
         its push is non-fast-forward and a plain one is rejected.
 
-        `paths` is None on purpose. The backend runs with ``acceptEdits`` and
-        ``Bash(*)``, so a repair can land anywhere in the worktree rather than
-        only in the files named here — and a narrower commit is how an edit gets
-        validated by the retry's hooks and then left out of what is pushed.
+        `paths` is the engine's snapshot difference rather than the files this
+        pass named. The backend runs with ``acceptEdits`` and ``Bash(*)``, so a
+        repair can land anywhere in the worktree rather than only in the files
+        the check named — and scoping to the named files is how an edit gets
+        validated by the retry's hooks and then left out of what is pushed. The
+        snapshot answers that: it catches every file the agent wrote to,
+        named or not. What it does not catch is what was already dirty when the
+        pass started, which is somebody else's work and was never this commit's
+        to push.
+
+        The rebuilt generated files join it. They were regenerated before the
+        pass began, so they are outside the difference by construction — but
+        one commit is what the hook validated, and splitting them out pushes a
+        HEAD the green run never saw.
 
         `recover` accounts for an agent that committed its own work. The pass
-        then finds nothing to stage, and reporting "nothing needed doing" over a
-        real repair is the failure that guards against.
+        then finds nothing to stage — an empty scope, the same outcome the
+        whole-tree form reached by finding a clean tree — and reporting
+        "nothing needed doing" over a real repair is the failure that guards
+        against.
 
         The subject is static and the body is the outcomes. This branch is
         squash-merged with COMMIT_MESSAGES, so what is written here lands
@@ -230,9 +284,14 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         if outcomes:
             message += f"\n\n{fixed} fixed, {len(outcomes) - fixed} unresolved"
             message += "\n\n" + "\n".join(_outcome_line(o) for o in outcomes)
+        if changed is None:
+            fix_scope.report_unattributable(self.workdir)
+        # An unattributable pass commits nothing at all — not even the rebuild,
+        # which would otherwise be force-pushed as though it were the repair.
+        scope = set() if changed is None else changed | set(self.rebuilt)
         return fix_engine.LandSpec(
             message=message, regen=REGEN_MESSAGE, recover=True,
-            args=FORCE_PUSH_ARGS,
+            args=FORCE_PUSH_ARGS, paths=scope,
         )
 
     def record(self, run: fix_engine.FixRun) -> None:
@@ -310,6 +369,7 @@ def fix_push_failures(
     pr = context.get("pr")
     adapter = PrePushFixAdapter(
         cwd, editable, truncated,
+        rebuilt=_rebuilt_files(generated),
         repo=str(context.get("repo") or ""),
         pr=str(pr) if pr else "",
         branch=str(context.get("branch") or ""),
@@ -326,17 +386,19 @@ def _land_rebuild(
     The engine's landing is unreachable here — it lands what an agent produced,
     and there was no agent — but the rebuild still has to reach the remote or
     the branch stays unpushable for the same drift the hook rejected.
+
+    No agent also means no snapshot is needed to scope the commit: a
+    regeneration's output is known by name, so `rebuilt` is both what the trail
+    reports and what gets staged.
     """
     if not generated.rebuilt:
         return None
 
+    rebuilt = _rebuilt_files(generated)
     landed = land.land(
-        cwd, message=REGEN_MESSAGE, gated=True, args=FORCE_PUSH_ARGS, trail=trail,
+        cwd, message=REGEN_MESSAGE, gated=True, args=FORCE_PUSH_ARGS,
+        trail=trail, paths=rebuilt,
     )
-    # The files a generator actually rebuilt, not every file classified as
-    # generated: a stale one had no regeneration command or its command failed,
-    # and naming it here would report an unchanged file as part of the commit.
-    rebuilt = [f for f in generated.excluded if f not in generated.stale]
     if landed.sha:
         tinfo(
             trail, TRAIL_ACTION, "committed regenerated files",

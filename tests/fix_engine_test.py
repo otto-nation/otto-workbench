@@ -68,8 +68,9 @@ class StubAdapter(fix_engine.FixAdapter):
     def template_vars(self):
         return {}
 
-    def landing(self, outcomes):
+    def landing(self, outcomes, changed):
         self.landing_saw = list(outcomes)
+        self.landing_scope = changed
         return self._spec
 
     def record(self, run):
@@ -110,6 +111,19 @@ def landed():
 def head():
     with patch.object(fix_engine.git_client, "head_sha", return_value="9999999"):
         yield
+
+
+@pytest.fixture(autouse=True)
+def snapshots():
+    """An empty worktree before the agent and after it, unless a test says other.
+
+    Autouse because every run now reads the dirty set on both sides of the
+    agent, and `tmp_path` is not a repo — an unstubbed read fails, which the
+    engine correctly treats as a reason not to run the pass at all.
+    """
+    with patch.object(fix_engine.fix_scope, "changed_files",
+                      return_value=set()) as m:
+        yield m
 
 
 def _run(adapter, **kwargs):
@@ -329,6 +343,66 @@ def test_the_domain_s_spec_reaches_the_land_owner(tmp_path, landed, head):
     assert kwargs["message"] == "fix: the thing"
     assert kwargs["regen"] == "chore: regenerate"
     assert kwargs["gated"] is True
+
+
+def test_the_domain_s_scope_reaches_the_land_owner(tmp_path, landed, head):
+    """The paths a domain names are the paths that get staged.
+
+    Asserted because the omission is silent: `paths=None` is a legal spec and
+    stages the whole tree, so a domain whose scope was dropped on the way down
+    commits everything dirty in the worktree and reports success.
+    """
+    adapter = StubAdapter(tmp_path, spec=fix_engine.LandSpec(
+        message="fix: the thing", paths={"a.py"},
+    ))
+    _run(adapter)
+
+    assert landed.call_args.kwargs["paths"] == {"a.py"}
+
+
+def test_the_engine_hands_the_domain_what_the_agent_changed(
+    tmp_path, landed, head, snapshots,
+):
+    """The snapshot difference, not either snapshot on its own.
+
+    The engine takes both readings because it is the only layer that sees the
+    two moments that bracket the agent — a domain taking its own baseline can
+    take it late and attribute somebody else's dirt to its agent.
+    """
+    snapshots.side_effect = [{"theirs.py"}, {"theirs.py", "ours.py"}]
+    adapter = StubAdapter(tmp_path)
+    _run(adapter)
+
+    assert adapter.landing_scope == {"ours.py"}
+
+
+def test_an_unreadable_second_snapshot_reaches_the_domain_as_none(
+    tmp_path, landed, head, snapshots,
+):
+    """None is not an empty set, and only the domain can say what to do with it."""
+    snapshots.side_effect = [set(), None]
+    adapter = StubAdapter(tmp_path)
+    _run(adapter)
+
+    assert adapter.landing_scope is None
+
+
+def test_an_unreadable_baseline_stops_the_pass_before_the_agent_runs(
+    tmp_path, landed, head, snapshots,
+):
+    """No baseline means no attribution, so the agent's turns would buy nothing.
+
+    Either outcome available without one is wrong — commit the worktree
+    wholesale, or commit none of what the agent did — so the honest move is to
+    spend nothing and say so.
+    """
+    snapshots.return_value = None
+    adapter = StubAdapter(tmp_path)
+    _, inv = _run(adapter)
+
+    inv.assert_not_called()
+    landed.assert_not_called()
+    assert adapter.recorded is None
 
 
 def test_a_domain_that_rewrote_its_branch_pushes_with_its_own_args(tmp_path, landed, head):

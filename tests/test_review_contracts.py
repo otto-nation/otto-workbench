@@ -618,7 +618,7 @@ def _render_fix_findings(wt_path) -> str:
         id="M1", severity=review_types.SEVERITY_MUST, seq=1,
         path="a.py", line=3, end_line=None, body="the guard is missing",
     )
-    return _render_adapter(review_fix.ReviewFixAdapter(job, [finding], set()))
+    return _render_adapter(review_fix.ReviewFixAdapter(job, [finding]))
 
 
 def _render_fix_prepush(wt_path) -> str:

@@ -232,7 +232,19 @@ def update_pr_body(repo: str, pr_number: int, body: str) -> bool:
     return _gh_post(f"repos/{repo}/pulls/{pr_number}", body, method="PATCH").ok
 
 
-def pr_body_draft(wt_path: Path) -> Path:
+def artifacts_dir(target_dir: Path) -> Path:
+    """Where the comments fix pass writes what it produces.
+
+    Under the run's target directory rather than the worktree, so nothing this
+    pass writes can be picked up by a `git add` in a target repo that does not
+    gitignore the path. One owner for the join, because the adapter and the
+    closeout path both need to name it and a second spelling of it would send
+    the two to different directories.
+    """
+    return target_dir / "pr-comments"
+
+
+def pr_body_draft(artifacts: Path) -> Path:
     """Where the fix agent leaves a PR description it was asked to rewrite.
 
     A reviewer comment is sometimes answered by editing the PR description
@@ -240,11 +252,15 @@ def pr_body_draft(wt_path: Path) -> Path:
     this tool waits for `--post`, so the agent writes the new description to a
     file and `deliver_pr_body` sends it through the gated client. Alongside
     the tracking file, so one directory holds everything a fix pass produced.
+
+    ``artifacts`` is the pass's own directory rather than the worktree: this is
+    the pass's bookkeeping, and a target repo that tracks the path it used to
+    be written under would have it committed along with the fix.
     """
-    return wt_path / "ignore" / "pr-comments" / "pr-description.md"
+    return artifacts / "pr-description.md"
 
 
-def deliver_pr_body(wt_path: Path, repo: str, pr_number: int) -> bool:
+def deliver_pr_body(artifacts: Path, repo: str, pr_number: int) -> bool:
     """Send the PR description the fix agent drafted. True when still owed.
 
     The gate is not consulted here: `update_pr_body` asks `publishing` at the
@@ -252,7 +268,7 @@ def deliver_pr_body(wt_path: Path, repo: str, pr_number: int) -> bool:
     `--post` leaves the file on disk for `--finish --post` to pick up. A caller
     that forgot to check would therefore still publish nothing.
     """
-    draft_file = pr_body_draft(wt_path)
+    draft_file = pr_body_draft(artifacts)
     if not draft_file.exists():
         return False
     body = draft_file.read_text().strip()

@@ -186,12 +186,31 @@ def test_a_run_of_only_skipped_failures_hands_over_nothing(tmp_path):
 
 
 def test_the_tracking_file_is_named_for_the_run(tmp_path):
-    """One directory per pass holds both the checklist and the session log."""
+    """One directory per pass holds both the checklist and the session log.
+
+    Under the run's target directory rather than in the worktree: a target repo
+    that does not gitignore the path would otherwise have the pass's own
+    bookkeeping swept into the commit.
+    """
     adapter = _adapter(tmp_path, {}, run_number=11)
 
     assert adapter.title == "CI Fix Tracking — Run #11"
-    assert adapter.tracking_path == tmp_path / "ignore" / "ci-failures" / "fix-tracking.md"
-    assert adapter.session_log == tmp_path / "ignore" / "ci-failures" / "fix-session.jsonl"
+    assert adapter.artifacts == tmp_path / "ci-failures"
+    assert adapter.tracking_path == tmp_path / "ci-failures" / "fix-tracking.md"
+    assert adapter.session_log == tmp_path / "ci-failures" / "fix-session.jsonl"
+
+
+def test_the_artifacts_are_not_written_inside_the_worktree(tmp_path):
+    """The hazard in its own words: nothing this pass writes is in the tree."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    adapter = fix_ci.CIFixAdapter(
+        _report({}, {}, 7),
+        make_ctx(worktree_root=worktree, target_dir=tmp_path / "state"),
+        _state(),
+    )
+
+    assert worktree not in adapter.artifacts.parents
 
 
 def test_the_commit_message_counts_what_the_agent_answered(tmp_path):
@@ -203,7 +222,7 @@ def test_the_commit_message_counts_what_the_agent_answered(tmp_path):
         ItemOutcome(id="c", outcome=FixOutcome.DEFERRED),
     ]
 
-    spec = adapter.landing(outcomes)
+    spec = adapter.landing(outcomes, {"a.py"})
 
     assert spec.message == "fix: address CI failures\n\n1 fixed, 2 skipped"
     assert spec.regen == "chore: regenerate after CI fixes"
@@ -214,7 +233,23 @@ def test_a_pass_that_fixed_nothing_says_only_what_it_did(tmp_path):
     adapter = _adapter(tmp_path, {})
     outcomes = [ItemOutcome(id="a", outcome=FixOutcome.DECLINED)]
 
-    assert adapter.landing(outcomes).message == "fix: address CI failures"
+    assert adapter.landing(outcomes, set()).message == "fix: address CI failures"
+
+
+def test_the_commit_is_scoped_to_what_the_agent_changed(tmp_path):
+    """Not the whole tree: this pass runs in a worktree it does not own."""
+    adapter = _adapter(tmp_path, {})
+    outcomes = [ItemOutcome(id="a", outcome=FixOutcome.FIXED)]
+
+    assert adapter.landing(outcomes, {"src/a.py"}).paths == {"src/a.py"}
+
+
+def test_a_pass_that_cannot_say_what_it_changed_commits_nothing(tmp_path):
+    """An empty scope commits nothing; None would commit the whole tree."""
+    adapter = _adapter(tmp_path, {})
+    outcomes = [ItemOutcome(id="a", outcome=FixOutcome.FIXED)]
+
+    assert adapter.landing(outcomes, None).paths == set()
 
 
 def test_held_back_failures_are_recorded_as_skipped(tmp_path):

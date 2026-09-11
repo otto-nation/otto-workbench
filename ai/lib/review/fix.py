@@ -6,16 +6,15 @@ is the three things only a review can answer: which findings are still open,
 which files the pass is allowed to commit, and how the review document reads
 once the agent has answered.
 
-What the agent changed is a snapshot difference: the worktree's dirty set is
-recorded before the agent runs and again after, and only the paths that appear
-in the second and not the first are attributed to it. Without that first
-snapshot the pass cannot tell its own work from whatever was already sitting in
-the worktree, and it both commits and takes credit for the difference.
+What the agent changed is a snapshot difference the engine takes on either side
+of the run — see `fix.scope`. Only the paths that appear in the second snapshot
+and not the first are attributed to the agent, so the pass neither commits nor
+takes credit for whatever was already sitting in the worktree.
 
-A snapshot git could not take stops the pass rather than reading as an empty
-one. Everything outside the difference goes uncommitted, so an unreadable
-worktree spelled the same way as an unchanged one is how a pass reports success
-having left the agent's fixes behind.
+A snapshot git could not take reads as None rather than as an empty one.
+Everything outside the difference goes uncommitted, so an unreadable worktree
+spelled the same way as an unchanged one is how a pass reports success having
+left the agent's fixes behind.
 
 The agent answers on a tracking file, not on the review document. That document
 is the deliverable — a reviewer reads it and a re-review reconciles against it —
@@ -41,10 +40,9 @@ import sys
 from pathlib import Path
 
 from fix import engine as fix_engine
+from fix import scope as fix_scope
 from fix import types as fix_types
-from git import client as git_client
 from core import log
-from core import proc
 from core.phases import Phase
 from pr.fix import FixOutcome, ItemOutcome
 from review.paths import phase_log_path
@@ -59,63 +57,6 @@ from core.trail import Trail
 # review document says the same thing about both: still unchecked, still there
 # for the next round.
 _STILL_OPEN = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
-
-
-def _changed_source_files(wt_path: str) -> set[str] | None:
-    """The changed files (staged, unstaged, and untracked), or None when git
-    could not list them.
-
-    Called on both sides of the fix agent's run. `--exclude-standard` keeps
-    gitignored paths out of either snapshot, so they cannot reach the
-    difference and cannot be staged from it.
-
-    `run` rather than `lines`, which returns `[]` on a non-zero exit: a path
-    missing from a snapshot is a path the pass never commits, so a read that
-    failed must not be spelled the same way as a worktree with nothing in it.
-    One failed half is enough to return None — a partial snapshot is the same
-    silent omission in a smaller size.
-    """
-    changed: set[str] = set()
-    # Untracked files count: a fix that only adds a test file still fixed the
-    # finding, and diff-only detection would report it as skipped.
-    for args in (("diff", "HEAD", "--name-only"),
-                 ("ls-files", "--others", "--exclude-standard")):
-        r = git_client.run(*args, cwd=wt_path)
-        if not r.ok:
-            log.warn(proc.failure_message(
-                f"Could not list what changed in {wt_path}", r,
-            ))
-            return None
-        changed.update(line for line in r.stdout.splitlines() if line)
-    return changed
-
-
-def _agent_changed(wt_path: str, before: set[str]) -> set[str] | None:
-    """What the agent added to the worktree's dirty set, or None when the
-    second snapshot could not be taken.
-
-    None is not an empty delta. An empty one says the agent changed nothing and
-    there is nothing to commit; None says the pass cannot name what the agent
-    changed, which is the case where committing nothing loses work.
-    """
-    after = _changed_source_files(wt_path)
-    return None if after is None else after - before
-
-
-def _report_unattributable(wt_path: str) -> None:
-    """Report a fix pass whose work could not be attributed, and where it is.
-
-    Staging everything is not the fallback: the pass stages by name so that a
-    build artifact or unrelated work in progress never rides along in a commit
-    it then pushes, and a snapshot that failed is exactly when that list is
-    unavailable. The edits are still in the worktree, so the honest end of this
-    path is to say so and commit nothing.
-    """
-    log.error(
-        f"could not read what the fix pass changed in {wt_path} — nothing was "
-        f"committed or pushed. Any fixes it made are still in the worktree:\n"
-        f"  git -C '{wt_path}' status"
-    )
 
 
 def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
@@ -229,11 +170,9 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
     checked box, a decline it reached itself — never reaches the agent and never
     reaches the turn budget those items would have bought.
 
-    Two things this adapter carries that the engine does not ask for. `before`
-    is the worktree's dirty set from before the agent ran, taken by the caller
-    because it has to be taken before the pass starts. `changed` is the
-    difference `landing` works out, held so `record` reports on the same set the
-    commit was scoped to rather than reading the worktree a third time.
+    `changed` is the engine's snapshot difference, held from `landing` so
+    `record` reports on the same set the commit was scoped to rather than
+    reading the worktree a third time.
     """
 
     phase = Phase.FIX
@@ -241,9 +180,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
     action = "applying review findings"
     item_noun = "finding"
 
-    def __init__(
-        self, job: ReviewJob, findings: list[Finding], before: set[str],
-    ) -> None:
+    def __init__(self, job: ReviewJob, findings: list[Finding]) -> None:
         self.job = job
         self.workdir = Path(job.wt_path)
         self.artifacts = Path(job.artifact_dir)
@@ -254,7 +191,6 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         self.effort = job.effort
         self.model = job.model
         self.findings = {f.id: f for f in findings}
-        self.before = before
         self.changed: set[str] | None = None
         self.summary = ""
 
@@ -286,16 +222,15 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         """Nothing — `fix-findings.md` asks for no substitution the engine withholds."""
         return {}
 
-    def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:
+    def landing(
+        self, outcomes: list[ItemOutcome], changed: set[str] | None,
+    ) -> fix_engine.LandSpec:
         """Commit the files the agent touched, and only those.
 
-        The second snapshot is taken here because this is the one point between
-        the agent finishing and the commit being made: earlier and it misses the
-        agent's work, later and the commit has already happened. A snapshot that
-        failed lands an empty scope, which commits nothing — `record` is what
-        then says where the work was left.
+        A snapshot that failed arrives as None and lands an empty scope, which
+        commits nothing — `record` is what then says where the work was left.
         """
-        self.changed = _agent_changed(str(self.workdir), self.before)
+        self.changed = changed
         self.summary = _summary(outcomes, self.findings)
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
@@ -317,7 +252,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         that would have made them done never happened.
         """
         if self.changed is None:
-            _report_unattributable(str(self.workdir))
+            fix_scope.report_unattributable(self.workdir)
             return
         if self.summary:
             log.info("Fix summary:")
@@ -347,17 +282,4 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
         log.info("No findings left to fix — skipping fix pass")
         return
 
-    # ceiling: attribution is by path, so a file already dirty when the pass
-    # starts is never credited to the agent — edits it makes to that file are
-    # neither staged nor committed. Upgrade to comparing each path's content
-    # hash across the snapshot once fix passes routinely run against trees that
-    # are dirty in the very files the review has findings on.
-    before = _changed_source_files(job.wt_path)
-    if before is None:
-        # Refused before the agent runs, so nothing is lost by refusing: with no
-        # baseline the pass cannot tell its own work from what was already here,
-        # and it would either commit the worktree wholesale or commit none of it.
-        log.error(f"could not read the state of {job.wt_path} — skipping fix pass")
-        return
-
-    fix_engine.run(ReviewFixAdapter(job, findings, before), trail=trail)
+    fix_engine.run(ReviewFixAdapter(job, findings), trail=trail)

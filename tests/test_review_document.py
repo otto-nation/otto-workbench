@@ -5,9 +5,9 @@ The header has three writers and only one of them is this module: the pipeline
 and `review-rebuild` render it, and on the synthesis and single-agent paths the
 review agent writes its own from prose in a template. So the header tests come
 in two halves — what `render` and `from_meta` put on disk, and what `parse`,
-`set_status` and `set_head_sha` make of a header they did not write. `ReviewDocument` is tested
-against the same split: what it renders for a document being built, and what it
-makes of one it is handed.
+`set_status` and `set_head_sha` make of a header they did not write.
+`ReviewDocument` is tested against the same split: what it renders for a
+document being built, and what it makes of one it is handed.
 
 The readers are the second half of that: what a document handed back says about
 its sections, its findings and the call it reached. Absent and empty are the
@@ -269,6 +269,17 @@ class TestSetHeadSha:
             "\n## Summary\n"
         )
         assert "<!-- an_agent_invention: keep me -->" in set_head_sha(content, "abc123")
+
+    def test_a_value_carrying_a_backslash_escape_is_written_literally(self):
+        """The SHA is substituted in, not interpreted as a replacement template.
+
+        No commit SHA contains a backslash, so this guards the editor rather
+        than a case the pipeline can reach: `re.sub` reads `\\1` and `\\g<n>` in
+        a string replacement, and a header writer that expanded them would
+        corrupt the line it was asked to correct.
+        """
+        content = "<!-- head_sha: deadbeef -->\n\n## Summary\n"
+        assert r"<!-- head_sha: \1abc -->" in set_head_sha(content, r"\1abc")
 
 
 class TestReviewTitle:

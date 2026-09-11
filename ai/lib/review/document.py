@@ -243,7 +243,10 @@ def set_status(content: str, status: ReviewStatus) -> str:
     """
     line = _line(MetaKey.STATUS, status.value)
     if _STATUS_RE.search(content):
-        return _STATUS_RE.sub(line, content, count=1)
+        # A function replacement, not a string one: `re.sub` reads backslash
+        # escapes in the latter, and the value being written is not this
+        # module's to vouch for.
+        return _STATUS_RE.sub(lambda _: line, content, count=1)
     generator = f"<!-- {MetaKey.GENERATOR}:"
     if generator in content:
         return content.replace(generator, f"{line}\n{generator}", 1)
@@ -273,7 +276,7 @@ def set_head_sha(content: str, head_sha: str) -> str:
     """
     line = _line(MetaKey.HEAD_SHA, head_sha)
     if _HEAD_SHA_RE.search(content):
-        return _HEAD_SHA_RE.sub(line, content, count=1)
+        return _HEAD_SHA_RE.sub(lambda _: line, content, count=1)
     generator = f"<!-- {MetaKey.GENERATOR}:"
     if generator in content:
         return content.replace(generator, f"{line}\n{generator}", 1)

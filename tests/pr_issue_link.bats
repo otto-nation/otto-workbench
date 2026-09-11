@@ -108,6 +108,7 @@ _first_line() {
 }
 
 @test "--no-issue leaves the description alone even with an issue in hand" {
+  # shellcheck disable=SC2034  # read by _pr_append_issue_link in lib/ai/pr.sh
   SKIP_ISSUE=true
   _pr_append_issue_link 1267
   [ "$(_first_line)" = "## What" ]
@@ -130,6 +131,7 @@ _first_line() {
   # The branch regex matches [A-Z]+-[0-9]+ and nothing else, so an inferred
   # issue is always Jira-shaped and always fails the numeric gate. That is why
   # no issue reaching the linker is a guess, and why it confirms nothing.
+  # shellcheck disable=SC2034  # read by _pr_resolve_issue in lib/ai/pr.sh
   PR_ISSUE_OVERRIDE=""
   _pr_resolve_issue "carlos/PROJ-42/oauth_login"
   [ "$PR_ISSUE" = "PROJ-42" ]

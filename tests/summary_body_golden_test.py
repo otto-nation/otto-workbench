@@ -67,6 +67,9 @@ from pr import attribution  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 from pr import summary_model
+from pr import summary_row
+from pr import summary_publish
+from pr import summary_render
 from pr import summary_rounds
 from pr import summary_scope  # noqa: E402
 
@@ -248,7 +251,7 @@ def _full_body(rt):
         },
     )
 
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         content,
         attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED, error=""),
         _REPO,
@@ -302,7 +305,7 @@ def _empty_body(rt):
     one whose only content is a comment triage has already split into rows — so
     it is the shape a reader sees when the pass has nothing to report.
     """
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         _round_content(rt),
         attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
@@ -331,7 +334,7 @@ def _raw_sections_body(rt, *, has_comment_items: bool = False):
     line is behind a multi-line HTML comment, a blank line and a heading —
     `_summarize_comment_body`'s three skips in one value.
     """
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         _round_content(
             rt,
             issue_comments=[
@@ -368,7 +371,7 @@ def _uncommitted_body(rt):
     unlinked, which is the one Action-cell wording neither
     `TestGeneratedActionCell` nor `TestActionCellOutcome` sweeps.
     """
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         _round_content(
             rt,
             deferred=[

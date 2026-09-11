@@ -1303,6 +1303,40 @@ the table is rendered (`pr.summary_render`), how a published body is read back
 (`pr.summary_scope`), and which rows a round may leave to an earlier comment
 (`pr.summary_rounds`).
 
+### pr/summary_publish.py
+
+Getting one round's summary onto the PR without shrinking the record.
+
+The publish decision and the two paths that reach it: the fix pass posting at
+the end of a round, and `--finish` re-rendering from state once a deferred
+tracking issue exists. Both build the same body through `pr.summary_render` and
+both come through `publish_summary`, which is where the record is protected —
+a row the published comments hold and this render cannot account for is carried
+forward rather than overwritten, and an Action cell a person rewrote is kept.
+
+Whether to edit the existing comment or post a fresh one is decided here too,
+because it changes what the round is allowed to leave out: an edit rewrites its
+target wholesale, a fresh post replaces nothing. `pr.summary_rounds` does that
+arithmetic; this hands it the decision.
+
+### pr/summary_render.py
+
+The summary comment's body: the table, its notes, and the sections under it.
+
+One round of the fix pass, rendered as the comment a reviewer reads. The table
+is built row by row from the round's buckets, and the counts above it are
+derived from the rows that actually reached it rather than from the buckets —
+a row left to an earlier comment is not counted here, or the header would
+describe a table the reader cannot see.
+
+What is not here: how one row's cells are built (`pr.summary_row`), what a row's
+identity is (`summary_model.row_key_from_cells`), which rows this round may omit
+(`pr.summary_rounds`), and how the finished body reaches GitHub
+(`pr.summary_publish`).
+
+The counts vocabulary is `pr.comments_fix`'s — `count_line` prints the same line
+on the state dashboard, and a reword in one surface must not change the other.
+
 ### pr/summary_rounds.py
 
 Which already-published rows a round's summary may leave to an earlier one.

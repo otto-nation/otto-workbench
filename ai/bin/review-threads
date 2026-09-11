@@ -826,6 +826,18 @@ def _classify_triage_entries(
     return result
 
 
+def _fixable_count(entries: list[CommentItem]) -> int:
+    """How many of these entries the fix agent will actually be handed.
+
+    The trail's own count, read off the classifier that routes them rather than
+    from a predicate restated beside it. The two parted company over
+    `complexity`: a valid actionable suggestion the model called complex goes to
+    a human, so a rule naming only classification and verification reports it as
+    fixable and every round carrying one was overstated.
+    """
+    return len(_classify_triage_entries(entries).fixable)
+
+
 def _accounted_thread_ids(
     fixable: list[CommentItem],
     needs_human: list[CommentItem],
@@ -1436,20 +1448,12 @@ def _run_threads(trail, args, ctx) -> None:
             sys.exit(rc)
 
         if args.fix and triage_result:
-            fixable_count = sum(
-                1 for t in triage_result.threads
-                if t.classification == "actionable_suggestion"
-                and t.verification == "valid"
-            )
-            fixable_items_count = sum(
-                1 for it in triage_result.comment_items
-                if it.classification == "actionable_suggestion"
-                and it.verification == "valid"
-            )
+            fixable_count = _fixable_count(triage_result.threads)
+            fixable_items_count = _fixable_count(triage_result.comment_items)
             trail.decision(
                 "fix_classification",
                 f"{fixable_count} fixable threads, {fixable_items_count} fixable items identified",
-                reason="classification=actionable_suggestion and verification=valid",
+                reason="the entries _classify_triage_entries routes to the fix agent",
                 data={"fixable": fixable_count, "fixable_items": fixable_items_count,
                       "total": len(triage_result.threads),
                       "total_items": len(triage_result.comment_items)},

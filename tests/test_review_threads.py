@@ -5284,6 +5284,50 @@ class TestClassifyTriageComplexity:
         assert len(result.needs_human) == 0
 
 
+class TestFixableCountMatchesTheClassifier:
+    """What the trail reports fixable is what the fix agent is handed.
+
+    The count used to be a predicate written out beside the trail call —
+    classification and verification, and nothing about complexity. The
+    classifier routes a valid actionable suggestion of high complexity to a
+    human, so that round was reported as having a fixable thread the pass never
+    attempted, and the fix pass's own count disagreed with the trail's for the
+    whole round.
+    """
+
+    def _entry(self, complexity, tid="t1"):
+        return CommentItem(
+            id=tid, file="f.go", line=10, reviewer="alice",
+            summary="refactor", classification="actionable_suggestion",
+            verification="valid", complexity=complexity, state=ThreadState.NEW,
+        )
+
+    def test_high_complexity_is_not_counted_fixable(self, rt):
+        assert rt._fixable_count([self._entry("high")]) == 0
+
+    def test_low_complexity_is_counted(self, rt):
+        assert rt._fixable_count([self._entry("low")]) == 1
+
+    def test_the_count_is_the_classifier_s_own(self, rt):
+        """Every shape at once, against the buckets the pass will actually use."""
+        entries = [
+            self._entry("high", tid="t1"),
+            self._entry("low", tid="t2"),
+            self._entry("medium", tid="t3"),
+        ]
+        assert rt._fixable_count(entries) == len(
+            rt._classify_triage_entries(entries).fixable)
+        assert rt._fixable_count(entries) == 2
+
+    def test_a_question_is_not_counted(self, rt):
+        entry = dataclasses.replace(self._entry("low"), classification="question")
+        assert rt._fixable_count([entry]) == 0
+
+    def test_a_contested_thread_is_not_counted(self, rt):
+        entry = dataclasses.replace(self._entry("low"), state=ThreadState.CONTESTED)
+        assert rt._fixable_count([entry]) == 0
+
+
 # ── already_addressed verification ─────────────────────────────────────────
 
 

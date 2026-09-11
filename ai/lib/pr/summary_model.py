@@ -61,38 +61,6 @@ def unseen_comments(comments: list[dict]) -> list[dict]:
     return [c for c in comments if not c.get("seen")]
 
 
-def duplicate_item_ids(
-    entries: list[CommentItem], threads_by_id: dict[str, ReportThread],
-) -> set[str]:
-    """Ids of comment items a review thread in the same table already covers.
-
-    Triage decomposes a top-level comment into items without knowing which of
-    its points an inline thread already carries, so one review finding can
-    arrive twice — once as a thread and once as a fragment of the comment that
-    restated it. Rendering both puts one point in the table under two outcomes
-    that need not agree, which reads as the summary contradicting itself. The
-    thread is the copy that stays: it is where the reply lands and where
-    resolution is recorded.
-
-    What counts as "the same point" is `finding_location`, whose ceiling
-    comment names what that coarsening costs.
-
-    `e.id in threads_by_id` is the test for "this entry is a review thread"
-    rather than a lookup across two id spaces: a thread entry carries the
-    thread's own id, while a decomposed item carries a synthetic `ic-`/`rb-`
-    one that no thread can have. So the entries that hit are exactly the
-    threads, and the ones that miss are the items being tested against them.
-    """
-    covered = {
-        finding_location(e) for e in entries if e.id in threads_by_id
-    } - {""}
-    return {
-        e.id for e in entries
-        if e.id not in threads_by_id
-        and permalinks.comment_item_source(e).ok
-        and finding_location(e) in covered
-    }
-
 @dataclass(frozen=True)
 class RoundContent:
     """Everything one round of the fix pass has to say, in one value.

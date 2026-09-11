@@ -17,7 +17,6 @@ import dataclasses
 import functools
 import json
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -605,123 +604,6 @@ def _create_or_update_deferred_issue(
         provider, body, ctx, repo, pr_number, provider_info.options, trail,
         publishing_open=publishing_open,
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _thread_covered_locations(
-    entries: Iterable[CommentItem], threads_by_id: dict[str, ReportThread],
-) -> frozenset[str]:
-    """The locations a review thread in this round speaks for.
-
-    One question with two readers: `summary_model.duplicate_item_ids` folds a
-    comment item at one of these locations out of the render, and
-    `_carried_over_rows` drops the published row restating it rather than
-    carrying it back. Computed once here so the two cannot disagree about which
-    locations a thread covers — a fold the carry-forward step does not
-    recognise reinstates the duplicate the fold removed.
-    """
-    return frozenset(
-        finding_location(e) for e in entries if e.id in threads_by_id
-    ) - {""}
-
-
-
-
-
-
-def _folded_locations(
-    content: summary_model.RoundContent, threads_by_id: dict[str, ReportThread],
-) -> frozenset[str]:
-    """The locations this round's fold accounts for, across every bucket.
-
-    `summary_model.folded_item_ids` says which entries the fold removes; this
-    says where they were. `_carried_over_rows` needs the second question,
-    because what it has to recognise is a *published* row at one of those
-    locations — there is no entry of its own to match ids against.
-
-    Cross-bucket for the reason `summary_model.folded_item_ids` is, and reading
-    the same buckets: the thread keeping a point and the item restating it need
-    not share an outcome.
-    """
-    return _thread_covered_locations(_every_entry(content), threads_by_id)
-
-
-def _every_entry(content: summary_model.RoundContent) -> list[CommentItem]:
-    """Every entry the round holds, whichever bucket it sits in."""
-    return [e for entries in content.by_outcome.values() for e in entries]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _post_pending_fix_replies(

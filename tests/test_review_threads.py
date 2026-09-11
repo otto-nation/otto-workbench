@@ -8515,7 +8515,7 @@ class TestFoldedRowsAreNotCarriedBack:
         cp = attribution.CommitPushResult("abc1234", "pushed", "")
         with _published(_published_summary(rt, self.ITEM_ROW)), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
-            rt._post_fix_summary(
+            summary_publish.post_fix_summary(
                 content(fixed=[thread], needs_human=[item]),
                 cp, "owner/repo", 1, threads, head_sha="abc1234",
             )

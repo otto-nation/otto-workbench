@@ -9,3 +9,8 @@ read the same way by each.
 
 - When a user's prompt matches a skill's trigger condition, invoke the skill before making any tool calls — never manually implement what a skill covers
 - If unsure whether a skill applies, invoke it — a skill that turns out irrelevant is cheaper than reimplementing its workflow by hand
+
+## Authoring
+
+- When adding or changing a `SKILL.md`, an agent, or a skill's lifecycle hooks, invoke `writing-skills` first — it carries the frontmatter contract, the `agent:` splice, and the generators to re-run afterwards
+- The same applies when changing the machinery behind them — `ai/skills/steps.sh`, `bin/local/validate-skills`, `bin/local/generate-tool-context` — since the contract those enforce is the one the skill documents

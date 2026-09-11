@@ -11,8 +11,8 @@
 # ```
 #
 # State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-# `PR_BASE`, `PR_ISSUE`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`, `PR_TITLE`,
-# `PR_DESCRIPTION`.
+# `PR_BASE`, `PR_ISSUE`, `PR_ISSUE_EXPLICIT`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
+# `PR_TITLE`, `PR_DESCRIPTION`.
 
 # _push_verified BRANCH [--set-upstream]
 # Pushes BRANCH through the owner in ai/lib/git/push.py, which confirms the remote
@@ -240,12 +240,18 @@ load_pr() {
 # _pr_resolve_issue BRANCH
 # Extracts an issue number from the branch name (e.g. feat/PROJ-42-desc → PROJ-42).
 # When none is found and SKIP_ISSUE is false, prompts the user to enter one.
-# Sets PR_ISSUE.
+# Sets PR_ISSUE and PR_ISSUE_EXPLICIT.
+#
+# PR_ISSUE_EXPLICIT records whether the caller named the issue or the number was
+# inferred from the branch. Only an inference is worth confirming interactively;
+# a caller that passed --issue has already answered.
 _pr_resolve_issue() {
   local branch="$1"
+  PR_ISSUE_EXPLICIT=false
 
   if [[ -n "${PR_ISSUE_OVERRIDE:-}" ]]; then
     PR_ISSUE="$PR_ISSUE_OVERRIDE"
+    PR_ISSUE_EXPLICIT=true
     echo "✓ Using issue: $PR_ISSUE"
     return
   fi
@@ -343,25 +349,62 @@ _pr_generate_multi_commit() {
   fi
 }
 
-# _pr_append_issue_link ISSUE HAS_TEMPLATE
-# Prepends "Closes #N" to PR_DESCRIPTION when the issue is a numeric GitHub issue,
-# no PR template is active (templates handle linking themselves), and the user confirms.
-# Modifies PR_DESCRIPTION in place.
+# _pr_description_links_issue ISSUE
+# True when PR_DESCRIPTION already carries a GitHub closing keyword for ISSUE.
+#
+# The keyword list is GitHub's own: anything else in the body is prose and does
+# not close anything on merge.
+_pr_description_links_issue() {
+  local issue="$1"
+  # `fix(|es|ed)` would be the natural spelling and BSD grep -E rejects the
+  # empty branch outright, so the optional suffix carries the `?`.
+  grep -qiE "(clos(e|es|ed)|fix(es|ed)?|resolv(e|es|ed))[[:space:]]+#$issue([^0-9]|\$)" \
+    <<< "$PR_DESCRIPTION"
+}
+
+# _pr_append_issue_link ISSUE
+# Prepends "Closes #N" to PR_DESCRIPTION when the issue is a numeric GitHub issue
+# and the description does not already link it. Modifies PR_DESCRIPTION in place.
+#
+# A PR template used to suppress this outright, on the reasoning that a template
+# handles its own linking. Most do not — this repo's is a What/Why pair with no
+# issue field — so the exemption withheld the link in exactly the repos where
+# prepending it was the only thing that would close the issue on merge. What
+# matters is whether the rendered description already links it, which is a
+# property of the text and not of a template existing.
 _pr_append_issue_link() {
-  local issue="$1" has_template="$2"
-  [ "$has_template" = "true" ] || [ -z "$issue" ] || [ "$SKIP_ISSUE" = "true" ] && return
+  local issue="$1"
+  if [ -z "$issue" ] || [ "$SKIP_ISSUE" = "true" ]; then
+    return 0
+  fi
 
   local clean_issue
   clean_issue="${issue##\#}"
-  echo "$clean_issue" | grep -qE '^[0-9]+$' || return
+  # Jira-style keys (PROJ-123) do not auto-close on GitHub, so there is no link
+  # to write for one.
+  grep -qE '^[0-9]+$' <<< "$clean_issue" || return 0
 
-  echo ""
-  printf "  Close issue #%s when PR merges? [y/N] " "$clean_issue"
-  local close_issue
-  read -r close_issue
-  if [[ "$close_issue" =~ ^[Yy]$ ]]; then
-    PR_DESCRIPTION="Closes #$clean_issue"$'\n\n'"$PR_DESCRIPTION"
+  if _pr_description_links_issue "$clean_issue"; then
+    echo "✓ Description already closes #$clean_issue"
+    return 0
   fi
+
+  # An explicit --issue is the answer, so asking again is a prompt an unattended
+  # run answers N to by default — which is how a linked PR silently becomes an
+  # unlinked one. A number inferred from the branch is a guess and still needs
+  # confirming; with no terminal to confirm at, it declines rather than closing
+  # an issue nobody chose.
+  if [[ "$PR_ISSUE_EXPLICIT" != "true" ]]; then
+    [ -t 0 ] || return 0
+    echo ""
+    printf "  Close issue #%s when PR merges? [y/N] " "$clean_issue"
+    local close_issue
+    read -r close_issue
+    [[ "$close_issue" =~ ^[Yy]$ ]] || return 0
+  fi
+
+  PR_DESCRIPTION="Closes #$clean_issue"$'\n\n'"$PR_DESCRIPTION"
+  echo "✓ Linked: Closes #$clean_issue"
 }
 
 # generate_pr_content BRANCH DEFAULT_BRANCH
@@ -394,5 +437,5 @@ generate_pr_content() {
   [[ -n "${PR_TITLE_OVERRIDE:-}" ]] && PR_TITLE="$PR_TITLE_OVERRIDE"
   [[ -n "${PR_BODY_OVERRIDE:-}" ]] && PR_DESCRIPTION="$PR_BODY_OVERRIDE"
 
-  _pr_append_issue_link "$PR_ISSUE" "$PR_HAS_TEMPLATE"
+  _pr_append_issue_link "$PR_ISSUE"
 }

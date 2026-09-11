@@ -1022,8 +1022,8 @@ create_pr GH_ARGS...               # runs gh pr create, reports the PR URL
 ```
 
 State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-`PR_BASE`, `PR_ISSUE`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`, `PR_TITLE`,
-`PR_DESCRIPTION`.
+`PR_BASE`, `PR_ISSUE`, `PR_ISSUE_EXPLICIT`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
+`PR_TITLE`, `PR_DESCRIPTION`.
 
 | Function | Purpose |
 |----------|---------|

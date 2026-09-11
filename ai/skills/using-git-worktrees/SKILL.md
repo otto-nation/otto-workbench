@@ -36,10 +36,16 @@ isolated workspace."
 Before creating anything, check whether you are already isolated.
 
 ```bash
-GIT_DIR=$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)
-GIT_COMMON=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)
-BRANCH=$(git branch --show-current)
+GIT_DIR=$(git rev-parse --absolute-git-dir 2>/dev/null)
+GIT_COMMON=$(realpath "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null)
+BRANCH=$(git branch --show-current 2>/dev/null)
 ```
+
+Neither line uses `cd … &&`. A compound `cd` raises an unsuppressible
+permission prompt in Claude Code, which loads this skill from the same source
+Pi does, and a statement boundary inside `$(…)` counts. `--absolute-git-dir`
+canonicalizes on its own; `--git-common-dir` has no such flag, so `realpath`
+does it there.
 
 `GIT_DIR != GIT_COMMON` is also true inside a submodule. Rule that out first — if
 this prints a path you are in a submodule, not a worktree, so treat it as a
@@ -49,21 +55,48 @@ normal repo:
 git rev-parse --show-superproject-working-tree 2>/dev/null
 ```
 
-**If `GIT_DIR != GIT_COMMON` and not a submodule:** you are already in a linked
-worktree. Skip to Step 2. Do not create another.
+Take the three cases in this order. The `DEFAULT` question below is only
+meaningful inside a linked worktree, so it must not be reached before that is
+established.
+
+**If either path is empty**, `git rev-parse` failed — you are outside a
+repository, or the directory is not readable. Two empty strings compare equal,
+so this would otherwise read as "normal checkout" when the truth is that nothing
+could be determined. Say so and stop rather than creating a worktree from an
+unknown location.
+
+**If `GIT_DIR == GIT_COMMON`:** you are in the primary checkout of a normal
+non-bare clone, whatever branch it has out. Go to Step 1.
+
+Otherwise you are in a linked worktree — but that is not by itself isolation on
+this machine. Bare repos here keep the default branch in a linked worktree of
+its own, so `main/` is a peer of the feature worktrees rather than a primary
+checkout, and `GIT_DIR != GIT_COMMON` is true while you stand on `main`. Ask
+which branch the container itself names:
+
+```bash
+DEFAULT=$(git --git-dir="$GIT_COMMON" symbolic-ref --quiet HEAD 2>/dev/null | sed 's|^refs/heads/||')
+```
+
+Ask it only here. In a non-bare clone `--git-dir` HEAD is whatever branch is
+checked out, so `DEFAULT` would equal `BRANCH` on every branch and the answer
+would be a tautology rather than the repo's default. The `GIT_DIR == GIT_COMMON`
+case above has already taken those repos out of the running.
+
+**If `BRANCH` equals `DEFAULT`:** you are standing in the default branch's own
+worktree, which is the one place these rules forbid writing. Go to Step 1 and
+cut a worktree, however much the paths look isolated.
+
+**Otherwise** — a linked worktree, not a submodule, on a branch that is not the
+container's default — you are in a feature worktree. Skip to Step 2. Do not
+create another.
 
 Report with branch state:
 - On a branch: "Already in isolated workspace at `<path>` on branch `<name>`."
 - Detached HEAD: "Already in isolated workspace at `<path>` (detached HEAD,
-  externally managed). Branch creation needed at finish time."
-
-**If `GIT_DIR == GIT_COMMON`:** you are in a normal checkout, which on this
-machine is usually the default branch's worktree.
-
-**If either is empty**, `git rev-parse` failed — you are outside a repository,
-or the directory is not readable. Two empty strings compare equal, so this
-reads as "normal checkout" when the truth is that nothing could be determined.
-Say so and stop rather than creating a worktree from an unknown location.
+  externally managed). Branch creation needed at finish time." An empty
+  `DEFAULT` cannot equal a branch name, so a detached container HEAD falls here
+  rather than into the case above.
 
 ## Step 1: Create the Worktree with `wt`
 
@@ -72,9 +105,10 @@ explicitly exempt. For anything that writes, a worktree is not optional and not
 a question to ask: this machine's rules forbid editing `main`, `master`, or any
 shared branch in place.
 
-An issue must exist before the branch does, because the branch name embeds its
-ID. If there is no issue yet, file one first — see the issue-tracker rules for
-which tracker this repo uses.
+If the work has an issue, its ID goes in the branch name, so the issue must
+exist before the branch does — see the issue-tracker rules for which tracker
+this repo uses. Work with no issue behind it uses the `type` form instead
+(`javier/feat/add_metrics`); do not stop an unattended run to file one.
 
 ```bash
 wt switch -c <username>/<ISSUE-or-type>/<description_in_snake_case>
@@ -90,14 +124,25 @@ guarantee working**, not an error to route around: the default branch has
 diverged from origin or will not fast-forward. Fix the default branch and
 re-run. Never re-run with `--no-hooks` to get past it.
 
+Any other `wt` failure — no `wt` on PATH, worktrunk unconfigured for this repo,
+a sandbox denying the write — stops the work. Report what failed and ask. Both
+improvisations are already closed off above, and working in place on the default
+branch is not a third option.
+
 `wt` prints the new worktree path but cannot change your shell's directory
 unless shell integration is installed. Read the path out of its output and `cd`
-there yourself, then confirm you landed:
+there yourself — as a call of its own, with nothing joined to it by `&&` or `;`,
+which would make it a compound `cd`. Then confirm you landed, addressing the
+worktree by path rather than relying on where you stand:
 
 ```bash
-git rev-parse --show-toplevel
-git branch --show-current
+git -C <worktree-path> rev-parse --show-toplevel
+git -C <worktree-path> branch --show-current
 ```
+
+In a subagent the bare `cd` does not persist between calls at all, so `git -C`
+is not merely tidier there — it is the only form that answers about the right
+tree.
 
 ## Step 2: Project Setup
 
@@ -137,13 +182,16 @@ Ready to implement <feature-name>
 
 | Situation | Action |
 |-----------|--------|
-| Already in a linked worktree | Skip creation (Step 0) |
+| Already in a linked worktree, non-default branch | Skip creation (Step 0) |
+| In the default branch's worktree (`main/`) | Create anyway — linked is not isolated (Step 0) |
 | In a submodule | Treat as a normal repo (Step 0 guard) |
 | Either path came back empty | `git rev-parse` failed — report it; do not read it as a normal checkout |
 | Normal checkout, work is read-only | No worktree needed |
 | Normal checkout, work writes | `wt switch -c` (Step 1) |
-| No issue yet | File the issue first — the branch name needs its ID |
+| Work has an issue | Its ID goes in the branch name |
+| No issue behind the work | Use the `type` form; do not stall to file one |
 | `wt switch -c` aborts on the hook | Fix the default branch; never `--no-hooks` |
+| `wt` fails any other way | Stop and report — do not improvise a worktree |
 | Shell did not change directory | Read the path from `wt` output and `cd` yourself |
 | Tests fail at baseline | Report and ask |
 
@@ -152,6 +200,7 @@ Ready to implement <feature-name>
 | Excuse | Reality |
 |--------|---------|
 | "I'm obviously not in a worktree" | Run Step 0. Harness-created isolation and submodules both fool eyeballing. |
+| "`GIT_DIR != GIT_COMMON`, so I'm isolated" | `main/` is a linked worktree here too. Compare the branch against the container's HEAD before believing it. |
 | "`git worktree add` is quicker" | Only `wt` applies this machine's naming rules and pre-switch hooks. The git form puts the worktree somewhere the rest of these rules do not describe. |
 | "I'll put it in `.worktrees/`" | That is upstream Superpowers' default, not this machine's. Bare repos here place worktrees as peers of `main/`. |
 | "The hook abort is a flake — I'll pass `--no-hooks`" | The abort means the default branch is stale or diverged. Branching anyway bases your work on it. |

@@ -19,6 +19,13 @@ skip: "Do not use while work is still in progress, or on a branch whose PR is al
      dropped even though the Superpowers extension re-adds its skills directory
      through resources_discover.
 
+     Upstream's callers describe this skill as the point that "presents the
+     options" (executing-plans, subagent-driven-development). They are
+     describing upstream's menu, not a contract this file breaks: Step 3's
+     self-review findings summary is the human turn, and the draft PR of Step 4
+     is the gate. A caller's residual findings still reach your human partner
+     through that caller's own final message.
+
      Written against superpowers v6.3.0. When bumping the pin, re-read the
      upstream skill — executing-plans and subagent-driven-development both hand
      off to it by name. -->
@@ -46,16 +53,27 @@ nothing is still on your list: a test you meant to add, a finding you meant to
 fix, a TODO you left. Anything outstanding belongs in the branch now, or in a
 follow-up PR after this one — not in a PR you open and then push to.
 
-Confirm the branch contains only your work:
+Confirm the branch contains only your work. Fetch first — a local `origin/main`
+that has not moved since yesterday reads a stale base as clean:
 
 ```bash
+git fetch origin
 git log --oneline origin/main..HEAD
 git diff --stat origin/main...HEAD
+git status --porcelain -uall
 ```
 
 Three dots for the diff. Reversions or unrelated files mean a stale base —
 rebase onto `origin/main` before going further, and resolve any conflicts before
 writing new code.
+
+The first two commands see committed work only. `git status --porcelain -uall`
+is what catches the file that exists nowhere else: a dirty tree passes the diff
+check silently, the PR opens without it, and you report a URL believing
+everything shipped. Commit it or say why it is being left.
+
+Where the branch targets something other than `main`, substitute it throughout
+and pass `--base <branch>` in Step 4.
 
 ## Step 3: Self-Review
 
@@ -96,9 +114,20 @@ command blocks on an interactive prompt.
 
 Report the PR URL.
 
+On a detached HEAD there is no branch for `task pr:create` to push — it reads
+`git branch --show-current`, which is empty, and fails obscurely downstream. Cut
+the branch first with `git switch -c <username>/<ISSUE-or-type>/<description_in_snake_case>`,
+then open the PR.
+
 **If your human partner names a different next step** — "merge this", "push it",
 "just keep it" — do that instead, directly. If it fails, debug the failure;
 do not fall back to a menu.
+
+Discarding is the exception. "Throw it away", "drop this branch", "get rid of
+it" destroys work that exists nowhere else, so confirm before acting: show what
+would be lost — `git log --oneline origin/main..HEAD` and `git status
+--porcelain -uall` — and ask them to reply with the word `discard`. Anything
+else is not confirmation.
 
 ## Step 5: Leave the Worktree in Place
 
@@ -107,7 +136,11 @@ branch is now shared — someone may be reading it, may have marked it ready, ma
 be merging it.
 
 Cleanup happens later, after the PR merges, and it is `wt remove` that does it —
-never `git worktree remove`, and never on `main` or the default branch.
+never `git worktree remove`, and never on `main` or the default branch. Your
+human partner runs it when they are done with the tree; `wt-cleanup` sweeps
+merged branches in bulk. If `wt remove` refuses, the tree is dirty: read what is
+there before forcing it, since `ignore/plans/` scratch work is gitignored and
+the PR carried none of it.
 
 If you do have to push again before the PR merges:
 - Say so on the PR, in a comment naming what changed and why. A silent push
@@ -126,6 +159,9 @@ If you do have to push again before the PR merges:
 | Tests failing | Stop. Report failures |
 | Something still on your list | Finish it now, or file it as a follow-up — do not open the PR yet |
 | Diff shows unrelated reversions | Stale base — rebase onto `origin/main` |
+| Uncommitted files in the tree | Commit them or say why not — the PR will not carry them |
+| Branch targets something other than `main` | Substitute it, and pass `--base` in Step 4 |
+| Detached HEAD | `git switch -c` a branch first — `pr:create` has nothing to push otherwise |
 | Review findings open | Work through them, then re-run the review |
 | HEAD moved since the review | Re-run `pr review --self` before the PR |
 | Ready to ship | `task --global pr:create -- --no-issue --draft` |
@@ -143,4 +179,5 @@ If you do have to push again before the PR merges:
 | "`gh pr create` is right here" | `task pr:create` applies the template, issue linking, and assignee rules. |
 | "The review passed earlier" | It covered one SHA. If HEAD moved — including for review fixes — re-run. |
 | "I'll push the last fix quietly" | A branch with an open PR is shared. Say what changed. |
+| "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |
 | "The worktree is done, I'll clean it up" | `wt remove`, after the merge — and never the default branch's worktree. |

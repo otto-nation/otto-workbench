@@ -318,6 +318,50 @@ if [[ -f "$CLAUDE_MD" && -f "$PI_AGENTS_HEAD" ]]; then
   fi
 fi
 
+# A skill that teaches a command the rules also pin is a second copy of that
+# command, and the copy is the one that goes stale: a flag change lands in the
+# rule file, and the skill keeps teaching the old invocation with nothing to
+# notice. Rather than compare prose — the skill spells the command across
+# several lines, with its own commentary — this asks the narrower question the
+# staleness actually turns on: every flagged `task ... pr:create --…` invocation
+# a skill gives is one git-operations.md gives too.
+#
+# Only the flagged form is compared. A bare `task pr:create` naming the command
+# in prose carries no flags to drift, and the rule file mentions that spelling
+# itself only to say it does not exist.
+_pr_create_lines() {
+  # shellcheck disable=SC2016  # the backtick is a markdown delimiter, not a subshell
+  grep -ho 'task [^`]*pr:create --[^`]*' "$1" 2> /dev/null | sed 's/ *$//' | sort -u
+}
+
+# _check_pr_create_drift FILE DISPLAY RULE_LINES — holds one skill's flagged
+# invocations against the rule file's.
+#
+# Matching is whole-line (-Fx). Substring containment would read a stale
+# invocation as canonical whenever it is a prefix of the real one: with the rule
+# file offering `... -- --no-issue --draft`, a skill that had lost `--draft`
+# would be contained in it and pass, which is precisely the drift being looked
+# for.
+_check_pr_create_drift() {
+  local skill_file="$1" display="$2" rule_lines="$3" pr_line
+  while IFS= read -r pr_line; do
+    [[ -n "$pr_line" ]] || continue
+    grep -qFx "$pr_line" <<< "$rule_lines" \
+      && _pass "$display: pr:create invocation matches git-operations.md" \
+      || _fail "$display: teaches \`$pr_line\`, which git-operations.md § PR Creation does not — the rule file owns this command"
+  done <<< "$(_pr_create_lines "$skill_file")"
+  return 0
+}
+
+GIT_OPS_RULE="$WORKBENCH_DIR/ai/guidelines/rules/git-operations.md"
+if [[ -f "$GIT_OPS_RULE" ]]; then
+  rule_pr_lines="$(_pr_create_lines "$GIT_OPS_RULE")"
+  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+    [[ -f "$skill_file" ]] || continue
+    _check_pr_create_drift "$skill_file" "skills/$(basename "$(dirname "$skill_file")")" "$rule_pr_lines"
+  done
+fi
+
 # Summary
 echo
 if (( FOUND == 0 )); then

@@ -190,7 +190,7 @@ class TestFormatPreflightData:
             architecture_md="## Known Constraints",
             review_checklists={"security.md": "# Security checks"},
         )
-        result = rc.format_preflight_data(data)
+        result = rc.format_preflight_data(data).text
         assert "Pre-collected data" in result
         assert "```diff" in result
         assert "foo.go" in result
@@ -209,7 +209,7 @@ class TestFormatPreflightData:
             claude_md="",
             architecture_md="",
         )
-        result = rc.format_preflight_data(data, file_filter=["foo.go"])
+        result = rc.format_preflight_data(data, file_filter=["foo.go"]).text
         assert "package main" in result
         assert "package bar" not in result
 
@@ -237,7 +237,7 @@ class TestFormatPreflightData:
             claude_md="",
             architecture_md="",
         )
-        result = rc.format_preflight_data(data, file_filter=["foo.go"])
+        result = rc.format_preflight_data(data, file_filter=["foo.go"]).text
         assert "a/foo.go" in result
         assert "a/bar.go" not in result
 
@@ -250,7 +250,7 @@ class TestFormatPreflightData:
             claude_md="",
             architecture_md="",
         )
-        assert "Commit history" not in rc.format_preflight_data(data)
+        assert "Commit history" not in rc.format_preflight_data(data).text
 
     def test_omitted_files_listed_in_output(self):
         data = PreflightData(
@@ -262,7 +262,7 @@ class TestFormatPreflightData:
             architecture_md="",
             omitted_files=["big.go", "huge.go"],
         )
-        result = rc.format_preflight_data(data)
+        result = rc.format_preflight_data(data).text
         assert "Files not pre-collected" in result
         assert "- big.go" in result
         assert "- huge.go" in result
@@ -277,7 +277,7 @@ class TestFormatPreflightData:
             claude_md="",
             architecture_md="",
         )
-        assert "Files not pre-collected" not in rc.format_preflight_data(data)
+        assert "Files not pre-collected" not in rc.format_preflight_data(data).text
 
     def test_skip_file_contents_names_what_it_did_not_inline(self):
         """Dropping the contents cannot also drop the list of them.
@@ -297,7 +297,7 @@ class TestFormatPreflightData:
             omitted_files=["bar.go"],
         )
         dropped_all = review_budget.fit_files(data.file_contents, data.file_permissions, 0)
-        result = rc.format_preflight_data(data, files=dropped_all)
+        result = rc.format_preflight_data(data, files=dropped_all).text
         assert "```diff" in result
         assert "abc123 fix bug" in result
         assert "# Project" in result
@@ -320,9 +320,51 @@ class TestFormatPreflightData:
             claude_md="",
             architecture_md="",
         )
-        result = rc.format_preflight_data(data, max_diff_bytes=500)
+        result = rc.format_preflight_data(data, max_diff_bytes=500).text
         assert "### Diffs not pre-collected" in result
         assert "- big.go" in result
+
+
+class TestTheBlockReportsWhatItsDiffCost:
+    """The block's own measurement is the only honest one.
+
+    `truncate_diff` drops whole files by tier, so the rendered diff is bounded
+    by its allowance but is not derivable from it — a caller that estimates
+    the diff from the cap it handed out is off by however much the tier
+    ranking declined to spend. The prompt budget read the cap for exactly that
+    reason and recorded every healthy render as hundreds of kilobytes under.
+    """
+
+    @staticmethod
+    def _two_file_diff() -> PreflightData:
+        return PreflightData(
+            diff=(
+                "diff --git a/small.go b/small.go\n+x\n"
+                "diff --git a/big.go b/big.go\n" + "+" * 2000 + "\n"
+            ),
+            commit_log="",
+            file_contents={},
+            file_permissions={},
+            claude_md="",
+            architecture_md="",
+        )
+
+    def test_an_uncapped_block_is_charged_the_whole_diff(self):
+        data = self._two_file_diff()
+        block = rc.format_preflight_data(data)
+        assert block.diff_bytes == len(data.diff.encode())
+
+    def test_a_truncated_diff_is_charged_what_it_kept_not_what_it_was_allowed(self):
+        data = self._two_file_diff()
+        block = rc.format_preflight_data(data, max_diff_bytes=500)
+        kept = "diff --git a/small.go b/small.go\n+x\n"
+        assert block.diff_bytes == len(kept.encode())
+        assert block.diff_bytes < 500
+
+    def test_a_scoped_block_counts_only_the_scoped_diff(self):
+        data = self._two_file_diff()
+        block = rc.format_preflight_data(data, file_filter=["small.go"])
+        assert 0 < block.diff_bytes < len(data.diff.encode())
 
 
 # ── Density-based file content skipping ─────────────────────────────────────

@@ -217,6 +217,22 @@ class TruncatedDiff:
     omitted: list[str]
 
 
+@dataclass(frozen=True)
+class PreflightBlock:
+    """The rendered "Pre-collected data" block, and what the diff cost inside it.
+
+    ``diff_bytes`` is the diff as it went into the block — after ``file_filter``
+    scoping and after `truncate_diff` — not the allowance it was given.
+    `truncate_diff` drops whole files by tier, so a block far under its
+    allowance is the ordinary case rather than the exception: the figure cannot
+    be derived from the cap, and a caller that estimates it from the cap is off
+    by however much the tier ranking declined to spend.
+    """
+
+    text: str
+    diff_bytes: int
+
+
 def scope_diff(full_diff: str, file_filter: list[str]) -> str:
     """``full_diff`` reduced to the per-file sections ``file_filter`` names."""
     filter_set = set(file_filter)
@@ -578,7 +594,7 @@ def format_preflight_data(
     files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
-) -> str:
+) -> PreflightBlock:
     """The "Pre-collected data" block a phase's prompt carries.
 
     ``file_filter`` scopes the diff and the file contents to one group's
@@ -587,6 +603,10 @@ def format_preflight_data(
     it dropped. ``skip_project_context`` is the budget's other lever, and
     ``max_diff_bytes`` caps the diff itself — whatever each drops is named in
     the block rather than left out of it.
+
+    The block reports the bytes its diff actually rendered to, because that is
+    the only place the figure exists: the caller knows the cap it handed out,
+    which on the ordinary path is several times what the diff spent.
     """
     parts = [
         "## Pre-collected data",
@@ -601,6 +621,7 @@ def format_preflight_data(
     if max_diff_bytes is not None:
         cut = truncate_diff(diff_text, max_diff_bytes)
         diff_text, diff_omitted = cut.text, cut.omitted
+    diff_bytes = len(diff_text.encode())
     parts += ["", "### Full diff", "", "```diff", diff_text, "```"]
 
     if data.commit_log:
@@ -618,4 +639,4 @@ def format_preflight_data(
         if project_ctx:
             parts += ["", project_ctx]
 
-    return "\n".join(parts)
+    return PreflightBlock("\n".join(parts), diff_bytes)

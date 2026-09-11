@@ -41,7 +41,7 @@ from review.budget import (
     FileFit, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
     fit_files, fixed_preflight_bytes,
 )
-from review.collect import build_project_context, format_preflight_data
+from review.collect import PreflightBlock, build_project_context, format_preflight_data
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt_prior import _build_prior_section, _build_unaccounted_section
 from review.prompt_sections import (
@@ -94,6 +94,7 @@ class PromptBuilder:
         self._common = common
         self._vars: dict[str, object] = {}
         self._plan: BudgetPlan | None = None
+        self._rendered_diff_bytes = 0
 
     def set(self, key: str, value) -> "PromptBuilder":
         self._vars[key] = value
@@ -147,12 +148,14 @@ class PromptBuilder:
         )
         self._plan = plan
         self.set("delta_section", plan.delta_section)
-        self.set("preflight_data", _build_preflight_section(
+        block = _build_preflight_section(
             job, file_filter=file_filter,
             files=plan.files,
             skip_project_context=skip_project_context,
-            max_diff_bytes=plan.diff_bytes,
-        ))
+            max_diff_bytes=plan.diff_allowance_bytes,
+        )
+        self.set("preflight_data", block.text)
+        self._rendered_diff_bytes = block.diff_bytes
         if "env_section" in self._vars:
             self.set("env_section", _build_env_section(
                 job.wt_path, preflight=job.preflight,
@@ -172,14 +175,14 @@ class PromptBuilder:
         return self._plan.cuts if self._plan else ()
 
     @property
-    def planned_bytes(self) -> int:
-        """What the budget believed the render would cost, or 0 if never fitted.
+    def accounting(self) -> "BudgetAccounting | None":
+        """The plan reconciled against the render, or None if `fit` never ran.
 
-        Zero rather than None for the phases that never call `fit` — disprove
-        builds no budgeted section — so the residual against it is not recorded
+        None rather than a zero sentinel for the phases that never call `fit`
+        — disprove builds no budgeted section — so no accounting is recorded
         for a prompt no ladder planned.
         """
-        return self._plan.planned_bytes if self._plan else 0
+        return self._plan.reconcile(self._rendered_diff_bytes) if self._plan else None
 
     @property
     def vars(self) -> dict[str, object]:
@@ -199,9 +202,9 @@ def _build_preflight_section(
     files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
-) -> str:
+) -> PreflightBlock:
     if not job.preflight:
-        return ""
+        return PreflightBlock("", 0)
     return format_preflight_data(
         job.preflight, file_filter=file_filter,
         files=files,
@@ -258,30 +261,60 @@ class Cut:
 
 
 @dataclass(frozen=True)
+class BudgetAccounting:
+    """What the ladder authorised for a render, against what it can charge it.
+
+    `allowance_bytes` is the room the ladder handed out; `accounted_bytes` is
+    the same measured sections with the diff charged at what it actually
+    rendered to. The gap between them is unspent allowance, which is ordinary
+    and says nothing. The gap between `accounted_bytes` and the rendered
+    prompt is the figure worth reading — see `_log_prompt_size`.
+
+    A separate type rather than two more fields on `BudgetPlan`: a plan that is
+    sometimes reconciled and sometimes not would leave `accounted_bytes`
+    silently equal to the allowance on the unreconciled path, which is the one
+    number with two meanings this replaced.
+    """
+
+    allowance_bytes: int
+    accounted_bytes: int
+
+
+@dataclass(frozen=True)
 class BudgetPlan:
     """How much of the prompt each variable-size section gets, and what was cut.
 
     `delta_section` is the rendered incremental context, already shrunk;
-    `diff_bytes` is the cap the full diff is truncated to; `files` is the
-    budget's fit over the pre-collected file contents — which ones survived
-    and which were dropped for room. `cuts` holds one `Cut` per lever the
-    ladder had to pull, in the order it pulled them, and is empty on the
-    ordinary path where everything fit.
+    `diff_allowance_bytes` is the cap the full diff is truncated to — an upper
+    bound the ordinary render spends a fraction of, not an estimate of its
+    cost; `files` is the budget's fit over the pre-collected file contents —
+    which ones survived and which were dropped for room. `cuts` holds one `Cut`
+    per lever the ladder had to pull, in the order it pulled them, and is empty
+    on the ordinary path where everything fit.
 
-    `planned_bytes` is what the ladder believed the render would cost: every
-    section it measured, plus the room it handed the two it caps. The rendered
-    prompt is the same figure plus whatever the template itself contributes, so
-    a residual much larger than a template is a section rendering into the
-    prompt that no lever measured — which is how a budget silently stops
-    bounding anything. `_log_prompt_size` records the difference for that
-    reason; nothing reads it at runtime.
+    `measured_bytes` is every section the ladder sized, the diff excluded: the
+    part of the plan that renders at the size it was measured at. `reconcile`
+    pairs it with what the diff cost to give the figure the rendered prompt is
+    checked against.
     """
 
     delta_section: str
-    diff_bytes: int
+    diff_allowance_bytes: int
     files: FileFit
     cuts: tuple[Cut, ...]
-    planned_bytes: int = 0
+    measured_bytes: int = 0
+
+    @property
+    def allowance_bytes(self) -> int:
+        """Everything the ladder measured, plus the room it handed the diff."""
+        return self.measured_bytes + self.diff_allowance_bytes
+
+    def reconcile(self, rendered_diff_bytes: int) -> BudgetAccounting:
+        """The same accounting, with the diff charged at what it rendered to."""
+        return BudgetAccounting(
+            allowance_bytes=self.allowance_bytes,
+            accounted_bytes=self.measured_bytes + rendered_diff_bytes,
+        )
 
 
 def _fixed_preflight_bytes(
@@ -416,10 +449,10 @@ def _fit_budget(
 
     return BudgetPlan(
         delta_section=delta,
-        diff_bytes=diff_bytes,
+        diff_allowance_bytes=diff_bytes,
         files=files,
         cuts=tuple(cuts),
-        planned_bytes=measured + contents + len(delta.encode()) + diff_bytes,
+        measured_bytes=measured + contents + len(delta.encode()),
     )
 
 
@@ -463,7 +496,7 @@ def _measured_tokens(
 def _log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
     label: str = "", cuts: tuple[Cut, ...] = (), phase: Phase | None = None,
-    planned_bytes: int = 0,
+    accounting: BudgetAccounting | None = None,
 ) -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
@@ -500,15 +533,25 @@ def _log_prompt_size(
         "sections": section_sizes,
         "cuts": [asdict(c) for c in cuts],
     }
-    if planned_bytes:
-        # What the ladder planned against what actually rendered. The residual
-        # is normally the template's own text, a couple of KB; a large one means
-        # a section reaches the prompt that no lever measured, and a budget that
-        # does not measure everything it sends bounds nothing. Recorded rather
-        # than asserted because the honest threshold is a question for the data,
-        # and there is none yet.
-        stats["planned_bytes"] = planned_bytes
-        stats["residual_bytes"] = prompt_bytes - planned_bytes
+    # `is not None`, not truthiness: a dataclass without `__bool__` is always
+    # truthy, so the shorter form would read as a check it is not.
+    if accounting is not None:
+        # What the render can be charged for, against what it cost. The diff is
+        # charged at what it rendered to rather than at the cap it was handed,
+        # because the cap is several times the spend on the ordinary path and a
+        # residual taken against it is hugely negative on every healthy render
+        # — which buries the small positive excess that is the only thing worth
+        # detecting. `unaccounted_bytes` is the template's own text and the
+        # block markup no lever sizes, a few KB; tens of KB means a section
+        # reaches the prompt that nothing measured, and a budget that does not
+        # measure everything it sends bounds nothing.
+        #
+        # ceiling: recorded, not asserted — the honest threshold is a question
+        # for the data and there is none yet. Upgrade to a hard check once
+        # #1221 has read enough records to name one.
+        stats["allowance_bytes"] = accounting.allowance_bytes
+        stats["accounted_bytes"] = accounting.accounted_bytes
+        stats["unaccounted_bytes"] = prompt_bytes - accounting.accounted_bytes
     measured = _measured_tokens(prompt, job, phase)
     if measured:
         # Both the count and the model are recorded: a density is meaningless

@@ -13,7 +13,6 @@ Write the review as an actionable checklist. Use this exact structure:
 ```
 # Self-Review: ${repo} — ${branch_name}
 <!-- date: YYYY-MM-DD -->
-<!-- head_sha: FULL_SHA -->
 <!-- generator: ${generator_version} -->
 
 ## Summary

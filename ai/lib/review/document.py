@@ -14,6 +14,13 @@ keys wherever they appear and in whatever order, and `set_status` edits the line
 it is asked about rather than re-rendering the block — a field this module was
 never told about survives an edit instead of being dropped by it.
 
+One key is not the agent's to state. `head_sha` records the commit the review
+was written against, and the next re-review measures its delta from it, so a
+value the agent typed from a template is a claim about a run the agent cannot
+see the harness' side of. `set_head_sha` stamps the harness' SHA over whatever
+reached disk, and because `parse` takes the first occurrence of a key, it
+replaces the first marker rather than adding one.
+
 `ReviewDocument` is for a document being *built*: it renders the canonical form
 this module defines. Editing one that is already on disk is a different job and
 stays a text edit, because a header read back off disk states only what its
@@ -108,6 +115,7 @@ class MetaKey(StrEnum):
 
 _LINE_RE = re.compile(r"<!--\s*([a-z_]+):\s*(.*?)\s*-->")
 _STATUS_RE = re.compile(rf"<!--\s*{MetaKey.STATUS}:[^>]*-->")
+_HEAD_SHA_RE = re.compile(rf"<!--\s*{MetaKey.HEAD_SHA}:[^>]*-->")
 
 
 def _line(key: MetaKey, value: object) -> str:
@@ -235,7 +243,40 @@ def set_status(content: str, status: ReviewStatus) -> str:
     """
     line = _line(MetaKey.STATUS, status.value)
     if _STATUS_RE.search(content):
-        return _STATUS_RE.sub(line, content, count=1)
+        # A function replacement, not a string one: `re.sub` reads backslash
+        # escapes in the latter, and the value being written is not this
+        # module's to vouch for.
+        return _STATUS_RE.sub(lambda _: line, content, count=1)
+    generator = f"<!-- {MetaKey.GENERATOR}:"
+    if generator in content:
+        return content.replace(generator, f"{line}\n{generator}", 1)
+    return content.replace("## ", f"{line}\n\n## ", 1)
+
+
+def set_head_sha(content: str, head_sha: str) -> str:
+    """`content` with its header stating `head_sha`, given one if it stated none.
+
+    The commit a review was written against is the point the next re-review
+    measures its delta from, so the value has to be the one the harness ran on.
+    On the paths that reach a review file without `render` — a single-agent
+    review, a synthesis that completed — the header on disk is the review
+    agent's, and the agent types this marker from a template rather than being
+    handed the SHA. A wrong one there is not visible in the document it
+    appears in: it degrades the *next* run, which either measures from some
+    other commit or gives up and reviews the whole PR again.
+
+    An edit rather than a re-render, for `set_status`' reason: the agent's
+    header may state keys this caller does not hold, and rendering a fresh
+    block over it would drop them.
+
+    The replacement is the first marker in the document, and an inserted one
+    goes in the header block, because `ReviewHeader.parse` reads the first
+    occurrence of a key wherever it appears — a marker appended below a
+    section heading would lose to whatever the agent wrote above it.
+    """
+    line = _line(MetaKey.HEAD_SHA, head_sha)
+    if _HEAD_SHA_RE.search(content):
+        return _HEAD_SHA_RE.sub(lambda _: line, content, count=1)
     generator = f"<!-- {MetaKey.GENERATOR}:"
     if generator in content:
         return content.replace(generator, f"{line}\n{generator}", 1)

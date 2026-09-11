@@ -258,7 +258,6 @@ Use the Write tool to save the review to the output path specified in the prompt
 ```markdown
 # Review: <repo>#<pr_number> — <PR title>
 <!-- date: YYYY-MM-DD -->
-<!-- head_sha: <full HEAD SHA at time of review> -->
 
 ## File Triage
 - `path/to/file.go` — **Tier 2** (application logic)

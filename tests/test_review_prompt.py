@@ -13,9 +13,11 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review.budget import (
-    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, fit_files,
+    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
+    fit_files, fixed_preflight_bytes,
 )
-from review.collect import format_preflight_data
+from review.grouping import ReviewProfile, ReviewRule, format_profiles_section
+from review.collect import build_project_context, format_preflight_data
 from gh.types import PRContext, PRMetadata
 from review.types import (
     FindingRef, PreflightData, PriorDisposition, PriorFinding, ReviewJob,
@@ -323,6 +325,137 @@ class TestFitBudget:
         )
 
 
+class TestProfilesAreCountedByTheBudget:
+    """A profile renders into the prompt, so a budget that ignores it overspends.
+
+    `review_profiles` reaches the prompt through `format_preflight_data` ->
+    `build_project_context` -> `format_profiles_section`, and was counted by
+    neither `fixed_preflight_bytes` nor collect's `base_size`. Zero-cost while
+    no repo declares a profile, which is why it went unnoticed.
+    """
+
+    def _profile(self, rule_bytes: int) -> ReviewProfile:
+        return ReviewProfile(
+            name="payments",
+            description="money handling",
+            paths=["**/*.py"],
+            rules=[ReviewRule(severity="must-fix", rule="r" * rule_bytes)],
+        )
+
+    def test_a_profile_costs_the_diff_the_bytes_it_renders(self):
+        job = _make_job(_make_preflight())
+        without = _fit_budget(job, {"header": "small"})
+        with_profile = _fit_budget(
+            _make_job(_make_preflight(review_profiles=[self._profile(50_000)])),
+            {"header": "small"},
+        )
+        assert without.diff_bytes - with_profile.diff_bytes >= 50_000
+
+    def test_the_charge_is_the_rendered_section_not_the_rule_text(self):
+        # The rendered section carries a heading and a preamble no rule holds,
+        # so measuring the source text alone would still under-count.
+        profile = self._profile(1_000)
+        rendered = len(format_profiles_section([profile]).encode())
+        job = _make_job(_make_preflight())
+        without = _fit_budget(job, {"header": "small"})
+        with_profile = _fit_budget(
+            _make_job(_make_preflight(review_profiles=[profile])),
+            {"header": "small"},
+        )
+        assert without.diff_bytes - with_profile.diff_bytes == rendered
+
+    def test_no_profiles_costs_nothing(self):
+        assert fixed_preflight_bytes("", "", "", {}, []) == 0
+        assert fixed_preflight_bytes("", "", "", {}, None) == 0
+        assert fixed_preflight_bytes("", "", "", {}) == 0
+
+    def test_a_caller_that_rendered_the_context_is_not_charged_twice(self):
+        """`_prompt_group` renders project context itself and registers it.
+
+        Those bytes are already in `known_bytes`, so reserving the same
+        sections again takes the difference out of the diff — the group phase
+        would be poorer by exactly the rendered context for no reason.
+        """
+        pf = _make_preflight(
+            claude_md="c" * 10_000, review_profiles=[self._profile(40_000)],
+        )
+        job = _make_job(pf)
+        ctx = build_project_context(pf)
+        as_group = _fit_budget(
+            job, {"project_context": ctx},
+            skip_file_contents=True, skip_project_context=True,
+        )
+        unrendered = _fit_budget(job, {}, skip_file_contents=True)
+        # Not exactly equal: the reserve counts the sections, while the group
+        # registers the rendered context, which adds `build_project_context`'s
+        # own heading and separators on top. That wrapper is real prompt bytes
+        # the reserve never counted, so the group pays a little more — tens of
+        # bytes against the ~50KB it was previously charged twice for.
+        wrapper = len(ctx.encode()) - fixed_preflight_bytes(
+            "", pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.review_profiles,
+        )
+        assert 0 < wrapper < 1024
+        assert unrendered.diff_bytes - as_group.diff_bytes == wrapper
+
+    def test_the_double_count_was_the_whole_reserve(self):
+        # Pins the size of the bug being fixed, so a regression is legible as
+        # "the group phase lost the context back" rather than a stray number.
+        pf = _make_preflight(
+            claude_md="c" * 10_000, review_profiles=[self._profile(40_000)],
+        )
+        job = _make_job(pf)
+        ctx = build_project_context(pf)
+        charged_twice = _fit_budget(
+            job, {"project_context": ctx}, skip_file_contents=True,
+        )
+        once = _fit_budget(
+            job, {"project_context": ctx},
+            skip_file_contents=True, skip_project_context=True,
+        )
+        reserve = fixed_preflight_bytes(
+            pf.commit_log, pf.claude_md, pf.architecture_md,
+            pf.review_checklists, pf.review_profiles,
+        )
+        assert reserve > 50_000
+        assert once.diff_bytes - charged_twice.diff_bytes == reserve
+
+
+class TestThePlanIsCheckedAgainstTheRender:
+    """The residual is how an unmeasured section becomes findable.
+
+    A budget that does not measure everything it sends bounds nothing, and the
+    way that failure presents is an over-budget render nobody can account for.
+    """
+
+    def test_a_plan_reports_what_it_expects_the_render_to_cost(self):
+        job = _make_job(_make_preflight())
+        plan = _fit_budget(job, {"header": "small"})
+        assert plan.planned_bytes > 0
+
+    def test_the_plan_counts_every_section_it_measured(self):
+        pf = _make_preflight(claude_md="c" * 5_000, commit_log="l" * 3_000)
+        plan = _fit_budget(_make_job(pf), {"header": "h" * 2_000})
+        # Known sections, unshrinkable preflight, and the room handed to the
+        # two capped sections — the flat reserve is not part of the estimate,
+        # since nothing renders it.
+        expected = (
+            2_000 + 5_000 + 3_000
+            + len("xy".encode())
+            + len(plan.delta_section.encode())
+            + plan.diff_bytes
+        )
+        assert plan.planned_bytes == expected
+
+    def test_a_phase_that_never_fits_plans_nothing(self):
+        # Disprove builds no budgeted section, so there is no plan to compare a
+        # render against and no residual worth recording.
+        from review.prompt import PromptBuilder
+        job = _make_job(_make_preflight())
+        b = PromptBuilder(_build_common_sections(job, max_turns=10))
+        assert b.planned_bytes == 0
+
+
 class TestBudgetKeepsTheFilesItCanAfford:
     """An over-ceiling prompt drops the lowest-ranked files, not all of them.
 
@@ -591,9 +724,22 @@ class TestPromptTokenTelemetry:
     def _stats(self, tmp_path):
         return json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
 
-    def test_no_token_count_unless_asked_for(self, tmp_path, monkeypatch):
-        """Counting a large prompt costs seconds; it stays opt-in."""
+    def test_measured_by_default(self, tmp_path, monkeypatch):
+        """A measurement nobody takes calibrates nothing.
+
+        This shipped opt-in and was never switched on: 1,758 recorded renders
+        carry no token count at all. The default is now on, so the density the
+        budget reasons about comes from real reviews.
+        """
         monkeypatch.delenv("WORKBENCH_AI_MEASURE_TOKENS", raising=False)
+        with patch("review.prompt.count_tokens", return_value=1000) as counter:
+            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        counter.assert_called_once()
+        assert self._stats(tmp_path)["prompt_tokens"] == 1000
+
+    def test_zero_opts_out(self, tmp_path, monkeypatch):
+        """The round trip is small but not free, and a run may decline it."""
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "0")
         with patch("review.prompt.count_tokens") as counter:
             review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         counter.assert_not_called()

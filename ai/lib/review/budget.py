@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from review.grouping import classify_tier
+from review.grouping import classify_tier, format_profiles_section
 
 # ── Byte budgets ──────────────────────────────────────────────────────────────
 
@@ -73,25 +73,37 @@ def fixed_preflight_bytes(
     claude_md: str,
     architecture_md: str,
     review_checklists: dict[str, str],
+    review_profiles: list | None = None,
 ) -> int:
     """The bytes of preflight data no budget lever can shrink.
 
     `commit_log` is the log the collector gathered, `claude_md` and
-    `architecture_md` are the project context files, and `review_checklists`
-    is every checklist keyed by name — the four sections that go into a prompt
-    whole or not at all. The diff, the pre-collected file contents and the
-    incremental delta are all levers a fit can pull, so none of them is here.
+    `architecture_md` are the project context files, `review_checklists` is
+    every checklist keyed by name, and `review_profiles` is every profile the
+    repo declares — the five sections that go into a prompt whole or not at
+    all. The diff, the pre-collected file contents and the incremental delta
+    are all levers a fit can pull, so none of them is here.
 
-    Taken as four values rather than as a `PreflightData`: the collector holds
-    them as locals before it has a `PreflightData` to put them in, and this
-    module knowing that type would invert the dependency. A caller that has one
-    reads the four fields off it, and one that does not spends nothing.
+    Profiles are measured as `format_profiles_section` will render them, not as
+    the sum of their source files: the rendered section carries a heading and a
+    preamble no source file holds, and a rule's text is reordered rather than
+    copied. Every profile is counted, because a prompt with no file filter
+    renders every one of them. A caller that scoped the profiles itself — a
+    group prompt matches its own files and registers the result as its own
+    section — asks `review.prompt` to skip the project context here rather than
+    being reserved for twice.
+
+    Taken as values rather than as a `PreflightData`: the collector holds them
+    as locals before it has a `PreflightData` to put them in, and this module
+    knowing that type would invert the dependency. A caller that has one reads
+    the fields off it, and one that does not spends nothing.
     """
     return (
         len(commit_log.encode())
         + len(claude_md.encode())
         + len(architecture_md.encode())
         + sum(len(v.encode()) for v in review_checklists.values())
+        + len(format_profiles_section(review_profiles or []).encode())
     )
 
 

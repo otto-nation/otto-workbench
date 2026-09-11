@@ -1023,32 +1023,53 @@ class TestCollectDeltaAncestry:
 
         assert delta.files.count("shared.go") == 1
 
-    def test_a_walk_that_failed_is_not_an_empty_delta(self, tmp_path, capsys):
-        """The guard M1 asked for: git failing must not read as "nothing changed".
+    def _delta_with_failing(self, tmp_path, capsys, failing) -> rc.DeltaScope:
+        """The delta for a merged branch, with `failing` git reads exiting 128.
+
+        `failing` takes the argument tuple and says whether that read fails.
+        Everything else runs for real, so the fallback still has a diff and a
+        log to build from.
+        """
+        job = self._merged(tmp_path, ["mine.go", "shared.go"])
+        real_run = rc.git_client.run
+
+        def _run(*args, **kwargs):
+            if failing(args):
+                return CmdResult(returncode=128, stderr="fatal: bad revision")
+            return real_run(*args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(rc.git_client, "run", _run)
+            delta = rc._collect_delta(job)
+        capsys.readouterr()
+        return delta
+
+    def test_a_failed_numstat_walk_is_not_an_empty_delta(self, tmp_path, capsys):
+        """git failing must not read as "the author changed nothing".
 
         `git_client.out` reports a non-zero exit and a timeout alike as no
         output, which is exactly what an author who changed nothing produces.
         Believing it would carry every group forward and skip a real review.
         """
-        job = self._merged(tmp_path, ["mine.go", "shared.go"])
-        # The delta walk fails; the diff and log the fallback reads still work.
-        real_run = rc.git_client.run
-
-        def _fail_the_walk(*args, **kwargs):
-            if args and args[0] in {"log", "rev-list", "show"} and "--numstat" in args:
-                return CmdResult(returncode=128, stderr="fatal: bad revision")
-            return real_run(*args, **kwargs)
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(rc.git_client, "run", _fail_the_walk)
-            delta = rc._collect_delta(job)
-        capsys.readouterr()
+        delta = self._delta_with_failing(
+            tmp_path, capsys,
+            lambda args: args and args[0] in {"log", "show"} and "--numstat" in args,
+        )
 
         assert delta.proven_empty is False
         assert delta.files, "a failed walk falls back to the whole range"
         # The log describes the same range the file list does, rather than the
         # ancestry-scoped one the walk was going to use.
         assert "Merge main" in delta.commit_log
+
+    def test_a_failed_merge_listing_is_not_an_empty_delta(self, tmp_path, capsys):
+        """The other walk: without the merge list, merge-only work is invisible."""
+        delta = self._delta_with_failing(
+            tmp_path, capsys, lambda args: args and args[0] == "rev-list",
+        )
+
+        assert delta.proven_empty is False
+        assert delta.files, "a failed walk falls back to the whole range"
 
     def test_a_non_ascii_path_is_named_as_git_stores_it(self, tmp_path, capsys):
         """`core.quotePath` is not applied to `log` by the client's own default.

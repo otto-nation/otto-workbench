@@ -433,6 +433,24 @@ def _author_delta(
     return numstat.parse_numstat("\n".join(w.stdout for w in walks))
 
 
+def _delta_log(job: ReviewJob, prior_sha: str, base_ref: str) -> str:
+    """The commits behind the delta, excluding the base's when there is one.
+
+    A list of the base's commits describes work this review is not looking at,
+    so the ancestry exclusion applies here as well as to the file list. Without
+    a base ref to exclude the whole range stands, which is also what the file
+    list falls back to — the two have to describe the same range or the prompt
+    contradicts itself.
+    """
+    surface = ["--", *(f["path"] for f in job.pr.files)] if job.pr.files else []
+    exclude = ["--no-merges", "--not", base_ref] if base_ref else []
+    raw_log = git_client.out(
+        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", *exclude, *surface,
+        cwd=job.wt_path,
+    )
+    return _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log")
+
+
 def _delta_diff_and_log(
     job: ReviewJob, prior_sha: str, base_ref: str,
 ) -> tuple[str, str]:
@@ -453,16 +471,9 @@ def _delta_diff_and_log(
     else:
         raw_diff = git_client.out("diff", f"{prior_sha}..HEAD", cwd=job.wt_path)
     raw_diff = _scope_to_surface(raw_diff, job.pr.files)
-
-    surface = ["--", *(f["path"] for f in job.pr.files)] if job.pr.files else []
-    exclude = ["--no-merges", "--not", base_ref] if base_ref else []
-    raw_log = git_client.out(
-        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", *exclude, *surface,
-        cwd=job.wt_path,
-    )
     return (
         truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES).text,
-        _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log"),
+        _delta_log(job, prior_sha, base_ref),
     )
 
 
@@ -529,9 +540,10 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         # The log is rebuilt without the ancestry exclusion so that it and the
         # file list describe the same range: a log missing the base's commits
         # beside a list naming their files reads as a contradiction.
-        _, whole_log = _delta_diff_and_log(job, prior_sha, "")
         files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
-        return DeltaScope(delta_diff, whole_log, files, 0, prior_sha)
+        return DeltaScope(
+            delta_diff, _delta_log(job, prior_sha, ""), files, 0, prior_sha,
+        )
 
     # One path can come back from both walks — a commit editing a file, then a
     # merge resolving a conflict in it — and each consumer counts what it is

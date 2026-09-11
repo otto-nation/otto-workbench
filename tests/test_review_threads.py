@@ -42,6 +42,8 @@ from pr import triage
 from pr import triage_prompt
 from pr import history_rewrite
 from pr import permalinks
+from pr import summary_model
+from pr import summary_row
 from pr import comments as pr_comments
 from pr import settlement
 from pr.comments_fix import (
@@ -110,7 +112,7 @@ def content(rt):
             k: list(buckets.pop(k, ()))
             for k in ("issue_comments", "review_body_comments")
         }
-        return rt.RoundContent(
+        return summary_model.RoundContent(
             by_outcome={
                 FixOutcome(name): list(entries)
                 for name, entries in buckets.items()
@@ -1063,7 +1065,7 @@ class TestFixedStatusText:
 
     def test_pushed(self, rt):
         cp = attribution.CommitPushResult("abc1234", "pushed", "")
-        text = rt._fixed_status_text(cp, "owner/repo")
+        text = summary_row.fixed_status_text(cp, "owner/repo")
         assert "Fixed in" in text
         assert "abc1234" in text
         assert "push failed" not in text
@@ -1071,14 +1073,14 @@ class TestFixedStatusText:
     def test_push_failed_says_the_commit_exists(self, rt):
         """"Fix pending" would deny a commit that is sitting in the worktree."""
         cp = attribution.CommitPushResult("abc1234", "push_failed", "rejected")
-        text = rt._fixed_status_text(cp, "owner/repo")
+        text = summary_row.fixed_status_text(cp, "owner/repo")
         assert "committed locally" in text
         assert "push failed" in text
         assert "abc1234" not in text
 
     def test_push_held_says_why_it_is_waiting(self, rt):
         cp = attribution.CommitPushResult("abc1234", "push_held", "")
-        text = rt._fixed_status_text(cp, "owner/repo")
+        text = summary_row.fixed_status_text(cp, "owner/repo")
         assert "committed locally" in text
         assert "push held" in text
         assert "abc1234" not in text
@@ -1086,7 +1088,7 @@ class TestFixedStatusText:
     def test_push_lost_says_the_remote_does_not_have_it(self, rt):
         """The operator saw a clean push, so "push failed" would read as wrong."""
         cp = attribution.CommitPushResult("abc1234", "push_lost", "")
-        text = rt._fixed_status_text(cp, "owner/repo")
+        text = summary_row.fixed_status_text(cp, "owner/repo")
         assert "committed locally" in text
         assert "remote does not have it" in text
         assert "abc1234" not in text
@@ -1094,7 +1096,7 @@ class TestFixedStatusText:
     def test_push_unverified_does_not_claim_the_remote_answered(self, rt):
         """An unreachable remote said neither yes nor no — say only that."""
         cp = attribution.CommitPushResult("abc1234", "push_unverified", "")
-        text = rt._fixed_status_text(cp, "owner/repo")
+        text = summary_row.fixed_status_text(cp, "owner/repo")
         assert "could not reach the remote" in text
         assert "does not have it" not in text
         assert "abc1234" not in text
@@ -1102,13 +1104,13 @@ class TestFixedStatusText:
     def test_no_changes_claims_nothing_about_why(self, rt):
         """"Fixed" and "nothing committed" cannot both be true."""
         cp = attribution.CommitPushResult(None, "no_changes", "")
-        text = rt._fixed_status_text(cp, "owner/repo")
+        text = summary_row.fixed_status_text(cp, "owner/repo")
         assert text == UNATTRIBUTED_STATUS_TEXT
         assert "no commit needed" not in text
 
     def test_commit_failed(self, rt):
         cp = attribution.CommitPushResult(None, "commit_failed", "hook error")
-        text = rt._fixed_status_text(cp, "owner/repo")
+        text = summary_row.fixed_status_text(cp, "owner/repo")
         assert "commit failed" in text
         assert "pre-commit" in text
 
@@ -1246,7 +1248,7 @@ class TestBuildSummaryBody:
             ]),
             cp, "owner/repo", 1, {},
         )
-        assert rt.HumanReason.CONTESTED.prose in body
+        assert summary_model.HumanReason.CONTESTED.prose in body
 
     def test_a_declined_entry_reaches_the_table_beside_needs_human(self, rt, content):
         """The coarsening `RoundContent.needs_a_person` owns, seen from the table.
@@ -2150,7 +2152,7 @@ class TestRoundContentNeedsAPerson:
 
     def test_every_member_of_the_constant_is_folded(self, rt, content):
         """A member added to `_NEEDS_A_PERSON` reaches the fold on its own."""
-        for outcome in rt._NEEDS_A_PERSON:
+        for outcome in summary_model.NEEDS_A_PERSON:
             assert content(**{outcome.value: ["t1"]}).needs_a_person == ["t1"]
 
     def test_an_outcome_no_entry_reached_contributes_nothing(self, content):
@@ -3200,7 +3202,7 @@ class TestReplyAttributionAcrossRounds:
         """One precedence rule, two renderers — they must not disagree."""
         outcome = self._fixed("t1", _ROUND_1_SHA, "a.py")
         bodies = self._drain(rt, outcome)
-        cell = rt._fixed_status_for(outcome, attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
+        cell = summary_row.fixed_status_for(outcome, attribution.CommitPushResult(_PASS_SHA, "pushed", ""),
                                     "owner/repo")
         assert _ROUND_1_SHA in cell
         assert _ROUND_1_SHA in bodies["t1"]
@@ -4619,7 +4621,7 @@ class TestSettledRowsAreNotCreditedToThePass:
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
                             settled_by=SettledBy.OPERATOR)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
-        cell = rt._fixed_status_for(entry, cp, "owner/repo")
+        cell = summary_row.fixed_status_for(entry, cp, "owner/repo")
         assert cell == RECONCILED_STATUS_TEXT
         assert cell != UNATTRIBUTED_STATUS_TEXT
 
@@ -4627,7 +4629,7 @@ class TestSettledRowsAreNotCreditedToThePass:
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
                             settled_by=SettledBy.OPERATOR, commit_sha="bbb2222")
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
-        cell = rt._fixed_status_for(entry, cp, "owner/repo")
+        cell = summary_row.fixed_status_for(entry, cp, "owner/repo")
         assert "bbb2222" in cell
         assert "aaa1111" not in cell
 
@@ -4641,7 +4643,7 @@ class TestSettledRowsAreNotCreditedToThePass:
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
                             reason=RECONCILED_REASON)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
-        assert rt._fixed_status_for(entry, cp, "owner/repo") == (
+        assert summary_row.fixed_status_for(entry, cp, "owner/repo") == (
             UNATTRIBUTED_STATUS_TEXT
         )
 
@@ -5818,7 +5820,7 @@ def _published_summary(rt, *rows: str) -> str:
     return "\n".join([
         rt._SUMMARY_MARKER, "## Review Comments Addressed", "",
         "**1 fixed**", "",
-        rt._SUMMARY_TABLE_HEADER, rt._SUMMARY_TABLE_DIVIDER,
+        summary_model.TABLE_HEADER, summary_model.TABLE_DIVIDER,
         *rows, "",
     ])
 
@@ -5853,15 +5855,15 @@ class TestPipesStayInTheirCell:
 
     def _row(self, rt, summary, status="Fixed"):
         entry = CommentItem(id="t1", summary=summary, reviewer="kgn", file="f.go", line=2)
-        return rt._build_row(entry, status, {}, "owner/repo", 1)
+        return summary_row.render_row(summary_row.row_cells_for(entry, status, {}, "owner/repo", 1))
 
     def test_a_summary_pipe_does_not_add_a_cell(self, rt):
         row = self._row(rt, "use a || b, not a | b")
-        assert len(markdown.row_cells(row)) == len(rt._SUMMARY_TABLE_COLUMNS)
+        assert len(markdown.row_cells(row)) == len(summary_model.TABLE_COLUMNS)
 
     def test_a_status_pipe_does_not_add_a_cell(self, rt):
         row = self._row(rt, "plain", status="Deferred — a | b")
-        assert len(markdown.row_cells(row)) == len(rt._SUMMARY_TABLE_COLUMNS)
+        assert len(markdown.row_cells(row)) == len(summary_model.TABLE_COLUMNS)
 
     def test_the_fallback_key_survives_a_summary_pipe(self, rt):
         deferred = self._row(rt, "use a | b", status="Deferred")
@@ -5992,13 +5994,13 @@ class TestGeneratedActionCell:
         wording change there must not silently freeze the rows it renders."""
         for status in CommitStatus:
             cp = attribution.CommitPushResult("9f2e1a0", status, "")
-            assert rt._is_generated_action(rt._fixed_status_text(cp, "owner/repo")) is True
+            assert summary_model.is_generated_action(summary_row.fixed_status_text(cp, "owner/repo")) is True
             bare = attribution.CommitPushResult(None, status, "")
-            assert rt._is_generated_action(rt._fixed_status_text(bare, "owner/repo")) is True
+            assert summary_model.is_generated_action(summary_row.fixed_status_text(bare, "owner/repo")) is True
 
     def test_every_human_reason_prose_is_recognised(self, rt):
-        for reason in rt.HumanReason:
-            assert rt._is_generated_action(reason.prose) is True
+        for reason in summary_model.HumanReason:
+            assert summary_model.is_generated_action(reason.prose) is True
 
     @pytest.mark.parametrize("cell", [
         "Already addressed",
@@ -6009,12 +6011,12 @@ class TestGeneratedActionCell:
         "Addressed outside the fix pass",
     ])
     def test_the_literal_cells_are_recognised(self, rt, cell):
-        assert rt._is_generated_action(cell) is True
+        assert summary_model.is_generated_action(cell) is True
 
     def test_a_retired_wording_is_still_recognised(self, rt):
         """A published summary outlives the builder that wrote its cells, so an
         opening no builder produces any more still opens rows on live PRs."""
-        assert rt._is_generated_action("Added to the PR description (no commit)") is True
+        assert summary_model.is_generated_action("Added to the PR description (no commit)") is True
 
     @pytest.mark.parametrize("cell", [
         "",
@@ -6022,7 +6024,7 @@ class TestGeneratedActionCell:
         "Withdrawn by the reviewer",
     ])
     def test_anything_else_reads_as_hand_written(self, rt, cell):
-        assert rt._is_generated_action(cell) is False
+        assert summary_model.is_generated_action(cell) is False
 
     def test_only_a_row_the_render_covers_is_held(self, rt):
         """A hand-written row the render does not cover is the carry-forward
@@ -6068,7 +6070,7 @@ class TestTheTwoOursVocabulariesAgree:
         disagreement that does not exist.
         """
         for prefix, expected in self._EXPECTED.items():
-            assert rt._action_outcome(prefix) is expected, prefix
+            assert summary_model.action_outcome(prefix) is expected, prefix
 
     def test_the_overlap_is_exactly_two_openings(self, rt):
         """Pins the shape, so gaining or losing an overlap is a failing test.
@@ -6098,11 +6100,11 @@ class TestActionCellOutcome:
                 else FixOutcome.FIXED
             )
             cp = attribution.CommitPushResult("9f2e1a0", status, "")
-            assert rt._action_outcome(
-                rt._fixed_status_text(cp, "owner/repo")) is expected
+            assert summary_model.action_outcome(
+                summary_row.fixed_status_text(cp, "owner/repo")) is expected
             bare = attribution.CommitPushResult(None, status, "")
-            assert rt._action_outcome(
-                rt._fixed_status_text(bare, "owner/repo")) is expected
+            assert summary_model.action_outcome(
+                summary_row.fixed_status_text(bare, "owner/repo")) is expected
 
     def test_every_cell_a_status_builder_can_emit_is_one_we_recognise(self, rt):
         """A wording with no entry reads as hand-written and freezes its row.
@@ -6115,30 +6117,30 @@ class TestActionCellOutcome:
         settled = CommentItem(id="t2", summary="s", file="a.py", line=1,
                               settled_by=SettledBy.RECONCILIATION)
         cells = [
-            rt._fixed_status_for(e, attribution.CommitPushResult(sha, status, ""), "owner/repo")
+            summary_row.fixed_status_for(e, attribution.CommitPushResult(sha, status, ""), "owner/repo")
             for status in CommitStatus
             for sha in ("9f2e1a0", None)
             for e in (entry, settled)
         ]
         cells += [
-            rt._addressed_status_for(
+            summary_row.addressed_status_for(
                 attribution.AddressedFraming(in_response=r, sha=sha), "owner/repo",
             )
             for r in (True, False)
             for sha in ("9f2e1a0", "")
         ]
-        assert [c for c in cells if rt._action_outcome(c) is None] == []
+        assert [c for c in cells if summary_model.action_outcome(c) is None] == []
 
     def test_a_fix_reported_two_ways_reads_the_same(self, rt):
         """The false positive a cell comparison produces: same outcome, two
         wordings, because one round resolved a commit and the next did not."""
-        cited = rt._fixed_in_cell("9f2e1a0", "owner/repo")
-        assert rt._action_outcome(cited) is rt._action_outcome(
+        cited = summary_row.fixed_in_cell("9f2e1a0", "owner/repo")
+        assert summary_model.action_outcome(cited) is summary_model.action_outcome(
             UNATTRIBUTED_STATUS_TEXT)
 
     def test_every_human_reason_prose_reads_as_open(self, rt):
-        for reason in rt.HumanReason:
-            assert rt._action_outcome(reason.prose) is FixOutcome.NEEDS_HUMAN
+        for reason in summary_model.HumanReason:
+            assert summary_model.action_outcome(reason.prose) is FixOutcome.NEEDS_HUMAN
 
     @pytest.mark.parametrize("cell,outcome", [
         ("Already addressed", FixOutcome.ALREADY_ADDRESSED),
@@ -6149,13 +6151,13 @@ class TestActionCellOutcome:
         ("Added to the PR description (no commit)", FixOutcome.FIXED),
     ])
     def test_the_literal_cells_read_as_their_outcome(self, rt, cell, outcome):
-        assert rt._action_outcome(cell) is outcome
+        assert summary_model.action_outcome(cell) is outcome
 
     @pytest.mark.parametrize("cell", ["", _HAND_WRITTEN_ACTION_CELL])
     def test_a_cell_we_did_not_write_states_no_outcome(self, rt, cell):
         """None is what keeps a hand-written cell from reading as a round's own
         re-classification — the row is the hand-held path's business, not this."""
-        assert rt._action_outcome(cell) is None
+        assert summary_model.action_outcome(cell) is None
 
     def test_no_opening_opens_another_under_a_different_outcome(self, rt):
         """What lets `_action_outcome` scan `_ACTION_OUTCOMES` in any order. Add
@@ -6164,8 +6166,8 @@ class TestActionCellOutcome:
         the outcome it left — with no wording anywhere to show which."""
         overlaps = [
             f"{opening!r} ({outcome}) opens {longer!r} ({other})"
-            for opening, outcome in rt._ACTION_OUTCOMES.items()
-            for longer, other in rt._ACTION_OUTCOMES.items()
+            for opening, outcome in summary_model.ACTION_OUTCOMES.items()
+            for longer, other in summary_model.ACTION_OUTCOMES.items()
             if longer != opening and longer.startswith(opening) and other is not outcome
         ]
         assert overlaps == []
@@ -6317,12 +6319,12 @@ def _sibling_rows(rt, hand_written: str = "") -> list[str]:
     that round posted.
     """
     return [
-        rt._build_row(
+        summary_row.render_row(summary_row.row_cells_for(
             item,
             _HAND_WRITTEN_ACTION_CELL if item.id == hand_written
             else _ROUND_ONE_ITEM_CELL,
             {}, "owner/repo", 1, "aaaaaaa",
-        )
+        ))
         for item in _SIBLING_ITEMS
     ]
 
@@ -6331,7 +6333,7 @@ class TestSiblingItemsKeyApart:
     """One anchor, N rows: the anchor names the source, not the row."""
 
     def _row(self, rt, item, status="Fixed", sha="aaaaaaa"):
-        return rt._build_row(item, status, {}, "owner/repo", 1, sha)
+        return summary_row.render_row(summary_row.row_cells_for(item, status, {}, "owner/repo", 1, sha))
 
     def test_each_sibling_gets_its_own_key(self, rt):
         keys = {rt._summary_row_key(self._row(rt, i)) for i in _SIBLING_ITEMS}
@@ -6538,7 +6540,7 @@ def _published_open_row(rt) -> str:
     tells "still open, and quiet" from "re-classified this round".
     """
     return ROUND_ONE_ROW.replace(
-        _GENERATED_ACTION_CELL, rt.HumanReason.prose_for(_OPEN_OUTCOME.reason))
+        _GENERATED_ACTION_CELL, summary_model.HumanReason.prose_for(_OPEN_OUTCOME.reason))
 
 
 class TestASummaryDescribesItsOwnRound:
@@ -8050,10 +8052,10 @@ class TestHumanReason:
         "contested", "conflicting", "question", "complex", "needs_discussion",
     ])
     def test_every_known_reason_renders_as_prose(self, rt, content, reason):
-        assert self._action_cell(rt, content, reason) == rt.HumanReason(reason).prose
+        assert self._action_cell(rt, content, reason) == summary_model.HumanReason(reason).prose
 
     def test_no_rendered_cell_holds_a_snake_case_token(self, rt, content):
-        for member in rt.HumanReason:
+        for member in summary_model.HumanReason:
             cell = self._action_cell(rt, content, member.value)
             assert "_" not in cell
             assert cell[0].isupper()
@@ -8066,7 +8068,7 @@ class TestHumanReason:
 
     def test_the_persisted_tokens_stay_stable(self, rt):
         """State files written before the enum existed must still read back."""
-        assert [m.value for m in rt.HumanReason] == [
+        assert [m.value for m in summary_model.HumanReason] == [
             "contested", "conflicting", "question", "complex", "needs_discussion",
         ]
 
@@ -8096,12 +8098,12 @@ class TestHumanReason:
         cp = attribution.CommitPushResult(None, "no_changes", "")
         entry = CommentItem.from_outcome(ItemOutcome(
             id="t1", summary="premise disputed", file="a.py", line=1,
-            outcome=FixOutcome.NEEDS_HUMAN, reason=rt.HumanReason.CONTESTED.value,
+            outcome=FixOutcome.NEEDS_HUMAN, reason=summary_model.HumanReason.CONTESTED.value,
         ))
         body = rt._build_summary_body(
             content(needs_human=[entry]), cp, "owner/repo", 1, {})
         rows = rt._summary_table_rows(body)
-        assert markdown.row_cells(rows[0])[-1] == rt.HumanReason.CONTESTED.prose
+        assert markdown.row_cells(rows[0])[-1] == summary_model.HumanReason.CONTESTED.prose
 
 
 # ── comment items settle through their source comment ─────────────────────
@@ -8414,12 +8416,12 @@ class TestDuplicateFindingRendersOnce:
         """
         round_content = content(fixed=[self._thread()], needs_human=[self._item()])
         threads = self._threads()
-        assert rt._folded_item_ids(round_content, threads) == {"ic-77-0"}
-        assert rt._folded_locations(round_content, threads) == frozenset({"kgn|a.go:7"})
+        assert summary_model.folded_item_ids(round_content, threads) == {"ic-77-0"}
+        assert summary_model.folded_locations(round_content, threads) == frozenset({"kgn|a.go:7"})
 
     def test_an_unfolded_round_reports_no_locations(self, rt, content):
         round_content = content(needs_human=[self._item()])
-        assert rt._folded_locations(round_content, {}) == frozenset()
+        assert summary_model.folded_locations(round_content, {}) == frozenset()
 
     def test_a_declined_item_folds_into_the_thread_it_restates(self, rt, content):
         """`_folded_item_ids` reads every bucket, so the fold is not `needs_human`'s.

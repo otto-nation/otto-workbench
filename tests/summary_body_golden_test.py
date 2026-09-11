@@ -66,6 +66,7 @@ from git.land import CommitStatus  # noqa: E402
 from pr import attribution  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
+from pr import summary_model  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN_FULL = FIXTURES / "summary_body_full.md"
@@ -97,7 +98,7 @@ def _round_content(rt, **buckets):
         k: list(buckets.pop(k, ()))
         for k in ("issue_comments", "review_body_comments")
     }
-    return rt.RoundContent(
+    return summary_model.RoundContent(
         by_outcome={
             FixOutcome(name): list(entries) for name, entries in buckets.items()
         },
@@ -265,7 +266,7 @@ def _full_body(rt):
         # rewrote its Action cell, so the published text is re-emitted in place
         # and the entry behind it drops out of the counts.
         hand_held=[
-            rt.HeldRow(
+            summary_model.HeldRow(
                 key="#discussion_r103",
                 published=(
                     "| [use the helper](https://github.com/owner/repo/pull/42"

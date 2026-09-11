@@ -1280,6 +1280,45 @@ What is not here: the summary that renders these endings, the replies that
 announce them, and the argparse layer that spells `--settle`. This module
 decides what happened and records it; the surfaces read the record.
 
+### pr/summary_model.py
+
+What a summary round is made of: its rows' vocabulary, and its identity.
+
+The value types the summary comment is built from, and the two questions that
+have to be answered the same way on both sides of a round trip through GitHub:
+what outcome an Action cell reports, and which row a rendered row *is*.
+
+Identity lives here rather than in the renderer for the reason `core.markdown`
+holds both halves of cell escaping. A row is rendered to markdown, published,
+and re-read on the next round to recover what the summary already carried, so
+the fresh row and the published one must key alike. Deriving the key from the
+rendered cells is what makes that true: the file cell reflects
+`permalinks.anchored_line`'s runtime decision rather than the entry's own line
+number, and a summary containing a markdown link renders nested. A key built
+from the typed entry disagrees with the published row in exactly those two
+cases — see `row_key_from_cells`.
+
+What is not here: how a cell is built (`pr.summary_row`), how the body around
+the table is rendered (`pr.summary_render`), how a published body is read back
+(`pr.summary_scope`), and which rows a round may leave to an earlier comment
+(`pr.summary_rounds`).
+
+### pr/summary_row.py
+
+One row of the summary table: its cells, and the Action cell that grades it.
+
+A row is built as cells and rendered from them, in two steps rather than one.
+The cells are what the row's identity is derived from — see
+`summary_model.row_key_from_cells` — so a caller that needs both takes the
+cells once and gets a row and a key that cannot disagree. Rendering straight to
+markdown and reading the key back out of it is what this shape replaces.
+
+The Action cell is the graded half of the row and is built here, in the five
+functions that spell what happened to a thread. What that cell *reports* once
+published is `summary_model.action_outcome`'s to say: the wordings are written
+here and parsed there, and the two are kept in step by a sweep test until
+#1252 gives each wording one owner.
+
 ### pr/thread_context.py
 
 The code and history a reviewer's comment has to be read against.

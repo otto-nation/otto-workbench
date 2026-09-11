@@ -69,6 +69,8 @@ from pr.thread_models import (
 )
 from gh.pr_reads import fetch_pr_data
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
+from pr import summary_model
+from pr import summary_row
 from pr import supersession
 from core.tool_parser import handle_value_flags
 from core.trail import Trail, add_trail_args
@@ -184,11 +186,6 @@ _UNSTATED_REASON = {
     FixOutcome.DECLINED: "agent declined without giving a reason",
 }
 
-# The outcomes the summary shows a reviewer under one heading. A thread the
-# agent argued against and one it could not decide both end the same way — an
-# operator has to read it — and the reason is carried per row either way, so the
-# distinction the state file keeps buys the summary nothing.
-_NEEDS_A_PERSON = (FixOutcome.NEEDS_HUMAN, FixOutcome.DECLINED)
 
 
 def _parse_tracking_results(
@@ -621,106 +618,14 @@ def _create_or_update_deferred_issue(
     )
 
 
-def _fixed_status_for(
-    entry: CommentItem,
-    cp: attribution.CommitPushResult,
-    repo: str,
-    history: "attribution.AddressingHistory | None" = None,
-    thread: ReportThread | None = None,
-) -> str:
-    """Status cell for one fixed row, rendering what `attribution.attribute_commit` allows.
-
-    The row asks the resolver which commit carries it and renders that answer;
-    it does not reach past the resolver for a SHA. Falling through to the
-    pass-level text is only correct when the resolver says the pass's own
-    commit is the whole story for this row — otherwise that text credits the
-    running pass for work landed in an earlier round, or by an operator across
-    several commits it cannot tell apart.
-
-    `history` is what lets the row be told apart in that last case. Without it
-    the cell reads the same as before; the thread reply has always passed one,
-    so a table built without it contradicts the reply posted beside it.
-    """
-    attributed = attribution.attribute_commit(entry, cp, history, thread)
-    if attributed.cited:
-        return _fixed_in_cell(attributed.sha, repo)
-    # A row settled outside the pass landed in a commit this run could not
-    # resolve. That is true of the row whatever the running pass did, so it is
-    # answered before the pass-level text gets a say.
-    if _settled_outside_the_pass(entry, cp):
-        return pr_comments_fix.RECONCILED_STATUS_TEXT
-    if attributed.claim is attribution.CommitClaim.PASS:
-        return _fixed_status_text(cp, repo)
-    return pr_comments_fix.UNATTRIBUTED_STATUS_TEXT
 
 
-def _settled_outside_the_pass(entry: CommentItem, cp: attribution.CommitPushResult) -> bool:
-    """Whether this fixed row's work landed where the running pass cannot name it.
-
-    Two ways that happens and one cell for both. The record says so — reconciled
-    at drain time, or recorded by the operator with `--settle` — or the branch
-    does, HEAD having moved past the fix snapshot onto a commit no reviewer can
-    be sent to.
-
-    Asked by the renderer and by the warning that counts what the renderer is
-    about to publish, so the table and the count beneath it cannot disagree
-    about which rows assert a fix the branch does not account for. The warning
-    used to compare the rendered cell text, which made a reworded cell a silent
-    change to what gets warned about.
-    """
-    return attribution.handled_outside(entry) or cp.status == CommitStatus.RECONCILED
 
 
-def _fixed_in_cell(sha: str, repo: str) -> str:
-    """The status cell that names the commit carrying a row.
-
-    One spelling for every surface that claims a fix landed: the fixed rows,
-    and the satisfied rows a commit made true after the reviewer asked.
-    """
-    return f"Fixed in [`{sha}`]({permalinks.commit_permalink(repo, sha)})"
 
 
-def _addressed_status_for(framing: attribution.AddressedFraming, repo: str) -> str:
-    """Status cell for one satisfied row, in the framing its history earned.
-
-    A row whose commit postdates the review comment reports as a fix, because
-    that is what it was — the same question the thread reply asks, read through
-    the same resolver so the table and the reply cannot say different things
-    about one thread.
-    """
-    if framing.in_response and framing.cited:
-        return _fixed_in_cell(framing.sha, repo)
-    return "Already addressed"
 
 
-def _fixed_status_text(cp: attribution.CommitPushResult, repo: str) -> str:
-    """Human-readable status for fixed threads in the summary table."""
-    if cp.sha and cp.status == CommitStatus.PUSHED:
-        return _fixed_in_cell(cp.sha, repo)
-    if cp.status == CommitStatus.NO_CHANGES:
-        # "A fix was applied" and "nothing was committed" contradict each other,
-        # and which half is wrong is not knowable from here — a hook may have
-        # rejected the commit, or the edit may have been a no-op. Publishing the
-        # confident reading ("no commit needed") over a rejected commit asserts
-        # more than is known, so the cell states only what is certain.
-        return pr_comments_fix.UNATTRIBUTED_STATUS_TEXT
-    if cp.status == CommitStatus.COMMIT_FAILED:
-        return "Fix applied (commit failed — pre-commit hook?)"
-    if cp.status == CommitStatus.RECONCILED:
-        return pr_comments_fix.RECONCILED_STATUS_TEXT
-    # Both callers refuse to render an unpushed commit, so these four are not
-    # reachable today. They are spelled out anyway: the fallback below reads as
-    # "not done yet", which would be a false claim about a commit that exists
-    # and is only waiting to be published.
-    if cp.status == CommitStatus.PUSH_HELD:
-        return "Fix committed locally (push held pending discussion)"
-    if cp.status == CommitStatus.PUSH_FAILED:
-        return "Fix committed locally (push failed)"
-    if cp.status == CommitStatus.PUSH_LOST:
-        return "Fix committed locally (push reported success, remote does not have it)"
-    if cp.status == CommitStatus.PUSH_UNVERIFIED:
-        return "Fix committed and pushed (could not reach the remote to confirm)"
-    return "Fix pending"
 
 
 def _warn_unattributed_fixes(
@@ -742,7 +647,7 @@ def _warn_unattributed_fixes(
     - `folded` drops the entries the renderer will fold into a thread's row.
       They reach no reader, so counting them describes a list nobody sees and
       reads as a larger attribution problem than the branch has.
-    - A row `_settled_outside_the_pass` recognises is not counted. The resolver
+    - A row `summary_row.settled_outside_the_pass` recognises is not counted. The resolver
       declines to cite it, which is why it used to be, but the cell it renders
       is a specific claim about where the fix went — the work is on the branch,
       in a commit this run cannot name. Nothing about it contradicts itself, and
@@ -771,7 +676,7 @@ def _warn_unattributed_fixes(
         e for e in fixed
         if e.id not in folded
         and not attribution.attribute_commit(e, cp, history, threads_by_id.get(e.id)).cited
-        and not _settled_outside_the_pass(e, cp)
+        and not summary_row.settled_outside_the_pass(e, cp)
     ]
     if not orphans:
         return
@@ -781,46 +686,8 @@ def _warn_unattributed_fixes(
     )
 
 
-def _summary_cell(
-    entry: CommentItem,
-    threads_by_id: dict[str, ReportThread],
-    repo: str, pr_number: int,
-) -> str:
-    """Thread summary as a markdown link if a permalink is available, plain text otherwise."""
-    summary = markdown.escape_cell(entry.summary or "—")
-    url = permalinks.thread_permalink(entry, threads_by_id, repo, pr_number)
-    if url:
-        return f"[{summary}]({url})"
-    return summary
 
 
-def _build_row(
-    entry: CommentItem, status: str,
-    threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
-    head_sha: str = "",
-    wt_path: Path | None = None,
-) -> str:
-    """Build a single summary table row for a thread entry.
-
-    The file cell is a permalink whenever a SHA is known — every claim the table
-    makes should be one line away from the code that backs it. The line anchor
-    is kept only where it still holds in that SHA, on the same terms as a reply's
-    link: see `permalinks.anchored_line`.
-    """
-    summary = _summary_cell(entry, threads_by_id, repo, pr_number)
-    reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
-    if entry.file and head_sha:
-        anchor = permalinks.anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
-        label = f"{entry.file}:{anchor}" if anchor else entry.file
-        url = permalinks.blob_permalink(repo, head_sha, entry.file, anchor)
-        file_loc = f"[`{label}`]({url})"
-    elif entry.file and entry.line:
-        file_loc = f"`{entry.file}:{entry.line}`"
-    elif entry.file:
-        file_loc = f"`{entry.file}`"
-    else:
-        file_loc = "—"
-    return f"| {summary} | {reviewer} | {file_loc} | {markdown.escape_cell(status)} |"
 
 
 def _summarize_comment_body(body: str, max_len: int = 120) -> str:
@@ -848,297 +715,53 @@ def _thread_covered_locations(
 ) -> frozenset[str]:
     """The locations a review thread in this round speaks for.
 
-    One question with two readers: `_duplicate_item_ids` folds a comment item
-    at one of these locations out of the render, and `_carried_over_rows` drops
-    the published row restating it rather than carrying it back. Computed once
-    here so the two cannot disagree about which locations a thread covers — a
-    fold the carry-forward step does not recognise reinstates the duplicate the
-    fold removed.
+    One question with two readers: `summary_model.duplicate_item_ids` folds a
+    comment item at one of these locations out of the render, and
+    `_carried_over_rows` drops the published row restating it rather than
+    carrying it back. Computed once here so the two cannot disagree about which
+    locations a thread covers — a fold the carry-forward step does not
+    recognise reinstates the duplicate the fold removed.
     """
     return frozenset(
         finding_location(e) for e in entries if e.id in threads_by_id
     ) - {""}
 
 
-def _duplicate_item_ids(
-    entries: list[CommentItem], threads_by_id: dict[str, ReportThread],
-) -> set[str]:
-    """Ids of comment items a review thread in the same table already covers.
-
-    Triage decomposes a top-level comment into items without knowing which of
-    its points an inline thread already carries, so one review finding can
-    arrive twice — once as a thread and once as a fragment of the comment that
-    restated it. Rendering both puts one point in the table under two outcomes
-    that need not agree, which reads as the summary contradicting itself. The
-    thread is the copy that stays: it is where the reply lands and where
-    resolution is recorded.
-
-    What counts as "the same point" is `finding_location`, whose ceiling
-    comment names what that coarsening costs.
-    """
-    covered = _thread_covered_locations(entries, threads_by_id)
-    return {
-        e.id for e in entries
-        if e.id not in threads_by_id
-        and permalinks.comment_item_source(e).ok
-        and finding_location(e) in covered
-    }
 
 
-def _unseen(comments: list[dict]) -> list[dict]:
-    """The comments no summary has reported yet.
-
-    One spelling of the flag for its two readers — `RoundContent.unseen`, which
-    decides whether a round has anything to say, and
-    `_render_raw_comment_sections`, which prints them.
-    """
-    return [c for c in comments if not c.get("seen")]
-
-
-@dataclass(frozen=True)
-class RoundContent:
-    """Everything one round of the fix pass has to say, in one value.
-
-    The buckets are a mapping keyed by `FixOutcome` for the reason
-    `_build_fix_record` takes one: the outcomes are `FixOutcome`'s to name, and
-    a value spelling them out as fields has to grow a field — and every
-    construction site an argument — each time that vocabulary does. A mapping
-    also makes miswiring unrepresentable, since a bucket is reached by the
-    outcome naming it rather than by position; the five keyword-only parameters
-    `_folded_item_ids` used to take were a guard against exactly that.
-
-    The unseen top-level comments ride along because the questions a round is
-    asked are asked of both halves at once — see `has_content`. Every field is
-    required: the round that printed a table and recorded that it owed nothing
-    was one caller passing a bucket another caller did not, and a default here
-    would leave that available to the next construction site.
-    """
-
-    by_outcome: Mapping[FixOutcome, list[CommentItem]]
-    issue_comments: list[dict]
-    review_body_comments: list[dict]
-
-    def of(self, *outcomes: FixOutcome) -> list[CommentItem]:
-        """The entries under these outcomes, in the order the outcomes are given.
-
-        An outcome no entry reached contributes nothing rather than raising. A
-        round is under no obligation to produce every outcome — the pass with
-        nothing to fix produces three of them at most — so absence is an
-        ordinary answer here, not a missing key.
-        """
-        return [e for o in outcomes for e in self.by_outcome.get(o, [])]
-
-    @property
-    def needs_a_person(self) -> list[CommentItem]:
-        """The entries a reviewer has to answer, under every outcome meaning that.
-
-        One coarsening, in one place. The state file keeps `DECLINED` apart from
-        `NEEDS_HUMAN` because the reason each carries is worth telling apart,
-        and they travel together to every reviewer-facing surface — see
-        `_NEEDS_A_PERSON`. Spelled out at a call site instead, a member added to
-        that constant reaches the surfaces that read it and silently misses the
-        ones that listed its members by hand.
-        """
-        return self.of(*_NEEDS_A_PERSON)
-
-    @property
-    def unseen(self) -> list[dict]:
-        """The top-level comments no summary has reported yet, both kinds at once."""
-        return _unseen([*self.issue_comments, *self.review_body_comments])
-
-    @property
-    def has_content(self) -> bool:
-        """Whether this round has anything for the fix summary to say.
-
-        One owner for the question, because three callers have to agree on it:
-        `_post_fix_summary` renders nothing when the answer is no,
-        `_summary_still_owed` must leave a summary owed exactly when a render
-        would produce one, and the no-fixable path decides from it whether to
-        attempt the post at all. Asked separately they drift, and a bucket one
-        of them forgets is a round whose table is printed and never published.
-
-        An unseen issue or review-body comment counts on its own. The summary
-        reports those too, so a round that settled no thread at all still has a
-        table to render when one arrived unread.
-        """
-        return bool(any(self.by_outcome.values()) or self.unseen)
-
-
-def _folded_item_ids(
-    content: RoundContent, threads_by_id: dict[str, ReportThread],
-) -> set[str]:
-    """The ids no bucket will render, folded across every bucket at once.
-
-    Which buckets a fold looks at is one decision, and this is where it is
-    made. Folding is cross-bucket by nature — the thread that keeps a point may
-    sit in a different bucket from the comment item restating it — so a caller
-    holding only one bucket cannot answer for it, and a caller that rebuilt the
-    list would be a second place to keep in step with the first.
-
-    `_build_summary_body` reads this to drop the rows and the counts over them;
-    `_warn_unattributed_fixes` reads it so what it counts is what the table
-    goes on to publish. Both recompute rather than pass a set between them:
-    it is a pure read of the buckets, so recomputing makes the two agree by
-    construction, where a threaded value could arrive stale and put the count
-    back out of step with the table — the very fault this answers.
-
-    Every bucket the round has, not a list of them named here: an outcome added
-    to the round's vocabulary is folded across from the moment it exists, where
-    a signature naming the buckets would keep folding the old set until someone
-    noticed.
-    """
-    return _duplicate_item_ids(_every_entry(content), threads_by_id)
 
 
 def _folded_locations(
-    content: RoundContent, threads_by_id: dict[str, ReportThread],
+    content: summary_model.RoundContent, threads_by_id: dict[str, ReportThread],
 ) -> frozenset[str]:
     """The locations this round's fold accounts for, across every bucket.
 
-    `_folded_item_ids` says which entries the fold removes; this says where
-    they were. `_carried_over_rows` needs the second question, because what it
-    has to recognise is a *published* row at one of those locations — there is
-    no entry of its own to match ids against.
+    `summary_model.folded_item_ids` says which entries the fold removes; this
+    says where they were. `_carried_over_rows` needs the second question,
+    because what it has to recognise is a *published* row at one of those
+    locations — there is no entry of its own to match ids against.
 
-    Cross-bucket for the reason `_folded_item_ids` is, and reading the same
-    buckets: the thread keeping a point and the item restating it need not
-    share an outcome.
+    Cross-bucket for the reason `summary_model.folded_item_ids` is, and reading
+    the same buckets: the thread keeping a point and the item restating it need
+    not share an outcome.
     """
     return _thread_covered_locations(_every_entry(content), threads_by_id)
 
 
-def _every_entry(content: RoundContent) -> list[CommentItem]:
+def _every_entry(content: summary_model.RoundContent) -> list[CommentItem]:
     """Every entry the round holds, whichever bucket it sits in."""
     return [e for entries in content.by_outcome.values() for e in entries]
 
 
-_SUMMARY_TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
-_SUMMARY_TABLE_HEADER = f"| {' | '.join(_SUMMARY_TABLE_COLUMNS)} |"
-_SUMMARY_TABLE_DIVIDER = "|" + "|".join("-" * 8 for _ in _SUMMARY_TABLE_COLUMNS) + "|"
 
 
-class HumanReason(Enum):
-    """Why a thread was routed to a human, in both spellings it is written in.
-
-    `value` is the machine-readable token stamped on the entry's `reason`.
-    `to_outcome` persists it as `ItemOutcome.reason`, and a later `--finish`
-    reads it back out of the state file to render the Action cell through
-    `prose_for` — that round trip is why the values must stay stable. They also
-    leave the process verbatim, in the stdout JSON report and the
-    `publishing_hold` trail entry, but neither of those interprets them.
-
-    `--track` and the deferral replies read neither: both work the deferred
-    bucket, whose `reason` is free text ("agent could not auto-fix") and never
-    a member of this enum.
-
-    `prose` is what the summary table's Action cell shows, alongside "Already
-    addressed" and "Dismissed (invalid)". One member owns both, so a token
-    cannot reach the published comment the way `needs_discussion` once did.
-    """
-
-    CONTESTED = ("contested", "Contested — needs discussion")
-    CONFLICTING = ("conflicting", "Conflicting reviewer feedback")
-    QUESTION = ("question", "Question for the author")
-    COMPLEX = ("complex", "Too complex to auto-fix")
-    NEEDS_DISCUSSION = ("needs_discussion", "Needs discussion")
-
-    def __new__(cls, value: str, prose: str) -> "HumanReason":
-        obj = object.__new__(cls)
-        obj._value_ = value
-        obj.prose = prose
-        return obj
-
-    @classmethod
-    def prose_for(cls, reason: str) -> str:
-        """The Action cell text for `reason`, readable whatever it holds.
-
-        A reason no member claims — an older state file, a hand-edited entry —
-        falls back to the generic prose rather than being emitted raw, since an
-        unrecognised token in a published comment is the failure this maps away.
-        """
-        try:
-            return cls(reason).prose
-        except ValueError:
-            return cls.NEEDS_DISCUSSION.prose
 
 
-# Every opening an Action cell this renderer wrote can have, under the outcome
-# that cell reports. The reply-side counterpart of `thread_replies.GENERATED_REPLY_PREFIXES`,
-# and read two ways: to tell a cell we produced apart from one somebody rewrote
-# by hand, and to tell a round that changed a row's outcome from one that only
-# re-worded it.
-#
-# Naming the outcome is what makes the second reading possible. One outcome is
-# written several ways — a fix reported with a commit one round and without one
-# the next, see `_fixed_status_for` — so a cell compared against a cell reports
-# a change that did not happen, and restates the row for the life of the PR.
-#
-# No opening may open another under a different outcome, which is what lets
-# `_action_outcome` scan in any order; the mapping cannot express the rule, so a
-# test asserts it. Its absence would be silent — the row is restated every
-# round, or left behind holding a stale outcome, with no wording to show which.
-#
-# Kept in step with the four places a status cell is built — `_fixed_status_for`
-# and `_fixed_status_text` (every "Fix…" opening), the literal cells in
-# `_build_summary_body`, and `HumanReason.prose`. A new wording that is not
-# covered here reads as hand-written, and its row is then frozen at whatever the
-# published comment already said.
-#
-# Retired wordings stay in the table. A summary comment outlives the code that
-# wrote it, so an opening no builder produces any more still opens rows on live
-# PRs, and dropping it here freezes every one of them.
-_ACTION_OUTCOMES: Mapping[str, FixOutcome] = {
-    "Fixed in ": FixOutcome.FIXED,
-    "Fix applied": FixOutcome.FIXED,
-    "Fix committed locally": FixOutcome.FIXED,
-    "Fix committed and pushed": FixOutcome.FIXED,
-    "Fix pending": FixOutcome.FIXED,
-    "Added to the PR description (no commit)": FixOutcome.FIXED,
-    # Not FIXED, though a fixed row can render it: the cell says the work landed
-    # somewhere this run cannot name, which is the same thing a settled-elsewhere
-    # row says. Both sides of the comparison read the cell, so a fixed row
-    # reading back as this one is not a change and does not restate the row.
-    pr_comments_fix.RECONCILED_STATUS_TEXT: FixOutcome.SETTLED_ELSEWHERE,
-    "Deferred": FixOutcome.DEFERRED,
-    "Already addressed": FixOutcome.ALREADY_ADDRESSED,
-    "Dismissed (invalid)": FixOutcome.DISMISSED,
-    **{reason.prose: FixOutcome.NEEDS_HUMAN for reason in HumanReason},
-}
-
-_GENERATED_ACTION_PREFIXES = tuple(_ACTION_OUTCOMES)
 
 
-def _action_outcome(cell: str) -> FixOutcome | None:
-    """The outcome an Action cell reports, or None for one we did not write.
-
-    Read on both sides of the comparison `RoundScope.covers` makes: the cell a
-    published comment carries, and the one this round's render would put in its
-    place. Two cells reporting the same outcome in different words is the case
-    the table exists to answer, so both sides have to come through here.
-
-    None is not "some outcome we cannot name" but "no claim to compare
-    against": a cell a person wrote, or a wording retired before this table was.
-    Both are rows `_hand_written_rows` owns, and reading either as an outcome
-    would let every round's own render differ from it and restate the row.
-    """
-    for prefix, outcome in _ACTION_OUTCOMES.items():
-        if cell.startswith(prefix):
-            return outcome
-    return None
 
 
-def _is_generated_action(cell: str) -> bool:
-    """Whether an Action cell is still one of ours, in template shape.
 
-    ceiling: an opening is the whole test, so a hand edit that appends to a
-    generated cell ("Fixed in `abc` — but see below") still reads as generated
-    and is overwritten on the next round. Matching the whole cell instead is not
-    the fix: the commit SHA and the deferral issue link vary per round, so an
-    exact set cannot be written down. Upgrade trigger: if an appended note is
-    ever lost this way, mark generated cells with an HTML comment and key off
-    that instead of the opening.
-    """
-    return cell.startswith(_GENERATED_ACTION_PREFIXES)
 
 
 @dataclass(frozen=True)
@@ -1185,7 +808,7 @@ class RoundScope:
     it as a round local state lost would put it straight back, verbatim.
 
     ``published_outcomes`` is the outcome each published row last reported, per
-    `_action_outcome`. A round that changed a row's outcome writes it whoever
+    `summary_model.action_outcome`. A round that changed a row's outcome writes it whoever
     else holds it — nobody has to speak for a deferred thread to become a fixed
     one, so the activity test alone would leave the new outcome on no summary at
     all and the record's newest word on the row the outcome it has replaced. A
@@ -1293,23 +916,10 @@ def _entry_activity_at(
     return sources_at.get(permalinks.comment_item_source(entry).id, "")
 
 
-@dataclass(frozen=True)
-class HeldRow:
-    """A published summary row whose Action cell a human wrote.
-
-    `published` is re-emitted in place of `replaced_by`, which is what this
-    render would otherwise have said. Both halves are carried so the run can
-    report the swap in full: a hand edit is only defensible as a hand edit if
-    the reader can see what the generated cell would have claimed instead.
-    """
-
-    key: str
-    published: str
-    replaced_by: str
 
 
 def _build_summary_body(
-    content: RoundContent,
+    content: summary_model.RoundContent,
     cp: attribution.CommitPushResult,
     repo: str,
     pr_number: int,
@@ -1319,7 +929,7 @@ def _build_summary_body(
     has_comment_items: bool = False,
     head_sha: str = "",
     carried_over: list[str] | None = None,
-    hand_held: list[HeldRow] | None = None,
+    hand_held: list[summary_model.HeldRow] | None = None,
     wt_path: Path | None = None,
     history: "attribution.AddressingHistory | None" = None,
     scope: RoundScope | None = None,
@@ -1365,7 +975,7 @@ def _build_summary_body(
     held_by_key = {row.key: row.published for row in hand_held or []}
     # Ahead of the counts, not just the rows: a count with no row under it is a
     # claim the table cannot show the reader.
-    folded = _folded_item_ids(content, threads_by_id)
+    folded = summary_model.folded_item_ids(content, threads_by_id)
 
     def unfolded(*outcomes: FixOutcome) -> list[CommentItem]:
         return [e for e in content.of(*outcomes) if e.id not in folded]
@@ -1411,11 +1021,13 @@ def _build_summary_body(
         which count reports the row when it is left out, because "settled" is
         the wrong word for a question still owed an answer.
         """
-        row = _build_row(entry, status, threads_by_id, repo, pr_number, sha, wt_path)
-        key = _summary_row_key(row)
+        cells = summary_row.row_cells_for(
+            entry, status, threads_by_id, repo, pr_number, sha, wt_path)
+        row = summary_row.render_row(cells)
+        key = summary_model.row_key_from_cells(cells)
         if not scope.covers(
             key, _entry_activity_at(entry, threads_by_id, sources_at),
-            _action_outcome(status),
+            summary_model.action_outcome(status),
         ):
             (open_earlier if open_thread else settled_earlier).append(key)
             return False
@@ -1441,7 +1053,7 @@ def _build_summary_body(
     fixed_count = sum([
         emit(
             e,
-            _fixed_status_for(e, cp, repo, history, threads_by_id.get(e.id)),
+            summary_row.fixed_status_for(e, cp, repo, history, threads_by_id.get(e.id)),
             getattr(e, "commit_sha", "") or link_sha,
         )
         for e in fixed
@@ -1449,7 +1061,7 @@ def _build_summary_body(
     # link_sha, not the addressing commit: the file cell's line number was read
     # at HEAD, and the commit answers "when", not "where".
     addressed_shown = [
-        (framing, emit(e, _addressed_status_for(framing, repo), link_sha))
+        (framing, emit(e, summary_row.addressed_status_for(framing, repo), link_sha))
         for e, framing in zip(already_addressed, addressed_framings, strict=True)
     ]
     # A satisfied row a commit made true after the review is a fix, and counts
@@ -1467,7 +1079,7 @@ def _build_summary_body(
         emit(e, pr_comments_fix.RECONCILED_STATUS_TEXT, link_sha) for e in settled_elsewhere
     ])
     human_count = sum([
-        emit(e, HumanReason.prose_for(e.reason), link_sha, open_thread=True)
+        emit(e, summary_model.HumanReason.prose_for(e.reason), link_sha, open_thread=True)
         for e in needs_human
     ])
     deferred_count = sum([emit(e, deferred_status, link_sha) for e in deferred])
@@ -1497,8 +1109,8 @@ def _build_summary_body(
     parts.append("")
 
     if rows:
-        parts.append(_SUMMARY_TABLE_HEADER)
-        parts.append(_SUMMARY_TABLE_DIVIDER)
+        parts.append(summary_model.TABLE_HEADER)
+        parts.append(summary_model.TABLE_DIVIDER)
         parts.extend(rows)
         parts.append("")
 
@@ -1558,19 +1170,19 @@ def _render_raw_comment_sections(
     """Render unseen comments as summary sections (fallback when items weren't decomposed).
 
     Each kind gets its own section, so the two lists are filtered apart here
-    rather than read off `RoundContent.unseen`. What must not drift is the
+    rather than read off `summary_model.RoundContent.unseen`. What must not drift is the
     predicate, not the partition: a comment this prints is one that made
     `has_content` true, and a round whose only content was an unread comment
     would otherwise publish a table with nothing under it.
     """
     parts: list[str] = []
-    unseen_reviews = _unseen(review_body_comments)
+    unseen_reviews = summary_model.unseen_comments(review_body_comments)
     if unseen_reviews:
         parts.extend(["### Review-Level Comments", ""])
         parts.extend(_format_review_body_items(unseen_reviews))
         parts.append("")
 
-    unseen_issue = _unseen(issue_comments)
+    unseen_issue = summary_model.unseen_comments(issue_comments)
     if unseen_issue:
         parts.extend(["### Discussion Comments", ""])
         parts.extend(_format_issue_comment_items(unseen_issue))
@@ -1599,17 +1211,6 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
     return lines
 
 
-# The two anchors a rendered row can carry, for telling which surface it came
-# from once the entry behind it is out of reach — and, in `_summary_row_key`,
-# whether that anchor identifies the row or only the comment it was cut from.
-# The two anchor shapes a published row can be identified by. Not markdown
-# primitives: what they match is a GitHub review thread and a decomposed
-# comment item, which is PR vocabulary — `core.markdown` owns the cell, this
-# owns what a cell of ours says.
-_ITEM_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-\d+")
-_THREAD_ANCHOR_RE = re.compile(r"#discussion_r\d+")
-
-
 def _row_location_key(row: str) -> str:
     """Reviewer and file cell of a rendered row, stripped of decoration.
 
@@ -1628,7 +1229,7 @@ def _row_location_key(row: str) -> str:
     two forms are only interchangeable if they spell the reviewer the same way.
     """
     cells = markdown.row_cells(row)
-    if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
+    if len(cells) < len(summary_model.TABLE_COLUMNS):
         return ""
     location = markdown.plain_cell(cells[2])
     if ":" not in location:
@@ -1638,38 +1239,16 @@ def _row_location_key(row: str) -> str:
 
 
 def _summary_row_key(row: str) -> str:
-    """Identity of one rendered summary row.
+    """Identity of one row that exists only as published text.
 
-    A thread anchor is identity on its own: one `#discussion_r` id names one
-    review thread, which this renderer writes one row for. A comment anchor is
-    not. Triage decomposes a top-level comment into N items, and every one of
-    them links back to the one `#issuecomment` / `#pullrequestreview` permalink
-    the comment has — so the anchor names the source the row was cut from,
-    while the summary cell is what tells the siblings apart. Keying the
-    siblings alike collapses them: each map built on this key keeps one row per
-    key, so N findings reach the table as one.
-
-    Falls back to the row's own text for a row with no permalink — a comment
-    item whose source could not be resolved. Link targets and backticks are
-    stripped so the same entry keys the same way however it was decorated, and
-    the Action cell is left out of every form because a later round changing it
-    (deferred to fixed) is exactly the case that must count as the same row.
+    The adapter for the re-parse path: a row read back off a summary comment
+    has no entry behind it, so its cells are recovered from the markdown and
+    handed to the one definition of what a row's identity is —
+    `summary_model.row_key_from_cells`. A freshly rendered row never comes
+    through here; it is keyed from the cells it was built from, before it
+    becomes markdown at all.
     """
-    thread = _THREAD_ANCHOR_RE.search(row)
-    if thread:
-        return thread.group(0)
-    cells = markdown.row_cells(row)
-    item = _ITEM_ANCHOR_RE.search(row)
-    if item:
-        # ceiling: the summary cell is the whole of what separates one item
-        # from its siblings, so a round that rewords an item's summary keys it
-        # as a new row and the published one carries forward beside it.
-        # Upgrade trigger: once a reworded item is seen rendering twice, write
-        # the item's synthetic id into the row and key on that instead.
-        return f"{item.group(0)} | {markdown.plain_cell(cells[0])}"
-    return " | ".join(
-        markdown.plain_cell(cell) for cell in cells[:len(_SUMMARY_TABLE_COLUMNS) - 1]
-    )
+    return summary_model.row_key_from_cells(markdown.row_cells(row))
 
 
 def _summary_table_rows(body: str) -> list[str]:
@@ -1681,7 +1260,7 @@ def _summary_table_rows(body: str) -> list[str]:
             continue
         if not line.strip("|-: "):
             continue
-        if markdown.row_cells(line) == list(_SUMMARY_TABLE_COLUMNS):
+        if markdown.row_cells(line) == list(summary_model.TABLE_COLUMNS):
             continue
         rows.append(line)
     return rows
@@ -1715,18 +1294,19 @@ def _carried_over_rows(
 
     The one thing that is not a lost round is a row this render folded into
     another: a comment item restating a review thread was published under its
-    own anchor before `_duplicate_item_ids` started collapsing the pair, and
+    own anchor before `summary_model.duplicate_item_ids` started collapsing the pair, and
     carrying it forward would restore the duplicate this render just removed.
 
     ``folded`` is the locations a fresh thread row accounts for, from
     `_thread_covered_locations` — the typed entries the render was built from,
     not the markdown it produced. Reading it back off the rendered rows made
-    the fold depend on a cell the renderer is free not to write: `_build_row`
-    drops the line anchor whenever `permalinks.anchored_line` cannot place the
-    line in the pinned SHA — an unfetched commit, a drifted line, no worktree —
-    and a File cell with no colon keys as "", so the fresh row's identity was
-    lost and the published duplicate came straight back. Nothing about the
-    render is allowed to decide this, so it is computed where the types are.
+    the fold depend on a cell the renderer is free not to write:
+    `summary_row.row_cells_for` drops the line anchor whenever
+    `permalinks.anchored_line` cannot place the line in the pinned SHA — an
+    unfetched commit, a drifted line, no worktree — and a File cell with no
+    colon keys as "", so the fresh row's identity was lost and the published
+    duplicate came straight back. Nothing about the render is allowed to
+    decide this, so it is computed where the types are.
 
     The published side still has to be parsed: those rows have no live entry,
     which is the whole reason carry-over exists. The ceiling on
@@ -1737,23 +1317,29 @@ def _carried_over_rows(
         return []
     fresh_rows = _summary_table_rows(fresh)
     fresh_keys = {_summary_row_key(row) for row in fresh_rows}
+    """
+    if not published:
+        return []
+    fresh_rows = _summary_table_rows(fresh)
+    fresh_keys = {_summary_row_key(row) for row in fresh_rows}
+
     return [
         row for row in _summary_table_rows(published)
         if _summary_row_key(row) not in fresh_keys
         and _summary_row_key(row) not in held_elsewhere
-        and not (_ITEM_ANCHOR_RE.search(row) and _row_location_key(row) in folded)
+        and not (summary_model.ITEM_ANCHOR_RE.search(row) and _row_location_key(row) in folded)
     ]
 
 
 def _row_action_cell(row: str) -> str:
     """The Action cell of a rendered row, or "" for a row that has no such cell."""
     cells = markdown.row_cells(row)
-    if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
+    if len(cells) < len(summary_model.TABLE_COLUMNS):
         return ""
-    return cells[len(_SUMMARY_TABLE_COLUMNS) - 1]
+    return cells[len(summary_model.TABLE_COLUMNS) - 1]
 
 
-def _hand_written_rows(published: Sequence[str], fresh: str) -> list[HeldRow]:
+def _hand_written_rows(published: Sequence[str], fresh: str) -> list[summary_model.HeldRow]:
     """Published rows this render would overwrite a human's Action cell on.
 
     `_carried_over_rows` is the sibling case and covers the opposite one: a
@@ -1799,9 +1385,9 @@ def _hand_written_rows(published: Sequence[str], fresh: str) -> list[HeldRow]:
     held = []
     for key, row in newest_by_key.items():
         cell = _row_action_cell(row)
-        if not cell or key not in fresh_by_key or _is_generated_action(cell):
+        if not cell or key not in fresh_by_key or summary_model.is_generated_action(cell):
             continue
-        held.append(HeldRow(key, row, fresh_by_key[key]))
+        held.append(summary_model.HeldRow(key, row, fresh_by_key[key]))
     return held
 
 
@@ -1879,7 +1465,7 @@ def _round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
     outcomes: dict[str, FixOutcome | None] = {}
     for body in marked.bodies:
         for row in _summary_table_rows(body):
-            outcomes[_summary_row_key(row)] = _action_outcome(_row_action_cell(row))
+            outcomes[_summary_row_key(row)] = summary_model.action_outcome(_row_action_cell(row))
     return RoundScope(
         since=target.updated_at or target.created_at,
         published_keys=target_own | elsewhere,
@@ -1986,7 +1572,7 @@ def _publish_summary(
 
 
 def _post_fix_summary(
-    content: RoundContent,
+    content: summary_model.RoundContent,
     cp: attribution.CommitPushResult,
     repo: str,
     pr_number: int,
@@ -2157,7 +1743,7 @@ def _render_deferred_summary(
         by_outcome.setdefault(o.outcome, []).append(
             CommentItem.from_outcome(o, fix.reviewers.get(o.id, "")),
         )
-    content = RoundContent(
+    content = summary_model.RoundContent(
         by_outcome=by_outcome,
         issue_comments=report.issue_comments,
         review_body_comments=report.review_body_comments,
@@ -2169,7 +1755,7 @@ def _render_deferred_summary(
     history = attribution.AddressingHistory(wt_path)
     _warn_unattributed_fixes(
         content.of(FixOutcome.FIXED), cp,
-        _folded_item_ids(content, threads_by_id),
+        summary_model.folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
     url = _publish_summary(repo, pr_number, functools.partial(
@@ -2192,7 +1778,7 @@ def _render_deferred_summary(
 
 
 def _summary_still_owed(
-    content: RoundContent, commit_status: str, has_unaccounted: bool,
+    content: summary_model.RoundContent, commit_status: str, has_unaccounted: bool,
 ) -> bool:
     """Whether this round has a fix summary the PR has not been told about.
 
@@ -2200,7 +1786,7 @@ def _summary_still_owed(
     threads this pass could not account for all make the summary premature, so
     it has to be rendered again later whatever went out. Otherwise the round
     owes a summary exactly when it has one to render, which is
-    `RoundContent.has_content` — not the outcomes this pass produced. A round
+    `summary_model.RoundContent.has_content` — not the outcomes this pass produced. A round
     settled entirely as `already_addressed`, by the agent or by `--settle`,
     renders a full table while producing neither a fix nor a dismissal, and a
     clause naming only those two buckets closes it out with the published
@@ -2225,7 +1811,7 @@ def _summary_still_owed(
 
 
 def _post_or_defer_summary(
-    content: RoundContent,
+    content: summary_model.RoundContent,
     cp: attribution.CommitPushResult,
     repo: str,
     pr_number: int,
@@ -2245,7 +1831,7 @@ def _post_or_defer_summary(
     history = attribution.AddressingHistory(wt_path)
     _warn_unattributed_fixes(
         content.of(FixOutcome.FIXED), cp,
-        _folded_item_ids(content, threads_by_id),
+        summary_model.folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
     if attribution.commit_unpushed(cp.status):
@@ -2358,17 +1944,17 @@ def _classify_triage_entries(
     for tt in triage_entries:
         if tt.state == ThreadState.CONTESTED:
             result.needs_human.append(
-                dataclasses.replace(tt, reason=HumanReason.CONTESTED.value))
+                dataclasses.replace(tt, reason=summary_model.HumanReason.CONTESTED.value))
             continue
 
         if tt.classification == "conflicting":
             result.needs_human.append(
-                dataclasses.replace(tt, reason=HumanReason.CONFLICTING.value))
+                dataclasses.replace(tt, reason=summary_model.HumanReason.CONFLICTING.value))
             continue
 
         if tt.classification == "question":
             result.needs_human.append(
-                dataclasses.replace(tt, reason=HumanReason.QUESTION.value))
+                dataclasses.replace(tt, reason=summary_model.HumanReason.QUESTION.value))
             continue
 
         if tt.classification != "actionable_suggestion":
@@ -2376,14 +1962,14 @@ def _classify_triage_entries(
 
         if tt.verification == "valid" and tt.complexity == "high":
             result.needs_human.append(
-                dataclasses.replace(tt, reason=HumanReason.COMPLEX.value))
+                dataclasses.replace(tt, reason=summary_model.HumanReason.COMPLEX.value))
             continue
 
         if tt.verification == "valid":
             result.fixable.append(tt)
         elif tt.verification == "needs_discussion":
             result.needs_human.append(
-                dataclasses.replace(tt, reason=HumanReason.NEEDS_DISCUSSION.value))
+                dataclasses.replace(tt, reason=summary_model.HumanReason.NEEDS_DISCUSSION.value))
         elif tt.verification == "already_addressed":
             result.already_addressed.append(tt)
         elif tt.verification == "invalid":
@@ -2632,7 +2218,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         # Two verdicts the agent reached and one triage did. They part company
         # in the state file, where the reason each carries is worth telling
         # apart, and travel together to every reviewer-facing surface — which
-        # `RoundContent.needs_a_person` is the one place that folds them.
+        # `summary_model.RoundContent.needs_a_person` is the one place that folds them.
         agent_needs_human = tracking.both(FixOutcome.NEEDS_HUMAN)
         declined = tracking.both(FixOutcome.DECLINED)
 
@@ -2642,8 +2228,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
 
         # Built once, ahead of both readers: the record keeps `DECLINED` apart
         # from `NEEDS_HUMAN` and the summary shows them together, and taking
-        # that coarsening off `RoundContent` is what keeps the two spellings of
-        # it from parting company — see `RoundContent.needs_a_person`.
+        # that coarsening off `summary_model.RoundContent` is what keeps the two spellings of
+        # it from parting company — see `summary_model.RoundContent.needs_a_person`.
         by_outcome = {
             FixOutcome.FIXED: all_fixed,
             FixOutcome.DEFERRED: all_deferred,
@@ -2652,7 +2238,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             FixOutcome.DISMISSED: self.dismissed,
             FixOutcome.ALREADY_ADDRESSED: self.already_addressed,
         }
-        content = RoundContent(
+        content = summary_model.RoundContent(
             by_outcome=by_outcome,
             issue_comments=self.report.issue_comments,
             review_body_comments=self.report.review_body_comments,
@@ -2815,7 +2401,7 @@ def _run_comment_fix(
             FixOutcome.DISMISSED: all_dismissed,
             FixOutcome.ALREADY_ADDRESSED: all_addressed,
         }
-        content = RoundContent(
+        content = summary_model.RoundContent(
             by_outcome=by_outcome,
             issue_comments=report.issue_comments,
             review_body_comments=report.review_body_comments,

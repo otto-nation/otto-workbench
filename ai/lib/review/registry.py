@@ -123,7 +123,7 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     prompt = _log_prompt_size(
         template_name, rendered, template_vars, job,
         label=built.label, cuts=built.builder.cuts, phase=phase,
-        planned_bytes=built.builder.planned_bytes,
+        accounting=built.builder.accounting,
     )
     if len(prompt.encode()) > MAX_PROMPT_BYTES:
         raise PromptTooLarge(template_name, len(prompt.encode()))

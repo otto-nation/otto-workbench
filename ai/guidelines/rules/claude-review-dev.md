@@ -136,6 +136,8 @@ its tail, and both age out on the same six-month horizon.
 **Diagnosing prompt bloat:**
 - `prompt-stats.json` → `sections` shows per-section byte sizes
 - `prompt-stats.json` → `file_contents.included` shows which files were injected and their sizes
+- `prompt-stats.json` → `unaccounted_bytes` is what the render cost that no budget lever measured. A few KB is the template's own text and the block markup; tens of KB means a section reaches the prompt outside the budget — usually a variable registered after `fit`
+- `prompt-stats.json` → `allowance_bytes - accounted_bytes` is the room the ladder handed out and the render did not spend, mostly the diff's unused cap. Large is ordinary and says nothing about bloat
 - Large files with small diffs are automatically skipped by the density filter (`FILE_CONTENT_DENSITY_THRESHOLD`)
 - Budget constants: `MAX_PROMPT_BYTES` (480KB), `TEMPLATE_OVERHEAD_BYTES` (20KB), `FILE_CONTENT_MIN_SIZE` (5KB)
 

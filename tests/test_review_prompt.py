@@ -258,7 +258,7 @@ class TestFitBudget:
         pf = _make_preflight(claude_md="", architecture_md="")
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"})
-        assert plan.diff_bytes > MIN_DIFF_BYTES
+        assert plan.diff_allowance_bytes > MIN_DIFF_BYTES
         assert plan.cuts == ()
         assert plan.files.included == pf.file_contents
 
@@ -266,7 +266,7 @@ class TestFitBudget:
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
         job = _make_job(_make_preflight(claude_md=huge))
         plan = _fit_budget(job, {"header": "small"})
-        assert plan.diff_bytes == MIN_DIFF_BYTES
+        assert plan.diff_allowance_bytes == MIN_DIFF_BYTES
         floored = [c for c in plan.cuts if c.lever is BudgetLever.DIFF_FLOOR]
         assert [c.floor_bytes for c in floored] == [MIN_DIFF_BYTES]
         assert floored[0].shortfall_bytes > 0
@@ -275,7 +275,7 @@ class TestFitBudget:
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
         job = _make_job(_make_preflight(claude_md=huge))
         plan = _fit_budget(job, {"header": "small"}, min_diff=0)
-        assert plan.diff_bytes == 0
+        assert plan.diff_allowance_bytes == 0
         # No floor to hold the diff at, so the cut is the whole of it.
         assert plan.cuts[-1].floor_bytes == 0
         assert "the full diff entirely" in plan.cuts[-1].describe()
@@ -287,7 +287,7 @@ class TestFitBudget:
         without_fc = _fit_budget(
             job, {"header": "small"}, file_filter=["gen.pb.go"], skip_file_contents=True,
         )
-        assert without_fc.diff_bytes - with_fc.diff_bytes >= 200_000
+        assert without_fc.diff_allowance_bytes - with_fc.diff_allowance_bytes >= 200_000
 
     def test_file_contents_are_the_first_lever_and_are_named(self):
         """The lever the log used to report was the one already at zero.
@@ -317,10 +317,10 @@ class TestFitBudget:
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"})
         assert [c.lever for c in plan.cuts] == [BudgetLever.DELTA]
-        assert plan.diff_bytes >= MIN_DIFF_BYTES
+        assert plan.diff_allowance_bytes >= MIN_DIFF_BYTES
         # Everything the plan admits still fits, which is what the ladder is for.
         assert (
-            len(plan.delta_section.encode()) + plan.diff_bytes
+            len(plan.delta_section.encode()) + plan.diff_allowance_bytes
             <= MAX_PROMPT_BYTES
         )
 
@@ -349,7 +349,7 @@ class TestProfilesAreCountedByTheBudget:
             _make_job(_make_preflight(review_profiles=[self._profile(50_000)])),
             {"header": "small"},
         )
-        assert without.diff_bytes - with_profile.diff_bytes >= 50_000
+        assert without.diff_allowance_bytes - with_profile.diff_allowance_bytes >= 50_000
 
     def test_the_charge_is_the_rendered_section_not_the_rule_text(self):
         # The rendered section carries a heading and a preamble no rule holds,
@@ -362,7 +362,7 @@ class TestProfilesAreCountedByTheBudget:
             _make_job(_make_preflight(review_profiles=[profile])),
             {"header": "small"},
         )
-        assert without.diff_bytes - with_profile.diff_bytes == rendered
+        assert without.diff_allowance_bytes - with_profile.diff_allowance_bytes == rendered
 
     def test_no_profiles_costs_nothing(self):
         assert fixed_preflight_bytes("", "", "", {}, []) == 0
@@ -396,7 +396,7 @@ class TestProfilesAreCountedByTheBudget:
             pf.review_profiles,
         )
         assert 0 < wrapper < 1024
-        assert unrendered.diff_bytes - as_group.diff_bytes == wrapper
+        assert unrendered.diff_allowance_bytes - as_group.diff_allowance_bytes == wrapper
 
     def test_the_double_count_was_the_whole_reserve(self):
         # Pins the size of the bug being fixed, so a regression is legible as
@@ -418,42 +418,82 @@ class TestProfilesAreCountedByTheBudget:
             pf.review_checklists, pf.review_profiles,
         )
         assert reserve > 50_000
-        assert once.diff_bytes - charged_twice.diff_bytes == reserve
+        assert once.diff_allowance_bytes - charged_twice.diff_allowance_bytes == reserve
 
 
 class TestThePlanIsCheckedAgainstTheRender:
-    """The residual is how an unmeasured section becomes findable.
+    """The unaccounted bytes are how an unmeasured section becomes findable.
 
     A budget that does not measure everything it sends bounds nothing, and the
     way that failure presents is an over-budget render nobody can account for.
+    Charging the diff at its allowance rather than its spend is what made the
+    figure useless: every healthy render read a quarter of a megabyte under,
+    so a kilobyte of genuine excess could never surface.
     """
 
     def test_a_plan_reports_what_it_expects_the_render_to_cost(self):
         job = _make_job(_make_preflight())
         plan = _fit_budget(job, {"header": "small"})
-        assert plan.planned_bytes > 0
+        assert plan.measured_bytes > 0
 
     def test_the_plan_counts_every_section_it_measured(self):
         pf = _make_preflight(claude_md="c" * 5_000, commit_log="l" * 3_000)
         plan = _fit_budget(_make_job(pf), {"header": "h" * 2_000})
-        # Known sections, unshrinkable preflight, and the room handed to the
-        # two capped sections — the flat reserve is not part of the estimate,
-        # since nothing renders it.
+        # Known sections, unshrinkable preflight, the file contents and the
+        # delta — every section that renders at the size it was measured at.
+        # The diff is not among them: it renders at whatever it costs, up to
+        # its cap. The flat reserve is absent too, since nothing renders it.
         expected = (
             2_000 + 5_000 + 3_000
             + len("xy".encode())
             + len(plan.delta_section.encode())
-            + plan.diff_bytes
         )
-        assert plan.planned_bytes == expected
+        assert plan.measured_bytes == expected
 
-    def test_a_phase_that_never_fits_plans_nothing(self):
+    def test_the_allowance_is_every_measured_section_plus_the_diffs_cap(self):
+        plan = _fit_budget(_make_job(_make_preflight()), {"header": "small"})
+        assert plan.allowance_bytes == plan.measured_bytes + plan.diff_allowance_bytes
+
+    def test_the_diff_is_charged_what_it_rendered_not_what_it_was_allowed(self):
+        """An allowance the diff never spends is not a cost the render incurred.
+
+        This is the regression: pairing the plan against the cap made every
+        real record hundreds of kilobytes negative, so the metric could report
+        slack it did not need and never the excess it was added to detect.
+        """
+        plan = _fit_budget(_make_job(_make_preflight()), {"header": "small"})
+        assert plan.diff_allowance_bytes > 1_000
+
+        acc = plan.reconcile(1_000)
+        assert acc.accounted_bytes == plan.measured_bytes + 1_000
+        assert acc.accounted_bytes < acc.allowance_bytes
+
+    def test_a_diff_that_overspends_its_allowance_shows_a_positive_excess(self):
+        """The small positive excess is the whole point of the figure.
+
+        A context too large to budget floors the diff's allowance at zero, and
+        the diff still renders its truncation notice — so the render costs a
+        few dozen bytes the ladder did not authorise. Harmless in itself, and
+        the cheapest available proof that an excess is visible at all.
+        """
+        pf = _make_preflight(
+            diff="diff --git a/a.py b/a.py\n-old\n+new\n",
+            claude_md="c" * MAX_PROMPT_BYTES,
+        )
+        plan = _fit_budget(_make_job(pf), {"header": "small"}, min_diff=0)
+        assert plan.diff_allowance_bytes == 0
+
+        block = format_preflight_data(pf, max_diff_bytes=plan.diff_allowance_bytes)
+        assert block.rendered_diff_bytes > 0
+        assert plan.reconcile(block.rendered_diff_bytes).accounted_bytes > plan.allowance_bytes
+
+    def test_a_phase_that_never_fits_has_no_accounting(self):
         # Disprove builds no budgeted section, so there is no plan to compare a
-        # render against and no residual worth recording.
+        # render against and nothing worth recording.
         from review.prompt import PromptBuilder
         job = _make_job(_make_preflight())
         b = PromptBuilder(_build_common_sections(job, max_turns=10))
-        assert b.planned_bytes == 0
+        assert b.accounting is None
 
 
 class TestBudgetKeepsTheFilesItCanAfford:
@@ -501,7 +541,7 @@ class TestBudgetKeepsTheFilesItCanAfford:
         })
         plan = _fit_budget(_make_job(pf), {"header": "small"})
 
-        text = format_preflight_data(pf, files=plan.files)
+        text = format_preflight_data(pf, files=plan.files).text
         assert "- huge.py" in text
         assert "Files not pre-collected" in text
 
@@ -555,7 +595,7 @@ class TestDroppedContentsAreDeclared:
     def test_skipping_contents_still_names_the_files(self):
         pf = _make_preflight(file_contents={"a.py": "x", "b.py": "y"})
         dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
-        text = format_preflight_data(pf, files=dropped_all)
+        text = format_preflight_data(pf, files=dropped_all).text
         assert "### Changed file contents" not in text
         assert "### Files not pre-collected (read directly)" in text
         assert "- a.py" in text
@@ -564,7 +604,7 @@ class TestDroppedContentsAreDeclared:
     def test_skipping_contents_does_not_double_list_omitted_files(self):
         pf = _make_preflight(file_contents={"a.py": "x"}, omitted_files=["big.go"])
         dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
-        text = format_preflight_data(pf, files=dropped_all)
+        text = format_preflight_data(pf, files=dropped_all).text
         assert text.count("- big.go") == 1
         assert "- a.py" in text
 
@@ -702,6 +742,62 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         prompt = build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         assert len(prompt.encode()) <= MAX_PROMPT_BYTES
         assert "Incremental review context" in prompt
+
+
+# ── The budget accounting in the prompt stats ───────────────────────────────
+
+
+class TestTheRecordAccountsForWhatItRendered:
+    """`prompt-stats.json` is where an unmeasured section becomes findable.
+
+    The first five real records paired the render against the diff's whole
+    allowance and read −246KB, −226KB, −223KB, −244KB, −230KB — the budget's
+    unspent room, reported as though the render had come in under an estimate.
+    A metric whose ordinary value is a quarter-megabyte of slack cannot surface
+    the few kilobytes of excess it exists to detect, so the sign is the thing
+    these pin.
+    """
+
+    def _job(self, tmp_path):
+        job = _make_job(_make_preflight())
+        job.review_file = str(tmp_path / "review.md")
+        return job
+
+    def _stats(self, tmp_path):
+        return json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
+
+    def test_the_record_names_the_allowance_and_what_it_accounted_for(self, tmp_path):
+        review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        stats = self._stats(tmp_path)
+        assert stats["allowance_bytes"] > 0
+        assert stats["accounted_bytes"] > 0
+        assert "unaccounted_bytes" in stats
+        # The old pair is retired rather than redefined, so a reader can tell
+        # the two shapes apart and drop the records whose residual was noise.
+        assert "planned_bytes" not in stats
+        assert "residual_bytes" not in stats
+
+    def test_the_unaccounted_bytes_are_a_template_not_a_quarter_of_a_megabyte(
+        self, tmp_path,
+    ):
+        review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        stats = self._stats(tmp_path)
+        # A few KB of template text and block markup no lever sizes. The bound
+        # is loose on purpose: the honest threshold is a question for the data.
+        assert 0 <= stats["unaccounted_bytes"] < 50_000
+        # The slack the retired field mistook for a residual is still visible,
+        # under a name that says it is unspent allowance.
+        assert stats["allowance_bytes"] - stats["accounted_bytes"] > 100_000
+
+    def test_a_phase_with_no_budgeted_section_records_no_accounting(self, tmp_path):
+        job = self._job(tmp_path)
+        review_registry.build_prompt(
+            Phase.DISPROVE, job, max_turns=10,
+            extra={"findings_block": "- a finding"},
+        )
+        stats = self._stats(tmp_path)
+        assert "accounted_bytes" not in stats
+        assert "unaccounted_bytes" not in stats
 
 
 # ── Token telemetry in the prompt stats ─────────────────────────────────────

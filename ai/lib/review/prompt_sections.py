@@ -437,6 +437,12 @@ def _build_delta_section(
     prose and the two file lists are not budgeted — capped at
     ``MAX_DELTA_LIST_ENTRIES`` they cannot exceed ~20KB, and a section that
     cannot say which commit it is comparing against is worth no bytes at all.
+
+    The file lists and the diff answer two different questions and can
+    disagree: the lists are what the *author* committed, by ancestry, while the
+    diff is the whole range since the prior review. A file the base branch
+    touched appears in the diff and under "unchanged", which is why the lists
+    say whose changes they are counting.
     """
     if not preflight or not preflight.prior_head_sha:
         return ""
@@ -454,7 +460,7 @@ def _build_delta_section(
         "## Incremental review context",
         "",
         f"This is an **incremental review**. A prior review exists at commit `{prior}`.",
-        f"{len(delta_files)} file(s) changed since the prior review.",
+        f"{len(delta_files)} file(s) changed by the author since the prior review.",
         "",
         "**Focus your review on the delta changes below.** For prior findings on unchanged files,",
         "carry them forward unless you have evidence they were fixed.",
@@ -472,7 +478,9 @@ def _build_delta_section(
 
     tail: list[str] = []
     if delta_files:
-        tail += _delta_file_list("### Files modified since prior review", delta_files)
+        tail += _delta_file_list(
+            "### Files the author modified since prior review", delta_files,
+        )
     if unchanged:
         tail += _delta_file_list(
             "### Files unchanged since prior review (prior findings still apply)", unchanged,
@@ -489,7 +497,15 @@ def _build_delta_section(
         room = max_bytes - len("\n".join(head + fence + tail).encode())
         diff_text = truncate_diff(diff_text, room).text if room >= MIN_DELTA_DIFF_BYTES else ""
 
-    diff_block = ["", "### Delta diff", "", "```diff", diff_text, "```"] if diff_text else []
+    diff_block = [
+        "",
+        "### Delta diff",
+        "",
+        "Every change in the range, the base branch's included — a hunk here for",
+        "a file listed as unchanged came from the base, not from the author.",
+        "",
+        "```diff", diff_text, "```",
+    ] if diff_text else []
     return "\n".join(head + diff_block + tail)
 
 

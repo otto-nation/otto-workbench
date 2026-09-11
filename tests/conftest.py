@@ -613,11 +613,17 @@ def pytest_runtest_makereport(item, call):
     ))
 
 
-def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
+def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None, check=True):
     """Run *argv* to completion and return it, failing the test unless it exits 0.
 
     Output is captured as text, so the returned ``CompletedProcess`` carries
     ``stdout`` and ``stderr`` for a caller that wants them.
+
+    ``check=False`` is for a command whose non-zero exit is the state being set
+    up rather than a failure — a merge a test needs to leave conflicted. The
+    contention handling still applies: what that turns off is the assertion on
+    the exit code, not the ability to tell a killed process from a finished
+    one.
 
     The failure paths are what this exists for. A non-zero exit raises an
     ``AssertionError`` quoting the command's own stdout and stderr — a bare
@@ -654,7 +660,7 @@ def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
             f"{shown} was killed by {proc.signal_description(result.returncode)}{where}\n"
             f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
         )
-    if result.returncode != 0:
+    if check and result.returncode != 0:
         raise AssertionError(
             f"{shown} failed (exit {result.returncode}){where}\n"
             f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"

@@ -338,6 +338,13 @@ keys wherever they appear and in whatever order, and `set_status` edits the line
 it is asked about rather than re-rendering the block — a field this module was
 never told about survives an edit instead of being dropped by it.
 
+One key is not the agent's to state. `head_sha` records the commit the review
+was written against, and the next re-review measures its delta from it, so a
+value the agent typed from a template is a claim about a run the agent cannot
+see the harness' side of. `set_head_sha` stamps the harness' SHA over whatever
+reached disk, and because `parse` takes the first occurrence of a key, it
+replaces the first marker rather than adding one.
+
 `ReviewDocument` is for a document being *built*: it renders the canonical form
 this module defines. Editing one that is already on disk is a different job and
 stays a text edit, because a header read back off disk states only what its

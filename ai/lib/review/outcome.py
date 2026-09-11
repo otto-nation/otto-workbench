@@ -22,7 +22,7 @@ from pathlib import Path
 from pr.domains import ReviewStatus
 from review.document import (
     SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, ReviewHeader, review_title,
+    ReviewDocument, ReviewHeader, review_title, set_head_sha,
 )
 from review.paths import write_review_meta
 from review.prompt_sections import _is_incremental
@@ -169,10 +169,28 @@ def _no_synthesis_body(
     )
 
 
-def _post_process_review(job: ReviewJob) -> None:
+def _reconcile_and_verify(job: ReviewJob) -> None:
     # Reconciliation reads the ledger, which post-processing then strips.
     record_prior_findings(job.review_file, job.prior_review, job.wt_path)
     job.verification = post_process_findings(job.review_file, job.wt_path)
+
+
+def _post_process_review(job: ReviewJob) -> None:
+    """The review file finished, for the paths where an agent wrote all of it.
+
+    A single-agent review and a completed synthesis are the two paths that
+    reach a review file without `_document` rendering its header, so they are
+    the two where the head SHA on disk is whatever the agent typed. Stamping it
+    here makes `job.pr.head_sha` the value every path records, the same one the
+    sidecar already carries.
+
+    Last, after reconciliation and verification, because both rewrite the file:
+    the stamp is only authoritative if nothing writes over it afterwards.
+    """
+    _reconcile_and_verify(job)
+    path = Path(job.review_file)
+    if job.pr.head_sha and path.exists():
+        path.write_text(set_head_sha(path.read_text(), job.pr.head_sha))
 
 
 def _post_processed_body(job: ReviewJob, body: str) -> str:
@@ -183,7 +201,10 @@ def _post_processed_body(job: ReviewJob, body: str) -> str:
     built out of what survived.
     """
     Path(job.review_file).write_text(body)
-    _post_process_review(job)
+    # Not `_post_process_review`: `body` is a bare body that `_document` has yet
+    # to render a header onto, and a head SHA stamped into it now would sit
+    # below that header as a second marker rather than being the one it states.
+    _reconcile_and_verify(job)
     return Path(job.review_file).read_text()
 
 

@@ -4,8 +4,8 @@ frame that holds them above the body.
 The header has three writers and only one of them is this module: the pipeline
 and `review-rebuild` render it, and on the synthesis and single-agent paths the
 review agent writes its own from prose in a template. So the header tests come
-in two halves — what `render` and `from_meta` put on disk, and what `parse` and
-`set_status` make of a header they did not write. `ReviewDocument` is tested
+in two halves — what `render` and `from_meta` put on disk, and what `parse`,
+`set_status` and `set_head_sha` make of a header they did not write. `ReviewDocument` is tested
 against the same split: what it renders for a document being built, and what it
 makes of one it is handed.
 
@@ -26,7 +26,7 @@ from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import (
     ReviewDocument, ReviewHeader,
-    review_title, section_span, set_section, set_status,
+    review_title, section_span, set_head_sha, set_section, set_status,
     strip_sections,
 )
 from review.grammar import (
@@ -213,6 +213,62 @@ class TestSetStatus:
         assert "<!-- an_agent_invention: keep me -->" in set_status(
             content, ReviewStatus.PARTIAL,
         )
+
+
+class TestSetHeadSha:
+    """The harness' SHA over whatever the review agent typed.
+
+    The marker is the point the next re-review measures its delta from, so
+    these cover the ways an agent's header can differ from the harness': a
+    wrong SHA, no marker at all, and — the one that matters — a wrong marker
+    the parser would otherwise reach first.
+    """
+
+    def test_a_wrong_sha_is_replaced(self):
+        content = (
+            "<!-- date: 2026-01-01 -->\n"
+            "<!-- head_sha: deadbeef -->\n"
+            "<!-- generator: 2.0.0 -->\n"
+            "\n## Summary\n"
+        )
+        updated = set_head_sha(content, "abc123")
+        assert "<!-- head_sha: abc123 -->" in updated
+        assert "deadbeef" not in updated
+
+    def test_a_header_with_no_marker_gains_one_above_the_generator(self):
+        content = "<!-- date: 2026-01-01 -->\n<!-- generator: 2.0.0 -->\n\n## Summary\n"
+        assert set_head_sha(content, "abc123") == (
+            "<!-- date: 2026-01-01 -->\n"
+            "<!-- head_sha: abc123 -->\n"
+            "<!-- generator: 2.0.0 -->\n"
+            "\n## Summary\n"
+        )
+
+    def test_a_document_with_neither_gains_one_above_the_first_heading(self):
+        content = "# Review: acme/widget#42\n<!-- date: 2026-01-01 -->\n\n## Summary\n"
+        updated = set_head_sha(content, "abc123")
+        assert updated.endswith("<!-- head_sha: abc123 -->\n\n## Summary\n")
+
+    def test_the_stamped_sha_is_the_one_the_parser_reads(self):
+        content = (
+            "<!-- head_sha: deadbeef -->\n"
+            "\n## Summary\n"
+            "An agent that mentioned <!-- head_sha: cafe --> further down.\n"
+        )
+        assert ReviewHeader.parse(set_head_sha(content, "abc123")).head_sha == "abc123"
+
+    def test_stamping_a_sha_that_is_already_there_changes_nothing(self):
+        content = "<!-- head_sha: abc123 -->\n<!-- generator: 2.0.0 -->\n\n## Summary\n"
+        assert set_head_sha(content, "abc123") == content
+
+    def test_the_keys_the_editor_was_not_told_about_survive(self):
+        content = (
+            "<!-- head_sha: deadbeef -->\n"
+            "<!-- an_agent_invention: keep me -->\n"
+            "<!-- generator: 2.0.0 -->\n"
+            "\n## Summary\n"
+        )
+        assert "<!-- an_agent_invention: keep me -->" in set_head_sha(content, "abc123")
 
 
 class TestReviewTitle:

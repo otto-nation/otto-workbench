@@ -8427,7 +8427,7 @@ class TestDuplicateFindingRendersOnce:
         assert summary_model.folded_locations(round_content, {}) == frozenset()
 
     def test_a_declined_item_folds_into_the_thread_it_restates(self, rt, content):
-        """`_folded_item_ids` reads every bucket, so the fold is not `needs_human`'s.
+        """`folded_item_ids` reads every bucket, so the fold is not `needs_human`'s.
 
         The duplicate detector walks the whole mapping rather than a list of
         bucket names, which is what keeps an outcome added later from being

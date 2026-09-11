@@ -700,13 +700,6 @@ def _post_pending_fix_replies(
         fix.replies_pending = False
 
 
-
-
-
-
-
-
-
 def _build_fix_record(
     by_outcome: dict[FixOutcome, list[CommentItem]],
     commit_sha: str = "",

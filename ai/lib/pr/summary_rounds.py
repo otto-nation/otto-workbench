@@ -69,9 +69,10 @@ class RoundScope:
     dropping it loses nothing, because the reader finds it one link back.
 
     ``elsewhere_keys`` is the rows some comment other than the target holds,
-    which is the same question read from the other side. `_carried_over_rows`
-    needs it: scoping a row out of the body while the carry-forward step reads
-    it as a round local state lost would put it straight back, verbatim.
+    which is the same question read from the other side.
+    `summary_scope.carried_over_rows` needs it: scoping a row out of the body
+    while the carry-forward step reads it as a round local state lost would put
+    it straight back, verbatim.
 
     ``published_outcomes`` is the outcome each published row last reported, per
     `summary_model.action_outcome`. A round that changed a row's outcome writes it whoever
@@ -92,7 +93,7 @@ class RoundScope:
 
     A default-constructed scope covers everything: no keys are published, so no
     row can be left out. That is the reading a run with no summary comment to
-    read wants, and the one `_build_summary_body` falls back to.
+    read wants, and the one `summary_render.build_summary_body` falls back to.
     """
 
     since: str = ""
@@ -159,10 +160,11 @@ def entry_activity_at(
 ) -> str:
     """When a reviewer last spoke on the surface this entry's row describes.
 
-    Our own comments are left out for the same reason `_newest_reviewer_activity`
-    leaves them out: the fix pass replies to a thread before it publishes, so a
-    round counting its own replies would find every thread it touched newly
-    active and restate the lot.
+    Our own comments are left out for the same reason
+    `summary_publish.newest_reviewer_activity` leaves them out: the fix pass
+    replies to a thread before it publishes, so a round counting its own
+    replies would find every thread it touched newly active and restate the
+    lot.
 
     "" means the run cannot date the entry — a thread this checkout did not
     fetch, an item whose source comment is not in the report. `RoundScope.covers`
@@ -191,10 +193,10 @@ def round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
     fresh comment replaces nothing and leaves every one of them where it is.
 
     Outcomes are read oldest comment first so the newest wins, the same order
-    and for the same reason as `_hand_written_rows`: that is the one a reader
-    arriving at the chain sees. A row whose newest cell is a person's states no
-    outcome and gets no entry, rather than falling back to the generated cell
-    an earlier round wrote under it.
+    and for the same reason as `summary_scope.hand_written_rows`: that is the
+    one a reader arriving at the chain sees. A row whose newest cell is a
+    person's states no outcome and gets no entry, rather than falling back to
+    the generated cell an earlier round wrote under it.
 
     ``since`` dates the target's body, so it takes ``updated_at`` and falls back
     to ``created_at`` for a listing that carried no edit time. The keys beside it

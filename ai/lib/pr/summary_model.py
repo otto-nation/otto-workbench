@@ -117,11 +117,12 @@ class RoundContent:
         """Whether this round has anything for the fix summary to say.
 
         One owner for the question, because three callers have to agree on it:
-        `_post_fix_summary` renders nothing when the answer is no,
-        `_summary_still_owed` must leave a summary owed exactly when a render
-        would produce one, and the no-fixable path decides from it whether to
-        attempt the post at all. Asked separately they drift, and a bucket one
-        of them forgets is a round whose table is printed and never published.
+        `summary_publish.post_fix_summary` renders nothing when the answer is
+        no, `summary_publish.summary_still_owed` must leave a summary owed
+        exactly when a render would produce one, and the no-fixable path
+        decides from it whether to attempt the post at all. Asked separately
+        they drift, and a bucket one of them forgets is a round whose table is
+        printed and never published.
 
         An unseen issue or review-body comment counts on its own. The summary
         reports those too, so a round that settled no thread at all still has a
@@ -136,11 +137,11 @@ def thread_covered_locations(
     """The locations a review thread in this round speaks for.
 
     One question with two readers: `duplicate_item_ids` folds a comment item
-    at one of these locations out of the render, and `_carried_over_rows` drops
-    the published row restating it rather than carrying it back. Computed once
-    here so the two cannot disagree about which locations a thread covers — a
-    fold the carry-forward step does not recognise reinstates the duplicate the
-    fold removed.
+    at one of these locations out of the render, and
+    `summary_scope.carried_over_rows` drops the published row restating it
+    rather than carrying it back. Computed once here so the two cannot disagree
+    about which locations a thread covers — a fold the carry-forward step does
+    not recognise reinstates the duplicate the fold removed.
     """
     return frozenset(
         finding_location(e) for e in entries if e.id in threads_by_id
@@ -183,9 +184,10 @@ def folded_item_ids(
     holding only one bucket cannot answer for it, and a caller that rebuilt the
     list would be a second place to keep in step with the first.
 
-    `_build_summary_body` reads this to drop the rows and the counts over them;
-    `_warn_unattributed_fixes` reads it so what it counts is what the table
-    goes on to publish. Both recompute rather than pass a set between them:
+    `summary_render.build_summary_body` reads this to drop the rows and the
+    counts over them; `_warn_unattributed_fixes` reads it so what it counts is
+    what the table goes on to publish. Both recompute rather than pass a set
+    between them:
     it is a pure read of the buckets, so recomputing makes the two agree by
     construction, where a threaded value could arrive stale and put the count
     back out of step with the table — the very fault this answers.
@@ -204,9 +206,9 @@ def folded_locations(
     """The locations this round's fold accounts for, across every bucket.
 
     `folded_item_ids` says which entries the fold removes; this says where
-    they were. `_carried_over_rows` needs the second question, because what it
-    has to recognise is a *published* row at one of those locations — there is
-    no entry of its own to match ids against.
+    they were. `summary_scope.carried_over_rows` needs the second question,
+    because what it has to recognise is a *published* row at one of those
+    locations — there is no entry of its own to match ids against.
 
     Cross-bucket for the reason `folded_item_ids` is, and reading the same
     buckets: the thread keeping a point and the item restating it need not
@@ -218,8 +220,6 @@ def folded_locations(
 def _every_entry(content: RoundContent) -> list[CommentItem]:
     """Every entry the round holds, whichever bucket it sits in."""
     return [e for entries in content.by_outcome.values() for e in entries]
-
-
 
 
 # The two anchor shapes a published row can be identified by. Not markdown
@@ -336,19 +336,21 @@ class HumanReason(Enum):
 #
 # Naming the outcome is what makes the second reading possible. One outcome is
 # written several ways — a fix reported with a commit one round and without one
-# the next, see `_fixed_status_for` — so a cell compared against a cell reports
-# a change that did not happen, and restates the row for the life of the PR.
+# the next, see `summary_row.fixed_status_for` — so a cell compared against a
+# cell reports a change that did not happen, and restates the row for the life
+# of the PR.
 #
 # No opening may open another under a different outcome, which is what lets
 # `action_outcome` scan in any order; the mapping cannot express the rule, so a
 # test asserts it. Its absence would be silent — the row is restated every
 # round, or left behind holding a stale outcome, with no wording to show which.
 #
-# Kept in step with the four places a status cell is built — `_fixed_status_for`
-# and `_fixed_status_text` (every "Fix…" opening), the literal cells in
-# `_build_summary_body`, and `HumanReason.prose`. A new wording that is not
-# covered here reads as hand-written, and its row is then frozen at whatever the
-# published comment already said.
+# Kept in step with the four places a status cell is built —
+# `summary_row.fixed_status_for` and `summary_row.fixed_status_text` (every
+# "Fix…" opening), the literal cells in `summary_render.build_summary_body`,
+# and `HumanReason.prose`. A new wording that is not covered here reads as
+# hand-written, and its row is then frozen at whatever the published comment
+# already said.
 #
 # Retired wordings stay in the table. A summary comment outlives the code that
 # wrote it, so an opening no builder produces any more still opens rows on live
@@ -385,8 +387,9 @@ def action_outcome(cell: str) -> FixOutcome | None:
 
     None is not "some outcome we cannot name" but "no claim to compare
     against": a cell a person wrote, or a wording retired before this table was.
-    Both are rows `_hand_written_rows` owns, and reading either as an outcome
-    would let every round's own render differ from it and restate the row.
+    Both are rows `summary_scope.hand_written_rows` owns, and reading either as
+    an outcome would let every round's own render differ from it and restate
+    the row.
     """
     for prefix, outcome in ACTION_OUTCOMES.items():
         if cell.startswith(prefix):

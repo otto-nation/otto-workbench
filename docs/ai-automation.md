@@ -45,7 +45,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -263,6 +263,16 @@ Reviews the session that just ended for anything worth keeping and logs it to th
 **Auto-trigger:** 24h (via Stop hook)
 **Trigger:** Auto-triggers at session end, at most once every 24h per repo, in repos that have a knowledge base.
 **Skip:** Never writes or edits an article — /wiki compile processes what this logs, deliberately.
+
+### `/writing-skills`
+
+Write or change a skill in this workbench — SKILL.md frontmatter, the agent: contract, and the generators to re-run. TRIGGER when: creating a skill, editing a SKILL.md, changing lifecycle hooks, or asked how to write a skill. SKIP: invoking an existing skill; authoring a rule (see rules-authoring).
+
+```
+/writing-skills
+```
+**Trigger:** Use when creating a new skill, editing an existing SKILL.md, changing auto-triggered lifecycle behavior, or when the user asks how to write or author a skill.
+**Skip:** Do not use for invoking a skill that already exists, or for authoring a coding rule (see rules-authoring.md).
 
 ## Session Lifecycle
 

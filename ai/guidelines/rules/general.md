@@ -72,7 +72,8 @@ On failure, diagnose in this order — do NOT retry with variations:
 - When a simplification genuinely has no upgrade path, write `// ceiling-permanent:` and say why the alternative is worse. It is counted apart from the pending ones — inventing a fake threshold to satisfy the gate is the outcome this form exists to prevent
 - The marker opens its own comment line and may run to the end of the comment block below it, so the trigger does not have to fit on the first line. `bin/local/validate-ceiling` fails on any `ceiling:` marker with neither a trigger nor the permanent form
 - When adding docs, extend existing files rather than creating new ones
-- When adding CLI commands or changing command signatures, update `docs/ai-automation.md` and/or `README.md`
+- Never edit a `docs/*.md` that carries a "Generated from … by bin/local/compose-docs" banner — edit its `docs/*.src.md`, or the source data behind the include directive
+- When adding CLI commands or changing command signatures, update `docs/ai-automation.src.md` and/or `README.md`
 
 ## Testing
 

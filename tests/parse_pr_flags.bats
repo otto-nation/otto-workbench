@@ -81,6 +81,44 @@ teardown() {
   [ "$PR_TITLE_OVERRIDE" = "" ]
   [ "$PR_BODY_OVERRIDE" = "" ]
   [ "$PR_ISSUE_OVERRIDE" = "" ]
+  [ "${#PR_CLOSES[@]}" -eq 0 ]
+}
+
+@test "--closes sets PR_CLOSES" {
+  parse_pr_flags "--closes 941"
+  [ "${#PR_CLOSES[@]}" -eq 1 ]
+  [ "${PR_CLOSES[0]}" = "#941" ]
+}
+
+@test "--closes is repeatable and keeps order" {
+  parse_pr_flags "--closes 941 --closes 942"
+  [ "${#PR_CLOSES[@]}" -eq 2 ]
+  [ "${PR_CLOSES[0]}" = "#941" ]
+  [ "${PR_CLOSES[1]}" = "#942" ]
+}
+
+@test "--closes normalises a leading #" {
+  parse_pr_flags "--closes #941"
+  [ "${PR_CLOSES[0]}" = "#941" ]
+}
+
+@test "--closes without value fails" {
+  run parse_pr_flags "--closes"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--closes requires a value"* ]]
+}
+
+@test "--closes coexists with the other create flags" {
+  parse_pr_flags "--no-issue --draft --closes 941 --title \"my title\""
+  [ "$SKIP_ISSUE" = "true" ]
+  [ "$PR_DRAFT" = "true" ]
+  [ "$PR_TITLE_OVERRIDE" = "my title" ]
+  [ "${PR_CLOSES[0]}" = "#941" ]
+}
+
+@test "a rejected --closes fails the whole parse" {
+  run parse_pr_flags "--closes banana --draft"
+  [ "$status" -eq 1 ]
 }
 
 @test "--issue sets PR_ISSUE_OVERRIDE" {

@@ -133,6 +133,8 @@ Rules:
 - Describe what the branch does now, not the order it was built in. Fix passes and
   review follow-ups are part of the change, not a changelog to recite.
 - Keep any content in the current description that is still accurate.
+- Reproduce any issue-closing line (Closes #12, Fixes ENG-34, Resolves #56) exactly
+  as it appears. Dropping one un-links an issue that was linked on purpose.
 - Do not mention AI assistance, agents, or tooling that produced the change.
 - Do not append a footer.
 

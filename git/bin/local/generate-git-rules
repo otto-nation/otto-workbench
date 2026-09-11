@@ -124,9 +124,9 @@ _budget_line() {
     "" \
     "### Issue linking" \
     "" \
-    "- Extract issue number from branch name (e.g. \`feature/PROJ-123-description\`)" \
-    "- Add \`Closes #<number>\` at the top of the description only for numeric GitHub issues" \
-    "- Omit issue linking for Jira-style keys (\`PROJ-123\`) — they do not auto-close on GitHub merge" \
+    "- A PR that should close an issue says so with \`--closes <ID>\`, which appends \`Closes <ID>\` to the body. Nothing else adds the keyword — an issue number in the branch name is context for the generated description, not a close" \
+    "- \`--closes\` is repeatable: \`--closes 941 --closes 942\`" \
+    "- A numeric ID (\`941\`, \`#941\`) is a GitHub issue and always closes. A tracker key (\`ENG-123\`) only closes where the tracker acts on the keyword, so it is accepted when \`issues.provider\` is \`linear\` and refused otherwise — rather than opening the PR with a link that will never fire" \
     "" \
     "### Assignee" \
     "" \

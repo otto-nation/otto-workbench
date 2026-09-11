@@ -858,26 +858,26 @@ JSON
 }
 
 @test "a wt list failure is reported rather than exiting clean" {
-  # $MOCK_BIN lives in BATS_FILE_TMPDIR and is shared by every test in this
-  # file, so the failing stub is put back before returning — otherwise every
-  # later test runs against a `wt` that refuses to list.
-  local saved="$BATS_TEST_TMPDIR/wt.real-mock"
-  cp "$MOCK_BIN/wt" "$saved"
-  cat > "$MOCK_BIN/wt" <<'FAKEWT'
+  # The failing stub goes in a directory of this test's own, ahead of
+  # $MOCK_BIN on PATH. $MOCK_BIN lives in BATS_FILE_TMPDIR and is shared by
+  # every test in the file: overwriting the stub there and restoring it
+  # afterwards makes `wt list` fail for whichever cases happen to run
+  # alongside this one under --jobs, and the schema tests read that failure as
+  # the wrong refusal.
+  local stub_bin="$BATS_TEST_TMPDIR/failing-wt"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/wt" <<'FAKEWT'
 #!/usr/bin/env bash
 [[ "$1" == "list" ]] && exit 1
 exit 0
 FAKEWT
-  chmod +x "$MOCK_BIN/wt"
+  chmod +x "$stub_bin/wt"
+  PATH="$stub_bin:$PATH"
 
   _run_cleanup
-  local st="$status" out="$output"
 
-  cp "$saved" "$MOCK_BIN/wt"
-  chmod +x "$MOCK_BIN/wt"
-
-  [ "$st" -eq 1 ]
-  [[ "$out" == *"wt list --format json failed"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"wt list --format json failed"* ]]
 }
 
 @test "wt list schema matches the fixture shape" {

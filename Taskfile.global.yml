@@ -218,7 +218,7 @@ tasks:
         fi
 
   pr:content:
-    desc: "Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --base <branch>)"
+    desc: "Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -242,7 +242,7 @@ tasks:
         echo "$PR_DESCRIPTION"
 
   pr:create:
-    desc: "Create AI-powered pull request (-- --no-issue, --issue <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
+    desc: "Create AI-powered pull request (-- --no-issue, --issue <ID>, --closes <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -280,7 +280,7 @@ tasks:
         create_pr "${GH_ARGS[@]}" || exit 1
 
   pr:update:
-    desc: "Update current PR description (-- --no-issue, --issue <ID>, --base <branch>, --title <title>, --body <body>)"
+    desc: "Update current PR description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>, --title <title>, --body <body>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -293,7 +293,14 @@ tasks:
         load_pr "$_CLI_ARGS" || exit 1
 
         echo "→ Checking for existing PR..."
-        PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
+        # Number and body in one call: the body is needed further down to carry
+        # closing references across the regeneration, and asking twice is a
+        # second round trip for something this call already has. A tab
+        # separator survives a body containing anything but a tab; @tsv would
+        # escape the newlines and the refs are matched line-wise.
+        PR_VIEW=$(gh pr view --json number,body -q '(.number|tostring) + "\t" + (.body // "")' 2>/dev/null)
+        PR_NUMBER="${PR_VIEW%%$'\t'*}"
+        EXISTING_BODY="${PR_VIEW#*$'\t'}"
 
         if [ -z "$PR_NUMBER" ]; then
           echo "✗ No PR found for branch: $BRANCH"
@@ -304,6 +311,13 @@ tasks:
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
         generate_pr_content "$BRANCH" "$TARGET_BASE"
+
+        # The regenerated body replaces the published one wholesale, so a
+        # closing reference already on the PR would be dropped here — and
+        # dropping it silently un-links an issue somebody linked on purpose.
+        # Carry every keyword the old body carried over to the new one.
+        pr_preserve_close_refs "$EXISTING_BODY"
+
         echo "✓ Content ready"
         echo "→ Updating PR #$PR_NUMBER..."
 

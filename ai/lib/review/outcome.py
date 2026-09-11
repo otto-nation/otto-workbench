@@ -21,15 +21,15 @@ from pathlib import Path
 
 from pr.domains import ReviewStatus
 from review.document import (
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, ReviewHeader, review_title, set_head_sha,
+    ReviewDocument, ReviewHeader, review_title, set_head_sha, strip_sections,
 )
 from review.paths import write_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
 from review.state import PipelineState, pipeline_status, set_failures_section
 from review.types import ReviewJob, ReviewMeta, ReviewType
-from review.prompt_prior import _strip_internal_sections
 from review.verdict import (
     CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
     build_mechanical_body, states_verdict,
@@ -176,6 +176,42 @@ def _reconcile_and_verify(job: ReviewJob) -> None:
     job.verification = post_process_findings(job.review_file, job.wt_path)
 
 
+# What a prior review states about the run that produced it rather than about
+# the code: its own framing, and the bookkeeping its groups wrote. A body
+# reusing its findings states all of this itself, so carrying these over would
+# be the new document making the old document's claims twice.
+_SUPERSEDED_SECTIONS = frozenset({
+    SECTION_SUMMARY.lower(),
+    SECTION_VERDICT.lower(),
+    SECTION_FILE_TRIAGE.lower(),
+    SECTION_PRIOR_FINDINGS.lower(),
+    SECTION_STATIC_ANALYSIS.lower(),
+})
+
+
+def _carried_findings(prior_review: str) -> str:
+    """`prior_review`'s findings, ready to be some other document's body.
+
+    The findings alone: the title and metadata header go with `ReviewDocument`'s
+    own parse, and every section stating something about the prior *run* is
+    dropped. What is left is the claims about the code, which nothing has
+    addressed and which therefore still stand.
+
+    Not `prompt_prior._strip_internal_sections`, which keeps `## Summary` and
+    `## Verdict` because a prompt wants a re-review to see the call its
+    predecessor reached. Embedding those in a new body gives the document two
+    of each, and both `section_span` and `ReviewDocument.verdict` read the
+    first — so the review reports the prior run's verdict while carrying a
+    fresh one below it, which inverts the answer when the prior run approved
+    and the carried findings do not.
+    """
+    if not prior_review:
+        return ""
+    return strip_sections(
+        ReviewDocument.parse(prior_review).body, _SUPERSEDED_SECTIONS,
+    ).strip()
+
+
 def _post_process_review(job: ReviewJob) -> None:
     """The review file finished, for the paths where an agent wrote all of it.
 
@@ -268,9 +304,8 @@ def write_unchanged_review(job: ReviewJob) -> None:
     next re-review measures its delta from here, so the merge that prompted
     this run is behind it rather than being walked again.
     """
-    carried = _strip_internal_sections(job.prior_review)
     body = build_mechanical_body(
-        carried,
+        _carried_findings(job.prior_review),
         group_count=0,
         summary_note=NO_CHANGES_SUMMARY,
         include_verdict=states_verdict(job.mode),

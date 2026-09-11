@@ -24,6 +24,7 @@ import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.trail import Trail, add_trail_args
@@ -153,16 +154,28 @@ def _is_no_op_rereview(job) -> bool:
     never be reviewed. `review.collect` reports `ATTRIBUTED` at one place,
     after every guard it has; everything else leaves it `UNATTRIBUTED`.
     """
-    pf = job.preflight
     return bool(
         _rpsec._is_incremental(job)
-        and pf.delta_attribution is DeltaAttribution.ATTRIBUTED
-        and not pf.delta_files
+        and job.preflight.delta_proven_empty
         and job.prior_review
     )
 
 
-def _review_scale(job) -> tuple[int, int, str]:
+@dataclass(frozen=True)
+class ReviewScale:
+    """How much work a run has in front of it, and which count says so.
+
+    `basis` is on the record rather than inferred by the reader because it is
+    what the trail reports: a pipeline choice that looks wrong for the PR is
+    read entirely differently once it says it sized itself by the delta.
+    """
+
+    files: int
+    lines: int
+    basis: str
+
+
+def _review_scale(job) -> ReviewScale:
     """How much work this run has in front of it: files, lines, and whose count.
 
     A re-review is sized by its own delta rather than by the PR, because the
@@ -185,8 +198,8 @@ def _review_scale(job) -> tuple[int, int, str]:
         and pf.delta_attribution is DeltaAttribution.ATTRIBUTED
     )
     if attributed:
-        return len(pf.delta_files), pf.delta_lines, "delta"
-    return job.pr.changed_files, job.pr.total_lines, "pr"
+        return ReviewScale(len(pf.delta_files), pf.delta_lines, "delta")
+    return ReviewScale(job.pr.changed_files, job.pr.total_lines, "pr")
 
 
 def _run_phases(trail, args, job) -> Pipeline:
@@ -213,20 +226,20 @@ def _run_phases(trail, args, job) -> Pipeline:
     preset = EFFORT_PRESETS[job.effort]
     line_threshold = preset.multi_phase_line_threshold
     file_threshold = preset.multi_phase_file_threshold
-    changed_files, total_lines, basis = _review_scale(job)
+    scale = _review_scale(job)
     is_large = (
-        total_lines > line_threshold
-        or changed_files > file_threshold
+        scale.lines > line_threshold
+        or scale.files > file_threshold
     )
     pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
 
     trail.decision(
         "select_pipeline",
         f"chose {pipeline}",
-        reason=f"{basis}: files={changed_files} lines={total_lines} thresholds=(files={file_threshold} lines={line_threshold})",
+        reason=f"{scale.basis}: files={scale.files} lines={scale.lines} thresholds=(files={file_threshold} lines={line_threshold})",
         data={
-            "pipeline": pipeline, "changed_files": changed_files,
-            "total_lines": total_lines, "basis": basis,
+            "pipeline": pipeline, "changed_files": scale.files,
+            "total_lines": scale.lines, "basis": scale.basis,
         },
     )
 

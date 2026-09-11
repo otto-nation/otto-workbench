@@ -507,6 +507,20 @@ class PreflightData:
     # everything in the range — which decides whether either can be acted on.
     # Only the ancestry walk in `review.collect` reports `ATTRIBUTED`.
     delta_attribution: DeltaAttribution = DeltaAttribution.NONE
+
+    @property
+    def delta_proven_empty(self) -> bool:
+        """The author committed nothing since the prior review, established.
+
+        The same question `DeltaScope.proven_empty` answers, asked of the
+        record that outlives it. Spelling it out at a call site invites the
+        half of it that reads `not delta_files`, which is true of a delta
+        nobody could attribute.
+        """
+        return (
+            self.delta_attribution is DeltaAttribution.ATTRIBUTED
+            and not self.delta_files
+        )
     prior_head_sha: str = ""
 
 

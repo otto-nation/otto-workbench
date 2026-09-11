@@ -28,18 +28,33 @@ from conftest import synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+from agent.types import EFFORT_PRESETS
 from cli import review_orchestrate as ro
 from core.phases import Effort, Mode
 from gh.types import PRContext, PRMetadata
-from review.document import ReviewHeader
+from pr.domains import ReviewVerdict
+from review.document import ReviewDocument, ReviewHeader
 from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
 
-# MEDIUM's thresholds are 500 lines / 10 files.
-_BIG_PR = {"additions": 4000, "deletions": 2000, "changed_files": 120}
+# Derived from the preset the jobs here run at, so a changed threshold moves
+# these with it rather than leaving a suite that passes for the wrong reason.
+_PRESET = EFFORT_PRESETS[Effort.MEDIUM]
+_BIG_PR = {
+    "additions": _PRESET.multi_phase_line_threshold * 8,
+    "deletions": _PRESET.multi_phase_line_threshold * 4,
+    "changed_files": _PRESET.multi_phase_file_threshold * 12,
+}
 _PRIOR = synthetic_review(
     meta="head_sha: 0ldc0de",
     findings="## Must fix\n- **[M1]** `a.py:1` — a bug nobody has fixed\n",
     verdict="Request changes",
+)
+# A prior run that approved while holding a finding the fast path must not
+# clear: its stale verdict is the one a document carrying two would report.
+_PRIOR_APPROVED = synthetic_review(
+    meta="head_sha: 0ldc0de",
+    findings="## Must fix\n- **[M1]** `a.py:1` — a bug nobody has fixed\n",
+    verdict="Approve — the prior run's call",
 )
 
 
@@ -150,7 +165,10 @@ class TestPipelineSizingUsesTheDelta:
     def test_a_large_pr_with_a_large_delta_still_fans_out(self, tmp_path, run_phases):
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.preflight = _preflight(
-            delta_files=[f"f{i}.py" for i in range(40)], delta_lines=3000,
+            delta_files=[
+                f"f{i}.py" for i in range(_PRESET.multi_phase_file_threshold * 4)
+            ],
+            delta_lines=_PRESET.multi_phase_line_threshold * 6,
             prior_head_sha="0ldc0de", delta_attribution=DeltaAttribution.ATTRIBUTED,
         )
 
@@ -200,9 +218,10 @@ class TestTheEmptyDeltaFastPath:
         return job
 
     def test_no_agent_runs(self, tmp_path, run_phases):
-        _, called, _ = run_phases(self._merge_only(tmp_path))
+        _, called, pipeline = run_phases(self._merge_only(tmp_path))
 
         assert called == []
+        assert pipeline == Pipeline.SINGLE
 
     def test_the_marker_advances_to_the_new_head(self, tmp_path, run_phases):
         job = self._merge_only(tmp_path)
@@ -240,6 +259,51 @@ class TestTheEmptyDeltaFastPath:
         run_phases(job)
 
         assert "Request changes" in Path(job.review_file).read_text()
+
+    def test_the_review_reaches_one_verdict(self, tmp_path, run_phases):
+        """The prior review's own verdict is not carried in beside the new one.
+
+        `section_span` and `ReviewDocument.verdict` both read the *first*
+        matching heading, so a body holding the prior document whole reports
+        the prior run's call — and states a fresh one further down that nothing
+        reads.
+        """
+        job = self._merge_only(tmp_path)
+
+        run_phases(job)
+
+        written = Path(job.review_file).read_text()
+        assert written.count("## Verdict") == 1
+        assert written.count("## Summary") == 1
+
+    def test_a_stale_approve_does_not_survive_its_findings(
+        self, tmp_path, run_phases,
+    ):
+        """The inversion the duplicate sections caused, asserted end to end."""
+        job = _job(tmp_path, prior_review=_PRIOR_APPROVED, **_BIG_PR)
+        job.preflight = _preflight(
+            delta_files=[], delta_lines=0,
+            delta_attribution=DeltaAttribution.ATTRIBUTED,
+            prior_head_sha="0ldc0de",
+        )
+
+        run_phases(job)
+
+        written = Path(job.review_file).read_text()
+        assert ReviewDocument.parse(written).verdict is ReviewVerdict.CHANGES_REQUESTED
+        assert "the prior run's call" not in written
+
+    def test_the_prior_runs_own_framing_is_not_carried_in(
+        self, tmp_path, run_phases,
+    ):
+        """Its title and header describe the run that wrote it, not this one."""
+        job = self._merge_only(tmp_path)
+
+        run_phases(job)
+
+        written = Path(job.review_file).read_text()
+        assert written.count("<!-- head_sha:") == 1
+        assert written.count("# Review:") == 1
 
     def test_the_run_records_why_it_did_nothing(self, tmp_path, run_phases):
         trail, _, _ = run_phases(self._merge_only(tmp_path))

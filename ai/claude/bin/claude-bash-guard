@@ -37,6 +37,12 @@ block() {
   exit 2
 }
 
+# Where a `sleep` stops being a pipeline step and starts being a wait for something
+# that reports itself. Kept in step with the Pi guard's own constant —
+# ai/pi/extensions/sleep-guard/detect.ts enforces the same rule for the harness this
+# hook does not run in, and tests/pi_extensions.bats holds the two to one value.
+SLEEP_WAIT_THRESHOLD_SECONDS=10
+
 # Fail open: a malformed payload must not block every Bash call.
 cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [[ -n "$cmd" ]] || exit 0
@@ -184,6 +190,31 @@ re_background='(^|[^&>|;])&([^&>]|$)'
 re_nohup='(^|[;&|][[:space:]]*)nohup[[:space:]]'
 if [[ "$stripped" =~ $re_background || "$stripped" =~ $re_nohup ]]; then
   block 'Backgrounding with & or nohup leaves a shell the tool cannot see, so stopping it later takes a pkill that prompts every time. Pass run_in_background instead, and make the request against it in a separate call. See bash-tool.md § Avoid Backgrounding with &.'
+fi
+
+# Not a permission prompt either — this one costs wall-clock rather than a click.
+# A `sleep 295` in front of work that reports its own completion buys nothing: the
+# report arrives when it arrives, and the agent has spent the five minutes either
+# way.
+#
+# Only a bare `sleep <n>` at the head of a statement counts, so `some-cmd --sleep 5`
+# and a `sleep` inside a script being read are left alone. The threshold is what
+# separates the two uses: a second or two letting a server bind its port is a real
+# pipeline step, while anything at this scale is a wait for something that will
+# announce itself. A fractional duration is under the threshold by definition and
+# never matches.
+#
+# ceiling: the duration is read as a plain integer, so a suffixed `sleep 5m` — a GNU
+# and BSD extension, not POSIX — does not match and passes. Upgrade to parsing the
+# suffix if one shows up; the shape being steered is `sleep <seconds>`, which is what
+# an agent writes.
+#
+# The 10# prefix forces base ten. Bash reads a leading zero as octal, so `sleep 08`
+# would otherwise abort the arithmetic with "value too great for base" and let the
+# command through on an error message rather than a decision.
+re_sleep='(^|[;&|][[:space:]]*)sleep[[:space:]]+([0-9]+)([[:space:]]|;|$)'
+if [[ "$stripped" =~ $re_sleep ]] && (( 10#${BASH_REMATCH[2]} >= SLEEP_WAIT_THRESHOLD_SECONDS )); then
+  block "A sleep of ${BASH_REMATCH[2]}s is a wait for something that reports its own completion. Background jobs message you when they finish and CI is reported when it lands — do nothing and wait, or do other work. To bound a run, pass the bound to the call that starts it (run_in_background with a timeout) rather than sleeping beside it. See general.md § Waiting on Background Work."
 fi
 
 # Below the rules above because it matches a wider range of commands than any of

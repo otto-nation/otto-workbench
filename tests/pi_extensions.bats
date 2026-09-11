@@ -308,3 +308,55 @@ _run_step_from_worktree() {
     [ -f "${dir}index.ts" ] || [ -f "${dir}index.js" ] || [ -f "${dir}package.json" ]
   done
 }
+
+# ─── sleep-guard ──────────────────────────────────────────────────────────
+# The half of the no-sleep rule that runs under Pi. Its predicate is in
+# detect.ts, which imports nothing, so node can load it directly — index.ts
+# imports the Pi SDK as a value and only resolves inside a session.
+
+# _detects COMMAND — prints true or false for isWaitingSleep(COMMAND).
+_detects() {
+  run node --input-type=module -e "
+    const { isWaitingSleep } = await import('$REPO_ROOT/ai/pi/extensions/sleep-guard/detect.ts');
+    process.stdout.write(String(isWaitingSleep(process.argv[1])));
+  " -- "$1"
+}
+
+@test "sleep-guard: a long sleep waiting on a job is a finding" {
+  _detects 'sleep 295; echo done'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: a short settle before a probe is not" {
+  _detects 'sleep 2; curl -sI localhost:8931'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: a --sleep flag on another command is not" {
+  _detects 'pr ci --wait --sleep 30'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: a long sleep on a later line is a finding" {
+  # The regex needs its m flag for this: without one, ^ anchors to the start of
+  # the whole command and only a first-line sleep is ever seen.
+  _detects 'gh pr checks 1257
+sleep 300
+gh pr checks 1257'
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: the two harnesses share one threshold" {
+  # Claude's hook and this extension enforce the same rule for different
+  # harnesses. Two constants that drift apart are one rule with two meanings, and
+  # nothing else in either tree would report it.
+  local pi_value claude_value
+  pi_value=$(grep -oE 'THRESHOLD_SECONDS = [0-9]+' \
+    "$REPO_ROOT/ai/pi/extensions/sleep-guard/detect.ts" | grep -oE '[0-9]+')
+  claude_value=$(grep -oE '^SLEEP_WAIT_THRESHOLD_SECONDS=[0-9]+' \
+    "$REPO_ROOT/ai/claude/bin/claude-bash-guard" | grep -oE '[0-9]+')
+  [ -n "$pi_value" ]
+  [ -n "$claude_value" ]
+  [ "$pi_value" = "$claude_value" ]
+}

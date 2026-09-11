@@ -8338,6 +8338,22 @@ class TestDuplicateFindingRendersOnce:
         assert len(rows) == 1
         assert "#issuecomment-77" in body
 
+    def test_the_folded_locations_are_where_the_folded_ids_were(self, rt, content):
+        """The carry-forward step reads locations; the render reads ids.
+
+        Both come off the same buckets, so a location this reports must be one
+        of the entries the fold removed — otherwise a published row would be
+        dropped for a fold that never happened.
+        """
+        round_content = content(fixed=[self._thread()], needs_human=[self._item()])
+        threads = self._threads()
+        assert rt._folded_item_ids(round_content, threads) == {"ic-77-0"}
+        assert rt._folded_locations(round_content, threads) == frozenset({"kgn|a.go:7"})
+
+    def test_an_unfolded_round_reports_no_locations(self, rt, content):
+        round_content = content(needs_human=[self._item()])
+        assert rt._folded_locations(round_content, {}) == frozenset()
+
     def test_a_declined_item_folds_into_the_thread_it_restates(self, rt, content):
         """`_folded_item_ids` reads every bucket, so the fold is not `needs_human`'s.
 
@@ -8361,21 +8377,80 @@ class TestFoldedRowsAreNotCarriedBack:
                   "| @kgn | [`a.go:7`](https://github.com/o/r/blob/abc/a.go#L7) | Fixed |")
     ITEM_ROW = ("| [also drop the retry](https://github.com/o/r/pull/1"
                 "#issuecomment-77) | @kgn | `a.go:7` | contested |")
+    # What the renderer writes when the SHA is known but the line cannot be
+    # placed in it: a permalink with no `#L7`, and a label with no `:7`.
+    UNANCHORED_THREAD_ROW = (
+        "| [drop the retry](https://github.com/o/r/pull/1#discussion_r5) "
+        "| @kgn | [`a.go`](https://github.com/o/r/blob/abc/a.go) | Fixed |")
+
+    FOLDED = frozenset({"kgn|a.go:7"})
 
     def test_the_published_duplicate_is_accounted_for(self, rt):
         published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
-        assert rt._carried_over_rows(published, self.THREAD_ROW) == []
+        assert rt._carried_over_rows(published, self.THREAD_ROW, folded=self.FOLDED) == []
 
     def test_an_item_row_elsewhere_is_still_carried(self, rt):
         elsewhere = self.ITEM_ROW.replace("a.go:7", "b.go:3")
         published = f"{self.THREAD_ROW}\n{elsewhere}"
-        assert rt._carried_over_rows(published, self.THREAD_ROW) == [elsewhere]
+        assert rt._carried_over_rows(
+            published, self.THREAD_ROW, folded=self.FOLDED) == [elsewhere]
 
     def test_a_published_thread_row_is_carried_as_before(self, rt):
         """Only comment items fold; a thread row this render lost is still a loss."""
         other = self.THREAD_ROW.replace("discussion_r5", "discussion_r9")
         published = f"{self.THREAD_ROW}\n{other}"
-        assert rt._carried_over_rows(published, self.THREAD_ROW) == [other]
+        assert rt._carried_over_rows(
+            published, self.THREAD_ROW, folded=self.FOLDED) == [other]
+
+    def test_a_dropped_line_anchor_still_accounts_for_the_duplicate(self, rt):
+        """The fold is decided from entries, so the rendered File cell cannot undo it.
+
+        `permalinks.anchored_line` returns 0 on an unfetched SHA, on drift, and
+        with no worktree, and the row then carries neither `:7` nor `#L7`.
+        Recovering the fold from that cell yielded "", so the published item row
+        restating the thread was carried forward and the duplicate came back.
+        """
+        published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
+        assert rt._carried_over_rows(
+            published, self.UNANCHORED_THREAD_ROW, folded=self.FOLDED) == []
+
+    def test_the_reviewer_cell_keys_without_its_at_sign(self, rt):
+        """`_row_location_key` and `finding_location` must spell the reviewer alike.
+
+        The rendered cell is `@kgn` and the typed key is `kgn`; the two are
+        compared against each other, so a key keeping the `@` matches nothing.
+        """
+        assert rt._row_location_key(self.ITEM_ROW) == "kgn|a.go:7"
+
+    def test_nothing_folded_carries_everything(self, rt):
+        """A round with no fold to report leaves the published rows alone."""
+        published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
+        assert rt._carried_over_rows(published, self.THREAD_ROW) == [self.ITEM_ROW]
+
+    def test_the_publish_path_folds_without_a_placeable_line(self, rt, content):
+        """End to end: the fix pass posting against an unfetched SHA.
+
+        No worktree is passed, so `permalinks.anchored_line` cannot place the
+        line and every File cell renders bare. The published item row must
+        still be recognised as the duplicate this round folded.
+        """
+        thread = CommentItem(id="t1", file="a.go", line=7, reviewer="kgn",
+                             summary="drop the retry")
+        item = CommentItem(id="ic-77-0", file="a.go", line=7, reviewer="kgn",
+                           summary="also drop the retry", reason="contested")
+        threads = {"t1": ReportThread(id="t1", file="a.go", line=7, reviewer="kgn",
+                                      comments=[{"databaseId": 5}])}
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
+        with _published(_published_summary(rt, self.ITEM_ROW)), \
+                patch("pr.comments.post_issue_comment", return_value="https://url") as post:
+            rt._post_fix_summary(
+                content(fixed=[thread], needs_human=[item]),
+                cp, "owner/repo", 1, threads, head_sha="abc1234",
+            )
+        body = post.call_args[0][2]
+        assert "#issuecomment-77" not in body
+        assert "carried over" not in body
+        assert len(rt._summary_table_rows(body)) == 1
 
 
 def _filed(issue_id: str, url: str) -> IssueResult:

@@ -18,7 +18,7 @@ import functools
 import json
 import re
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -843,6 +843,23 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
     return "(empty)"
 
 
+def _thread_covered_locations(
+    entries: Iterable[CommentItem], threads_by_id: dict[str, ReportThread],
+) -> frozenset[str]:
+    """The locations a review thread in this round speaks for.
+
+    One question with two readers: `_duplicate_item_ids` folds a comment item
+    at one of these locations out of the render, and `_carried_over_rows` drops
+    the published row restating it rather than carrying it back. Computed once
+    here so the two cannot disagree about which locations a thread covers — a
+    fold the carry-forward step does not recognise reinstates the duplicate the
+    fold removed.
+    """
+    return frozenset(
+        finding_location(e) for e in entries if e.id in threads_by_id
+    ) - {""}
+
+
 def _duplicate_item_ids(
     entries: list[CommentItem], threads_by_id: dict[str, ReportThread],
 ) -> set[str]:
@@ -859,9 +876,7 @@ def _duplicate_item_ids(
     What counts as "the same point" is `finding_location`, whose ceiling
     comment names what that coarsening costs.
     """
-    covered = {
-        finding_location(e) for e in entries if e.id in threads_by_id
-    } - {""}
+    covered = _thread_covered_locations(entries, threads_by_id)
     return {
         e.id for e in entries
         if e.id not in threads_by_id
@@ -972,10 +987,29 @@ def _folded_item_ids(
     a signature naming the buckets would keep folding the old set until someone
     noticed.
     """
-    return _duplicate_item_ids(
-        [e for entries in content.by_outcome.values() for e in entries],
-        threads_by_id,
-    )
+    return _duplicate_item_ids(_every_entry(content), threads_by_id)
+
+
+def _folded_locations(
+    content: RoundContent, threads_by_id: dict[str, ReportThread],
+) -> frozenset[str]:
+    """The locations this round's fold accounts for, across every bucket.
+
+    `_folded_item_ids` says which entries the fold removes; this says where
+    they were. `_carried_over_rows` needs the second question, because what it
+    has to recognise is a *published* row at one of those locations — there is
+    no entry of its own to match ids against.
+
+    Cross-bucket for the reason `_folded_item_ids` is, and reading the same
+    buckets: the thread keeping a point and the item restating it need not
+    share an outcome.
+    """
+    return _thread_covered_locations(_every_entry(content), threads_by_id)
+
+
+def _every_entry(content: RoundContent) -> list[CommentItem]:
+    """Every entry the round holds, whichever bucket it sits in."""
+    return [e for entries in content.by_outcome.values() for e in entries]
 
 
 _SUMMARY_TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
@@ -1588,6 +1622,10 @@ def _row_location_key(row: str) -> str:
     `finding_location` — and one step coarser again, because a published row
     is markdown rather than a typed entry: the reviewer and file cells are all
     that survive to match on.
+
+    The `@` the Reviewer cell is rendered with is stripped, because these keys
+    are compared against `finding_location`'s, which carry the bare login. The
+    two forms are only interchangeable if they spell the reviewer the same way.
     """
     cells = markdown.row_cells(row)
     if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
@@ -1595,7 +1633,8 @@ def _row_location_key(row: str) -> str:
     location = markdown.plain_cell(cells[2])
     if ":" not in location:
         return ""
-    return f"{cells[1]}|{location}"
+    reviewer = markdown.plain_cell(cells[1]).removeprefix("@")
+    return f"{reviewer}|{location}"
 
 
 def _summary_row_key(row: str) -> str:
@@ -1650,6 +1689,7 @@ def _summary_table_rows(body: str) -> list[str]:
 
 def _carried_over_rows(
     published: str, fresh: str, held_elsewhere: frozenset[str] = frozenset(),
+    folded: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Rows the published summary holds that a fresh render does not.
 
@@ -1676,20 +1716,27 @@ def _carried_over_rows(
     The one thing that is not a lost round is a row this render folded into
     another: a comment item restating a review thread was published under its
     own anchor before `_duplicate_item_ids` started collapsing the pair, and
-    carrying it forward would restore the duplicate this render just removed. A
-    fresh thread row at that location accounts for it — "that location" being
-    `_row_location_key`, so the ceiling on `finding_location` bounds this too:
-    an item row that collides with an unrelated fresh thread row is dropped
-    rather than carried.
+    carrying it forward would restore the duplicate this render just removed.
+
+    ``folded`` is the locations a fresh thread row accounts for, from
+    `_thread_covered_locations` — the typed entries the render was built from,
+    not the markdown it produced. Reading it back off the rendered rows made
+    the fold depend on a cell the renderer is free not to write: `_build_row`
+    drops the line anchor whenever `permalinks.anchored_line` cannot place the
+    line in the pinned SHA — an unfetched commit, a drifted line, no worktree —
+    and a File cell with no colon keys as "", so the fresh row's identity was
+    lost and the published duplicate came straight back. Nothing about the
+    render is allowed to decide this, so it is computed where the types are.
+
+    The published side still has to be parsed: those rows have no live entry,
+    which is the whole reason carry-over exists. The ceiling on
+    `finding_location` therefore still bounds it — an item row colliding with
+    an unrelated fresh thread row is dropped rather than carried.
     """
     if not published:
         return []
     fresh_rows = _summary_table_rows(fresh)
     fresh_keys = {_summary_row_key(row) for row in fresh_rows}
-    folded = {
-        _row_location_key(row) for row in fresh_rows
-        if _THREAD_ANCHOR_RE.search(row)
-    } - {""}
     return [
         row for row in _summary_table_rows(published)
         if _summary_row_key(row) not in fresh_keys
@@ -1862,7 +1909,7 @@ def _earlier_rounds(
 
 def _publish_summary(
     repo: str, pr_number: int, build_body: Callable[..., str],
-    activity_at: str = "",
+    activity_at: str = "", folded: frozenset[str] = frozenset(),
 ) -> str | None:
     """Publish the round without shrinking the record the PR already holds.
 
@@ -1875,6 +1922,11 @@ def _publish_summary(
     Held rows are resolved before carried ones, and the carry-forward set is
     then computed against the body that already holds them, so a hand-written
     row is kept once rather than emitted twice.
+
+    ``folded`` is passed through to `_carried_over_rows` rather than read off
+    the body this renders. Only the caller has the typed entries the fold was
+    decided from, and the File cell markdown would have to be read for instead
+    is one the renderer is free to drop the line from.
 
     The comment is edited in place while nothing has been said below it, and
     posted fresh once something has — see `_summary_answered_since`. Which one
@@ -1914,7 +1966,7 @@ def _publish_summary(
     # comment is still published there, and lifting it into this one would
     # restate the round the chain already carries.
     carried = _carried_over_rows(
-        "" if answered else existing.body, body, scope.elsewhere_keys)
+        "" if answered else existing.body, body, scope.elsewhere_keys, folded)
     if carried:
         log.warn(
             f"Published summary has {len(carried)} row(s) this run cannot account "
@@ -1955,7 +2007,7 @@ def _post_fix_summary(
         head_sha=head_sha,
         wt_path=wt_path,
         history=history,
-    ), activity_at=activity_at)
+    ), activity_at=activity_at, folded=_folded_locations(content, threads_by_id))
     if url:
         log.info(f"Posted fix summary: {url}")
     elif publishing.enabled():
@@ -2129,7 +2181,8 @@ def _render_deferred_summary(
         head_sha=cp.sha or state.identity.head_sha,
         wt_path=wt_path,
         history=history,
-    ), activity_at=_newest_reviewer_activity(report))
+    ), activity_at=_newest_reviewer_activity(report),
+        folded=_folded_locations(content, threads_by_id))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
         fix.summary_url = url

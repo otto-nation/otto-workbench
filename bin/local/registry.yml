@@ -84,6 +84,11 @@ tools:
     visibility: brief
     description: "Validates that a bats suite using flags on run declares bats_require_minimum_version 1.5.0"
 
+  - name: validate-tmpdir-isolation
+    permission: false
+    visibility: brief
+    description: "Validates that a bats suite writing under $TMPDIR pins it to per-test scratch, so parallel cases do not share one directory"
+
   - name: validate-script-loading
     permission: false
     visibility: brief

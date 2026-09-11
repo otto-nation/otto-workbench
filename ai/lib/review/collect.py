@@ -526,8 +526,12 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         log.warn(
             "Could not attribute the commits since the prior review — the delta "
             "covers every commit in the range, the base's included")
+        # The log is rebuilt without the ancestry exclusion so that it and the
+        # file list describe the same range: a log missing the base's commits
+        # beside a list naming their files reads as a contradiction.
+        _, whole_log = _delta_diff_and_log(job, prior_sha, "")
         files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
-        return DeltaScope(delta_diff, delta_log, files, 0, prior_sha)
+        return DeltaScope(delta_diff, whole_log, files, 0, prior_sha)
 
     # One path can come back from both walks — a commit editing a file, then a
     # merge resolving a conflict in it — and each consumer counts what it is

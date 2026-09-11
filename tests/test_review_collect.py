@@ -1046,6 +1046,9 @@ class TestCollectDeltaAncestry:
 
         assert delta.proven_empty is False
         assert delta.files, "a failed walk falls back to the whole range"
+        # The log describes the same range the file list does, rather than the
+        # ancestry-scoped one the walk was going to use.
+        assert "Merge main" in delta.commit_log
 
     def test_a_non_ascii_path_is_named_as_git_stores_it(self, tmp_path, capsys):
         """`core.quotePath` is not applied to `log` by the client's own default.

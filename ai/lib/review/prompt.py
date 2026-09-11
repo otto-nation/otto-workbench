@@ -170,6 +170,16 @@ class PromptBuilder:
         return self._plan.cuts if self._plan else ()
 
     @property
+    def planned_bytes(self) -> int:
+        """What the budget believed the render would cost, or 0 if never fitted.
+
+        Zero rather than None for the phases that never call `fit` — disprove
+        builds no budgeted section — so the residual against it is not recorded
+        for a prompt no ladder planned.
+        """
+        return self._plan.planned_bytes if self._plan else 0
+
+    @property
     def vars(self) -> dict[str, object]:
         return dict(self._vars)
 
@@ -255,12 +265,21 @@ class BudgetPlan:
     and which were dropped for room. `cuts` holds one `Cut` per lever the
     ladder had to pull, in the order it pulled them, and is empty on the
     ordinary path where everything fit.
+
+    `planned_bytes` is what the ladder believed the render would cost: every
+    section it measured, plus the room it handed the two it caps. The rendered
+    prompt is the same figure plus whatever the template itself contributes, so
+    a residual much larger than a template is a section rendering into the
+    prompt that no lever measured — which is how a budget silently stops
+    bounding anything. `_log_prompt_size` records the difference for that
+    reason; nothing reads it at runtime.
     """
 
     delta_section: str
     diff_bytes: int
     files: FileFit
     cuts: tuple[Cut, ...]
+    planned_bytes: int = 0
 
 
 def _fixed_preflight_bytes(pf: PreflightData | None) -> int:
@@ -268,6 +287,7 @@ def _fixed_preflight_bytes(pf: PreflightData | None) -> int:
         return 0
     return fixed_preflight_bytes(
         pf.commit_log, pf.claude_md, pf.architecture_md, pf.review_checklists,
+        pf.review_profiles,
     )
 
 
@@ -326,7 +346,11 @@ def _fit_budget(
     known_bytes = sum(
         len(str(v).encode()) for v in known_sections.values() if v is not None
     )
-    fixed = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + _fixed_preflight_bytes(job.preflight)
+    # `measured` is what the ladder can account for; `fixed` adds the flat
+    # reserve, which is held back against sections nothing measures and so is
+    # not part of what the render is expected to cost.
+    measured = known_bytes + _fixed_preflight_bytes(job.preflight)
+    fixed = NON_PREFLIGHT_OVERHEAD_BYTES + measured
     scoped = {} if skip_file_contents else _scoped_contents(job.preflight, file_filter)
     contents = _contents_bytes(scoped)
     files = FileFit(scoped, job.preflight.file_permissions if job.preflight else {}, [])
@@ -372,13 +396,19 @@ def _fit_budget(
         diff_bytes=diff_bytes,
         files=files,
         cuts=tuple(cuts),
+        planned_bytes=measured + contents + len(delta.encode()) + diff_bytes,
     )
 
 
-# Counting a 370KB prompt costs a 2.5s round trip, and a multi-phase review
-# renders a dozen of them. Nothing enforces a budget against these numbers yet;
-# they exist so the ceiling can be calibrated against real reviews rather than a
-# synthetic corpus. Off unless a run asks to pay for them.
+# On by default, because a measurement nobody takes calibrates nothing: this
+# shipped behind an opt-in and, across 1,758 recorded renders, was never once
+# switched on — every density figure the budget work has to reason about is
+# therefore inferred rather than measured. Set the variable to 0 to opt out.
+#
+# The cost is a round trip that is mostly fixed latency: measured here at 0.29s
+# for 6KB and 0.55s for 374KB, against a phase that then runs for minutes. An
+# unreachable counter is free — `count_tokens` returns None without raising —
+# so a machine with no Vertex credentials pays nothing and records nothing.
 _MEASURE_TOKENS_ENV = "WORKBENCH_AI_MEASURE_TOKENS"
 
 
@@ -400,7 +430,7 @@ def _measured_tokens(
     deliberately not distinguished here: both leave the stats record without a
     token count, which is the only thing a reader can act on.
     """
-    if os.environ.get(_MEASURE_TOKENS_ENV) != "1" or phase is None:
+    if os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0" or phase is None:
         return None
     model = agent_phases.phase_model(phase, job.model, job.config)
     counted = count_tokens(prompt, model)
@@ -410,6 +440,7 @@ def _measured_tokens(
 def _log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
     label: str = "", cuts: tuple[Cut, ...] = (), phase: Phase | None = None,
+    planned_bytes: int = 0,
 ) -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
@@ -446,6 +477,15 @@ def _log_prompt_size(
         "sections": section_sizes,
         "cuts": [asdict(c) for c in cuts],
     }
+    if planned_bytes:
+        # What the ladder planned against what actually rendered. The residual
+        # is normally the template's own text, a couple of KB; a large one means
+        # a section reaches the prompt that no lever measured, and a budget that
+        # does not measure everything it sends bounds nothing. Recorded rather
+        # than asserted because the honest threshold is a question for the data,
+        # and there is none yet.
+        stats["planned_bytes"] = planned_bytes
+        stats["residual_bytes"] = prompt_bytes - planned_bytes
     measured = _measured_tokens(prompt, job, phase)
     if measured:
         # Both the count and the model are recorded: a density is meaningless

@@ -361,7 +361,7 @@ Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `ANTHROPIC_DEFAULT_SONN
 
 #### Prompt token measurement
 
-Set `WORKBENCH_AI_MEASURE_TOKENS=1` to record each rendered prompt's exact input-token count in `prompt-stats.json`, alongside the model it was counted against and the resulting bytes-per-token. Off by default: counting a large prompt is a round trip of a second or more, and a multi-phase review renders many.
+Each rendered prompt's exact input-token count is recorded in `prompt-stats.json`, alongside the model it was counted against and the resulting bytes-per-token. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out. The count is a round trip that is mostly fixed latency — 0.29s for a 6KB prompt, 0.55s for a 374KB one — and a machine with no Vertex credentials skips it and records nothing. It is on by default because it shipped opt-in and was never once switched on, leaving every density figure inferred rather than measured.
 
 The count comes from the model's own tokenizer, so it is only meaningful against the model that will serve the request — `claude-sonnet-5` counts the same text around 27% denser than `claude-sonnet-4-5`. It needs the same Vertex configuration and application-default credentials as the quota preflight below; without them the run proceeds and records no count rather than recording a guess.
 

@@ -470,7 +470,7 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
     base_size = (
         len(diff.encode())
         + fixed_preflight_bytes(
-            commit_log, claude_md, architecture_md, review_checklists,
+            commit_log, claude_md, architecture_md, review_checklists, profiles,
         )
         + TEMPLATE_OVERHEAD_BYTES
     )

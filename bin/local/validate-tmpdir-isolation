@@ -96,9 +96,8 @@ def _strip_inline_comment(value: str) -> str:
             in_single = not in_single
         elif ch == '"' and not in_single:
             in_double = not in_double
-        elif ch == '#' and not in_single and not in_double:
-            if i == 0 or value[i - 1].isspace():
-                return value[:i]
+        elif ch == '#' and not (in_single or in_double) and (i == 0 or value[i - 1].isspace()):
+            return value[:i]
     return value
 
 
@@ -128,15 +127,15 @@ def _pin_lines(lines: list[str]) -> dict[int, bool]:
             pins[lineno] = _is_safe_value(assign.group(1), safe_vars)
             continue
         other = OTHER_ASSIGN.match(line)
-        if other:
-            var = other.group(1)
-            if _is_safe_value(other.group(2), safe_vars):
-                safe_vars.add(var)
-            else:
-                # A later reassignment to an unsafe value must revoke the
-                # earlier safety: otherwise a stale, now-unsafe var still
-                # reads as safe for the rest of the file.
-                safe_vars.discard(var)
+        if not other:
+            continue
+        if _is_safe_value(other.group(2), safe_vars):
+            safe_vars.add(other.group(1))
+            continue
+        # A later reassignment to an unsafe value must revoke the earlier
+        # safety: otherwise a stale, now-unsafe var still reads as safe for
+        # the rest of the file.
+        safe_vars.discard(other.group(1))
     return pins
 
 

@@ -115,7 +115,7 @@ def head():
 
 @pytest.fixture(autouse=True)
 def snapshots():
-    """An empty worktree before the agent and after it, unless a test says other.
+    """An empty worktree before the agent and after it, unless a test says otherwise.
 
     Autouse because every run now reads the dirty set on both sides of the
     agent, and `tmp_path` is not a repo — an unstubbed read fails, which the

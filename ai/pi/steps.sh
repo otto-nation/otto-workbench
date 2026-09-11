@@ -10,39 +10,53 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   . "$WORKBENCH_DIR/lib/ui.sh"
 fi
 
-# _pi_package_org SOURCE — prints the GitHub org owning a package source.
-# Prints nothing for a source with no GitHub org — an npm spec, a local path, or
-# a repo on another host — which the membership gate then leaves alone.
-_pi_package_org() {
+# _pi_package_repo SOURCE — prints the owner/repo a GitHub package source names.
+# Prints nothing for a source that names no GitHub repo — an npm spec, a local
+# path, or a repo on another host — which the gate then leaves alone.
+#
+# A pinned `@ref` and a trailing `.git` are both stripped: the probe addresses a
+# repo, and neither is part of its name.
+_pi_package_repo() {
   local source="$1"
-  if [[ ! "$source" =~ github\.com[:/]([^/]+)/ ]]; then
+  if [[ ! "$source" =~ github\.com[:/]([^/]+)/([^/@#]+) ]]; then
     return 0
   fi
-  printf '%s' "${BASH_REMATCH[1]}"
+  printf '%s/%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]%.git}"
 }
 
-# _pi_org_membership ORG — prints member, nonmember, or unknown.
+# _pi_repo_reachable REPO — prints reachable, unreachable, or unknown for an
+# owner/repo.
+#
+# The question the gate needs answered is whether the clone will succeed, which
+# is not the same as whether this machine belongs to the owning org. A public
+# user-owned repo has no org to belong to, and a deleted or team-restricted repo
+# inside an org this machine does belong to still cannot be cloned.
 #
 # Unknown is every answer that is not a verdict: no gh, no auth, no network, or
-# a scope the token lacks. It is distinct from nonmember because the two lead to
-# opposite actions — a sync run offline must not withdraw a package that already
-# works, and must not add one it could not verify.
-_pi_org_membership() {
-  local org="$1" out status
+# a scope the token lacks. It is distinct from unreachable because the two lead
+# to opposite actions — a sync run offline must not withdraw a package that
+# already works, and must not add one it could not verify.
+_pi_repo_reachable() {
+  local repo="$1" out status
   if ! command -v gh > /dev/null 2>&1; then
     printf 'unknown'
     return 0
   fi
 
-  out=$(gh api "user/memberships/orgs/$org" --jq '.state' 2>&1) && status=0 || status=$?
+  # No --jq: exit 0 is itself the allow signal, and repo JSON carries no field
+  # worth reading here. The body is captured only so a failure's error text can
+  # be matched, and is discarded on success.
+  out=$(gh api "repos/$repo" 2>&1) && status=0 || status=$?
 
-  # A pending invitation is not membership — the clone would still be refused.
   if [[ $status -eq 0 ]]; then
-    [[ "$out" == "active" ]] && printf 'member' || printf 'nonmember'
+    printf 'reachable'
     return 0
   fi
+  # GitHub answers 404 for a private repo this token cannot see exactly as it
+  # does for one that does not exist. Both mean the clone fails, so the gate
+  # does not need to tell them apart.
   if [[ "$out" == *"HTTP 404"* || "$out" == *"Not Found"* ]]; then
-    printf 'nonmember'
+    printf 'unreachable'
     return 0
   fi
   printf 'unknown'
@@ -51,9 +65,9 @@ _pi_org_membership() {
 # _pi_partition_packages ALLOWED_VAR BLOCKED_VAR — splits the template's packages
 # into JSON arrays of what this machine was confirmed to reach and confirmed not to.
 #
-# The shared packages are private to their org, so an entry a non-member cannot
-# clone leaves Pi retrying the clone on every startup. Packages whose org could
-# not be checked land in neither array and are left however the live file has them.
+# An entry this machine cannot clone leaves Pi retrying the clone on every
+# startup. Packages whose repo could not be probed land in neither array and are
+# left however the live file has them.
 #
 # Every local here carries the __pi_ prefix for the same reason the namerefs carry
 # __: a local sharing a name with the variable the caller named would shadow the
@@ -63,18 +77,18 @@ _pi_partition_packages() {
   local -n __allowed=$1
   local -n __blocked=$2
   local -a __pi_ok=() __pi_no=()
-  local __pi_entry __pi_source __pi_org __pi_verdict
+  local __pi_entry __pi_source __pi_repo __pi_verdict
 
   while IFS= read -r __pi_entry; do
     [[ -z "$__pi_entry" ]] && continue
     __pi_source=$(jq -r 'if type == "object" then .source else . end' <<< "$__pi_entry")
-    __pi_org=$(_pi_package_org "$__pi_source")
-    __pi_verdict=member
-    [[ -n "$__pi_org" ]] && __pi_verdict=$(_pi_org_membership "$__pi_org")
+    __pi_repo=$(_pi_package_repo "$__pi_source")
+    __pi_verdict=reachable
+    [[ -n "$__pi_repo" ]] && __pi_verdict=$(_pi_repo_reachable "$__pi_repo")
     case "$__pi_verdict" in
-      member)    __pi_ok+=("$__pi_entry") ;;
-      nonmember) __pi_no+=("$__pi_entry"); skip "Pi package $__pi_source — no active $__pi_org membership" ;;
-      *)         skip "Pi package $__pi_source — could not verify $__pi_org membership" ;;
+      reachable)   __pi_ok+=("$__pi_entry") ;;
+      unreachable) __pi_no+=("$__pi_entry"); skip "Pi package $__pi_source — cannot reach $__pi_repo" ;;
+      *)           skip "Pi package $__pi_source — could not verify $__pi_repo is reachable" ;;
     esac
   done < <(jq -c '(.packages // [])[]' "$PI_SETTINGS_SRC")
 

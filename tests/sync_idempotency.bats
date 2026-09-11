@@ -331,10 +331,10 @@ _pi_setup() {
   _source_with "$FAKE_HOME" "ai/pi/steps.sh"
   make_fake_binary "$FAKE_HOME/.local/bin" "pi"
   export PATH="$FAKE_HOME/.local/bin:$PATH"
-  # The org-membership verdict is the one thing here that would reach the
+  # The package reachability verdict is the one thing here that would reach the
   # network. pi_settings.bats owns the verdict's own behaviour; this file is
   # about running the sync twice, so the answer is pinned.
-  _pi_org_membership() { printf 'member'; }
+  _pi_repo_reachable() { printf 'reachable'; }
   mkdir -p "$CLAUDE_RULES_DIR"
   printf -- 'GENERAL RULE BODY\n' > "$CLAUDE_RULES_DIR/general.md"
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for step_pi_settings in ai/pi/steps.sh — merging the workbench's managed
-# keys into Pi's live global settings, with the shared package gated on the
-# machine's membership of the org that hosts it.
+# keys into Pi's live global settings, with each package gated on whether this
+# machine can reach the repo it names.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -14,7 +14,8 @@ setup() {
   BIN="$TMPDIR/bin"
   mkdir -p "$BIN"
   ORG="usemaximum"
-  PKG="git:github.com/$ORG/pi-extensions"
+  REPO="$ORG/pi-extensions"
+  PKG="git:github.com/$REPO"
   _write_template "$(jq -nc --arg p "$PKG" '[$p]')"
 }
 
@@ -103,7 +104,7 @@ _live() {
 }
 
 @test "writes to the agent path Pi actually reads" {
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -112,7 +113,7 @@ _live() {
 }
 
 @test "seeds the managed defaults into a machine that has none" {
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -124,7 +125,7 @@ _live() {
   # The workbench is authoritative — template values always win over whatever
   # an extension or `pi config` set.
   _write_live '{"defaultModel": "claude-sonnet-5"}'
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -132,8 +133,8 @@ _live() {
   [ "$(_live '.defaultProvider')" = "google-vertex-claude" ]
 }
 
-@test "declares the shared package for a member of its org" {
-  _stub_gh 'echo active'
+@test "declares the shared package when its repo answers" {
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -142,7 +143,7 @@ _live() {
 
 @test "keeps a package the operator installed themselves" {
   _write_live_packages "npm:pi-thing"
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -152,7 +153,7 @@ _live() {
 
 @test "a pinned ref of the same package is left as the operator pinned it" {
   _write_live_packages "$PKG@v2"
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -162,7 +163,7 @@ _live() {
 
 @test "an object-form entry carrying filters is not duplicated by the plain source" {
   _write_live "$(jq -nc --arg p "$PKG" '{packages: [{source: $p, tools: ["web_fetch"]}]}')"
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -170,27 +171,44 @@ _live() {
   [ "$(_live '.packages[0].tools[0]')" = "web_fetch" ]
 }
 
-@test "withdraws the package when the org refuses the membership lookup" {
-  # A non-member cannot clone a private repo, so leaving the entry in place
-  # buys a failing clone on every Pi startup.
+@test "declares a public package owned by a user account" {
+  # No org to be a member of. The gate asks whether the repo answers, so a
+  # personal account's public repo installs like any other.
+  _write_template '["git:github.com/obra/superpowers@v6.3.0"]'
+  _stub_gh 'echo "{}"'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.packages[0]')" = "git:github.com/obra/superpowers@v6.3.0" ]
+}
+
+@test "the probe addresses the repo, not the owner" {
+  # A pinned @ref is not part of the repo's name, and probing the owner alone
+  # is the membership proxy this gate replaced.
+  _write_template '["git:github.com/obra/superpowers@v6.3.0"]'
+  # The heredoc in _stub_gh expands at write time, so the args path is baked in
+  # and only \$* is left for the stub itself to expand.
+  _stub_gh "echo \"\$*\" > '$TMPDIR/gh-args'; echo '{}'"
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMPDIR/gh-args")" = "api repos/obra/superpowers" ]
+}
+
+@test "withdraws the package when the repo cannot be reached" {
+  # A repo this token cannot see — deleted, renamed, private, or restricted —
+  # cannot be cloned, so leaving the entry in place buys a failing clone on
+  # every Pi startup.
   _write_live_packages "$PKG"
   _stub_gh 'echo "gh: Not Found (HTTP 404)" >&2; exit 1'
 
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.packages | length')" = "0" ]
-  [[ "$output" == *"no active $ORG membership"* ]]
+  [[ "$output" == *"cannot reach $REPO"* ]]
 }
 
-@test "a pending invitation is not membership" {
-  _stub_gh 'echo pending'
-
-  run _run_step
-  [ "$status" -eq 0 ]
-  [ "$(_live '.packages | length')" = "0" ]
-}
-
-@test "an unverifiable membership leaves a working package alone" {
+@test "an unverifiable repo leaves a working package alone" {
   # A sync run offline must not withdraw what already works.
   _write_live_packages "$PKG"
   _stub_gh 'echo "dial tcp: lookup api.github.com: no such host" >&2; exit 1'
@@ -198,10 +216,22 @@ _live() {
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.packages[0]')" = "$PKG" ]
-  [[ "$output" == *"could not verify $ORG membership"* ]]
+  [[ "$output" == *"could not verify $REPO is reachable"* ]]
 }
 
-@test "an unverifiable membership does not install the package either" {
+@test "a token with no credentials reaches no verdict" {
+  # 401 is not a 404: the repo may well exist and be reachable once the token
+  # is fixed, so this must not withdraw the package.
+  _write_live_packages "$PKG"
+  _stub_gh 'echo "gh: Bad credentials (HTTP 401)" >&2; exit 1'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.packages[0]')" = "$PKG" ]
+  [[ "$output" == *"could not verify $REPO is reachable"* ]]
+}
+
+@test "an unverifiable repo does not install the package either" {
   _stub_gh 'echo "dial tcp: lookup api.github.com: no such host" >&2; exit 1'
 
   run _run_step
@@ -214,10 +244,10 @@ _live() {
 
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"could not verify $ORG membership"* ]]
+  [[ "$output" == *"could not verify $REPO is reachable"* ]]
 }
 
-@test "a package with no GitHub org is not gated on membership" {
+@test "a package naming no GitHub repo is not gated at all" {
   _write_template '["npm:pi-thing"]'
   _hide_gh
 
@@ -227,12 +257,12 @@ _live() {
 }
 
 @test "a package the template no longer declares is left where it is" {
-  # Withdrawal is a membership verdict, not a diff against the template: nothing
-  # here can tell a dropped template entry from one the operator installed.
-  # Removing a package the workbench once installed is a migration's job.
+  # Withdrawal is a reachability verdict, not a diff against the template:
+  # nothing here can tell a dropped template entry from one the operator
+  # installed. Removing a package the workbench once installed is a migration's job.
   _write_live_packages "$PKG"
   _write_template '[]'
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -248,7 +278,7 @@ _live() {
 }
 
 @test "a second run changes nothing" {
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -292,7 +322,7 @@ _teardown_env_local() {
     "export AI_OPUS_MODEL='claude-opus-5'" \
     "export AI_SONNET_MODEL='claude-sonnet-5'" \
     "export AI_HAIKU_MODEL='claude-haiku-4-5@20251001'"
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -306,7 +336,7 @@ _teardown_env_local() {
 
 @test "partial env — only AI_MODEL set builds a one-entry enabledModels" {
   _seed_env_local 'export AI_MODEL=claude-opus-5'
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -318,7 +348,7 @@ _teardown_env_local() {
 
 @test "no AI_MODEL leaves model keys to whatever the template or live file had" {
   _seed_env_local '# nothing set'
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -330,7 +360,7 @@ _teardown_env_local() {
 @test "env-derived models override stale live values" {
   _seed_env_local 'export AI_MODEL=claude-opus-5'
   _write_live '{"defaultModel": "claude-opus-4-6", "enabledModels": ["google-vertex-claude/claude-opus-4-6"]}'
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -347,7 +377,7 @@ _teardown_env_local() {
     'export AI_MODEL=claude-opus-5' \
     "export AI_OPUS_MODEL='claude-sonnet-5'" \
     "export AI_SONNET_MODEL='claude-sonnet-5'"
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -389,7 +419,7 @@ _teardown_registry_tree() {
   _seed_env_local \
     'export AI_MODEL=claude-opus-5' \
     "export AI_FAST_MODEL='claude-fast-1'"
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -410,7 +440,7 @@ _teardown_registry_tree() {
   _seed_env_local \
     'export AI_MODEL=claude-opus-5' \
     'export GOOGLE_CLOUD_PROJECT=some-gcp-project'
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
@@ -424,7 +454,7 @@ _teardown_registry_tree() {
   _seed_registry_tree '  - var: AI_OPUS_MODEL
     role: model-tier'
   _seed_env_local "export AI_OPUS_MODEL='claude-opus-5'"
-  _stub_gh 'echo active'
+  _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]

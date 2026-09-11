@@ -55,40 +55,48 @@ normal repo:
 git rev-parse --show-superproject-working-tree 2>/dev/null
 ```
 
-A linked worktree is not by itself isolation on this machine. Bare repos here
-keep the default branch in a linked worktree of its own — `main/` is a peer of
-the feature worktrees, not a primary checkout — so `GIT_DIR != GIT_COMMON` is
-true while you stand on `main`. Ask which branch the container itself names:
+Take the three cases in this order. The `DEFAULT` question below is only
+meaningful inside a linked worktree, so it must not be reached before that is
+established.
+
+**If either path is empty**, `git rev-parse` failed — you are outside a
+repository, or the directory is not readable. Two empty strings compare equal,
+so this would otherwise read as "normal checkout" when the truth is that nothing
+could be determined. Say so and stop rather than creating a worktree from an
+unknown location.
+
+**If `GIT_DIR == GIT_COMMON`:** you are in the primary checkout of a normal
+non-bare clone, whatever branch it has out. Go to Step 1.
+
+Otherwise you are in a linked worktree — but that is not by itself isolation on
+this machine. Bare repos here keep the default branch in a linked worktree of
+its own, so `main/` is a peer of the feature worktrees rather than a primary
+checkout, and `GIT_DIR != GIT_COMMON` is true while you stand on `main`. Ask
+which branch the container itself names:
 
 ```bash
 DEFAULT=$(git --git-dir="$GIT_COMMON" symbolic-ref --quiet HEAD 2>/dev/null | sed 's|^refs/heads/||')
 ```
 
-An empty `DEFAULT` is a real answer, not a failure to handle: a repo whose HEAD
-is detached has no default branch to stand on, so no branch can equal it and
-every comparison below falls through to Step 1 — the safe direction, since it
-cuts a worktree rather than assuming isolation.
-
-**If `GIT_DIR != GIT_COMMON`, not a submodule, and `BRANCH` differs from
-`DEFAULT`:** you are in a feature worktree. Skip to Step 2. Do not create
-another.
-
-Report with branch state:
-- On a branch: "Already in isolated workspace at `<path>` on branch `<name>`."
-- Detached HEAD: "Already in isolated workspace at `<path>` (detached HEAD,
-  externally managed). Branch creation needed at finish time."
+Ask it only here. In a non-bare clone `--git-dir` HEAD is whatever branch is
+checked out, so `DEFAULT` would equal `BRANCH` on every branch and the answer
+would be a tautology rather than the repo's default. The `GIT_DIR == GIT_COMMON`
+case above has already taken those repos out of the running.
 
 **If `BRANCH` equals `DEFAULT`:** you are standing in the default branch's own
 worktree, which is the one place these rules forbid writing. Go to Step 1 and
 cut a worktree, however much the paths look isolated.
 
-**If `GIT_DIR == GIT_COMMON`:** you are in the primary checkout of a normal
-non-bare clone. Go to Step 1.
+**Otherwise** — a linked worktree, not a submodule, on a branch that is not the
+container's default — you are in a feature worktree. Skip to Step 2. Do not
+create another.
 
-**If either is empty**, `git rev-parse` failed — you are outside a repository,
-or the directory is not readable. Two empty strings compare equal, so this
-reads as "normal checkout" when the truth is that nothing could be determined.
-Say so and stop rather than creating a worktree from an unknown location.
+Report with branch state:
+- On a branch: "Already in isolated workspace at `<path>` on branch `<name>`."
+- Detached HEAD: "Already in isolated workspace at `<path>` (detached HEAD,
+  externally managed). Branch creation needed at finish time." An empty
+  `DEFAULT` cannot equal a branch name, so a detached container HEAD falls here
+  rather than into the case above.
 
 ## Step 1: Create the Worktree with `wt`
 

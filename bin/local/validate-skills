@@ -318,12 +318,6 @@ if [[ -f "$CLAUDE_MD" && -f "$PI_AGENTS_HEAD" ]]; then
   fi
 fi
 
-# Summary
-echo
-if (( FOUND == 0 )); then
-  echo -e "  ${DIM}no skill directories found${NC}"
-fi
-
 # A skill that teaches a command the rules also pin is a second copy of that
 # command, and the copy is the one that goes stale: a flag change lands in the
 # rule file, and the skill keeps teaching the old invocation with nothing to
@@ -366,6 +360,12 @@ if [[ -f "$GIT_OPS_RULE" ]]; then
     [[ -f "$skill_file" ]] || continue
     _check_pr_create_drift "$skill_file" "skills/$(basename "$(dirname "$skill_file")")" "$rule_pr_lines"
   done
+fi
+
+# Summary
+echo
+if (( FOUND == 0 )); then
+  echo -e "  ${DIM}no skill directories found${NC}"
 fi
 
 # FOUND == 0 no longer implies a clean run: the agent-coverage loop above can

@@ -116,7 +116,7 @@ Report the PR URL.
 
 On a detached HEAD there is no branch for `task pr:create` to push — it reads
 `git branch --show-current`, which is empty, and fails obscurely downstream. Cut
-the branch first with `git switch -c <username>/<ISSUE-or-type>/<description>`,
+the branch first with `git switch -c <username>/<ISSUE-or-type>/<description_in_snake_case>`,
 then open the PR.
 
 **If your human partner names a different next step** — "merge this", "push it",

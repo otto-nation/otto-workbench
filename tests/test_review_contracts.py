@@ -48,6 +48,7 @@ from gh.types import PRContext, PRMetadata  # noqa: E402
 from pr import ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
+from pr.thread_models import ReplyOutcome  # noqa: E402
 from review.budget import MAX_PROMPT_BYTES  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
 
@@ -600,7 +601,7 @@ def _render_fix_comments(rt, wt_path) -> str:
     adapter = rt.CommentFixAdapter(
         rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
         fixable=[], fixable_items=[], needs_human=[], dismissed=[],
-        already_addressed=[], resolved=[], triage_replies=0,
+        already_addressed=[], replies=ReplyOutcome(),
         has_unaccounted=False, has_items=False,
     )
     # The default-branch checkout is a fetch and a reset against a second

@@ -181,6 +181,38 @@ class ClassificationResult:
 # ── Fix tracking types ────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class ReplyOutcome:
+    """What a round's replies did: how many went out, and what they resolved.
+
+    The two travel together because they are saved together. `persist` applies
+    the resolution delta in the same write that records the reply count, and
+    the comment tally on disk was snapshotted before the pass ran — so a delta
+    that arrives in a second save is a delta the tally never sees.
+
+    They were a pair of loose locals accumulated across two phases, which is a
+    tuple with the parentheses left off: triage replies to the dismissed and
+    the already-addressed, then the pass replies to what it fixed, and both
+    halves have to reach one `persist` call. A value that adds to another is
+    how the second phase extends the first without either knowing the shape of
+    the sum.
+
+    `resolved` names the bucket each thread came from rather than the thread,
+    because that is what the tally moves between — see
+    `CommentsSummary.move_to_resolved`.
+    """
+
+    posted: int = 0
+    resolved: tuple[ThreadState, ...] = ()
+
+    def plus(self, other: "ReplyOutcome") -> "ReplyOutcome":
+        """This round's replies, extended by a later phase's."""
+        return ReplyOutcome(
+            posted=self.posted + other.posted,
+            resolved=(*self.resolved, *other.resolved),
+        )
+
+
 # What a verdict means when the agent ticked its box without saying why. FIXED
 # is absent deliberately: the change itself is the reason, and an entry that
 # needs no explanation should carry whatever triage already put on it.

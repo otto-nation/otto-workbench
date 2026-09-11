@@ -59,8 +59,8 @@ from pr.fix import (
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
-    CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
-    TriageStats, triage_result_from_dict,
+    CommentItem, PRReport, ReplyOutcome, ReportThread, TrackingResult,
+    TriageResult, TriageStats, triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
@@ -939,7 +939,7 @@ def _fix_adapter(rt, wt_path, **overrides):
     )
     kwargs = dict(
         fixable=[], fixable_items=[], needs_human=[], dismissed=[],
-        already_addressed=[], resolved=[], triage_replies=0,
+        already_addressed=[], replies=ReplyOutcome(),
         has_unaccounted=False, has_items=False,
     )
     kwargs.update(overrides)

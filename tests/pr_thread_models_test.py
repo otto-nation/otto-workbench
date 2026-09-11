@@ -23,7 +23,10 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
-from pr.thread_models import CommentItem, TrackingResult  # noqa: E402
+from pr.comments_state import ThreadState  # noqa: E402
+from pr.thread_models import (  # noqa: E402
+    CommentItem, ReplyOutcome, TrackingResult,
+)
 
 
 def _entry(eid, **kw):
@@ -118,3 +121,44 @@ class TestFromOutcomesFillsTheUnstatedReason:
         source = _entry("t1")
         TrackingResult.from_outcomes([_recorded("t1", FixOutcome.DEFERRED)], [source])
         assert source.reason == ""
+
+
+class TestReplyOutcomeAccumulates:
+    """The two halves of a round's replies reach one save as one value.
+
+    Triage replies to the dismissed and the already-addressed before the agent
+    runs; the pass replies to what it fixed after. Both halves have to arrive
+    at the same `persist` call, because the comment tally on disk was
+    snapshotted before either ran and learns of the resolutions only from the
+    delta. Carried as two loose locals, a phase that forgot to add one of them
+    in silently dropped its resolutions from `pr status`.
+    """
+
+    def test_an_empty_outcome_says_nothing_happened(self):
+        empty = ReplyOutcome()
+        assert empty.posted == 0
+        assert empty.resolved == ()
+
+    def test_the_counts_add(self):
+        total = ReplyOutcome(posted=2).plus(ReplyOutcome(posted=3))
+        assert total.posted == 5
+
+    def test_the_resolutions_concatenate_in_order(self):
+        """The bucket each thread came from, first phase's before the second's."""
+        total = ReplyOutcome(resolved=(ThreadState.NEW,)).plus(
+            ReplyOutcome(resolved=(ThreadState.ADDRESSED, ThreadState.NEW)))
+        assert total.resolved == (
+            ThreadState.NEW, ThreadState.ADDRESSED, ThreadState.NEW)
+
+    def test_adding_an_empty_outcome_changes_nothing(self):
+        """The phase that replied to nothing still adds its outcome in."""
+        one = ReplyOutcome(posted=2, resolved=(ThreadState.NEW,))
+        assert one.plus(ReplyOutcome()) == one
+
+    def test_neither_side_is_mutated(self):
+        """Frozen, so a phase cannot lose its own half to the sum."""
+        first = ReplyOutcome(posted=1, resolved=(ThreadState.NEW,))
+        second = ReplyOutcome(posted=1, resolved=(ThreadState.ADDRESSED,))
+        first.plus(second)
+        assert first.posted == 1 and first.resolved == (ThreadState.NEW,)
+        assert second.posted == 1 and second.resolved == (ThreadState.ADDRESSED,)

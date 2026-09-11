@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from core import log
@@ -367,6 +368,79 @@ def post_or_defer_summary(
 
     log.info("Deferred fix summary — will render from state on --finish")
     return None
+
+
+@dataclass(frozen=True)
+class SummaryOutcome:
+    """What became of one round's summary: where it went, and whether it is owed.
+
+    The two questions are separate and the answer that matters is neither of
+    them alone. `url` is where the comment landed, or None for a draft, a
+    refusal, or a render the round declined to attempt. `owed` is whether local
+    state still has something to say, which `summary_still_owed` decides from
+    the round rather than from what went out.
+
+    `deferred` is their conjunction, and it exists here because it was written
+    out at four call sites that all had to agree — two building a `FixSummary`
+    and two building a `CommentFixResult`. A round whose post succeeded owes
+    nothing further; a round that printed its table to stderr, or whose post
+    the API refused, is owed and `--finish` re-renders it. Spelled at each site
+    instead, the pair drifts, and the drift is silent: the state file says the
+    summary went out and the published comment holds the previous round's rows.
+    """
+
+    url: str | None
+    owed: bool
+
+    @property
+    def deferred(self) -> bool:
+        """Whether `--finish` still has this round's table to render."""
+        return self.url is None and self.owed
+
+    @property
+    def recorded_url(self) -> str:
+        """The url as the state file spells it — empty rather than None.
+
+        `FixSummary.summary_url` is cycle-scoped and merges by truthiness, so an
+        empty string reads as "this round posted nothing" and leaves the live
+        comment's url standing. None would not survive the round trip.
+        """
+        return self.url or ""
+
+
+def publish(
+    content: summary_model.RoundContent,
+    cp: attribution.CommitPushResult,
+    repo: str,
+    pr_number: int,
+    threads_by_id: dict[str, ReportThread],
+    report: PRReport,
+    *,
+    has_comment_items: bool,
+    has_unaccounted: bool,
+    head_sha: str,
+    wt_path: Path | None = None,
+) -> SummaryOutcome:
+    """Render this round's summary and say what is still owed after it.
+
+    The two halves asked together, because they are two readings of one round
+    and the caller needs both. Asked apart, a caller can pair a post with the
+    wrong round's debt — which is the shape the four hand-written conjunctions
+    this replaces were one edit away from.
+
+    The debt is computed before the post rather than after: it is a question
+    about what this round has to say, not about whether saying it worked, and
+    `SummaryOutcome.deferred` is where the two meet.
+    """
+    owed = summary_still_owed(content, cp.status, has_unaccounted)
+    url = post_or_defer_summary(
+        content, cp, repo, pr_number, threads_by_id,
+        has_comment_items=has_comment_items,
+        head_sha=head_sha,
+        activity_at=newest_reviewer_activity(report),
+        wt_path=wt_path,
+    )
+    return SummaryOutcome(url, owed)
 
 
 def render_deferred_summary(

@@ -54,6 +54,7 @@ from pr.thread_models import (
     CommentFixResult,
     CommentItem,
     PRReport,
+    ReplyOutcome,
     ReportThread,
     TrackingResult,
     TriageResult,
@@ -869,6 +870,36 @@ def _hold_while_contested(
         )
 
 
+def _settle_fixed(
+    fixed: list[CommentItem],
+    threads_by_id: dict[str, ReportThread],
+    repo: str,
+    pr_number: int,
+    cp: attribution.CommitPushResult,
+    wt_path: Path,
+) -> ReplyOutcome:
+    """Tell the reviewers what landed, and close the threads it landed on.
+
+    The two acts are one decision and the gate is theirs rather than the
+    caller's: both assert to a reviewer that the fix is on the branch, which is
+    only true once the commit is on the remote. A pass that committed locally
+    and could not push has fixed the code and told nobody, which is the outcome
+    the gate exists to produce — the replies and the resolutions wait for
+    `--finish --post`.
+
+    Nothing fixed, or a commit that did not reach the remote, is an empty
+    outcome rather than a skipped call, so the caller adds it either way.
+    """
+    if not fixed or cp.status != CommitStatus.PUSHED:
+        return ReplyOutcome()
+    return ReplyOutcome(
+        posted=thread_replies.reply_to_fixed(
+            fixed, threads_by_id, repo, pr_number, cp, wt_path,
+        ),
+        resolved=tuple(settlement.resolve_fixed_threads(fixed, threads_by_id)),
+    )
+
+
 def _triage_replies_drafted(
     already_addressed: list[CommentItem], dismissed: list[CommentItem],
 ) -> bool:
@@ -912,8 +943,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         needs_human: list[CommentItem],
         dismissed: list[CommentItem],
         already_addressed: list[CommentItem],
-        resolved: list[ThreadState],
-        triage_replies: int,
+        replies: ReplyOutcome,
         has_unaccounted: bool,
         has_items: bool,
         trail: Trail | None = None,
@@ -937,8 +967,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         self.needs_human = needs_human
         self.dismissed = dismissed
         self.already_addressed = already_addressed
-        self.resolved = resolved
-        self.triage_replies = triage_replies
+        self.replies = replies
         self.has_unaccounted = has_unaccounted
         self.has_items = has_items
         # `record` builds this and `_run_comment_fix` returns it.
@@ -1020,14 +1049,10 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         all_fixed = tracking.both(FixOutcome.FIXED)
         attribution.stamp_pass_commit(all_fixed, cp.sha or "")
 
-        replies_posted = self.triage_replies
-        resolved = list(self.resolved)
-        if fixed_threads and cp.status == CommitStatus.PUSHED:
-            replies_posted += thread_replies.reply_to_fixed(
-                fixed_threads, self.threads_by_id, self.repo,
-                self.report.pr_number, cp, self.workdir,
-            )
-            resolved += settlement.resolve_fixed_threads(fixed_threads, self.threads_by_id)
+        replies = self.replies.plus(_settle_fixed(
+            fixed_threads, self.threads_by_id, self.repo,
+            self.report.pr_number, cp, self.workdir,
+        ))
 
         all_deferred = tracking.both(FixOutcome.DEFERRED)
         # Two verdicts the agent reached and one triage did. They part company
@@ -1059,15 +1084,12 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             review_body_comments=self.report.review_body_comments,
         )
 
-        pending_deferred = summary_publish.summary_still_owed(
-            content, cp.status, self.has_unaccounted,
-        )
-
-        summary_url = summary_publish.post_or_defer_summary(
+        summary = summary_publish.publish(
             content, cp, self.repo, self.report.pr_number, self.threads_by_id,
+            self.report,
             has_comment_items=self.has_items,
+            has_unaccounted=self.has_unaccounted,
             head_sha=cp.sha or self.ctx.head_sha,
-            activity_at=summary_publish.newest_reviewer_activity(self.report),
             wt_path=self.workdir,
         )
 
@@ -1082,17 +1104,17 @@ class CommentFixAdapter(fix_engine.FixAdapter):
                 head_sha=git_client.head_sha(short=True, cwd=self.workdir),
             ),
             reviewers=_reviewers_for(by_outcome),
-            replies_posted=replies_posted,
+            replies_posted=replies.posted,
             replies_pending=(
                 bool(fixed_threads) and not publishing.enabled()
                 or _triage_replies_drafted(self.already_addressed, self.dismissed)
             ),
             pr_body_pending=pr_body_pending,
-            summary_url=summary_url or "",
-            summary_deferred=summary_url is None and pending_deferred,
+            summary_url=summary.recorded_url,
+            summary_deferred=summary.deferred,
             has_comment_items=self.has_items,
             updated_at=pr_state.now_iso(),
-        ), self.workdir, self.ctx, self.trail, resolved=resolved)
+        ), self.workdir, self.ctx, self.trail, resolved=list(replies.resolved))
 
         # Read off the content rather than rebuilt beside it: these five fields
         # are the round's buckets flattened for the stdout JSON, whose shape
@@ -1106,9 +1128,9 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             deferred=content.of(FixOutcome.DEFERRED),
             commit_sha=cp.sha,
             commit_status=cp.status,
-            replies_posted=replies_posted,
-            summary_url=summary_url,
-            summary_deferred=summary_url is None and pending_deferred,
+            replies_posted=replies.posted,
+            summary_url=summary.url,
+            summary_deferred=summary.deferred,
             max_turns=run.max_turns,
             max_budget=run.max_budget,
             batches=run.batches,
@@ -1175,18 +1197,19 @@ def _run_comment_fix(
     # Both return paths hand this to _persist_fix_state: the tally on disk was
     # written before this function ran, so it learns of these resolutions only
     # from the delta.
-    resolved: list[ThreadState] = []
-
-    triage_replies = 0
+    replies = ReplyOutcome()
     if dismissed:
-        triage_replies += thread_replies.post_dismissed_replies(
+        replies = replies.plus(ReplyOutcome(posted=thread_replies.post_dismissed_replies(
             dismissed, threads_by_id, ctx.repo, report.pr_number, wt_path,
-        )
+        )))
     if all_addressed:
-        triage_replies += thread_replies.post_already_addressed_replies(
-            all_addressed, threads_by_id, ctx.repo, report.pr_number, wt_path,
-        )
-        resolved += settlement.resolve_fixed_threads(all_addressed, threads_by_id)
+        replies = replies.plus(ReplyOutcome(
+            posted=thread_replies.post_already_addressed_replies(
+                all_addressed, threads_by_id, ctx.repo, report.pr_number, wt_path,
+            ),
+            resolved=tuple(settlement.resolve_fixed_threads(
+                all_addressed, threads_by_id)),
+        ))
 
     all_fixable = bool(fixable) or bool(fixable_items)
     has_items = (
@@ -1197,7 +1220,7 @@ def _run_comment_fix(
     empty_result = CommentFixResult(
         needs_human=all_needs_human, dismissed=all_dismissed,
         already_addressed=all_addressed,
-        commit_status=CommitStatus.NO_CHANGES, replies_posted=triage_replies,
+        commit_status=CommitStatus.NO_CHANGES, replies_posted=replies.posted,
     )
 
     if not all_fixable:
@@ -1221,29 +1244,26 @@ def _run_comment_fix(
             issue_comments=report.issue_comments,
             review_body_comments=report.review_body_comments,
         )
-        early_deferred = summary_publish.summary_still_owed(
-            content, no_commit.status, has_unaccounted,
-        )
-        # Asked of `post_or_defer_summary` alone, exactly as the pass that
-        # commits asks it. Two guards used to stand in front of this call and
-        # neither belonged to it. `content.has_content` is already
-        # `post_fix_summary`'s own first question, so the round with nothing to
-        # say returned None through it either way. And `has_unaccounted` left
-        # the previous round's table standing as the newest thing on the PR:
-        # the summary is one marker comment edited in place, so declining to
-        # render is not silence but a stale table, while the rows this round
-        # does hold are true. `summary_still_owed` is True either way, so
-        # `--finish` re-renders regardless — the choice was between an interim
-        # truth now and nothing until a closeout that may not come.
-        summary_url = summary_publish.post_or_defer_summary(
-            content, no_commit, ctx.repo, report.pr_number, threads_by_id,
+        # Asked exactly as the pass that commits asks it. Two guards used to
+        # stand in front of this call and neither belonged to it.
+        # `content.has_content` is already `post_fix_summary`'s own first
+        # question, so the round with nothing to say returned None through it
+        # either way. And `has_unaccounted` left the previous round's table
+        # standing as the newest thing on the PR: the summary is one marker
+        # comment edited in place, so declining to render is not silence but a
+        # stale table, while the rows this round does hold are true.
+        # `summary_still_owed` is True either way, so `--finish` re-renders
+        # regardless — the choice was between an interim truth now and nothing
+        # until a closeout that may not come.
+        summary = summary_publish.publish(
+            content, no_commit, ctx.repo, report.pr_number, threads_by_id, report,
             has_comment_items=has_items,
+            has_unaccounted=has_unaccounted,
             head_sha=ctx.head_sha,
-            activity_at=summary_publish.newest_reviewer_activity(report),
             wt_path=wt_path,
         )
-        empty_result.summary_url = summary_url
-        empty_result.summary_deferred = summary_url is None and early_deferred
+        empty_result.summary_url = summary.url
+        empty_result.summary_deferred = summary.deferred
         _persist_fix_state(pr_comments_fix.FixSummary(
             fix=_build_fix_record(
                 by_outcome,
@@ -1251,13 +1271,13 @@ def _run_comment_fix(
                 head_sha=git_client.head_sha(short=True, cwd=wt_path),
             ),
             reviewers=_reviewers_for(by_outcome),
-            replies_posted=triage_replies,
+            replies_posted=replies.posted,
             replies_pending=_triage_replies_drafted(all_addressed, all_dismissed),
-            summary_url=summary_url or "",
-            summary_deferred=summary_url is None and early_deferred,
+            summary_url=summary.recorded_url,
+            summary_deferred=summary.deferred,
             has_comment_items=has_items,
             updated_at=pr_state.now_iso(),
-        ), wt_path, ctx, trail, resolved=resolved)
+        ), wt_path, ctx, trail, resolved=list(replies.resolved))
         return empty_result
 
     adapter = CommentFixAdapter(
@@ -1267,8 +1287,7 @@ def _run_comment_fix(
         needs_human=all_needs_human,
         dismissed=all_dismissed,
         already_addressed=all_addressed,
-        resolved=resolved,
-        triage_replies=triage_replies,
+        replies=replies,
         has_unaccounted=has_unaccounted,
         has_items=has_items,
         trail=trail,

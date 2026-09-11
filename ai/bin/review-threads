@@ -165,51 +165,6 @@ def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
     return main_wt
 
 
-# What a verdict means when the agent ticked its box without saying why. FIXED
-# is absent deliberately: the change itself is the reason, and an entry that
-# needs no explanation should carry whatever triage already put on it.
-_UNSTATED_REASON = {
-    FixOutcome.DEFERRED: "agent could not auto-fix",
-    FixOutcome.NEEDS_HUMAN: "agent could not auto-fix",
-    FixOutcome.DECLINED: "agent declined without giving a reason",
-}
-
-
-
-def _parse_tracking_results(
-    outcomes: list[ItemOutcome], fixable: list[CommentItem],
-    fixable_items: list[CommentItem] | None = None,
-) -> TrackingResult:
-    """Sort the agent's recorded outcomes back onto the entries they belong to.
-
-    Reading the file is `fix_engine`'s job; what this adds is the domain's own
-    entries. An outcome carries an id and a verdict, while the reviewer, the
-    summary and the conversation behind that id live on the `CommentItem` the
-    pass started from — so the outcome selects the bucket and the entry is what
-    goes in it.
-
-    An id the pass did not hand over is skipped. The file the outcomes were read
-    from is agent-editable, and a section that names no thread is a section with
-    no reviewer to reply to.
-    """
-    fixable_by_id = {t.id: t for t in fixable}
-    items_by_id = {it.id: it for it in (fixable_items or [])}
-    result = TrackingResult()
-
-    for recorded in outcomes:
-        source = fixable_by_id.get(recorded.id) or items_by_id.get(recorded.id)
-        if not source:
-            continue
-        reason = recorded.reason or _UNSTATED_REASON.get(recorded.outcome, "")
-        result.add(
-            recorded.outcome,
-            dataclasses.replace(source, reason=reason or source.reason),
-            item=recorded.id in items_by_id,
-        )
-
-    return result
-
-
 _NO_ISSUE = CreatedIssue()
 
 
@@ -1053,7 +1008,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         of them actually went out.
         """
         cp = attribution.pass_commit(self.workdir, run.landed)
-        tracking = _parse_tracking_results(
+        tracking = TrackingResult.from_outcomes(
             run.outcomes, self.fixable, fixable_items=self.fixable_items,
         )
 

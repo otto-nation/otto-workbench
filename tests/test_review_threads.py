@@ -59,7 +59,7 @@ from pr.fix import (
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
-    CommentItem, PRReport, ReportThread, TriageResult,
+    CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
     TriageStats, triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS
@@ -8143,7 +8143,7 @@ class TestCommentTrackingRoundTrip:
         ))
 
     def _parsed(self, rt, path, threads, comment_items=()):
-        return rt._parse_tracking_results(
+        return TrackingResult.from_outcomes(
             fix_tracking.parse(path), list(threads),
             fixable_items=list(comment_items),
         )
@@ -8205,27 +8205,27 @@ class TestCommentTrackingRoundTrip:
 
 
 class TestMergeTracking:
-    def test_batch_results_accumulate(self, rt):
-        total = rt.TrackingResult(
+    def test_batch_results_accumulate(self):
+        total = TrackingResult(
             threads={FixOutcome.FIXED: ["a"]}, items={FixOutcome.DEFERRED: ["z"]},
         )
-        total.merge(rt.TrackingResult(
+        total.merge(TrackingResult(
             threads={FixOutcome.FIXED: ["b"], FixOutcome.DEFERRED: ["c"]},
         ))
         assert total.bucket(FixOutcome.FIXED) == ["a", "b"]
         assert total.bucket(FixOutcome.DEFERRED) == ["c"]
         assert total.bucket(FixOutcome.DEFERRED, item=True) == ["z"]
 
-    def test_a_merge_does_not_alias_the_source_s_lists(self, rt):
+    def test_a_merge_does_not_alias_the_source_s_lists(self):
         """A batch merged into an empty total must not hand over its own list."""
-        batch = rt.TrackingResult(threads={FixOutcome.FIXED: ["a"]})
-        total = rt.TrackingResult()
+        batch = TrackingResult(threads={FixOutcome.FIXED: ["a"]})
+        total = TrackingResult()
         total.merge(batch)
         total.add(FixOutcome.FIXED, "b")
         assert batch.bucket(FixOutcome.FIXED) == ["a"]
 
-    def test_dropping_an_outcome_forgets_threads_and_items_alike(self, rt):
-        total = rt.TrackingResult(
+    def test_dropping_an_outcome_forgets_threads_and_items_alike(self):
+        total = TrackingResult(
             threads={FixOutcome.DEFERRED: ["a"], FixOutcome.FIXED: ["k"]},
             items={FixOutcome.DEFERRED: ["z"]},
         )

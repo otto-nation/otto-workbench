@@ -66,12 +66,9 @@ from git.land import CommitStatus  # noqa: E402
 from pr import attribution  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
-from pr import summary_model
-from pr import summary_row
-from pr import summary_publish
-from pr import summary_render
-from pr import summary_rounds
-from pr import summary_scope  # noqa: E402
+from pr import summary_model  # noqa: E402
+from pr import summary_render  # noqa: E402
+from pr import summary_rounds  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN_FULL = FIXTURES / "summary_body_full.md"

@@ -45,7 +45,6 @@ from pr import permalinks
 from pr import summary_model
 from pr import summary_publish
 from pr import summary_render
-from pr import summary_rounds
 from pr import summary_scope
 from pr import summary_row
 from pr import comments as pr_comments
@@ -60,7 +59,7 @@ from pr.fix import (
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
-    CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
+    CommentItem, PRReport, ReportThread, TriageResult,
     TriageStats, triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS

@@ -16,12 +16,8 @@ import argparse
 import dataclasses
 import functools
 import json
-import re
 import sys
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime
-from enum import Enum
+from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -53,9 +49,6 @@ from git.land import CommitStatus
 from pr.comments_state import ThreadRecord, ThreadState
 from pr.fix import FixOutcome, FixRecord, ItemOutcome
 from review import issue as review_issue
-from core import markdown
-from core import text
-from core import timeouts
 from core.phases import Phase
 from pr.thread_models import (
     ClassificationResult,
@@ -65,16 +58,11 @@ from pr.thread_models import (
     ReportThread,
     TrackingResult,
     TriageResult,
-    finding_location,
 )
 from gh.pr_reads import fetch_pr_data
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
 from pr import summary_model
 from pr import summary_publish
-from pr import summary_render
-from pr import summary_rounds
-from pr import summary_scope
-from pr import summary_row
 from pr import supersession
 from core.tool_parser import handle_value_flags
 from core.trail import Trail, add_trail_args

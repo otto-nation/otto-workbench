@@ -48,10 +48,10 @@ from pr.summary_render import SUMMARY_MARKER
 from pr.thread_models import CommentItem, PRReport, ReportThread
 
 def _warn_unattributed_fixes(
-    fixed: list,
+    fixed: list[CommentItem],
     cp: attribution.CommitPushResult,
     folded: set[str] | None = None,
-    history: "attribution.AddressingHistory | None" = None,
+    history: attribution.AddressingHistory | None = None,
     threads_by_id: dict[str, ReportThread] | None = None,
 ) -> None:
     """Say so when rows claim fixes that no commit accounts for.
@@ -276,7 +276,7 @@ def post_fix_summary(
     head_sha: str = "",
     activity_at: str = "",
     wt_path: Path | None = None,
-    history: "attribution.AddressingHistory | None" = None,
+    history: attribution.AddressingHistory | None = None,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     if not content.has_content:
@@ -436,5 +436,3 @@ def render_deferred_summary(
         fix.summary_deferred = False
     elif publishing.enabled():
         log.error("failed to post deferred fix summary")
-
-

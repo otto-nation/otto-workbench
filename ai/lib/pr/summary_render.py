@@ -65,7 +65,7 @@ def build_summary_body(
     carried_over: list[str] | None = None,
     hand_held: list[summary_model.HeldRow] | None = None,
     wt_path: Path | None = None,
-    history: "attribution.AddressingHistory | None" = None,
+    history: attribution.AddressingHistory | None = None,
     scope: summary_rounds.RoundScope | None = None,
     chain: list[summary_rounds.SummaryRound] | None = None,
 ) -> str:
@@ -343,5 +343,3 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
         summary = summarize_comment_body(c.get("body", ""))
         lines.append(f"- **@{user}**: {summary}")
     return lines
-
-

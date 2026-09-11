@@ -24,7 +24,8 @@ from collections.abc import Sequence
 
 from core import markdown
 from pr import summary_model
-from pr.summary_model import HeldRow, TABLE_COLUMNS
+from pr.summary_model import TABLE_COLUMNS
+
 
 def row_location_key(row: str) -> str:
     """Reviewer and file cell of a rendered row, stripped of decoration.
@@ -198,5 +199,3 @@ def hand_written_rows(published: Sequence[str], fresh: str) -> list[summary_mode
             continue
         held.append(summary_model.HeldRow(key, row, fresh_by_key[key]))
     return held
-
-

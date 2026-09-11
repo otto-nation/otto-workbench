@@ -86,7 +86,7 @@ def fixed_status_for(
     entry: CommentItem,
     cp: attribution.CommitPushResult,
     repo: str,
-    history: "attribution.AddressingHistory | None" = None,
+    history: attribution.AddressingHistory | None = None,
     thread: ReportThread | None = None,
 ) -> str:
     """Status cell for one fixed row, rendering what `attribution.attribute_commit` allows.

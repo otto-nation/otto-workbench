@@ -222,5 +222,3 @@ def round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
             key: outcome for key, outcome in outcomes.items() if outcome is not None
         },
     )
-
-

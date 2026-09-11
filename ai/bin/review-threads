@@ -1633,7 +1633,7 @@ def _row_location_key(row: str) -> str:
     location = markdown.plain_cell(cells[2])
     if ":" not in location:
         return ""
-    reviewer = markdown.plain_cell(cells[1]).lstrip("@")
+    reviewer = markdown.plain_cell(cells[1]).removeprefix("@")
     return f"{reviewer}|{location}"
 
 

@@ -189,10 +189,9 @@ def _full_body(rt):
             # addressed" rather than being counted as a fix.
             CommentItem(id="t11", summary="already true upstream", reviewer="kgn",
                         file="k.py", line=12),
-            # Satisfied *in response*, which
-            # `summary_render.build_summary_body` counts as a
-            # fix even though the bucket says addressed — the one place a row's
-            # count and its bucket deliberately disagree.
+            # Satisfied *in response*, which `summary_render.build_summary_body`
+            # counts as a fix even though the bucket says addressed — the one
+            # place a row's count and its bucket deliberately disagree.
             CommentItem(id="t12", summary="fixed after the review", reviewer="amp",
                         file="l.py", line=3),
         ],
@@ -369,8 +368,7 @@ def _uncommitted_body(rt):
     so are part of row identity. With no sha to link against, the File cell
     falls back to plain backticks rather than a blob permalink — the only
     shape in which `summary_scope.row_location_key` sees a bare ``file:line``.
-    And a
-    deferral whose tracker id is known but whose URL is not renders the id
+    And a deferral whose tracker id is known but whose URL is not renders the id
     unlinked, which is the one Action-cell wording neither
     `TestGeneratedActionCell` nor `TestActionCellOutcome` sweeps.
     """

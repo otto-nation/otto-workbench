@@ -296,6 +296,56 @@ _live() {
   [ "$output" = "$PKG" ]
 }
 
+@test "the shipped template pins superpowers to a ref" {
+  # Tracking main would take 100 commits a quarter unreviewed, and two of the
+  # package's skills are overridden by name from ai/skills/ — a changed upstream
+  # contract has to be a decision, not a sync. `sync-settings.jq` identifies
+  # entries by source with the ref stripped, so the pin survives reconciliation.
+  run jq -r '.packages[] | select(startswith("git:github.com/obra/superpowers"))' \
+    "$REPO_ROOT/ai/pi/settings.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^git:github\.com/obra/superpowers@v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+@test "every skill superpowers displaces has a workbench file of the same name" {
+  # Name collision is the only containment mechanism that survives the
+  # extension, so the shims and the package entry must land together. A sync
+  # that installed the package without them would leave using-git-worktrees
+  # meaning `git worktree add` into .worktrees/ on this machine.
+  run jq -e '.packages | any(startswith("git:github.com/obra/superpowers"))' \
+    "$REPO_ROOT/ai/pi/settings.json"
+  [ "$status" -eq 0 ]
+  [ -f "$REPO_ROOT/ai/skills/using-git-worktrees/SKILL.md" ]
+  [ -f "$REPO_ROOT/ai/skills/finishing-a-development-branch/SKILL.md" ]
+}
+
+@test "each shim records the upstream version it was written against" {
+  # The shims are written against a specific upstream contract and their
+  # callers reference them by name, so bumping the pin has to be paired with
+  # re-reading them. Recording the version is what makes that checkable.
+  local pinned
+  pinned=$(jq -r '.packages[] | select(startswith("git:github.com/obra/superpowers"))' \
+    "$REPO_ROOT/ai/pi/settings.json")
+  pinned="${pinned##*@}"
+  [ -n "$pinned" ]
+
+  local skill
+  for skill in using-git-worktrees finishing-a-development-branch; do
+    run grep -q "superpowers $pinned" "$REPO_ROOT/ai/skills/$skill/SKILL.md"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the shipped template filters no superpowers skills" {
+  # A package `skills: ["!..."]` filter disables the resource at the package
+  # layer and the extension's resources_discover hook re-adds the directory,
+  # so the skill returns. Every displaced skill is displaced by an ai/skills/
+  # file of the same name instead — see ai/skills/using-git-worktrees.
+  run jq -e '.packages | map(select(type == "object")) | length == 0' \
+    "$REPO_ROOT/ai/pi/settings.json"
+  [ "$status" -eq 0 ]
+}
+
 @test "the template carries no hardcoded model keys" {
   # Model config comes from ~/.env.local at sync time, not the template.
   # A hardcoded defaultModel or enabledModels would fight the SSOT.

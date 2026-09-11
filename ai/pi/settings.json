@@ -3,6 +3,7 @@
   "defaultProvider": "google-vertex-claude",
   "defaultThinkingLevel": "medium",
   "packages": [
-    "git:github.com/usemaximum/pi-extensions"
+    "git:github.com/usemaximum/pi-extensions",
+    "git:github.com/obra/superpowers@v6.3.0"
   ]
 }

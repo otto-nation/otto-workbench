@@ -45,7 +45,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, wiki, wiki-capture — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -137,6 +137,16 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 **Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h.
 **Skip:** Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead).
 
+### `/finishing-a-development-branch`
+
+Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main. SKIP: work still in progress; a branch whose PR is already open.
+
+```
+/finishing-a-development-branch
+```
+**Trigger:** Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch.
+**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — push and comment on the PR instead.
+
 ### `/machine`
 
 Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. TRIGGER when: user upgrades tools, installs new runtimes, or machine.md is stale (>7 days). SKIP: project-specific architecture (use architecture); memory consolidation (use dream).
@@ -218,6 +228,16 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 ```
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
+
+### `/using-git-worktrees`
+
+Ensure work happens in an isolated worktree before implementation begins. TRIGGER when: starting feature work that needs isolation, or before executing an implementation plan. SKIP: read-only exploration, which needs no worktree.
+
+```
+/using-git-worktrees
+```
+**Trigger:** Use when starting feature work that needs isolation, before executing an implementation plan, or when the user asks to set up a worktree.
+**Skip:** Do not use for read-only work — searching, reading, and exploring are exempt from this machine's worktree rules.
 
 ### `/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]`
 

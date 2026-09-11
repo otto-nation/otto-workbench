@@ -52,6 +52,7 @@
     "skill:ci-failures",
     "skill:debugger",
     "skill:dream",
+    "skill:finishing-a-development-branch",
     "skill:incident",
     "skill:machine",
     "skill:migrate",
@@ -62,6 +63,7 @@
     "skill:retro",
     "skill:reviewer",
     "skill:self-review-fix",
+    "skill:using-git-worktrees",
     "skill:wiki",
     "skill:wiki-capture"
   ]

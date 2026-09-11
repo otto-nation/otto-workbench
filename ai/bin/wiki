@@ -53,11 +53,13 @@ from wiki import report as wiki_report  # noqa: E402
 # Bound here so the command bodies and this script's tests read the same
 # names, while the imports above stay in the `from <package> import <module>`
 # form the tarball's reachability walk follows.
+ARTICLES_DIR = wiki_paths.ARTICLES_DIR
 DEFAULT_SETTINGS = wiki_paths.DEFAULT_SETTINGS
 DEFAULT_WIKI_DIRNAME = wiki_paths.DEFAULT_WIKI_DIRNAME
 HASH_PREFIX_LEN = wiki_parsing.HASH_PREFIX_LEN
 INDEX_FILE = wiki_paths.INDEX_FILE
 MAX_PARENT_DEPTH = wiki_paths.MAX_PARENT_DEPTH
+RAW_DIR = wiki_paths.RAW_DIR
 SCHEMA_FILE = wiki_paths.SCHEMA_FILE
 ArchiveResult = wiki_create.ArchiveResult
 ArticleNotFoundError = wiki_create.ArticleNotFoundError
@@ -73,6 +75,7 @@ collect_status = wiki_report.collect_status
 find_wiki = wiki_paths.find_wiki
 hash_file = wiki_parsing.hash_file
 init_wiki = wiki_create.init_wiki
+is_wiki = wiki_paths.is_wiki
 manifest_row = wiki_create.manifest_row
 read_text = wiki_parsing.read_text
 slugify_title = wiki_create.slugify_title
@@ -445,7 +448,8 @@ def main(argv: list[str] | None = None) -> int:
         where = args.wiki or args.directory
         print(
             f"{SCRIPT}: no knowledge base found from {where} "
-            f"(looked for a directory holding {SCHEMA_FILE})",
+            f"(looked for a directory holding {SCHEMA_FILE}, "
+            f"{ARTICLES_DIR}/, and {RAW_DIR}/)",
             file=sys.stderr,
         )
         return 2

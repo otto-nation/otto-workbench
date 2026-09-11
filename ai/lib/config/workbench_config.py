@@ -283,9 +283,10 @@ class WikiConfig:
     the same base, and an absolute path would fix it to one starting directory.
 
     Configuration rather than detection because the name is the only part that
-    cannot be discovered. ``SCHEMA.md`` marks the directory once found, so a
-    repo keeping its base under ``docs/knowledge`` needs to say so exactly once,
-    and every harness reads the same answer.
+    cannot be discovered. ``SCHEMA.md`` alongside ``articles/`` and ``raw/``
+    identifies the directory once found, so a repo keeping its base under
+    ``docs/knowledge`` needs to say so exactly once, and every harness reads the
+    same answer.
     """
 
     dir: str = "wiki"

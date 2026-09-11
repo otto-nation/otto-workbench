@@ -22,7 +22,6 @@ from .paths import (
     RAW_DIR,
     SCHEMA_FILE,
     SOURCES_FILE,
-    is_wiki,
 )
 
 # Created empty by init, in the order a reader meets them.
@@ -109,12 +108,18 @@ def slugify_title(title: str) -> str:
 def init_wiki(root: Path, domain: str = "", audience: str = "", template: Path | None = None) -> Path:
     """Create the knowledge base at *root* and return it.
 
-    Raises ``WikiExistsError`` when one is already there. Init is otherwise
-    idempotent in the sense that matters: it writes only files that do not
-    exist, so a base half-created by an interrupted run completes rather than
-    losing what it already had.
+    Raises ``WikiExistsError`` when a ``SCHEMA.md`` is already there — any
+    ``SCHEMA.md``, whether or not a knowledge base surrounds it. Init is
+    otherwise idempotent in the sense that matters: it writes only files that do
+    not exist, so a base half-created by an interrupted run completes rather
+    than losing what it already had.
     """
-    if is_wiki(root):
+    # Not `is_wiki`: that answers whether a *knowledge base* is here, and a
+    # directory holding an unrelated SCHEMA.md is not one. Init must still
+    # refuse it, because the schema is the one file `_write_if_absent` would
+    # leave alone — building the rest of the layout around a foreign file would
+    # produce a base whose settings came from something else entirely.
+    if (root / SCHEMA_FILE).is_file():
         raise WikiExistsError(f"{root / SCHEMA_FILE} already exists")
 
     for name in LAYOUT:

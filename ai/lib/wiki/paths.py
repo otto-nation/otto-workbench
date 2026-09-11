@@ -7,11 +7,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# SCHEMA.md is what makes a directory a knowledge base. The plugin this was
-# ported from used two different markers — `_index.md` in its session hook and
-# SCHEMA.md in its init flow — so a wiki mid-build answered "yes" to one and
-# "no" to the other. The index is generated and can be deleted and rebuilt; the
-# schema is authored and cannot.
+# A knowledge base is SCHEMA.md plus the `articles/` and `raw/` trees. The
+# plugin this was ported from used two different markers — `_index.md` in its
+# session hook and SCHEMA.md in its init flow — so a wiki mid-build answered
+# "yes" to one and "no" to the other. The index is generated and can be deleted
+# and rebuilt; the schema is authored and cannot.
+#
+# SCHEMA.md alone is not enough to identify one. The name is generic — a schema
+# reference shipped by an unrelated library carries it too — and a bare filename
+# test made every such directory answer as a knowledge base to every `wiki`
+# subcommand. The two trees are what a base is *for*, so requiring them costs
+# nothing a real base has and rejects a directory that merely shares a filename.
 SCHEMA_FILE = "SCHEMA.md"
 INDEX_FILE = "_index.md"
 SOURCES_FILE = "_sources.md"
@@ -47,7 +53,18 @@ DEFAULT_SETTINGS = {
 
 
 def is_wiki(path: Path) -> bool:
-    return (path / SCHEMA_FILE).is_file()
+    """Whether *path* is a knowledge base.
+
+    Structure, not just the marker file: `init_wiki` creates every directory
+    before writing SCHEMA.md, so a base interrupted mid-creation never lands in
+    the state this rejects, while a foreign SCHEMA.md with no wiki around it
+    does.
+    """
+    return (
+        (path / SCHEMA_FILE).is_file()
+        and (path / ARTICLES_DIR).is_dir()
+        and (path / RAW_DIR).is_dir()
+    )
 
 
 def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = None) -> Path | None:

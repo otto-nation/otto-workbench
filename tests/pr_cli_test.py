@@ -1356,6 +1356,7 @@ _CREATE_VALUE_FLAGS = [
     ("--body", "## What\n\nA body with a blank line."),
     ("--body-file", "/tmp/pr-body.md"),
     ("--base", "release/v2"),
+    ("--closes", "941"),
 ]
 
 

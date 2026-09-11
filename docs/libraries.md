@@ -1022,16 +1022,17 @@ create_pr GH_ARGS...               # runs gh pr create, reports the PR URL
 ```
 
 State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-`PR_BASE`, `PR_ISSUE`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`, `PR_TITLE`,
-`PR_DESCRIPTION`.
+`PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
+`PR_TITLE`, `PR_DESCRIPTION`.
 
 | Function | Purpose |
 |----------|---------|
 | `push_branch BRANCH` | Pushes BRANCH to remote, handling first-push and divergence cases. Returns 1 on any failure that should abort the caller. |
 | `create_pr GH_ARGS...` | Runs `gh pr create` with the given arguments and reports the resulting PR URL. gh's exit code is the authoritative success signal; a zero exit with no parsable pull request URL is still treated as a failure. Returns 1 on any failure. |
 | `load_pr_context` | Loads the AI command, resolves the current branch context and verifies the effective base has a remote-tracking ref. Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure. |
-| `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_DRAFT, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE. Returns 1 on unknown flag or missing value. |
+| `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_DRAFT, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE, PR_CLOSES. Returns 1 on unknown flag, missing value, or an unclosable --closes reference. |
 | `load_pr [ARGS]` | Parses PR flags from ARGS, then loads the PR context. Sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH. Returns 1 on failure. |
+| `pr_preserve_close_refs OLD_BODY` | Re-appends to PR_DESCRIPTION any closing reference OLD_BODY carried that the regenerated body lost. For pr:update, where `gh pr edit --body` replaces the published body outright: an issue somebody linked on the PR stays linked across a regeneration it had no part in. |
 | `generate_pr_content BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set). Sets PR_TITLE and PR_DESCRIPTION. |
 
 ### ai/prompts.sh

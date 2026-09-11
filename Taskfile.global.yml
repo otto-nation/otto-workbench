@@ -218,7 +218,7 @@ tasks:
         fi
 
   pr:content:
-    desc: "Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --base <branch>)"
+    desc: "Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -242,7 +242,7 @@ tasks:
         echo "$PR_DESCRIPTION"
 
   pr:create:
-    desc: "Create AI-powered pull request (-- --no-issue, --issue <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
+    desc: "Create AI-powered pull request (-- --no-issue, --issue <ID>, --closes <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -280,7 +280,7 @@ tasks:
         create_pr "${GH_ARGS[@]}" || exit 1
 
   pr:update:
-    desc: "Update current PR description (-- --no-issue, --issue <ID>, --base <branch>, --title <title>, --body <body>)"
+    desc: "Update current PR description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>, --title <title>, --body <body>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     env:
@@ -304,6 +304,14 @@ tasks:
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
         generate_pr_content "$BRANCH" "$TARGET_BASE"
+
+        # The regenerated body replaces the published one wholesale, so a
+        # closing reference already on the PR would be dropped here — and
+        # dropping it silently un-links an issue somebody linked on purpose.
+        # Carry every keyword the old body carried over to the new one.
+        EXISTING_BODY=$(gh pr view "$PR_NUMBER" --json body -q .body 2>/dev/null || true)
+        pr_preserve_close_refs "$EXISTING_BODY"
+
         echo "✓ Content ready"
         echo "→ Updating PR #$PR_NUMBER..."
 

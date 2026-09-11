@@ -11,8 +11,8 @@
 # ```
 #
 # State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-# `PR_BASE`, `PR_ISSUE`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`, `PR_TITLE`,
-# `PR_DESCRIPTION`.
+# `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
+# `PR_TITLE`, `PR_DESCRIPTION`.
 
 # _push_verified BRANCH [--set-upstream]
 # Pushes BRANCH through the owner in ai/lib/git/push.py, which confirms the remote
@@ -179,13 +179,14 @@ _set_pr_flag() {
     --body)      PR_BODY_OVERRIDE="$2" ;;
     --body-file) PR_BODY_OVERRIDE="$(cat "$2")" ;;
     --issue)     PR_ISSUE_OVERRIDE="$2" ;;
+    --closes)    _pr_add_close_ref "$2" || return 1 ;;
   esac
 }
 
 # parse_pr_flags ARGS
 # Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_DRAFT,
-# PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE. Returns 1 on unknown flag or
-# missing value.
+# PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE, PR_CLOSES. Returns 1 on unknown
+# flag, missing value, or an unclosable --closes reference.
 #
 # Uses eval to re-parse so quoted multi-word values work:
 #   --title "fix: clean empty markers" --body-file /tmp/body.txt
@@ -199,6 +200,8 @@ parse_pr_flags() {
   PR_TITLE_OVERRIDE=""
   PR_BODY_OVERRIDE=""
   PR_ISSUE_OVERRIDE=""
+  # shellcheck disable=SC2034  # PR_CLOSES read by _pr_append_issue_link
+  PR_CLOSES=()
 
   [[ -z "$args" ]] && return 0
 
@@ -209,16 +212,18 @@ parse_pr_flags() {
   local arg expect_flag=""
   for arg in "${parsed[@]}"; do
     if [[ -n "$expect_flag" ]]; then
-      _set_pr_flag "$expect_flag" "$arg"
+      _set_pr_flag "$expect_flag" "$arg" || return 1
       expect_flag=""
       continue
     fi
     # shellcheck disable=SC2034  # PR_DRAFT is read by Taskfile callers
     case "$arg" in
+      # Accepted and inert. Every documented pr:create invocation passes it to
+      # suppress an issue prompt that no longer exists.
       --no-issue) SKIP_ISSUE=true ;;
       --draft)    PR_DRAFT=true ;;
       --issue)    expect_flag="$arg" ;;
-      --base|--title|--body|--body-file) expect_flag="$arg" ;;
+      --base|--title|--body|--body-file|--closes) expect_flag="$arg" ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
     esac
   done
@@ -239,7 +244,11 @@ load_pr() {
 
 # _pr_resolve_issue BRANCH
 # Extracts an issue number from the branch name (e.g. feat/PROJ-42-desc → PROJ-42).
-# When none is found and SKIP_ISSUE is false, prompts the user to enter one.
+# When none is found, PR_ISSUE is left empty and the AI prompt renders it as
+# "Issue: None" — nothing is read from stdin. This ran an interactive prompt
+# once, which aborted the task outright whenever stdin was not a terminal.
+# The issue here is context for the generated description; a PR that should
+# close something says so with --closes.
 # Sets PR_ISSUE.
 _pr_resolve_issue() {
   local branch="$1"
@@ -252,16 +261,10 @@ _pr_resolve_issue() {
 
   PR_ISSUE=$(echo "$branch" | grep -oE '[A-Z]+-[0-9]+' | head -1)
 
-  if [ -z "$PR_ISSUE" ]; then
-    if [[ "$SKIP_ISSUE" = "false" ]]; then
-      echo "→ No issue number found in branch name: $branch"
-      echo ""
-      printf "  Enter issue number (e.g., ISSUE-123) or press Enter to skip: "
-      read -r PR_ISSUE
-    fi
-  else
+  if [ -n "$PR_ISSUE" ]; then
     echo "✓ Found issue number: $PR_ISSUE"
   fi
+  return 0
 }
 
 # _pr_load_template
@@ -343,55 +346,130 @@ _pr_generate_multi_commit() {
   fi
 }
 
-# _pr_description_links_issue ISSUE
-# True when PR_DESCRIPTION already carries a GitHub closing keyword for ISSUE.
+# _pr_issue_provider
+# The repo's issues.provider, or nothing when no scope sets one.
 #
-# The keyword list is GitHub's own: anything else in the body is prose and does
-# not close anything on merge.
-_pr_description_links_issue() {
-  local issue="$1"
-  # `fix(|es|ed)` would be the natural spelling and BSD grep -E rejects the
-  # empty branch outright, so the optional suffix carries the `?`.
-  grep -qiE "(clos(e|es|ed)|fix(es|ed)?|resolv(e|es|ed))[[:space:]]+#$issue([^0-9]|\$)" \
-    <<< "$PR_DESCRIPTION"
+# wb_config_get in lib/config.sh is the documented reader and cannot be used
+# here: it needs the constants block, and lib/constants.sh resolves its own
+# directory from BASH_SOURCE, which go-task's shell leaves unset — sourcing it
+# from a task block fails and leaves the guard tripping. The record format is
+# three tab-separated fields, documented in lib/config_cli.py. The key is
+# spelled out rather than read from ISSUE_PROVIDER_CONFIG_KEY for the same
+# reason; tests/config.bats cross-validates that constant against Python.
+_pr_issue_provider() {
+  local record
+  record="$(python3 "$WORKBENCH_ROOT/lib/config_cli.py" get issues.provider 2>/dev/null)" || return 0
+  printf '%s' "$record" | cut -f2
+  return 0
 }
 
-# _pr_append_issue_link ISSUE
-# Prepends "Closes #N" to PR_DESCRIPTION when the issue is a numeric GitHub issue
-# and the description does not already link it. Modifies PR_DESCRIPTION in place.
+# _pr_add_close_ref ID
+# Appends one validated closing reference to PR_CLOSES. Accepts a GitHub issue
+# number (941 or #941) anywhere, and a tracker key (ENG-123) only where it can
+# actually close something. Returns 1, having said why, on a reference nothing
+# can close — a bad --closes is refused before the PR is opened rather than
+# becoming a dead link in a body that is already published.
+_pr_add_close_ref() {
+  local raw="${1##\#}" provider
+
+  case "$raw" in
+    ''|*[!0-9]*) ;;
+    *) PR_CLOSES+=("#$raw"); return 0 ;;
+  esac
+
+  # Anchored, and matched with grep rather than a case glob: a glob's `*` would
+  # admit anything between the letters and the digits, and what it admitted
+  # would reach _pr_close_ref_present as part of a regex.
+  if printf '%s' "$raw" | grep -qE '^[A-Z]+-[0-9]+$'; then
+    provider="$(_pr_issue_provider)"
+    if [ "$provider" != "linear" ]; then
+      printf "✗ --closes %s: a tracker key only auto-closes on Linear, and issues.provider is '%s'\n" \
+        "$raw" "${provider:-unset}"
+      return 1
+    fi
+    PR_CLOSES+=("$raw")
+    return 0
+  fi
+
+  printf "✗ --closes %s: expected a GitHub issue number (941 or #941) or a tracker key (ENG-123)\n" "$raw"
+  return 1
+}
+
+# _pr_close_ref_present BODY REF
+# Whether BODY already closes REF under any of GitHub's closing keywords. The
+# trailing ([^0-9]|$) is what keeps "#1" from matching a body that closes "#12".
+_pr_close_ref_present() {
+  printf '%s' "$1" | grep -qiE "(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+$2([^0-9]|\$)"
+}
+
+# _pr_append_issue_link
+# Appends one "Closes <ref>" line per entry in PR_CLOSES that PR_DESCRIPTION
+# does not already carry, after a blank line at the end of the body.
 #
-# A PR template used to suppress this outright, on the reasoning that a template
-# handles its own linking. Most do not — this repo's is a What/Why pair with no
-# issue field — so the exemption withheld the link in exactly the repos where
-# prepending it was the only thing that would close the issue on merge. What
-# matters is whether the rendered description already links it, which is a
-# property of the text and not of a template existing.
+# Appended rather than prepended because a templated body's section headers are
+# a contract — content above the first heading, or injected into a section the
+# AI wrote, is content the template did not ask for. GitHub honours a closing
+# keyword anywhere in the body, so the end costs nothing, and re-running
+# pr:update over a body that already links is then a no-op.
 #
-# Every issue reaching here has been named by someone: `--issue` carries the
-# caller's, and the only other numeric source is the number typed at
-# `_pr_resolve_issue`'s prompt. A branch name yields only Jira-style keys, which
-# the numeric gate below declines. So there is no guess left to confirm, and the
-# confirmation this used to ask for was a second prompt after an answer — one an
-# unattended run answers N to, which is how a linked PR became an unlinked one.
+# Reads and modifies PR_DESCRIPTION in place. Returns 0 on every path: it is the
+# last statement of generate_pr_content, and go-task aborts a task on a non-zero
+# command.
 _pr_append_issue_link() {
-  local issue="$1"
-  if [ -z "$issue" ] || [ "$SKIP_ISSUE" = "true" ]; then
+  if [ "${#PR_CLOSES[@]}" -eq 0 ]; then
     return 0
   fi
 
-  local clean_issue
-  clean_issue="${issue##\#}"
-  # Jira-style keys (PROJ-123) do not auto-close on GitHub, so there is no link
-  # to write for one.
-  grep -qE '^[0-9]+$' <<< "$clean_issue" || return 0
+  local pending="" ref
+  for ref in "${PR_CLOSES[@]}"; do
+    if _pr_close_ref_present "$PR_DESCRIPTION" "$ref"; then
+      echo "✓ Already linked: Closes $ref"
+      continue
+    fi
+    pending="${pending}Closes ${ref}"$'\n'
+  done
 
-  if _pr_description_links_issue "$clean_issue"; then
-    echo "✓ Description already closes #$clean_issue"
+  if [ -z "$pending" ]; then
     return 0
   fi
 
-  PR_DESCRIPTION="Closes #$clean_issue"$'\n\n'"$PR_DESCRIPTION"
-  echo "✓ Linked: Closes #$clean_issue"
+  # The command substitution strips trailing newlines, so the blank line below
+  # is exactly one however the generated body happened to end.
+  PR_DESCRIPTION="$(printf '%s' "$PR_DESCRIPTION")"$'\n\n'"${pending%$'\n'}"
+  echo "✓ Linked for auto-close on merge: ${pending//$'\n'/ }"
+  return 0
+}
+
+# pr_preserve_close_refs OLD_BODY
+# Re-appends to PR_DESCRIPTION any closing reference OLD_BODY carried that the
+# regenerated body lost. For pr:update, where `gh pr edit --body` replaces the
+# published body outright: an issue somebody linked on the PR stays linked
+# across a regeneration it had no part in.
+#
+# Modifies PR_DESCRIPTION in place. Returns 0 on every path.
+pr_preserve_close_refs() {
+  local old_body="$1" ref
+  [ -n "$old_body" ] || return 0
+
+  # One ref per line, deduplicated, keyword and case normalised away.
+  local found
+  found=$(printf '%s' "$old_body" \
+    | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+(#[0-9]+|[A-Z]+-[0-9]+)' \
+    | grep -oE '(#[0-9]+|[A-Z]+-[0-9]+)$' \
+    | sort -u || true)
+  [ -n "$found" ] || return 0
+
+  local restored=""
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    _pr_close_ref_present "$PR_DESCRIPTION" "$ref" && continue
+    PR_DESCRIPTION="$(printf '%s' "$PR_DESCRIPTION")"$'\n\n'"Closes $ref"
+    restored="$restored $ref"
+  done <<< "$found"
+
+  [ -n "$restored" ] && echo "✓ Preserved existing issue link(s):$restored"
+  return 0
+}
 }
 
 # generate_pr_content BRANCH DEFAULT_BRANCH
@@ -404,6 +482,7 @@ generate_pr_content() {
   if [[ -n "${PR_TITLE_OVERRIDE:-}" && -n "${PR_BODY_OVERRIDE:-}" ]]; then
     PR_TITLE="$PR_TITLE_OVERRIDE"
     PR_DESCRIPTION="$PR_BODY_OVERRIDE"
+    _pr_append_issue_link
     return 0
   fi
 
@@ -424,5 +503,5 @@ generate_pr_content() {
   [[ -n "${PR_TITLE_OVERRIDE:-}" ]] && PR_TITLE="$PR_TITLE_OVERRIDE"
   [[ -n "${PR_BODY_OVERRIDE:-}" ]] && PR_DESCRIPTION="$PR_BODY_OVERRIDE"
 
-  _pr_append_issue_link "$PR_ISSUE"
+  _pr_append_issue_link
 }

@@ -60,6 +60,15 @@ _write_conventions() {
   [ "$output" -ge 1 ]
 }
 
+# --closes is the only thing that writes a closing keyword into a PR body, so a
+# rules file that does not name it leaves an agent with no way to close an issue
+# — the state that left three merged PRs' issues open.
+@test "the issue-linking rules name the --closes flag" {
+  env GIT_RULES_OUTPUT="$OUT" "$GENERATOR" --quiet
+  run grep -cF -- "--closes" "$OUT"
+  [ "$output" -ge 1 ]
+}
+
 # The hyphenated spelling is a Conventional Commits synonym that release-please
 # reads and the gate accepts, so the shipped rules have to name it too.
 @test "the rules name the hyphenated synonym of the breaking change footer" {

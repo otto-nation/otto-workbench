@@ -320,7 +320,7 @@ the rounds it does not restate.
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:
 
 ```bash
-task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue
+task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue --closes 941
 task --global REPO_DIR=/path/to/worktree commit
 ```
 

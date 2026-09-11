@@ -58,7 +58,7 @@ Applies only when the resolved provider is `github`.
 
 - Issues are addressed by repo, not by team — there is no team key to supply, and nothing should be skipped for want of one
 - Assign with `--assignee @me`
-- Put `Closes #<number>` at the top of a PR description to auto-close a numeric issue on merge. Jira-style keys (`PROJ-123`) do not auto-close, so omit the line for them
+- Pass `--closes <number>` to `pr:create` to auto-close a numeric issue on merge — it appends `Closes #<number>` to the body. Jira-style keys (`PROJ-123`) do not auto-close on GitHub and the flag refuses them
 - Pass `--repo <owner>/<repo>` *after* the subcommand — `gh issue view --repo x/y`, never `gh --repo x/y issue view`. The permission allow list keys on per-subcommand prefixes
 
 | Command | Notes |

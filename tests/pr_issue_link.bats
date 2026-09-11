@@ -11,7 +11,6 @@ setup() {
   common_setup
   source_lib
   SKIP_ISSUE=false
-  PR_ISSUE_EXPLICIT=true
   PR_DESCRIPTION="## What
 
 Some change."
@@ -46,9 +45,10 @@ _first_line() {
   [[ "$PR_DESCRIPTION" == *"Some change."* ]]
 }
 
-@test "an explicit issue is not confirmed interactively" {
-  # --issue is the answer. Re-asking is a prompt an unattended run answers N to,
-  # which is how a linked PR silently becomes an unlinked one.
+@test "a named issue is not confirmed a second time" {
+  # Every issue reaching this function was named by someone — --issue, or typed
+  # at the resolve prompt. Asking again is a prompt after an answer, and an
+  # unattended run answers it N, which is how a linked PR becomes unlinked.
   run _pr_append_issue_link 1267
   [[ "$output" != *"when PR merges?"* ]]
 }
@@ -113,25 +113,27 @@ _first_line() {
   [ "$(_first_line)" = "## What" ]
 }
 
-@test "an inferred issue is not linked unprompted when nobody can be asked" {
-  # Only an explicit --issue is a standing answer. A number guessed from the
-  # branch name still needs confirming, and a non-interactive run has no one to
-  # confirm it — so it declines rather than linking an issue nobody chose.
-  PR_ISSUE_EXPLICIT=false
+@test "the link is written without a terminal to prompt at" {
+  # task pr:create runs unattended in CI and from agents. Anything conditional
+  # on a tty here decides the issue link by how the command was invoked.
   _pr_append_issue_link 1267 < /dev/null
-  [ "$(_first_line)" = "## What" ]
+  [ "$(_first_line)" = "Closes #1267" ]
 }
 
-@test "--issue records that the caller named the issue" {
+@test "--issue is what the resolver hands on" {
   PR_ISSUE_OVERRIDE=1267
   _pr_resolve_issue "isaac/some/branch"
   [ "$PR_ISSUE" = "1267" ]
-  [ "$PR_ISSUE_EXPLICIT" = "true" ]
 }
 
-@test "an issue read off the branch name is not an explicit one" {
+@test "a branch name yields only keys the linker declines" {
+  # The branch regex matches [A-Z]+-[0-9]+ and nothing else, so an inferred
+  # issue is always Jira-shaped and always fails the numeric gate. That is why
+  # no issue reaching the linker is a guess, and why it confirms nothing.
   PR_ISSUE_OVERRIDE=""
   _pr_resolve_issue "carlos/PROJ-42/oauth_login"
   [ "$PR_ISSUE" = "PROJ-42" ]
-  [ "$PR_ISSUE_EXPLICIT" = "false" ]
+
+  _pr_append_issue_link "$PR_ISSUE"
+  [ "$(_first_line)" = "## What" ]
 }

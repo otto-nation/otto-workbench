@@ -11,8 +11,8 @@
 # ```
 #
 # State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-# `PR_BASE`, `PR_ISSUE`, `PR_ISSUE_EXPLICIT`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
-# `PR_TITLE`, `PR_DESCRIPTION`.
+# `PR_BASE`, `PR_ISSUE`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`, `PR_TITLE`,
+# `PR_DESCRIPTION`.
 
 # _push_verified BRANCH [--set-upstream]
 # Pushes BRANCH through the owner in ai/lib/git/push.py, which confirms the remote
@@ -240,18 +240,12 @@ load_pr() {
 # _pr_resolve_issue BRANCH
 # Extracts an issue number from the branch name (e.g. feat/PROJ-42-desc → PROJ-42).
 # When none is found and SKIP_ISSUE is false, prompts the user to enter one.
-# Sets PR_ISSUE and PR_ISSUE_EXPLICIT.
-#
-# PR_ISSUE_EXPLICIT records whether the caller named the issue or the number was
-# inferred from the branch. Only an inference is worth confirming interactively;
-# a caller that passed --issue has already answered.
+# Sets PR_ISSUE.
 _pr_resolve_issue() {
   local branch="$1"
-  PR_ISSUE_EXPLICIT=false
 
   if [[ -n "${PR_ISSUE_OVERRIDE:-}" ]]; then
     PR_ISSUE="$PR_ISSUE_OVERRIDE"
-    PR_ISSUE_EXPLICIT=true
     echo "✓ Using issue: $PR_ISSUE"
     return
   fi
@@ -372,6 +366,13 @@ _pr_description_links_issue() {
 # prepending it was the only thing that would close the issue on merge. What
 # matters is whether the rendered description already links it, which is a
 # property of the text and not of a template existing.
+#
+# Every issue reaching here has been named by someone: `--issue` carries the
+# caller's, and the only other numeric source is the number typed at
+# `_pr_resolve_issue`'s prompt. A branch name yields only Jira-style keys, which
+# the numeric gate below declines. So there is no guess left to confirm, and the
+# confirmation this used to ask for was a second prompt after an answer — one an
+# unattended run answers N to, which is how a linked PR became an unlinked one.
 _pr_append_issue_link() {
   local issue="$1"
   if [ -z "$issue" ] || [ "$SKIP_ISSUE" = "true" ]; then
@@ -387,20 +388,6 @@ _pr_append_issue_link() {
   if _pr_description_links_issue "$clean_issue"; then
     echo "✓ Description already closes #$clean_issue"
     return 0
-  fi
-
-  # An explicit --issue is the answer, so asking again is a prompt an unattended
-  # run answers N to by default — which is how a linked PR silently becomes an
-  # unlinked one. A number inferred from the branch is a guess and still needs
-  # confirming; with no terminal to confirm at, it declines rather than closing
-  # an issue nobody chose.
-  if [[ "$PR_ISSUE_EXPLICIT" != "true" ]]; then
-    [ -t 0 ] || return 0
-    echo ""
-    printf "  Close issue #%s when PR merges? [y/N] " "$clean_issue"
-    local close_issue
-    read -r close_issue
-    [[ "$close_issue" =~ ^[Yy]$ ]] || return 0
   fi
 
   PR_DESCRIPTION="Closes #$clean_issue"$'\n\n'"$PR_DESCRIPTION"

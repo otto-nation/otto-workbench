@@ -17,7 +17,7 @@ from review.budget import (
     fit_files, fixed_preflight_bytes,
 )
 from review.grouping import ReviewProfile, ReviewRule, format_profiles_section
-from review.collect import format_preflight_data
+from review.collect import build_project_context, format_preflight_data
 from gh.types import PRContext, PRMetadata
 from review.types import (
     FindingRef, PreflightData, PriorDisposition, PriorFinding, ReviewJob,
@@ -368,6 +368,57 @@ class TestProfilesAreCountedByTheBudget:
         assert fixed_preflight_bytes("", "", "", {}, []) == 0
         assert fixed_preflight_bytes("", "", "", {}, None) == 0
         assert fixed_preflight_bytes("", "", "", {}) == 0
+
+    def test_a_caller_that_rendered_the_context_is_not_charged_twice(self):
+        """`_prompt_group` renders project context itself and registers it.
+
+        Those bytes are already in `known_bytes`, so reserving the same
+        sections again takes the difference out of the diff — the group phase
+        would be poorer by exactly the rendered context for no reason.
+        """
+        pf = _make_preflight(
+            claude_md="c" * 10_000, review_profiles=[self._profile(40_000)],
+        )
+        job = _make_job(pf)
+        ctx = build_project_context(pf)
+        as_group = _fit_budget(
+            job, {"project_context": ctx},
+            skip_file_contents=True, skip_project_context=True,
+        )
+        unrendered = _fit_budget(job, {}, skip_file_contents=True)
+        # Not exactly equal: the reserve counts the sections, while the group
+        # registers the rendered context, which adds `build_project_context`'s
+        # own heading and separators on top. That wrapper is real prompt bytes
+        # the reserve never counted, so the group pays a little more — tens of
+        # bytes against the ~50KB it was previously charged twice for.
+        wrapper = len(ctx.encode()) - fixed_preflight_bytes(
+            "", pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.review_profiles,
+        )
+        assert 0 < wrapper < 1024
+        assert unrendered.diff_bytes - as_group.diff_bytes == wrapper
+
+    def test_the_double_count_was_the_whole_reserve(self):
+        # Pins the size of the bug being fixed, so a regression is legible as
+        # "the group phase lost the context back" rather than a stray number.
+        pf = _make_preflight(
+            claude_md="c" * 10_000, review_profiles=[self._profile(40_000)],
+        )
+        job = _make_job(pf)
+        ctx = build_project_context(pf)
+        charged_twice = _fit_budget(
+            job, {"project_context": ctx}, skip_file_contents=True,
+        )
+        once = _fit_budget(
+            job, {"project_context": ctx},
+            skip_file_contents=True, skip_project_context=True,
+        )
+        reserve = fixed_preflight_bytes(
+            pf.commit_log, pf.claude_md, pf.architecture_md,
+            pf.review_checklists, pf.review_profiles,
+        )
+        assert reserve > 50_000
+        assert once.diff_bytes - charged_twice.diff_bytes == reserve
 
 
 class TestThePlanIsCheckedAgainstTheRender:

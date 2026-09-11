@@ -141,7 +141,9 @@ class PromptBuilder:
         """
         plan = _fit_budget(
             job, self._vars, file_filter=file_filter,
-            skip_file_contents=skip_file_contents, min_diff=min_diff,
+            skip_file_contents=skip_file_contents,
+            skip_project_context=skip_project_context,
+            min_diff=min_diff,
         )
         self._plan = plan
         self.set("delta_section", plan.delta_section)
@@ -282,9 +284,23 @@ class BudgetPlan:
     planned_bytes: int = 0
 
 
-def _fixed_preflight_bytes(pf: PreflightData | None) -> int:
+def _fixed_preflight_bytes(
+    pf: PreflightData | None, *, skip_project_context: bool = False,
+) -> int:
+    """The preflight bytes the ladder must reserve for `pf`.
+
+    `skip_project_context` is for the caller that rendered the project context
+    itself and registered it as its own template variable — `_prompt_group`
+    does, scoped to its group's files. Those bytes are already in
+    `known_bytes`, so reserving them here as well charges the phase twice for
+    one section and takes the difference out of the diff. Only the commit log
+    is left to reserve in that case; everything else `fixed_preflight_bytes`
+    counts is inside the context the caller already rendered.
+    """
     if not pf:
         return 0
+    if skip_project_context:
+        return fixed_preflight_bytes(pf.commit_log, "", "", {}, None)
     return fixed_preflight_bytes(
         pf.commit_log, pf.claude_md, pf.architecture_md, pf.review_checklists,
         pf.review_profiles,
@@ -321,6 +337,7 @@ def _fit_budget(
     known_sections: dict[str, object],
     *,
     skip_file_contents: bool = False,
+    skip_project_context: bool = False,
     file_filter: list[str] | None = None,
     min_diff: int = MIN_DIFF_BYTES,
 ) -> BudgetPlan:
@@ -336,6 +353,10 @@ def _fit_budget(
     size)` rather than dropping the whole collection, so a ceiling too low for
     everything still buys the files most worth having.
 
+    `skip_project_context` says the caller rendered the project context itself
+    and registered it, so it is already in `known_sections` and must not be
+    reserved for a second time.
+
     Pulling every lever is not a guarantee of fitting: the fixed overhead alone
     can exceed the budget. The plan then reports the cuts it made and
     `build_prompt` raises `PromptTooLarge` on the rendered result, rather than
@@ -349,7 +370,9 @@ def _fit_budget(
     # `measured` is what the ladder can account for; `fixed` adds the flat
     # reserve, which is held back against sections nothing measures and so is
     # not part of what the render is expected to cost.
-    measured = known_bytes + _fixed_preflight_bytes(job.preflight)
+    measured = known_bytes + _fixed_preflight_bytes(
+        job.preflight, skip_project_context=skip_project_context,
+    )
     fixed = NON_PREFLIGHT_OVERHEAD_BYTES + measured
     scoped = {} if skip_file_contents else _scoped_contents(job.preflight, file_filter)
     contents = _contents_bytes(scoped)

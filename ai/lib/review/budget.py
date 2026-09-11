@@ -87,10 +87,11 @@ def fixed_preflight_bytes(
     Profiles are measured as `format_profiles_section` will render them, not as
     the sum of their source files: the rendered section carries a heading and a
     preamble no source file holds, and a rule's text is reordered rather than
-    copied. They are measured against *every* profile because a prompt with no
-    file filter renders every one of them, which is the largest a fit has to
-    plan for — a group prompt matching a subset spends less than the plan
-    reserved, which is the safe direction.
+    copied. Every profile is counted, because a prompt with no file filter
+    renders every one of them. A caller that scoped the profiles itself — a
+    group prompt matches its own files and registers the result as its own
+    section — asks `review.prompt` to skip the project context here rather than
+    being reserved for twice.
 
     Taken as values rather than as a `PreflightData`: the collector holds them
     as locals before it has a `PreflightData` to put them in, and this module

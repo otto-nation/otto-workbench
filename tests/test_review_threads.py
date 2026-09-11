@@ -873,8 +873,15 @@ def _git_ran(returncode, stdout="", stderr=""):
     return proc.CmdResult(returncode, stdout, stderr)
 
 
-def _answering_the_owner(mock_run, sha="abc1234"):
-    """Wrap a `git_client.run` stub so the push owner's verification is answered.
+def _answering_the_owner(mock_run, sha="abc1234", touched=("f.go",)):
+    """Wrap a `git_client.run` stub so the owner's own reads are answered.
+
+    Two of them. The commit scope is a dirty-set snapshot taken on either side
+    of the agent, and a catch-all stub answers both readings identically — an
+    empty difference, so the pass commits nothing and every assertion about the
+    commit fails for a reason the test never set up. ``touched`` is what the
+    agent is taken to have changed: absent from the first reading and present
+    in the second.
 
     Every push here goes through `push.push`, which finishes by asking the
     remote what it holds. A stub's catch-all answers that with the empty string
@@ -888,9 +895,15 @@ def _answering_the_owner(mock_run, sha="abc1234"):
     discarded as somebody else's branch, and every push would read as lost for
     a reason that has nothing to do with what the test set up.
     """
+    snapshots = iter(("", "\n".join(touched)))
+
     def run(*cmd, **kwargs):
         if cmd[:1] == ("ls-remote",):
             return _git_ran(0, stdout=f"{sha}\t{cmd[-1]}\n" if sha else "")
+        if cmd[:2] == ("diff", "HEAD"):
+            return _git_ran(0, stdout=next(snapshots, ""))
+        if cmd[:2] == ("ls-files", "--others"):
+            return _git_ran(0, stdout="")
         return mock_run(*cmd, **kwargs)
     return run
 
@@ -902,7 +915,7 @@ def _tick_every_fix(wt_path):
     an agent that answers anything has to answer it from inside the call —
     a file ticked beforehand is overwritten before the agent ever sees it.
     """
-    tracking = Path(wt_path) / "ignore" / "pr-comments" / "fix-tracking.md"
+    tracking = Path(wt_path) / "pr-comments" / "fix-tracking.md"
 
     def invoke(_invocation):
         tracking.write_text(tracking.read_text().replace("- [ ] fixed", "- [x] fixed"))
@@ -928,6 +941,41 @@ def _fix_adapter(rt, wt_path, **overrides):
     return rt.CommentFixAdapter(report, ctx, wt_path, **kwargs)
 
 
+class TestTheArtifactsAreOutsideTheWorktree:
+    """Nothing this pass writes may be picked up by a `git add` in the target.
+
+    The pass runs against arbitrary repos, and `ignore/` — where these used to
+    go — is only gitignored by convention. A repo that tracks it had the
+    tracking file, the session log and the PR description draft committed along
+    with the fix, and then pushed.
+    """
+
+    def _adapter(self, rt, tmp_path):
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        ctx = make_ctx(repo="owner/repo", pr_number=1,
+                       worktree_root=worktree, target_dir=tmp_path / "state")
+        return worktree, _fix_adapter(rt, worktree, ctx=ctx)
+
+    def test_the_tracking_file_is_not_in_the_worktree(self, rt, tmp_path):
+        worktree, adapter = self._adapter(rt, tmp_path)
+        assert worktree not in adapter.tracking_path.parents
+
+    def test_the_session_log_is_not_in_the_worktree(self, rt, tmp_path):
+        worktree, adapter = self._adapter(rt, tmp_path)
+        assert worktree not in adapter.session_log.parents
+
+    def test_the_pr_description_draft_is_not_in_the_worktree(self, rt, tmp_path):
+        worktree, adapter = self._adapter(rt, tmp_path)
+        draft = pr_comments.pr_body_draft(adapter.artifacts)
+        assert worktree not in draft.parents
+
+    def test_the_artifacts_are_keyed_off_the_run_s_target(self, rt, tmp_path):
+        """The same identity the state file is filed under, not a second one."""
+        _, adapter = self._adapter(rt, tmp_path)
+        assert adapter.artifacts == pr_comments.artifacts_dir(tmp_path / "state")
+
+
 class TestCommentFixLanding:
     """The pass's boundary onto the landing owner.
 
@@ -938,13 +986,14 @@ class TestCommentFixLanding:
     """
 
     @staticmethod
-    def _spec(rt, tmp_path, *, fixed=1, deferred=0):
+    def _spec(rt, tmp_path, *, fixed=1, deferred=0, changed=frozenset({"a.py"})):
         outcomes = (
             [ItemOutcome(id=f"f{n}", outcome=FixOutcome.FIXED) for n in range(fixed)]
             + [ItemOutcome(id=f"d{n}", outcome=FixOutcome.DEFERRED)
                for n in range(deferred)]
         )
-        return _fix_adapter(rt, tmp_path).landing(outcomes)
+        return _fix_adapter(rt, tmp_path).landing(
+            outcomes, set(changed) if changed is not None else None)
 
     @staticmethod
     def _recorded(rt, landed, *, short="abc1234"):
@@ -970,6 +1019,16 @@ class TestCommentFixLanding:
         spec = self._spec(rt, tmp_path, fixed=0, deferred=4)
 
         assert spec.message == "fix: address review comments"
+
+    def test_the_commit_is_scoped_to_what_the_agent_changed(self, rt, tmp_path):
+        """Not the whole tree: this branch is under review by somebody else."""
+        spec = self._spec(rt, tmp_path, changed={"src/a.py", "src/a_test.py"})
+
+        assert spec.paths == {"src/a.py", "src/a_test.py"}
+
+    def test_a_pass_that_cannot_say_what_it_changed_commits_nothing(self, rt, tmp_path):
+        """An empty scope commits nothing; None would commit the whole tree."""
+        assert self._spec(rt, tmp_path, changed=None).paths == set()
 
     def test_the_sha_is_recorded_at_the_width_the_state_file_uses(self, rt):
         """A commit recorded twice at two widths reads as two commits."""
@@ -1812,7 +1871,8 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(rt, "_persist_fix_state") as persist, \
-             patch.object(rt.git_client, "run", side_effect=mock_run), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(mock_run, sha="aaa1111")), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u"), \
              patch("pr.comments.resolve_thread", return_value=True):
@@ -2546,9 +2606,13 @@ class TestDeliverPrBody:
     """A comment answered by rewriting the PR description is gated like a reply.
 
     The fix agent may not run `gh` at all, so the rewrite arrives as a file in
-    the worktree and this is what sends it. Every test here asserts on what
-    reached (or did not reach) the process boundary rather than on a flag the
-    caller consulted first.
+    the pass's artifact directory and this is what sends it. Every test here
+    asserts on what reached (or did not reach) the process boundary rather than
+    on a flag the caller consulted first.
+
+    The directory these pass is a `tmp_path`-rooted stand-in: which directory
+    it is belongs to `TestTheArtifactsAreOutsideTheWorktree`, and what the
+    delivery does with a draft in it is the same wherever it sits.
     """
 
     def _draft(self, rt, wt_path, body="A rewritten description.\n"):
@@ -2605,7 +2669,7 @@ class TestDeliverPrBody:
         with patch.object(rt, "_find_and_update_main_worktree", return_value=None):
             prompt = fix_engine._prompt(adapter, 10)
 
-        assert str(pr_comments.pr_body_draft(worktree)) in prompt
+        assert str(pr_comments.pr_body_draft(adapter.artifacts)) in prompt
         assert "${pr_body_file}" not in prompt
 
     def test_no_draft_owes_nothing(self, rt, worktree):
@@ -3669,7 +3733,10 @@ class TestFinishDeferredWork:
         self, rt, worktree, publishing_on,
     ):
         self._save(worktree, pr_body_pending=True)
-        draft = pr_comments.pr_body_draft(worktree)
+        # Where the fix pass left it: the run's artifact directory, which is
+        # keyed off the target dir rather than sitting in the worktree.
+        draft = pr_comments.pr_body_draft(
+            pr_comments.artifacts_dir(worktree / "target"))
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_text("A rewritten description.\n")
         with patch.object(rt.pc, "update_pr_body", return_value=True) as update, \

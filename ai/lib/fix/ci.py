@@ -92,7 +92,13 @@ class CIFixAdapter(fix_engine.FixAdapter):
 
     def __init__(self, report: ci_report.CIReport, ctx, state) -> None:
         self.workdir = ctx.require_worktree()
-        self.artifacts = self.workdir / "ignore" / "ci-failures"
+        # Under the run's own target directory, not inside the worktree. The
+        # tracking file and the session log are this pass's bookkeeping, not
+        # the repo's, and a target repo whose `.gitignore` says nothing about
+        # `ignore/` had them swept into the commit the pass then pushed.
+        # `ctx.target_dir` already keys per repo and branch, which is the same
+        # identity `state.json` is filed under.
+        self.artifacts = ctx.target_dir / "ci-failures"
         self.title = f"CI Fix Tracking — Run #{report.run_number}"
         self.branch = ctx.branch
         self.repo = ctx.repo
@@ -116,8 +122,18 @@ class CIFixAdapter(fix_engine.FixAdapter):
         """Nothing — `fix-ci.md` asks for no substitution the engine withholds."""
         return {}
 
-    def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:
-        """Commit the whole tree — a CI fix pass owns the worktree it runs in.
+    def landing(
+        self, outcomes: list[ItemOutcome], changed: set[str] | None,
+    ) -> fix_engine.LandSpec:
+        """Commit what the agent touched, and only that.
+
+        Not the whole tree: the pass edits a branch worktree it does not own,
+        and anything else dirty there — an unrelated edit in progress, a build
+        artifact — would be swept into a commit the pass then offers to push.
+
+        A snapshot that failed arrives as None and lands an empty scope, which
+        commits nothing and leaves the fixes in the worktree. That is the right
+        answer for a pass that cannot say which files are its own.
 
         The push is gated, so a run without `--post` commits the fixes and
         drafts the push instead of making it.
@@ -128,6 +144,7 @@ class CIFixAdapter(fix_engine.FixAdapter):
             msg += f"\n\n{fixed} fixed, {len(outcomes) - fixed} skipped"
         return fix_engine.LandSpec(
             message=msg, regen="chore: regenerate after CI fixes",
+            paths=changed if changed else set(),
         )
 
     def record(self, run: fix_engine.FixRun) -> None:

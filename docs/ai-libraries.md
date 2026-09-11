@@ -264,6 +264,28 @@ the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
 
+### fix/scope.py
+
+What a fix pass changed, so its commit can be scoped to exactly that.
+
+A fix pass runs an agent with edit permissions in a worktree it does not own.
+Committing the whole tree afterwards sweeps in whatever else was dirty — a
+build artifact, an operator's work in progress, another tool's scratch file —
+and the pass then pushes it. Naming the files instead is what keeps a commit to
+the work the pass is accountable for.
+
+The set is read twice, before and after the agent, and the difference is the
+pass's own doing. It is not the set of files the pass was *asked* about: an
+agent fixing a finding in one file routinely edits its test, its fixture, or
+the caller that broke — and no pass reports the files it actually touched.
+Asking git afterwards is the only account of that there is.
+
+None and the empty set are different answers and both are returned. Empty says
+the agent changed nothing, so there is nothing to commit. None says the
+worktree could not be read, so the pass cannot tell its own work from what was
+already there — which is the one case where committing nothing is right and
+committing everything is how unreviewed content reaches a branch.
+
 ### review/budget.py
 
 Every bound on what a prompt may carry, and the one fit that spends them.
@@ -670,16 +692,15 @@ is the three things only a review can answer: which findings are still open,
 which files the pass is allowed to commit, and how the review document reads
 once the agent has answered.
 
-What the agent changed is a snapshot difference: the worktree's dirty set is
-recorded before the agent runs and again after, and only the paths that appear
-in the second and not the first are attributed to it. Without that first
-snapshot the pass cannot tell its own work from whatever was already sitting in
-the worktree, and it both commits and takes credit for the difference.
+What the agent changed is a snapshot difference the engine takes on either side
+of the run — see `fix.scope`. Only the paths that appear in the second snapshot
+and not the first are attributed to the agent, so the pass neither commits nor
+takes credit for whatever was already sitting in the worktree.
 
-A snapshot git could not take stops the pass rather than reading as an empty
-one. Everything outside the difference goes uncommitted, so an unreadable
-worktree spelled the same way as an unchanged one is how a pass reports success
-having left the agent's fixes behind.
+A snapshot git could not take reads as None rather than as an empty one.
+Everything outside the difference goes uncommitted, so an unreadable worktree
+spelled the same way as an unchanged one is how a pass reports success having
+left the agent's fixes behind.
 
 The agent answers on a tracking file, not on the review document. That document
 is the deliverable — a reviewer reads it and a re-review reconciles against it —
@@ -1026,7 +1047,7 @@ drafts the body and reports the draft, and only `--post` sends it.
 Some comments are answered by rewriting the PR description rather than the code.
 That is a GitHub write like any other, so the fix agent does not make it: it is
 barred from running `gh` at all, and instead writes the replacement description
-to `ignore/pr-comments/pr-description.md` in the worktree. The fix pass sends it
+to `pr-description.md` in the pass's artifact directory. The fix pass sends it
 through the same gated client the replies use, which means a run without
 `--post` records the intended edit and performs none. The undelivered
 description is owed in `pr status` alongside the replies

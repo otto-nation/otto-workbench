@@ -398,7 +398,7 @@ def _finish_deferred_work(
     _push_held_commit(state, wt_path, trail)
     if state.fix.pr_body_pending:
         state.fix.pr_body_pending = pc.deliver_pr_body(
-            wt_path, ctx.repo, ctx.pr_number,
+            pc.artifacts_dir(ctx.target_dir), ctx.repo, ctx.pr_number,
         )
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _warn_if_snapshot_stale(state, wt_path)
@@ -2518,7 +2518,11 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         trail: Trail | None = None,
     ) -> None:
         self.workdir = wt_path
-        self.artifacts = wt_path / "ignore" / "pr-comments"
+        # The run's target directory, not the worktree. What this pass writes —
+        # the tracking file, the session log, the PR description draft — is its
+        # own bookkeeping, and a target repo that does not gitignore `ignore/`
+        # had all three swept into the commit the pass then pushed.
+        self.artifacts = pc.artifacts_dir(ctx.target_dir)
         self.title = f"Comment Fix Tracking — PR #{report.pr_number}"
         self.branch = ctx.branch
         self.repo = ctx.repo
@@ -2562,17 +2566,25 @@ class CommentFixAdapter(fix_engine.FixAdapter):
 
     def template_vars(self) -> dict[str, str]:
         return {
-            "pr_body_file": str(pc.pr_body_draft(self.workdir)),
+            "pr_body_file": str(pc.pr_body_draft(self.artifacts)),
             "main_worktree": _main_worktree_block(self.main_wt),
         }
 
-    def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:
-        """Commit the whole tree under one static subject.
+    def landing(
+        self, outcomes: list[ItemOutcome], changed: set[str] | None,
+    ) -> fix_engine.LandSpec:
+        """Commit what the agent touched, under one static subject.
+
+        Not the whole tree: this pass runs in a contributor's worktree on a
+        branch under review, and anything else dirty there would be swept into
+        a commit that then goes out to the PR.
 
         `recover` because this agent edits a repo whose own conventions it
         follows, and a fix pass in a repo that commits its work leaves the
         landing nothing to stage — see `git.replay.replayed_commit`, which is what finds
-        that commit again after a rebase.
+        that commit again after a rebase. An agent that committed its own work
+        leaves an empty scope, which is the same nothing-to-stage the recovery
+        already answers.
         """
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         deferred = sum(1 for o in outcomes if o.outcome is FixOutcome.DEFERRED)
@@ -2583,6 +2595,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             message=msg,
             regen="chore: regenerate after review comment fixes",
             recover=True,
+            paths=changed if changed else set(),
         )
 
     def record(self, run: fix_engine.FixRun) -> None:
@@ -2624,7 +2637,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         declined = tracking.both(FixOutcome.DECLINED)
 
         pr_body_pending = pc.deliver_pr_body(
-            self.workdir, self.repo, self.report.pr_number,
+            self.artifacts, self.repo, self.report.pr_number,
         )
 
         # Built once, ahead of both readers: the record keeps `DECLINED` apart

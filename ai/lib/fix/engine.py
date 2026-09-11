@@ -43,6 +43,7 @@ from agent import invoke as agent_invoke
 from agent import phases as agent_phases
 from agent import retry as agent_retry
 from agent import templates as agent_templates
+from fix import scope as fix_scope
 from fix import tracking as fix_tracking
 from git import client as git_client
 from git import land
@@ -209,8 +210,24 @@ class FixAdapter(ABC):
         """
 
     @abstractmethod
-    def landing(self, outcomes: list[ItemOutcome]) -> LandSpec:
-        """The commit this pass wants for what its agent produced."""
+    def landing(self, outcomes: list[ItemOutcome], changed: set[str] | None) -> LandSpec:
+        """The commit this pass wants for what its agent produced.
+
+        ``changed`` is what the agent added to the worktree's dirty set, from
+        the snapshot the engine takes on either side of the run — the files a
+        scoped commit stages. It is a parameter rather than something each
+        domain works out because every domain needs it and the two snapshots
+        have to bracket the agent exactly: the engine is the only layer that
+        sees both moments, and a domain taking its own baseline can take it
+        late and attribute someone else's dirt to its agent.
+
+        None is not an empty set. Empty says the agent changed nothing; None
+        says the worktree could not be read, and a domain that scopes its
+        commit must answer that with an empty scope rather than with the whole
+        tree — see `fix.scope`. The engine has already told the operator where
+        the work was left by the time this is called, so a domain handles the
+        commit and not the reporting.
+        """
 
     @abstractmethod
     def record(self, run: FixRun) -> None:
@@ -416,13 +433,29 @@ def run(adapter: FixAdapter, *, trail: Trail | None = None) -> FixRun:
 
     A pass with no items runs nothing and commits nothing: an empty `FixRun` is
     the honest answer, and a domain that wants to say something about having had
-    no work says it before calling here.
+    no work says it before calling here. A worktree whose dirty set cannot be
+    read stops the pass on the same terms and for a sharper reason — see below.
     """
     items = adapter.items()
     if not items:
         return FixRun()
 
     head_before = git_client.head_sha(cwd=adapter.workdir)
+    # The pre-agent half of the commit scope, taken at the same moment as the
+    # HEAD it is the counterpart of: everything dirty here is somebody else's,
+    # and what appears after the agent runs is the pass's own.
+    dirty_before = fix_scope.changed_files(adapter.workdir)
+    if dirty_before is None:
+        # Refused before the agent runs, so nothing is lost by refusing. With no
+        # baseline the pass could not tell its own work from what was already
+        # here, so every outcome is either committing the worktree wholesale or
+        # committing none of it — and the agent's turns would be spent either
+        # way. Better to spend nothing and say so.
+        log.error(
+            f"could not read the state of {adapter.workdir} — skipping fix pass"
+        )
+        return FixRun()
+
     chunk_size = agent_phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)
     name = PHASES[adapter.phase].label
@@ -445,7 +478,16 @@ def run(adapter: FixAdapter, *, trail: Trail | None = None) -> FixRun:
         adapter, results, {item.id: item for item in items}, max_turns, trail,
     )
 
-    spec = adapter.landing(settled.outcomes)
+    # After the agent and before the commit — the one moment the difference is
+    # the agent's work and nothing else's.
+    changed = fix_scope.agent_changed(adapter.workdir, dirty_before)
+    if changed is None:
+        # Reported here rather than by each adapter. Every one of them owes the
+        # operator this line — the fixes are loose in the worktree and only
+        # this says so — and four copies of it is four chances for the next
+        # adapter to be the one that stays quiet.
+        fix_scope.report_unattributable(adapter.workdir)
+    spec = adapter.landing(settled.outcomes, changed)
     landed = land.land(
         adapter.workdir,
         message=spec.message,

@@ -197,7 +197,9 @@ parse_pr_flags() {
   PR_DRAFT=false
   # shellcheck disable=SC2034  # PR_BASE read by Taskfile callers
   PR_BASE=""
+  # shellcheck disable=SC2034  # PR_TITLE_OVERRIDE read by generate_pr_content
   PR_TITLE_OVERRIDE=""
+  # shellcheck disable=SC2034  # PR_BODY_OVERRIDE read by generate_pr_content
   PR_BODY_OVERRIDE=""
   PR_ISSUE_OVERRIDE=""
   # shellcheck disable=SC2034  # PR_CLOSES read by _pr_append_issue_link
@@ -485,7 +487,6 @@ pr_preserve_close_refs() {
 
   [ -n "$restored" ] && echo "✓ Preserved existing issue link(s):$restored"
   return 0
-}
 }
 
 # generate_pr_content BRANCH DEFAULT_BRANCH

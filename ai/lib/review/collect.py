@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from git import client as git_client
@@ -316,39 +316,125 @@ def _scope_to_surface(raw_diff: str, pr_files: list[dict]) -> str:
     ``pr_files`` is the review's surface — `PRMetadata.files`. A diff with no
     file headers, or a job with no surface to narrow to, comes back untouched.
 
-    The delta range is `prior_sha..HEAD`, which spans the base branch as well
-    as the branch: rebase onto a moved base and every commit the base gained
-    lands in it. That is how a 107-file review came to report 4,974 changed
-    files — the list alone was 260KB, and it pushed the synthesis prompt past
-    its budget. Nothing outside the surface is reviewable in the first place,
-    so narrowing here bounds the delta by the PR rather than by the base's
-    churn, and `delta_files` — which decides whether a group's files changed
-    enough to re-review — stops naming files no group holds.
+    The delta diff's range is `prior_sha..HEAD`, which spans the base branch as
+    well as the branch: rebase onto a moved base and every commit the base
+    gained lands in it. That is how a 107-file review came to report 4,974
+    changed files — the list alone was 260KB, and it pushed the synthesis
+    prompt past its budget. Nothing outside the surface is reviewable in the
+    first place, so narrowing here bounds the diff by the PR rather than by the
+    base's churn.
+
+    It does not bound it by *authorship*: a base commit touching a file the PR
+    also touches survives this filter, because the file is in the surface. That
+    is what `_author_delta` answers instead, and why `delta_files` is no longer
+    read back out of this diff.
     """
     if not pr_files:
         return raw_diff
     return scope_diff(raw_diff, [f["path"] for f in pr_files])
 
 
-def _collect_delta(job: ReviewJob) -> tuple[str, str, list[str], str]:
-    empty = ("", "", [], "")
-    if not job.prior_review:
-        log.info("No prior review — running full review")
-        return empty
-    prior_sha = ReviewHeader.parse(job.prior_review).head_sha
-    if not prior_sha:
-        log.info("Prior review has no SHA marker — running full review")
-        return empty
-    if prior_sha == job.pr.head_sha:
-        log.info("Prior review is on current HEAD — running full review")
-        return empty
-    verify = git_client.out("cat-file", "-t", prior_sha, cwd=job.wt_path)
-    if verify != "commit":
-        log.warn(
-            f"Prior review SHA {git_client.abbrev(prior_sha)} not reachable "
-            "— running full review")
-        return empty
+@dataclass(frozen=True)
+class DeltaScope:
+    """What changed since the prior review, and whether that answer is trusted.
 
+    `files` and `lines` are the author's work alone — what the branch gained
+    that the base did not — while `diff` is the whole range narrowed to the
+    review's surface. The two disagree by design: the diff is prompt context,
+    where showing a base-branch hunk costs a few hundred bytes, and the file
+    list is a gate, where naming a file the author never touched costs an agent
+    call per group holding it.
+
+    `proven_empty` is the difference between "the author changed nothing" and
+    "this run could not tell". Only the ancestry walk sets it, and only once
+    every guard it depends on has held; every fallback leaves it false. A
+    caller skipping work on an empty delta has to read this rather than
+    `not files`, because an unresolvable base ref, a git failure and a genuine
+    no-op all produce the same empty list.
+    """
+
+    diff: str = ""
+    commit_log: str = ""
+    files: list[str] = field(default_factory=list)
+    lines: int = 0
+    prior_sha: str = ""
+    proven_empty: bool = False
+
+
+# git escapes a non-ASCII path unless told otherwise, and `git.client` only
+# passes this for the subcommands whose whole output is a path list. An escaped
+# name matches no `Group.files` entry, so a delta carrying one skips the group
+# that owns the file it names.
+_QUOTE_PATH_OFF = {"core.quotePath": "false"}
+
+
+def _base_ref(wt_path: str, base: str) -> str:
+    """``origin/<base>`` if it resolves to a commit here, else empty.
+
+    Checked rather than assumed because the ancestry walk excludes this ref by
+    name: `git log ... --not origin/main` against a repo without that ref exits
+    128, which `git_client.out` reports as empty output — indistinguishable
+    from an author who changed nothing. A caller that cannot get an answer has
+    to know it did not get one.
+
+    Only `origin/<base>`, never a local `main`: the two name different commits
+    whenever the local branch is behind, so falling back to whichever exists
+    would make the delta depend on a fetch nobody in this path controls.
+    """
+    ref = f"origin/{base}"
+    if git_client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=wt_path):
+        return ref
+    return ""
+
+
+def _author_delta(wt_path: str, prior_sha: str, base_ref: str) -> numstat.Numstat:
+    """What the author committed since ``prior_sha`` that the base did not give them.
+
+    Two walks, because one commit shape carries author work that the other
+    cannot see:
+
+    `--no-merges ... --not <base>` is the ordinary case — commits on the branch
+    and not on the base. Excluding the base by ancestry rather than by path is
+    what distinguishes a merge of a sub-branch, whose commits are the topic's
+    own, from a merge of main, whose commits belong to everyone.
+
+    The merge commits themselves are then re-read with `--diff-merges=remerge`,
+    which reports only what the merge holds *beyond* a mechanical replay — a
+    conflict resolution, or an edit made while merging. A clean merge reports
+    nothing. Without this second walk a re-review of a merge that resolved a
+    conflict sees an empty delta and skips the group holding the file the
+    author just hand-edited, which is the one place they were most likely to
+    get it wrong.
+    """
+    text = git_client.out(
+        "log", "--no-merges", "--numstat", "--pretty=format:",
+        f"{prior_sha}..HEAD", "--not", base_ref,
+        cwd=wt_path, config=_QUOTE_PATH_OFF,
+    )
+    merges = git_client.lines(
+        "rev-list", "--merges", f"{prior_sha}..HEAD", "--not", base_ref, cwd=wt_path,
+    )
+    for merge_sha in merges:
+        text += "\n" + git_client.out(
+            "show", "--diff-merges=remerge", "--numstat", "--pretty=format:",
+            merge_sha, cwd=wt_path, config=_QUOTE_PATH_OFF,
+        )
+    return numstat.parse_numstat(text)
+
+
+def _delta_diff_and_log(
+    job: ReviewJob, prior_sha: str, base_ref: str,
+) -> tuple[str, str]:
+    """The delta's prompt context: the patch to read and the commits behind it.
+
+    The patch stays the whole `prior_sha..HEAD` range narrowed to the review's
+    surface, rather than the author's commits alone. It is context an agent
+    reads, not a gate: a base-branch hunk in it costs a few hundred bytes of a
+    budget that truncates anyway, while reassembling a patch out of per-commit
+    diffs would show a file touched three times as three overlapping hunks.
+    The commit log is ancestry-scoped, since a list of the base's commits
+    describes work this review is not looking at.
+    """
     if job.mode == Mode.SELF:
         # Self-review's surface reaches past HEAD, so a delta review still sees
         # edits that have not been committed since the prior review.
@@ -356,21 +442,85 @@ def _collect_delta(job: ReviewJob) -> tuple[str, str, list[str], str]:
     else:
         raw_diff = git_client.out("diff", f"{prior_sha}..HEAD", cwd=job.wt_path)
     raw_diff = _scope_to_surface(raw_diff, job.pr.files)
-    delta_diff = truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES).text
-    # Same pathspec as the diff, for the same reason: a rebase puts every
-    # commit the base gained in this range, and a log of them describes work
-    # the review is not looking at.
+
     surface = ["--", *(f["path"] for f in job.pr.files)] if job.pr.files else []
+    exclude = ["--no-merges", "--not", base_ref] if base_ref else []
     raw_log = git_client.out(
-        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", *surface, cwd=job.wt_path,
+        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", *exclude, *surface,
+        cwd=job.wt_path,
     )
-    delta_log = _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log")
-    delta_files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(raw_diff)]
+    return (
+        truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES).text,
+        _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log"),
+    )
+
+
+def _prior_sha_for_delta(job: ReviewJob) -> str:
+    """The commit this re-review is a delta against, or empty for a full one.
+
+    Every reason to review the whole PR instead is decided here: no prior
+    review, a prior review that recorded no SHA, one recorded against the
+    commit already checked out, and one naming a commit this worktree cannot
+    resolve.
+    """
+    if not job.prior_review:
+        log.info("No prior review — running full review")
+        return ""
+    prior_sha = ReviewHeader.parse(job.prior_review).head_sha
+    if not prior_sha:
+        log.info("Prior review has no SHA marker — running full review")
+        return ""
+    if prior_sha == job.pr.head_sha:
+        log.info("Prior review is on current HEAD — running full review")
+        return ""
+    if git_client.out("cat-file", "-t", prior_sha, cwd=job.wt_path) != "commit":
+        log.warn(
+            f"Prior review SHA {git_client.abbrev(prior_sha)} not reachable "
+            "— running full review")
+        return ""
+    return prior_sha
+
+
+def _collect_delta(job: ReviewJob) -> DeltaScope:
+    """What ``job`` has to re-review, measured from the prior review's commit.
+
+    The file list is the author's work by ancestry — see `_author_delta` —
+    rather than everything in the range, because a merge of main changes HEAD
+    without the author having written anything, and a re-review that treats the
+    base's commits as its own re-runs every group they touch.
+
+    Self-review keeps the whole range: its surface is the working tree, which
+    has no commits to attribute, and it is never reported as proven empty.
+    """
+    prior_sha = _prior_sha_for_delta(job)
+    if not prior_sha:
+        return DeltaScope()
+
+    base = job.pr.base or git_topology.default_branch(Path(job.wt_path))
+    base_ref = _base_ref(job.wt_path, base) if job.mode != Mode.SELF else ""
+    delta_diff, delta_log = _delta_diff_and_log(job, prior_sha, base_ref)
+
+    if not base_ref:
+        # Attributing the range needs a base to exclude. Without one the whole
+        # range stands, over-reporting rather than reporting nothing.
+        if job.mode != Mode.SELF:
+            log.warn(
+                f"origin/{base} not resolvable — the delta covers every commit "
+                "since the prior review, the base's included")
+        files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
+        return DeltaScope(delta_diff, delta_log, files, 0, prior_sha)
+
+    authored = _author_delta(job.wt_path, prior_sha, base_ref)
+    files = [f["path"] for f in authored.files]
+    lines = authored.additions + authored.deletions
+    span = f"{git_client.abbrev(prior_sha)}..{git_client.abbrev(job.pr.head_sha)}"
+    if not files:
+        log.info(f"Incremental review: no author changes since prior review ({span})")
+        return DeltaScope(delta_diff, delta_log, [], 0, prior_sha, proven_empty=True)
     log.info(
-        f"Incremental review: {len(delta_files)} files changed since "
-        f"prior review ({git_client.abbrev(prior_sha)}..{git_client.abbrev(job.pr.head_sha)})"
+        f"Incremental review: {len(files)} files changed since prior review ({span})"
     )
-    return delta_diff, delta_log, delta_files, prior_sha
+    return DeltaScope(delta_diff, delta_log, files, lines, prior_sha)
 
 
 def _collect_git_data(
@@ -492,7 +642,7 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
     )
     fit = _fit_to_budget(all_contents, all_permissions, file_changes, base_size)
 
-    delta_diff, delta_commit_log, delta_files, prior_head_sha = _collect_delta(job)
+    delta = _collect_delta(job)
 
     return PreflightData(
         diff=diff,
@@ -504,10 +654,12 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         review_checklists=review_checklists,
         review_profiles=profiles,
         omitted_files=fit.omitted,
-        delta_diff=delta_diff,
-        delta_commit_log=delta_commit_log,
-        delta_files=delta_files,
-        prior_head_sha=prior_head_sha,
+        delta_diff=delta.diff,
+        delta_commit_log=delta.commit_log,
+        delta_files=delta.files,
+        delta_lines=delta.lines,
+        delta_proven_empty=delta.proven_empty,
+        prior_head_sha=delta.prior_sha,
     )
 
 

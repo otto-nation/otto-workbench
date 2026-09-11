@@ -80,7 +80,7 @@ class TestBuildDeltaSectionScoped:
     def test_filter_scopes_unchanged_to_filter_set(self):
         pf = _make_preflight(delta_files=["a.py"])
         section = _build_delta_section(pf, file_filter=["a.py", "b.py"])
-        assert "### Files modified" in section
+        assert "### Files the author modified" in section
         assert "`a.py`" in section
         assert "### Files unchanged" in section
         assert "`b.py`" in section

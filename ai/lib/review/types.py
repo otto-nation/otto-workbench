@@ -481,6 +481,11 @@ class PreflightData:
     delta_diff: str = ""
     delta_commit_log: str = ""
     delta_files: list[str] = field(default_factory=list)
+    delta_lines: int = 0
+    # Whether `delta_files` being empty means the author changed nothing, as
+    # opposed to this run not having been able to tell. Only the ancestry walk
+    # in `review.collect` sets it; see `DeltaScope`.
+    delta_proven_empty: bool = False
     prior_head_sha: str = ""
 
 

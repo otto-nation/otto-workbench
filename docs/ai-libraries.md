@@ -1287,6 +1287,116 @@ What is not here: the summary that renders these endings, the replies that
 announce them, and the argparse layer that spells `--settle`. This module
 decides what happened and records it; the surfaces read the record.
 
+### pr/summary_model.py
+
+What a summary round is made of: its rows' vocabulary, and its identity.
+
+The value types the summary comment is built from, and the two questions that
+have to be answered the same way on both sides of a round trip through GitHub:
+what outcome an Action cell reports, and which row a rendered row *is*.
+
+Identity lives here rather than in the renderer for the reason `core.markdown`
+holds both halves of cell escaping. A row is rendered to markdown, published,
+and re-read on the next round to recover what the summary already carried, so
+the fresh row and the published one must key alike. Deriving the key from the
+rendered cells is what makes that true: the file cell reflects
+`permalinks.anchored_line`'s runtime decision rather than the entry's own line
+number, and a summary containing a markdown link renders nested. A key built
+from the typed entry disagrees with the published row in exactly those two
+cases — see `row_key_from_cells`.
+
+What is not here: how a cell is built (`pr.summary_row`), how the body around
+the table is rendered (`pr.summary_render`), how a published body is read back
+(`pr.summary_scope`), and which rows a round may leave to an earlier comment
+(`pr.summary_rounds`).
+
+### pr/summary_publish.py
+
+Getting one round's summary onto the PR without shrinking the record.
+
+The publish decision and the two paths that reach it: the fix pass posting at
+the end of a round, and `--finish` re-rendering from state once a deferred
+tracking issue exists. Both build the same body through `pr.summary_render` and
+both come through `publish_summary`, which is where the record is protected —
+a row the published comments hold and this render cannot account for is carried
+forward rather than overwritten, and an Action cell a person rewrote is kept.
+
+Whether to edit the existing comment or post a fresh one is decided here too,
+because it changes what the round is allowed to leave out: an edit rewrites its
+target wholesale, a fresh post replaces nothing. `pr.summary_rounds` does that
+arithmetic; this hands it the decision.
+
+### pr/summary_render.py
+
+The summary comment's body: the table, its notes, and the sections under it.
+
+One round of the fix pass, rendered as the comment a reviewer reads. The table
+is built row by row from the round's buckets, and the counts above it are
+derived from the rows that actually reached it rather than from the buckets —
+a row left to an earlier comment is not counted here, or the header would
+describe a table the reader cannot see.
+
+What is not here: how one row's cells are built (`pr.summary_row`), what a row's
+identity is (`summary_model.row_key_from_cells`), which rows this round may omit
+(`pr.summary_rounds`), and how the finished body reaches GitHub
+(`pr.summary_publish`).
+
+The counts vocabulary is `pr.comments_fix`'s — `count_line` prints the same line
+on the state dashboard, and a reword in one surface must not change the other.
+
+### pr/summary_rounds.py
+
+Which already-published rows a round's summary may leave to an earlier one.
+
+A cycle used to keep one comment and restate every thread it had ever covered,
+so the newest summary was always the complete one — and unreadable past a
+handful of threads, re-notifying every reviewer with mostly stale rows. A round
+now describes itself and links back through the footer chain.
+
+Leaving a row out is only safe while the record still holds it somewhere, so
+this module is the arithmetic of that safety: what every summary comment on the
+PR holds, what the comment being edited alone holds, what each row last reported,
+and when a reviewer last spoke on the surface behind it.
+
+What is not here: reading rows out of a body (`pr.summary_scope`), and deciding
+whether to edit or post fresh (`pr.summary_publish`) — this is handed that
+decision because it changes what the round may omit.
+
+### pr/summary_row.py
+
+One row of the summary table: its cells, and the Action cell that grades it.
+
+A row is built as cells and rendered from them, in two steps rather than one.
+The cells are what the row's identity is derived from — see
+`summary_model.row_key_from_cells` — so a caller that needs both takes the
+cells once and gets a row and a key that cannot disagree. Rendering straight to
+markdown and reading the key back out of it is what this shape replaces.
+
+The Action cell is the graded half of the row and is built here, in the five
+functions that spell what happened to a thread. What that cell *reports* once
+published is `summary_model.action_outcome`'s to say: the wordings are written
+here and parsed there, and the two are kept in step by a sweep test until
+#1252 gives each wording one owner.
+
+### pr/summary_scope.py
+
+Reading a published summary back: which rows it holds, and which are a person's.
+
+The summary comment is one comment edited across a review cycle, and the
+replacement body is built entirely from local state — which is per-target and
+per-worktree, and routinely absent for a round the comment already covers.
+Treating state as authoritative would silently delete rounds nobody can recover,
+so the published comment is read as the record it is and anything this render
+cannot account for is kept verbatim.
+
+That reading is this module. It parses rows out of a rendered body, decides
+which of them a fresh render did not reproduce, and decides which carry an
+Action cell a human wrote and must not be overwritten.
+
+What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`
+owns that, and both this path and the freshly-rendered one go through it), and
+which rows a round may leave to an earlier comment (`pr.summary_rounds`).
+
 ### pr/thread_context.py
 
 The code and history a reviewer's comment has to be read against.

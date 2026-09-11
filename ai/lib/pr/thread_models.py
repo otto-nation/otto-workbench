@@ -258,12 +258,13 @@ def finding_location(entry: CommentItem | ReportThread) -> str:
     call two findings the same point, and two reviewers writing about one line
     are writing about two different things.
 
-    Every use of the heuristic reads the tradeoff below: `_duplicate_item_ids`
-    folds the pair out of a fresh render, and `_carried_over_rows` reads the
-    same keys so it does not reinstate a row this render folded. It recovers
-    the published side's keys from rendered markdown with `_row_location_key`,
-    which is why that function strips the `@` the Reviewer cell is written
-    with — the two forms are compared and must spell the login alike.
+    Every use of the heuristic reads the tradeoff below:
+    `summary_model.duplicate_item_ids` folds the pair out of a fresh render,
+    and `summary_scope.carried_over_rows` reads the same keys so it does not
+    reinstate a row this render folded. It recovers the published side's keys
+    from rendered markdown with `summary_scope.row_location_key`, which is why
+    that function strips the `@` the Reviewer cell is written with — the two
+    forms are compared and must spell the login alike.
     """
     # ceiling: reviewer plus file:line is the whole test for "the same point",
     # so two distinct findings by one reviewer on one line fold into one row —

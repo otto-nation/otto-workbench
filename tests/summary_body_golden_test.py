@@ -1,13 +1,15 @@
 """The rendered fix summary, recorded whole.
 
-`_summary_row_key` derives a published row's identity from its rendered cell
-text, and the next round re-parses the comment this renderer wrote to recover
-what it said. A change to how any cell renders is therefore a change to row
-identity, and duplicates every row in the table on the following round.
+`summary_model.row_key_from_cells` derives a published row's identity from its
+rendered cell text, and the next round re-parses the comment this renderer
+wrote to recover what it said. A change to how any cell renders is therefore a
+change to row identity, and duplicates every row in the table on the following
+round.
 
 Nothing else in the suite compares a *whole* rendered body. Every other
-assertion over `_build_summary_body` is a substring check on a cell somebody
-thought to name, so a change to a part nobody named passes all of them. That is
+assertion over `summary_render.build_summary_body` is a substring check on a
+cell somebody thought to name, so a change to a part nobody named passes all of
+them. That is
 measured rather than assumed — against `test_review_threads.py`'s 722 tests:
 
 - moving the padding inside the row's outer pipes (`| a |` → `|a |`), which
@@ -46,8 +48,9 @@ for the same reason `test_mcp_server.py` uses prose: one regeneration idiom in
 the repo is better than two.
 
 A diff in one of these files is a change to the published summary format and is
-read as one — check `_summary_row_key`, `_carried_over_rows` and
-`_hand_written_rows` before accepting it. During the decomposition this render
+read as one — check `summary_model.row_key_from_cells`,
+`summary_scope.carried_over_rows` and `summary_scope.hand_written_rows` before
+accepting it. During the decomposition this render
 is being split for, the golden must be **re-run and re-asserted, never
 regenerated**: regenerating it records whatever the split produced and asserts
 nothing about it.
@@ -66,6 +69,9 @@ from git.land import CommitStatus  # noqa: E402
 from pr import attribution  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
+from pr import summary_model  # noqa: E402
+from pr import summary_render  # noqa: E402
+from pr import summary_rounds  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN_FULL = FIXTURES / "summary_body_full.md"
@@ -97,7 +103,7 @@ def _round_content(rt, **buckets):
         k: list(buckets.pop(k, ()))
         for k in ("issue_comments", "review_body_comments")
     }
-    return rt.RoundContent(
+    return summary_model.RoundContent(
         by_outcome={
             FixOutcome(name): list(entries) for name, entries in buckets.items()
         },
@@ -132,7 +138,7 @@ def _threads():
 
     The comment-item rows (`ic-`/`rb-` ids) deliberately have no entry: those
     anchor to the top-level comment they were split out of, which is the other
-    half of `_summary_row_key`'s identity tiers.
+    half of `summary_model.row_key_from_cells`'s identity tiers.
     """
     return {
         f"t{n}": ReportThread(id=f"t{n}", comments=[{"databaseId": 100 + n}])
@@ -152,7 +158,8 @@ def _full_body(rt):
     here (`has_comment_items=True` says triage already split those into rows)
     and are recorded by `_raw_sections_body` instead.
 
-    What is *not* here is the Action-cell wording matrix. `_summary_row_key`
+    What is *not* here is the Action-cell wording matrix.
+    `summary_model.row_key_from_cells`
     excludes cell 3 from all three of its identity tiers, and
     `TestGeneratedActionCell` and `TestActionCellOutcome` sweep the two
     generated families — `_fixed_status_text` over `CommitStatus`, and
@@ -182,9 +189,9 @@ def _full_body(rt):
             # addressed" rather than being counted as a fix.
             CommentItem(id="t11", summary="already true upstream", reviewer="kgn",
                         file="k.py", line=12),
-            # Satisfied *in response*, which `_build_summary_body` counts as a
-            # fix even though the bucket says addressed — the one place a row's
-            # count and its bucket deliberately disagree.
+            # Satisfied *in response*, which `summary_render.build_summary_body`
+            # counts as a fix even though the bucket says addressed — the one
+            # place a row's count and its bucket deliberately disagree.
             CommentItem(id="t12", summary="fixed after the review", reviewer="amp",
                         file="l.py", line=3),
         ],
@@ -235,7 +242,7 @@ def _full_body(rt):
                     file="m.py", line=9),
     ])
     quiet = ["#discussion_r109", "#discussion_r110", "#discussion_r113"]
-    scope = rt.RoundScope(
+    scope = summary_rounds.RoundScope(
         since=_SCOPE_SINCE,
         published_keys=frozenset(quiet),
         published_outcomes={
@@ -245,7 +252,7 @@ def _full_body(rt):
         },
     )
 
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         content,
         attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED, error=""),
         _REPO,
@@ -265,7 +272,7 @@ def _full_body(rt):
         # rewrote its Action cell, so the published text is re-emitted in place
         # and the entry behind it drops out of the counts.
         hand_held=[
-            rt.HeldRow(
+            summary_model.HeldRow(
                 key="#discussion_r103",
                 published=(
                     "| [use the helper](https://github.com/owner/repo/pull/42"
@@ -282,10 +289,10 @@ def _full_body(rt):
         }),
         scope=scope,
         chain=[
-            rt.SummaryRound(
+            summary_rounds.SummaryRound(
                 number=1,
                 url="https://github.com/owner/repo/pull/42#issuecomment-11"),
-            rt.SummaryRound(
+            summary_rounds.SummaryRound(
                 number=2,
                 url="https://github.com/owner/repo/pull/42#issuecomment-12"),
         ],
@@ -299,7 +306,7 @@ def _empty_body(rt):
     one whose only content is a comment triage has already split into rows — so
     it is the shape a reader sees when the pass has nothing to report.
     """
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         _round_content(rt),
         attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
@@ -328,7 +335,7 @@ def _raw_sections_body(rt, *, has_comment_items: bool = False):
     line is behind a multi-line HTML comment, a blank line and a heading —
     `_summarize_comment_body`'s three skips in one value.
     """
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         _round_content(
             rt,
             issue_comments=[
@@ -360,12 +367,12 @@ def _uncommitted_body(rt):
     Two branches the full body cannot reach, both of which render *cells* and
     so are part of row identity. With no sha to link against, the File cell
     falls back to plain backticks rather than a blob permalink — the only
-    shape in which `_row_location_key` sees a bare ``file:line``. And a
-    deferral whose tracker id is known but whose URL is not renders the id
+    shape in which `summary_scope.row_location_key` sees a bare ``file:line``.
+    And a deferral whose tracker id is known but whose URL is not renders the id
     unlinked, which is the one Action-cell wording neither
     `TestGeneratedActionCell` nor `TestActionCellOutcome` sweeps.
     """
-    return rt._build_summary_body(
+    return summary_render.build_summary_body(
         _round_content(
             rt,
             deferred=[

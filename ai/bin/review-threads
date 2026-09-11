@@ -1300,6 +1300,7 @@ def _run_comment_fix(
             replies_pending=_triage_replies_drafted(all_addressed, all_dismissed),
             summary_url=summary_url or "",
             summary_deferred=summary_url is None and early_deferred,
+            has_comment_items=has_items,
             updated_at=pr_state.now_iso(),
         ), wt_path, ctx, trail, resolved=resolved)
         return empty_result

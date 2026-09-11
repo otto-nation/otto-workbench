@@ -5783,6 +5783,63 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
         assert result.summary_deferred is True
 
 
+class TestARoundWithNoFixablesRecordsItsCommentItems:
+    """What the round persists about comment items survives into `--finish`.
+
+    `has_comment_items` decides whether the render appends the raw comment
+    sections under the table — an entry decomposed out of a top-level comment
+    is already a row, so repeating its body below the table reports it twice.
+    The round with nothing to fix computed the value and then left the field off
+    its `FixSummary`, so it persisted false and the deferred render on
+    `--finish` duplicated every comment-item row.
+    """
+
+    def _persisted(self, rt, tmp_path, *, comment_items):
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t1", file="f.go", line=10,
+                                  comments=[{"databaseId": 100}])],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
+             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(rt, "_persist_fix_state") as persist, \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_thread_reply", return_value=True), \
+             patch("pr.comments.post_issue_comment", return_value="https://u"), \
+             patch("pr.comments.resolve_thread", return_value=True):
+            rt._run_comment_fix(
+                TriageResult(threads=[], comment_items=comment_items),
+                report, tmp_path, ctx,
+            )
+        return persist.call_args[0][0]
+
+    @staticmethod
+    def _item(verification):
+        return CommentItem(
+            id="ic-1", file="f.go", line=10, reviewer="kgn", summary="a thought",
+            classification="actionable_suggestion", verification=verification,
+            complexity="low", state=ThreadState.NEW,
+        )
+
+    def test_a_round_carrying_comment_items_says_so(self, rt, tmp_path,
+                                                    publishing_on):
+        persisted = self._persisted(
+            rt, tmp_path, comment_items=[self._item("invalid")])
+        assert persisted.has_comment_items is True
+
+    def test_a_round_without_them_does_not(self, rt, tmp_path, publishing_on):
+        """Pairs with the case above: proves the assertion is not vacuous."""
+        persisted = self._persisted(rt, tmp_path, comment_items=[])
+        assert persisted.has_comment_items is False
+
+
 class TestARoundWithUnaccountedThreadsStillPublishes:
     """A thread this pass never reached does not silence the rows it did settle.
 

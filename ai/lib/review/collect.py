@@ -326,8 +326,8 @@ def _scope_to_surface(raw_diff: str, pr_files: list[dict]) -> str:
 
     It does not bound it by *authorship*: a base commit touching a file the PR
     also touches survives this filter, because the file is in the surface. That
-    is what `_author_delta` answers instead, and why `delta_files` is no longer
-    read back out of this diff.
+    is what `_author_delta` answers instead, and why the delta's file list is
+    read back out of this diff only when the ancestry walk could not run.
     """
     if not pr_files:
         return raw_diff
@@ -387,7 +387,9 @@ def _base_ref(wt_path: str, base: str) -> str:
     return ""
 
 
-def _author_delta(wt_path: str, prior_sha: str, base_ref: str) -> numstat.Numstat:
+def _author_delta(
+    wt_path: str, prior_sha: str, base_ref: str,
+) -> numstat.Numstat | None:
     """What the author committed since ``prior_sha`` that the base did not give them.
 
     Two walks, because one commit shape carries author work that the other
@@ -405,21 +407,30 @@ def _author_delta(wt_path: str, prior_sha: str, base_ref: str) -> numstat.Numsta
     conflict sees an empty delta and skips the group holding the file the
     author just hand-edited, which is the one place they were most likely to
     get it wrong.
+
+    None when any walk failed, rather than the empty result a failure would
+    otherwise be indistinguishable from. `git_client.out` reports a non-zero
+    exit and a timeout alike as no output, and an empty delta is the answer
+    that skips every group.
     """
-    text = git_client.out(
+    walks = [git_client.run(
         "log", "--no-merges", "--numstat", "--pretty=format:",
         f"{prior_sha}..HEAD", "--not", base_ref,
         cwd=wt_path, config=_QUOTE_PATH_OFF,
-    )
-    merges = git_client.lines(
+    )]
+    listed = git_client.run(
         "rev-list", "--merges", f"{prior_sha}..HEAD", "--not", base_ref, cwd=wt_path,
     )
-    for merge_sha in merges:
-        text += "\n" + git_client.out(
+    if not listed.ok:
+        return None
+    for merge_sha in listed.stdout.split():
+        walks.append(git_client.run(
             "show", "--diff-merges=remerge", "--numstat", "--pretty=format:",
             merge_sha, cwd=wt_path, config=_QUOTE_PATH_OFF,
-        )
-    return numstat.parse_numstat(text)
+        ))
+    if not all(w.ok for w in walks):
+        return None
+    return numstat.parse_numstat("\n".join(w.stdout for w in walks))
 
 
 def _delta_diff_and_log(
@@ -511,7 +522,17 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         return DeltaScope(delta_diff, delta_log, files, 0, prior_sha)
 
     authored = _author_delta(job.wt_path, prior_sha, base_ref)
-    files = [f["path"] for f in authored.files]
+    if authored is None:
+        log.warn(
+            "Could not attribute the commits since the prior review — the delta "
+            "covers every commit in the range, the base's included")
+        files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
+        return DeltaScope(delta_diff, delta_log, files, 0, prior_sha)
+
+    # One path can come back from both walks — a commit editing a file, then a
+    # merge resolving a conflict in it — and each consumer counts what it is
+    # given: the group gate sets, the prompt lists, the line total sums.
+    files = sorted({f["path"] for f in authored.files})
     lines = authored.additions + authored.deletions
     span = f"{git_client.abbrev(prior_sha)}..{git_client.abbrev(job.pr.head_sha)}"
     if not files:

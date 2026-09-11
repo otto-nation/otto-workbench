@@ -5,14 +5,15 @@ from __future__ import annotations
 import contextlib
 import io
 import os
-import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from conftest import GIT_TIMEOUT, add_self_origin, commit_all, git_out, init_repo
+from conftest import (
+    add_self_origin, commit_all, git_out, init_repo, run_checked,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -20,6 +21,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from core.proc import CmdResult
 from git import client as git_client
 from review import budget as review_budget
 from review import collect as rc
@@ -734,22 +736,28 @@ class TestCollectDeltaMode:
 
         Self-review's surface reaches past HEAD deliberately. There is no
         ancestry walk that could establish the author changed nothing, so the
-        flag that lets a caller skip work stays off however empty the delta is.
+        flag that lets a caller skip work stays off even when the delta is
+        genuinely empty — which is what this builds: a worktree restored to the
+        prior review's commit, with the head SHA the only thing that differs.
         """
-        repo, prior_sha = self._repo_with_prior_commit(tmp_path)
-        git_out(repo, "checkout", "-q", ".")
-        (repo / "untracked.go").unlink()
+        repo = init_repo(tmp_path / "repo")
+        (repo / "reviewed.go").write_text("package main\n")
+        commit_all(repo, "reviewed")
+        add_self_origin(repo)
+        prior_sha = git_out(repo, "rev-parse", "HEAD").strip()
         job = replace(
             _delta_job(
-                head_sha=prior_sha,
+                head_sha="a-later-commit-this-worktree-does-not-hold",
                 prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
             ),
             wt_path=str(repo), mode="self",
-            pr=replace(_delta_job("x").pr, head_sha="never-equal"),
         )
 
-        assert rc._collect_delta(job).proven_empty is False
+        delta = rc._collect_delta(job)
         capsys.readouterr()
+
+        assert delta.files == []
+        assert delta.proven_empty is False
 
 
 class TestCollectDeltaSurface:
@@ -862,10 +870,12 @@ class TestCollectDeltaAncestry:
 
         Not `git_out`: a conflicting merge exits non-zero, which that helper
         reports as a failed test rather than as the state being set up here.
+        `run_checked` still runs it, so a process killed by machine contention
+        is reported as contention rather than passing for the wrong reason.
         """
-        result = subprocess.run(
+        result = run_checked(
             ["git", "-C", str(repo), "merge", ref, "-m", "Merge main"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT,
+            check=False,
         )
         assert result.returncode != 0, "expected the merge to conflict"
 
@@ -990,6 +1000,52 @@ class TestCollectDeltaAncestry:
         capsys.readouterr()
 
         assert delta.lines == 6
+
+    def test_a_file_both_walks_report_is_named_once(self, tmp_path, capsys):
+        """A commit and a later conflict resolution can touch the same file.
+
+        Each consumer counts what it is handed — the prompt says how many files
+        changed, the line total sums them — so a path arriving from both walks
+        would be reported twice.
+        """
+        repo, prior_sha = self._repo(tmp_path)
+        (repo / "shared.go").write_text("package main\nfunc fromBranch() {}\n")
+        commit_all(repo, "branch edits the same file the base did")
+        self._merge_expecting_conflict(repo, "main")
+        (repo / "shared.go").write_text(
+            "package main\nfunc fromBranch() {}\nfunc fromBase() {}\n"
+        )
+        git_out(repo, "add", "shared.go")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "Merge main")
+
+        delta = rc._collect_delta(self._job(repo, prior_sha, ["mine.go", "shared.go"]))
+        capsys.readouterr()
+
+        assert delta.files.count("shared.go") == 1
+
+    def test_a_walk_that_failed_is_not_an_empty_delta(self, tmp_path, capsys):
+        """The guard M1 asked for: git failing must not read as "nothing changed".
+
+        `git_client.out` reports a non-zero exit and a timeout alike as no
+        output, which is exactly what an author who changed nothing produces.
+        Believing it would carry every group forward and skip a real review.
+        """
+        job = self._merged(tmp_path, ["mine.go", "shared.go"])
+        # The delta walk fails; the diff and log the fallback reads still work.
+        real_run = rc.git_client.run
+
+        def _fail_the_walk(*args, **kwargs):
+            if args and args[0] in {"log", "rev-list", "show"} and "--numstat" in args:
+                return CmdResult(returncode=128, stderr="fatal: bad revision")
+            return real_run(*args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(rc.git_client, "run", _fail_the_walk)
+            delta = rc._collect_delta(job)
+        capsys.readouterr()
+
+        assert delta.proven_empty is False
+        assert delta.files, "a failed walk falls back to the whole range"
 
     def test_a_non_ascii_path_is_named_as_git_stores_it(self, tmp_path, capsys):
         """`core.quotePath` is not applied to `log` by the client's own default.

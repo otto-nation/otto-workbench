@@ -481,6 +481,12 @@ class PreflightData:
     delta_diff: str = ""
     delta_commit_log: str = ""
     delta_files: list[str] = field(default_factory=list)
+    # Recorded by the ancestry walk and not yet read: the pipeline still sizes
+    # itself from the whole PR's stats and still decides what to skip from
+    # `delta_files` alone. Both are the measurements those two decisions need —
+    # a re-review's own size, and whether an empty delta was proved or merely
+    # computed — and neither can be taken later, since only the walk that
+    # produced the file list can say how it came by it.
     delta_lines: int = 0
     # Whether `delta_files` being empty means the author changed nothing, as
     # opposed to this run not having been able to tell. Only the ancestry walk

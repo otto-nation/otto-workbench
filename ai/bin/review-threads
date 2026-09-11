@@ -1269,19 +1269,24 @@ def _run_comment_fix(
         early_deferred = summary_publish.summary_still_owed(
             content, no_commit.status, has_unaccounted,
         )
-        if has_unaccounted:
-            log.info("Deferred fix summary — unresolved threads not yet addressed")
-            summary_url = None
-        elif content.has_content:
-            summary_url = summary_publish.post_or_defer_summary(
-                content, no_commit, ctx.repo, report.pr_number, threads_by_id,
-                has_comment_items=has_items,
-                head_sha=ctx.head_sha,
-                activity_at=summary_publish.newest_reviewer_activity(report),
-                wt_path=wt_path,
-            )
-        else:
-            summary_url = None
+        # Asked of `post_or_defer_summary` alone, exactly as the pass that
+        # commits asks it. Two guards used to stand in front of this call and
+        # neither belonged to it. `content.has_content` is already
+        # `post_fix_summary`'s own first question, so the round with nothing to
+        # say returned None through it either way. And `has_unaccounted` left
+        # the previous round's table standing as the newest thing on the PR:
+        # the summary is one marker comment edited in place, so declining to
+        # render is not silence but a stale table, while the rows this round
+        # does hold are true. `summary_still_owed` is True either way, so
+        # `--finish` re-renders regardless — the choice was between an interim
+        # truth now and nothing until a closeout that may not come.
+        summary_url = summary_publish.post_or_defer_summary(
+            content, no_commit, ctx.repo, report.pr_number, threads_by_id,
+            has_comment_items=has_items,
+            head_sha=ctx.head_sha,
+            activity_at=summary_publish.newest_reviewer_activity(report),
+            wt_path=wt_path,
+        )
         empty_result.summary_url = summary_url
         empty_result.summary_deferred = summary_url is None and early_deferred
         _persist_fix_state(pr_comments_fix.FixSummary(

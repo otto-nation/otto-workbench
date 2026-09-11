@@ -5783,6 +5783,107 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
         assert result.summary_deferred is True
 
 
+class TestARoundWithUnaccountedThreadsStillPublishes:
+    """A thread this pass never reached does not silence the rows it did settle.
+
+    The round with nothing to fix used to skip the post outright when any open
+    thread went undisposed. The summary is one marker comment edited in place,
+    so skipping it is not silence: the *previous* round's table stays as the
+    newest thing on the PR, and the dismissals this round made are invisible
+    until a `--finish` that may never run. The pass that commits has always
+    posted here; the two paths asked the same question and answered it
+    differently.
+
+    `summary_still_owed` returns True either way, so nothing is lost by
+    posting: the closeout re-renders whatever the interim table missed.
+    """
+
+    def _run(self, rt, tmp_path):
+        """One thread dismissed, one open thread the pass never sees.
+
+        `t2` is on the report and absent from triage, which is what makes
+        `has_unaccounted` true — the condition the old guard turned on.
+        """
+        threads = [CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn", summary="t1 summary",
+            classification="actionable_suggestion", verification="invalid",
+            complexity="low", state=ThreadState.NEW,
+        )]
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[
+                ReportThread(id="t1", file="f.go", line=10,
+                             comments=[{"databaseId": 100}]),
+                ReportThread(id="t2", file="g.go", line=20,
+                             comments=[{"databaseId": 200}]),
+            ],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
+             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(rt, "_persist_fix_state"), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_thread_reply", return_value=True), \
+             patch("pr.comments.resolve_thread", return_value=True):
+            return rt._run_comment_fix(
+                TriageResult(threads=threads), report, tmp_path, ctx,
+            )
+
+    def test_the_interim_table_goes_out(self, rt, tmp_path, publishing_on):
+        with patch("pr.comments.post_issue_comment", return_value="https://u") as post:
+            result = self._run(rt, tmp_path)
+        assert result.summary_url == "https://u"
+        assert post.called
+
+    def test_the_dismissal_is_on_the_table_that_went_out(self, rt, tmp_path,
+                                                         publishing_on):
+        """Not a vacuous post: the round's own row is in the published body."""
+        with patch("pr.comments.post_issue_comment", return_value="https://u") as post:
+            self._run(rt, tmp_path)
+        body = post.call_args[0][2]
+        assert "t1 summary" in body
+
+    def test_a_draft_still_owes_it(self, rt, tmp_path):
+        """The gate declining the write leaves the round owed, as it always did."""
+        result = self._run(rt, tmp_path)
+        assert result.summary_url is None
+        assert result.summary_deferred is True
+
+    def test_a_round_with_nothing_to_say_posts_nothing(self, rt, tmp_path,
+                                                       publishing_on):
+        """The deleted `has_content` guard was `post_fix_summary`'s own question.
+
+        Removing it must not have started publishing empty tables — the callee
+        asks the same thing and returns None.
+        """
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t2", file="g.go", line=20,
+                                  comments=[{"databaseId": 200}])],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(rt, "_persist_fix_state"), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_issue_comment",
+                   return_value="https://u") as post:
+            result = rt._run_comment_fix(TriageResult(), report, tmp_path, ctx)
+        assert result.summary_url is None
+        assert not post.called
+
+
 class TestAlreadyAddressedInSummary:
     def test_rendered_as_addressed_not_dismissed(self, rt, content):
         cp = attribution.CommitPushResult(None, "no_changes", "")

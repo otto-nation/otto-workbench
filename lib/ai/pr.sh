@@ -406,7 +406,7 @@ _pr_add_close_ref() {
     return 0
   fi
 
-  printf "✗ --closes %s: expected a GitHub issue number (941 or #941) or a tracker key (ENG-123)\n" "$raw"
+  printf "✗ --closes %s: expected a GitHub issue number (941 or #941) or an uppercase tracker key (ENG-123)\n" "$raw"
   return 1
 }
 
@@ -451,7 +451,8 @@ _pr_append_issue_link() {
   # The command substitution strips trailing newlines, so the blank line below
   # is exactly one however the generated body happened to end.
   PR_DESCRIPTION="$(printf '%s' "$PR_DESCRIPTION")"$'\n\n'"${pending%$'\n'}"
-  echo "✓ Linked for auto-close on merge: ${pending//$'\n'/ }"
+  local staged="${pending%$'\n'}"
+  echo "✓ Linked for auto-close on merge: ${staged//$'\n'/ }"
   return 0
 }
 

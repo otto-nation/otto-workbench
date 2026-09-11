@@ -2,9 +2,9 @@
 name: finishing-a-development-branch
 description: "Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main. SKIP: work still in progress; a branch whose PR is already open."
 source: otto-workbench/ai/skills/finishing-a-development-branch/SKILL.md
-invocation: "/skill:finishing-a-development-branch"
-trigger: "implementation complete, finish this branch, ship it, wrap up the work"
-skip: "Work in progress; a branch whose PR already exists — push and comment instead"
+invocation: "/finishing-a-development-branch"
+trigger: "Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch."
+skip: "Do not use while work is still in progress, or on a branch whose PR is already open — push and comment on the PR instead."
 ---
 
 <!-- Overrides superpowers:finishing-a-development-branch, which presents a

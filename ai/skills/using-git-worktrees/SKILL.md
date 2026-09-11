@@ -2,9 +2,9 @@
 name: using-git-worktrees
 description: "Ensure work happens in an isolated worktree before implementation begins. TRIGGER when: starting feature work that needs isolation, or before executing an implementation plan. SKIP: read-only exploration, which needs no worktree."
 source: otto-workbench/ai/skills/using-git-worktrees/SKILL.md
-invocation: "/skill:using-git-worktrees"
-trigger: "start feature work, isolate this change, set up a worktree, before executing a plan"
-skip: "Read-only work — searching, reading, exploring — which this machine's rules exempt"
+invocation: "/using-git-worktrees"
+trigger: "Use when starting feature work that needs isolation, before executing an implementation plan, or when the user asks to set up a worktree."
+skip: "Do not use for read-only work — searching, reading, and exploring are exempt from this machine's worktree rules."
 ---
 
 <!-- Overrides superpowers:using-git-worktrees, which cuts `git worktree add`
@@ -59,6 +59,11 @@ Report with branch state:
 
 **If `GIT_DIR == GIT_COMMON`:** you are in a normal checkout, which on this
 machine is usually the default branch's worktree.
+
+**If either is empty**, `git rev-parse` failed — you are outside a repository,
+or the directory is not readable. Two empty strings compare equal, so this
+reads as "normal checkout" when the truth is that nothing could be determined.
+Say so and stop rather than creating a worktree from an unknown location.
 
 ## Step 1: Create the Worktree with `wt`
 
@@ -134,6 +139,7 @@ Ready to implement <feature-name>
 |-----------|--------|
 | Already in a linked worktree | Skip creation (Step 0) |
 | In a submodule | Treat as a normal repo (Step 0 guard) |
+| Either path came back empty | `git rev-parse` failed — report it; do not read it as a normal checkout |
 | Normal checkout, work is read-only | No worktree needed |
 | Normal checkout, work writes | `wt switch -c` (Step 1) |
 | No issue yet | File the issue first — the branch name needs its ID |

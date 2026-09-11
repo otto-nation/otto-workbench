@@ -137,15 +137,15 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 **Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h.
 **Skip:** Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead).
 
-### `/skill:finishing-a-development-branch`
+### `/finishing-a-development-branch`
 
 Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main. SKIP: work still in progress; a branch whose PR is already open.
 
 ```
-/skill:finishing-a-development-branch
+/finishing-a-development-branch
 ```
-**Trigger:** implementation complete, finish this branch, ship it, wrap up the work
-**Skip:** Work in progress; a branch whose PR already exists — push and comment instead
+**Trigger:** Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch.
+**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — push and comment on the PR instead.
 
 ### `/machine`
 
@@ -229,15 +229,15 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
 
-### `/skill:using-git-worktrees`
+### `/using-git-worktrees`
 
 Ensure work happens in an isolated worktree before implementation begins. TRIGGER when: starting feature work that needs isolation, or before executing an implementation plan. SKIP: read-only exploration, which needs no worktree.
 
 ```
-/skill:using-git-worktrees
+/using-git-worktrees
 ```
-**Trigger:** start feature work, isolate this change, set up a worktree, before executing a plan
-**Skip:** Read-only work — searching, reading, exploring — which this machine's rules exempt
+**Trigger:** Use when starting feature work that needs isolation, before executing an implementation plan, or when the user asks to set up a worktree.
+**Skip:** Do not use for read-only work — searching, reading, and exploring are exempt from this machine's worktree rules.
 
 ### `/wiki [init|ingest|compile|status|lint|signals|promote|archive] [args]`
 

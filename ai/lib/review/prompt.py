@@ -155,7 +155,7 @@ class PromptBuilder:
             max_diff_bytes=plan.diff_allowance_bytes,
         )
         self.set("preflight_data", block.text)
-        self._rendered_diff_bytes = block.diff_bytes
+        self._rendered_diff_bytes = block.rendered_diff_bytes
         if "env_section" in self._vars:
             self.set("env_section", _build_env_section(
                 job.wt_path, preflight=job.preflight,
@@ -294,8 +294,8 @@ class BudgetPlan:
 
     `measured_bytes` is every section the ladder sized, the diff excluded: the
     part of the plan that renders at the size it was measured at. `reconcile`
-    pairs it with what the diff cost to give the figure the rendered prompt is
-    checked against.
+    pairs it with what the diff cost, and `BudgetAccounting` is where the two
+    resulting figures are described.
     """
 
     delta_section: str

@@ -484,8 +484,8 @@ class TestThePlanIsCheckedAgainstTheRender:
         assert plan.diff_allowance_bytes == 0
 
         block = format_preflight_data(pf, max_diff_bytes=plan.diff_allowance_bytes)
-        assert block.diff_bytes > 0
-        assert plan.reconcile(block.diff_bytes).accounted_bytes > plan.allowance_bytes
+        assert block.rendered_diff_bytes > 0
+        assert plan.reconcile(block.rendered_diff_bytes).accounted_bytes > plan.allowance_bytes
 
     def test_a_phase_that_never_fits_has_no_accounting(self):
         # Disprove builds no budgeted section, so there is no plan to compare a

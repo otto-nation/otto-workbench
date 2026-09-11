@@ -352,19 +352,19 @@ class TestTheBlockReportsWhatItsDiffCost:
     def test_an_uncapped_block_is_charged_the_whole_diff(self):
         data = self._two_file_diff()
         block = rc.format_preflight_data(data)
-        assert block.diff_bytes == len(data.diff.encode())
+        assert block.rendered_diff_bytes == len(data.diff.encode())
 
     def test_a_truncated_diff_is_charged_what_it_kept_not_what_it_was_allowed(self):
         data = self._two_file_diff()
         block = rc.format_preflight_data(data, max_diff_bytes=500)
         kept = "diff --git a/small.go b/small.go\n+x\n"
-        assert block.diff_bytes == len(kept.encode())
-        assert block.diff_bytes < 500
+        assert block.rendered_diff_bytes == len(kept.encode())
+        assert block.rendered_diff_bytes < 500
 
     def test_a_scoped_block_counts_only_the_scoped_diff(self):
         data = self._two_file_diff()
         block = rc.format_preflight_data(data, file_filter=["small.go"])
-        assert 0 < block.diff_bytes < len(data.diff.encode())
+        assert 0 < block.rendered_diff_bytes < len(data.diff.encode())
 
 
 # ── Density-based file content skipping ─────────────────────────────────────

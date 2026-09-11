@@ -157,6 +157,7 @@ Closes #12"
 }
 
 @test "_pr_resolve_issue reads nothing from stdin when the branch has no key" {
+  # shellcheck disable=SC2034  # read by _pr_resolve_issue in the sourced lib
   SKIP_ISSUE=false
   run _pr_resolve_issue "isaac/fix/no_key_here" < /dev/null
   [ "$status" -eq 0 ]
@@ -207,7 +208,9 @@ Closes #941"
 }
 
 @test "generate_pr_content links when both title and body are overridden" {
+  # shellcheck disable=SC2034  # both read by generate_pr_content in the sourced lib
   PR_TITLE_OVERRIDE="feat: thing"
+  # shellcheck disable=SC2034
   PR_BODY_OVERRIDE="a body"
   PR_CLOSES=("#941")
   generate_pr_content "isaac/fix/thing" "main"

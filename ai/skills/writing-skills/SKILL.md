@@ -25,8 +25,10 @@ Skills live at `ai/skills/<name>/SKILL.md` and install into both Claude Code
 (`~/.claude/skills/`) and Pi (`~/.agents/skills/`) from that one tree. Write it
 once; both harnesses read it the same way.
 
-**Announce at start:** "I'm using the writing-skills skill to author this
-skill."
+**Announce at start:** "I'm using the writing-skills skill." The skill also
+covers changing an existing SKILL.md, changing lifecycle hooks, and answering
+how a skill is authored here — so say which of those you are doing rather than
+claiming to author a new one.
 
 ## Step 1: Decide It Should Be a Skill
 

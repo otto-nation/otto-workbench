@@ -32,13 +32,12 @@ import json
 import os
 from core import log
 from agent.token_count import count_tokens
-from agent import phases as agent_phases
 from agent.templates import build_output_block
 from agent.types import EFFORT_PRESETS
 from core.phases import Mode, Phase
 from pr.domains import ReviewVerdict
 from review.budget import (
-    FileFit, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+    FileFit, MIN_DIFF_BYTES, MODEL_CONTEXT_TOKENS,
     fit_files, fixed_preflight_bytes,
 )
 from review.collect import PreflightBlock, build_project_context, format_preflight_data
@@ -65,6 +64,11 @@ class CommonSections:
     The incremental delta is not among them: it is budgeted, and a phase that
     scopes itself to one group budgets a different section from a phase that
     reads the whole PR. `PromptBuilder.fit` builds and registers it instead.
+
+    `budget_bytes` is the one field that is not a section. It rides here
+    because it is per-prompt context in exactly the way the sections are —
+    resolved once from the phase's model, then read by the ladder, the stats
+    record and the refusal check, which must all quote the same number.
     """
 
     today: str
@@ -77,9 +81,12 @@ class CommonSections:
     issue_section: str
     omitted_guidance: str
     max_turns: int
+    budget_bytes: int
 
 
-COMMON_SECTION_NAMES = frozenset(f.name for f in fields(CommonSections))
+# Every field a template may interpolate. `budget_bytes` is context rather than
+# content, so naming it in `shared()` is the error the exclusion makes it.
+COMMON_SECTION_NAMES = frozenset(f.name for f in fields(CommonSections)) - {"budget_bytes"}
 
 
 class PromptBuilder:
@@ -142,6 +149,7 @@ class PromptBuilder:
         """
         plan = _fit_budget(
             job, self._vars, file_filter=file_filter,
+            budget_bytes=self._common.budget_bytes,
             skip_file_contents=skip_file_contents,
             skip_project_context=skip_project_context,
             min_diff=min_diff,
@@ -369,6 +377,7 @@ def _fit_budget(
     job: ReviewJob,
     known_sections: dict[str, object],
     *,
+    budget_bytes: int,
     skip_file_contents: bool = False,
     skip_project_context: bool = False,
     file_filter: list[str] | None = None,
@@ -394,27 +403,35 @@ def _fit_budget(
     can exceed the budget. The plan then reports the cuts it made and
     `build_prompt` raises `PromptTooLarge` on the rendered result, rather than
     logging past a prompt the model will reject.
+
+    `budget_bytes` is the ceiling for this phase's model, resolved by
+    `review.budget.prompt_budget_bytes`. It is a parameter rather than a
+    module constant because the window it derives from is a property of the
+    model, and a phase can be pointed at a different one.
     """
     # `is not None`, not truthiness — a falsy value (0, False) still renders
     # into the prompt and must count against the budget.
     known_bytes = sum(
         len(str(v).encode()) for v in known_sections.values() if v is not None
     )
-    # `measured` is what the ladder can account for; `fixed` adds the flat
-    # reserve, which is held back against sections nothing measures and so is
-    # not part of what the render is expected to cost.
+    # Everything the ladder can account for, and the whole of what it reserves.
+    # A flat overhead reserve used to be added on top of this, covering the
+    # template and the PR header — the same sections `known_bytes` measures
+    # exactly, so it double-counted them and held back ~116KB no render spent.
+    # What a prompt costs beyond its own text is reserved in tokens by
+    # `OVERHEAD_RESERVE_TOKENS` before `budget_bytes` is derived, and the
+    # markup the render adds by `RENDER_MARKUP_RESERVE_BYTES`.
     measured = known_bytes + _fixed_preflight_bytes(
         job.preflight, skip_project_context=skip_project_context,
     )
-    fixed = NON_PREFLIGHT_OVERHEAD_BYTES + measured
     scoped = {} if skip_file_contents else _scoped_contents(job.preflight, file_filter)
     contents = _contents_bytes(scoped)
     files = FileFit(scoped, job.preflight.file_permissions if job.preflight else {}, [])
     delta = _build_delta_section(job.preflight, file_filter=file_filter)
     cuts: list[Cut] = []
 
-    if contents and fixed + contents + len(delta.encode()) + min_diff > MAX_PROMPT_BYTES:
-        room = max(0, MAX_PROMPT_BYTES - fixed - len(delta.encode()) - min_diff)
+    if contents and measured + contents + len(delta.encode()) + min_diff > budget_bytes:
+        room = max(0, budget_bytes - measured - len(delta.encode()) - min_diff)
         files = fit_files(scoped, files.permissions, room)
         kept = _contents_bytes(files.included)
         cuts.append(Cut(
@@ -424,7 +441,7 @@ def _fit_budget(
         ))
         contents = kept
 
-    delta_room = max(0, MAX_PROMPT_BYTES - fixed - contents - min_diff)
+    delta_room = max(0, budget_bytes - measured - contents - min_diff)
     if len(delta.encode()) > delta_room:
         shrunk = _build_delta_section(
             job.preflight, file_filter=file_filter, max_bytes=delta_room,
@@ -435,7 +452,7 @@ def _fit_budget(
         ))
         delta = shrunk
 
-    diff_bytes = MAX_PROMPT_BYTES - fixed - contents - len(delta.encode())
+    diff_bytes = budget_bytes - measured - contents - len(delta.encode())
     if diff_bytes < min_diff:
         # Recorded as a shortfall rather than as bytes freed, because the floor
         # frees nothing: it is what the ladder could not absorb, and so is also
@@ -469,13 +486,15 @@ _MEASURE_TOKENS_ENV = "WORKBENCH_AI_MEASURE_TOKENS"
 
 
 def _measured_tokens(
-    prompt: str, job: ReviewJob, phase: Phase | None,
+    prompt: str, phase: Phase | None, model: str,
 ) -> tuple[int, str] | None:
     """The prompt's exact token count and the model it was counted against.
 
     The two travel together because a density is uninterpretable without its
     tokenizer, and resolving the model twice is how the recorded count and the
-    recorded model come to disagree.
+    recorded model come to disagree. ``model`` is therefore the one the caller
+    already resolved to derive the budget, not a second resolution of it: the
+    count, the density and the ceiling all have to describe the same model.
 
     This is the rendered prompt only. The system prompt and tool schemas the
     CLI adds are charged to the same request and are not visible from here, so
@@ -488,19 +507,21 @@ def _measured_tokens(
     """
     if os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0" or phase is None:
         return None
-    model = agent_phases.phase_model(phase, job.model, job.config)
     counted = count_tokens(prompt, model)
     return (counted, model) if counted is not None else None
 
 
 def _log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
+    *,
+    budget_bytes: int,
+    model: str,
     label: str = "", cuts: tuple[Cut, ...] = (), phase: Phase | None = None,
     accounting: BudgetAccounting | None = None,
 ) -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
-    budget_kb = MAX_PROMPT_BYTES // 1024
+    budget_kb = budget_bytes // 1024
 
     section_sizes = {}
     parts = []
@@ -514,8 +535,9 @@ def _log_prompt_size(
     msg = f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})"
     if cuts:
         msg += " — dropped " + ", ".join(c.describe() for c in cuts)
-    if prompt_bytes > MAX_PROMPT_BYTES:
-        msg += f" — EXCEEDS budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB"
+    over_budget = prompt_bytes > budget_bytes
+    if over_budget:
+        msg += f" — EXCEEDS budget by {(prompt_bytes - budget_bytes) // 1024}KB"
     log.info(msg)
 
     suffix = f"-{label}" if label else ""
@@ -528,10 +550,15 @@ def _log_prompt_size(
     stats: dict = {
         "template": f"{template_name}{suffix}",
         "prompt_bytes": prompt_bytes,
-        "budget_bytes": MAX_PROMPT_BYTES,
-        "utilization_pct": round(prompt_bytes / MAX_PROMPT_BYTES * 100, 1),
+        "budget_bytes": budget_bytes,
+        "utilization_pct": round(prompt_bytes / budget_bytes * 100, 1),
         "sections": section_sizes,
         "cuts": [asdict(c) for c in cuts],
+        # The budget is only interpretable against the model it was derived
+        # from: the window is per-model and the tokenizer is generation-
+        # specific, so a density recorded without its model says nothing.
+        "budget_model": model,
+        "budget_window_tokens": MODEL_CONTEXT_TOKENS.get(model, 0),
     }
     # `is not None`, not truthiness: a dataclass without `__bool__` is always
     # truthy, so the shorter form would read as a check it is not.
@@ -552,7 +579,7 @@ def _log_prompt_size(
         stats["allowance_bytes"] = accounting.allowance_bytes
         stats["accounted_bytes"] = accounting.accounted_bytes
         stats["unaccounted_bytes"] = prompt_bytes - accounting.accounted_bytes
-    measured = _measured_tokens(prompt, job, phase)
+    measured = _measured_tokens(prompt, phase, model)
     if measured:
         # Both the count and the model are recorded: a density is meaningless
         # without the tokenizer it was measured against, and sonnet-5 counts the
@@ -780,7 +807,9 @@ def _prompt_disprove(job, common, extra, output):
     return BuiltPrompt(b, "")
 
 
-def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
+def _build_common_sections(
+    job: ReviewJob, *, max_turns: int, budget_bytes: int,
+) -> CommonSections:
     return CommonSections(
         today=date.today().isoformat(),
         generator_version=job.generator_version,
@@ -797,6 +826,7 @@ def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
             skip_omitted=EFFORT_PRESETS[job.effort].skip_omitted_files,
         ),
         max_turns=max_turns,
+        budget_bytes=budget_bytes,
     )
 
 
@@ -810,12 +840,20 @@ class PromptTooLarge(RuntimeError):
     the phase's finding.
     """
 
-    def __init__(self, template: str, prompt_bytes: int):
+    def __init__(
+        self, template: str, prompt_bytes: int,
+        budget_bytes: int = 0, model: str = "",
+    ):
         self.template = template
         self.prompt_bytes = prompt_bytes
+        self.budget_bytes = budget_bytes
+        self.model = model
+        against = f"{budget_bytes // 1024}KB budget"
+        if model:
+            against += f" for {model}"
         super().__init__(
             f"{template} prompt is {prompt_bytes // 1024}KB against a "
-            f"{MAX_PROMPT_BYTES // 1024}KB budget, with every lever already pulled"
+            f"{against}, with every lever already pulled"
         )
 
 

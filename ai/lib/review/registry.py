@@ -21,7 +21,8 @@ from agent import templates as agent_templates
 from core import log
 from agent.registry import PHASES
 from core.phases import Phase
-from review.budget import MAX_PROMPT_BYTES
+from agent.phases import phase_model
+from review.budget import prompt_budget_bytes
 from review.paths import phase_output_path
 from review.prompt import (
     BuiltPrompt, PromptTooLarge, _build_common_sections, _log_prompt_size,
@@ -99,8 +100,12 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     it. ``extra`` carries only what the phase cannot derive — the group's
     identity and the content a later phase reasons over.
 
-    Raises `PromptTooLarge` when the result exceeds `MAX_PROMPT_BYTES` even
-    after the budget ladder has cut everything it can.
+    The byte ceiling is derived from the phase's own model, so a phase pointed
+    at a 200k-window model budgets against that rather than against whatever
+    the default happens to be. Raises `review.budget.UnknownModelWindow` when
+    the model has no recorded window — including an unresolved tier alias —
+    and `PromptTooLarge` when the result exceeds the ceiling even after the
+    budget ladder has cut everything it can.
     """
     entry = for_phase(phase)
     if entry is None:
@@ -116,7 +121,12 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     )
     template_name = spec.template_for(job.mode)
 
-    common = _build_common_sections(job, max_turns=max_turns)
+    model = phase_model(phase, job.model or None, job.config)
+    budget_bytes = prompt_budget_bytes(model)
+
+    common = _build_common_sections(
+        job, max_turns=max_turns, budget_bytes=budget_bytes,
+    )
     built = entry.build(job, common, extra, output)
     template_vars = built.builder.vars
     rendered = agent_templates.render(template_name, **template_vars)
@@ -124,7 +134,11 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
         template_name, rendered, template_vars, job,
         label=built.label, cuts=built.builder.cuts, phase=phase,
         accounting=built.builder.accounting,
+        budget_bytes=budget_bytes, model=model,
     )
-    if len(prompt.encode()) > MAX_PROMPT_BYTES:
-        raise PromptTooLarge(template_name, len(prompt.encode()))
+    if len(prompt.encode()) > budget_bytes:
+        raise PromptTooLarge(
+            template_name, len(prompt.encode()),
+            budget_bytes=budget_bytes, model=model,
+        )
     return prompt

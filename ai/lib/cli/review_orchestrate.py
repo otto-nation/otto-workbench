@@ -68,6 +68,9 @@ from core.tool_parser import enum_arg
 # `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
 # means two things. `abbrev` is pure formatting of a sha already in hand.
 from git.client import abbrev
+from review.budget import (
+    MODEL_CONTEXT_TOKENS, UnknownModelWindow, prompt_budget_bytes,
+)
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
@@ -116,6 +119,44 @@ def _log_ai_backend(trail) -> None:
         else:
             data[key] = val or ""
     trail.info("ai_backend", "resolved AI backend configuration", data=data)
+
+
+def _budgets_are_derivable(phase_models, trail) -> bool:
+    """Whether every phase's model has a context window to budget against.
+
+    Checked here, beside the backend preflight, because the alternative is
+    discovering it once per phase after the review has already paid for
+    metadata and preflight collection.
+
+    An unresolved tier alias is not a failure — it is what
+    `ANTHROPIC_DEFAULT_SONNET_MODEL` being unset looks like, which is the
+    ordinary first-party-API setup — but it does mean the budget is the
+    tier's conservative floor rather than the model's real window, so it is
+    said out loud rather than left to be inferred from a smaller review.
+    """
+    for model, phases in sorted(phase_models.items()):
+        named = ", ".join(str(p) for p in phases)
+        try:
+            budget = prompt_budget_bytes(model)
+        except UnknownModelWindow as exc:
+            log.error(f"Cannot budget prompts for {named}: {exc}")
+            trail.decision(
+                "prompt_budget", "aborting review",
+                reason=f"no context window on record for {model}",
+            )
+            return False
+        if model not in MODEL_CONTEXT_TOKENS:
+            log.warn(
+                f"{model!r} is an unresolved tier alias, so {named} budget "
+                f"against the tier floor ({budget // 1024}KB) rather than the "
+                f"model's own window. Set ANTHROPIC_DEFAULT_{model.upper()}_MODEL "
+                f"to budget against the real one."
+            )
+            trail.decision(
+                "prompt_budget", "budgeting against the tier floor",
+                reason=f"{model} did not resolve to a concrete model id",
+            )
+    return True
 
 
 def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_path: str) -> dict | None:
@@ -276,7 +317,10 @@ def _run_phases(trail, args, job) -> Pipeline:
 
 def _run_orchestrate(trail, args, repo, session_log) -> int:
     _log_ai_backend(trail)
-    if not ai_backend.preflight(collect_phase_models(args.model), trail):
+    phase_models = collect_phase_models(args.model)
+    if not ai_backend.preflight(phase_models, trail):
+        return 1
+    if not _budgets_are_derivable(phase_models, trail):
         return 1
     run_ctx = fetch_metadata(
         repo, args.pr, args.mode, args.repo_dir, args.recover_sha,

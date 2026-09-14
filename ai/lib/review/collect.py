@@ -38,8 +38,9 @@ from core.phases import Mode
 from review.budget import (
     FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
     MAX_COMMIT_LOG_BYTES, MAX_DELTA_DIFF_BYTES, MAX_DELTA_LOG_BYTES,
-    MAX_FILE_BYTES, MAX_PROMPT_BYTES, MAX_TRUNCATED_LINES,
-    TEMPLATE_OVERHEAD_BYTES, fit_files, fixed_preflight_bytes,
+    MAX_FILE_BYTES, MAX_TRUNCATED_LINES,
+    TEMPLATE_OVERHEAD_BYTES, collection_budget_bytes, fit_files,
+    fixed_preflight_bytes,
 )
 from review.document import ReviewHeader
 from review.grouping import (
@@ -644,13 +645,14 @@ def _fit_to_budget(
     all_permissions: dict[str, str],
     file_changes: dict[str, int],
     base_size: int,
+    budget_bytes: int,
 ) -> FileFit:
     """Which of `all_contents` a review can afford, at collection time.
 
     Drops low-density files first — large ones `file_changes` shows only a
     sliver of, where the diff already carries what changed — then ranks
     whatever is left by `(classify_tier, size)` and keeps what fits in
-    `MAX_PROMPT_BYTES` once `base_size` (the diff, the commit log, and the
+    `budget_bytes` once `base_size` (the diff, the commit log, and the
     rest of the fixed overhead) is spent.
     """
     density_skipped = [
@@ -658,7 +660,7 @@ def _fit_to_budget(
         if _is_low_density(p, c, file_changes)
     ]
     candidates = {p: c for p, c in all_contents.items() if p not in set(density_skipped)}
-    fit = fit_files(candidates, all_permissions, MAX_PROMPT_BYTES - base_size)
+    fit = fit_files(candidates, all_permissions, budget_bytes - base_size)
     omitted = density_skipped + fit.omitted
 
     if density_skipped:
@@ -689,7 +691,10 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         )
         + TEMPLATE_OVERHEAD_BYTES
     )
-    fit = _fit_to_budget(all_contents, all_permissions, file_changes, base_size)
+    fit = _fit_to_budget(
+        all_contents, all_permissions, file_changes, base_size,
+        collection_budget_bytes(job.model or None),
+    )
 
     delta = _collect_delta(job)
 

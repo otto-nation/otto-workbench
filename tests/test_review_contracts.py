@@ -54,8 +54,11 @@ from pr import ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.triage_round import TriagedRound  # noqa: E402
-from review.budget import MAX_PROMPT_BYTES  # noqa: E402
+from review.budget import prompt_budget_bytes  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
+
+# The model every phase resolves to here, and the ceiling it buys.
+MAX_PROMPT_BYTES = prompt_budget_bytes("claude-sonnet-5")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -688,6 +691,7 @@ _AGENT_RENDERERS = _FIX_RENDERERS | {
 def _make_common_sections() -> review_prompt.CommonSections:
     return review_prompt.CommonSections(
         **{name: "" for name in review_prompt.COMMON_SECTION_NAMES},
+        budget_bytes=MAX_PROMPT_BYTES,
     )
 
 

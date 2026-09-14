@@ -382,6 +382,21 @@ template and the PR header cost. This module owns each of those numbers, so a
 collector deciding what to gather and a phase deciding what to send read the
 same figure rather than two that drifted apart.
 
+The ceiling is derived, not declared. It starts from the resolved model's
+context window, subtracts what the reply and the CLI's own system prompt need,
+and prices the remainder in bytes at a density floor — so it is a property of
+the model a phase actually runs on rather than a constant that matched none of
+them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
+takes its tier's floor rather than failing, because an unset
+`ANTHROPIC_DEFAULT_*_MODEL` is the ordinary first-party-API setup; only a
+concrete model nobody has measured raises `UnknownModelWindow`.
+
+The byte figure can only ever be conservative: no byte count bounds a token
+count without knowing the content's density, so `BYTES_PER_TOKEN_FLOOR` assumes
+content denser than anything measured and the budget spends less than the
+window allows. That is the intended direction — too generous is an API
+rejection, too conservative is a shallower review.
+
 `agent.types.RetryBudget` is a different thing that shares the word — it
 budgets retries, not bytes.
 

@@ -312,6 +312,34 @@ teardown() {
   done
 }
 
+@test "every WORKBENCH_ROOT path a lib/ai module reaches is in the guard's list" {
+  # The tier the guard actually owns, asserted so the comment above it stops
+  # being prose. A path resolved through WORKBENCH_ROOT is reached mid-run by
+  # python3 — ai/lib/git/push.py after the nesting sweep and the push, and
+  # lib/config_cli.py at pr.sh:363 with stderr discarded and 0 returned, which
+  # reports nothing at all. A lib/ai module that gains another must teach the
+  # guard about it. Modules a task sources by name are deliberately out of
+  # scope: those fail on the body's first three lines, naming the path.
+  local guard list refs p
+  guard=$(yq -r '.tasks."_lib-dir-guard".cmds[0]' "$REPO_ROOT/Taskfile.global.yml")
+  list=$(printf '%s\n' "$guard" | sed -n 's/^ *for _f in \(.*\); do$/\1/p')
+  # Vacuity: a reshaped loop must fail here, not take every path out of scope.
+  [ -n "$list" ]
+
+  # grep over lib/ai/*.sh only — the guard body lives in the Taskfile and names
+  # these same paths, so scanning it would compare the list against itself.
+  refs=$(grep -rhoE '\$WORKBENCH_ROOT/[A-Za-z0-9_./-]+' "$REPO_ROOT"/lib/ai/*.sh \
+    | sed 's|^\$WORKBENCH_ROOT/||' | sort -u)
+  [ -n "$refs" ]
+
+  while IFS= read -r p; do
+    # -f drops ai/lib, which is pr.sh:28's PYTHONPATH directory rather than a
+    # file to check — a filter, not a hand-kept exclusion list that could rot.
+    [ -f "$REPO_ROOT/$p" ] || continue
+    [[ " $list " == *" $p "* ]]
+  done <<< "$refs"
+}
+
 @test "an unset pin short-circuits the guard before any filesystem check" {
   # Unset resolves to TASKFILE_DIR, so the guard's first line must return
   # before it stats anything — the default path stays byte-identical even when

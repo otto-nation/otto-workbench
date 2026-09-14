@@ -62,12 +62,24 @@ tasks:
     # 1 whenever the pin is an override, which is a task failure the moment
     # anything runs this body under errexit.
     #
-    # The paths checked are the ones a task actually reaches. lib/ai/core.sh
-    # and lib/conventions.sh are sourced by every one of them; ai/lib/git/push.py
-    # and lib/config_cli.py are reached through WORKBENCH_ROOT, which core.sh
-    # derives from this same value (lib/ai/pr.sh:28-29,363). A pin at a partial
-    # checkout otherwise passes a core.sh-only gate and fails later inside
-    # python3 with no mention of the variable that sent it there.
+    # The loop is a witness set, not the closure of what a task reaches.
+    # Three of the four stand for a directory the pin must supply at all:
+    # lib/ai/core.sh for lib/ai, lib/conventions.sh for the rest of lib, and
+    # ai/lib/git/push.py for the ai/ tree the installed symlink farm has no
+    # link to. The fourth stands for a silence: lib/config_cli.py is read at
+    # lib/ai/pr.sh:363, which discards stderr and returns 0, so a checkout
+    # missing it loses issue-provider resolution and reports nothing at all.
+    # push.py is reached the same way (pr.sh:28-29) and fails inside python3
+    # after the nesting sweep and the push — that run is N1, and late or
+    # silent is what earns a path a place in this list.
+    #
+    # The modules a task names itself are deliberately absent, as are
+    # lib/git_remote.sh and lib/ai/compact_diff.sh behind them. Each fails
+    # while the body's first three `.` lines run, before git, the AI or any
+    # push, and the shell prints the absolute path it could not open — under
+    # a pin, the pinned root and the rest. Restating them here would mirror
+    # the source graph by hand to improve on a failure that already stops
+    # the run at its first line and shows the pin in what it prints.
     cmds:
       - |
         if [ "$WORKBENCH_LIB_DIR" = "$TASKFILE_DIR" ]; then

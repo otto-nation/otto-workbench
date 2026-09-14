@@ -341,14 +341,14 @@ task --global WORKBENCH_LIB_DIR=/path/to/worktree REPO_DIR=/path/to/worktree com
 ```
 
 Both are go-task variables, written after `--global` — not a `VAR=value` shell
-prefix, which `claude-bash-guard` blocks. It pins the checkout root rather than
-`lib/` alone, so `ai/lib/git/push.py` and `lib/config_cli.py` come from the same
-tree as the shell libraries calling them. Unset, nothing resolves differently
-than before. Set, `_lib-dir-guard` — in `deps:` on every task that sources
-`lib/ai` and on none that does not — requires it to be absolute and to hold each
-of the four paths those tasks reach, so a partial checkout is refused by the
-missing path's name, not by a later `python3` failure naming nothing. The value
-reaches the guard through the environment, never spliced into script text.
+prefix, which `claude-bash-guard` blocks. It pins the checkout root, not `lib/`
+alone, so `ai/lib/git/push.py` and `lib/config_cli.py` come from the same tree
+as the libraries calling them. Unset, nothing resolves differently than before.
+Set, `_lib-dir-guard` — in `deps:` on each task sourcing `lib/ai` and no other —
+requires it absolute and holding the four paths that witness a whole checkout,
+so a partial one is refused by the missing path's name, not by a later `python3`
+failure naming nothing. A module sourced by name is not among them: it fails on
+the body's first lines. The value is read from the environment, never spliced.
 
 ### How `pr` decides what a bare token is
 

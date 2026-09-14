@@ -21,7 +21,11 @@
 
 set -e
 
-_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+_SELF="${BASH_SOURCE[0]}"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: an inherited
+# GIT_DIR makes git skip discovery and answer the caller's cwd instead of the
+# repo root. See lib/ui.sh's header.
+_SCRIPT_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # Which tree to scan. Overridable so tests can point at a fixture directory
 # instead of creating throwaway scripts inside the live checkout. Deliberately
 # not WORKBENCH_DIR: setup code assigns that to the main worktree, and picking

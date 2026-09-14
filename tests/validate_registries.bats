@@ -44,6 +44,20 @@ teardown() {
   common_teardown
 }
 
+@test "resolves REPO_ROOT from its own path, not an inherited GIT_DIR" {
+  # setup() above sources the script with REPO_ROOT pre-set, so this
+  # re-sources it fresh, in isolation, with REPO_ROOT unset and an inherited
+  # GIT_DIR (e.g. from a git hook) pointing nowhere.
+  local real_root
+  real_root="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  run env GIT_DIR="$TMPDIR/nowhere" GIT_WORK_TREE="$TMPDIR/nowhere" bash -c '
+    source "$1"
+    printf "%s\n" "$REPO_ROOT"
+  ' _ "$BATS_TEST_DIRNAME/../bin/local/validate-registries"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$real_root" ]
+}
+
 _write_valid_brew() {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:

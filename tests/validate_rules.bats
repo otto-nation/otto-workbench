@@ -15,6 +15,11 @@ teardown() {
   common_teardown
 }
 
+@test "resolves its repo root from its own path, not an inherited GIT_DIR" {
+  run env GIT_DIR="$TMPDIR/nowhere" GIT_WORK_TREE="$TMPDIR/nowhere" "$VALIDATE" --help
+  [ "$status" -eq 0 ]
+}
+
 _rule() {
   printf -- '%s\n' "$2" > "$FAKE_WORKBENCH/ai/guidelines/rules/$1"
 }

@@ -82,6 +82,11 @@ _wait_until() {
   return 1
 }
 
+@test "resolves its repo root from its own path, not an inherited GIT_DIR" {
+  run env GIT_DIR="$TMPDIR/nowhere" GIT_WORK_TREE="$TMPDIR/nowhere" "$VALIDATE_ALL" --list
+  [ "$status" -eq 0 ]
+}
+
 @test "validate-all discovers validators in both bin and bin/local" {
   _fixture_validator "bin" "validate-top" 0
   _fixture_validator "bin/local" "validate-nested" 0

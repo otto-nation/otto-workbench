@@ -9,7 +9,7 @@ fix-pass results.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 
 from core import serde
 from pr.comments_state import ThreadState
@@ -166,19 +166,93 @@ class TriageResult:
 
 @dataclass
 class ClassificationResult:
-    """Result of classifying triage entries into action categories.
+    """What one side of triage decided about each entry it was given.
 
-    fixable contains the raw CommentItem objects (downstream consumers
-    like _build_tracking_file need the full AI fields).
+    The four dispositions the fix pass routes on, ahead of the agent: what it
+    will be asked to fix, what a person has to answer, what does not hold, and
+    what the code already does. They are not `FixOutcome`s and must not be
+    confused for them — `fixable` is a question the agent has yet to answer,
+    and comes back from it as FIXED, DEFERRED, NEEDS_HUMAN or DECLINED.
+
+    Entries carry their full triage fields rather than being reduced to ids:
+    the checklist the agent is handed needs the summary and the conversation,
+    and the reply to a dismissal needs the reasoning.
+
+    One side of the round only. Threads and decomposed comment items are
+    classified separately because only a thread has somewhere to reply — see
+    `TriagedRound`, which holds both and merges them where a surface treats
+    them alike.
     """
 
-    fixable: list = field(default_factory=list)
+    fixable: list[CommentItem] = field(default_factory=list)
     needs_human: list[CommentItem] = field(default_factory=list)
     dismissed: list[CommentItem] = field(default_factory=list)
     already_addressed: list[CommentItem] = field(default_factory=list)
 
+    @property
+    def any_entry(self) -> bool:
+        """Whether triage put anything at all in this side's buckets."""
+        return bool(self.fixable or self.needs_human
+                    or self.dismissed or self.already_addressed)
+
+    def ids(self) -> set[str]:
+        """Every id this side gave a disposition to.
+
+        What `has_unaccounted` is measured against: a thread on the PR that
+        appears in none of the four buckets is one this round never reached,
+        and the summary it publishes is partial until someone does.
+        """
+        return {
+            entry.id
+            for bucket in (self.fixable, self.needs_human,
+                           self.dismissed, self.already_addressed)
+            for entry in bucket
+        }
+
 
 # ── Fix tracking types ────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ReplyOutcome:
+    """What a round's replies did: how many went out, and what they resolved.
+
+    The two travel together because they are saved together. `persist` applies
+    the resolution delta in the same write that records the reply count, and
+    the comment tally on disk was snapshotted before the pass ran — so a delta
+    that arrives in a second save is a delta the tally never sees.
+
+    They were a pair of loose locals accumulated across two phases, which is a
+    tuple with the parentheses left off: triage replies to the dismissed and
+    the already-addressed, then the pass replies to what it fixed, and both
+    halves have to reach one `persist` call. A value that adds to another is
+    how the second phase extends the first without either knowing the shape of
+    the sum.
+
+    `resolved` names the bucket each thread came from rather than the thread,
+    because that is what the tally moves between — see
+    `CommentsSummary.move_to_resolved`.
+    """
+
+    posted: int = 0
+    resolved: tuple[ThreadState, ...] = ()
+
+    def plus(self, other: "ReplyOutcome") -> "ReplyOutcome":
+        """This round's replies, extended by a later phase's."""
+        return ReplyOutcome(
+            posted=self.posted + other.posted,
+            resolved=(*self.resolved, *other.resolved),
+        )
+
+
+# What a verdict means when the agent ticked its box without saying why. FIXED
+# is absent deliberately: the change itself is the reason, and an entry that
+# needs no explanation should carry whatever triage already put on it.
+_UNSTATED_REASON = {
+    FixOutcome.DEFERRED: "agent could not auto-fix",
+    FixOutcome.NEEDS_HUMAN: "agent could not auto-fix",
+    FixOutcome.DECLINED: "agent declined without giving a reason",
+}
 
 
 @dataclass
@@ -196,6 +270,55 @@ class TrackingResult:
 
     threads: dict[FixOutcome, list[CommentItem]] = field(default_factory=dict)
     items: dict[FixOutcome, list[CommentItem]] = field(default_factory=dict)
+
+    @classmethod
+    def from_outcomes(
+        cls, outcomes: list[ItemOutcome], fixable: list[CommentItem],
+        fixable_items: list[CommentItem] | None = None,
+    ) -> "TrackingResult":
+        """Sort the agent's recorded outcomes back onto the entries they belong to.
+
+        Reading the file is `fix.tracking`'s job and stays there: that module
+        knows the format and nothing about which domain handed the entries
+        over. What this adds is the domain's own entries. An outcome carries an
+        id and a verdict, while the reviewer, the summary and the conversation
+        behind that id live on the `CommentItem` the pass started from — so the
+        outcome selects the bucket and the entry is what goes in it.
+
+        A constructor rather than a function beside the type: the two dicts it
+        fills are private to the shape above, and nothing outside should be
+        reaching for `add` in a loop to build one.
+
+        An id the pass did not hand over is skipped. The file the outcomes were
+        read from is agent-editable, and a section that names no thread is a
+        section with no reviewer to reply to.
+
+        Which entry the id resolves to and which side it is filed under are one
+        decision. They used to be two — the entry was looked up threads-first
+        and the side was `id in items_by_id` — so an id both sides claimed took
+        the thread's entry and was filed as an item, which is a thread nothing
+        would ever reply to. Unreachable today, because a comment item's id is
+        synthesised with an `ic-`/`rb-` prefix and a thread's is GitHub's, but
+        the two answers were free to disagree and only the prefix was stopping
+        them.
+        """
+        fixable_by_id = {t.id: t for t in fixable}
+        items_by_id = {it.id: it for it in (fixable_items or [])}
+        result = cls()
+
+        for recorded in outcomes:
+            is_item = recorded.id not in fixable_by_id
+            source = items_by_id.get(recorded.id) if is_item else fixable_by_id[recorded.id]
+            if not source:
+                continue
+            reason = recorded.reason or _UNSTATED_REASON.get(recorded.outcome, "")
+            result.add(
+                recorded.outcome,
+                dataclass_replace(source, reason=reason or source.reason),
+                item=is_item,
+            )
+
+        return result
 
     def _side(self, item: bool) -> dict[FixOutcome, list[CommentItem]]:
         return self.items if item else self.threads

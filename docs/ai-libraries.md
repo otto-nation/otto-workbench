@@ -231,6 +231,64 @@ boundary is `fix.types.FixItem`, and the translation into one happens here so
 that what the engine sees is the same for every domain and what CI reasons
 about stays `pr.ci_failures`' own types.
 
+### fix/comment_checklist.py
+
+What the comment fix agent is shown: the checklist, and where to read from.
+
+The comments pass's half of the prompt. `fix.comments` is what the engine runs
+and what happens to the answer; this is the question — one section per thread
+or decomposed comment item, carrying the conversation, the code around the line
+and the PR's diff for the file.
+
+The heading, the id marker and the outcome boxes are deliberately not here.
+They belong to `fix.tracking`, which is also what reads them back, so the two
+halves of the format cannot drift apart. What this contributes is the body
+under each heading.
+
+### fix/comment_replies.py
+
+The replies a comment fix round owes, on both sides of the agent.
+
+Two moments, one subject. Triage's verdicts are answers that do not wait on any
+fix — the code already does what the reviewer asked, or their premise does not
+hold — so they go out before the agent runs. The fixed threads are answered
+after, once the commit is on the remote.
+
+Both are gated on the same question and it belongs to them rather than to their
+caller: a reply asserts to a reviewer that something is true of the branch, and
+`publishing` decides whether this run is allowed to assert anything. What is
+left over is `replies_drafted`, which is how a round that rendered replies it
+could not send tells `--finish` they are still owed.
+
+Resolving is paired with replying here because the two are one decision. An
+already-addressed or fixed thread is closed as it is answered; a dismissed one
+is answered and left open, because telling a reviewer their premise does not
+hold is the reply most likely to be argued with.
+
+### fix/comments.py
+
+The comments pass: what the fix engine is handed, and what it owes after.
+
+`fix.engine` runs a pass; this says what the review-comment domain hands it and
+what that domain does once the work has landed. `fix.ci` is the same shape for
+CI, and the other side of the boundary is `fix.types.FixItem` — the translation
+into one happens here so that what the engine sees is the same for every domain
+and what the comments pass reasons about stays `pr`'s own types.
+
+Layer 5 because the adapter reads `pr` and nothing above it: the dispositions
+are `pr.triage_round`'s, the replies `pr.thread_replies`', the summary
+`pr.summary_publish`'s, the state write `pr.fix_state`'s. The placement rule is
+`rebase.prepush`'s docstring — an adapter's home is the lowest layer its own
+imports permit, and `fix.engine.run()` taking it as an argument is what makes
+that free.
+
+**One tail, whether or not the agent ran.** `fix.engine.run` declines a pass
+with no items and never calls `record`, so a round with nothing fixable would
+have no way to publish the table for what triage settled or to write its
+outcomes. `run_pass` calls `record` itself in that case rather than keeping a
+second copy of the tail, which is what the two copies that used to exist here
+kept drifting apart over.
+
 ### fix/engine.py
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.
@@ -1479,6 +1537,27 @@ posted back to a reviewer must cite a line: a claim about their code with
 nothing to point at is not a claim, which is why `evidence_file` is required for
 exactly the two verdicts that are posted outward.
 
+### pr/triage_round.py
+
+What triage decided, and the holds that decision places.
+
+`pr.triage` asks the model and refuses what it cannot back. This is the other
+half of the same round: sorting those verdicts into the four dispositions the
+fix pass routes on, placing the publishing holds they call for, and carrying
+the result as one value.
+
+The two are separate modules because they are separate phases. The model can be
+asked once and its answer disposed of twice — a triage-only run stops after
+`pr.triage`, and only `--fix` reaches here — and the prompt half has no business
+knowing about publishing holds.
+
+**The holds are why `TriagedRound` has a constructor rather than being built by
+its caller.** `publishing.hold()` flips `publishing.enabled()`, and the fix
+pass reads that flag afterwards to decide whether the replies it rendered are
+still owed. The two used to be kept in order by sitting near each other in one
+function; here the ordering is the type's, since there is no `TriagedRound` that
+predates its own holds.
+
 ### review/issue.py
 
 Issue tracking integration for claude-review.
@@ -1862,6 +1941,26 @@ shared pipeline all three now run on, and the thing that produces the
 not the same as recording through these types: the review-findings pass
 re-renders the review document from its outcomes rather than writing a record
 at all.
+
+### pr/fix_state.py
+
+Writing what a comment fix pass did into the PR's state file.
+
+`pr.comments_fix` owns the shape — `FixSummary`, its merge rules, its
+rendering. This owns the write: assembling the record out of the round's
+buckets, naming the reviewer behind each entry, and saving both alongside the
+thread-tally delta in one transaction.
+
+Split from `pr.comments_fix` rather than folded into it because the domain and
+its writer answer different questions, and a module that holds both is the
+shape `…-00` rule F-C warns about: a renderer reading a field some other file
+is responsible for keeping current.
+
+**The save is one transaction, deliberately.** The comment tally on disk was
+snapshotted before the pass ran, so it learns of the threads the pass resolved
+only from the delta applied here. A second save would write the fix record
+against a tally that had not moved, and `pr status` would report threads still
+open that GitHub has already closed.
 
 ### pr/history_rewrite.py
 

@@ -145,8 +145,61 @@ def disposition_precedence(disposition: "PriorDisposition | None") -> int:
 # same claim as "Fixed — `check_key` now calls it directly.", and the prompt's
 # example cannot show every punctuation a model will reach for. The comma stays
 # off it: what follows a comma qualifies the verdict rather than explaining it.
-DISPOSITION_TAIL_PUNCTUATION = "—–:(-."
-_DISPOSITION_TAIL_RE = re.compile(rf"^\s*(?:[{re.escape(DISPOSITION_TAIL_PUNCTUATION)}]|$)")
+#
+# The markdown emphasis characters are on it for the same reason the full stop
+# is: "Fixed *(removed in 89f66d9)*" is the claim "Fixed (removed in 89f66d9)"
+# already makes, and the ledger is markdown, so a model italicises its detail
+# whether or not the prompt shows that form. Emphasis carries no meaning here —
+# stripping it changes nothing about what the line claims — so it introduces
+# detail rather than qualifying the verdict.
+#
+# Each character is mapped to the words the prompt uses for it, because neither
+# can be derived from the other: three of these are "a dash" and two are
+# "italics", so a glyph list built from the keys would instruct a model worse
+# than prose does, and prose alone has now gone stale twice. The prompt is held
+# to these names by `TestLedgerInstructionNamesEveryBreak`, so a character added
+# here fails a test until `review.prompt_prior` says how to write it.
+DISPOSITION_TAIL_PROSE = {
+    "—": "a dash",
+    "–": "a dash",
+    "-": "a dash",
+    ":": "a colon",
+    ".": "a full stop",
+    "(": "an opening bracket",
+    "*": "italics",
+    "_": "italics",
+}
+DISPOSITION_TAIL_PUNCTUATION = "".join(DISPOSITION_TAIL_PROSE)
+
+# The two characters above that join words as readily as they break them. Glued
+# straight onto the verdict and straight onto what follows, neither is a break
+# at all — "Fixed_up in a follow-up branch" and "Fixed-up in a follow-up branch"
+# are the unparseable "Fixed in a follow-up branch" with the space spelled
+# differently, not a verdict with detail after it. So they break the line only
+# where a space precedes them or a non-word character follows: "Fixed _reason_"
+# and a trailing "Fixed -" still read as verdicts, while a hyphenated or
+# underscored word does not. Every other character in the map cannot sit inside
+# a word in the first place and is read wherever it appears.
+#
+# Public, unlike the regex built from it: the diagnostic printed for a verdict
+# that did not parse (`review.reconcile`) has to show these two apart from the
+# rest, and a second hand-typed "-_" there would be this rule restated where
+# nothing holds the two copies together.
+DISPOSITION_TAIL_WORD_JOINERS = "-_"
+
+# The rest of the map: every character that breaks a verdict wherever it
+# appears. Public for the same reason the joiner class is — the diagnostic in
+# `review.reconcile` lists these as the unconditional breaks, and a second
+# comprehension there would be this one subtraction with two owners.
+DISPOSITION_TAIL_BREAKS = "".join(
+    c for c in DISPOSITION_TAIL_PUNCTUATION if c not in DISPOSITION_TAIL_WORD_JOINERS
+)
+_DISPOSITION_TAIL_RE = re.compile(
+    rf"^(?:\s*$"
+    rf"|\s*[{re.escape(DISPOSITION_TAIL_BREAKS)}]"
+    rf"|\s+[{re.escape(DISPOSITION_TAIL_WORD_JOINERS)}]"
+    rf"|[{re.escape(DISPOSITION_TAIL_WORD_JOINERS)}](?!\w))"
+)
 
 
 # ── Coverage ─────────────────────────────────────────────────────────────────

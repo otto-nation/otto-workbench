@@ -22,9 +22,11 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import (
     assert_no_worktree_exit, git_in, git_out, make_ctx, run_checked,
-    supersession_context, supersession_evidence, supersession_verdict,
 )
 from agent import retry as agent_retry
+from fix import comment_checklist
+from fix import comment_replies
+from fix import comments as fix_comments
 from fix import engine as fix_engine
 from fix import tracking as fix_tracking
 from pr import state as pr_state
@@ -38,8 +40,11 @@ from git.land import CommitStatus
 from pr import thread_replies
 from pr import attribution
 from pr import thread_context
+from pr import fix_state
 from pr import triage
 from pr import triage_prompt
+from pr import triage_round
+from pr.triage_round import TriagedRound
 from pr import history_rewrite
 from pr import permalinks
 from pr import summary_model
@@ -52,15 +57,14 @@ from pr import settlement
 from pr.comments_fix import (
     RECONCILED_STATUS_TEXT, UNATTRIBUTED_STATUS_TEXT, FixSummary,
 )
-from pr.domains import SupersessionKind
 from pr.fix import (
     FixOutcome, FixRecord, ItemOutcome, RECONCILED_REASON, SETTLED_REASON,
     SettledBy,
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
-    CommentItem, PRReport, ReportThread, TriageResult,
-    TriageStats, triage_result_from_dict,
+    ClassificationResult, CommentItem, PRReport, ReplyOutcome, ReportThread,
+    TrackingResult, TriageResult, TriageStats, triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
@@ -928,6 +932,25 @@ def _tick_every_fix(wt_path):
     return invoke
 
 
+def _triaged_round(*, fixable=(), fixable_items=(), needs_human=(), dismissed=(),
+                   already_addressed=(), replies=None, has_unaccounted=False):
+    """A `TriagedRound` from the buckets a test names, with the rest empty.
+
+    The thread side takes everything except `fixable_items`, which is what the
+    round's own properties then merge — a test naming `dismissed` is making a
+    point about a dismissal, not about which side it arrived on.
+    """
+    return TriagedRound(
+        threads=ClassificationResult(
+            fixable=list(fixable), needs_human=list(needs_human),
+            dismissed=list(dismissed), already_addressed=list(already_addressed),
+        ),
+        items=ClassificationResult(fixable=list(fixable_items)),
+        replies=replies or ReplyOutcome(),
+        has_unaccounted=has_unaccounted,
+    )
+
+
 def _fix_adapter(rt, wt_path, **overrides):
     """A CommentFixAdapter over an otherwise empty pass.
 
@@ -937,13 +960,8 @@ def _fix_adapter(rt, wt_path, **overrides):
     ctx = overrides.pop("ctx", None) or make_ctx(
         repo="owner/repo", pr_number=1, worktree_root=wt_path, target_dir=wt_path,
     )
-    kwargs = dict(
-        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
-        already_addressed=[], resolved=[], triage_replies=0,
-        has_unaccounted=False, has_items=False,
-    )
-    kwargs.update(overrides)
-    return rt.CommentFixAdapter(report, ctx, wt_path, **kwargs)
+    round_ = overrides.pop("round_", None) or _triaged_round(**overrides)
+    return fix_comments.CommentFixAdapter(report, ctx, wt_path, round_)
 
 
 class TestTheArtifactsAreOutsideTheWorktree:
@@ -979,6 +997,136 @@ class TestTheArtifactsAreOutsideTheWorktree:
         """The same identity the state file is filed under, not a second one."""
         _, adapter = self._adapter(rt, tmp_path)
         assert adapter.artifacts == pr_comments.artifacts_dir(tmp_path / "state")
+
+
+class TestWhatTheRoundPersistsAndReports:
+    """The two projections `record` ends on, against the round that made them.
+
+    Everything upstream of these has its own coverage; what these hold is the
+    correspondence between one round and the two shapes it leaves behind — the
+    state file and the stdout JSON. A field dropped on the way into either is
+    invisible end to end: the pass still commits, replies and posts, and the
+    loss shows up a round later as a closeout that re-renders work already done
+    or a `pr status` missing a reviewer.
+    """
+
+    def _round(self, **kw):
+        return _triaged_round(**kw)
+
+    def _adapter(self, rt, tmp_path, **kw):
+        return _fix_adapter(rt, tmp_path, round_=self._round(**kw))
+
+    @staticmethod
+    def _entry(eid="t1", reviewer="kgn"):
+        return CommentItem(id=eid, file="f.go", line=3, reviewer=reviewer,
+                           summary=f"{eid} summary")
+
+    def _state(self, rt, tmp_path, *, tracking=None, replies=None,
+               summary=None, **round_kw):
+        adapter = self._adapter(rt, tmp_path, **round_kw)
+        content = summary_model.RoundContent(
+            by_outcome=adapter.round.by_outcome(tracking or TrackingResult()),
+            issue_comments=[], review_body_comments=[],
+        )
+        cp = attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, "")
+        return adapter._state_for(
+            content, cp, replies or ReplyOutcome(),
+            summary or summary_publish.SummaryOutcome("https://u", owed=False),
+            tracking or TrackingResult(),
+        )
+
+    def test_the_reviewer_behind_each_entry_is_recorded(self, rt, tmp_path):
+        """`ItemOutcome` carries no login, so the map beside it is the only record.
+
+        Dropped, every later surface that names a reviewer — the summary's
+        Reviewer column, the reply's addressee — falls back to anonymous.
+        """
+        state = self._state(rt, tmp_path, dismissed=[self._entry(reviewer="ana")])
+        assert state.reviewers == {"t1": "ana"}
+
+    def test_a_held_reply_leaves_the_queue_owed(self, rt, tmp_path):
+        """The gate shut on a fixed thread's reply, so `--finish` still owes it."""
+        tracking = TrackingResult()
+        tracking.add(FixOutcome.FIXED, self._entry())
+        state = self._state(rt, tmp_path, tracking=tracking, fixable=[self._entry()])
+        assert state.replies_pending is True
+
+    def test_a_delivered_reply_owes_nothing(self, rt, tmp_path, publishing_on):
+        """Pairs with the case above: proves the assertion is not vacuous."""
+        tracking = TrackingResult()
+        tracking.add(FixOutcome.FIXED, self._entry())
+        state = self._state(rt, tmp_path, tracking=tracking, fixable=[self._entry()])
+        assert state.replies_pending is False
+
+    def test_a_drafted_triage_reply_owes_on_its_own(self, rt, tmp_path):
+        """No fixed thread at all, and the queue is still owed.
+
+        The triage replies go out before the pass knows whether anything is
+        fixable, so a rule that asked only about the fixed queue reported a
+        drained one and `--finish --post` published nothing.
+        """
+        state = self._state(rt, tmp_path, dismissed=[self._entry()])
+        assert state.replies_pending is True
+
+    def test_a_round_that_ran_names_the_commit_it_made(self, rt, tmp_path):
+        """HEAD after the pass, which is the commit the outcomes were measured against."""
+        adapter = self._adapter(rt, tmp_path, fixable=[self._entry()])
+        with patch.object(git_client, "head_sha", return_value="fff9999") as head:
+            assert adapter._snapshot_sha() == "fff9999"
+        assert head.called
+
+    def test_a_round_that_did_not_run_asks_no_subprocess(self, rt, tmp_path):
+        """Nothing committed, so HEAD has not moved and the context already knows it."""
+        adapter = self._adapter(rt, tmp_path, dismissed=[self._entry()])
+        with patch.object(git_client, "head_sha") as head:
+            assert adapter._snapshot_sha() == adapter.ctx.head_sha
+        assert not head.called
+
+    def test_the_result_carries_what_the_agent_was_given(self, rt, tmp_path):
+        """The batch statistics are the run's, not the adapter's.
+
+        They are what `pr comments` reports about cost, and an adapter that
+        answered from its own state would report the same numbers for every
+        round.
+        """
+        content = summary_model.RoundContent(
+            by_outcome={}, issue_comments=[], review_body_comments=[])
+        run = fix_engine.FixRun(batches=3, max_turns=17, max_budget=2.5)
+        result = fix_comments._result_for(
+            content, attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, ""),
+            ReplyOutcome(posted=4),
+            summary_publish.SummaryOutcome(None, owed=True), run,
+        )
+        assert (result.batches, result.max_turns, result.max_budget) == (3, 17, 2.5)
+        assert result.replies_posted == 4
+        assert result.summary_deferred is True
+
+    def test_the_result_projects_every_bucket(self, rt, tmp_path):
+        """Five fields off one content, so none can disagree with the table."""
+        content = summary_model.RoundContent(
+            by_outcome={
+                FixOutcome.FIXED: [self._entry("t1")],
+                FixOutcome.DEFERRED: [self._entry("t2")],
+                FixOutcome.NEEDS_HUMAN: [self._entry("t3")],
+                FixOutcome.DECLINED: [self._entry("t4")],
+                FixOutcome.DISMISSED: [self._entry("t5")],
+                FixOutcome.ALREADY_ADDRESSED: [self._entry("t6")],
+            },
+            issue_comments=[], review_body_comments=[],
+        )
+        result = fix_comments._result_for(
+            content, attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, ""),
+            ReplyOutcome(), summary_publish.SummaryOutcome("https://u", owed=False),
+            fix_engine.FixRun(),
+        )
+        assert [e.id for e in result.fixed] == ["t1"]
+        assert [e.id for e in result.deferred] == ["t2"]
+        assert [e.id for e in result.dismissed] == ["t5"]
+        assert [e.id for e in result.already_addressed] == ["t6"]
+        # The one folded field: a thread the agent argued against and one it
+        # could not decide both end with a person, and the summary shows them
+        # together even though the state file keeps them apart.
+        assert [e.id for e in result.needs_human] == ["t3", "t4"]
 
 
 class TestCommentFixLanding:
@@ -1503,50 +1651,6 @@ class TestPostOrDeferSummary:
         mock.assert_not_called()
 
 
-class TestUnaccountedThreadsDeferSummary:
-    """Summary should defer when non-resolved threads are not in any classified bucket."""
-
-    def test_all_threads_accounted(self, rt):
-        """When every non-resolved thread is in fixable/needs_human/dismissed, none are unaccounted."""
-        triage_threads = [
-            CommentItem(id="t1", classification="actionable_suggestion",
-                        verification="valid", complexity="low",
-                        file="a.py", line=1, summary="fix it"),
-        ]
-        report_threads = [
-            ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
-            ReportThread(id="t2", state=ThreadState.RESOLVED, is_resolved=True),
-        ]
-        accounted_ids = rt._accounted_thread_ids(triage_threads, [], [])
-        non_resolved = [t for t in report_threads if t.state != "resolved"]
-        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
-        assert unaccounted == []
-
-    def test_unaccounted_threads_detected(self, rt):
-        """Threads not in any classified bucket are detected as unaccounted."""
-        triage_threads = [
-            CommentItem(id="t1", classification="actionable_suggestion",
-                        verification="valid", complexity="low",
-                        file="a.py", line=1, summary="fix it"),
-            CommentItem(id="t2", classification="approval",
-                        file="b.py", line=1, summary="lgtm"),
-        ]
-        report_threads = [
-            ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
-            ReportThread(id="t2", state=ThreadState.NEW, is_resolved=False),
-            ReportThread(id="t3", state=ThreadState.NEW, is_resolved=False),
-        ]
-        classified = rt._classify_triage_entries(triage_threads)
-        accounted_ids = rt._accounted_thread_ids(
-            classified.fixable, classified.needs_human, classified.dismissed,
-        )
-        non_resolved = [t for t in report_threads if t.state != "resolved"]
-        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
-        # t2 was classified as "approval" and dropped; t3 wasn't in triage at all
-        assert len(unaccounted) == 2
-        assert {t.id for t in unaccounted} == {"t2", "t3"}
-
-
 class TestRenderDeferredSummary:
     def test_not_deferred_is_noop(self, rt):
         state = _make_state(_fix(summary_deferred=False))
@@ -1873,15 +1977,15 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
              patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state") as persist, \
+             patch.object(fix_state, "persist") as persist, \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(mock_run, sha="aaa1111")), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u"), \
              patch("pr.comments.resolve_thread", return_value=True):
-            result = rt._run_comment_fix(
+            result = fix_comments.run_pass(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
         return SimpleNamespace(
@@ -2671,7 +2775,7 @@ class TestDeliverPrBody:
         adapter = _fix_adapter(rt, worktree)
         adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
         adapter.tracking_path.write_text("")
-        with patch.object(rt, "_find_and_update_main_worktree", return_value=None):
+        with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None):
             prompt = fix_engine._prompt(adapter, 10)
 
         assert str(pr_comments.pr_body_draft(adapter.artifacts)) in prompt
@@ -3075,49 +3179,6 @@ class TestResolutionsReachThePersistedTally:
         assert "no new left to move" in capsys.readouterr().err
 
 
-class TestFixPassResolutionsReachTheTally:
-    """The fix pass resolves after the counts were saved, same as the drain.
-
-    This is the commoner path of the two: a pass that fixed, pushed, replied and
-    resolved in one run leaves `replies_pending` false, so the drain returns
-    early and never sees those threads. `_persist_fix_state` is where the pass
-    writes its own results, and so where the delta has to land.
-    """
-
-    def _persist(self, rt, by_state, resolved):
-        ctx = make_ctx()
-        state = _make_state(_fix())
-        state.comments.by_state = dict(by_state)
-        with patch("pr.state.load_or_init", return_value=state), \
-             patch("pr.state.save_state") as save:
-            rt._persist_fix_state(_fix(), Path("/wt"), ctx, None,
-                                  resolved=resolved)
-        assert save.called, "the pass must still save what it persisted"
-        return state.comments
-
-    def test_the_pass_moves_what_it_resolved(self, rt):
-        comments = self._persist(
-            rt, {"new": 2, "addressed": 1},
-            [ThreadState.NEW, ThreadState.ADDRESSED],
-        )
-        assert comments.by_state[ThreadState.NEW] == 1
-        assert comments.by_state[ThreadState.ADDRESSED] == 0
-        assert comments.by_state[ThreadState.RESOLVED] == 2
-
-    def test_a_pass_that_resolved_nothing_leaves_the_tally_alone(self, rt):
-        """The default, and the shape of every caller that predates the delta."""
-        assert self._persist(rt, {"new": 2}, []).by_state == {"new": 2}
-
-    def test_omitting_the_argument_is_the_same_as_none_resolved(self, rt):
-        ctx = make_ctx()
-        state = _make_state(_fix())
-        state.comments.by_state = {"new": 2}
-        with patch("pr.state.load_or_init", return_value=state), \
-             patch("pr.state.save_state"):
-            rt._persist_fix_state(_fix(), Path("/wt"), ctx, None)
-        assert state.comments.by_state == {"new": 2}
-
-
 class TestTriageQueueIsRecorded:
     """The flag the drain turns on: a drafted triage owes its replies."""
 
@@ -3125,14 +3186,14 @@ class TestTriageQueueIsRecorded:
         return CommentItem(id="t1", summary="s", file="x.py", line=1)
 
     def test_a_drafted_triage_records_what_it_did_not_send(self, rt):
-        assert rt._triage_replies_drafted([self._item()], []) is True
-        assert rt._triage_replies_drafted([], [self._item()]) is True
+        assert comment_replies.replies_drafted([self._item()], []) is True
+        assert comment_replies.replies_drafted([], [self._item()]) is True
 
     def test_a_published_triage_owes_nothing(self, rt, publishing_on):
-        assert rt._triage_replies_drafted([self._item()], [self._item()]) is False
+        assert comment_replies.replies_drafted([self._item()], [self._item()]) is False
 
     def test_a_triage_with_no_replies_owes_nothing(self, rt):
-        assert rt._triage_replies_drafted([], []) is False
+        assert comment_replies.replies_drafted([], []) is False
 
 
 class TestReplyAttributionAcrossRounds:
@@ -5239,220 +5300,6 @@ class TestAnEntryAndAnOutcomeAreInverses:
         assert entry.to_outcome(FixOutcome.FIXED).outcome is FixOutcome.FIXED
 
 
-# ── _classify_triage_entries (complexity) ──────────────────────────────────
-
-class TestClassifyTriageComplexity:
-    def test_high_complexity_goes_to_needs_human(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="refactor", classification="actionable_suggestion",
-            verification="valid", complexity="high", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 0
-        assert len(result.needs_human) == 1
-        assert result.needs_human[0].reason == "complex"
-
-    def test_low_complexity_stays_fixable(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="rename", classification="actionable_suggestion",
-            verification="valid", complexity="low", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 1
-        assert len(result.needs_human) == 0
-
-    def test_medium_complexity_stays_fixable(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="add guard", classification="actionable_suggestion",
-            verification="valid", complexity="medium", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 1
-        assert len(result.needs_human) == 0
-
-    def test_no_complexity_field_stays_fixable(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="fix", classification="actionable_suggestion",
-            verification="valid", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 1
-        assert len(result.needs_human) == 0
-
-
-# ── already_addressed verification ─────────────────────────────────────────
-
-
-class TestClassifyAlreadyAddressed:
-    """A suggestion the code already satisfies must not be routed to dismissed.
-
-    Triage sees current HEAD, which already contains fixes made earlier in the
-    same review cycle. Treating "the code already does this" as `invalid` posts
-    a reply telling the reviewer their suggestion was inapplicable — when it was
-    in fact the reason for the change.
-    """
-
-    def _entry(self, verification):
-        return CommentItem(
-            id="t1", file="f.go", line=10, reviewer="kgn",
-            summary="drop the nil-logger guard",
-            classification="actionable_suggestion",
-            verification=verification, complexity="low", state=ThreadState.NEW,
-        )
-
-    def test_already_addressed_gets_own_bucket(self, rt):
-        result = rt._classify_triage_entries([self._entry("already_addressed")])
-        assert len(result.already_addressed) == 1
-        assert result.dismissed == []
-        assert result.fixable == []
-        assert result.needs_human == []
-
-    def test_invalid_still_dismissed(self, rt):
-        result = rt._classify_triage_entries([self._entry("invalid")])
-        assert len(result.dismissed) == 1
-        assert result.already_addressed == []
-
-    def test_accounted_ids_include_already_addressed(self, rt):
-        result = rt._classify_triage_entries([self._entry("already_addressed")])
-        accounted = rt._accounted_thread_ids(
-            result.fixable, result.needs_human, result.dismissed,
-            result.already_addressed,
-        )
-        assert accounted == {"t1"}
-
-    def test_the_record_carries_the_already_addressed_outcome(self, rt):
-        entry = self._entry("already_addressed")
-        record = rt._build_fix_record(
-            {FixOutcome.ALREADY_ADDRESSED: [entry]},
-        )
-        assert len(record.items) == 1
-        assert record.items[0].outcome == FixOutcome.ALREADY_ADDRESSED
-
-    def test_an_outcome_the_caller_did_not_name_records_nothing(self, rt):
-        """The mapping is the whole vocabulary of a call — nothing is implied."""
-        assert rt._build_fix_record({}).items == []
-
-    def test_a_declined_thread_is_recorded_as_declined(self, rt):
-        """Not folded into needs-human: the state file keeps the two apart."""
-        entry = CommentItem(id="t9", reviewer="kgn", reason="premise does not hold")
-        record = rt._build_fix_record({FixOutcome.DECLINED: [entry]})
-        assert record.items[0].outcome == FixOutcome.DECLINED
-        assert record.items[0].reason == "premise does not hold"
-
-    def test_the_reviewer_is_kept_beside_the_record_not_on_it(self, rt):
-        """`ItemOutcome` is every domain's; a login is only the comment pass's."""
-        by_outcome = {FixOutcome.DECLINED: [
-            CommentItem(id="t9", reviewer="kgn"),
-            CommentItem(id="t8"),
-        ]}
-        assert rt._reviewers_for(by_outcome) == {"t9": "kgn"}
-
-    def test_only_fixed_outcomes_carry_the_pass_commit(self, rt):
-        """A deferred thread was not fixed by this commit — or any."""
-        fixed = self._entry("valid")
-        deferred = CommentItem(id="t2", file="b.py", line=2, reviewer="kgn",
-                               summary="too complex")
-        record = rt._build_fix_record({
-            FixOutcome.FIXED: [fixed],
-            FixOutcome.DEFERRED: [deferred],
-        }, commit_sha="deadbee")
-        by_id = {o.id: o.commit_sha for o in record.items}
-        assert by_id == {"t1": "deadbee", "t2": ""}
-
-    def test_no_commit_leaves_the_sha_empty(self, rt):
-        record = rt._build_fix_record(
-            {FixOutcome.FIXED: [self._entry("valid")]}, commit_sha="",
-        )
-        assert record.items[0].commit_sha == ""
-
-
-class TestHoldIfSuperseded:
-    """What the preflight's findings are allowed to do to this run.
-
-    A hold, not the refusal `pr review` answers with: by the time this runs the
-    triage pass is already paid for, so stopping saves nothing — what must not
-    happen is asserting outward that superseded code was fixed. Detection
-    itself is `supersession`'s, and tested there.
-    """
-
-    def test_evidence_shuts_the_gate(self, rt, publishing_on):
-        from core import publishing
-        rt._hold_if_superseded(supersession_verdict(supersession_evidence()))
-        assert publishing.enabled() is False
-        assert "supersession signal" in publishing.held()
-
-    def test_context_alone_leaves_it_open(self, rt, publishing_on):
-        """A rebase is how the problem becomes visible, not the problem."""
-        from core import publishing
-        rt._hold_if_superseded(supersession_verdict(supersession_context()))
-        assert publishing.enabled() is True
-
-    def test_nothing_found_says_nothing(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded(supersession_verdict())
-        assert capsys.readouterr().err == ""
-
-    def test_the_output_names_the_signal_that_fired(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded(supersession_verdict(
-            supersession_context("replayed onto a moved base"),
-            supersession_evidence("`foo` is gone from origin/main"),
-        ))
-        err = capsys.readouterr().err
-        assert "[rebase_skew] replayed onto a moved base" in err
-        assert "[readds_removed_symbol] `foo` is gone from origin/main" in err
-
-    def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
-        trail = MagicMock()
-        rt._hold_if_superseded(supersession_verdict(supersession_evidence()), trail)
-        data = trail.decision.call_args.kwargs["data"]
-        assert data["signals"] == [SupersessionKind.READDS_REMOVED_SYMBOL]
-
-
-class TestHoldWhileContested:
-    """Real fixes must not reach a branch a reviewer said should not land."""
-
-    @staticmethod
-    def _entry(reason, id="t1"):
-        return CommentItem(id=id, file="f.go", line=10, reviewer="kgn",
-                           summary="the root cause does not exist", reason=reason)
-
-    def test_an_open_thread_shuts_the_gate(self, rt, publishing_on):
-        from core import publishing
-        rt._hold_while_contested([self._entry("needs_discussion")])
-        assert publishing.enabled() is False
-        assert "1 thread(s)" in publishing.held()
-
-    def test_nothing_contested_leaves_the_gate_alone(self, rt, publishing_on):
-        from core import publishing
-        rt._hold_while_contested([])
-        assert publishing.enabled() is True
-        assert publishing.held() == ""
-
-    def test_every_needs_human_reason_holds(self, rt, publishing_on):
-        """Contested, conflicting, question, complex — all route to needs_human.
-
-        The halt is on the bucket, not the reason: distinguishing a
-        premise-invalidating question from a bikeshed is the problem this
-        deliberately does not try to solve.
-        """
-        from core import publishing
-        rt._hold_while_contested([self._entry("complex")])
-        assert publishing.enabled() is False
-
-    def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
-        trail = MagicMock()
-        rt._hold_while_contested(
-            [self._entry("needs_discussion"), self._entry("question", id="t2")],
-            trail,
-        )
-        trail.decision.assert_called_once()
-        data = trail.decision.call_args.kwargs["data"]
-        assert data["reasons"] == ["needs_discussion", "question"]
-
-
 class TestFixPassHoldsWhenContested:
     """The whole point of the hold, asserted through `_run_comment_fix` itself.
 
@@ -5503,15 +5350,15 @@ class TestFixPassHoldsWhenContested:
         with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
              patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(mock_run)), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u"), \
              patch("pr.comments.resolve_thread", return_value=True):
-            result = rt._run_comment_fix(
+            result = fix_comments.run_pass(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
         return SimpleNamespace(result=result, pushes=pushes, commits=commits)
@@ -5669,15 +5516,15 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
             target_dir=tmp_path,
         )
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True):
-            return rt._run_comment_fix(
+            return fix_comments.run_pass(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
 
@@ -5719,13 +5566,13 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
             repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
             target_dir=tmp_path,
         )
-        with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+        with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))):
-            return rt._run_comment_fix(TriageResult(), report, tmp_path, ctx)
+            return fix_comments.run_pass(TriageResult(), report, tmp_path, ctx)
 
     def test_the_round_publishes_its_table(self, rt, tmp_path, publishing_on):
         with patch("pr.comments.post_issue_comment", return_value="https://u"):
@@ -5737,6 +5584,265 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
         result = self._run(rt, tmp_path)
         assert result.summary_url is None
         assert result.summary_deferred is True
+
+
+class TestTheRoundWithNothingToFixTakesTheSameTail:
+    """One `record`, whether or not the agent ran.
+
+    `fix_engine.run` declines a pass with no items and never calls `record`,
+    so the round with nothing fixable used to run a second copy of the tail
+    written out in the entry function. The two drifted in three ways before
+    anyone noticed — a dropped `has_comment_items`, a summary the fix path
+    posted and this one skipped, and a result built by mutation rather than
+    projected from the round.
+
+    What is asserted here is the equivalence the collapse rests on: with no
+    outcomes, the shared tail produces what the hand-written one did. The state
+    write is the place to check it — the return value is the same object either
+    way, so a tail that quietly persisted less would not show there.
+    """
+
+    def _persisted(self, rt, tmp_path, *, threads=(), comment_items=()):
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t1", file="f.go", line=10,
+                                  comments=[{"databaseId": 100}])],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(fix_state, "persist") as persist, \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_thread_reply", return_value=True), \
+             patch("pr.comments.post_issue_comment", return_value="https://u"), \
+             patch("pr.comments.resolve_thread", return_value=True):
+            result = fix_comments.run_pass(
+                TriageResult(threads=list(threads),
+                             comment_items=list(comment_items)),
+                report, tmp_path, ctx,
+            )
+        return persist.call_args[0][0], result
+
+    @staticmethod
+    def _dismissed(eid="t1"):
+        return CommentItem(
+            id=eid, file="f.go", line=10, reviewer="kgn", summary="a point",
+            classification="actionable_suggestion", verification="invalid",
+            complexity="low", state=ThreadState.NEW,
+        )
+
+    def test_the_record_carries_the_rounds_own_outcome(self, rt, tmp_path,
+                                                       publishing_on):
+        """The buckets triage filled reach the state file with no agent involved."""
+        persisted, _ = self._persisted(rt, tmp_path, threads=[self._dismissed()])
+        assert [o.outcome for o in persisted.fix.items] == [FixOutcome.DISMISSED]
+        assert persisted.fix.commit_sha == ""
+        assert persisted.fix.commit_status == CommitStatus.NO_CHANGES
+
+    def test_the_identity_sha_stands_in_for_an_unmoved_head(self, rt, tmp_path,
+                                                            publishing_on):
+        """No agent ran, so HEAD did not move and the context already knows it."""
+        persisted, _ = self._persisted(rt, tmp_path, threads=[self._dismissed()])
+        assert persisted.fix.head_sha == "aaa1111"
+
+    def test_no_description_draft_is_delivered(self, rt, tmp_path, publishing_on):
+        """The draft on disk is an earlier round's, and `--finish` owns it.
+
+        Going through the shared tail put this round in reach of a delivery it
+        never used to make: `deliver_pr_body` sends whatever file is there, and
+        a round that ran no agent wrote none of it. The draft has to exist for
+        the assertion to mean anything — with no file the delivery declines on
+        its own and the gate under test is never reached.
+        """
+        draft = pr_comments.pr_body_draft(pr_comments.artifacts_dir(tmp_path))
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text("a description an earlier round drafted\n")
+        with patch("pr.comments.update_pr_body", return_value=True) as update:
+            persisted, _ = self._persisted(
+                rt, tmp_path, threads=[self._dismissed()])
+        assert persisted.pr_body_pending is False
+        assert not update.called
+        assert draft.exists(), "the draft stays for --finish to deliver"
+
+    def test_the_result_is_projected_from_the_round(self, rt, tmp_path,
+                                                    publishing_on):
+        """Not a pre-built object mutated on the way out."""
+        _, result = self._persisted(rt, tmp_path, threads=[self._dismissed()])
+        assert [e.id for e in result.dismissed] == ["t1"]
+        assert result.fixed == []
+        assert result.batches == 0
+        assert result.commit_status == CommitStatus.NO_CHANGES
+
+    def test_the_replies_triage_sent_are_counted(self, rt, tmp_path, publishing_on):
+        """The round's own replies reach the tail that did not send them."""
+        persisted, result = self._persisted(
+            rt, tmp_path, threads=[self._dismissed()])
+        assert result.replies_posted == 1
+        assert persisted.replies_posted == 1
+
+
+class TestARoundWithNoFixablesRecordsItsCommentItems:
+    """What the round persists about comment items survives into `--finish`.
+
+    `has_comment_items` decides whether the render appends the raw comment
+    sections under the table — an entry decomposed out of a top-level comment
+    is already a row, so repeating its body below the table reports it twice.
+    The round with nothing to fix computed the value and then left the field off
+    its `FixSummary`, so it persisted false and the deferred render on
+    `--finish` duplicated every comment-item row.
+    """
+
+    def _persisted(self, rt, tmp_path, *, comment_items):
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t1", file="f.go", line=10,
+                                  comments=[{"databaseId": 100}])],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(fix_state, "persist") as persist, \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_thread_reply", return_value=True), \
+             patch("pr.comments.post_issue_comment", return_value="https://u"), \
+             patch("pr.comments.resolve_thread", return_value=True):
+            fix_comments.run_pass(
+                TriageResult(threads=[], comment_items=comment_items),
+                report, tmp_path, ctx,
+            )
+        return persist.call_args[0][0]
+
+    @staticmethod
+    def _item(verification):
+        return CommentItem(
+            id="ic-1", file="f.go", line=10, reviewer="kgn", summary="a thought",
+            classification="actionable_suggestion", verification=verification,
+            complexity="low", state=ThreadState.NEW,
+        )
+
+    def test_a_round_carrying_comment_items_says_so(self, rt, tmp_path,
+                                                    publishing_on):
+        persisted = self._persisted(
+            rt, tmp_path, comment_items=[self._item("invalid")])
+        assert persisted.has_comment_items is True
+
+    def test_a_round_without_them_does_not(self, rt, tmp_path, publishing_on):
+        """Pairs with the case above: proves the assertion is not vacuous."""
+        persisted = self._persisted(rt, tmp_path, comment_items=[])
+        assert persisted.has_comment_items is False
+
+
+class TestARoundWithUnaccountedThreadsStillPublishes:
+    """A thread this pass never reached does not silence the rows it did settle.
+
+    The round with nothing to fix used to skip the post outright when any open
+    thread went undisposed. The summary is one marker comment edited in place,
+    so skipping it is not silence: the *previous* round's table stays as the
+    newest thing on the PR, and the dismissals this round made are invisible
+    until a `--finish` that may never run. The pass that commits has always
+    posted here; the two paths asked the same question and answered it
+    differently.
+
+    `summary_still_owed` returns True either way, so nothing is lost by
+    posting: the closeout re-renders whatever the interim table missed.
+    """
+
+    def _run(self, rt, tmp_path):
+        """One thread dismissed, one open thread the pass never sees.
+
+        `t2` is on the report and absent from triage, which is what makes
+        `has_unaccounted` true — the condition the old guard turned on.
+        """
+        threads = [CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn", summary="t1 summary",
+            classification="actionable_suggestion", verification="invalid",
+            complexity="low", state=ThreadState.NEW,
+        )]
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[
+                ReportThread(id="t1", file="f.go", line=10,
+                             comments=[{"databaseId": 100}]),
+                ReportThread(id="t2", file="g.go", line=20,
+                             comments=[{"databaseId": 200}]),
+            ],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(fix_state, "persist"), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_thread_reply", return_value=True), \
+             patch("pr.comments.resolve_thread", return_value=True):
+            return fix_comments.run_pass(
+                TriageResult(threads=threads), report, tmp_path, ctx,
+            )
+
+    def test_the_interim_table_goes_out(self, rt, tmp_path, publishing_on):
+        with patch("pr.comments.post_issue_comment", return_value="https://u") as post:
+            result = self._run(rt, tmp_path)
+        assert result.summary_url == "https://u"
+        assert post.called
+
+    def test_the_dismissal_is_on_the_table_that_went_out(self, rt, tmp_path,
+                                                         publishing_on):
+        """Not a vacuous post: the round's own row is in the published body."""
+        with patch("pr.comments.post_issue_comment", return_value="https://u") as post:
+            self._run(rt, tmp_path)
+        body = post.call_args[0][2]
+        assert "t1 summary" in body
+
+    def test_a_draft_still_owes_it(self, rt, tmp_path):
+        """The gate declining the write leaves the round owed, as it always did."""
+        result = self._run(rt, tmp_path)
+        assert result.summary_url is None
+        assert result.summary_deferred is True
+
+    def test_a_round_with_nothing_to_say_posts_nothing(self, rt, tmp_path,
+                                                       publishing_on):
+        """The deleted `has_content` guard was `post_fix_summary`'s own question.
+
+        Removing it must not have started publishing empty tables — the callee
+        asks the same thing and returns None.
+        """
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t2", file="g.go", line=20,
+                                  comments=[{"databaseId": 200}])],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(fix_state, "persist"), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_issue_comment",
+                   return_value="https://u") as post:
+            result = fix_comments.run_pass(TriageResult(), report, tmp_path, ctx)
+        assert result.summary_url is None
+        assert not post.called
 
 
 class TestAlreadyAddressedInSummary:
@@ -7941,7 +8047,7 @@ class TestCommentTrackingRoundTrip:
         ))
 
     def _parsed(self, rt, path, threads, comment_items=()):
-        return rt._parse_tracking_results(
+        return TrackingResult.from_outcomes(
             fix_tracking.parse(path), list(threads),
             fixable_items=list(comment_items),
         )
@@ -8003,27 +8109,27 @@ class TestCommentTrackingRoundTrip:
 
 
 class TestMergeTracking:
-    def test_batch_results_accumulate(self, rt):
-        total = rt.TrackingResult(
+    def test_batch_results_accumulate(self):
+        total = TrackingResult(
             threads={FixOutcome.FIXED: ["a"]}, items={FixOutcome.DEFERRED: ["z"]},
         )
-        total.merge(rt.TrackingResult(
+        total.merge(TrackingResult(
             threads={FixOutcome.FIXED: ["b"], FixOutcome.DEFERRED: ["c"]},
         ))
         assert total.bucket(FixOutcome.FIXED) == ["a", "b"]
         assert total.bucket(FixOutcome.DEFERRED) == ["c"]
         assert total.bucket(FixOutcome.DEFERRED, item=True) == ["z"]
 
-    def test_a_merge_does_not_alias_the_source_s_lists(self, rt):
+    def test_a_merge_does_not_alias_the_source_s_lists(self):
         """A batch merged into an empty total must not hand over its own list."""
-        batch = rt.TrackingResult(threads={FixOutcome.FIXED: ["a"]})
-        total = rt.TrackingResult()
+        batch = TrackingResult(threads={FixOutcome.FIXED: ["a"]})
+        total = TrackingResult()
         total.merge(batch)
         total.add(FixOutcome.FIXED, "b")
         assert batch.bucket(FixOutcome.FIXED) == ["a"]
 
-    def test_dropping_an_outcome_forgets_threads_and_items_alike(self, rt):
-        total = rt.TrackingResult(
+    def test_dropping_an_outcome_forgets_threads_and_items_alike(self):
+        total = TrackingResult(
             threads={FixOutcome.DEFERRED: ["a"], FixOutcome.FIXED: ["k"]},
             items={FixOutcome.DEFERRED: ["z"]},
         )
@@ -8086,7 +8192,7 @@ class TestHumanReason:
             CommentItem(id="t5", classification="actionable_suggestion",
                         verification="needs_discussion"),
         ]
-        result = rt._classify_triage_entries(entries)
+        result = triage_round.classify_entries(entries)
         assert [e.reason for e in result.needs_human] == [
             "contested", "conflicting", "question", "complex", "needs_discussion",
         ]

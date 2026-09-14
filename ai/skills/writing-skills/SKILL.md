@@ -16,8 +16,10 @@ skip: "Do not use for invoking a skill that already exists, or for authoring a c
      dropped even though the Superpowers extension re-adds its skills directory
      through resources_discover.
 
-     Written against superpowers v6.3.0. When bumping the pin, re-read the
-     upstream skill. -->
+     Written against superpowers v6.3.0, which validate-skills holds against
+     the pin in ai/pi/settings.json. When bumping the pin, re-read the upstream
+     skill and update that line. No upstream skill invokes this one, so the
+     re-read is about what upstream now teaches, not a caller's contract. -->
 
 # Writing Skills
 

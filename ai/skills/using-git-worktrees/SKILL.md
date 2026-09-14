@@ -18,9 +18,14 @@ skip: "Do not use for read-only work — searching, reading, and exploring are e
      dropped even though the Superpowers extension re-adds its skills directory
      through resources_discover.
 
-     Written against superpowers v6.3.0. When bumping the pin, re-read the
-     upstream skill: its callers (executing-plans, subagent-driven-development,
-     writing-plans) reference it by name, and a changed contract lands here. -->
+     Written against superpowers v6.3.0, which validate-skills holds against
+     the pin in ai/pi/settings.json. When bumping the pin, re-read the upstream
+     skill and update that line: executing-plans and subagent-driven-development
+     both invoke it by name. What they ask of it is thin — create an isolated
+     workspace or verify the existing one — and `wt` satisfies that, so watch a
+     bump for callers starting to depend on how upstream isolates rather than
+     that it did. (writing-plans names it too, but only to say a worktree should
+     have been made at execution time; it does not invoke it.) -->
 
 # Using Git Worktrees
 

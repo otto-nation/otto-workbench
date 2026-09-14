@@ -33,7 +33,10 @@ from review.grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE, SID_MARKER_RE
 from review.merge import annotate_prior_with_stable_ids
 from review.reply_threads import ReplyThreads
 from review.spans import finding_spans
-from review.types import PriorDisposition, PriorFinding, ReplyState
+from review.types import (
+    DISPOSITION_TAIL_PROSE, PriorDisposition, PriorFinding, ReplyState,
+)
+from core.text import join_or
 
 
 def _in_scope(line: str, filter_set: set[str]) -> bool:
@@ -160,6 +163,15 @@ def _annotate_with_thread_state(review_text: str, reply_threads: ReplyThreads | 
 # is lost. So the instruction says where the verdict goes as well as what it
 # is, and `TestLedgerInstructionParses` reads every example back through
 # `review.grammar.parse_ledger_line` to hold the two together.
+#
+# Which breaks may follow the verdict is named rather than listed as glyphs: a
+# model reads "a dash" better than it reads three dash characters it has to tell
+# apart. The names are the parser's own — `DISPOSITION_TAIL_PROSE` maps every
+# accepted character to the words for it — so the sentence cannot describe a
+# break the parser rejects, or omit one it accepts, which hand-typing it did
+# twice.
+_TAIL_BREAK_NAMES = list(dict.fromkeys(DISPOSITION_TAIL_PROSE.values()))
+_TAIL_BREAKS = join_or(_TAIL_BREAK_NAMES)
 _LEDGER_INSTRUCTION = f"""
 End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
 finding above, one line each, copying its ID and path exactly as written there:
@@ -173,9 +185,10 @@ finding above, one line each, copying its ID and path exactly as written there:
   `*(declined — one-line reason)*` so it is not raised or auto-fixed again. A
   declined finding stays declined: never downgrade one to {PriorDisposition.STILL_OPEN}
 Write the verdict word first, before any explanation of it, and let it end the
-line or be followed by a dash, a colon or a full stop. A verdict qualified in
-the same breath ("{PriorDisposition.FIXED}, but only on the happy path") is not
-read as a verdict at all.
+line or be followed by whatever introduces that explanation:
+{_TAIL_BREAKS} around the detail.
+A verdict qualified in the same breath ("{PriorDisposition.FIXED}, but only on
+the happy path") is not read as a verdict at all.
 This section is bookkeeping — it is stripped before the review is published, and
 a prior finding missing from it is reported as unaccounted for."""
 

@@ -68,9 +68,7 @@ from core.tool_parser import enum_arg
 # `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
 # means two things. `abbrev` is pure formatting of a sha already in hand.
 from git.client import abbrev
-from review.budget import (
-    MODEL_CONTEXT_TOKENS, UnknownModelWindow, prompt_budget_bytes,
-)
+from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
@@ -78,7 +76,7 @@ from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
-from agent.phases import collect_phase_models, resolve_effort
+from agent.phases import ModelAlias, collect_phase_models, resolve_effort
 from review.pipeline import (
     DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
@@ -145,12 +143,13 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
                 reason=f"no context window on record for {model}",
             )
             return False
-        if model not in MODEL_CONTEXT_TOKENS:
+        alias = ModelAlias.parse(model)
+        if alias is not None:
             log.warn(
                 f"{model!r} is an unresolved tier alias, so {named} budget "
                 f"against the tier floor ({budget // 1024}KB) rather than the "
-                f"model's own window. Set ANTHROPIC_DEFAULT_{model.upper()}_MODEL "
-                f"to budget against the real one."
+                f"model's own window. Set {alias.env_key} to budget against "
+                f"the real one."
             )
             trail.decision(
                 "prompt_budget", "budgeting against the tier floor",

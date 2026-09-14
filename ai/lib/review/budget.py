@@ -152,13 +152,33 @@ class UnknownModelWindow(RuntimeError):
     `ALIAS_FLOOR_TOKENS`.
     """
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, detail: str = ""):
         self.model = model
-        known = ", ".join(sorted(MODEL_CONTEXT_TOKENS))
-        super().__init__(
-            f"no context window on record for model {model!r} — add it to "
-            f"review.budget.MODEL_CONTEXT_TOKENS. Known models: {known}"
-        )
+        if not detail:
+            known = ", ".join(sorted(MODEL_CONTEXT_TOKENS))
+            detail = (
+                f"no context window on record for model {model!r} — add it to "
+                f"review.budget.MODEL_CONTEXT_TOKENS. Known models: {known}"
+            )
+        super().__init__(detail)
+
+    @classmethod
+    def too_narrow(cls, model: str, window: int) -> "UnknownModelWindow":
+        """A window the reserves alone exhaust, so no prompt could ever fit.
+
+        Unreachable while every recorded window is 200,000 against 96,000 of
+        reserves. It is raised rather than clamped because the alternative is a
+        negative budget that `_fit_budget`'s `max(0, ...)` guards absorb
+        without complaint — every phase would then refuse every prompt, and the
+        reason would be a table entry nobody would think to look at.
+        """
+        reserved = COMPLETION_RESERVE_TOKENS + OVERHEAD_RESERVE_TOKENS
+        return cls(model, (
+            f"{model!r} has a {window:,}-token window, which its reserves "
+            f"({reserved:,}) exhaust — no prompt could fit. Lower "
+            f"COMPLETION_RESERVE_TOKENS or OVERHEAD_RESERVE_TOKENS, or do not "
+            f"review with this model."
+        ))
 
 
 def model_window_tokens(model: str) -> int:
@@ -184,7 +204,10 @@ def prompt_budget_tokens(model: str) -> int:
     schemas the CLI adds out of sight.
     """
     window = model_window_tokens(model)
-    return window - COMPLETION_RESERVE_TOKENS - OVERHEAD_RESERVE_TOKENS
+    budget = window - COMPLETION_RESERVE_TOKENS - OVERHEAD_RESERVE_TOKENS
+    if budget <= 0:
+        raise UnknownModelWindow.too_narrow(model, window)
+    return budget
 
 
 def prompt_budget_bytes(model: str) -> int:
@@ -219,6 +242,7 @@ def collection_budget_bytes(explicit_model: str | None = None) -> int:
         prompt_budget_bytes(model)
         for model in collect_phase_models(explicit_model)
     )
+
 
 def fixed_preflight_bytes(
     commit_log: str,

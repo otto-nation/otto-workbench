@@ -32,6 +32,14 @@ from unittest.mock import patch
 from review.grammar import parse_ledger_line
 from review.prompt import BudgetLever, Cut, _build_common_sections
 from review.prompt import _fit_budget as _fit_budget_impl
+from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
+from review.prompt_sections import (
+    _build_ci_failure_items, _build_delta_section, _build_env_section,
+    _build_omitted_guidance, _build_pr_header,
+)
+from review import registry as review_registry
+from pr.ci_failures import FailureGroup, FailureItem, FailureKind, RunState
+from pr.domains import CIDomain
 
 # The model every phase resolves to here, and the ceiling it buys. Tests state
 # the budget once rather than at each of two dozen call sites; a test that
@@ -43,14 +51,7 @@ MAX_PROMPT_BYTES = prompt_budget_bytes(TEST_MODEL)
 def _fit_budget(job, known_sections, **kw):
     kw.setdefault("budget_bytes", MAX_PROMPT_BYTES)
     return _fit_budget_impl(job, known_sections, **kw)
-from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
-from review.prompt_sections import (
-    _build_ci_failure_items, _build_delta_section, _build_env_section,
-    _build_omitted_guidance, _build_pr_header,
-)
-from review import registry as review_registry
-from pr.ci_failures import FailureGroup, FailureItem, FailureKind, RunState
-from pr.domains import CIDomain
+
 
 
 # ── _build_delta_section with file_filter ──────────────────────────────────
@@ -1105,6 +1106,21 @@ class TestTheBudgetComesFromTheModel:
         assert model_window_tokens("sonnet") == ALIAS_FLOOR_TOKENS
         assert prompt_budget_bytes("sonnet") == prompt_budget_bytes("claude-sonnet-4-6")
 
+    def test_a_window_its_reserves_exhaust_is_refused(self, monkeypatch):
+        """A negative budget would be absorbed rather than noticed.
+
+        `_fit_budget` guards every subtraction with `max(0, ...)`, so a window
+        smaller than the reserves would not crash — every phase would quietly
+        refuse every prompt, and the cause would be a table entry nobody would
+        think to look at.
+        """
+        from review import budget as review_budget
+        from review.budget import UnknownModelWindow
+
+        monkeypatch.setitem(review_budget.MODEL_CONTEXT_TOKENS, "tiny", 50_000)
+        with pytest.raises(UnknownModelWindow, match="exhaust"):
+            prompt_budget_bytes("tiny")
+
     def test_the_alias_floor_is_never_more_generous_than_a_real_window(self):
         """Guessing wide is the expensive direction.
 
@@ -1138,6 +1154,28 @@ class TestTheBudgetComesFromTheModel:
         assert record["budget_model"] == TEST_MODEL
         assert record["budget_window_tokens"] == 1_000_000
         assert record["budget_bytes"] == prompt_budget_bytes(TEST_MODEL)
+
+    def test_an_alias_records_the_window_it_actually_budgeted_against(
+        self, tmp_path, monkeypatch,
+    ):
+        """The alias path is ordinary, so its record has to read as ordinary.
+
+        A window of 0 beside a nonzero budget reads as a bug in the budget
+        rather than as the documented tier-floor path, which is exactly the
+        diagnostic this field exists to serve.
+        """
+        from review.budget import ALIAS_FLOOR_TOKENS
+        from review.registry import build_prompt
+
+        monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
+        job = _make_job(_make_preflight())
+        job.review_file = str(tmp_path / "review.md")
+        build_prompt(Phase.SCOUT, job, max_turns=10)
+
+        record = json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
+        assert record["budget_model"] == "sonnet"
+        assert record["budget_window_tokens"] == ALIAS_FLOOR_TOKENS
+        assert record["budget_bytes"] == prompt_budget_bytes("sonnet")
 
     def test_the_refusal_names_the_budget_it_was_measured_against(self):
         """An over-budget phase is skipped, so its message is the whole report.

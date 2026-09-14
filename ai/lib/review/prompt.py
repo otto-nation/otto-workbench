@@ -37,8 +37,8 @@ from agent.types import EFFORT_PRESETS
 from core.phases import Mode, Phase
 from pr.domains import ReviewVerdict
 from review.budget import (
-    FileFit, MIN_DIFF_BYTES, MODEL_CONTEXT_TOKENS,
-    fit_files, fixed_preflight_bytes,
+    FileFit, MIN_DIFF_BYTES,
+    fit_files, fixed_preflight_bytes, model_window_tokens,
 )
 from review.collect import PreflightBlock, build_project_context, format_preflight_data
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
@@ -557,8 +557,12 @@ def _log_prompt_size(
         # The budget is only interpretable against the model it was derived
         # from: the window is per-model and the tokenizer is generation-
         # specific, so a density recorded without its model says nothing.
+        # `model_window_tokens` rather than a table lookup, because an
+        # unresolved alias budgets against its tier floor and a reader of this
+        # record needs the window the budget actually used — a 0 beside a
+        # nonzero `budget_bytes` reads as a bug rather than as that path.
         "budget_model": model,
-        "budget_window_tokens": MODEL_CONTEXT_TOKENS.get(model, 0),
+        "budget_window_tokens": model_window_tokens(model),
     }
     # `is not None`, not truthiness: a dataclass without `__bool__` is always
     # truthy, so the shorter form would read as a check it is not.

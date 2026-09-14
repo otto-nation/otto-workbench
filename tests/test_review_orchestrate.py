@@ -278,6 +278,19 @@ class TestPromptBudgetsArePreflighted:
         assert "ANTHROPIC_DEFAULT_SONNET_MODEL" in err.getvalue()
         assert trail.decision.called
 
+    def test_the_warning_names_the_variable_that_would_fix_it(self, ro):
+        """The env key comes from `ModelAlias`, not from a second derivation.
+
+        Two copies of the naming convention drift the moment a tier's key stops
+        following the plain uppercase pattern, and the copy in a warning is the
+        one nobody notices is wrong.
+        """
+        from agent.phases import ModelAlias
+
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            ro._budgets_are_derivable({"haiku": [ro.Phase.SCOUT]}, MagicMock())
+        assert ModelAlias.HAIKU.env_key in err.getvalue()
+
     def test_a_resolved_model_warns_about_nothing(self, ro):
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:

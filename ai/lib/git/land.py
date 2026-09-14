@@ -499,9 +499,10 @@ def _push_and_retry(
     """
     result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
     push.report(result, wt_path)
-    # Only a refusal can be a regenerating hook: a push the remote dropped left
-    # nothing behind to commit, and `push` has already retried that one itself.
-    if result.status is not PushStatus.REFUSED or regen is None:
+    # Only a repairable refusal can be a regenerating hook: a push the remote
+    # dropped left nothing behind to commit, and `push` has already asked the
+    # remote and retried that one itself.
+    if not result.repairable or regen is None:
         return _landed(wt_path, sha, result)
 
     retried = _retry_after_regen(wt_path, regen, gated=gated, args=args, trail=trail)

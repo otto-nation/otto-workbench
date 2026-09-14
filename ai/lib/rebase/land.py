@@ -41,8 +41,9 @@ def land_rebased(
     )
     # Only a refusal leaves something an agent could repair. A held, lost, or
     # unverified push says nothing is wrong with the worktree, and handing one to
-    # the fix pass asks an agent to rewrite code that passed every check.
-    refused = landed.push is not None and landed.push.status is push.PushStatus.REFUSED
+    # the fix pass asks an agent to rewrite code that passed every check. So does
+    # a refusal the connection dropped, which `repairable` is what excludes.
+    refused = landed.push is not None and landed.push.repairable
     if not refused or not resolved_files or not landed.error:
         return landed
 

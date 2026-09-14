@@ -12,6 +12,7 @@ remote ends up holding what it held before. That is the failure #962 describes,
 reproduced rather than simulated.
 """
 
+import signal
 import sys
 from pathlib import Path
 
@@ -349,6 +350,10 @@ def test_the_refused_report_omits_the_line_when_there_is_no_artifact(capsys):
     ("validate-all failed\nerror: failed to push some refs to 'origin'",
      push.Refusal.HOOK),
     ("something nobody has seen before", push.Refusal.OTHER),
+    ("Read from remote host github.com: Connection reset by peer",
+     push.Refusal.DROPPED),
+    ("client_loop: send disconnect: Broken pipe", push.Refusal.DROPPED),
+    ("fatal: The remote end hung up unexpectedly", push.Refusal.DROPPED),
 ])
 def test_classify_names_the_refusal(output, expected):
     assert push.classify(output) == expected
@@ -359,6 +364,220 @@ def test_a_hook_rejection_outranks_nothing_it_shares_words_with():
     output = ("fatal: Could not read from remote repository.\n"
               "error: failed to push some refs to 'origin'")
     assert push.classify(output) is push.Refusal.TRANSPORT
+
+
+# What a push killed by a mid-transfer reset actually printed, from #1262. Every
+# other classification in this module matches something in it, which is why the
+# ordering in `classify` is the whole fix: the ssh diagnostic reads as transport
+# and the trailing line reads as a hook rejection.
+_RESET_DUMP = (
+    "Read from remote host github.com: Connection reset by peer\n"
+    "client_loop: send disconnect: Broken pipe\n"
+    "fatal: Could not read from remote repository.\n"
+    "error: failed to push some refs to 'origin'\n"
+)
+
+
+def test_a_drop_outranks_the_refusal_line_it_prints_too():
+    """The observed #1262 output: neither the tests nor the remote said no.
+
+    Classified as HOOK it tells the operator their checks failed, which is the
+    misdirection the issue is about — the gates had all printed a tick.
+    """
+    assert push.classify(_RESET_DUMP) is push.Refusal.DROPPED
+
+
+@pytest.mark.parametrize("output", [
+    "Permission denied (publickey).",
+    "ssh: Could not resolve host: github.com",
+    "ERROR: Repository not found.",
+])
+def test_an_auth_failure_is_not_a_drop(output):
+    """Nothing was established, so the remote has nothing to be asked about.
+
+    Verifying these would ask `ls-remote` to reach a remote the credentials just
+    failed against, and report a push that never happened as one that could not
+    be confirmed.
+    """
+    assert push.classify(output) is push.Refusal.TRANSPORT
+
+
+# ── the drop predicate ──────────────────────────────────────────────────────
+
+
+def test_a_signal_death_with_no_output_is_a_drop():
+    """A git that took a signal on the way down usually says nothing at all."""
+    assert push._dropped(proc.CmdResult(-signal.SIGPIPE, "", ""))
+
+
+def test_a_plain_refusal_is_not_a_drop():
+    assert not push._dropped(
+        proc.CmdResult(1, "", "error: failed to push some refs to 'origin'"))
+
+
+def test_a_shells_141_is_not_how_a_signal_arrives_here():
+    """`proc.run` reports a signal as the negated number, never as 128 + it.
+
+    141 is the shell's rendering of SIGPIPE and reaches no Python here, so a
+    predicate written against it would be dead code that never fires.
+    """
+    assert not push._dropped(proc.CmdResult(128 + signal.SIGPIPE, "", ""))
+
+
+def test_a_killed_push_speaks_through_the_signal_when_it_said_nothing():
+    """An empty excerpt under the headline is the unreadable failure #1262 names."""
+    spoken = push._push_output(proc.CmdResult(-signal.SIGPIPE, "", ""))
+    assert "SIGPIPE" in spoken
+
+
+def test_a_killed_push_that_did_speak_is_quoted_rather_than_summarised():
+    assert push._push_output(
+        proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP)) == _RESET_DUMP
+
+
+# ── a push the connection dropped ───────────────────────────────────────────
+
+
+@pytest.fixture
+def drops_the_connection(monkeypatch):
+    """Let the push run for real, then report it as killed by a reset.
+
+    The ref moves (or does not, with the losing hook in place) exactly as it
+    would in production while the client sees a drop — which is the situation
+    that cannot be reproduced by killing a real git, since then the ref never
+    moves at all. Faking the `CmdResult` also keeps `proc.MACHINE_KILLS` empty,
+    so `conftest` does not staple a contention section onto an unrelated
+    failure here.
+    """
+    real_run = git_client.run
+    seen: list[tuple[str, ...]] = []
+
+    def dropping(*args, **kwargs):
+        result = real_run(*args, **kwargs)
+        if args and args[0] == "push":
+            seen.append(args)
+            return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP)
+        return result
+
+    monkeypatch.setattr(git_client, "run", dropping)
+    return seen
+
+
+def test_a_dropped_push_the_remote_took_is_pushed(pushable, drops_the_connection):
+    """git could not say it landed; `ls-remote` can, and it did."""
+    wt, _ = pushable
+    sha = _commit(wt, "work")
+
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.PUSHED
+    assert result.refusal is push.Refusal.DROPPED
+    assert result.remote_sha == sha
+    assert result.retry is push.Retry.NONE
+    assert len(drops_the_connection) == 1
+
+
+def test_a_dropped_push_the_remote_never_took_is_lost_and_retried(
+        pushable, drops_the_connection):
+    wt, remote = pushable
+    _commit(wt, "work")
+    _lose_pushes(remote)
+
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.LOST
+    assert result.retry is push.Retry.ATTEMPTED
+    assert len(drops_the_connection) == 2
+
+
+def test_a_dropped_push_recovers_when_the_retry_lands(pushable, monkeypatch):
+    """The gates passed seconds ago for this commit, so the retry costs a transfer."""
+    wt, remote = pushable
+    sha = _commit(wt, "work")
+    hook = _lose_pushes(remote)
+    seen: list[tuple[str, ...]] = []
+    real_run = git_client.run
+
+    def drop_then_heal(*args, **kwargs):
+        if args and args[0] == "push":
+            seen.append(args)
+            if len(seen) == 1:
+                real_run(*args, **kwargs)
+                hook.unlink()
+                return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(git_client, "run", drop_then_heal)
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.PUSHED
+    assert result.retry is push.Retry.ATTEMPTED
+    assert result.remote_sha == sha
+    assert "--no-verify" in seen[1]
+
+
+def test_an_auth_failure_is_refused_without_asking_the_remote(monkeypatch):
+    """Asking a remote the credentials just failed against reports UNVERIFIED.
+
+    That is a legibility regression, not a fix: a push that never happened would
+    be reported as one that could not be confirmed.
+    """
+    monkeypatch.setattr(
+        push.git_client, "run",
+        lambda *a, **k: proc.CmdResult(128, "", "Permission denied (publickey)."))
+    monkeypatch.setattr(push, "remote_head", _never_runs)
+
+    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+
+    assert result.status is push.PushStatus.REFUSED
+    assert result.refusal is push.Refusal.TRANSPORT
+
+
+def test_a_hook_rejection_is_refused_without_asking_the_remote(monkeypatch):
+    refused = f"{_HOOK_DUMP}error: failed to push some refs to 'origin'\n"
+    monkeypatch.setattr(push.git_client, "run",
+                        lambda *a, **k: proc.CmdResult(1, "", refused))
+    monkeypatch.setattr(push, "remote_head", _never_runs)
+
+    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+
+    assert result.status is push.PushStatus.REFUSED
+    assert result.refusal is push.Refusal.HOOK
+
+
+def test_a_dropped_push_reaches_the_trail(pushable, drops_the_connection):
+    """`otto-log` should hold the event, since the console line says it recovered."""
+    wt, _ = pushable
+    sha = _commit(wt, "work")
+    trail = Trail.start(script="test", context={})
+
+    push.push(wt, gated=False, trail=trail)
+
+    event = _last_event()
+    assert event["data"]["sha"] == sha
+    assert "dropped" in event["detail"]
+
+
+def test_a_dropped_refusal_is_not_repairable():
+    """Nothing in the tree was rejected, so there is nothing for a fix pass."""
+    assert not push.PushResult(
+        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.DROPPED).repairable
+
+
+@pytest.mark.parametrize("refusal", [push.Refusal.HOOK, push.Refusal.DIVERGED,
+                                     push.Refusal.TRANSPORT, push.Refusal.OTHER])
+def test_every_other_refusal_is_repairable(refusal):
+    assert push.PushResult(
+        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=refusal).repairable
+
+
+@pytest.mark.parametrize("status", [push.PushStatus.PUSHED, push.PushStatus.HELD,
+                                    push.PushStatus.LOST,
+                                    push.PushStatus.UNVERIFIED])
+def test_only_a_refusal_is_repairable(status):
+    assert not push.PushResult(status, sha="1a2b3c4d", branch="feat/x").repairable
 
 
 # ── the retry ───────────────────────────────────────────────────────────────
@@ -505,7 +724,7 @@ def test_a_divergence_answers_force_with_lease():
 
 
 @pytest.mark.parametrize("refusal", [push.Refusal.HOOK, push.Refusal.TRANSPORT,
-                                     push.Refusal.OTHER])
+                                     push.Refusal.DROPPED, push.Refusal.OTHER])
 def test_no_other_refusal_answers_a_force_push(refusal):
     """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
     assert "--force" not in push.resume_command(
@@ -595,6 +814,65 @@ def test_lost_report_says_when_the_remote_holds_no_such_ref(capsys):
     printed = capsys.readouterr().err
     assert "no such ref" in printed
     assert "Not retried." in printed
+
+
+def test_a_dropped_push_that_landed_says_the_connection_dropped(capsys):
+    """The terminal is full of red ssh diagnostics; the commit arrived anyway."""
+    result = push.PushResult(
+        push.PushStatus.PUSHED, sha="1a2b3c4d", branch="feat/x",
+        remote_sha="1a2b3c4d", refusal=push.Refusal.DROPPED,
+    )
+    push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "connection dropped" in printed
+    assert "1a2b3c4" in printed
+
+
+def test_a_dropped_push_does_not_claim_git_reported_success(capsys):
+    """git reporting success is the one thing that did not happen here."""
+    result = push.PushResult(
+        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.DROPPED, retry=push.Retry.ATTEMPTED,
+    )
+    push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "reported success" not in printed
+    assert "connection dropped" in printed
+
+
+def test_a_lost_push_git_reported_as_clean_still_says_so(capsys):
+    """The classic lost push is the one git *did* report as a success."""
+    result = push.PushResult(
+        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
+    )
+    push.report(result, "/tmp/wt")
+
+    assert "reported success" in capsys.readouterr().err
+
+
+def test_a_dropped_refusal_does_not_claim_nothing_reached_the_remote(capsys):
+    """Whether anything reached it is exactly what a drop leaves unestablished."""
+    result = push.PushResult(
+        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.DROPPED, output=_RESET_DUMP,
+    )
+    push.report(result, "/tmp/wt")
+
+    assert "nothing reached the remote" not in capsys.readouterr().err
+
+
+def test_the_dropped_report_quotes_what_killed_the_push(capsys):
+    """A LOST report prints no output normally; here the signal is the account."""
+    result = push.PushResult(
+        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.DROPPED,
+        output="git was killed by SIGPIPE (signal 13)",
+    )
+    push.report(result, "/tmp/wt")
+
+    assert "SIGPIPE" in capsys.readouterr().err
 
 
 def test_every_retry_state_has_a_report_line():

@@ -70,6 +70,23 @@ half of it"
   [[ "$output" != *"Missing section(s)"*"## What"* ]]
 }
 
+@test "a template header survives a backslash elsewhere in the file" {
+  # `printf '%s'` rather than `echo` throughout, matching the rest of this
+  # file. The stronger failure `echo` invites — a whole template that is
+  # exactly `-e`, which bash reads as a flag and drops — is not reachable
+  # through this function, since such a template carries no `##` line and
+  # yields no headers either way. What is reachable is content mangling, and a
+  # template is a repo-controlled file that may hold anything.
+  printf '## What\n\nuse C:\\path or \\n in your description\n\n## Why\n' \
+    > .github/PULL_REQUEST_TEMPLATE.md
+  _pr_load_template
+
+  run _pr_template_headers
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"## What"* ]]
+  [[ "$output" == *"## Why"* ]]
+}
+
 @test "a repo with no template accepts any body" {
   rm -rf .github
   _pr_load_template

@@ -492,8 +492,12 @@ pr_preserve_close_refs() {
 
 # _pr_template_headers
 # Prints the section headers a template requires, one per line.
+# `printf` rather than `echo`, as everywhere else in this file: the template is
+# read from a repo-controlled file, and bash's `echo` reads an argument that is
+# exactly `-n`, `-e` or `-E` as a flag rather than as content — which would
+# yield no headers and silently accept every body.
 _pr_template_headers() {
-  echo "$PR_TEMPLATE" | grep '^##[[:space:]]' || true
+  printf '%s\n' "$PR_TEMPLATE" | grep '^##[[:space:]]' || true
 }
 
 # _pr_check_body_against_template BODY

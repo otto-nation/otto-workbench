@@ -64,7 +64,8 @@ from pr.fix import (
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
     ClassificationResult, CommentItem, PRReport, ReplyOutcome, ReportThread,
-    TrackingResult, TriageResult, TriageStats, triage_result_from_dict,
+    TrackingResult, TriageResult, TriageStats, Verification,
+    triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
@@ -5436,10 +5437,17 @@ class TestFixPassHoldsWhenContested:
 class TestTriagePromptVerificationValues:
     """The prompt must define every verification value it asks for."""
 
-    def test_defines_all_four_values(self):
+    def test_defines_every_verification_value(self):
+        """Iterating the enum, so a new verdict cannot be added unexplained."""
         prompt = triage_prompt.build_triage_prompt([], "diff")
-        for value in ("valid", "already_addressed", "invalid", "needs_discussion"):
-            assert f"- {value}:" in prompt
+        for member in Verification:
+            if member is Verification.UNSET:
+                continue
+            assert f"- {member.value}:" in prompt
+
+    def test_every_verification_member_has_guidance(self):
+        expected = {m for m in Verification if m is not Verification.UNSET}
+        assert set(triage_prompt.VERIFICATION_GUIDANCE) == expected
 
     def test_steers_away_from_invalid_for_satisfied_code(self):
         prompt = triage_prompt.build_triage_prompt([], "diff")

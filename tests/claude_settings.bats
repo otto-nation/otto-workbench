@@ -908,8 +908,19 @@ _init_test_repo() {
 }
 
 @test "sleep hook: blocks a sleep exactly at the threshold" {
+  # Also the whole-command case: a lone `sleep 10` is a single statement with no
+  # separator, and the scan drops a final line with no terminator unless the
+  # split adds one — which made every single-statement command invisible.
   run _run_guard '{"tool_input":{"command":"sleep 10"}}'
   [ "$status" -eq 2 ]
+}
+
+@test "sleep hook: blocks a long sleep behind a short one" {
+  # The bypass a leftmost-match test leaves open: `=~` returns the first match
+  # only, so a one-token `sleep 2 &&` in front waved the real wait through.
+  run _run_guard '{"tool_input":{"command":"curl -sI localhost:8931; sleep 2 && sleep 300"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"300s"* ]]
 }
 
 @test "sleep hook: names the duration it refused" {

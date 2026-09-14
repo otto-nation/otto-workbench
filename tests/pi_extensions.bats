@@ -339,11 +339,45 @@ _detects() {
 }
 
 @test "sleep-guard: a long sleep on a later line is a finding" {
-  # The regex needs its m flag for this: without one, ^ anchors to the start of
-  # the whole command and only a first-line sleep is ever seen.
   _detects 'gh pr checks 1257
 sleep 300
 gh pr checks 1257'
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: a long sleep behind a short one is a finding" {
+  # Testing only the first match let a one-token `sleep 2 &&` in front wave the
+  # real wait through. Both guards read the longest sleep, not the first.
+  _detects 'curl -sI localhost:8931; sleep 2 && sleep 300'
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: a sleep inside a heredoc body is not a finding" {
+  # Content being written to a file, not a command being run. Claude's guard
+  # exempts these lines, so this one must too — two guards enforcing one rule
+  # that disagree about a command are worse than either alone.
+  _detects 'cat > /tmp/x/poll.sh <<EOF
+sleep 300
+EOF'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: an indented terminator closes only a <<- heredoc" {
+  # Accepting indentation for a plain << would end the body at a line that
+  # happens to be the marker word and scan the rest of it as commands.
+  _detects 'cat > /tmp/x/poll.sh <<-EOF
+sleep 300
+  EOF
+curl -sI localhost:8931'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: a zero-padded duration is read as base ten" {
+  # Claude's guard needs a 10# prefix here or the arithmetic aborts on `sleep 08`.
+  # JS parses base ten already; the case is asserted so the two stay comparable.
+  _detects 'sleep 08'
+  [ "$output" = false ]
+  _detects 'sleep 060'
   [ "$output" = true ]
 }
 

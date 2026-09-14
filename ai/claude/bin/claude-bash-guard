@@ -209,13 +209,25 @@ fi
 # suffix if one shows up; the shape being steered is `sleep <seconds>`, which is what
 # an agent writes.
 #
+# Every statement is tested, not just the first match. `=~` returns the leftmost
+# match only, so testing the command as a whole let `sleep 2 && sleep 300` through
+# on the strength of its short first sleep — a one-token prefix that defeated the
+# rule entirely. Splitting on the separators and checking each piece is what closes
+# that; `&&` and `||` become two empty pieces, which match nothing and cost nothing.
+#
 # The 10# prefix forces base ten. Bash reads a leading zero as octal, so `sleep 08`
 # would otherwise abort the arithmetic with "value too great for base" and let the
 # command through on an error message rather than a decision.
-re_sleep='(^|[;&|][[:space:]]*)sleep[[:space:]]+([0-9]+)([[:space:]]|;|$)'
-if [[ "$stripped" =~ $re_sleep ]] && (( 10#${BASH_REMATCH[2]} >= SLEEP_WAIT_THRESHOLD_SECONDS )); then
-  block "A sleep of ${BASH_REMATCH[2]}s is a wait for something that reports its own completion. Background jobs message you when they finish and CI is reported when it lands — do nothing and wait, or do other work. To bound a run, pass the bound to the call that starts it (run_in_background with a timeout) rather than sleeping beside it. See general.md § Waiting on Background Work."
-fi
+re_sleep='^[[:space:]]*sleep[[:space:]]+([0-9]+)([[:space:]]|$)'
+while IFS= read -r statement; do
+  [[ "$statement" =~ $re_sleep ]] || continue
+  (( 10#${BASH_REMATCH[1]} >= SLEEP_WAIT_THRESHOLD_SECONDS )) || continue
+  block "A sleep of ${BASH_REMATCH[1]}s is a wait for something that reports its own completion. A background job reports when it finishes and CI is reported when it lands — do nothing and wait, or do other work in the meantime. Start long-running work with run_in_background and read its output when it is done, rather than sleeping beside it. See general.md § Waiting on Background Work."
+#
+# The trailing newline printf adds is load-bearing: `read` discards a final line
+# with no terminator, so without it the last statement is never scanned — and a
+# command that is a single `sleep 300` is entirely last statement.
+done < <(printf '%s\n' "$stripped" | tr ';&|' '\n\n\n')
 
 # Below the rules above because it matches a wider range of commands than any of
 # them — a `$VAR` in a compound cd or an env -C should get that rule's message.

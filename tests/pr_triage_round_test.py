@@ -20,10 +20,10 @@ import sys
 from unittest.mock import MagicMock, patch
 
 from conftest import (
-    make_ctx, supersession_context, supersession_evidence, supersession_verdict,
+    REPO_ROOT, make_ctx, supersession_context, supersession_evidence,
+    supersession_verdict,
 )
 
-REPO_ROOT = __import__("conftest").REPO_ROOT
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -215,8 +215,6 @@ class TestHoldWhileContested:
         trail.decision.assert_called_once()
         data = trail.decision.call_args.kwargs["data"]
         assert data["reasons"] == ["needs_discussion", "question"]
-
-
 
 
 class TestTheRoundMergesItsTwoSides:

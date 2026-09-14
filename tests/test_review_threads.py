@@ -38,10 +38,12 @@ from git.land import CommitStatus
 from pr import thread_replies
 from pr import attribution
 from pr import thread_context
+from pr import comments as pc
 from pr import fix_state
 from pr import triage
 from pr import triage_prompt
 from pr import triage_round
+from pr.triage_round import TriagedRound
 from pr import history_rewrite
 from pr import permalinks
 from pr import summary_model
@@ -61,8 +63,8 @@ from pr.fix import (
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
-    CommentItem, PRReport, ReplyOutcome, ReportThread, TrackingResult,
-    TriageResult, TriageStats, triage_result_from_dict,
+    ClassificationResult, CommentItem, PRReport, ReplyOutcome, ReportThread,
+    TrackingResult, TriageResult, TriageStats, triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
@@ -930,6 +932,25 @@ def _tick_every_fix(wt_path):
     return invoke
 
 
+def _triaged_round(*, fixable=(), fixable_items=(), needs_human=(), dismissed=(),
+                   already_addressed=(), replies=None, has_unaccounted=False):
+    """A `TriagedRound` from the buckets a test names, with the rest empty.
+
+    The thread side takes everything except `fixable_items`, which is what the
+    round's own properties then merge — a test naming `dismissed` is making a
+    point about a dismissal, not about which side it arrived on.
+    """
+    return TriagedRound(
+        threads=ClassificationResult(
+            fixable=list(fixable), needs_human=list(needs_human),
+            dismissed=list(dismissed), already_addressed=list(already_addressed),
+        ),
+        items=ClassificationResult(fixable=list(fixable_items)),
+        replies=replies or ReplyOutcome(),
+        has_unaccounted=has_unaccounted,
+    )
+
+
 def _fix_adapter(rt, wt_path, **overrides):
     """A CommentFixAdapter over an otherwise empty pass.
 
@@ -939,13 +960,8 @@ def _fix_adapter(rt, wt_path, **overrides):
     ctx = overrides.pop("ctx", None) or make_ctx(
         repo="owner/repo", pr_number=1, worktree_root=wt_path, target_dir=wt_path,
     )
-    kwargs = dict(
-        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
-        already_addressed=[], replies=ReplyOutcome(),
-        has_unaccounted=False, has_items=False,
-    )
-    kwargs.update(overrides)
-    return rt.CommentFixAdapter(report, ctx, wt_path, **kwargs)
+    round_ = overrides.pop("round_", None) or _triaged_round(**overrides)
+    return rt.CommentFixAdapter(report, ctx, wt_path, round_)
 
 
 class TestTheArtifactsAreOutsideTheWorktree:
@@ -5438,6 +5454,107 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
         result = self._run(rt, tmp_path)
         assert result.summary_url is None
         assert result.summary_deferred is True
+
+
+class TestTheRoundWithNothingToFixTakesTheSameTail:
+    """One `record`, whether or not the agent ran.
+
+    `fix_engine.run` declines a pass with no items and never calls `record`,
+    so the round with nothing fixable used to run a second copy of the tail
+    written out in the entry function. The two drifted in three ways before
+    anyone noticed — a dropped `has_comment_items`, a summary the fix path
+    posted and this one skipped, and a result built by mutation rather than
+    projected from the round.
+
+    What is asserted here is the equivalence the collapse rests on: with no
+    outcomes, the shared tail produces what the hand-written one did. The state
+    write is the place to check it — the return value is the same object either
+    way, so a tail that quietly persisted less would not show there.
+    """
+
+    def _persisted(self, rt, tmp_path, *, threads=(), comment_items=()):
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t1", file="f.go", line=10,
+                                  comments=[{"databaseId": 100}])],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(thread_context, "diff_context_for_file", return_value=""), \
+             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(fix_state, "persist") as persist, \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr.comments.post_thread_reply", return_value=True), \
+             patch("pr.comments.post_issue_comment", return_value="https://u"), \
+             patch("pr.comments.resolve_thread", return_value=True):
+            result = rt._run_comment_fix(
+                TriageResult(threads=list(threads),
+                             comment_items=list(comment_items)),
+                report, tmp_path, ctx,
+            )
+        return persist.call_args[0][0], result
+
+    @staticmethod
+    def _dismissed(eid="t1"):
+        return CommentItem(
+            id=eid, file="f.go", line=10, reviewer="kgn", summary="a point",
+            classification="actionable_suggestion", verification="invalid",
+            complexity="low", state=ThreadState.NEW,
+        )
+
+    def test_the_record_carries_the_rounds_own_outcome(self, rt, tmp_path,
+                                                       publishing_on):
+        """The buckets triage filled reach the state file with no agent involved."""
+        persisted, _ = self._persisted(rt, tmp_path, threads=[self._dismissed()])
+        assert [o.outcome for o in persisted.fix.items] == [FixOutcome.DISMISSED]
+        assert persisted.fix.commit_sha == ""
+        assert persisted.fix.commit_status == CommitStatus.NO_CHANGES
+
+    def test_the_identity_sha_stands_in_for_an_unmoved_head(self, rt, tmp_path,
+                                                            publishing_on):
+        """No agent ran, so HEAD did not move and the context already knows it."""
+        persisted, _ = self._persisted(rt, tmp_path, threads=[self._dismissed()])
+        assert persisted.fix.head_sha == "aaa1111"
+
+    def test_no_description_draft_is_delivered(self, rt, tmp_path, publishing_on):
+        """The draft on disk is an earlier round's, and `--finish` owns it.
+
+        Going through the shared tail put this round in reach of a delivery it
+        never used to make: `deliver_pr_body` sends whatever file is there, and
+        a round that ran no agent wrote none of it. The draft has to exist for
+        the assertion to mean anything — with no file the delivery declines on
+        its own and the gate under test is never reached.
+        """
+        draft = pc.pr_body_draft(pc.artifacts_dir(tmp_path))
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text("a description an earlier round drafted\n")
+        with patch("pr.comments.update_pr_body", return_value=True) as update:
+            persisted, _ = self._persisted(
+                rt, tmp_path, threads=[self._dismissed()])
+        assert persisted.pr_body_pending is False
+        assert not update.called
+        assert draft.exists(), "the draft stays for --finish to deliver"
+
+    def test_the_result_is_projected_from_the_round(self, rt, tmp_path,
+                                                    publishing_on):
+        """Not a pre-built object mutated on the way out."""
+        _, result = self._persisted(rt, tmp_path, threads=[self._dismissed()])
+        assert [e.id for e in result.dismissed] == ["t1"]
+        assert result.fixed == []
+        assert result.batches == 0
+        assert result.commit_status == CommitStatus.NO_CHANGES
+
+    def test_the_replies_triage_sent_are_counted(self, rt, tmp_path, publishing_on):
+        """The round's own replies reach the tail that did not send them."""
+        persisted, result = self._persisted(
+            rt, tmp_path, threads=[self._dismissed()])
+        assert result.replies_posted == 1
+        assert persisted.replies_posted == 1
 
 
 class TestARoundWithNoFixablesRecordsItsCommentItems:

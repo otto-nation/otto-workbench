@@ -714,6 +714,15 @@ class CommentFixAdapter(fix_engine.FixAdapter):
     Only the fixable entries reach `items`. The rest are carried so `record` can
     account for them: a summary that named only what the agent saw would read as
     if the dismissed and the contested were never triaged.
+
+    **A round with nothing fixable builds one of these too.** `fix_engine.run`
+    declines to run a pass with no items and never calls `record`, which is
+    right — there is nothing to commit — but the round still owes a reviewer the
+    table for what triage settled and the state file its outcomes. That tail
+    used to be a second copy in the entry function, and the two drifted: one
+    forgot `has_comment_items`, and they disagreed about whether an unaccounted
+    thread suppressed the summary. Here the caller runs the engine or calls
+    `record` itself, and there is one tail either way.
     """
 
     phase = Phase.COMMENTS_FIX
@@ -725,15 +734,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         report: PRReport,
         ctx: pr_context.ResolvedContext,
         wt_path: Path,
+        round_: triage_round.TriagedRound,
         *,
-        fixable: list[CommentItem],
-        fixable_items: list[CommentItem],
-        needs_human: list[CommentItem],
-        dismissed: list[CommentItem],
-        already_addressed: list[CommentItem],
-        replies: ReplyOutcome,
-        has_unaccounted: bool,
-        has_items: bool,
         trail: Trail | None = None,
     ) -> None:
         self.workdir = wt_path
@@ -750,16 +752,20 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         self.ctx = ctx
         self.trail = trail
         self.threads_by_id = {t.id: t for t in report.threads}
-        self.fixable = fixable
-        self.fixable_items = fixable_items
-        self.needs_human = needs_human
-        self.dismissed = dismissed
-        self.already_addressed = already_addressed
-        self.replies = replies
-        self.has_unaccounted = has_unaccounted
-        self.has_items = has_items
+        self.round = round_
         # `record` builds this and `_run_comment_fix` returns it.
         self.result = CommentFixResult()
+
+    @property
+    def ran(self) -> bool:
+        """Whether the agent was given anything to do.
+
+        `record` runs either way — see the class docstring — so the two acts
+        that only make sense after an agent edited the tree ask this rather
+        than assuming it: delivering the description draft, and reading HEAD
+        for a commit that may not exist.
+        """
+        return self.round.has_fixables
 
     @functools.cached_property
     def main_wt(self) -> Path | None:
@@ -777,8 +783,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
 
     def items(self) -> list[fix_types.FixItem]:
         return _fix_items(
-            self.fixable, self.threads_by_id, self.workdir,
-            fixable_items=self.fixable_items,
+            self.round.fixable, self.threads_by_id, self.workdir,
+            fixable_items=self.round.fixable_items,
             default_branch=git_topology.default_branch_cached(self.workdir),
         )
 
@@ -826,7 +832,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         """
         cp = attribution.pass_commit(self.workdir, run.landed)
         tracking = TrackingResult.from_outcomes(
-            run.outcomes, self.fixable, fixable_items=self.fixable_items,
+            run.outcomes, self.round.fixable,
+            fixable_items=self.round.fixable_items,
         )
 
         # Recorded here rather than left for the pass envelope to imply: from
@@ -837,35 +844,19 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         all_fixed = tracking.both(FixOutcome.FIXED)
         attribution.stamp_pass_commit(all_fixed, cp.sha or "")
 
-        replies = self.replies.plus(_settle_fixed(
+        replies = self.round.replies.plus(_settle_fixed(
             fixed_threads, self.threads_by_id, self.repo,
             self.report.pr_number, cp, self.workdir,
         ))
 
-        all_deferred = tracking.both(FixOutcome.DEFERRED)
-        # Two verdicts the agent reached and one triage did. They part company
-        # in the state file, where the reason each carries is worth telling
-        # apart, and travel together to every reviewer-facing surface — which
-        # `summary_model.RoundContent.needs_a_person` is the one place that folds them.
-        agent_needs_human = tracking.both(FixOutcome.NEEDS_HUMAN)
-        declined = tracking.both(FixOutcome.DECLINED)
-
-        pr_body_pending = pc.deliver_pr_body(
+        # The agent's own draft, and only when it ran. A round that handed the
+        # agent nothing has no description to deliver, and asking would send
+        # the draft an earlier round left on disk — which `--finish` owns.
+        pr_body_pending = self.ran and pc.deliver_pr_body(
             self.artifacts, self.repo, self.report.pr_number,
         )
 
-        # Built once, ahead of both readers: the record keeps `DECLINED` apart
-        # from `NEEDS_HUMAN` and the summary shows them together, and taking
-        # that coarsening off `summary_model.RoundContent` is what keeps the two spellings of
-        # it from parting company — see `summary_model.RoundContent.needs_a_person`.
-        by_outcome = {
-            FixOutcome.FIXED: all_fixed,
-            FixOutcome.DEFERRED: all_deferred,
-            FixOutcome.NEEDS_HUMAN: self.needs_human + agent_needs_human,
-            FixOutcome.DECLINED: declined,
-            FixOutcome.DISMISSED: self.dismissed,
-            FixOutcome.ALREADY_ADDRESSED: self.already_addressed,
-        }
+        by_outcome = self.round.by_outcome(tracking)
         content = summary_model.RoundContent(
             by_outcome=by_outcome,
             issue_comments=self.report.issue_comments,
@@ -875,8 +866,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         summary = summary_publish.publish(
             content, cp, self.repo, self.report.pr_number, self.threads_by_id,
             self.report,
-            has_comment_items=self.has_items,
-            has_unaccounted=self.has_unaccounted,
+            has_comment_items=self.round.has_items,
+            has_unaccounted=self.round.has_unaccounted,
             head_sha=cp.sha or self.ctx.head_sha,
             wt_path=self.workdir,
         )
@@ -888,19 +879,25 @@ class CommentFixAdapter(fix_engine.FixAdapter):
                 commit_status=cp.status,
                 # HEAD after the pass, not ctx.head_sha: the fix pass commits,
                 # so the snapshot must name the commit its outcomes were
-                # measured against.
-                head_sha=git_client.head_sha(short=True, cwd=self.workdir),
+                # measured against. A round that ran no agent committed
+                # nothing, so HEAD has not moved and the context's SHA is the
+                # same answer without the subprocess.
+                head_sha=(
+                    git_client.head_sha(short=True, cwd=self.workdir)
+                    if self.ran else self.ctx.head_sha
+                ),
             ),
             reviewers=fix_state.reviewers_for(by_outcome),
             replies_posted=replies.posted,
             replies_pending=(
                 bool(fixed_threads) and not publishing.enabled()
-                or _triage_replies_drafted(self.already_addressed, self.dismissed)
+                or _triage_replies_drafted(
+                    self.round.already_addressed, self.round.dismissed)
             ),
             pr_body_pending=pr_body_pending,
             summary_url=summary.recorded_url,
             summary_deferred=summary.deferred,
-            has_comment_items=self.has_items,
+            has_comment_items=self.round.has_items,
             updated_at=pr_state.now_iso(),
         ), self.workdir, self.ctx, self.trail, resolved=list(replies.resolved))
 
@@ -925,6 +922,49 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         )
 
 
+def _post_triage_replies(
+    round_: triage_round.TriagedRound,
+    threads_by_id: dict[str, ReportThread],
+    report: PRReport,
+    ctx: pr_context.ResolvedContext,
+    wt_path: Path,
+) -> ReplyOutcome:
+    """The replies triage owes, sent before the agent runs.
+
+    A dismissal and an already-addressed verdict are both answers to the
+    reviewer that do not wait on any fix — the code either already does what
+    they asked or their premise does not hold — so they go out now rather than
+    after a pass that may have nothing to do.
+
+    Only the thread side of the dismissals is replied to. An entry decomposed
+    out of a top-level comment has no thread to reply on; it is reported in the
+    summary table instead.
+
+    The already-addressed threads are resolved as well as replied to, and the
+    dismissed are not: telling a reviewer their premise does not hold is the
+    reply most likely to be argued with, so the thread stays open for them to
+    answer.
+    """
+    replies = ReplyOutcome()
+    if round_.threads.dismissed:
+        replies = replies.plus(ReplyOutcome(
+            posted=thread_replies.post_dismissed_replies(
+                round_.threads.dismissed, threads_by_id, ctx.repo,
+                report.pr_number, wt_path,
+            ),
+        ))
+    if round_.already_addressed:
+        replies = replies.plus(ReplyOutcome(
+            posted=thread_replies.post_already_addressed_replies(
+                round_.already_addressed, threads_by_id, ctx.repo,
+                report.pr_number, wt_path,
+            ),
+            resolved=tuple(settlement.resolve_fixed_threads(
+                round_.already_addressed, threads_by_id)),
+        ))
+    return replies
+
+
 def _run_comment_fix(
     triage_result: TriageResult,
     report: PRReport,
@@ -938,120 +978,34 @@ def _run_comment_fix(
     round_ = triage_round.triage_the_round(
         triage_result, report, wt_path, ctx, trail=trail,
     )
-    fixable = round_.fixable
-    fixable_items = round_.fixable_items
-    all_needs_human = round_.needs_human
-    all_dismissed = round_.dismissed
-    all_addressed = round_.already_addressed
-    has_unaccounted = round_.has_unaccounted
 
     # Before the fix pass touches the tree: every line these entries carry —
     # the review comment's own and triage's citation alike — was read against
     # this head, and a permalink built after the fix commit needs to know that
     # to decide whether its anchor still points at the reviewer's code.
     attribution.stamp_read_sha(
-        fixable + list(fixable_items or [])
-        + all_needs_human + all_dismissed + all_addressed,
+        round_.fixable + round_.fixable_items + round_.needs_human
+        + round_.dismissed + round_.already_addressed,
         git_client.head_sha(short=True, cwd=wt_path),
     )
 
-    no_commit = attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-
-    # Both return paths hand this to _persist_fix_state: the tally on disk was
-    # written before this function ran, so it learns of these resolutions only
-    # from the delta.
-    replies = ReplyOutcome()
-    if round_.threads.dismissed:
-        replies = replies.plus(ReplyOutcome(posted=thread_replies.post_dismissed_replies(
-            round_.threads.dismissed, threads_by_id, ctx.repo, report.pr_number, wt_path,
-        )))
-    if all_addressed:
-        replies = replies.plus(ReplyOutcome(
-            posted=thread_replies.post_already_addressed_replies(
-                all_addressed, threads_by_id, ctx.repo, report.pr_number, wt_path,
-            ),
-            resolved=tuple(settlement.resolve_fixed_threads(
-                all_addressed, threads_by_id)),
-        ))
-
-    has_items = round_.has_items
-
-    empty_result = CommentFixResult(
-        needs_human=all_needs_human, dismissed=all_dismissed,
-        already_addressed=all_addressed,
-        commit_status=CommitStatus.NO_CHANGES, replies_posted=replies.posted,
+    round_ = dataclasses.replace(
+        round_, replies=_post_triage_replies(round_, threads_by_id, report, ctx, wt_path),
     )
 
-    if not round_.has_fixables:
-        # The same question the pass with fixes to make asks after committing,
-        # asked here of the same value. A round with nothing to fix still
-        # renders a table for what triage settled, and a rule of its own here
-        # is how an `already_addressed`-only round came to print one and record
-        # that it owed nothing.
-        #
-        # The buckets this round has no entries for are absent from the mapping
-        # rather than passed as empty lists to each reader in turn. Three
-        # readers spelling out their own emptiness is three chances to spell it
-        # differently, which is the shape the fault above had.
-        by_outcome = {
-            FixOutcome.NEEDS_HUMAN: all_needs_human,
-            FixOutcome.DISMISSED: all_dismissed,
-            FixOutcome.ALREADY_ADDRESSED: all_addressed,
-        }
-        content = summary_model.RoundContent(
-            by_outcome=by_outcome,
-            issue_comments=report.issue_comments,
-            review_body_comments=report.review_body_comments,
-        )
-        # Asked exactly as the pass that commits asks it. Two guards used to
-        # stand in front of this call and neither belonged to it.
-        # `content.has_content` is already `post_fix_summary`'s own first
-        # question, so the round with nothing to say returned None through it
-        # either way. And `has_unaccounted` left the previous round's table
-        # standing as the newest thing on the PR: the summary is one marker
-        # comment edited in place, so declining to render is not silence but a
-        # stale table, while the rows this round does hold are true.
-        # `summary_still_owed` is True either way, so `--finish` re-renders
-        # regardless — the choice was between an interim truth now and nothing
-        # until a closeout that may not come.
-        summary = summary_publish.publish(
-            content, no_commit, ctx.repo, report.pr_number, threads_by_id, report,
-            has_comment_items=has_items,
-            has_unaccounted=has_unaccounted,
-            head_sha=ctx.head_sha,
-            wt_path=wt_path,
-        )
-        empty_result.summary_url = summary.url
-        empty_result.summary_deferred = summary.deferred
-        fix_state.persist(pr_comments_fix.FixSummary(
-            fix=fix_state.fix_record_for(
-                by_outcome,
-                commit_status=no_commit.status,
-                head_sha=git_client.head_sha(short=True, cwd=wt_path),
-            ),
-            reviewers=fix_state.reviewers_for(by_outcome),
-            replies_posted=replies.posted,
-            replies_pending=_triage_replies_drafted(all_addressed, all_dismissed),
-            summary_url=summary.recorded_url,
-            summary_deferred=summary.deferred,
-            has_comment_items=has_items,
-            updated_at=pr_state.now_iso(),
-        ), wt_path, ctx, trail, resolved=list(replies.resolved))
-        return empty_result
-
-    adapter = CommentFixAdapter(
-        report, ctx, wt_path,
-        fixable=fixable,
-        fixable_items=list(fixable_items or []),
-        needs_human=all_needs_human,
-        dismissed=all_dismissed,
-        already_addressed=all_addressed,
-        replies=replies,
-        has_unaccounted=has_unaccounted,
-        has_items=has_items,
-        trail=trail,
-    )
-    fix_engine.run(adapter, trail=trail)
+    adapter = CommentFixAdapter(report, ctx, wt_path, round_, trail=trail)
+    if round_.has_fixables:
+        # The engine batches the entries, runs the agent, lands the commit and
+        # calls `record` itself.
+        fix_engine.run(adapter, trail=trail)
+    else:
+        # `fix_engine.run` returns an empty `FixRun` for a pass with no items
+        # and never reaches `record`, which is the right contract — there is
+        # nothing to commit. The round still owes its table and its state
+        # write, so the tail is called here with the run that did not happen.
+        # One tail either way: the second copy this replaces had drifted from
+        # the first in three ways before anyone noticed.
+        adapter.record(fix_engine.FixRun())
     return adapter.result
 
 

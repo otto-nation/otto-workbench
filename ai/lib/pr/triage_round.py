@@ -30,8 +30,10 @@ from git import topology as git_topology
 from pr import summary_model
 from pr import supersession
 from pr.comments_state import ThreadState
+from pr.fix import FixOutcome
 from pr.thread_models import (
-    ClassificationResult, CommentItem, PRReport, ReplyOutcome, TriageResult,
+    ClassificationResult, CommentItem, PRReport, ReplyOutcome, TrackingResult,
+    TriageResult,
 )
 
 
@@ -211,6 +213,40 @@ class TriagedRound:
         the round reports.
         """
         return bool(self.fixable or self.fixable_items)
+
+    def by_outcome(
+        self, tracking: TrackingResult,
+    ) -> dict[FixOutcome, list[CommentItem]]:
+        """This round's entries under every outcome, in one mapping.
+
+        The join between what triage decided, which this round holds, and what
+        the agent recorded, which `TrackingResult` holds. Neither can own it
+        alone: the tracking result has never heard of `dismissed`, and
+        `RoundContent` is built *from* this rather than holding it.
+
+        **One mapping, two readings, and the disagreement between them is the
+        point.** `FixRecord` keeps `DECLINED` apart from `NEEDS_HUMAN` because
+        the reason each carries is worth telling apart in the state file, and
+        `RoundContent.needs_a_person` folds them because a reviewer reads both
+        the same way. That is only safe while both are reading one dict. Built
+        twice — which it was, in two shapes thirty lines apart — the two
+        spellings are free to drift, and the drift shows up as a state file
+        that contradicts the published table.
+
+        A round the agent never ran for passes an empty `TrackingResult` and
+        gets the same mapping with three empty buckets, which `RoundContent.of`
+        documents as an ordinary answer and `fix_record_for` skips.
+        """
+        return {
+            FixOutcome.FIXED: tracking.both(FixOutcome.FIXED),
+            FixOutcome.DEFERRED: tracking.both(FixOutcome.DEFERRED),
+            FixOutcome.NEEDS_HUMAN: (
+                self.needs_human + tracking.both(FixOutcome.NEEDS_HUMAN)
+            ),
+            FixOutcome.DECLINED: tracking.both(FixOutcome.DECLINED),
+            FixOutcome.DISMISSED: self.dismissed,
+            FixOutcome.ALREADY_ADDRESSED: self.already_addressed,
+        }
 
     @property
     def has_items(self) -> bool:

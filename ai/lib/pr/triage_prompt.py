@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import textwrap
 
 from pr.thread_models import (
     Classification,
@@ -60,15 +61,25 @@ VERIFICATION_GUIDANCE = {
     ),
 }
 
+# Same split as VERIFICATION_GUIDANCE: the labels live on Complexity, the
+# steering prose lives here. Keyed by member so a new level with no prose is a
+# test failure rather than a value the model is offered and never told about.
+COMPLEXITY_GUIDANCE = {
+    Complexity.LOW: (
+        "rename, remove, import fix, guard/nil check, use existing helper"
+    ),
+    Complexity.MEDIUM: "logic change within a single function or file",
+    Complexity.HIGH: (
+        "cross-file refactor, design decision, or architectural change"
+    ),
+}
 
-def _options(enum_cls, wrap_after: int | None = None) -> str:
+
+def _options(enum_cls) -> str:
     """The members as the prompt offers them: `'a', 'b', 'c'`."""
-    parts = [f"'{m.value}'" for m in enum_cls if m is not enum_cls.UNSET]
-    if wrap_after is None:
-        return ", ".join(parts)
-    head = ", ".join(parts[:wrap_after])
-    tail = ", ".join(parts[wrap_after:])
-    return f"{head},\n   {tail}"
+    return ", ".join(
+        f"'{m.value}'" for m in enum_cls if m is not enum_cls.UNSET
+    )
 
 
 def _vocab_schema_lines() -> str:
@@ -90,11 +101,11 @@ def _vocab_schema_lines() -> str:
     )
 
 
-def _verification_guidance_lines() -> str:
+def _guidance_lines(enum_cls, guidance: dict) -> str:
     return "\n".join(
-        f"   - {member.value}: {VERIFICATION_GUIDANCE[member]}"
-        for member in Verification
-        if member is not Verification.UNSET
+        f"   - {member.value}: {guidance[member]}"
+        for member in enum_cls
+        if member is not enum_cls.UNSET
     )
 
 
@@ -160,16 +171,23 @@ Top-level comments:
   ],"""
         )
 
+    # The verification sentence is prose the model reads; wrap it to the width
+    # the rest of the prompt sits in so a longer option list reflows instead of
+    # overflowing the line the rest of the prompt uses.
+    verification_line = textwrap.fill(
+        f"2. verification (only for actionable_suggestion): one of {_options(Verification)}",
+        width=88,
+        subsequent_indent="   ",
+    )
+
     return f"""You are a code review triage assistant. Analyze these PR review threads and classify each one.
 
 For each thread, provide:
 1. classification: one of {_options(Classification)}
-2. verification (only for actionable_suggestion): one of {_options(Verification, wrap_after=2)}
-{_verification_guidance_lines()}
+{verification_line}
+{_guidance_lines(Verification, VERIFICATION_GUIDANCE)}
 3. complexity (only for actionable_suggestion with verification=valid): one of {_options(Complexity)}
-   - low: rename, remove, import fix, guard/nil check, use existing helper
-   - medium: logic change within a single function or file
-   - high: cross-file refactor, design decision, or architectural change
+{_guidance_lines(Complexity, COMPLEXITY_GUIDANCE)}
 4. reasoning: one sentence explaining your classification/verification
 5. summary: one-line summary of the thread
 6. evidence_file / evidence_line: the file and 1-based line that prove your verdict.

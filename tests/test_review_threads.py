@@ -63,8 +63,8 @@ from pr.fix import (
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
-    ClassificationResult, CommentItem, PRReport, ReplyOutcome, ReportThread,
-    TrackingResult, TriageResult, TriageStats, Verification,
+    ClassificationResult, CommentItem, Complexity, PRReport, ReplyOutcome,
+    ReportThread, TrackingResult, TriageResult, TriageStats, Verification,
     triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS
@@ -5448,6 +5448,10 @@ class TestTriagePromptVerificationValues:
     def test_every_verification_member_has_guidance(self):
         expected = {m for m in Verification if m is not Verification.UNSET}
         assert set(triage_prompt.VERIFICATION_GUIDANCE) == expected
+
+    def test_every_complexity_member_has_guidance(self):
+        expected = {m for m in Complexity if m is not Complexity.UNSET}
+        assert set(triage_prompt.COMPLEXITY_GUIDANCE) == expected
 
     def test_steers_away_from_invalid_for_satisfied_code(self):
         prompt = triage_prompt.build_triage_prompt([], "diff")

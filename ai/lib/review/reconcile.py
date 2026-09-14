@@ -59,7 +59,7 @@ from review.grammar import (
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review.spans import finding_spans
 from review.types import (
-    DISPOSITION_TAIL_PUNCTUATION, DISPOSITION_TAIL_WORD_JOINERS, FindingRef,
+    DISPOSITION_TAIL_BREAKS, DISPOSITION_TAIL_WORD_JOINERS, FindingRef,
     FindingSpan, LedgerEntry, PriorDisposition, PriorFinding,
 )
 from core.text import join_or, plural
@@ -561,10 +561,10 @@ def _report_group(reason: UndecidedReason, records: list[PriorRecord]) -> None:
 # a leading space or a trailing non-word character around, so a character moved
 # between the two sets moves between the two halves here. Printed in one list,
 # they read as unconditional breaks, and a reader who takes the message at its
-# word glues a hyphen mid-word and writes the line the parser rejected.
-_VERDICT_TAIL_BREAKS = [
-    c for c in DISPOSITION_TAIL_PUNCTUATION if c not in DISPOSITION_TAIL_WORD_JOINERS
-]
+# word glues a hyphen mid-word and writes the line the parser rejected. Both
+# classes are `review.types`' own, split there for the regex, so the message
+# names each half rather than re-deriving either.
+#
 # Dropped entirely rather than rendered empty when nothing is conditional, so
 # retiring the joiner class leaves a message with one honest list instead of a
 # caveat naming no characters.
@@ -575,7 +575,7 @@ _VERDICT_JOINER_CAVEAT = (
 ) if DISPOSITION_TAIL_WORD_JOINERS else ""
 _VERDICT_SHAPE = (
     f"write one of {join_or([d.value for d in PriorDisposition])} first, then "
-    f"end the line or break with one of: {' '.join(_VERDICT_TAIL_BREAKS)}"
+    f"end the line or break with one of: {' '.join(DISPOSITION_TAIL_BREAKS)}"
     f"{_VERDICT_JOINER_CAVEAT}"
 )
 

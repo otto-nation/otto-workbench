@@ -98,6 +98,22 @@ tools:
 EOF
 }
 
+# ── Root resolution ──────────────────────────────────────────────────────────
+
+@test "resolves REPO_ROOT from its own path, not an inherited GIT_DIR" {
+  # An inherited GIT_DIR (e.g. from a git hook) makes `git rev-parse
+  # --show-toplevel` skip discovery and fail or answer the wrong directory.
+  # setup() above already sourced the script with REPO_ROOT pre-set by
+  # test_helper, so this re-sources it fresh, in isolation, with REPO_ROOT
+  # unset and GIT_DIR pointing nowhere.
+  run env GIT_DIR="$TMPDIR/nowhere" GIT_WORK_TREE="$TMPDIR/nowhere" bash -c '
+    source "$1"
+    printf "%s\n" "$REPO_ROOT"
+  ' _ "$REPO_ROOT/bin/local/generate-tool-context"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$REPO_ROOT" ]
+}
+
 # ── Output file ───────────────────────────────────────────────────────────────
 
 @test "creates the output file" {

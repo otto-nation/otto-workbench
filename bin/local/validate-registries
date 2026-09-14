@@ -24,7 +24,11 @@
 # Usage: bin/local/validate-registries
 # Exit code: 0 if all checks pass, 1 if any fail.
 
-REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
+_SELF="${BASH_SOURCE[0]}"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: an inherited
+# GIT_DIR makes git skip discovery and answer the caller's cwd instead of the
+# repo root. See lib/ui.sh's header.
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
 WORKBENCH_DIR="${WORKBENCH_DIR:-$REPO_ROOT}"
 
 # shellcheck source=/dev/null

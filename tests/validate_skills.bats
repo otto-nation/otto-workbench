@@ -16,6 +16,11 @@ teardown() {
   common_teardown
 }
 
+@test "resolves its repo root from its own path, not an inherited GIT_DIR" {
+  run env GIT_DIR="$TMPDIR/nowhere" GIT_WORK_TREE="$TMPDIR/nowhere" "$VALIDATE_SKILLS" --help
+  [ "$status" -eq 0 ]
+}
+
 # Helper: create a valid SKILL.md with optional lifecycle fields
 _make_skill() {
   local name="$1"

@@ -33,6 +33,9 @@ from conftest import make_ctx  # noqa: E402
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
 from fix import ci as fix_ci  # noqa: E402
+from fix import comment_checklist
+from fix import comment_replies
+from fix import comments as fix_comments
 from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
@@ -598,7 +601,7 @@ def _render_fix_ci(wt_path) -> str:
 def _render_fix_comments(rt, wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    pr_number=1, worktree_root=wt_path, target_dir=wt_path)
-    adapter = rt.CommentFixAdapter(
+    adapter = fix_comments.CommentFixAdapter(
         rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
         TriagedRound(),
     )

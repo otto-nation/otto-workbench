@@ -25,6 +25,9 @@ from conftest import (
     supersession_context, supersession_evidence, supersession_verdict,
 )
 from agent import retry as agent_retry
+from fix import comment_checklist
+from fix import comment_replies
+from fix import comments as fix_comments
 from fix import engine as fix_engine
 from fix import tracking as fix_tracking
 from pr import state as pr_state
@@ -961,7 +964,7 @@ def _fix_adapter(rt, wt_path, **overrides):
         repo="owner/repo", pr_number=1, worktree_root=wt_path, target_dir=wt_path,
     )
     round_ = overrides.pop("round_", None) or _triaged_round(**overrides)
-    return rt.CommentFixAdapter(report, ctx, wt_path, round_)
+    return fix_comments.CommentFixAdapter(report, ctx, wt_path, round_)
 
 
 class TestTheArtifactsAreOutsideTheWorktree:
@@ -1092,7 +1095,7 @@ class TestWhatTheRoundPersistsAndReports:
         content = summary_model.RoundContent(
             by_outcome={}, issue_comments=[], review_body_comments=[])
         run = fix_engine.FixRun(batches=3, max_turns=17, max_budget=2.5)
-        result = rt._result_for(
+        result = fix_comments._result_for(
             content, attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, ""),
             ReplyOutcome(posted=4),
             summary_publish.SummaryOutcome(None, owed=True), run,
@@ -1114,7 +1117,7 @@ class TestWhatTheRoundPersistsAndReports:
             },
             issue_comments=[], review_body_comments=[],
         )
-        result = rt._result_for(
+        result = fix_comments._result_for(
             content, attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, ""),
             ReplyOutcome(), summary_publish.SummaryOutcome("https://u", owed=False),
             fix_engine.FixRun(),
@@ -1977,7 +1980,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
              patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist") as persist, \
              patch.object(rt.git_client, "run",
@@ -1985,7 +1988,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u"), \
              patch("pr.comments.resolve_thread", return_value=True):
-            result = rt._run_comment_fix(
+            result = fix_comments.run_pass(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
         return SimpleNamespace(
@@ -2775,7 +2778,7 @@ class TestDeliverPrBody:
         adapter = _fix_adapter(rt, worktree)
         adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
         adapter.tracking_path.write_text("")
-        with patch.object(rt, "_find_and_update_main_worktree", return_value=None):
+        with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None):
             prompt = fix_engine._prompt(adapter, 10)
 
         assert str(pr_comments.pr_body_draft(adapter.artifacts)) in prompt
@@ -3186,14 +3189,14 @@ class TestTriageQueueIsRecorded:
         return CommentItem(id="t1", summary="s", file="x.py", line=1)
 
     def test_a_drafted_triage_records_what_it_did_not_send(self, rt):
-        assert rt._triage_replies_drafted([self._item()], []) is True
-        assert rt._triage_replies_drafted([], [self._item()]) is True
+        assert comment_replies.replies_drafted([self._item()], []) is True
+        assert comment_replies.replies_drafted([], [self._item()]) is True
 
     def test_a_published_triage_owes_nothing(self, rt, publishing_on):
-        assert rt._triage_replies_drafted([self._item()], [self._item()]) is False
+        assert comment_replies.replies_drafted([self._item()], [self._item()]) is False
 
     def test_a_triage_with_no_replies_owes_nothing(self, rt):
-        assert rt._triage_replies_drafted([], []) is False
+        assert comment_replies.replies_drafted([], []) is False
 
 
 class TestReplyAttributionAcrossRounds:
@@ -5350,7 +5353,7 @@ class TestFixPassHoldsWhenContested:
         with patch.object(triage.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=_tick_every_fix(tmp_path)), \
              patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
@@ -5358,7 +5361,7 @@ class TestFixPassHoldsWhenContested:
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u"), \
              patch("pr.comments.resolve_thread", return_value=True):
-            result = rt._run_comment_fix(
+            result = fix_comments.run_pass(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
         return SimpleNamespace(result=result, pushes=pushes, commits=commits)
@@ -5516,7 +5519,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
             target_dir=tmp_path,
         )
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
@@ -5524,7 +5527,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True):
-            return rt._run_comment_fix(
+            return fix_comments.run_pass(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
 
@@ -5566,13 +5569,13 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
             repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
             target_dir=tmp_path,
         )
-        with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+        with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))):
-            return rt._run_comment_fix(TriageResult(), report, tmp_path, ctx)
+            return fix_comments.run_pass(TriageResult(), report, tmp_path, ctx)
 
     def test_the_round_publishes_its_table(self, rt, tmp_path, publishing_on):
         with patch("pr.comments.post_issue_comment", return_value="https://u"):
@@ -5613,7 +5616,7 @@ class TestTheRoundWithNothingToFixTakesTheSameTail:
             target_dir=tmp_path,
         )
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist") as persist, \
              patch.object(rt.git_client, "run",
@@ -5622,7 +5625,7 @@ class TestTheRoundWithNothingToFixTakesTheSameTail:
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="https://u"), \
              patch("pr.comments.resolve_thread", return_value=True):
-            result = rt._run_comment_fix(
+            result = fix_comments.run_pass(
                 TriageResult(threads=list(threads),
                              comment_items=list(comment_items)),
                 report, tmp_path, ctx,
@@ -5709,7 +5712,7 @@ class TestARoundWithNoFixablesRecordsItsCommentItems:
             target_dir=tmp_path,
         )
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist") as persist, \
              patch.object(rt.git_client, "run",
@@ -5718,7 +5721,7 @@ class TestARoundWithNoFixablesRecordsItsCommentItems:
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="https://u"), \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._run_comment_fix(
+            fix_comments.run_pass(
                 TriageResult(threads=[], comment_items=comment_items),
                 report, tmp_path, ctx,
             )
@@ -5784,7 +5787,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
             target_dir=tmp_path,
         )
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
-             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
@@ -5792,7 +5795,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True):
-            return rt._run_comment_fix(
+            return fix_comments.run_pass(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
 
@@ -5832,7 +5835,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
             repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
             target_dir=tmp_path,
         )
-        with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+        with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
@@ -5840,7 +5843,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_issue_comment",
                    return_value="https://u") as post:
-            result = rt._run_comment_fix(TriageResult(), report, tmp_path, ctx)
+            result = fix_comments.run_pass(TriageResult(), report, tmp_path, ctx)
         assert result.summary_url is None
         assert not post.called
 

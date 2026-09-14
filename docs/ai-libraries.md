@@ -231,6 +231,64 @@ boundary is `fix.types.FixItem`, and the translation into one happens here so
 that what the engine sees is the same for every domain and what CI reasons
 about stays `pr.ci_failures`' own types.
 
+### fix/comment_checklist.py
+
+What the comment fix agent is shown: the checklist, and where to read from.
+
+The comments pass's half of the prompt. `fix.comments` is what the engine runs
+and what happens to the answer; this is the question — one section per thread
+or decomposed comment item, carrying the conversation, the code around the line
+and the PR's diff for the file.
+
+The heading, the id marker and the outcome boxes are deliberately not here.
+They belong to `fix.tracking`, which is also what reads them back, so the two
+halves of the format cannot drift apart. What this contributes is the body
+under each heading.
+
+### fix/comment_replies.py
+
+The replies a comment fix round owes, on both sides of the agent.
+
+Two moments, one subject. Triage's verdicts are answers that do not wait on any
+fix — the code already does what the reviewer asked, or their premise does not
+hold — so they go out before the agent runs. The fixed threads are answered
+after, once the commit is on the remote.
+
+Both are gated on the same question and it belongs to them rather than to their
+caller: a reply asserts to a reviewer that something is true of the branch, and
+`publishing` decides whether this run is allowed to assert anything. What is
+left over is `replies_drafted`, which is how a round that rendered replies it
+could not send tells `--finish` they are still owed.
+
+Resolving is paired with replying here because the two are one decision. An
+already-addressed or fixed thread is closed as it is answered; a dismissed one
+is answered and left open, because telling a reviewer their premise does not
+hold is the reply most likely to be argued with.
+
+### fix/comments.py
+
+The comments pass: what the fix engine is handed, and what it owes after.
+
+`fix.engine` runs a pass; this says what the review-comment domain hands it and
+what that domain does once the work has landed. `fix.ci` is the same shape for
+CI, and the other side of the boundary is `fix.types.FixItem` — the translation
+into one happens here so that what the engine sees is the same for every domain
+and what the comments pass reasons about stays `pr`'s own types.
+
+Layer 5 because the adapter reads `pr` and nothing above it: the dispositions
+are `pr.triage_round`'s, the replies `pr.thread_replies`', the summary
+`pr.summary_publish`'s, the state write `pr.fix_state`'s. The placement rule is
+`rebase.prepush`'s docstring — an adapter's home is the lowest layer its own
+imports permit, and `fix.engine.run()` taking it as an argument is what makes
+that free.
+
+**One tail, whether or not the agent ran.** `fix.engine.run` declines a pass
+with no items and never calls `record`, so a round with nothing fixable would
+have no way to publish the table for what triage settled or to write its
+outcomes. `run_pass` calls `record` itself in that case rather than keeping a
+second copy of the tail, which is what the two copies that used to exist here
+kept drifting apart over.
+
 ### fix/engine.py
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.

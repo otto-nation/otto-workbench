@@ -13,7 +13,7 @@ GitHub has already closed.
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from conftest import REPO_ROOT, make_ctx
 
@@ -21,13 +21,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pytest  # noqa: E402
-
 from git.land import CommitStatus  # noqa: E402
 from pr import fix_state  # noqa: E402
 from pr.comments_fix import FixSummary  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
-from pr.fix import FixOutcome, FixRecord, ItemOutcome  # noqa: E402
+from pr.fix import FixOutcome, FixRecord  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import CommentItem  # noqa: E402
 
@@ -156,8 +154,6 @@ class TestTheFixRecordCarriesEveryOutcome:
         assert record.items[0].commit_sha == ""
 
 
-
-
 class TestThePassWritesOnce:
     """The fix record and the resolution delta reach disk in the same save.
 
@@ -209,7 +205,7 @@ class TestAFailedWriteDoesNotTakeThePassDown:
         assert "fix state update failed" in capsys.readouterr().err
 
     def test_the_failure_reaches_the_trail(self):
-        trail = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
+        trail = MagicMock()
         with patch("pr.state.load_or_init", side_effect=OSError("disk full")):
             fix_state.persist(_fix(), Path("/wt"), make_ctx(), trail)
         assert trail.error.called

@@ -22,7 +22,6 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import (
     assert_no_worktree_exit, git_in, git_out, make_ctx, run_checked,
-    supersession_context, supersession_evidence, supersession_verdict,
 )
 from agent import retry as agent_retry
 from fix import comment_checklist
@@ -41,7 +40,6 @@ from git.land import CommitStatus
 from pr import thread_replies
 from pr import attribution
 from pr import thread_context
-from pr import comments as pc
 from pr import fix_state
 from pr import triage
 from pr import triage_prompt
@@ -59,7 +57,6 @@ from pr import settlement
 from pr.comments_fix import (
     RECONCILED_STATUS_TEXT, UNATTRIBUTED_STATUS_TEXT, FixSummary,
 )
-from pr.domains import SupersessionKind
 from pr.fix import (
     FixOutcome, FixRecord, ItemOutcome, RECONCILED_REASON, SETTLED_REASON,
     SettledBy,
@@ -5663,7 +5660,7 @@ class TestTheRoundWithNothingToFixTakesTheSameTail:
         the assertion to mean anything — with no file the delivery declines on
         its own and the gate under test is never reached.
         """
-        draft = pc.pr_body_draft(pc.artifacts_dir(tmp_path))
+        draft = pr_comments.pr_body_draft(pr_comments.artifacts_dir(tmp_path))
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_text("a description an earlier round drafted\n")
         with patch("pr.comments.update_pr_body", return_value=True) as update:

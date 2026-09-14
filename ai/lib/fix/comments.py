@@ -282,6 +282,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             return True
         return comment_replies.replies_drafted(
             self.round.already_addressed, self.round.dismissed)
+
+
 def _result_for(
     content: summary_model.RoundContent,
     cp: attribution.CommitPushResult,
@@ -312,6 +314,8 @@ def _result_for(
         max_budget=run.max_budget,
         batches=run.batches,
     )
+
+
 def run_pass(
     triage_result: TriageResult,
     report: PRReport,

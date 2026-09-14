@@ -85,7 +85,16 @@ def classify_entries(triage_entries: list[CommentItem]) -> ClassificationResult:
         elif tt.verification == "already_addressed":
             result.already_addressed.append(tt)
         elif tt.verification == "invalid":
-            result.dismissed.append(dataclass_replace(tt, reasoning=tt.reasoning))
+            # A copy, and the only branch that makes one. It was written as a
+            # `replace` of `reasoning` with its own value, which reads as a
+            # transformation and is not one — but removing it is not a no-op
+            # either: `attribution.stamp_read_sha` writes through these entries
+            # before the pass runs, and `--triage --fix` serialises the triage
+            # result to stdout afterwards. The aliasing branches show the stamp
+            # there and this one does not. Which of the two is right is #1289;
+            # what is not in doubt is that the three should agree, and picking
+            # one here would change the JSON a caller parses.
+            result.dismissed.append(dataclass_replace(tt))
 
     return result
 
@@ -176,6 +185,11 @@ class TriagedRound:
 
     threads: ClassificationResult = field(default_factory=ClassificationResult)
     items: ClassificationResult = field(default_factory=ClassificationResult)
+    # A bare instance rather than a `default_factory`, which the two above need
+    # and this does not: `ReplyOutcome` is frozen, so the one shared default is
+    # unwritable and cannot carry a round's replies into the next round. Give
+    # it a mutable field and this line becomes the classic shared-default bug
+    # — take the `default_factory` then.
     replies: ReplyOutcome = ReplyOutcome()
     # A thread on the PR that this round gave no disposition to. The summary it
     # publishes is partial while one exists, so the round stays owed however

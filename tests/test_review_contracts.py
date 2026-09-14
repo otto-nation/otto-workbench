@@ -33,9 +33,7 @@ from conftest import make_ctx  # noqa: E402
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
 from fix import ci as fix_ci  # noqa: E402
-from fix import comment_checklist
-from fix import comment_replies
-from fix import comments as fix_comments
+from fix import comments as fix_comments  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402

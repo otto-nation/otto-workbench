@@ -63,6 +63,8 @@ def settle_fixed(
         ),
         resolved=tuple(settlement.resolve_fixed_threads(fixed, threads_by_id)),
     )
+
+
 def replies_drafted(
     already_addressed: list[CommentItem], dismissed: list[CommentItem],
 ) -> bool:
@@ -75,6 +77,8 @@ def replies_drafted(
     approved round goes missing.
     """
     return bool(already_addressed or dismissed) and not publishing.enabled()
+
+
 def post_triage_replies(
     round_: triage_round.TriagedRound,
     threads_by_id: dict[str, ReportThread],

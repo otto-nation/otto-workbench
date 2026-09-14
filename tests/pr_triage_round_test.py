@@ -30,7 +30,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from pr import supersession, triage_round  # noqa: E402
+from pr import triage_round  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.domains import SupersessionKind  # noqa: E402
 from pr.thread_models import (  # noqa: E402

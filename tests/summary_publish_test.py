@@ -19,8 +19,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pytest  # noqa: E402
-
 from git.land import CommitStatus  # noqa: E402
 from pr import attribution, summary_publish  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402

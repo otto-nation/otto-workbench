@@ -74,6 +74,8 @@ def fix_items(
         ))
 
     return items
+
+
 def main_worktree_block(main_wt: Path | None) -> str:
     """What the prompt says about the default-branch checkout, when there is one.
 
@@ -89,6 +91,8 @@ def main_worktree_block(main_wt: Path | None) -> str:
         "callers, existing patterns, or shared utilities — read from this path "
         "to understand the baseline. Do not modify files in this worktree.\n"
     )
+
+
 def find_and_update_main_worktree(wt_path: Path) -> Path | None:
     """Find the default-branch worktree and update it to match origin."""
     default_branch = git_topology.default_branch_cached(wt_path)

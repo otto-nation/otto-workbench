@@ -73,12 +73,6 @@ def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord
     return resolved
 
 
-
-
-
-
-
-
 _NO_ISSUE = CreatedIssue()
 
 
@@ -567,18 +561,6 @@ def _post_pending_fix_replies(
         if attribution.commit_unpushed(record.commit_status):
             record.commit_status = CommitStatus.PUSHED
         fix.replies_pending = False
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _run_threads(trail, args, ctx) -> None:

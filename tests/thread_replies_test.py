@@ -299,6 +299,12 @@ class TestAReplySaysWhatWasEstablished:
     The defect behind #1275: a fix that was applied but never exercised reads
     identically to one that was run and passed. Both closed the thread and
     spent the reviewer's trust; only one had earned it.
+
+    Overlaps `TestTheFollowupPatternKnowsEveryLead` on purpose, and the two
+    should not be merged: that one asserts the hedge is still *recognised* as
+    our own reply (an unrecognised one is never updated again for the life of
+    the PR), this one asserts it *says* the right thing. A single test would
+    drop whichever property its assertions did not happen to cover.
     """
 
     @pytest.fixture

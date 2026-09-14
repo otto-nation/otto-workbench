@@ -29,6 +29,8 @@ execution as the operator, with their credentials and their network.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from agent import invoke as agent_invoke
 from agent import phases as agent_phases
 from agent import templates as agent_templates
@@ -38,13 +40,20 @@ from core import log
 from core.phases import Phase
 from fix.types import FixItem
 
+if TYPE_CHECKING:
+    # Only under the type checker: `fix.engine` imports this module's runner at
+    # call time, so a real import here would close the cycle. The Verdict type
+    # lives there because it is the engine's contract with every domain rather
+    # than this runner's own.
+    from fix.engine import Verdict
+
 # What the gate calls one unit of its work, in the prompt's own words.
 _NOUN = "fix"
 
 
 def run(
     phase: Phase, _prompt_unused: str, *, items: list[FixItem], adapter,
-) -> dict[str, "object"]:
+) -> dict[str, "Verdict"]:
     """Ask the gate about `items` and hand back a verdict per item id.
 
     Signature is the engine's `VerifyFn`: the engine supplies the phase and the
@@ -56,9 +65,6 @@ def run(
     reads that as unverified rather than as falsified — see `engine._verify`,
     which is where the decision not to demote on silence is argued.
     """
-    # Imported here rather than at module scope: `engine` imports this module's
-    # caller, and the Verdict type lives there because it is the engine's
-    # contract with every domain, not this runner's.
     from fix.engine import Verdict
 
     path = adapter.verify_tracking_path

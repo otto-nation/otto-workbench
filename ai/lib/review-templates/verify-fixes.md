@@ -41,14 +41,9 @@ change. If it cannot fail, it has established nothing.
 
 ${answer_format}
 
-- **verified** — you ran something against the changed path and it did what the
-  reviewer asked. Say what you ran.
-- **not verified** — you could not establish it either way: nothing runnable
-  covers this path, the check needs credentials or a service you do not have,
-  or the only available test is vacuous. Say what stopped you. This is not a
-  criticism of the fix, and it is a perfectly good answer.
-- **broken** — you ran something and the fix does not hold up. Say what you ran
-  and what happened. Quote the failure.
+`not verified` is not a criticism of the fix and is a perfectly good answer: a
+path nothing runnable covers, a check that needs credentials or a service that
+is not here, or a test too vacuous to mean anything all earn it.
 
 Default to **not verified** when uncertain. Only say **broken** when you have
 run something concrete and seen it fail — a fix demoted on a guess costs the

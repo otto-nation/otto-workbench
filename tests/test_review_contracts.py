@@ -674,6 +674,18 @@ _FIX_RENDERERS = {
     "prepush": lambda rt, wt: _render_fix_prepush(wt),
 }
 
+# Every template a fix-shaped agent is handed, including the verify gate's.
+# Wider than `_FIX_RENDERERS` because the gate does not share two of the four
+# contracts those renderers are held to: it edits nothing, so it carries no
+# generated-artifact block, and it answers in `VERIFY_BOXES` rather than the fix
+# pass's vocabulary. The contracts it does share — no Write-tool mandate, and a
+# worktree block — apply for exactly the reasons they apply to the others, so it
+# is held to those here rather than left outside the check because the wider set
+# did not fit.
+_AGENT_RENDERERS = _FIX_RENDERERS | {
+    "verify": lambda rt, wt: _render_verify_fixes(rt, wt),
+}
+
 
 def _make_common_sections() -> review_prompt.CommonSections:
     return review_prompt.CommonSections(
@@ -777,9 +789,9 @@ class TestOutputBlockContract:
     def test_no_write_tool_mandate(self, key):
         self._assert_no_mandate(_template_of(key), _render_via_build_prompt(key))
 
-    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    @pytest.mark.parametrize("render", sorted(_AGENT_RENDERERS))
     def test_fix_templates_have_no_write_tool_mandate(self, render, rt, tmp_path):
-        self._assert_no_mandate(render, _FIX_RENDERERS[render](rt, tmp_path))
+        self._assert_no_mandate(render, _AGENT_RENDERERS[render](rt, tmp_path))
 
     def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
@@ -824,9 +836,9 @@ class TestOutputBlockContract:
         }
         assert expected == checked
 
-    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    @pytest.mark.parametrize("render", sorted(_AGENT_RENDERERS))
     def test_fix_templates_share_the_worktree_block(self, render, rt, tmp_path):
-        rendered = _FIX_RENDERERS[render](rt, tmp_path)
+        rendered = _AGENT_RENDERERS[render](rt, tmp_path)
         assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))

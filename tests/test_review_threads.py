@@ -7909,6 +7909,16 @@ class TestUnsupportedVerdictDowngrade:
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
+    def test_every_evidence_bearing_verdict_is_downgraded(self, tmp_path):
+        """Driven by the enum, so a new citing verdict is covered on arrival."""
+        citing = [m for m in Verification if m.needs_evidence]
+        assert citing, "no verdict claims to need evidence"
+        for member in citing:
+            entry = CommentItem(id="t1", verification=member)
+            downgraded = triage.downgrade_unsupported_verdicts([entry], tmp_path)
+            assert downgraded == 1, f"{member} not downgraded"
+            assert entry.verification is Verification.NEEDS_DISCUSSION
+
     def test_reason_is_recorded_so_the_author_knows_why(self, tmp_path):
         item = self._item(reasoning="reviewer misread the guard")
         triage.downgrade_unsupported_verdicts([item], tmp_path)

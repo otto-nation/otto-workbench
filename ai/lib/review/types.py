@@ -145,7 +145,14 @@ def disposition_precedence(disposition: "PriorDisposition | None") -> int:
 # same claim as "Fixed — `check_key` now calls it directly.", and the prompt's
 # example cannot show every punctuation a model will reach for. The comma stays
 # off it: what follows a comma qualifies the verdict rather than explaining it.
-DISPOSITION_TAIL_PUNCTUATION = "—–:(-."
+#
+# The markdown emphasis characters are on it for the same reason the full stop
+# is: "Fixed *(removed in 89f66d9)*" is the claim "Fixed (removed in 89f66d9)"
+# already makes, and the ledger is markdown, so a model italicises its detail
+# whether or not the prompt shows that form. Emphasis carries no meaning here —
+# stripping it changes nothing about what the line claims — so it introduces
+# detail rather than qualifying the verdict.
+DISPOSITION_TAIL_PUNCTUATION = "—–:(-.*_"
 _DISPOSITION_TAIL_RE = re.compile(rf"^\s*(?:[{re.escape(DISPOSITION_TAIL_PUNCTUATION)}]|$)")
 
 

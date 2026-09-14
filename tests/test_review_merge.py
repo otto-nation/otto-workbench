@@ -178,6 +178,35 @@ class TestPriorDisposition:
         )
         assert PriorDisposition.parse("Still open.") is PriorDisposition.STILL_OPEN
 
+    def test_a_verdict_with_italicised_detail_is_still_a_verdict(self):
+        """Emphasis carries no meaning here — the same line parses unitalicised."""
+        assert (
+            PriorDisposition.parse("Fixed *(removed entirely in 89f66d9)*")
+            is PriorDisposition.FIXED
+        )
+        assert (
+            PriorDisposition.parse("Still open *the guard is still there*")
+            is PriorDisposition.STILL_OPEN
+        )
+        assert (
+            PriorDisposition.parse("Declined *(documented `ceiling:` tradeoff)*")
+            is PriorDisposition.DECLINED
+        )
+
+    def test_underscore_emphasis_reads_the_same_as_asterisk(self):
+        assert (
+            PriorDisposition.parse("Fixed _(removed entirely in 89f66d9)_")
+            is PriorDisposition.FIXED
+        )
+        assert (
+            PriorDisposition.parse("Still open _the guard is still there_")
+            is PriorDisposition.STILL_OPEN
+        )
+        assert (
+            PriorDisposition.parse("Declined _(documented `ceiling:` tradeoff)_")
+            is PriorDisposition.DECLINED
+        )
+
     def test_parses_a_declined_verdict(self):
         assert PriorDisposition.parse("Declined") is PriorDisposition.DECLINED
         assert (

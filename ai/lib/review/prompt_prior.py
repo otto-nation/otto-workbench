@@ -173,9 +173,10 @@ finding above, one line each, copying its ID and path exactly as written there:
   `*(declined — one-line reason)*` so it is not raised or auto-fixed again. A
   declined finding stays declined: never downgrade one to {PriorDisposition.STILL_OPEN}
 Write the verdict word first, before any explanation of it, and let it end the
-line or be followed by a dash, a colon or a full stop. A verdict qualified in
-the same breath ("{PriorDisposition.FIXED}, but only on the happy path") is not
-read as a verdict at all.
+line or be followed by whatever introduces that explanation — a dash, a colon, a
+full stop, an opening bracket, or italics around the detail. A verdict qualified
+in the same breath ("{PriorDisposition.FIXED}, but only on the happy path") is
+not read as a verdict at all.
 This section is bookkeeping — it is stripped before the review is published, and
 a prior finding missing from it is reported as unaccounted for."""
 

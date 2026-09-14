@@ -3235,7 +3235,10 @@ drops mid-transfer — `Connection reset by peer`, a broken pipe, or a git that
 took a signal and said nothing at all — git cannot report what arrived, so the
 remote is asked instead of the operator being told their checks failed. That is
 `Refusal.DROPPED`, and it is the one refusal that does not end at `REFUSED`: the
-commit turns out to be on the remote, or it is `LOST` and takes the retry above.
+commit turns out to be on the remote, it is `LOST` and takes the retry above, or
+the remote could not be asked either and it is `UNVERIFIED` with neither account
+of it left — which is the one `UNVERIFIED` that may not be reported as a push
+git made.
 The keepalive in the managed ssh config answers an *idle* connection; it cannot
 answer a reset arriving from the far end, which is why this path exists at all.
 

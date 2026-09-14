@@ -38,7 +38,10 @@ drops mid-transfer — `Connection reset by peer`, a broken pipe, or a git that
 took a signal and said nothing at all — git cannot report what arrived, so the
 remote is asked instead of the operator being told their checks failed. That is
 `Refusal.DROPPED`, and it is the one refusal that does not end at `REFUSED`: the
-commit turns out to be on the remote, or it is `LOST` and takes the retry above.
+commit turns out to be on the remote, it is `LOST` and takes the retry above, or
+the remote could not be asked either and it is `UNVERIFIED` with neither account
+of it left — which is the one `UNVERIFIED` that may not be reported as a push
+git made.
 The keepalive in the managed ssh config answers an *idle* connection; it cannot
 answer a reset arriving from the far end, which is why this path exists at all.
 
@@ -229,11 +232,16 @@ _DROPPED_MARKERS = (
 
 _PUSH_REFUSED = "failed to push some refs"
 
-# What the LOST report says about the retry. A message claiming an attempt that
-# never ran is the same class of wrong reporting this module exists to remove,
-# so every state names itself and a test asserts the map covers the enum.
+# What a report says about the retry. A message claiming an attempt that never
+# ran is the same class of wrong reporting this module exists to remove, so
+# every state names itself and a test asserts the map covers the enum.
+#
+# Retry state only: what the remote holds is the caller's line to print, because
+# the two reports that read this know different things about it. A LOST report
+# has just been told the remote's answer and prints it on its own `origin:` line
+# above; an UNVERIFIED one was told nothing.
 _RETRY_NOTE = {
-    Retry.ATTEMPTED: "Retried once without the gates; the remote still does not hold it.",
+    Retry.ATTEMPTED: "Retried once without the gates.",
     Retry.HEAD_MOVED: "HEAD moved since the push; not retried.",
     Retry.DIRTY: "The worktree is dirty; not retried.",
     Retry.NONE: "Not retried.",
@@ -289,6 +297,13 @@ def _push_output(r: proc.CmdResult) -> str:
     the unreadable failure this path exists to remove. The signal is then the
     whole account, and `proc.signal_description` is the one place it is spelled.
 
+    The signal is named and no cause is inferred from it. `_dropped` routes
+    every signal here, not only the network ones, so the git a supervisor or an
+    operator ended arrives by the same path as the one a reset killed — and
+    "the connection died" is then a cause nothing established. What every signal
+    death does establish is the narrower thing worth saying: git stopped before
+    it could report what the remote received.
+
     `proc.failure_message` is deliberately not reused: it appends a contention
     note telling the reader to re-run rather than bisect, and the far end
     resetting the connection is not the machine running out of cores.
@@ -296,7 +311,7 @@ def _push_output(r: proc.CmdResult) -> str:
     if r.combined_output.strip() or not r.signalled:
         return r.combined_output
     return (f"git was killed by {proc.signal_description(r.returncode)} — "
-            f"the connection died mid-push")
+            "what the remote received is unconfirmed")
 
 
 def remote_head(
@@ -531,6 +546,24 @@ def _refused_headline(result: PushResult) -> str:
     return f"push refused ({result.refusal}) — nothing reached the remote"
 
 
+def _unverified_headline(result: PushResult) -> str:
+    """What to lead a push the remote could not be asked about with.
+
+    "pushed" is a claim about what git did, and it holds for the ordinary
+    unverified push: git exited zero and only the confirming round trip failed.
+    A drop makes it false. There the local `git push` errored and was routed to
+    the remote rather than to `REFUSED` precisely because nobody could say what
+    arrived — and the remote then could not say either, so both accounts of this
+    push are missing and neither may be reported as the other. The commit is
+    still named, because the reader's next move is to ask about that SHA.
+    """
+    if result.refusal is Refusal.DROPPED:
+        return (f"the connection dropped and the remote could not be asked "
+                f"whether it holds {git_client.abbrev(result.sha)}")
+    return (f"pushed {git_client.abbrev(result.sha)} but could not reach the "
+            f"remote to confirm it landed")
+
+
 def _lost_headline(result: PushResult) -> str:
     """What to lead a lost push with.
 
@@ -562,10 +595,13 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     resume = resume_command(result, wt_path)
 
     if result.status is PushStatus.UNVERIFIED:
-        log.warn(
-            f"pushed {git_client.abbrev(result.sha)} but could not reach the "
-            f"remote to confirm it landed — check with: {resume}"
-        )
+        log.warn(f"{_unverified_headline(result)} — check with: {resume}")
+        # Only a push that was lost and then retried can reach here having made
+        # two transfers, and the reader has to know that to read the check above:
+        # what `ls-remote` answers is the fate of the retry, not of the push they
+        # watched fail.
+        if result.retry is not Retry.NONE:
+            log.dim(_RETRY_NOTE[result.retry])
         return
 
     if result.status is PushStatus.REFUSED:

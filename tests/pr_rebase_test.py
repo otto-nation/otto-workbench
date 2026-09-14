@@ -88,9 +88,9 @@ def _held() -> land.LandResult:
     return land.LandResult(CommitStatus.PUSH_HELD, sha=_LANDED_SHA, resume=_RESUME)
 
 
-# What a push killed by a mid-transfer reset printed, from #1262. Nothing in it
+# Ssh's half of what a push killed by a mid-transfer reset prints. Nothing in it
 # is a complaint about the worktree, which is the point of the test below.
-_RESET_DUMP = (
+_RESET_DUMP_SSH = (
     "Read from remote host github.com: Connection reset by peer\n"
     "client_loop: send disconnect: Broken pipe\n"
 )
@@ -3092,10 +3092,11 @@ def test_a_dropped_refusal_is_not_handed_to_the_ai_fix():
     rejected.
     """
     dropped = land.LandResult(
-        CommitStatus.PUSH_FAILED, sha=_LANDED_SHA, error=_RESET_DUMP, resume=_RESUME,
+        CommitStatus.PUSH_FAILED, sha=_LANDED_SHA, error=_RESET_DUMP_SSH,
+        resume=_RESUME,
         push=push.PushResult(
             push.PushStatus.REFUSED, sha=_LANDED_SHA, branch="isaac/feat/x",
-            refusal=push.Refusal.DROPPED, output=_RESET_DUMP,
+            refusal=push.Refusal.DROPPED, output=_RESET_DUMP_SSH,
         ),
     )
 

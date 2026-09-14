@@ -8,8 +8,8 @@ claim a mock cannot make honestly.
 A lost push is fabricated with a `post-receive` hook on the bare remote that
 rewinds the ref it was just handed. post-receive runs after the refs move and
 its exit code cannot fail the push, so the client sees a clean success while the
-remote ends up holding what it held before. That is the failure #962 describes,
-reproduced rather than simulated.
+remote ends up holding what it held before. That is the failure the verification
+step exists to catch, reproduced rather than simulated.
 """
 
 import signal
@@ -366,11 +366,11 @@ def test_a_hook_rejection_outranks_nothing_it_shares_words_with():
     assert push.classify(output) is push.Refusal.TRANSPORT
 
 
-# What a push killed by a mid-transfer reset actually printed, from #1262. Every
-# other classification in this module matches something in it, which is why the
-# ordering in `classify` is the whole fix: the ssh diagnostic reads as transport
-# and the trailing line reads as a hook rejection.
-_RESET_DUMP = (
+# Everything a push killed by a mid-transfer reset prints — ssh's diagnostic,
+# then git's. Every other classification in this module matches something in it,
+# which is why the ordering in `classify` is the whole fix: the ssh diagnostic
+# reads as transport and the trailing line reads as a hook rejection.
+_RESET_DUMP_FULL = (
     "Read from remote host github.com: Connection reset by peer\n"
     "client_loop: send disconnect: Broken pipe\n"
     "fatal: Could not read from remote repository.\n"
@@ -379,12 +379,12 @@ _RESET_DUMP = (
 
 
 def test_a_drop_outranks_the_refusal_line_it_prints_too():
-    """The observed #1262 output: neither the tests nor the remote said no.
+    """Neither the tests nor the remote said no, and the output must not read so.
 
     Classified as HOOK it tells the operator their checks failed, which is the
-    misdirection the issue is about — the gates had all printed a tick.
+    misdirection this ordering removes — the gates had all printed a tick.
     """
-    assert push.classify(_RESET_DUMP) is push.Refusal.DROPPED
+    assert push.classify(_RESET_DUMP_FULL) is push.Refusal.DROPPED
 
 
 @pytest.mark.parametrize("output", [
@@ -425,14 +425,31 @@ def test_a_shells_141_is_not_how_a_signal_arrives_here():
 
 
 def test_a_killed_push_speaks_through_the_signal_when_it_said_nothing():
-    """An empty excerpt under the headline is the unreadable failure #1262 names."""
+    """An empty excerpt under the headline is a failure nobody can read."""
     spoken = push._push_output(proc.CmdResult(-signal.SIGPIPE, "", ""))
     assert "SIGPIPE" in spoken
 
 
 def test_a_killed_push_that_did_speak_is_quoted_rather_than_summarised():
     assert push._push_output(
-        proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP)) == _RESET_DUMP
+        proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)) == _RESET_DUMP_FULL
+
+
+@pytest.mark.parametrize("sig", [signal.SIGKILL, signal.SIGINT, signal.SIGPIPE])
+def test_a_killed_push_names_the_signal_without_asserting_a_cause(sig):
+    """The drop predicate fires on any signal, so the account may not name one cause.
+
+    A git the OOM killer or an operator ended has nothing to do with the
+    connection, and saying it died mid-transfer asserts a cause the return code
+    does not carry — the overclaiming the headlines here take care to avoid.
+    What every signal death does establish is the same, narrower thing: git
+    stopped before it could say what the remote received.
+    """
+    spoken = push._push_output(proc.CmdResult(-sig, "", ""))
+
+    assert sig.name in spoken
+    assert "connection" not in spoken.lower()
+    assert "unconfirmed" in spoken
 
 
 # ── a push the connection dropped ───────────────────────────────────────────
@@ -456,7 +473,7 @@ def drops_the_connection(monkeypatch):
         result = real_run(*args, **kwargs)
         if args and args[0] == "push":
             seen.append(args)
-            return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP)
+            return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)
         return result
 
     monkeypatch.setattr(git_client, "run", dropping)
@@ -504,7 +521,7 @@ def test_a_dropped_push_recovers_when_the_retry_lands(pushable, monkeypatch):
             if len(seen) == 1:
                 real_run(*args, **kwargs)
                 hook.unlink()
-                return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP)
+                return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)
         return real_run(*args, **kwargs)
 
     monkeypatch.setattr(git_client, "run", drop_then_heal)
@@ -514,6 +531,41 @@ def test_a_dropped_push_recovers_when_the_retry_lands(pushable, monkeypatch):
     assert result.retry is push.Retry.ATTEMPTED
     assert result.remote_sha == sha
     assert "--no-verify" in seen[1]
+
+
+def test_a_dropped_push_the_remote_could_not_be_asked_about_is_unverified(
+        pushable, drops_the_connection, monkeypatch):
+    """Both accounts failed: git died mid-transfer and `ls-remote` answered nothing.
+
+    Neither REFUSED nor LOST is honest about that — the refusal would claim
+    nothing reached the remote and the loss would claim the remote said no.
+    """
+    wt, _ = pushable
+    sha = _commit(wt, "work")
+    monkeypatch.setattr(push, "remote_head", lambda *a, **k: None)
+
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.UNVERIFIED
+    assert result.refusal is push.Refusal.DROPPED
+    assert result.sha == sha
+    assert result.retry is push.Retry.NONE
+
+
+def test_a_retry_the_remote_could_not_be_asked_about_records_the_attempt(
+        pushable, drops_the_connection, monkeypatch):
+    """The second transfer happened whether or not anything could confirm it."""
+    wt, remote = pushable
+    _commit(wt, "work")
+    _lose_pushes(remote)
+    answers = ["", None]
+    monkeypatch.setattr(push, "remote_head", lambda *a, **k: answers.pop(0))
+
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.UNVERIFIED
+    assert result.retry is push.Retry.ATTEMPTED
+    assert len(drops_the_connection) == 2
 
 
 def test_an_auth_failure_is_refused_without_asking_the_remote(monkeypatch):
@@ -775,6 +827,63 @@ def test_the_resume_command_quotes_a_worktree_with_a_space():
 # ── the report ──────────────────────────────────────────────────────────────
 
 
+def test_an_unverified_push_git_reported_as_clean_says_it_was_pushed(capsys):
+    """git did report success here, so the only open question is confirmation."""
+    result = push.PushResult(
+        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+    )
+    push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "pushed 1a2b3c4" in printed
+    assert "ls-remote" in printed
+
+
+def test_an_unverified_dropped_push_does_not_claim_it_was_pushed(capsys):
+    """`git push` itself failed here; nothing has established the commit was sent.
+
+    The drop is why the remote was asked rather than the operator being told
+    their checks failed — and the remote then could not answer either. Reusing
+    the ordinary wording tells the reader git pushed it, which is the misreport
+    this classification exists to remove.
+    """
+    result = push.PushResult(
+        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.DROPPED,
+    )
+    push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "pushed 1a2b3c4" not in printed
+    assert "connection dropped" in printed
+    assert "ls-remote" in printed
+
+
+def test_an_unverified_push_reports_the_retry_that_ran(capsys):
+    """A retry whose verification failed too is still a retry that ran.
+
+    Left unsaid, the reader counts one transfer where two were made and reads a
+    `--no-verify` push as one that never happened.
+    """
+    result = push.PushResult(
+        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.DROPPED, retry=push.Retry.ATTEMPTED,
+    )
+    push.report(result, "/tmp/wt")
+
+    assert "Retried once" in capsys.readouterr().err
+
+
+def test_an_unverified_push_that_never_retried_says_nothing_about_retries(capsys):
+    """The common warning stays one line; there is no retry to account for."""
+    result = push.PushResult(
+        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+    )
+    push.report(result, "/tmp/wt")
+
+    assert "etried" not in capsys.readouterr().err
+
+
 def test_refused_report_trims_a_whole_test_suite_to_its_tail(capsys):
     """A failing pre-push prints its entire suite; the tail is what named it."""
     output = "\n".join(f"line {n}" for n in range(200))
@@ -856,7 +965,7 @@ def test_a_dropped_refusal_does_not_claim_nothing_reached_the_remote(capsys):
     """Whether anything reached it is exactly what a drop leaves unestablished."""
     result = push.PushResult(
         push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.DROPPED, output=_RESET_DUMP,
+        refusal=push.Refusal.DROPPED, output=_RESET_DUMP_FULL,
     )
     push.report(result, "/tmp/wt")
 

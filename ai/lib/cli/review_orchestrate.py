@@ -139,8 +139,7 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
         except UnknownModelWindow as exc:
             log.error(f"Cannot budget prompts for {named}: {exc}")
             trail.decision(
-                "prompt_budget", "aborting review",
-                reason=f"no context window on record for {model}",
+                "prompt_budget", "aborting review", reason=str(exc),
             )
             return False
         alias = ModelAlias.parse(model)

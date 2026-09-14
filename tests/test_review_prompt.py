@@ -38,14 +38,14 @@ from review.prompt_sections import (
     _build_omitted_guidance, _build_pr_header,
 )
 from review import registry as review_registry
+from conftest import TEST_MODEL, model_budget_bytes
 from pr.ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr.domains import CIDomain
 
 # The model every phase resolves to here, and the ceiling it buys. Tests state
 # the budget once rather than at each of two dozen call sites; a test that
 # cares about a different model passes `budget_bytes` itself.
-TEST_MODEL = "claude-sonnet-5"
-MAX_PROMPT_BYTES = prompt_budget_bytes(TEST_MODEL)
+MAX_PROMPT_BYTES = model_budget_bytes()
 
 
 def _fit_budget(job, known_sections, **kw):

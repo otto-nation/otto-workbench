@@ -29,7 +29,7 @@ AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from conftest import make_ctx  # noqa: E402
+from conftest import make_ctx, model_budget_bytes  # noqa: E402
 
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
@@ -54,11 +54,10 @@ from pr import ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.triage_round import TriagedRound  # noqa: E402
-from review.budget import prompt_budget_bytes  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
 
 # The model every phase resolves to here, and the ceiling it buys.
-MAX_PROMPT_BYTES = prompt_budget_bytes("claude-sonnet-5")
+MAX_PROMPT_BYTES = model_budget_bytes()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

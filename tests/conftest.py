@@ -563,6 +563,23 @@ def worktree(tmp_path) -> Path:
 GIT_TIMEOUT = 10  # seconds; a hang here should fail the test, not stall the suite
 
 
+# The model the review phases resolve to on this machine, and the prompt
+# ceiling it buys. Shared because three review test modules derive the same
+# figure: the budget is per-model now, so a test asserting against it has to
+# name the model it assumed, and three copies of that would drift the first
+# time the reference model changed.
+TEST_MODEL = "claude-sonnet-5"
+
+
+def model_budget_bytes() -> int:
+    """`prompt_budget_bytes(TEST_MODEL)`, imported lazily like the other lib reaches."""
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from review.budget import prompt_budget_bytes
+
+    return prompt_budget_bytes(TEST_MODEL)
+
+
 class MachineContention(AssertionError):
     """A subprocess a test drove died on a signal or a timeout.
 

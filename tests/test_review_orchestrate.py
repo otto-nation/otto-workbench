@@ -13,11 +13,10 @@ from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from core.phases import Phase
-from review.budget import prompt_budget_bytes
+from conftest import TEST_MODEL as _TEST_MODEL, model_budget_bytes
 from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
 
-_TEST_MODEL = "claude-sonnet-5"
-_TEST_BUDGET = prompt_budget_bytes(_TEST_MODEL)
+_TEST_BUDGET = model_budget_bytes()
 
 
 

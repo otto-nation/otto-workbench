@@ -60,9 +60,34 @@ HANDLED_REPLY_PREFIXES = tuple(
 # it appears in stops being recognised as ours.
 _GENERATED_FOLLOWUP_RE = re.compile(
     r"(?:Fixed in|Result is in|Current behaviour is at|Addressed in|See|"
-    r"Tracked in|Unchanged at) .+\.$",
+    r"Tracked in|Unchanged at|Not verified) .+\.$",
     re.DOTALL,
 )
+
+# The hedge an unverified fix carries. A fix pass edits code and then says so;
+# whether the edit works is a separate claim, and one nothing establishes unless
+# the verify gate ran and reached a verdict. Saying "fixed" for both is what
+# turns an ordinary wrong guess into a retraction, because the reviewer closes
+# the thread on the strength of a claim nobody checked.
+UNVERIFIED_REPLY_NOTE = "Not verified automatically"
+
+
+def unverified_note(entry: CommentItem) -> str:
+    """The sentence an unverified fix carries, or "" when one was established.
+
+    The detail is why nobody could check it, which is the part that makes the
+    row actionable — but the hedge is the claim being weakened and stands on its
+    own when the gate reached no verdict at all.
+
+    A pass that never ran the gate (`verified is None`) says nothing either way.
+    Hedging there would put a caveat on every fix on every PR and teach the
+    reader to skip the ones that mean something.
+    """
+    if entry.verified is not False:
+        return ""
+    if entry.verify_detail:
+        return f"{UNVERIFIED_REPLY_NOTE} — {entry.verify_detail}."
+    return f"{UNVERIFIED_REPLY_NOTE}: please confirm it does what you asked."
 
 
 def our_last_reply_id(thread: ReportThread | None) -> int | None:
@@ -242,6 +267,9 @@ def post_fix_replies(
         if entry.file:
             url = permalinks.blob_permalink(repo, sha, entry.file)
             parts.append(f"Result is in [`{entry.file}`]({url}).")
+        note = unverified_note(entry)
+        if note:
+            parts.append(note)
         return "\n\n".join(parts)
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)

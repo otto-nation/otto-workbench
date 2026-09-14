@@ -180,6 +180,27 @@ class ItemOutcome:
     # anchor still points at the code the item meant. Empty reads as "cannot
     # anchor" rather than as "anchor is current".
     read_sha: str = ""
+    # Whether something was run against the changed path and passed. Three
+    # states, because two would conflate the case the gate exists to surface
+    # with the case that predates it:
+    #
+    #   None  — nobody asked. The gate did not run, and this pass claims no
+    #           more and no less than it did before the gate existed.
+    #   False — the gate ran and could not establish the fix works. This is the
+    #           one a surface hedges on: it is a fix nobody could exercise, not
+    #           a fix known to be broken (a falsified fix is demoted out of
+    #           FIXED entirely and never reaches a record as one).
+    #   True  — something ran against the changed path and passed.
+    #
+    # Defaulting to None rather than False is what keeps every row a gate-less
+    # pass renders worded as it always was. Hedging those would put a caveat on
+    # every fix on every PR, which trains the reader to skip the caveat on the
+    # rows that earned one.
+    verified: bool | None = None
+    # What the gate ran and what came of it, in the words a reply prints. Set
+    # whether or not the gate could reach a verdict, since "no runnable check"
+    # is the part an operator needs to see on an unverified row.
+    verify_detail: str = ""
 
 
 @dataclass

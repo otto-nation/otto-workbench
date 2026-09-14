@@ -36,6 +36,7 @@ from fix import comment_checklist
 from fix import comment_replies
 from fix import engine as fix_engine
 from fix import types as fix_types
+from fix import verify as fix_verify
 from git import client as git_client
 from git import topology as git_topology
 from pr import attribution
@@ -322,12 +323,18 @@ def run_pass(
     wt_path: Path,
     ctx: pr_context.ResolvedContext,
     trail: Trail | None = None,
+    verify: bool = True,
 ) -> CommentFixResult:
     """Apply mechanical fixes for the threads and items triage found actionable.
 
     The pass's entry point, in the shape `review.fix.run_fix_pass` and
     `rebase.prepush.fix_push_failures` established: build the domain's half,
     hand it to the engine, and return what the domain recorded.
+
+    `verify` runs the gate that holds each claimed fix against what actually
+    runs before anything is committed or replied to. On by default: a fix pass
+    publishes a claim about behaviour under the operator's name, and the gate is
+    what makes that claim worth something.
     """
     threads_by_id = {t.id: t for t in report.threads}
 
@@ -353,7 +360,10 @@ def run_pass(
     if round_.has_fixables:
         # The engine batches the entries, runs the agent, lands the commit and
         # calls `record` itself.
-        fix_engine.run(adapter, trail=trail)
+        fix_engine.run(
+            adapter, trail=trail,
+            verify=fix_verify.run if verify else None,
+        )
     else:
         # `fix_engine.run` returns an empty `FixRun` for a pass with no items
         # and never reaches `record`, which is the right contract — there is

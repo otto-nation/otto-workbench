@@ -88,16 +88,27 @@ _SECTION_RE = re.compile(
     r"^## <!-- fix:(?P<id>[^\s>]+) -->[ ]*(?P<heading>.*)$", re.MULTILINE,
 )
 
+
+def box_pattern(boxes: tuple[_Box, ...]) -> re.Pattern[str]:
+    """The `- [x] <label>` matcher for one set of boxes.
+
+    Built per set rather than once per module: the verify gate answers in a
+    different vocabulary from the fix pass — whether a fix holds up, not whether
+    one was applied — and a single pattern covering both would let an agent tick
+    the other pass's box and have it read as an answer here.
+    """
+    return re.compile(
+        r"^- \[(?P<mark>[ xX])\] (?P<label>%s)(?P<rest>[^\w\n].*)?$"
+        % "|".join(re.escape(box.label) for box in boxes),
+        re.MULTILINE,
+    )
+
 # Whatever follows the label is `rest`, left for `_reason` to interpret rather
 # than pinned to the separator the render happens to write. The one character it
 # may not start with is a newline: a bare `- [ ] fixed` would otherwise swallow
 # the line below it as its own reason and the box on that line would never be
 # seen at all.
-_BOX_RE = re.compile(
-    r"^- \[(?P<mark>[ xX])\] (?P<label>%s)(?P<rest>[^\w\n].*)?$"
-    % "|".join(re.escape(box.label) for box in _BOXES),
-    re.MULTILINE,
-)
+_BOX_RE = box_pattern(_BOXES)
 
 # What stands between a ticked box's label and the agent's words after it. The
 # render writes an em dash, but the agent is writing prose and reaches for a
@@ -118,12 +129,18 @@ def _suffix(box: _Box) -> str:
     return f" — {_WHY}" if box.outcome in _REASONED else ""
 
 
-def render(title: str, items: list[FixItem]) -> str:
+def render(
+    title: str, items: list[FixItem], boxes: tuple[_Box, ...] = _BOXES,
+) -> str:
     """The tracking file for `items`, under `title`, as markdown.
 
     Rendered rather than accumulated so the file is a function of the work: a
     pass that rebuilds it per batch, or rebuilds it for a retry over what is
     left, gets a file describing exactly the items in hand and nothing else.
+
+    `boxes` is the vocabulary the answering agent writes in. It is a parameter
+    rather than the module constant because the verify gate asks a different
+    question of the same items — see `VERIFY_BOXES`.
     """
     sections = [f"# {title}\n"]
     for item in items:
@@ -132,10 +149,63 @@ def render(title: str, items: list[FixItem]) -> str:
             heading += f"{_HEADING_SEP}{item.label}"
         body = item.body.strip()
         section = heading + "\n\n" + (f"{body}\n\n" if body else "")
-        for box in _BOXES:
+        for box in boxes:
             section += f"- [ ] {box.label}{_suffix(box)}\n"
         sections.append(section)
     return "\n".join(sections)
+
+
+def verify_instructions(noun: str) -> str:
+    """How to answer the verify file, in the words `parse_verdicts` reads back."""
+    boxes = "\n".join(
+        f"- `- [x] {box.label} — <why>` — {box.contract.format(noun=noun)}"
+        for box in VERIFY_BOXES
+    )
+    return textwrap.dedent("""\
+        Every {noun} above carries three boxes. Answer each one by ticking
+        exactly one of them with the Edit tool, in the tracking file:
+
+        {boxes}
+
+        Leave all three unticked only for a {noun} you never got to. That reads
+        as unverified — the same as ticking `not verified`, but without telling
+        anyone why — so prefer the box and the reason.""").format(
+        noun=noun, boxes=boxes)
+
+
+def parse_verdicts(path: Path) -> dict[str, tuple[bool | None, str]]:
+    """The gate's verdict per item id: (ok, detail).
+
+    `ok` is True for verified, False for broken, None for not verified. An id
+    with nothing ticked is absent from the result rather than present as None —
+    the caller distinguishes "the gate said it could not tell" from "the gate
+    never answered", and only the first carries a reason worth printing.
+    """
+    if not path.exists():
+        return {}
+    text = path.read_text()
+    verdicts: dict[str, tuple[bool | None, str]] = {}
+    matches = list(_SECTION_RE.finditer(text))
+    for n, match in enumerate(matches):
+        end = matches[n + 1].start() if n + 1 < len(matches) else len(text)
+        body = text[match.end():end]
+        ticked = {
+            box.group("label"): _reason(box.group("rest"))
+            for box in _VERIFY_BOX_RE.finditer(body)
+            if box.group("mark") in "xX"
+        }
+        for box in VERIFY_BOXES:
+            if box.label not in ticked:
+                continue
+            verdicts[match.group("id")] = (_VERDICT_OK[box.label], ticked[box.label])
+            break
+    return verdicts
+
+
+# Which box means what, as the three-valued answer `Verdict.ok` carries.
+_VERDICT_OK: dict[str, bool | None] = {
+    "verified": True, "not verified": None, "broken": False,
+}
 
 
 def instructions(noun: str) -> str:
@@ -168,10 +238,44 @@ def instructions(noun: str) -> str:
         {noun} you read and had an answer for.""").format(noun=noun, boxes=boxes)
 
 
-def write(path: Path, title: str, items: list[FixItem]) -> None:
+def write(
+    path: Path, title: str, items: list[FixItem],
+    boxes: tuple[_Box, ...] = _BOXES,
+) -> None:
     """Render `items` to `path`, creating the directory that holds it."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render(title, items))
+    path.write_text(render(title, items, boxes))
+
+
+# ── the verify gate's vocabulary ────────────────────────────────────────────
+#
+# The gate answers a different question from the pass it checks: not "did you
+# apply a change" but "does the change hold up when run". Three answers, and the
+# middle one is load-bearing — a gate with only pass and fail would have to call
+# a fix it could not exercise one or the other, and both are lies. Most projects
+# have paths nothing runnable covers.
+#
+# `broken` is deliberately the narrow one: it means something was run and it
+# failed, and it is the only verdict that costs the operator a fix. The prompt
+# in verify-fixes.md says to default to `not verified` when uncertain.
+VERIFY_BOXES: tuple[_Box, ...] = (
+    _Box("verified", FixOutcome.FIXED,
+         "you ran something against the changed path and it did what the "
+         "reviewer asked. Replace `<why>` with what you ran"),
+    _Box("not verified", FixOutcome.DEFERRED,
+         "you could not establish it either way — nothing runnable covers this "
+         "path, or the only test that does is vacuous. Replace `<why>` with "
+         "what stopped you"),
+    _Box("broken", FixOutcome.NEEDS_HUMAN,
+         "you ran something and the fix did not hold up. Replace `<why>` with "
+         "what you ran and what happened"),
+)
+
+_VERIFY_BOX_RE = box_pattern(VERIFY_BOXES)
+
+# Every verify box asks for a reason, including the passing one: "what did you
+# run" is the whole evidentiary value of a verdict that says a fix works.
+_VERIFY_REASONED = frozenset(box.outcome for box in VERIFY_BOXES)
 
 
 def parse(path: Path) -> list[ItemOutcome]:

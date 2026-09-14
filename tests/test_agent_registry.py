@@ -49,6 +49,7 @@ class TestPhaseDomains:
             Phase.DISPROVE: PhaseDomain.REVIEW,
             Phase.FIX: PhaseDomain.REVIEW,
             Phase.COMMENTS_FIX: PhaseDomain.COMMENTS,
+            Phase.COMMENTS_VERIFY: PhaseDomain.COMMENTS,
             Phase.COMMENTS_TRIAGE: PhaseDomain.COMMENTS,
             Phase.CI_FIX: PhaseDomain.CI,
             Phase.REBASE: PhaseDomain.REBASE,
@@ -83,6 +84,7 @@ class TestPhaseThinkingDefaults:
             # Neither fix pass named a thinking level before it was a phase —
             # both called the backend without one and took its default.
             Phase.COMMENTS_FIX: None,
+            Phase.COMMENTS_VERIFY: Thinking.LOW,
             Phase.CI_FIX: None,
             # Nor did any prompt-shaped call, which had no way to name one:
             # ai_backend.prompt took no thinking argument until they became
@@ -114,6 +116,7 @@ class TestPhaseMaxTurnsDefaults:
             Phase.DISPROVE: 15,
             Phase.FIX: 20,
             Phase.COMMENTS_FIX: 20,
+            Phase.COMMENTS_VERIFY: 15,
             Phase.CI_FIX: 20,
             Phase.PREPUSH_FIX: 20,
         }
@@ -133,7 +136,10 @@ class TestPhaseBudgetDefaults:
 
     def test_only_the_non_review_phases_pin_a_budget(self):
         pinned = {p for p, s in PHASES.items() if s.max_budget is not None}
-        assert pinned == {Phase.COMMENTS_FIX, Phase.CI_FIX, Phase.PREPUSH_FIX}
+        assert pinned == {
+            Phase.COMMENTS_FIX, Phase.COMMENTS_VERIFY, Phase.CI_FIX,
+            Phase.PREPUSH_FIX,
+        }
 
     def test_preserves_current_caps(self):
         assert PHASES[Phase.COMMENTS_FIX].max_budget == 2.0
@@ -162,7 +168,8 @@ class TestPhaseShapes:
     def test_only_the_fix_phases_edit_the_workspace(self):
         editing = {p for p, s in PHASES.items() if s.shape is PhaseShape.FIX}
         assert editing == {
-            Phase.FIX, Phase.COMMENTS_FIX, Phase.CI_FIX, Phase.PREPUSH_FIX,
+            Phase.FIX, Phase.COMMENTS_FIX, Phase.COMMENTS_VERIFY,
+            Phase.CI_FIX, Phase.PREPUSH_FIX,
         }
 
     def test_only_the_stateless_phases_are_prompts(self):

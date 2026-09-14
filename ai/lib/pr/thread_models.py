@@ -65,6 +65,16 @@ class CommentItem:
     # without the field it would have to recognise the prose in `reason`.
     outcome: FixOutcome | None = None
     settled_by: SettledBy = SettledBy.PASS
+    # Whether anything was run against this fix and passed, and what. Carried on
+    # the entry as well as the outcome because `--finish` renders replies and
+    # the summary out of state rather than out of the pass that wrote them: a
+    # field the drain drops is one the published reply would have to guess at,
+    # and the confident guess is the one that makes the false claim.
+    #
+    # None is "the gate did not run", which is not the same as "the gate could
+    # not tell" — see `ItemOutcome.verified`, which this mirrors.
+    verified: bool | None = None
+    verify_detail: str = ""
 
     def __post_init__(self) -> None:
         self.line = int(self.line or 0)
@@ -101,6 +111,8 @@ class CommentItem:
             reason=reason or self.reason or self.reasoning,
             commit_sha=self.commit_sha,
             read_sha=self.read_sha,
+            verified=self.verified,
+            verify_detail=self.verify_detail,
         )
 
     @classmethod
@@ -135,6 +147,8 @@ class CommentItem:
             read_sha=outcome.read_sha,
             outcome=outcome.outcome,
             settled_by=outcome.settled_by,
+            verified=outcome.verified,
+            verify_detail=outcome.verify_detail,
             **{reason_field: outcome.reason},
         )
 

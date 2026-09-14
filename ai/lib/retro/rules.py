@@ -46,10 +46,16 @@ STOP_WORDS = frozenset({
 KEYWORD_PATTERN = re.compile(r"[a-z][a-z_-]{2,}")
 
 # A passage opens on its own line: a list item — bulleted or numbered — or a
-# table row. Anything else accumulates into the paragraph being read, and a
+# table row. Anything else accumulates into the passage being read, and a
 # heading closes one without joining it — a heading shares a comment's words
 # too readily for how little it says, and the passage under it states the rule
 # anyway.
+#
+# Opening a passage is not the same as finishing one: an item that wraps onto
+# further lines states the rest of its rule there, so the continuation joins
+# the line that opened it. Flushing the opener straight out leaves each half
+# of a wrapped item as a passage neither of which is the rule — and the tail
+# half carries none of the subject named in the line above it.
 #
 # A numbered item counts because a ladder is a list of separate rules, not one
 # rule in several parts: merging "1. Scope clear? … 4. Build" into a paragraph
@@ -100,25 +106,32 @@ def split_passages(content: str) -> list[str]:
     cover, and comparing against that union is what let file length decide the
     match. Neither is a whole numbered list — a ladder's steps are separate
     rules, and merging them recreates that union inside one passage.
+
+    An item runs from its own marker to the next boundary, so the lines it
+    wraps onto belong to it. A sub-item nested under it does not: it carries a
+    marker of its own, which is the author saying it is a separate rule, and
+    indentation is left to decide nothing either way. That keeps one test for
+    what opens a passage instead of two that can disagree about a continuation
+    indented as deeply as a sibling item's text.
     """
     passages: list[str] = []
-    paragraph: list[str] = []
+    current: list[str] = []
     content = FRONTMATTER.sub("", content)
 
     def flush() -> None:
-        if paragraph:
-            passages.append(" ".join(paragraph))
-            paragraph.clear()
+        if current:
+            passages.append(" ".join(current))
+            current.clear()
 
     for line in content.splitlines():
         stripped = line.strip()
         if PASSAGE_START.match(line):
             flush()
-            passages.append(stripped)
+            current.append(stripped)
         elif not stripped or HEADING.match(stripped):
             flush()
         else:
-            paragraph.append(stripped)
+            current.append(stripped)
     flush()
     return passages
 

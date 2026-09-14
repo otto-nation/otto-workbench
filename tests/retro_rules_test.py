@@ -14,7 +14,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from retro.rules import (  # noqa: E402
+    FRONTMATTER,
+    HEADING,
     MIN_MATCH_SCORE,
+    PASSAGE_START,
     best_passage_score,
     build_rule,
     extract_keywords,
@@ -54,6 +57,27 @@ def _ordered_items(content: str) -> list[str]:
     ]
 
 
+def _continuations(content: str) -> list[str]:
+    """The wrapped continuation lines of `content`'s list items.
+
+    A line is one when it is indented, opens no item of its own, and the last
+    line that was neither blank nor a heading opened an item. Derived from the
+    text rather than from `split_passages`, so it says what the files hold
+    independently of what the splitter makes of them.
+    """
+    found: list[str] = []
+    in_item = False
+    for line in FRONTMATTER.sub("", content).splitlines():
+        stripped = line.strip()
+        if PASSAGE_START.match(line):
+            in_item = True
+        elif not stripped or HEADING.match(stripped):
+            in_item = False
+        elif in_item and line[:1].isspace():
+            found.append(stripped)
+    return found
+
+
 def _vocab_rank(rules: list[dict]) -> list[str]:
     """Rule filenames, largest vocabulary first."""
     return [
@@ -88,6 +112,14 @@ OFF_TOPIC_PADDING = "\n\n".join(
     "- " + " ".join(_NONSENSE[i:i + 25]) + "."
     for i in range(0, len(_NONSENSE), 25)
 )
+
+
+# Rule files whose whole text is absorbed into one other file below. Four of
+# them, so the absorber ends up with the largest vocabulary in the set and its
+# raw overlap with a comment about any of their subjects is at least theirs.
+_ABSORBED_FILES = frozenset({
+    "git-operations.md", "bash.md", "general.md", "security-secrets.md",
+})
 
 
 def _pad_rule(filename: str, padding: str = OFF_TOPIC_PADDING) -> list[dict]:
@@ -155,9 +187,10 @@ class TestSizeBias:
     def test_match_distribution_is_not_rank_order_of_file_size(self):
         """The failure mode from the field: matches ranked by vocabulary size.
 
-        Over a real scan the top two files took 73% of all matches in exactly
-        the order of their keyword-set sizes. Asserting the two rankings
-        differ is the cheapest direct statement of what went wrong.
+        Over 1410 real review findings the old scorer put 67% of all matches
+        on two files, both of them among the three largest in the corpus.
+        Asserting the two rankings differ is the cheapest direct statement of
+        what went wrong.
         """
         rules = _rules()
         comments = [body for body, _ in TOPICAL_COMMENTS]
@@ -171,9 +204,9 @@ class TestSizeBias:
     def test_the_four_largest_files_do_not_absorb_every_match(self):
         """No topical comment here is about any of them, so none should match.
 
-        In the field these four took 96% of 1381 findings between them purely
-        on vocabulary size, so naming them is a sharper assertion than one
-        about the single largest file.
+        In the field these four took 98% of the 1408 matches the old scorer
+        made over 1410 findings, purely on vocabulary size, so naming them is
+        a sharper assertion than one about the single largest file.
         """
         rules = _rules()
         biggest = set(_vocab_rank(rules)[:4])
@@ -213,8 +246,10 @@ class TestSizeBias:
         """The causal statement of the same property.
 
         Growing a rule file with text that has nothing to do with the comment
-        must not move the comment onto it. Under a raw-overlap score it does:
-        the padded file clears the floor on almost any English sentence.
+        must not move the comment onto it. This is the weaker half of the
+        property and holds under a raw-overlap score too, since nonsense
+        shares no word with the comment: the sharp case is the sibling test
+        below, which pads with another rule's real text.
         """
         rules = _rules()
         comment = (
@@ -239,11 +274,16 @@ class TestSizeBias:
         """The sharpest form: pad one file with the *whole* of another.
 
         The padded file now contains every word of `bash.md` plus its own, so
-        under a raw-overlap score its intersection with any bash comment is
-        strictly larger than `bash.md`'s and it wins every one of them. The
-        rule that actually states the thing must still be the answer, and the
-        assertion is on the score rather than on which file is visited first,
-        so a tie cannot be passed off as a win.
+        under a raw-overlap score it ties or beats `bash.md` on every bash
+        comment and takes the ones it wins on length alone — padding
+        `security-secrets.md` this way took it from 0 matches to 8 over 1410
+        real findings.
+
+        Under the passage scorer the padded file holds a verbatim copy of the
+        passage that states the rule, so scoring exactly equal is the correct
+        answer rather than a near miss: the assertion is that it never scores
+        *higher*. Which of two tied files `score_rules` returns is iteration
+        order, so that is deliberately not what is asserted.
         """
         comment = (
             "sed -i without an empty argument is the GNU spelling and fails "
@@ -259,7 +299,6 @@ class TestSizeBias:
 
         best = score_rules(comment, padded)
         assert best is not None
-        assert best.rule["filename"] == "bash.md"
 
         weights = term_weights(padded)
         keywords = extract_keywords(comment)
@@ -267,28 +306,48 @@ class TestSizeBias:
             r["filename"]: best_passage_score(keywords, r, weights) for r in padded
         }
         assert by_file["output.md"] <= by_file["bash.md"]
+        assert by_file["bash.md"] == max(by_file.values()), (
+            "the rule that states the thing should score no worse than any other"
+        )
+        assert best.score == by_file["bash.md"]
 
     def test_the_padded_file_takes_no_match_across_the_corpus(self):
-        """The property stated over a corpus rather than one comment.
+        """The property stated over several comments rather than one.
 
-        Under the raw-overlap score, padding the smallest rule file this way
-        took it from 0 matches to 74 over 1381 real review findings, on length
-        alone. It must take none of the comments below, all of which are about
-        a subject some other rule states and the padding does not mention.
+        Padded with four whole rule files rather than with nonsense: nonsense
+        shares no word with any comment, so no scorer can be fooled by it and
+        a corpus-wide assertion against it discriminates nothing.
+
+        The absorber now holds a verbatim copy of the passage that states each
+        comment's rule, so scoring *equal* is correct and "takes no match" is
+        not a property any scorer can have. What it must never do is score
+        higher than the file the rule is actually written in — under the
+        raw-overlap score it does, on every one of these, because its
+        intersection with the comment is a superset of that file's.
         """
-        padded = _pad_rule("output.md")
-        # Every comment TOPICAL_COMMENTS pairs with a rule other than the one
-        # being padded, so the padded file is the right answer to none of them.
-        bodies = [
-            body for body, expected in TOPICAL_COMMENTS if expected != "output.md"
-        ] + [
-            "Never run git push while on main; branch protection rejects it.",
-            "The subagent's cwd does not persist, so qualify the path with git -C.",
-            "Guard the grep with || true, since set -e exits on a non-match.",
-        ]
-        matched = _match_rank(bodies, padded)
-        assert matched
-        assert "output.md" not in matched
+        absorbed = "\n\n".join(
+            r["content"] for r in _rules() if r["filename"] in _ABSORBED_FILES
+        )
+        padded = _pad_rule("output.md", absorbed)
+        grown = next(r for r in padded if r["filename"] == "output.md")
+        assert len(grown["keywords"]) == max(
+            len(r["keywords"]) for r in padded
+        ), "the padded file should now hold the largest vocabulary in the set"
+
+        weights = term_weights(padded)
+        outscored = []
+        for body, expected in TOPICAL_COMMENTS:
+            if expected == "output.md":
+                continue
+            keywords = extract_keywords(body)
+            stated = next(r for r in padded if r["filename"] == expected)
+            if best_passage_score(keywords, grown, weights) > best_passage_score(
+                keywords, stated, weights
+            ):
+                outscored.append(expected)
+        assert not outscored, (
+            f"the padded file outscored the rule that states the subject: {outscored}"
+        )
 
 
 class TestTopicality:
@@ -372,6 +431,93 @@ class TestPassages:
         content = "1. outer step\n   2. nested step\n"
         assert split_passages(content) == ["1. outer step", "2. nested step"]
 
+    def test_a_wrapped_list_item_is_one_passage(self):
+        """A continuation line states the rest of the item's own rule.
+
+        Flushing it as a paragraph of its own halves the item: neither half is
+        the whole rule, and the tail carries none of the subject named in the
+        line above it.
+        """
+        content = (
+            "1. Check the review's head_sha against the branch. If HEAD\n"
+            "   has moved, re-run the review before opening the PR\n"
+            "2. The same applies to a commit that only fixes findings\n"
+        )
+        assert split_passages(content) == [
+            "1. Check the review's head_sha against the branch. If HEAD "
+            "has moved, re-run the review before opening the PR",
+            "2. The same applies to a commit that only fixes findings",
+        ]
+
+    def test_a_wrapped_bullet_is_one_passage(self):
+        content = "- the first half of the rule,\n  and the second half\n"
+        assert split_passages(content) == [
+            "- the first half of the rule, and the second half"
+        ]
+
+    def test_a_nested_sub_item_does_not_join_its_parents_passage(self):
+        """A sub-bullet states its own rule; a wrapped line continues one.
+
+        The parent keeps the continuation written above the sub-item, and the
+        sub-item keeps the continuation written below it — so indentation
+        decides nothing and the list marker decides everything.
+        """
+        content = (
+            "- parent rule, which wraps\n"
+            "  onto a second line\n"
+            "  - child rule, which also wraps\n"
+            "    onto a second line\n"
+        )
+        assert split_passages(content) == [
+            "- parent rule, which wraps onto a second line",
+            "- child rule, which also wraps onto a second line",
+        ]
+
+    def test_a_blank_line_still_ends_a_wrapped_item(self):
+        content = "- an item\n  continued\n\nplain prose after it\n"
+        assert split_passages(content) == [
+            "- an item continued",
+            "plain prose after it",
+        ]
+
+    def test_the_self_review_ladder_item_keeps_its_continuation(self):
+        """The case the field defect was found on, read off the real file.
+
+        `self-review.md`'s first ladder item under "The Review Covers One
+        Commit" wraps onto two more lines. Split, the head keeps `head_sha`
+        and `git rev-parse HEAD` while the tail keeps the instruction, and a
+        comment about re-running a stale review matches neither well.
+        """
+        passages = split_passages(_rule_texts()["self-review.md"])
+        item = next(
+            p for p in passages
+            if p.startswith("1.") and "head_sha" in p
+        )
+        assert "git rev-parse HEAD" in item
+        assert "has moved, re-run the review" in item
+        assert "earlier commit" in item
+        assert not any(
+            p.startswith("has moved, re-run the review") for p in passages
+        ), "the continuation should not stand as a passage of its own"
+
+    def test_no_continuation_line_in_the_corpus_stands_alone(self):
+        """Stated over the real rule files rather than one known case.
+
+        A line indented under a list item and opening no item of its own is a
+        continuation of that item, so it must never head a passage of its own.
+        """
+        texts = _rule_texts()
+        stranded = [
+            f"{name}: {cont[:70]}"
+            for name, content in texts.items()
+            for cont in _continuations(content)
+            if any(p.startswith(cont) for p in split_passages(content))
+        ]
+        assert not stranded
+        assert sum(
+            len(_continuations(c)) for c in texts.values()
+        ), "the rule corpus should hold some wrapped list items"
+
     def test_a_number_inside_prose_does_not_open_a_passage(self):
         """A decimal or a year opening a line is prose, not a list item."""
         content = (
@@ -401,13 +547,21 @@ class TestPassages:
         assert not blobs
 
     def test_every_ordered_list_item_in_the_corpus_stands_alone(self):
-        """Stated over the real rule files, item by item rather than in bulk."""
+        """Stated over the real rule files, item by item rather than in bulk.
+
+        Each item heads a passage rather than equalling one: an item that
+        wraps carries its continuation lines into the same passage, so the
+        passage is the item's own text and no other item's.
+        """
         texts = _rule_texts()
         merged = [
             f"{name}: {item[:70]}"
             for name, content in texts.items()
             for item in _ordered_items(content)
-            if item not in split_passages(content)
+            if sum(
+                p == item or p.startswith(item + " ")
+                for p in split_passages(content)
+            ) != 1
         ]
         assert not merged
         assert sum(
@@ -424,11 +578,16 @@ class TestPassages:
         assert split_passages(content) == ["- the actual rule"]
 
     def test_rules_carry_passages_and_none_is_a_whole_file(self):
+        """Every passage is a strict subset of the file's own vocabulary.
+
+        A passage equal to the whole file is the blob this module exists to
+        break up, so `<` rather than `<=` — the weaker form admits exactly the
+        case the test is named for.
+        """
         for rule in _rules():
             assert rule["passages"], rule["filename"]
             for passage in rule["passages"]:
-                assert passage < rule["keywords"] or passage == rule["keywords"]
-                assert len(passage) < len(rule["keywords"]) or len(rule["passages"]) == 1
+                assert passage < rule["keywords"], rule["filename"]
 
 
 class TestLoadRules:

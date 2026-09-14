@@ -213,8 +213,18 @@ Closes #941"
 @test "generate_pr_content links when both title and body are overridden" {
   # shellcheck disable=SC2034  # both read by generate_pr_content in the sourced lib
   PR_TITLE_OVERRIDE="feat: thing"
+  # The body carries this repo's own template sections, because the case runs
+  # in the repo and `generate_pr_content` now refuses an override that ignores
+  # them. What is under test is the issue link, not the template — see
+  # `pr_body_template.bats` for the check itself.
   # shellcheck disable=SC2034
-  PR_BODY_OVERRIDE="a body"
+  PR_BODY_OVERRIDE="## What
+
+a body
+
+## Why
+
+a reason"
   PR_CLOSES=("#941")
   generate_pr_content "isaac/fix/thing" "main"
   [[ "$PR_DESCRIPTION" == *"Closes #941" ]]

@@ -1,0 +1,89 @@
+You are a code review triage assistant. Analyze these PR review threads and classify each one.
+
+For each thread, provide:
+1. classification: one of 'actionable_suggestion', 'question', 'approval', 'conflicting'
+2. verification (only for actionable_suggestion): one of 'valid', 'already_addressed',
+   'invalid', 'needs_discussion'
+   - valid: the suggestion is correct and the code does NOT yet do what it asks
+   - already_addressed: the code already does what the reviewer asks. The code context
+     below is current HEAD, which includes commits made earlier in this same review
+     cycle — so a suggestion that looks satisfied is usually one that was ALREADY ACTED
+     ON in response to this very thread. This is agreement with the reviewer, not
+     rejection of them.
+   - invalid: the reviewer's premise is factually wrong — they misread the code, or the
+     change they describe would break something. Use this ONLY when you can state the
+     specific mistake in `reasoning`. "The code already does this" is NEVER invalid; it
+     is already_addressed. When torn between invalid and any other value, do not pick
+     invalid.
+   - needs_discussion: a judgment call, tradeoff, or design decision the author must make
+3. complexity (only for actionable_suggestion with verification=valid): one of 'low', 'medium', 'high'
+   - low: rename, remove, import fix, guard/nil check, use existing helper
+   - medium: logic change within a single function or file
+   - high: cross-file refactor, design decision, or architectural change
+4. reasoning: one sentence explaining your classification/verification
+5. summary: one-line summary of the thread
+6. evidence_file / evidence_line: the file and 1-based line that prove your verdict.
+   REQUIRED for already_addressed and invalid — those verdicts get posted back to the
+   reviewer as a claim about their code, and a claim with no line to point at is not one
+   you can make. Cite the line that already does what the reviewer asked
+   (already_addressed) or the line that contradicts their premise (invalid). If you
+   cannot name one, the verdict is needs_discussion. Leave both empty otherwise.
+
+Thread data:
+[
+  {
+    "id": "t1",
+    "state": "new",
+    "classification": null,
+    "reviewer": "alice",
+    "comments": [
+      {
+        "user": "alice",
+        "body": "rename this flag"
+      }
+    ],
+    "is_resolved": false,
+    "file": "ai/lib/pr/triage.py",
+    "line": 42,
+    "my_login": ""
+  }
+]
+
+Code context for referenced files:
+diff --git a/x.py b/x.py
++pass
+
+
+Return JSON matching this exact schema:
+{
+  "threads": [
+    {
+      "id": "id from input",
+      "state": "state from input",
+      "classification": "actionable_suggestion|question|approval|conflicting",
+      "verification": "valid|already_addressed|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
+      "reasoning": "brief explanation",
+      "file": "file from input",
+      "line": "line from input",
+      "reviewer": "reviewer from input",
+      "summary": "one-line summary",
+      "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
+      "evidence_line": 0
+    }
+  ],
+  "stats": {
+    "total": "count of threads",
+    "actionable": "count of actionable threads",
+    "questions": "count of question threads",
+    "approvals": "count of approval threads",
+    "conflicting": "count of conflicting threads",
+    "valid": "count of valid threads",
+    "invalid": "count of invalid threads",
+    "already_addressed": "count of already-addressed threads",
+    "comment_items_total": "count of decomposed comment items (0 if none)",
+    "comment_items_actionable": "count of actionable comment items (0 if none)"
+  }
+}
+
+IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation.

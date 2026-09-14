@@ -188,18 +188,28 @@ def parse_verdicts(path: Path) -> dict[str, tuple[bool | None, str]]:
     matches = list(_SECTION_RE.finditer(text))
     for n, match in enumerate(matches):
         end = matches[n + 1].start() if n + 1 < len(matches) else len(text)
-        body = text[match.end():end]
-        ticked = {
-            box.group("label"): _reason(box.group("rest"))
-            for box in _VERIFY_BOX_RE.finditer(body)
-            if box.group("mark") in "xX"
-        }
-        for box in VERIFY_BOXES:
-            if box.label not in ticked:
-                continue
-            verdicts[match.group("id")] = (_VERDICT_OK[box.label], ticked[box.label])
-            break
+        verdict = _section_verdict(text[match.end():end])
+        if verdict is not None:
+            verdicts[match.group("id")] = verdict
     return verdicts
+
+
+def _section_verdict(body: str) -> tuple[bool | None, str] | None:
+    """One section's verdict, or None when nothing was ticked.
+
+    Ticking more than one resolves by `VERIFY_BOXES` order, the same way
+    `_record_verdict` resolves the fix boxes: an agent that reorders the list
+    cannot change what its answer means.
+    """
+    ticked = {
+        box.group("label"): _reason(box.group("rest"))
+        for box in _VERIFY_BOX_RE.finditer(body)
+        if box.group("mark") in "xX"
+    }
+    for box in VERIFY_BOXES:
+        if box.label in ticked:
+            return _VERDICT_OK[box.label], ticked[box.label]
+    return None
 
 
 # Which box means what, as the three-valued answer `Verdict.ok` carries.

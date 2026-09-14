@@ -999,6 +999,136 @@ class TestTheArtifactsAreOutsideTheWorktree:
         assert adapter.artifacts == pr_comments.artifacts_dir(tmp_path / "state")
 
 
+class TestWhatTheRoundPersistsAndReports:
+    """The two projections `record` ends on, against the round that made them.
+
+    Everything upstream of these has its own coverage; what these hold is the
+    correspondence between one round and the two shapes it leaves behind — the
+    state file and the stdout JSON. A field dropped on the way into either is
+    invisible end to end: the pass still commits, replies and posts, and the
+    loss shows up a round later as a closeout that re-renders work already done
+    or a `pr status` missing a reviewer.
+    """
+
+    def _round(self, **kw):
+        return _triaged_round(**kw)
+
+    def _adapter(self, rt, tmp_path, **kw):
+        return _fix_adapter(rt, tmp_path, round_=self._round(**kw))
+
+    @staticmethod
+    def _entry(eid="t1", reviewer="kgn"):
+        return CommentItem(id=eid, file="f.go", line=3, reviewer=reviewer,
+                           summary=f"{eid} summary")
+
+    def _state(self, rt, tmp_path, *, tracking=None, replies=None,
+               summary=None, **round_kw):
+        adapter = self._adapter(rt, tmp_path, **round_kw)
+        content = summary_model.RoundContent(
+            by_outcome=adapter.round.by_outcome(tracking or TrackingResult()),
+            issue_comments=[], review_body_comments=[],
+        )
+        cp = attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, "")
+        return adapter._state_for(
+            content, cp, replies or ReplyOutcome(),
+            summary or summary_publish.SummaryOutcome("https://u", owed=False),
+            tracking or TrackingResult(),
+        )
+
+    def test_the_reviewer_behind_each_entry_is_recorded(self, rt, tmp_path):
+        """`ItemOutcome` carries no login, so the map beside it is the only record.
+
+        Dropped, every later surface that names a reviewer — the summary's
+        Reviewer column, the reply's addressee — falls back to anonymous.
+        """
+        state = self._state(rt, tmp_path, dismissed=[self._entry(reviewer="ana")])
+        assert state.reviewers == {"t1": "ana"}
+
+    def test_a_held_reply_leaves_the_queue_owed(self, rt, tmp_path):
+        """The gate shut on a fixed thread's reply, so `--finish` still owes it."""
+        tracking = TrackingResult()
+        tracking.add(FixOutcome.FIXED, self._entry())
+        state = self._state(rt, tmp_path, tracking=tracking, fixable=[self._entry()])
+        assert state.replies_pending is True
+
+    def test_a_delivered_reply_owes_nothing(self, rt, tmp_path, publishing_on):
+        """Pairs with the case above: proves the assertion is not vacuous."""
+        tracking = TrackingResult()
+        tracking.add(FixOutcome.FIXED, self._entry())
+        state = self._state(rt, tmp_path, tracking=tracking, fixable=[self._entry()])
+        assert state.replies_pending is False
+
+    def test_a_drafted_triage_reply_owes_on_its_own(self, rt, tmp_path):
+        """No fixed thread at all, and the queue is still owed.
+
+        The triage replies go out before the pass knows whether anything is
+        fixable, so a rule that asked only about the fixed queue reported a
+        drained one and `--finish --post` published nothing.
+        """
+        state = self._state(rt, tmp_path, dismissed=[self._entry()])
+        assert state.replies_pending is True
+
+    def test_a_round_that_ran_names_the_commit_it_made(self, rt, tmp_path):
+        """HEAD after the pass, which is the commit the outcomes were measured against."""
+        adapter = self._adapter(rt, tmp_path, fixable=[self._entry()])
+        with patch.object(git_client, "head_sha", return_value="fff9999") as head:
+            assert adapter._snapshot_sha() == "fff9999"
+        assert head.called
+
+    def test_a_round_that_did_not_run_asks_no_subprocess(self, rt, tmp_path):
+        """Nothing committed, so HEAD has not moved and the context already knows it."""
+        adapter = self._adapter(rt, tmp_path, dismissed=[self._entry()])
+        with patch.object(git_client, "head_sha") as head:
+            assert adapter._snapshot_sha() == adapter.ctx.head_sha
+        assert not head.called
+
+    def test_the_result_carries_what_the_agent_was_given(self, rt, tmp_path):
+        """The batch statistics are the run's, not the adapter's.
+
+        They are what `pr comments` reports about cost, and an adapter that
+        answered from its own state would report the same numbers for every
+        round.
+        """
+        content = summary_model.RoundContent(
+            by_outcome={}, issue_comments=[], review_body_comments=[])
+        run = fix_engine.FixRun(batches=3, max_turns=17, max_budget=2.5)
+        result = rt._result_for(
+            content, attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, ""),
+            ReplyOutcome(posted=4),
+            summary_publish.SummaryOutcome(None, owed=True), run,
+        )
+        assert (result.batches, result.max_turns, result.max_budget) == (3, 17, 2.5)
+        assert result.replies_posted == 4
+        assert result.summary_deferred is True
+
+    def test_the_result_projects_every_bucket(self, rt, tmp_path):
+        """Five fields off one content, so none can disagree with the table."""
+        content = summary_model.RoundContent(
+            by_outcome={
+                FixOutcome.FIXED: [self._entry("t1")],
+                FixOutcome.DEFERRED: [self._entry("t2")],
+                FixOutcome.NEEDS_HUMAN: [self._entry("t3")],
+                FixOutcome.DECLINED: [self._entry("t4")],
+                FixOutcome.DISMISSED: [self._entry("t5")],
+                FixOutcome.ALREADY_ADDRESSED: [self._entry("t6")],
+            },
+            issue_comments=[], review_body_comments=[],
+        )
+        result = rt._result_for(
+            content, attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, ""),
+            ReplyOutcome(), summary_publish.SummaryOutcome("https://u", owed=False),
+            fix_engine.FixRun(),
+        )
+        assert [e.id for e in result.fixed] == ["t1"]
+        assert [e.id for e in result.deferred] == ["t2"]
+        assert [e.id for e in result.dismissed] == ["t5"]
+        assert [e.id for e in result.already_addressed] == ["t6"]
+        # The one folded field: a thread the agent argued against and one it
+        # could not decide both end with a person, and the summary shows them
+        # together even though the state file keeps them apart.
+        assert [e.id for e in result.needs_human] == ["t3", "t4"]
+
+
 class TestCommentFixLanding:
     """The pass's boundary onto the landing owner.
 

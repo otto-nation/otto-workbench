@@ -829,40 +829,31 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         rewritten, the reviewer-facing summary and the state file, in that order:
         each of the outward acts is gated, and the state file has to record which
         of them actually went out.
+
+        Runs whether or not the agent did — see the class docstring. Everything
+        below is written to be true of a round with no outcomes as well, which
+        is what lets there be one tail instead of two.
         """
         cp = attribution.pass_commit(self.workdir, run.landed)
         tracking = TrackingResult.from_outcomes(
             run.outcomes, self.round.fixable,
             fixable_items=self.round.fixable_items,
         )
-
-        # Recorded here rather than left for the pass envelope to imply: from
+        # Stamped here rather than left for the pass envelope to imply: from
         # this point on, "no SHA on the entry" means the entry did not land in
         # this commit, which is what lets a later round tell its own rows from
         # an earlier round's.
-        fixed_threads = tracking.bucket(FixOutcome.FIXED)
-        all_fixed = tracking.both(FixOutcome.FIXED)
-        attribution.stamp_pass_commit(all_fixed, cp.sha or "")
+        attribution.stamp_pass_commit(tracking.both(FixOutcome.FIXED), cp.sha or "")
 
         replies = self.round.replies.plus(_settle_fixed(
-            fixed_threads, self.threads_by_id, self.repo,
+            tracking.bucket(FixOutcome.FIXED), self.threads_by_id, self.repo,
             self.report.pr_number, cp, self.workdir,
         ))
-
-        # The agent's own draft, and only when it ran. A round that handed the
-        # agent nothing has no description to deliver, and asking would send
-        # the draft an earlier round left on disk — which `--finish` owns.
-        pr_body_pending = self.ran and pc.deliver_pr_body(
-            self.artifacts, self.repo, self.report.pr_number,
-        )
-
-        by_outcome = self.round.by_outcome(tracking)
         content = summary_model.RoundContent(
-            by_outcome=by_outcome,
+            by_outcome=self.round.by_outcome(tracking),
             issue_comments=self.report.issue_comments,
             review_body_comments=self.report.review_body_comments,
         )
-
         summary = summary_publish.publish(
             content, cp, self.repo, self.report.pr_number, self.threads_by_id,
             self.report,
@@ -872,54 +863,106 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             wt_path=self.workdir,
         )
 
-        fix_state.persist(pr_comments_fix.FixSummary(
+        fix_state.persist(
+            self._state_for(content, cp, replies, summary, tracking),
+            self.workdir, self.ctx, self.trail, resolved=list(replies.resolved),
+        )
+        self.result = _result_for(content, cp, replies, summary, run)
+
+    def _state_for(
+        self,
+        content: summary_model.RoundContent,
+        cp: attribution.CommitPushResult,
+        replies: ReplyOutcome,
+        summary: summary_publish.SummaryOutcome,
+        tracking: TrackingResult,
+    ) -> pr_comments_fix.FixSummary:
+        """What this round persists.
+
+        Reads `content.by_outcome` rather than rebuilding the mapping: the
+        record keeps `DECLINED` apart from `NEEDS_HUMAN` and the summary folds
+        them together, and that disagreement is only safe while both are
+        readings of one dict.
+
+        The PR description is delivered here, and only when the agent ran: a
+        round that handed it nothing has no description to deliver, and asking
+        would send the draft an earlier round left on disk, which `--finish`
+        owns.
+        """
+        return pr_comments_fix.FixSummary(
             fix=fix_state.fix_record_for(
-                by_outcome,
+                content.by_outcome,
                 commit_sha=cp.sha or "",
                 commit_status=cp.status,
-                # HEAD after the pass, not ctx.head_sha: the fix pass commits,
-                # so the snapshot must name the commit its outcomes were
-                # measured against. A round that ran no agent committed
-                # nothing, so HEAD has not moved and the context's SHA is the
-                # same answer without the subprocess.
-                head_sha=(
-                    git_client.head_sha(short=True, cwd=self.workdir)
-                    if self.ran else self.ctx.head_sha
-                ),
+                head_sha=self._snapshot_sha(),
             ),
-            reviewers=fix_state.reviewers_for(by_outcome),
+            reviewers=fix_state.reviewers_for(content.by_outcome),
             replies_posted=replies.posted,
-            replies_pending=(
-                bool(fixed_threads) and not publishing.enabled()
-                or _triage_replies_drafted(
-                    self.round.already_addressed, self.round.dismissed)
+            replies_pending=self._replies_pending(tracking),
+            pr_body_pending=self.ran and pc.deliver_pr_body(
+                self.artifacts, self.repo, self.report.pr_number,
             ),
-            pr_body_pending=pr_body_pending,
             summary_url=summary.recorded_url,
             summary_deferred=summary.deferred,
             has_comment_items=self.round.has_items,
             updated_at=pr_state.now_iso(),
-        ), self.workdir, self.ctx, self.trail, resolved=list(replies.resolved))
-
-        # Read off the content rather than rebuilt beside it: these five fields
-        # are the round's buckets flattened for the stdout JSON, whose shape
-        # `pr-comments` documents, so the content owns them and this projects
-        # them.
-        self.result = CommentFixResult(
-            fixed=content.of(FixOutcome.FIXED),
-            needs_human=content.needs_a_person,
-            dismissed=content.of(FixOutcome.DISMISSED),
-            already_addressed=content.of(FixOutcome.ALREADY_ADDRESSED),
-            deferred=content.of(FixOutcome.DEFERRED),
-            commit_sha=cp.sha,
-            commit_status=cp.status,
-            replies_posted=replies.posted,
-            summary_url=summary.url,
-            summary_deferred=summary.deferred,
-            max_turns=run.max_turns,
-            max_budget=run.max_budget,
-            batches=run.batches,
         )
+
+    def _snapshot_sha(self) -> str:
+        """The commit this round's outcomes were measured against.
+
+        HEAD after the pass, not `ctx.head_sha`: the fix pass commits, so the
+        snapshot has to name the commit it made. A round that ran no agent
+        committed nothing, so HEAD has not moved and the context already holds
+        the same answer without the subprocess.
+        """
+        if not self.ran:
+            return self.ctx.head_sha
+        return git_client.head_sha(short=True, cwd=self.workdir)
+
+    def _replies_pending(self, tracking: TrackingResult) -> bool:
+        """Whether a reply this round rendered is still owed to a reviewer.
+
+        Two queues, and either one owes. A fixed thread's reply waits on the
+        publishing gate, which a hold or a draft run leaves shut; the triage
+        replies were rendered before the pass and answer for themselves.
+        """
+        if tracking.bucket(FixOutcome.FIXED) and not publishing.enabled():
+            return True
+        return _triage_replies_drafted(
+            self.round.already_addressed, self.round.dismissed)
+
+
+def _result_for(
+    content: summary_model.RoundContent,
+    cp: attribution.CommitPushResult,
+    replies: ReplyOutcome,
+    summary: summary_publish.SummaryOutcome,
+    run: fix_engine.FixRun,
+) -> CommentFixResult:
+    """What this round reports on stdout.
+
+    Read off the content rather than rebuilt beside it: the five bucket fields
+    are the round's own, flattened for the JSON shape `pr-comments` documents,
+    so the content owns them and this projects them. A free function rather
+    than a classmethod on `CommentFixResult`, which is layer 4 and must not
+    learn what a `FixRun` is.
+    """
+    return CommentFixResult(
+        fixed=content.of(FixOutcome.FIXED),
+        needs_human=content.needs_a_person,
+        dismissed=content.of(FixOutcome.DISMISSED),
+        already_addressed=content.of(FixOutcome.ALREADY_ADDRESSED),
+        deferred=content.of(FixOutcome.DEFERRED),
+        commit_sha=cp.sha,
+        commit_status=cp.status,
+        replies_posted=replies.posted,
+        summary_url=summary.url,
+        summary_deferred=summary.deferred,
+        max_turns=run.max_turns,
+        max_budget=run.max_budget,
+        batches=run.batches,
+    )
 
 
 def _post_triage_replies(

@@ -737,3 +737,39 @@ def test_the_gate_is_off_by_default(tmp_path, landed, head):
     assert run.outcomes[0].outcome is FixOutcome.FIXED
     assert run.outcomes[0].verified is None, "a pass that never gated claims nothing either way"
     assert run.outcomes[0].verify_detail == ""
+
+
+def test_the_gate_is_told_what_the_reviewer_asked_for(tmp_path, landed, head):
+    """The gate judges a fix against the ask, so it has to be given the ask.
+
+    An outcome carries a location and a verdict: `parse` reads the anchor back
+    out of the section heading and never the label, so a gate handed only
+    outcomes sees `a.py:1` and three empty boxes. Its own prompt opens by
+    telling it to run the reviewer's repro — which is in the body.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["items"] = list(items or [])
+        return {}
+
+    _run(adapter, verify=run_verify)
+
+    assert seen["items"][0].body == "body 0", "the reviewer's words never reached the gate"
+    assert seen["items"][0].label == "item 0"
+
+
+def test_the_gate_looks_where_the_fix_landed(tmp_path, landed, head):
+    """The anchor is the outcome's, since the agent may have moved the code."""
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["items"] = list(items or [])
+        return {}
+
+    _run(adapter, verify=run_verify)
+
+    assert seen["items"][0].file == "a.py"
+    assert seen["items"][0].line == 1

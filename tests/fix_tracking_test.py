@@ -312,3 +312,27 @@ class TestVerifyVerdicts:
         assert "- [ ] not verified" in text
         assert "- [ ] broken" in text
         assert "- [ ] fixed\n" not in text
+
+
+class TestEveryVerifyVerdictAsksForEvidence:
+    """A verdict with no reason is a verdict nobody can act on.
+
+    The fix boxes and the verify boxes disagree about this: a fix needs no
+    reason because the change speaks for itself, while "what did you run" is
+    the entire evidentiary value of a verify verdict — including the passing
+    one, which is the claim a reviewer will rely on.
+    """
+
+    def test_all_three_boxes_carry_the_placeholder(self):
+        text = fix_tracking.render(
+            "Verify", [FixItem(id="t1", file="a.py", line=1, label="x")],
+            fix_tracking.VERIFY_BOXES,
+        )
+        for label in ("verified", "not verified", "broken"):
+            assert f"- [ ] {label} — <why>" in text, f"{label} asks for no evidence"
+
+    def test_the_fix_boxes_are_unchanged_by_the_verify_vocabulary(self):
+        """FIXED still renders bare — the two sets must not leak into each other."""
+        text = fix_tracking.render("Fix", [FixItem(id="t1", file="a.py", line=1)])
+        assert "- [ ] fixed\n" in text
+        assert "- [ ] declined — <why>" in text

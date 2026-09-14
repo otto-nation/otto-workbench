@@ -124,9 +124,15 @@ _LOCATION_RE = re.compile(r"^(?P<file>.+):(?P<line>\d+)$")
 _HEADING_SEP = " — "
 
 
-def _suffix(box: _Box) -> str:
-    """What the render leaves after a box's label for the agent to fill in."""
-    return f" — {_WHY}" if box.outcome in _REASONED else ""
+def _suffix(box: _Box, reasoned: frozenset) -> str:
+    """What the render leaves after a box's label for the agent to fill in.
+
+    `reasoned` is the vocabulary's own set rather than the fix pass's, because
+    the two disagree about which boxes owe an explanation: a fix needs none (the
+    change speaks for itself) while every verify verdict does — "what did you
+    run" is the entire evidentiary value of one.
+    """
+    return f" — {_WHY}" if box.outcome in reasoned else ""
 
 
 def render(
@@ -150,7 +156,7 @@ def render(
         body = item.body.strip()
         section = heading + "\n\n" + (f"{body}\n\n" if body else "")
         for box in boxes:
-            section += f"- [ ] {box.label}{_suffix(box)}\n"
+            section += f"- [ ] {box.label}{_suffix(box, _reasoned_for(boxes))}\n"
         sections.append(section)
     return "\n".join(sections)
 
@@ -163,7 +169,8 @@ def verify_instructions(noun: str) -> str:
     )
     return textwrap.dedent("""\
         Every {noun} above carries three boxes. Answer each one by ticking
-        exactly one of them with the Edit tool, in the tracking file:
+        exactly one of them with the Edit tool, in the tracking file, replacing
+        `<why>` with your evidence:
 
         {boxes}
 
@@ -232,7 +239,8 @@ def instructions(noun: str) -> str:
     looks for fails silently — every item comes back reading as work still owed.
     """
     boxes = "\n".join(
-        f"- `- [x] {box.label}{_suffix(box)}` — {box.contract.format(noun=noun)}"
+        f"- `- [x] {box.label}{_suffix(box, _REASONED)}` — "
+        f"{box.contract.format(noun=noun)}"
         for box in _BOXES
     )
     return textwrap.dedent("""\
@@ -286,6 +294,11 @@ _VERIFY_BOX_RE = box_pattern(VERIFY_BOXES)
 # Every verify box asks for a reason, including the passing one: "what did you
 # run" is the whole evidentiary value of a verdict that says a fix works.
 _VERIFY_REASONED = frozenset(box.outcome for box in VERIFY_BOXES)
+
+
+def _reasoned_for(boxes: tuple[_Box, ...]) -> frozenset:
+    """Which of `boxes` owe the agent's words after the tick."""
+    return _VERIFY_REASONED if boxes is VERIFY_BOXES else _REASONED
 
 
 def parse(path: Path) -> list[ItemOutcome]:

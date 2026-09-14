@@ -447,9 +447,32 @@ class Verdict:
 VerifyFn = Callable[..., dict[str, Verdict]]
 
 
+def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
+    """One claimed fix as the gate is asked about it.
+
+    The body is the domain's own rendering of what the reviewer said, carried
+    over verbatim: the gate's job is to judge the fix against what was asked
+    for, and the ask is not recoverable from the outcome. Falling back to the
+    outcome alone keeps a gate that is merely under-informed rather than one
+    that crashes, for an id the pass answered but never handed out.
+    """
+    if source is None:
+        return FixItem(id=outcome.id, file=outcome.file, line=outcome.line,
+                       label=outcome.summary)
+    return FixItem(
+        id=outcome.id,
+        # The outcome's anchor, not the source's: the agent may have moved the
+        # code, and the gate should look where the fix landed.
+        file=outcome.file or source.file,
+        line=outcome.line or source.line,
+        label=source.label or outcome.summary,
+        body=source.body,
+    )
+
+
 def _verify(
     outcomes: list[ItemOutcome], verify: VerifyFn | None, adapter: FixAdapter,
-    trail: Trail | None,
+    by_id: dict[str, FixItem], trail: Trail | None,
 ) -> None:
     """Hold each claimed fix against what actually runs, before anything lands.
 
@@ -466,6 +489,14 @@ def _verify(
 
     Mutates in place, before `landing` is asked for a spec, so the outcome the
     domain records and the outcome the commit carries cannot disagree.
+
+    `by_id` is the items as the domain rendered them, which is where the
+    reviewer's own words are. An outcome carries a location and a verdict and
+    nothing else — `parse` reads the anchor back out of the section heading and
+    never the label — so a gate handed only outcomes would be asked whether a
+    fix at `a.py:2` works without being told what it was meant to do. The
+    prompt's first instruction is to run the reviewer's repro; this is what
+    puts that repro in front of it.
     """
     if verify is None:
         return
@@ -473,8 +504,7 @@ def _verify(
     if not claimed:
         return
 
-    items = [FixItem(id=o.id, file=o.file, line=o.line, label=o.summary)
-             for o in claimed]
+    items = [_verify_item(o, by_id.get(o.id)) for o in claimed]
     verdicts = verify(adapter.phase, "", items=items, adapter=adapter) or {}
 
     falsified = 0
@@ -595,7 +625,10 @@ def run(
     # Before the scope is read and before anything is committed: a fix the gate
     # falsifies must not reach `landing` as a fix, or the commit and the record
     # would disagree about what the pass did.
-    _verify(settled.outcomes, verify, adapter, trail)
+    _verify(
+        settled.outcomes, verify, adapter,
+        {item.id: item for item in items}, trail,
+    )
 
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.

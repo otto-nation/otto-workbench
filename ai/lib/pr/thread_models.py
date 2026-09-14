@@ -141,9 +141,9 @@ class CommentItem:
     source_id: str = ""
     source_type: str = ""
     index: int = 0
-    classification: str = ""
-    verification: str = ""
-    complexity: str = ""
+    classification: Classification = Classification.UNSET
+    verification: Verification = Verification.UNSET
+    complexity: Complexity = Complexity.UNSET
     body: str = ""
     # Where in the tree the verdict can be checked. A verdict posted back to a
     # reviewer has to point at code, so triage cites the location it read.
@@ -182,6 +182,14 @@ class CommentItem:
         self.line = int(self.line or 0)
         self.index = int(self.index or 0)
         self.evidence_line = int(self.evidence_line or 0)
+        # The three fields a model fills in, coerced where the ints already
+        # are. Not left to `serde`: its enum coercion raises on an unknown
+        # value, and `_lenient_from_dict` answers a raise by discarding the
+        # whole entry. An invented verdict should cost itself, not the id and
+        # summary the model got right.
+        self.classification = _coerce_vocab(Classification, self.classification)
+        self.verification = _coerce_vocab(Verification, self.verification)
+        self.complexity = _coerce_vocab(Complexity, self.complexity)
 
     def has_evidence(self) -> bool:
         """Whether this item cites a location a permalink can point at."""

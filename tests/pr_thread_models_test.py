@@ -26,7 +26,7 @@ from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import (  # noqa: E402
     Classification, CommentItem, Complexity, ReplyOutcome, TrackingResult,
-    Verification, Vocabulary, _coerce_vocab,
+    Verification, Vocabulary, _coerce_vocab, triage_result_from_dict,
 )
 
 
@@ -247,3 +247,46 @@ class TestVocabularyCoercion:
     def test_a_non_string_becomes_unset(self):
         assert _coerce_vocab(Complexity, 7) is Complexity.UNSET
         assert _coerce_vocab(Complexity, None) is Complexity.UNSET
+
+
+class TestTheEntryCoercesItsVocabulary:
+    """Strings in, members out — including from a model that invented one."""
+
+    def test_a_string_becomes_a_member(self):
+        entry = CommentItem(id="t1", verification="valid")
+        assert entry.verification is Verification.VALID
+
+    def test_an_invented_verdict_keeps_the_entry_and_its_id(self):
+        """The whole point of coercing here rather than in `serde`."""
+        entry = CommentItem(id="t1", summary="real", verification="banana")
+        assert entry.verification is Verification.UNSET
+        assert entry.id == "t1"
+        assert entry.summary == "real"
+
+    def test_an_absent_field_is_unset(self):
+        entry = CommentItem(id="t1")
+        assert entry.classification is Classification.UNSET
+        assert entry.verification is Verification.UNSET
+        assert entry.complexity is Complexity.UNSET
+
+    def test_an_invented_verdict_survives_the_lenient_parse(self):
+        """`_lenient_from_dict` must not answer a bad verdict with an empty item."""
+        result = triage_result_from_dict({
+            "threads": [{"id": "t1", "verification": "banana", "summary": "real"}],
+        })
+        assert result.threads[0].id == "t1"
+        assert result.threads[0].summary == "real"
+        assert result.threads[0].verification is Verification.UNSET
+
+    def test_the_entry_still_serialises_as_bare_strings(self):
+        """The stdout contract: `asdict` then `json.dump`, no enum conversion."""
+        import dataclasses
+        import json
+        entry = CommentItem(
+            id="t1", classification="actionable_suggestion",
+            verification="valid", complexity="low",
+        )
+        dumped = json.loads(json.dumps(dataclasses.asdict(entry)))
+        assert dumped["classification"] == "actionable_suggestion"
+        assert dumped["verification"] == "valid"
+        assert dumped["complexity"] == "low"

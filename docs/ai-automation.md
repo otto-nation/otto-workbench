@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 437 -->
+<!-- doc-budget: 458 -->
 
 # AI Automation
 
@@ -582,6 +582,27 @@ A related hazard exists one level down, for the AI subprocess rather than the
 shell task: a backend CLI inherits the launching process's working directory
 unless it is told otherwise. Every `ai_backend` entry point therefore takes a
 required `cwd` — see [`agent/backend.py`](ai-libraries.md#agentbackendpy).
+
+### Running a branch's own libraries
+
+`REPO_DIR` sets the working directory. It does not change where the task's
+libraries come from — that is the Taskfile's own directory, which through the
+`~/.config/task` symlink is always `main/`. A change to `lib/ai/*.sh` therefore
+runs `main`'s copy unless the run pins `WORKBENCH_LIB_DIR` at the worktree:
+
+```bash
+task --global WORKBENCH_LIB_DIR=/path/to/worktree REPO_DIR=/path/to/worktree commit
+```
+
+Both are go-task variables, written after `--global` — not a `VAR=value` shell
+prefix, which `claude-bash-guard` blocks. It pins the checkout root, not `lib/`
+alone, so `ai/lib/git/push.py` and `lib/config_cli.py` come from the same tree
+as the libraries calling them. Unset, nothing resolves differently than before.
+Set, `_lib-dir-guard` — in `deps:` on each task sourcing `lib/ai` and no other —
+requires it absolute and holding the four paths that witness a whole checkout,
+so a partial one is refused by the missing path's name, not by a later `python3`
+failure naming nothing. A module sourced by name is not among them: it fails on
+the body's first lines. The value is read from the environment, never spliced.
 
 ### How `pr` decides what a bare token is
 

@@ -9,8 +9,94 @@ version: "3"
 
 env:
   TASKFILE_DIR: '{{.TASKFILE_DIR}}'
+  # The checkout whose libraries these tasks load. Defaults to the Taskfile's
+  # own directory, which through the ~/.config/task symlink is always main/ —
+  # so a change to lib/ai/*.sh cannot be exercised from the branch that makes
+  # it unless the run pins this:
+  #
+  #   task --global WORKBENCH_LIB_DIR=/path/to/worktree commit
+  #
+  # It pins the checkout root, not lib/ alone: lib/ai/core.sh derives
+  # WORKBENCH_ROOT from the same value, so ai/lib/git/push.py and
+  # lib/config_cli.py come from the tree that owns the shell libs calling them.
+  # Pinning only the source lines would load a branch's core.sh over main's
+  # conventions.sh and compact_diff.sh, which is a build neither tree has.
+  #
+  # REPO_DIR is unrelated and unchanged — it sets the working directory, so git
+  # runs against the intended worktree. This sets where the code comes from.
+  #
+  # Resolution is a static template and runs no shell: a value equal to
+  # TASKFILE_DIR is the default path, byte-identical to what it resolved before
+  # this entry existed. Checking an override is the `_lib-dir-guard` task below,
+  # which reads this resolved value out of its own environment — the value is
+  # never spliced into script text, so no path, however quoted, is parsed as
+  # shell.
+  WORKBENCH_LIB_DIR: '{{.WORKBENCH_LIB_DIR | default .TASKFILE_DIR}}'
 
 tasks:
+  # ============================================================================
+  # INTERNAL
+  # ============================================================================
+  _lib-dir-guard:
+    internal: true
+    silent: true
+    # Every task that sources lib/ai lists this in `deps:`, so an override is
+    # checked once, at the point of consumption, and the tasks that load no
+    # library (ai:setup, brew:*, help) neither fork a shell nor fail on a pin
+    # they never read.
+    #
+    # The equality test is first and returns: unset resolves to TASKFILE_DIR,
+    # which stats nothing and leaves the default path exactly as it was. An
+    # override is checked because one left behind in an environment must not
+    # quietly route a PR through library code nobody reviewed.
+    #
+    # That first test is load-bearing, not an optimisation. The installed
+    # TASKFILE_DIR is ~/.config/task, a symlink farm holding a `lib` link and
+    # nothing else — it has no ai/ at all, so it would fail the loop below.
+    # core.sh resolves the default through that link to the real checkout,
+    # which is why the default path works and why the farm is not checked as
+    # though it were a pin. Pinning at the farm itself is correctly refused:
+    # that root is the one whose missing push.py broke pr:create.
+    #
+    # `if`, not `[ ... ] && exit 0` — that form leaves the line's own status at
+    # 1 whenever the pin is an override, which is a task failure the moment
+    # anything runs this body under errexit.
+    #
+    # The loop is a witness set, not the closure of what a task reaches.
+    # Three of the four stand for a directory the pin must supply at all:
+    # lib/ai/core.sh for lib/ai, lib/conventions.sh for the rest of lib, and
+    # ai/lib/git/push.py for the ai/ tree the installed symlink farm has no
+    # link to. The fourth stands for a silence: lib/config_cli.py is read at
+    # lib/ai/pr.sh:363, which discards stderr and returns 0, so a checkout
+    # missing it loses issue-provider resolution and reports nothing at all.
+    # push.py is reached the same way (pr.sh:28-29) and fails inside python3
+    # after the nesting sweep and the push — that run is N1, and late or
+    # silent is what earns a path a place in this list.
+    #
+    # The modules a task names itself are deliberately absent, as are
+    # lib/git_remote.sh and lib/ai/compact_diff.sh behind them. Each fails
+    # while the body's first three `.` lines run, before git, the AI or any
+    # push, and the shell prints the absolute path it could not open — under
+    # a pin, the pinned root and the rest. Restating them here would mirror
+    # the source graph by hand to improve on a failure that already stops
+    # the run at its first line and shows the pin in what it prints.
+    cmds:
+      - |
+        if [ "$WORKBENCH_LIB_DIR" = "$TASKFILE_DIR" ]; then
+          exit 0
+        fi
+        case "$WORKBENCH_LIB_DIR" in
+          /*) ;;
+          *) echo "WORKBENCH_LIB_DIR must be an absolute path: $WORKBENCH_LIB_DIR" >&2; exit 1 ;;
+        esac
+        for _f in lib/ai/core.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py; do
+          if [ ! -f "$WORKBENCH_LIB_DIR/$_f" ]; then
+            echo "WORKBENCH_LIB_DIR does not contain $_f: $WORKBENCH_LIB_DIR" >&2
+            exit 1
+          fi
+        done
+        exit 0
+
   # ============================================================================
   # GIT AUTOMATION
   # ============================================================================
@@ -73,11 +159,12 @@ tasks:
     desc: "Generate AI-powered commit message based on staged changes"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [_lib-dir-guard]
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/commit.sh"
         load_ai_command || exit 1
 
         # Auto-heal: core.hooksPath=/dev/null silently disables all git hooks
@@ -120,13 +207,14 @@ tasks:
     desc: "Reword a commit message with AI (default: HEAD; or: task reword -- SHA)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [_lib-dir-guard]
     env:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/commit.sh"
         load_ai_command || exit 1
 
         # CLI_ARGS contains everything after "--"; strip whitespace so empty args become HEAD
@@ -221,13 +309,14 @@ tasks:
     desc: "Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [_lib-dir-guard]
     env:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
         load_pr "$_CLI_ARGS" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
@@ -245,13 +334,14 @@ tasks:
     desc: "Create AI-powered pull request (-- --no-issue, --issue <ID>, --closes <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [_lib-dir-guard]
     env:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
         load_pr "$_CLI_ARGS" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
@@ -283,13 +373,14 @@ tasks:
     desc: "Update current PR description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>, --title <title>, --body <body>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [_lib-dir-guard]
     env:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
         load_pr "$_CLI_ARGS" || exit 1
 
         echo "→ Checking for existing PR..."
@@ -330,11 +421,12 @@ tasks:
     desc: "AI review of staged, unstaged, and committed branch changes"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [_lib-dir-guard]
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/review.sh"
         load_ai_command || exit 1
 
         STAGED=$(git diff --cached --no-color)
@@ -369,11 +461,12 @@ tasks:
     desc: "AI review of the current PR"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [_lib-dir-guard]
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/review.sh"
         load_ai_command || exit 1
         load_gh_token || exit 1
 

@@ -40,6 +40,7 @@ from pr import attribution
 from pr import thread_context
 from pr import triage
 from pr import triage_prompt
+from pr import triage_round
 from pr import history_rewrite
 from pr import permalinks
 from pr import summary_model
@@ -1501,50 +1502,6 @@ class TestPostOrDeferSummary:
             )
         assert url is None
         mock.assert_not_called()
-
-
-class TestUnaccountedThreadsDeferSummary:
-    """Summary should defer when non-resolved threads are not in any classified bucket."""
-
-    def test_all_threads_accounted(self, rt):
-        """When every non-resolved thread is in fixable/needs_human/dismissed, none are unaccounted."""
-        triage_threads = [
-            CommentItem(id="t1", classification="actionable_suggestion",
-                        verification="valid", complexity="low",
-                        file="a.py", line=1, summary="fix it"),
-        ]
-        report_threads = [
-            ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
-            ReportThread(id="t2", state=ThreadState.RESOLVED, is_resolved=True),
-        ]
-        accounted_ids = rt._accounted_thread_ids(triage_threads, [], [])
-        non_resolved = [t for t in report_threads if t.state != "resolved"]
-        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
-        assert unaccounted == []
-
-    def test_unaccounted_threads_detected(self, rt):
-        """Threads not in any classified bucket are detected as unaccounted."""
-        triage_threads = [
-            CommentItem(id="t1", classification="actionable_suggestion",
-                        verification="valid", complexity="low",
-                        file="a.py", line=1, summary="fix it"),
-            CommentItem(id="t2", classification="approval",
-                        file="b.py", line=1, summary="lgtm"),
-        ]
-        report_threads = [
-            ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
-            ReportThread(id="t2", state=ThreadState.NEW, is_resolved=False),
-            ReportThread(id="t3", state=ThreadState.NEW, is_resolved=False),
-        ]
-        classified = rt._classify_triage_entries(triage_threads)
-        accounted_ids = rt._accounted_thread_ids(
-            classified.fixable, classified.needs_human, classified.dismissed,
-        )
-        non_resolved = [t for t in report_threads if t.state != "resolved"]
-        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
-        # t2 was classified as "approval" and dropped; t3 wasn't in triage at all
-        assert len(unaccounted) == 2
-        assert {t.id for t in unaccounted} == {"t2", "t3"}
 
 
 class TestRenderDeferredSummary:
@@ -5239,106 +5196,8 @@ class TestAnEntryAndAnOutcomeAreInverses:
         assert entry.to_outcome(FixOutcome.FIXED).outcome is FixOutcome.FIXED
 
 
-# ── _classify_triage_entries (complexity) ──────────────────────────────────
-
-class TestClassifyTriageComplexity:
-    def test_high_complexity_goes_to_needs_human(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="refactor", classification="actionable_suggestion",
-            verification="valid", complexity="high", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 0
-        assert len(result.needs_human) == 1
-        assert result.needs_human[0].reason == "complex"
-
-    def test_low_complexity_stays_fixable(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="rename", classification="actionable_suggestion",
-            verification="valid", complexity="low", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 1
-        assert len(result.needs_human) == 0
-
-    def test_medium_complexity_stays_fixable(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="add guard", classification="actionable_suggestion",
-            verification="valid", complexity="medium", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 1
-        assert len(result.needs_human) == 0
-
-    def test_no_complexity_field_stays_fixable(self, rt):
-        entries = [CommentItem(
-            id="t1", file="f.go", line=10, reviewer="alice",
-            summary="fix", classification="actionable_suggestion",
-            verification="valid", state=ThreadState.NEW,
-        )]
-        result = rt._classify_triage_entries(entries)
-        assert len(result.fixable) == 1
-        assert len(result.needs_human) == 0
-
-
-class TestFixableCountMatchesTheClassifier:
-    """What the trail reports fixable is what the fix agent is handed.
-
-    The count used to be a predicate written out beside the trail call —
-    classification and verification, and nothing about complexity. The
-    classifier routes a valid actionable suggestion of high complexity to a
-    human, so that round was reported as having a fixable thread the pass never
-    attempted, and the fix pass's own count disagreed with the trail's for the
-    whole round.
-    """
-
-    def _entry(self, complexity, tid="t1"):
-        return CommentItem(
-            id=tid, file="f.go", line=10, reviewer="alice",
-            summary="refactor", classification="actionable_suggestion",
-            verification="valid", complexity=complexity, state=ThreadState.NEW,
-        )
-
-    def test_high_complexity_is_not_counted_fixable(self, rt):
-        assert rt._fixable_count([self._entry("high")]) == 0
-
-    def test_low_complexity_is_counted(self, rt):
-        assert rt._fixable_count([self._entry("low")]) == 1
-
-    def test_the_count_is_the_classifier_s_own(self, rt):
-        """Every shape at once, against the buckets the pass will actually use."""
-        entries = [
-            self._entry("high", tid="t1"),
-            self._entry("low", tid="t2"),
-            self._entry("medium", tid="t3"),
-        ]
-        assert rt._fixable_count(entries) == len(
-            rt._classify_triage_entries(entries).fixable)
-        assert rt._fixable_count(entries) == 2
-
-    def test_a_question_is_not_counted(self, rt):
-        entry = dataclasses.replace(self._entry("low"), classification="question")
-        assert rt._fixable_count([entry]) == 0
-
-    def test_a_contested_thread_is_not_counted(self, rt):
-        entry = dataclasses.replace(self._entry("low"), state=ThreadState.CONTESTED)
-        assert rt._fixable_count([entry]) == 0
-
-
-# ── already_addressed verification ─────────────────────────────────────────
-
-
-class TestClassifyAlreadyAddressed:
-    """A suggestion the code already satisfies must not be routed to dismissed.
-
-    Triage sees current HEAD, which already contains fixes made earlier in the
-    same review cycle. Treating "the code already does this" as `invalid` posts
-    a reply telling the reviewer their suggestion was inapplicable — when it was
-    in fact the reason for the change.
-    """
+class TestTheFixRecordCarriesEveryOutcome:
+    """What the pass persists about each entry, one outcome at a time."""
 
     def _entry(self, verification):
         return CommentItem(
@@ -5347,26 +5206,6 @@ class TestClassifyAlreadyAddressed:
             classification="actionable_suggestion",
             verification=verification, complexity="low", state=ThreadState.NEW,
         )
-
-    def test_already_addressed_gets_own_bucket(self, rt):
-        result = rt._classify_triage_entries([self._entry("already_addressed")])
-        assert len(result.already_addressed) == 1
-        assert result.dismissed == []
-        assert result.fixable == []
-        assert result.needs_human == []
-
-    def test_invalid_still_dismissed(self, rt):
-        result = rt._classify_triage_entries([self._entry("invalid")])
-        assert len(result.dismissed) == 1
-        assert result.already_addressed == []
-
-    def test_accounted_ids_include_already_addressed(self, rt):
-        result = rt._classify_triage_entries([self._entry("already_addressed")])
-        accounted = rt._accounted_thread_ids(
-            result.fixable, result.needs_human, result.dismissed,
-            result.already_addressed,
-        )
-        assert accounted == {"t1"}
 
     def test_the_record_carries_the_already_addressed_outcome(self, rt):
         entry = self._entry("already_addressed")
@@ -5412,89 +5251,6 @@ class TestClassifyAlreadyAddressed:
             {FixOutcome.FIXED: [self._entry("valid")]}, commit_sha="",
         )
         assert record.items[0].commit_sha == ""
-
-
-class TestHoldIfSuperseded:
-    """What the preflight's findings are allowed to do to this run.
-
-    A hold, not the refusal `pr review` answers with: by the time this runs the
-    triage pass is already paid for, so stopping saves nothing — what must not
-    happen is asserting outward that superseded code was fixed. Detection
-    itself is `supersession`'s, and tested there.
-    """
-
-    def test_evidence_shuts_the_gate(self, rt, publishing_on):
-        from core import publishing
-        rt._hold_if_superseded(supersession_verdict(supersession_evidence()))
-        assert publishing.enabled() is False
-        assert "supersession signal" in publishing.held()
-
-    def test_context_alone_leaves_it_open(self, rt, publishing_on):
-        """A rebase is how the problem becomes visible, not the problem."""
-        from core import publishing
-        rt._hold_if_superseded(supersession_verdict(supersession_context()))
-        assert publishing.enabled() is True
-
-    def test_nothing_found_says_nothing(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded(supersession_verdict())
-        assert capsys.readouterr().err == ""
-
-    def test_the_output_names_the_signal_that_fired(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded(supersession_verdict(
-            supersession_context("replayed onto a moved base"),
-            supersession_evidence("`foo` is gone from origin/main"),
-        ))
-        err = capsys.readouterr().err
-        assert "[rebase_skew] replayed onto a moved base" in err
-        assert "[readds_removed_symbol] `foo` is gone from origin/main" in err
-
-    def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
-        trail = MagicMock()
-        rt._hold_if_superseded(supersession_verdict(supersession_evidence()), trail)
-        data = trail.decision.call_args.kwargs["data"]
-        assert data["signals"] == [SupersessionKind.READDS_REMOVED_SYMBOL]
-
-
-class TestHoldWhileContested:
-    """Real fixes must not reach a branch a reviewer said should not land."""
-
-    @staticmethod
-    def _entry(reason, id="t1"):
-        return CommentItem(id=id, file="f.go", line=10, reviewer="kgn",
-                           summary="the root cause does not exist", reason=reason)
-
-    def test_an_open_thread_shuts_the_gate(self, rt, publishing_on):
-        from core import publishing
-        rt._hold_while_contested([self._entry("needs_discussion")])
-        assert publishing.enabled() is False
-        assert "1 thread(s)" in publishing.held()
-
-    def test_nothing_contested_leaves_the_gate_alone(self, rt, publishing_on):
-        from core import publishing
-        rt._hold_while_contested([])
-        assert publishing.enabled() is True
-        assert publishing.held() == ""
-
-    def test_every_needs_human_reason_holds(self, rt, publishing_on):
-        """Contested, conflicting, question, complex — all route to needs_human.
-
-        The halt is on the bucket, not the reason: distinguishing a
-        premise-invalidating question from a bikeshed is the problem this
-        deliberately does not try to solve.
-        """
-        from core import publishing
-        rt._hold_while_contested([self._entry("complex")])
-        assert publishing.enabled() is False
-
-    def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
-        trail = MagicMock()
-        rt._hold_while_contested(
-            [self._entry("needs_discussion"), self._entry("question", id="t2")],
-            trail,
-        )
-        trail.decision.assert_called_once()
-        data = trail.decision.call_args.kwargs["data"]
-        assert data["reasons"] == ["needs_discussion", "question"]
 
 
 class TestFixPassHoldsWhenContested:
@@ -8288,7 +8044,7 @@ class TestHumanReason:
             CommentItem(id="t5", classification="actionable_suggestion",
                         verification="needs_discussion"),
         ]
-        result = rt._classify_triage_entries(entries)
+        result = triage_round.classify_entries(entries)
         assert [e.reason for e in result.needs_human] == [
             "contested", "conflicting", "question", "complex", "needs_discussion",
         ]

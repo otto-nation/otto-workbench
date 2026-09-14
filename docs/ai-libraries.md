@@ -1479,6 +1479,27 @@ posted back to a reviewer must cite a line: a claim about their code with
 nothing to point at is not a claim, which is why `evidence_file` is required for
 exactly the two verdicts that are posted outward.
 
+### pr/triage_round.py
+
+What triage decided, and the holds that decision places.
+
+`pr.triage` asks the model and refuses what it cannot back. This is the other
+half of the same round: sorting those verdicts into the four dispositions the
+fix pass routes on, placing the publishing holds they call for, and carrying
+the result as one value.
+
+The two are separate modules because they are separate phases. The model can be
+asked once and its answer disposed of twice — a triage-only run stops after
+`pr.triage`, and only `--fix` reaches here — and the prompt half has no business
+knowing about publishing holds.
+
+**The holds are why `TriagedRound` has a constructor rather than being built by
+its caller.** `publishing.hold()` flips `publishing.enabled()`, and the fix
+pass reads that flag afterwards to decide whether the replies it rendered are
+still owed. The two used to be kept in order by sitting near each other in one
+function; here the ordering is the type's, since there is no `TriagedRound` that
+predates its own holds.
+
 ### review/issue.py
 
 Issue tracking integration for claude-review.

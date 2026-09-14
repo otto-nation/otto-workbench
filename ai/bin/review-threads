@@ -31,6 +31,7 @@ from pr import attribution
 from pr import thread_context
 from pr import thread_replies
 from pr import triage
+from pr import triage_round
 from pr import comments as pc
 from pr import comments_fix as pr_comments_fix
 from pr import history_rewrite
@@ -736,140 +737,6 @@ def _persist_fix_state(
         log.error(f"fix state update failed: {exc}")
 
 
-def _classify_triage_entries(
-    triage_entries: list[CommentItem],
-) -> ClassificationResult:
-    """Classify triage entries into fixable/needs_human/dismissed.
-
-    Works for both threads and comment items.
-    """
-    result = ClassificationResult()
-
-    for tt in triage_entries:
-        if tt.state == ThreadState.CONTESTED:
-            result.needs_human.append(
-                dataclasses.replace(tt, reason=summary_model.HumanReason.CONTESTED.value))
-            continue
-
-        if tt.classification == "conflicting":
-            result.needs_human.append(
-                dataclasses.replace(tt, reason=summary_model.HumanReason.CONFLICTING.value))
-            continue
-
-        if tt.classification == "question":
-            result.needs_human.append(
-                dataclasses.replace(tt, reason=summary_model.HumanReason.QUESTION.value))
-            continue
-
-        if tt.classification != "actionable_suggestion":
-            continue
-
-        if tt.verification == "valid" and tt.complexity == "high":
-            result.needs_human.append(
-                dataclasses.replace(tt, reason=summary_model.HumanReason.COMPLEX.value))
-            continue
-
-        if tt.verification == "valid":
-            result.fixable.append(tt)
-        elif tt.verification == "needs_discussion":
-            result.needs_human.append(
-                dataclasses.replace(tt, reason=summary_model.HumanReason.NEEDS_DISCUSSION.value))
-        elif tt.verification == "already_addressed":
-            result.already_addressed.append(tt)
-        elif tt.verification == "invalid":
-            result.dismissed.append(dataclasses.replace(tt, reasoning=tt.reasoning))
-
-    return result
-
-
-def _fixable_count(entries: list[CommentItem]) -> int:
-    """How many of these entries the fix agent will actually be handed.
-
-    The trail's own count, read off the classifier that routes them rather than
-    from a predicate restated beside it. The two parted company over
-    `complexity`: a valid actionable suggestion the model called complex goes to
-    a human, so a rule naming only classification and verification reports it as
-    fixable and every round carrying one was overstated.
-    """
-    return len(_classify_triage_entries(entries).fixable)
-
-
-def _accounted_thread_ids(
-    fixable: list[CommentItem],
-    needs_human: list[CommentItem],
-    dismissed: list[CommentItem],
-    already_addressed: list[CommentItem] | None = None,
-) -> set[str]:
-    """Return IDs of all threads that have a disposition in the fix pipeline."""
-    return {
-        entry.id
-        for entries in (fixable, needs_human, dismissed, already_addressed or [])
-        for entry in entries
-    }
-
-
-def _hold_if_superseded(
-    verdict: supersession.Verdict, trail: Trail | None = None,
-) -> None:
-    """Report what the preflight found, and hold if any of it is evidence.
-
-    A hold rather than the refusal `pr review` and `pr rebase` answer with: by
-    the time this runs the triage pass has already been paid for, so there is
-    nothing left to save by stopping, and the fixes themselves are worth having
-    locally either way. What must not happen is asserting outward that
-    superseded code was fixed.
-
-    The hold is the same one an open thread places, and reaches the same acts:
-    the push, the `Fixed in <sha>` replies, the thread resolutions, and the
-    summary. The local commit is not one of them — see `fix_engine`, whose gate
-    is fixed at commit-but-do-not-push for exactly this reason.
-    """
-    supersession.report(verdict)
-    if not verdict.superseded:
-        return
-    holding = verdict.holding
-    publishing.hold(
-        f"{len(holding)} supersession signal(s) suggest this branch is superseded"
-    )
-    if trail:
-        trail.decision(
-            "publishing_hold",
-            f"held publishing — {len(holding)} supersession signal(s)",
-            reason="fixing code the default branch has already removed asserts it should exist",
-            data={"signals": [s.kind for s in holding]},
-        )
-
-
-def _hold_while_contested(
-    needs_human: list[CommentItem], trail: Trail | None = None,
-) -> None:
-    """Stop the pass asserting progress while a thread is still being argued.
-
-    Threads are bucketed independently, so a finding that says "your root cause
-    does not exist" only removes itself from `fixable` — the pass goes on to fix
-    everything else, commit it, push it, and reply that it is done. Every one of
-    those findings can be individually real and the branch still not worth
-    landing — that is how a pass pushes a run of fixes to superseded code.
-
-    Telling a premise-invalidating question from a bikeshed is the hard problem,
-    and getting it wrong in the permissive direction is what this exists to
-    prevent. So the halt is deliberately blunt — any open thread — and cheap:
-    the fixes are still applied and still committed locally, and only the
-    outward acts wait. A wrong call costs a local commit, not a pushed one. The
-    human clears it by answering and re-running `--finish --post`.
-    """
-    if not needs_human:
-        return
-    publishing.hold(f"{len(needs_human)} thread(s) awaiting discussion")
-    if trail:
-        trail.decision(
-            "publishing_hold",
-            f"held publishing — {len(needs_human)} thread(s) awaiting discussion",
-            reason="a contested thread can invalidate the premise of every other fix",
-            data={"reasons": sorted({t.reason for t in needs_human if t.reason})},
-        )
-
-
 def _settle_fixed(
     fixed: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
@@ -1147,22 +1014,15 @@ def _run_comment_fix(
     """Apply mechanical fixes for valid actionable comment threads and items."""
     threads_by_id = {t.id: t for t in report.threads}
 
-    # Classify threads
-    thread_cls = _classify_triage_entries(triage_result.threads)
-    fixable = thread_cls.fixable
-    needs_human = thread_cls.needs_human
-    dismissed = thread_cls.dismissed
-
-    # Classify comment items
-    item_cls = _classify_triage_entries(triage_result.comment_items)
-    fixable_items = item_cls.fixable
-    items_needs_human = item_cls.needs_human
-    items_dismissed = item_cls.dismissed
-    items_already_addressed = item_cls.already_addressed
-
-    all_needs_human = needs_human + items_needs_human
-    all_dismissed = dismissed + items_dismissed
-    all_addressed = thread_cls.already_addressed + items_already_addressed
+    round_ = triage_round.triage_the_round(
+        triage_result, report, wt_path, ctx, trail=trail,
+    )
+    fixable = round_.fixable
+    fixable_items = round_.fixable_items
+    all_needs_human = round_.needs_human
+    all_dismissed = round_.dismissed
+    all_addressed = round_.already_addressed
+    has_unaccounted = round_.has_unaccounted
 
     # Before the fix pass touches the tree: every line these entries carry —
     # the review comment's own and triage's citation alike — was read against
@@ -1174,33 +1034,15 @@ def _run_comment_fix(
         git_client.head_sha(short=True, cwd=wt_path),
     )
 
-    _hold_if_superseded(
-        supersession.detect_cached(
-            wt_path, ctx.repo, ctx.target_dir,
-            base=f"origin/{git_topology.default_branch_cached(wt_path)}", trail=trail,
-        ),
-        trail,
-    )
-    _hold_while_contested(all_needs_human, trail)
-
-    non_resolved_ids = {t.id for t in report.threads if t.state != ThreadState.RESOLVED}
-    accounted_ids = _accounted_thread_ids(
-        fixable + (fixable_items or []),
-        all_needs_human,
-        all_dismissed,
-        all_addressed,
-    )
-    has_unaccounted = bool(non_resolved_ids - accounted_ids)
-
     no_commit = attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
 
     # Both return paths hand this to _persist_fix_state: the tally on disk was
     # written before this function ran, so it learns of these resolutions only
     # from the delta.
     replies = ReplyOutcome()
-    if dismissed:
+    if round_.threads.dismissed:
         replies = replies.plus(ReplyOutcome(posted=thread_replies.post_dismissed_replies(
-            dismissed, threads_by_id, ctx.repo, report.pr_number, wt_path,
+            round_.threads.dismissed, threads_by_id, ctx.repo, report.pr_number, wt_path,
         )))
     if all_addressed:
         replies = replies.plus(ReplyOutcome(
@@ -1211,11 +1053,7 @@ def _run_comment_fix(
                 all_addressed, threads_by_id)),
         ))
 
-    all_fixable = bool(fixable) or bool(fixable_items)
-    has_items = (
-        bool(fixable_items) or bool(items_needs_human)
-        or bool(items_dismissed) or bool(items_already_addressed)
-    )
+    has_items = round_.has_items
 
     empty_result = CommentFixResult(
         needs_human=all_needs_human, dismissed=all_dismissed,
@@ -1223,7 +1061,7 @@ def _run_comment_fix(
         commit_status=CommitStatus.NO_CHANGES, replies_posted=replies.posted,
     )
 
-    if not all_fixable:
+    if not round_.has_fixables:
         # The same question the pass with fixes to make asks after committing,
         # asked here of the same value. A round with nothing to fix still
         # renders a table for what triage settled, and a rule of its own here
@@ -1428,12 +1266,14 @@ def _run_threads(trail, args, ctx) -> None:
             sys.exit(rc)
 
         if args.fix and triage_result:
-            fixable_count = _fixable_count(triage_result.threads)
-            fixable_items_count = _fixable_count(triage_result.comment_items)
+            fixable_count = len(
+                triage_round.classify_entries(triage_result.threads).fixable)
+            fixable_items_count = len(
+                triage_round.classify_entries(triage_result.comment_items).fixable)
             trail.decision(
                 "fix_classification",
                 f"{fixable_count} fixable threads, {fixable_items_count} fixable items identified",
-                reason="the entries _classify_triage_entries routes to the fix agent",
+                reason="the entries triage_round.classify_entries routes to the fix agent",
                 data={"fixable": fixable_count, "fixable_items": fixable_items_count,
                       "total": len(triage_result.threads),
                       "total_items": len(triage_result.comment_items)},

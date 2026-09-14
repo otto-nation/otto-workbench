@@ -166,16 +166,48 @@ class TriageResult:
 
 @dataclass
 class ClassificationResult:
-    """Result of classifying triage entries into action categories.
+    """What one side of triage decided about each entry it was given.
 
-    fixable contains the raw CommentItem objects (downstream consumers
-    like _build_tracking_file need the full AI fields).
+    The four dispositions the fix pass routes on, ahead of the agent: what it
+    will be asked to fix, what a person has to answer, what does not hold, and
+    what the code already does. They are not `FixOutcome`s and must not be
+    confused for them — `fixable` is a question the agent has yet to answer,
+    and comes back from it as FIXED, DEFERRED, NEEDS_HUMAN or DECLINED.
+
+    Entries carry their full triage fields rather than being reduced to ids:
+    the checklist the agent is handed needs the summary and the conversation,
+    and the reply to a dismissal needs the reasoning.
+
+    One side of the round only. Threads and decomposed comment items are
+    classified separately because only a thread has somewhere to reply — see
+    `TriagedRound`, which holds both and merges them where a surface treats
+    them alike.
     """
 
-    fixable: list = field(default_factory=list)
+    fixable: list[CommentItem] = field(default_factory=list)
     needs_human: list[CommentItem] = field(default_factory=list)
     dismissed: list[CommentItem] = field(default_factory=list)
     already_addressed: list[CommentItem] = field(default_factory=list)
+
+    @property
+    def any_entry(self) -> bool:
+        """Whether triage put anything at all in this side's buckets."""
+        return bool(self.fixable or self.needs_human
+                    or self.dismissed or self.already_addressed)
+
+    def ids(self) -> set[str]:
+        """Every id this side gave a disposition to.
+
+        What `has_unaccounted` is measured against: a thread on the PR that
+        appears in none of the four buckets is one this round never reached,
+        and the summary it publishes is partial until someone does.
+        """
+        return {
+            entry.id
+            for bucket in (self.fixable, self.needs_human,
+                           self.dismissed, self.already_addressed)
+            for entry in bucket
+        }
 
 
 # ── Fix tracking types ────────────────────────────────────────────────────

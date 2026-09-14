@@ -20,7 +20,27 @@ from pr.fix import FixOutcome, ItemOutcome, SettledBy
 # ── Core types ─────────────────────────────────────────────────────────────
 
 
-class Classification(StrEnum):
+class Vocabulary(StrEnum):
+    """Shared leniency for the three triage vocabularies.
+
+    An unrecognised value from a model becomes UNSET rather than raising.
+    That contract is declared once here so Classification, Verification, and
+    Complexity cannot drift. Every subclass MUST define UNSET = "": `_missing_`
+    returns it.
+
+    This is the serde-path half of the leniency. `serde.from_dict` constructs
+    a field with `hint(value)` and never reaches `__post_init__`. Direct
+    construction never consults the enum at all — a dataclass does not coerce
+    its own field types — so `_coerce_vocab` in `__post_init__` is the other
+    half. Both are load-bearing.
+    """
+
+    @classmethod
+    def _missing_(cls, value):
+        return cls.UNSET
+
+
+class Classification(Vocabulary):
     """What kind of thing a reviewer's comment is.
 
     The vocabulary the triage prompt asks for, owned here so the prompt that
@@ -39,20 +59,8 @@ class Classification(StrEnum):
     CONFLICTING = "conflicting"
     UNSET = ""
 
-    @classmethod
-    def _missing_(cls, value):
-        """The serde-path half of the leniency; `__post_init__` is the other.
 
-        An unrecognised verdict must cost its own entry, not the batch.
-        `from_dict` constructs the field with `hint(value)` and never reaches
-        `__post_init__` if that raises — `_lenient_from_dict` then returns an
-        empty item. Direct construction never asks the enum, so the same
-        unknown still needs the post-init coerce.
-        """
-        return cls.UNSET
-
-
-class Verification(StrEnum):
+class Verification(Vocabulary):
     """Whether an actionable suggestion holds, and how it is answered.
 
     Only asked for when the classification is `actionable_suggestion`; the
@@ -64,18 +72,6 @@ class Verification(StrEnum):
     INVALID = "invalid"
     NEEDS_DISCUSSION = "needs_discussion"
     UNSET = ""
-
-    @classmethod
-    def _missing_(cls, value):
-        """The serde-path half of the leniency; `__post_init__` is the other.
-
-        An unrecognised verdict must cost its own entry, not the batch.
-        `from_dict` constructs the field with `hint(value)` and never reaches
-        `__post_init__` if that raises — `_lenient_from_dict` then returns an
-        empty item. Direct construction never asks the enum, so the same
-        unknown still needs the post-init coerce.
-        """
-        return cls.UNSET
 
     @property
     def needs_evidence(self) -> bool:
@@ -93,7 +89,7 @@ class Verification(StrEnum):
         return self in (Verification.ALREADY_ADDRESSED, Verification.INVALID)
 
 
-class Complexity(StrEnum):
+class Complexity(Vocabulary):
     """How large a change a valid suggestion asks for.
 
     Only asked for when the verification is `valid`. `UNSET` is a valid
@@ -106,33 +102,23 @@ class Complexity(StrEnum):
     HIGH = "high"
     UNSET = ""
 
-    @classmethod
-    def _missing_(cls, value):
-        """The serde-path half of the leniency; `__post_init__` is the other.
-
-        An unrecognised verdict must cost its own entry, not the batch.
-        `from_dict` constructs the field with `hint(value)` and never reaches
-        `__post_init__` if that raises — `_lenient_from_dict` then returns an
-        empty item. Direct construction never asks the enum, so the same
-        unknown still needs the post-init coerce.
-        """
-        return cls.UNSET
-
 
 def _coerce_vocab(enum_cls, value):
     """One of `enum_cls`'s members, or its `UNSET`.
 
-    The lenient boundary for the three fields a model fills in. `serde` would
-    reach these through `_coerce_enum`, whose bare `hint(value)` raises on an
-    unknown value — and `_lenient_from_dict` answers a raise by returning an
-    empty `CommentItem`, losing the id and every other field the model got
-    right. A made-up verdict costs its own entry here instead: it becomes
-    `UNSET`, routes to no bucket, and the rest of the batch is untouched.
+    The two hooks cover two different construction paths. `_missing_` on
+    `Vocabulary` covers construction through serde, which never reaches
+    `__post_init__`. This function in `__post_init__` covers DIRECT
+    construction, which never consults the enum at all — a dataclass does not
+    coerce its own field types, so `CommentItem(verification="banana")` would
+    otherwise store the raw string. Every existing test in this repo constructs
+    `CommentItem` directly with bare strings, so both are load-bearing.
+
+    With `_missing_` inherited, `enum_cls(value)` never raises: an unrecognised
+    or non-string input becomes `UNSET` inside the enum constructor. The
+    conversion is therefore a direct call.
     """
-    try:
-        return enum_cls(value)
-    except (ValueError, TypeError):
-        return enum_cls.UNSET
+    return enum_cls(value)
 
 
 @dataclass

@@ -26,7 +26,7 @@ from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import (  # noqa: E402
     Classification, CommentItem, Complexity, ReplyOutcome, TrackingResult,
-    Verification, _coerce_vocab,
+    Verification, Vocabulary, _coerce_vocab,
 )
 
 
@@ -221,6 +221,12 @@ class TestTheVocabularyEnums:
         item = serde.from_dict(Holder, {"id": "t1", "verification": "banana"})
         assert item.verification is Verification.UNSET
         assert item.id == "t1"
+
+    def test_the_three_vocabularies_share_the_leniency_base(self):
+        """A future enum added without Vocabulary would re-triplicate `_missing_`."""
+        for enum_cls in (Classification, Verification, Complexity):
+            assert issubclass(enum_cls, Vocabulary)
+            assert enum_cls._missing_.__func__ is Vocabulary._missing_.__func__
 
 
 class TestVocabularyCoercion:

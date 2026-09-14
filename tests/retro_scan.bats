@@ -673,7 +673,7 @@ PY
   [[ "$result" == *"myrepo-self-1"* ]]
 }
 
-# ── find_nearest_rule: MIN_KEYWORD_OVERLAP=2 ───────────────────────────────
+# ── find_nearest_rule: MIN_SHARED_TERMS ──────────────────────────────────────
 
 @test "find_nearest_rule: single keyword overlap returns None" {
   _make_rules_dir "$TMPDIR/wb"

@@ -29,7 +29,13 @@ from review.dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
 from retro.github import GQL_MERGED_PRS_LIMIT, fetch_repo_review_data  # noqa: E402
 from retro.report import DATE_FMT, best_matching_bullet, format_report  # noqa: E402
 from retro.reviews import CONSUMED_REVIEWS_NAME, scan_local_reviews  # noqa: E402
-from retro.rules import RULES_REL, find_nearest_rule, load_rules  # noqa: E402
+from retro.rules import (  # noqa: E402
+    RULES_REL,
+    TermWeights,
+    find_nearest_rule,
+    load_rules,
+    term_weights,
+)
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -181,6 +187,7 @@ def _parse_since(since: str) -> int:
 def _annotate_comment(
     comment: dict, pr_author: str, git_user: str,
     rules: list[dict], rule_match_counts: dict[str, dict],
+    weights: TermWeights,
 ) -> str:
     """Returns "skip", "matched", or "unmatched"."""
     comment_author = comment.get("author", "unknown")
@@ -192,7 +199,7 @@ def _annotate_comment(
         comment["direction"] = "received"
     else:
         comment["direction"] = "observed"
-    nearest = find_nearest_rule(comment["body"], rules)
+    nearest = find_nearest_rule(comment["body"], rules, weights)
     if nearest:
         comment["nearest_rule"] = {
             "filename": nearest["filename"],
@@ -207,6 +214,7 @@ def _annotate_comment(
 def _scan_repo(
     repo: dict, last_retro_ts: int, rules: list[dict],
     git_user: str, rule_match_counts: dict[str, dict],
+    weights: TermWeights,
 ) -> dict:
     log.info(f"Fetching PRs for {repo['github']}...")
     pr_data = fetch_repo_review_data(repo["github"], last_retro_ts)
@@ -220,7 +228,9 @@ def _scan_repo(
         pr_author = pr.get("user", {}).get("login", "")
         comments = pr["comments"]
         results = [
-            _annotate_comment(c, pr_author, git_user, rules, rule_match_counts)
+            _annotate_comment(
+                c, pr_author, git_user, rules, rule_match_counts, weights,
+            )
             for c in comments
         ]
         comments = [c for c, r in zip(comments, results) if r != "skip"]
@@ -321,9 +331,14 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     scan_repos: list[dict] = []
     rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0} for r in rules}
     unmatched_count = 0
+    # Once for the scan, not once per comment: the IDF is over the rule set,
+    # and a scan scores thousands of comments against the one set.
+    weights = term_weights(rules)
 
     for repo in repos:
-        result = _scan_repo(repo, last_retro_ts, rules, git_user, rule_match_counts)
+        result = _scan_repo(
+            repo, last_retro_ts, rules, git_user, rule_match_counts, weights,
+        )
         unmatched_count += result["unmatched"]
         if result["prs"]:
             scan_repos.append({
@@ -335,7 +350,7 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
 
     state_dir = workbench_paths.state_dir()
     local_scan = scan_local_reviews(
-        workbench_paths.reviews_dir(), rules, rule_match_counts,
+        workbench_paths.reviews_dir(), rules, rule_match_counts, weights,
     )
     local_repos = _dedup_local_against_github(scan_repos, local_scan.repos)
     for lr in local_repos:

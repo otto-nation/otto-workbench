@@ -490,6 +490,45 @@ pr_preserve_close_refs() {
   return 0
 }
 
+# _pr_template_headers
+# Prints the section headers a template requires, one per line.
+# `printf` rather than `echo`, as everywhere else in this file: the template is
+# read from a repo-controlled file, and bash's `echo` reads an argument that is
+# exactly `-n`, `-e` or `-E` as a flag rather than as content — which would
+# yield no headers and silently accept every body.
+_pr_template_headers() {
+  printf '%s\n' "$PR_TEMPLATE" | grep '^##[[:space:]]' || true
+}
+
+# _pr_check_body_against_template BODY
+# Refuses a hand-written body that does not carry the repo template's sections.
+# The AI paths are handed the template and fill it; a body supplied with --body
+# or --body-file never passed through them, so nothing else checks it. Returns 1
+# and names the missing headers.
+_pr_check_body_against_template() {
+  local body="$1"
+  [ "$PR_HAS_TEMPLATE" = "true" ] || return 0
+
+  local missing="" header
+  while IFS= read -r header; do
+    [ -n "$header" ] || continue
+    # A literal substring test, not a pattern one: `$header` is the right-hand
+    # side of `==` and would be read as a glob, so it is quoted. This is what
+    # `grep -qF` was doing, without two forks per header.
+    if [[ "$body" != *"$header"* ]]; then
+      missing+="  $header"$'\n'
+    fi
+  done <<< "$(_pr_template_headers)"
+
+  [ -n "$missing" ] || return 0
+
+  echo "✗ The PR body does not use this repo's template" >&2
+  echo "→ Missing section(s) from .github/PULL_REQUEST_TEMPLATE.md:" >&2
+  printf '%s' "$missing" >&2
+  echo "→ Use the template's own headers, or drop --body to have them filled" >&2
+  return 1
+}
+
 # generate_pr_content BRANCH DEFAULT_BRANCH
 # Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set).
 # Sets PR_TITLE and PR_DESCRIPTION.
@@ -497,7 +536,13 @@ generate_pr_content() {
   local branch="$1"
   local default_branch="$2"
 
+  # Loaded before the override check, not after it. A body supplied by hand
+  # skips every AI path that would have been handed the template, so this is
+  # the only place left that can tell whether it conforms.
+  _pr_load_template
+
   if [[ -n "${PR_TITLE_OVERRIDE:-}" && -n "${PR_BODY_OVERRIDE:-}" ]]; then
+    _pr_check_body_against_template "$PR_BODY_OVERRIDE" || return 1
     PR_TITLE="$PR_TITLE_OVERRIDE"
     PR_DESCRIPTION="$PR_BODY_OVERRIDE"
     _pr_append_issue_link
@@ -505,7 +550,6 @@ generate_pr_content() {
   fi
 
   _pr_resolve_issue "$branch"
-  _pr_load_template
 
   local commits commit_count changed_files
   commits=$(git log --oneline "$GIT_REMOTE/$default_branch..HEAD")
@@ -519,7 +563,12 @@ generate_pr_content() {
   fi
 
   [[ -n "${PR_TITLE_OVERRIDE:-}" ]] && PR_TITLE="$PR_TITLE_OVERRIDE"
-  [[ -n "${PR_BODY_OVERRIDE:-}" ]] && PR_DESCRIPTION="$PR_BODY_OVERRIDE"
+  if [[ -n "${PR_BODY_OVERRIDE:-}" ]]; then
+    # The half-override path: a body given without a title still replaces
+    # whatever the AI produced, so it owes the template the same conformance.
+    _pr_check_body_against_template "$PR_BODY_OVERRIDE" || return 1
+    PR_DESCRIPTION="$PR_BODY_OVERRIDE"
+  fi
 
   _pr_append_issue_link
 }

@@ -146,8 +146,10 @@ no template here"
   # the floor as well as the ceiling, which is what catches a guard added by
   # deleting the call it was on.
   local calls guarded
+  # shellcheck disable=SC2016  # the literal `$BRANCH` is what is being matched
   calls=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE"' \
     "$REPO_ROOT/Taskfile.global.yml" || true)
+  # shellcheck disable=SC2016  # the literal `$BRANCH` is what is being matched
   guarded=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE" || exit 1' \
     "$REPO_ROOT/Taskfile.global.yml" || true)
 
@@ -160,7 +162,9 @@ no template here"
   # reads as "empty PR" rather than as a missing `|| exit 1`.
   PR_TITLE=""
   PR_DESCRIPTION=""
+  # shellcheck disable=SC2034  # both read by generate_pr_content in the sourced lib
   PR_TITLE_OVERRIDE="fix: thing"
+  # shellcheck disable=SC2034
   PR_BODY_OVERRIDE="## Summary
 
 off template"
@@ -174,7 +178,9 @@ off template"
 }
 
 @test "generate_pr_content accepts a conforming body override without calling AI" {
+  # shellcheck disable=SC2034  # both read by generate_pr_content in the sourced lib
   PR_TITLE_OVERRIDE="fix: thing"
+  # shellcheck disable=SC2034
   PR_BODY_OVERRIDE="## What
 
 did a thing
@@ -184,6 +190,7 @@ did a thing
 it was broken"
   # Unset so a path that reached the AI would fail loudly rather than silently
   # producing a body.
+  # shellcheck disable=SC2034  # read by run_ai in the sourced lib
   AI_COMMAND=""
 
   run generate_pr_content "isaac/fix/thing" "main"

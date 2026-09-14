@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -32,10 +33,13 @@ from conftest import make_ctx  # noqa: E402
 
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
+from agent import invoke as agent_invoke  # noqa: E402
 from fix import ci as fix_ci  # noqa: E402
 from fix import comments as fix_comments  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
+from fix import types as fix_types  # noqa: E402
+from fix import verify as fix_verify  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 from core.phases import Mode, Phase, PhaseShape  # noqa: E402
 from rebase import prepush as rebase_prepush  # noqa: E402
@@ -609,6 +613,38 @@ def _render_fix_comments(rt, wt_path) -> str:
     return _render_adapter(adapter)
 
 
+def _render_verify_fixes(rt, wt_path) -> str:
+    """Render the verify gate's prompt the way `fix_verify.run` renders it.
+
+    Driven through the real runner with the agent call stubbed out, for the
+    reason `_render_adapter` gives: a placeholder the runner stopped supplying
+    has to show up here rather than pass against a call nobody makes.
+    """
+    ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
+                   pr_number=1, worktree_root=wt_path, target_dir=wt_path)
+    adapter = rt.CommentFixAdapter(
+        rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
+        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
+        already_addressed=[], resolved=[], triage_replies=0,
+        has_unaccounted=False, has_items=False,
+    )
+    adapter.__dict__["main_wt"] = None
+
+    rendered = {}
+
+    def capture(_phase, prompt, **_kwargs):
+        rendered["prompt"] = prompt
+        return agent_invoke.FixResult(0, None)
+
+    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=capture):
+        fix_verify.run(
+            Phase.COMMENTS_VERIFY, "",
+            items=[fix_types.FixItem(id="t1", file="a.py", line=2, label="x")],
+            adapter=adapter,
+        )
+    return rendered["prompt"]
+
+
 def _render_fix_findings(wt_path) -> str:
     job = _make_review_job(
         wt_path=str(wt_path),
@@ -703,6 +739,10 @@ class TestTemplateRendering:
         left = _unsubstituted(_render_fix_findings(tmp_path))
         assert not left, f"fix-findings.md left: {left}"
 
+    def test_verify_fixes_template_fully_substituted(self, rt, tmp_path):
+        left = _unsubstituted(_render_verify_fixes(rt, tmp_path))
+        assert not left, f"verify-fixes.md left: {left}"
+
     def test_every_template_is_covered(self):
         """A new template must be added to this file's render coverage."""
         covered = {_template_of(key) for key in _BUILD_PROMPT_EXTRAS} | {
@@ -710,6 +750,7 @@ class TestTemplateRendering:
             PHASES[Phase.CI_FIX].template_for(),
             PHASES[Phase.COMMENTS_FIX].template_for(),
             PHASES[Phase.PREPUSH_FIX].template_for(),
+            PHASES[Phase.COMMENTS_VERIFY].template_for(),
         }
         uncovered = sorted(
             name for name in _template_files() - covered

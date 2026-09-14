@@ -112,6 +112,7 @@
               "disprove",
               "fix",
               "comments_fix",
+              "comments_verify",
               "comments_triage",
               "ci_fix",
               "rebase",

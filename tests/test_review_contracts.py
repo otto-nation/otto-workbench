@@ -33,6 +33,7 @@ from conftest import make_ctx  # noqa: E402
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
 from fix import ci as fix_ci  # noqa: E402
+from fix import comments as fix_comments  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
@@ -48,6 +49,7 @@ from gh.types import PRContext, PRMetadata  # noqa: E402
 from pr import ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
+from pr.triage_round import TriagedRound  # noqa: E402
 from review.budget import MAX_PROMPT_BYTES  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
 
@@ -597,11 +599,9 @@ def _render_fix_ci(wt_path) -> str:
 def _render_fix_comments(rt, wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    pr_number=1, worktree_root=wt_path, target_dir=wt_path)
-    adapter = rt.CommentFixAdapter(
+    adapter = fix_comments.CommentFixAdapter(
         rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
-        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
-        already_addressed=[], resolved=[], triage_replies=0,
-        has_unaccounted=False, has_items=False,
+        TriagedRound(),
     )
     # The default-branch checkout is a fetch and a reset against a second
     # worktree; a render has no business making either.

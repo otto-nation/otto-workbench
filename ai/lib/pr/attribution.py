@@ -94,14 +94,22 @@ def commit_unpushed(status: str) -> bool:
     return status in _UNPUSHED_STATUSES
 
 
-def pass_commit(wt_path: Path, result: LandResult) -> CommitPushResult:
+def pass_commit(wt_path: Path, result: LandResult | None) -> CommitPushResult:
     """The owner's landing, as the pass records and renders it.
 
     The SHA is abbreviated because every other SHA this command persists is —
     the snapshot HEAD, each thread's `commit_sha`, each `read_sha`. A state file
     that mixed the two widths would make one commit recorded twice look like
     two, which is exactly the comparison :func:`attribute_commit` turns on.
+
+    A pass that never reached a landing hands over None, and gets the same
+    no-commit value a pass whose landing changed nothing gets: there is no SHA
+    either way, and `NO_CHANGES` is what every reader downstream already
+    handles. The alternative was each caller constructing that value itself,
+    which two of them did — identically, and only by coincidence.
     """
+    if result is None:
+        return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
     short = git_client.out(
         "rev-parse", "--short", result.sha, cwd=wt_path,
     ) if result.sha else ""

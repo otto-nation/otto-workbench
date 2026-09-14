@@ -615,3 +615,102 @@ _make_protocol_tables() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"Agent protocols table diverges"* ]]
 }
+
+# ── Superpowers shim pin ────────────────────────────────────────────────────
+
+# _make_shim NAME PIN RECORDED — a skill carrying the override marker, with the
+# pin written into ai/pi/settings.json and RECORDED into the shim's header.
+# RECORDED may be empty, for a shim that records no version at all.
+_make_shim() {
+  local name="$1" pin="$2" recorded="${3:-}"
+  _make_skill "$name"
+
+  mkdir -p "$FAKE_WORKBENCH/ai/pi"
+  cat > "$FAKE_WORKBENCH/ai/pi/settings.json" <<JSON
+{
+  "packages": [
+    "git:github.com/obra/superpowers@$pin"
+  ]
+}
+JSON
+
+  {
+    echo ""
+    echo "<!-- Overrides superpowers:$name, which does it the upstream way."
+    [[ -n "$recorded" ]] && echo "     Written against superpowers $recorded. -->" || echo "     -->"
+  } >> "$FAKE_WORKBENCH/ai/skills/$name/SKILL.md"
+}
+
+@test "a shim recording the pinned version passes" {
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a shim written against an older version than the pin fails" {
+  _make_shim using-git-worktrees v6.4.0 v6.3.0
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"written against superpowers v6.3.0"* ]]
+  [[ "$output" == *"pins v6.4.0"* ]]
+}
+
+@test "a shim recording no version at all fails" {
+  _make_shim using-git-worktrees v6.3.0 ""
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"without recording the version"* ]]
+}
+
+@test "every shim is checked, not a hardcoded list" {
+  # The check discovers shims by their override marker. A skill added later is
+  # covered without editing the validator — which is the property that makes
+  # this worth having over the three-name loop it replaces.
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+  _make_shim some-future-shim v6.3.0 v6.2.0
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"skills/some-future-shim"* ]]
+}
+
+@test "a skill with no override marker needs no recorded version" {
+  _make_skill ordinary-skill
+  mkdir -p "$FAKE_WORKBENCH/ai/pi"
+  echo '{"packages":["git:github.com/obra/superpowers@v6.3.0"]}' \
+    > "$FAKE_WORKBENCH/ai/pi/settings.json"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "shims pass when the package is not declared at all" {
+  # The shims are what make the package safe to install, so a tree carrying
+  # them before the entry lands is a legitimate mid-adoption state.
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+  echo '{"packages":["git:github.com/usemaximum/pi-extensions"]}' \
+    > "$FAKE_WORKBENCH/ai/pi/settings.json"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "an object-form package entry is read for its pin" {
+  # Pi accepts an object entry carrying filters; sync-settings.jq identifies
+  # entries by source either way, so the pin has to be readable from both.
+  _make_shim using-git-worktrees v6.3.0 v6.2.0
+  cat > "$FAKE_WORKBENCH/ai/pi/settings.json" <<'JSON'
+{
+  "packages": [
+    { "source": "git:github.com/obra/superpowers@v6.3.0" }
+  ]
+}
+JSON
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pins v6.3.0"* ]]
+}

@@ -59,10 +59,10 @@ from review.grammar import (
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review.spans import finding_spans
 from review.types import (
-    DISPOSITION_TAIL_PUNCTUATION, FindingRef, FindingSpan, LedgerEntry,
-    PriorDisposition, PriorFinding,
+    DISPOSITION_TAIL_PUNCTUATION, DISPOSITION_TAIL_WORD_JOINERS, FindingRef,
+    FindingSpan, LedgerEntry, PriorDisposition, PriorFinding,
 )
-from core.text import plural
+from core.text import join_or, plural
 
 # ── Carry-forward identity ───────────────────────────────────────────────────
 
@@ -548,9 +548,35 @@ def _report_group(reason: UndecidedReason, records: list[PriorRecord]) -> None:
 # What to write instead, for the reader who has just been shown a line that did
 # not parse. Both the words and the punctuation come from what the parser
 # accepts, so this cannot describe a shape the parser would reject.
+#
+# Glyphs rather than the prose `review.prompt_prior` instructs a model with:
+# this is read beside the character that failed, by someone matching it, and
+# the prose names collapse across exactly the line that matters here — "a dash"
+# is the two unconditional dashes and the conditional hyphen, "italics" is the
+# unconditional asterisk and the conditional underscore, so no prose list can
+# state the rule without contradicting itself.
+#
+# The rule is the second half of the message instead, and the split is the
+# parser's own: `DISPOSITION_TAIL_WORD_JOINERS` is the class the regex requires
+# a leading space or a trailing non-word character around, so a character moved
+# between the two sets moves between the two halves here. Printed in one list,
+# they read as unconditional breaks, and a reader who takes the message at its
+# word glues a hyphen mid-word and writes the line the parser rejected.
+_VERDICT_TAIL_BREAKS = [
+    c for c in DISPOSITION_TAIL_PUNCTUATION if c not in DISPOSITION_TAIL_WORD_JOINERS
+]
+# Dropped entirely rather than rendered empty when nothing is conditional, so
+# retiring the joiner class leaves a message with one honest list instead of a
+# caveat naming no characters.
+_VERDICT_JOINER_CAVEAT = (
+    f" (also {join_or(list(DISPOSITION_TAIL_WORD_JOINERS))}, but only where a "
+    "space precedes one or a non-word character follows — glued inside a word "
+    "neither breaks the verdict)"
+) if DISPOSITION_TAIL_WORD_JOINERS else ""
 _VERDICT_SHAPE = (
-    f"write one of {', '.join(d.value for d in PriorDisposition)} first, then "
-    f"end the line or break with one of: {' '.join(DISPOSITION_TAIL_PUNCTUATION)}"
+    f"write one of {join_or([d.value for d in PriorDisposition])} first, then "
+    f"end the line or break with one of: {' '.join(_VERDICT_TAIL_BREAKS)}"
+    f"{_VERDICT_JOINER_CAVEAT}"
 )
 
 

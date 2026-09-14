@@ -36,6 +36,7 @@ from review.spans import finding_spans
 from review.types import (
     DISPOSITION_TAIL_PROSE, PriorDisposition, PriorFinding, ReplyState,
 )
+from core.text import join_or
 
 
 def _in_scope(line: str, filter_set: set[str]) -> bool:
@@ -170,7 +171,7 @@ def _annotate_with_thread_state(review_text: str, reply_threads: ReplyThreads | 
 # break the parser rejects, or omit one it accepts, which hand-typing it did
 # twice.
 _TAIL_BREAK_NAMES = list(dict.fromkeys(DISPOSITION_TAIL_PROSE.values()))
-_TAIL_BREAKS = f"{', '.join(_TAIL_BREAK_NAMES[:-1])}, or {_TAIL_BREAK_NAMES[-1]}"
+_TAIL_BREAKS = join_or(_TAIL_BREAK_NAMES)
 _LEDGER_INSTRUCTION = f"""
 End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
 finding above, one line each, copying its ID and path exactly as written there:

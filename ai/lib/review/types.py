@@ -180,15 +180,20 @@ DISPOSITION_TAIL_PUNCTUATION = "".join(DISPOSITION_TAIL_PROSE)
 # and a trailing "Fixed -" still read as verdicts, while a hyphenated or
 # underscored word does not. Every other character in the map cannot sit inside
 # a word in the first place and is read wherever it appears.
-_DISPOSITION_TAIL_WORD_JOINERS = "-_"
+#
+# Public, unlike the regex built from it: the diagnostic printed for a verdict
+# that did not parse (`review.reconcile`) has to show these two apart from the
+# rest, and a second hand-typed "-_" there would be this rule restated where
+# nothing holds the two copies together.
+DISPOSITION_TAIL_WORD_JOINERS = "-_"
 _DISPOSITION_TAIL_BREAKS = "".join(
-    c for c in DISPOSITION_TAIL_PUNCTUATION if c not in _DISPOSITION_TAIL_WORD_JOINERS
+    c for c in DISPOSITION_TAIL_PUNCTUATION if c not in DISPOSITION_TAIL_WORD_JOINERS
 )
 _DISPOSITION_TAIL_RE = re.compile(
     rf"^(?:\s*$"
     rf"|\s*[{re.escape(_DISPOSITION_TAIL_BREAKS)}]"
-    rf"|\s+[{re.escape(_DISPOSITION_TAIL_WORD_JOINERS)}]"
-    rf"|[{re.escape(_DISPOSITION_TAIL_WORD_JOINERS)}](?!\w))"
+    rf"|\s+[{re.escape(DISPOSITION_TAIL_WORD_JOINERS)}]"
+    rf"|[{re.escape(DISPOSITION_TAIL_WORD_JOINERS)}](?!\w))"
 )
 
 

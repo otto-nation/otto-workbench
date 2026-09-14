@@ -25,8 +25,9 @@ import pytest  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import (  # noqa: E402
-    Classification, CommentItem, Complexity, ReplyOutcome, TrackingResult,
-    Verification, Vocabulary, _coerce_vocab, triage_result_from_dict,
+    Classification, ClassificationResult, CommentItem, Complexity, Disposition,
+    ReplyOutcome, TrackingResult, Verification, Vocabulary, _coerce_vocab,
+    triage_result_from_dict,
 )
 
 
@@ -290,3 +291,38 @@ class TestTheEntryCoercesItsVocabulary:
         assert dumped["classification"] == "actionable_suggestion"
         assert dumped["verification"] == "valid"
         assert dumped["complexity"] == "low"
+
+
+class TestTheResultKnowsItsOwnBuckets:
+    """The four dispositions named once, not once per method."""
+
+    def test_every_disposition_has_a_bucket(self):
+        result = ClassificationResult()
+        for d in Disposition:
+            assert result.bucket(d) == []
+
+    def test_the_named_properties_are_the_same_lists(self):
+        result = ClassificationResult()
+        entry = CommentItem(id="t1")
+        result.bucket(Disposition.FIXABLE).append(entry)
+        assert result.fixable == [entry]
+
+    def test_ids_covers_every_disposition(self):
+        result = ClassificationResult()
+        for i, d in enumerate(Disposition):
+            result.bucket(d).append(CommentItem(id=f"t{i}"))
+        assert result.ids() == {f"t{i}" for i in range(len(Disposition))}
+
+    def test_any_entry_sees_every_disposition(self):
+        for d in Disposition:
+            result = ClassificationResult()
+            assert not result.any_entry
+            result.bucket(d).append(CommentItem(id="t1"))
+            assert result.any_entry, f"{d} not counted"
+
+    def test_two_results_do_not_share_a_list(self):
+        a = ClassificationResult()
+        b = ClassificationResult()
+        a.bucket(Disposition.FIXABLE).append(CommentItem(id="t1"))
+        assert b.bucket(Disposition.FIXABLE) == []
+        assert a.fixable is not b.fixable

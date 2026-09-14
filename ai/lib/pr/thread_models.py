@@ -288,6 +288,24 @@ class TriageResult:
     stats: TriageStats = field(default_factory=TriageStats)
 
 
+class Disposition(StrEnum):
+    """Where a classified entry goes.
+
+    Not a `FixOutcome`: `FIXABLE` is a question the agent has yet to answer,
+    and comes back from it as FIXED, DEFERRED, NEEDS_HUMAN or DECLINED.
+    """
+
+    FIXABLE = "fixable"
+    NEEDS_HUMAN = "needs_human"
+    DISMISSED = "dismissed"
+    ALREADY_ADDRESSED = "already_addressed"
+
+
+def _empty_disposition_buckets() -> dict[Disposition, list[CommentItem]]:
+    """A fresh list per member. Not `dict.fromkeys` — that shares one list."""
+    return {d: [] for d in Disposition}
+
+
 @dataclass
 class ClassificationResult:
     """What one side of triage decided about each entry it was given.
@@ -308,16 +326,52 @@ class ClassificationResult:
     them alike.
     """
 
-    fixable: list[CommentItem] = field(default_factory=list)
-    needs_human: list[CommentItem] = field(default_factory=list)
-    dismissed: list[CommentItem] = field(default_factory=list)
-    already_addressed: list[CommentItem] = field(default_factory=list)
+    _buckets: dict[Disposition, list[CommentItem]] = field(
+        default_factory=_empty_disposition_buckets, init=False, repr=False,
+    )
+
+    def __init__(self, **named: list[CommentItem]) -> None:
+        unknown = named.keys() - {d.value for d in Disposition}
+        if unknown:
+            extra = ", ".join(sorted(unknown))
+            raise TypeError(
+                f"ClassificationResult() got unexpected keyword argument(s): {extra}"
+            )
+        self._buckets = _empty_disposition_buckets()
+        for d in Disposition:
+            supplied = named.get(d.value)
+            if supplied is not None:
+                self._buckets[d] = supplied
+
+    def bucket(self, disposition: Disposition) -> list[CommentItem]:
+        """The entries filed under one disposition.
+
+        A `Disposition` is not a `FixOutcome`. `FIXABLE` is a question the
+        agent has yet to answer; `TrackingResult.bucket` is the same verb on
+        the container keyed by what came back.
+        """
+        return self._buckets[disposition]
+
+    @property
+    def fixable(self) -> list[CommentItem]:
+        return self.bucket(Disposition.FIXABLE)
+
+    @property
+    def needs_human(self) -> list[CommentItem]:
+        return self.bucket(Disposition.NEEDS_HUMAN)
+
+    @property
+    def dismissed(self) -> list[CommentItem]:
+        return self.bucket(Disposition.DISMISSED)
+
+    @property
+    def already_addressed(self) -> list[CommentItem]:
+        return self.bucket(Disposition.ALREADY_ADDRESSED)
 
     @property
     def any_entry(self) -> bool:
         """Whether triage put anything at all in this side's buckets."""
-        return bool(self.fixable or self.needs_human
-                    or self.dismissed or self.already_addressed)
+        return any(self._buckets.values())
 
     def ids(self) -> set[str]:
         """Every id this side gave a disposition to.
@@ -328,8 +382,7 @@ class ClassificationResult:
         """
         return {
             entry.id
-            for bucket in (self.fixable, self.needs_human,
-                           self.dismissed, self.already_addressed)
+            for bucket in self._buckets.values()
             for entry in bucket
         }
 

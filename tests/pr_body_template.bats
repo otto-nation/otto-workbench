@@ -115,25 +115,27 @@ no template here"
   [[ "$output" == *"does not use this repo's template"* ]]
 }
 
-@test "a refused body stops the task instead of opening an empty PR" {
-  # The refusal is only worth having if a caller acts on it. Every `task pr:*`
-  # target calls `generate_pr_content` unguarded at first, so the non-zero
-  # return printed an error and the script carried on to `create_pr` with
-  # `PR_TITLE` and `PR_DESCRIPTION` never assigned — an empty PR, opened after
-  # an error message saying it would not be.
-  local script
-  script=$(awk '/^  pr:create:/{f=1} /^  pr:update:/{f=0} f' \
-    "$REPO_ROOT/Taskfile.global.yml")
-  [[ "$script" == *'generate_pr_content "$BRANCH" "$TARGET_BASE" || exit 1'* ]]
-}
-
-@test "every pr target guards the call, not just the one that opens a PR" {
-  # `pr:content` prints what would be posted and `pr:update` replaces a live
-  # body; both take the same override flags and owe the same refusal.
-  local unguarded
-  unguarded=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE"$' \
+@test "every call to generate_pr_content acts on its refusal" {
+  # The refusal is only worth having if a caller acts on it. All three targets
+  # called `generate_pr_content` unguarded at first, so the non-zero return
+  # printed an error and the script carried on to `create_pr` with `PR_TITLE`
+  # and `PR_DESCRIPTION` never assigned — an empty PR, opened right after an
+  # error message saying it would not be.
+  #
+  # Counted rather than matched line-for-line: what matters is that no call
+  # site is missing a guard, and a count survives the reformatting that an
+  # exact-string assertion would break on. `pr:content` prints what would be
+  # posted and `pr:update` replaces a live body, so all three owe it — hence
+  # the floor as well as the ceiling, which is what catches a guard added by
+  # deleting the call it was on.
+  local calls guarded
+  calls=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE"' \
     "$REPO_ROOT/Taskfile.global.yml" || true)
-  [ "$unguarded" -eq 0 ]
+  guarded=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE" || exit 1' \
+    "$REPO_ROOT/Taskfile.global.yml" || true)
+
+  [ "$calls" -eq 3 ]
+  [ "$guarded" -eq "$calls" ]
 }
 
 @test "the refused body leaves no title or description behind" {

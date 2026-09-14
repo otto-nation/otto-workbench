@@ -258,6 +258,34 @@ def _no_live_backend(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_vertex_endpoint(monkeypatch):
+    """Run every test on a machine with no Vertex endpoint to reach.
+
+    `review.prompt` takes an exact token count of every rendered prompt unless
+    `WORKBENCH_AI_MEASURE_TOKENS` is 0, and it is on by default — right for a
+    real review, since a measurement nobody takes calibrates nothing. In the
+    suite it makes each `build_prompt` a live round trip with a 30s timeout.
+
+    `_clear_agent_env` does not prevent it: these vars carry no `WORKBENCH_AI_`
+    prefix, so a developer who exports them for their own runs has the suite
+    reaching the network under their credentials. It still passes, slowly,
+    which is the worst form of it — the cost reads as ordinary slowness rather
+    than as a dependency on one machine's environment.
+
+    Unsetting the endpoint rather than the measure flag is deliberate. It is
+    the same floor `_clear_agent_env` draws, one layer out: `count_tokens`
+    returns None when `vertex_env()` does, so this covers every caller of it
+    rather than the one that happens to be on by default, and it leaves
+    `WORKBENCH_AI_MEASURE_TOKENS` unset as `TestAgentEnvGuard` requires. A test
+    that wants the measured path patches `review.prompt.count_tokens`, which is
+    what the token-telemetry tests already do.
+    """
+    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+    monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+    monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_workbench_config(tmp_path, monkeypatch):
     """Run every test against an empty config root.
 

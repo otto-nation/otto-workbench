@@ -38,6 +38,7 @@ from git.land import CommitStatus
 from pr import thread_replies
 from pr import attribution
 from pr import thread_context
+from pr import fix_state
 from pr import triage
 from pr import triage_prompt
 from pr import triage_round
@@ -1832,7 +1833,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state") as persist, \
+             patch.object(fix_state, "persist") as persist, \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(mock_run, sha="aaa1111")), \
              patch("pr.comments.post_thread_reply", return_value=True), \
@@ -3030,49 +3031,6 @@ class TestResolutionsReachThePersistedTally:
         """The clamp is a floor, not a reason to stay quiet about the mismatch."""
         self._drain(rt, {"new": 1})
         assert "no new left to move" in capsys.readouterr().err
-
-
-class TestFixPassResolutionsReachTheTally:
-    """The fix pass resolves after the counts were saved, same as the drain.
-
-    This is the commoner path of the two: a pass that fixed, pushed, replied and
-    resolved in one run leaves `replies_pending` false, so the drain returns
-    early and never sees those threads. `_persist_fix_state` is where the pass
-    writes its own results, and so where the delta has to land.
-    """
-
-    def _persist(self, rt, by_state, resolved):
-        ctx = make_ctx()
-        state = _make_state(_fix())
-        state.comments.by_state = dict(by_state)
-        with patch("pr.state.load_or_init", return_value=state), \
-             patch("pr.state.save_state") as save:
-            rt._persist_fix_state(_fix(), Path("/wt"), ctx, None,
-                                  resolved=resolved)
-        assert save.called, "the pass must still save what it persisted"
-        return state.comments
-
-    def test_the_pass_moves_what_it_resolved(self, rt):
-        comments = self._persist(
-            rt, {"new": 2, "addressed": 1},
-            [ThreadState.NEW, ThreadState.ADDRESSED],
-        )
-        assert comments.by_state[ThreadState.NEW] == 1
-        assert comments.by_state[ThreadState.ADDRESSED] == 0
-        assert comments.by_state[ThreadState.RESOLVED] == 2
-
-    def test_a_pass_that_resolved_nothing_leaves_the_tally_alone(self, rt):
-        """The default, and the shape of every caller that predates the delta."""
-        assert self._persist(rt, {"new": 2}, []).by_state == {"new": 2}
-
-    def test_omitting_the_argument_is_the_same_as_none_resolved(self, rt):
-        ctx = make_ctx()
-        state = _make_state(_fix())
-        state.comments.by_state = {"new": 2}
-        with patch("pr.state.load_or_init", return_value=state), \
-             patch("pr.state.save_state"):
-            rt._persist_fix_state(_fix(), Path("/wt"), ctx, None)
-        assert state.comments.by_state == {"new": 2}
 
 
 class TestTriageQueueIsRecorded:
@@ -5196,63 +5154,6 @@ class TestAnEntryAndAnOutcomeAreInverses:
         assert entry.to_outcome(FixOutcome.FIXED).outcome is FixOutcome.FIXED
 
 
-class TestTheFixRecordCarriesEveryOutcome:
-    """What the pass persists about each entry, one outcome at a time."""
-
-    def _entry(self, verification):
-        return CommentItem(
-            id="t1", file="f.go", line=10, reviewer="kgn",
-            summary="drop the nil-logger guard",
-            classification="actionable_suggestion",
-            verification=verification, complexity="low", state=ThreadState.NEW,
-        )
-
-    def test_the_record_carries_the_already_addressed_outcome(self, rt):
-        entry = self._entry("already_addressed")
-        record = rt._build_fix_record(
-            {FixOutcome.ALREADY_ADDRESSED: [entry]},
-        )
-        assert len(record.items) == 1
-        assert record.items[0].outcome == FixOutcome.ALREADY_ADDRESSED
-
-    def test_an_outcome_the_caller_did_not_name_records_nothing(self, rt):
-        """The mapping is the whole vocabulary of a call — nothing is implied."""
-        assert rt._build_fix_record({}).items == []
-
-    def test_a_declined_thread_is_recorded_as_declined(self, rt):
-        """Not folded into needs-human: the state file keeps the two apart."""
-        entry = CommentItem(id="t9", reviewer="kgn", reason="premise does not hold")
-        record = rt._build_fix_record({FixOutcome.DECLINED: [entry]})
-        assert record.items[0].outcome == FixOutcome.DECLINED
-        assert record.items[0].reason == "premise does not hold"
-
-    def test_the_reviewer_is_kept_beside_the_record_not_on_it(self, rt):
-        """`ItemOutcome` is every domain's; a login is only the comment pass's."""
-        by_outcome = {FixOutcome.DECLINED: [
-            CommentItem(id="t9", reviewer="kgn"),
-            CommentItem(id="t8"),
-        ]}
-        assert rt._reviewers_for(by_outcome) == {"t9": "kgn"}
-
-    def test_only_fixed_outcomes_carry_the_pass_commit(self, rt):
-        """A deferred thread was not fixed by this commit — or any."""
-        fixed = self._entry("valid")
-        deferred = CommentItem(id="t2", file="b.py", line=2, reviewer="kgn",
-                               summary="too complex")
-        record = rt._build_fix_record({
-            FixOutcome.FIXED: [fixed],
-            FixOutcome.DEFERRED: [deferred],
-        }, commit_sha="deadbee")
-        by_id = {o.id: o.commit_sha for o in record.items}
-        assert by_id == {"t1": "deadbee", "t2": ""}
-
-    def test_no_commit_leaves_the_sha_empty(self, rt):
-        record = rt._build_fix_record(
-            {FixOutcome.FIXED: [self._entry("valid")]}, commit_sha="",
-        )
-        assert record.items[0].commit_sha == ""
-
-
 class TestFixPassHoldsWhenContested:
     """The whole point of the hold, asserted through `_run_comment_fix` itself.
 
@@ -5305,7 +5206,7 @@ class TestFixPassHoldsWhenContested:
              patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(mock_run)), \
              patch("pr.comments.post_thread_reply", return_value=True), \
@@ -5471,7 +5372,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
@@ -5521,7 +5422,7 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
         )
         with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))):
@@ -5563,7 +5464,7 @@ class TestARoundWithNoFixablesRecordsItsCommentItems:
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state") as persist, \
+             patch.object(fix_state, "persist") as persist, \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
@@ -5638,7 +5539,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
@@ -5686,7 +5587,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
         )
         with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(rt, "_persist_fix_state"), \
+             patch.object(fix_state, "persist"), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \

@@ -1884,6 +1884,26 @@ not the same as recording through these types: the review-findings pass
 re-renders the review document from its outcomes rather than writing a record
 at all.
 
+### pr/fix_state.py
+
+Writing what a comment fix pass did into the PR's state file.
+
+`pr.comments_fix` owns the shape — `FixSummary`, its merge rules, its
+rendering. This owns the write: assembling the record out of the round's
+buckets, naming the reviewer behind each entry, and saving both alongside the
+thread-tally delta in one transaction.
+
+Split from `pr.comments_fix` rather than folded into it because the domain and
+its writer answer different questions, and a module that holds both is the
+shape `…-00` rule F-C warns about: a renderer reading a field some other file
+is responsible for keeping current.
+
+**The save is one transaction, deliberately.** The comment tally on disk was
+snapshotted before the pass ran, so it learns of the threads the pass resolved
+only from the delta applied here. A second save would write the fix record
+against a tally that had not moved, and `pr status` would report threads still
+open that GitHub has already closed.
+
 ### pr/history_rewrite.py
 
 Keeping a recorded commit true after the branch is rewritten under it.

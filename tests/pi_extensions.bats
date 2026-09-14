@@ -308,3 +308,89 @@ _run_step_from_worktree() {
     [ -f "${dir}index.ts" ] || [ -f "${dir}index.js" ] || [ -f "${dir}package.json" ]
   done
 }
+
+# ─── sleep-guard ──────────────────────────────────────────────────────────
+# The half of the no-sleep rule that runs under Pi. Its predicate is in
+# detect.ts, which imports nothing, so node can load it directly — index.ts
+# imports the Pi SDK as a value and only resolves inside a session.
+
+# _detects COMMAND — prints true or false for isWaitingSleep(COMMAND).
+_detects() {
+  run node --input-type=module -e "
+    const { isWaitingSleep } = await import('$REPO_ROOT/ai/pi/extensions/sleep-guard/detect.ts');
+    process.stdout.write(String(isWaitingSleep(process.argv[1])));
+  " -- "$1"
+}
+
+@test "sleep-guard: a long sleep waiting on a job is a finding" {
+  _detects 'sleep 295; echo done'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: a short settle before a probe is not" {
+  _detects 'sleep 2; curl -sI localhost:8931'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: a --sleep flag on another command is not" {
+  _detects 'pr ci --wait --sleep 30'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: a long sleep on a later line is a finding" {
+  _detects 'gh pr checks 1257
+sleep 300
+gh pr checks 1257'
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: a long sleep behind a short one is a finding" {
+  # Testing only the first match let a one-token `sleep 2 &&` in front wave the
+  # real wait through. Both guards read the longest sleep, not the first.
+  _detects 'curl -sI localhost:8931; sleep 2 && sleep 300'
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: a sleep inside a heredoc body is not a finding" {
+  # Content being written to a file, not a command being run. Claude's guard
+  # exempts these lines, so this one must too — two guards enforcing one rule
+  # that disagree about a command are worse than either alone.
+  _detects 'cat > /tmp/x/poll.sh <<EOF
+sleep 300
+EOF'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: an indented terminator closes only a <<- heredoc" {
+  # Accepting indentation for a plain << would end the body at a line that
+  # happens to be the marker word and scan the rest of it as commands.
+  _detects 'cat > /tmp/x/poll.sh <<-EOF
+sleep 300
+  EOF
+curl -sI localhost:8931'
+  [ "$output" = false ]
+}
+
+@test "sleep-guard: a zero-padded duration is read as base ten" {
+  # Claude's guard needs a 10# prefix here or the arithmetic aborts on `sleep 08`.
+  # JS parses base ten already; the case is asserted so the two stay comparable.
+  _detects 'sleep 08'
+  [ "$output" = false ]
+  _detects 'sleep 060'
+  [ "$output" = true ]
+}
+
+@test "sleep-guard: the two harnesses share one threshold" {
+  # Claude's hook and this extension enforce the same rule for different
+  # harnesses. Two constants that drift apart are one rule with two meanings, and
+  # nothing else in either tree would report it.
+  local pi_value claude_value
+  pi_value=$(grep -oE 'THRESHOLD_SECONDS = [0-9]+' \
+    "$REPO_ROOT/ai/pi/extensions/sleep-guard/detect.ts" | grep -oE '[0-9]+')
+  claude_value=$(grep -oE '^SLEEP_WAIT_THRESHOLD_SECONDS=[0-9]+' \
+    "$REPO_ROOT/ai/claude/bin/claude-bash-guard" | grep -oE '[0-9]+')
+  [ -n "$pi_value" ]
+  [ -n "$claude_value" ]
+  [ "$pi_value" = "$claude_value" ]
+}

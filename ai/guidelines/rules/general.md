@@ -42,6 +42,15 @@ Reuse ladder — stop at the first rung that solves the problem:
 - When a linter (nesting depth, ShellCheck, errexit, bare-refs) flags a file the current change set touched, fix every violation in that file — not only the one that failed the check. Pre-existing violations in a file we already modified are in scope; violations in files we did not touch are not
 - Never delete or move a spec, plan, doc, or test file to get past a failing pre-push or pre-commit check. Fix the underlying violation, or stop and ask — bypassing the check by removing its input silently discards work
 
+## Waiting on Background Work
+
+- Never run `sleep` to wait for work that reports its own completion — a background job, a CI run, a deploy. `sleep 295` in front of a job that messages you on exit buys nothing: the message arrives on its own schedule either way, and the wait is spent whether the job took ten seconds or the full five minutes. Enforced by `claude-bash-guard` under Claude Code and by the `sleep-guard` extension under Pi, both at ten seconds and up
+- Polling is the same mistake spread over more turns. Re-reading a job's output on a timer costs a tool call each time to learn what the completion message says once, for free
+- After starting background work, do other work or end the turn. Doing nothing is a valid turn, and there is no need to announce the wait
+- To *bound* how long something may run, pass the bound to the call that starts it (`timeout_minutes` on a background job, `timeout` on a foreground command). A bound passed to the call kills the work; a sleep beside it only delays you, and the two drift apart the moment the work runs long
+- A short `sleep` a pipeline genuinely needs — letting a server bind its port before the first request — is not this, and is below the threshold the guards enforce
+- When nothing reports completion, say so rather than guessing a duration from outside. A tool that finishes silently is a gap in the tool, and the fix is to make it report
+
 ## Debugging
 
 On failure, diagnose in this order — do NOT retry with variations:

@@ -895,6 +895,94 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+# ── sleeping to wait ────────────────────────────────────────────────────────
+# Unlike the rules above this one costs wall-clock, not a permission click: a
+# `sleep 295` in front of work that reports its own completion spends five
+# minutes to learn what the report says for free. The threshold is what keeps a
+# real pipeline step — a second letting a server bind its port — out of it.
+
+@test "sleep hook: blocks a long sleep waiting on a background job" {
+  run _run_guard '{"tool_input":{"command":"sleep 295; echo done"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"reports its own completion"* ]]
+}
+
+@test "sleep hook: blocks a sleep exactly at the threshold" {
+  # Also the whole-command case: a lone `sleep 10` is a single statement with no
+  # separator, and the scan drops a final line with no terminator unless the
+  # split adds one — which made every single-statement command invisible.
+  run _run_guard '{"tool_input":{"command":"sleep 10"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "sleep hook: blocks a long sleep behind a short one" {
+  # The bypass a leftmost-match test leaves open: `=~` returns the first match
+  # only, so a one-token `sleep 2 &&` in front waved the real wait through.
+  run _run_guard '{"tool_input":{"command":"curl -sI localhost:8931; sleep 2 && sleep 300"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"300s"* ]]
+}
+
+@test "sleep hook: names the duration it refused" {
+  # The message quotes the number back so the refusal reads as being about this
+  # command rather than about sleeping in general.
+  run _run_guard '{"tool_input":{"command":"sleep 120"}}'
+  [[ "$output" == *"120s"* ]]
+}
+
+@test "sleep hook: blocks a long sleep after another statement" {
+  # Statement-anchored like the rules above it: a leading no-op must not be a
+  # way around the check.
+  run _run_guard '{"tool_input":{"command":"gh pr checks 1257; sleep 60"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "sleep hook: blocks a long sleep on its own line" {
+  run _run_guard '{"tool_input":{"command":"gh pr checks 1257\nsleep 60\ngh pr checks 1257"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "sleep hook: allows a short settle before a probe" {
+  # The case the threshold exists for. This one is still blocked — by the
+  # backgrounding rule, which owns the `&` — so the sleep is tested on its own.
+  run _run_guard '{"tool_input":{"command":"sleep 2; curl -sI localhost:8931"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "sleep hook: reads a zero-padded duration as base ten" {
+  # Bash reads a leading zero as octal, so an unprefixed comparison aborts on
+  # `sleep 08` with "value too great for base" and the command goes through on an
+  # error rather than a decision. Both sides of the threshold are checked, since a
+  # guard that errored would let the blocking case past too.
+  run _run_guard '{"tool_input":{"command":"sleep 08"}}'
+  [ "$status" -eq 0 ]
+  run _run_guard '{"tool_input":{"command":"sleep 060"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "sleep hook: allows a fractional sleep" {
+  # Under the threshold by definition, and the integer match never sees it.
+  run _run_guard '{"tool_input":{"command":"sleep 0.5; curl -sI localhost:8931"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "sleep hook: allows a --sleep flag on another command" {
+  run _run_guard '{"tool_input":{"command":"pr ci --wait --sleep 30"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "sleep hook: allows sleep as a grep pattern" {
+  run _run_guard "{\"tool_input\":{\"command\":\"grep -rn 'sleep 300' bin/local\"}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "sleep hook: allows a sleep inside a heredoc body" {
+  # Content being written to a file, not a command being run — the same
+  # exemption every statement-anchored rule above gets.
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/poll.sh <<EOF\nsleep 300\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
 # ── shell variable expansion ────────────────────────────────────────────────
 # A `$VAR` reference is flagged as "simple_expansion" and prompts every time.
 # This rule reads text stripped of single-quoted spans only: `'$HOME'` is a

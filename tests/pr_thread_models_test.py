@@ -295,7 +295,7 @@ class TestTheEntryCoercesItsVocabulary:
 
 
 class TestTheResultKnowsItsOwnBuckets:
-    """The four dispositions named once, not once per method."""
+    """Each disposition named once, not once per method."""
 
     def test_every_disposition_has_a_bucket(self):
         result = ClassificationResult()

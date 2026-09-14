@@ -34,8 +34,8 @@ from pr import triage_round  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.domains import SupersessionKind  # noqa: E402
 from pr.thread_models import (  # noqa: E402
-    ClassificationResult, CommentItem, PRReport, ReplyOutcome, ReportThread,
-    TriageResult,
+    Classification, ClassificationResult, CommentItem, PRReport, ReplyOutcome,
+    ReportThread, TriageResult, Verification,
 )
 
 
@@ -461,3 +461,83 @@ class TestEveryDispositionCountsAsAccounted:
         threads = ClassificationResult(dismissed=[CommentItem(id="t1")])
         items = ClassificationResult(already_addressed=[CommentItem(id="ic-1")])
         assert threads.ids() | items.ids() == {"t1", "ic-1"}
+
+
+class TestEveryDispositionCopiesTheModelsEntry:
+    """#1289: the buckets used to disagree about this, by object identity.
+
+    Two arms aliased the entry the model produced and four copied it, so
+    `stamp_read_sha` reached the originals for some dispositions and not
+    others — visible in the stdout JSON as a `read_sha` set on some buckets
+    and empty on others. Nothing read it, which is why it went unnoticed.
+
+    One append site is what makes the four agree; this asserts the property
+    that site exists to guarantee.
+    """
+
+    def _entry(self, **kw):
+        base = dict(
+            id="t1", file="f.go", line=10, reviewer="alice", summary="s",
+            classification=Classification.ACTIONABLE_SUGGESTION,
+            state=ThreadState.NEW,
+        )
+        return CommentItem(**(base | kw))
+
+    def test_a_fixable_entry_is_a_copy(self):
+        entry = self._entry(verification=Verification.VALID)
+        assert triage_round.classify_entries([entry]).fixable[0] is not entry
+
+    def test_an_already_addressed_entry_is_a_copy(self):
+        entry = self._entry(verification=Verification.ALREADY_ADDRESSED)
+        result = triage_round.classify_entries([entry])
+        assert result.already_addressed[0] is not entry
+
+    def test_a_dismissed_entry_is_a_copy(self):
+        entry = self._entry(verification=Verification.INVALID)
+        assert triage_round.classify_entries([entry]).dismissed[0] is not entry
+
+    def test_a_needs_human_entry_is_a_copy(self):
+        entry = self._entry(verification=Verification.NEEDS_DISCUSSION)
+        assert triage_round.classify_entries([entry]).needs_human[0] is not entry
+
+    def test_stamping_a_bucket_leaves_the_models_entry_alone(self):
+        """The behaviour the identity assertions are a proxy for."""
+        entries = [
+            self._entry(id="t1", verification=Verification.VALID),
+            self._entry(id="t2", verification=Verification.INVALID),
+        ]
+        result = triage_round.classify_entries(entries)
+        for bucket in (result.fixable, result.dismissed):
+            bucket[0].read_sha = "abc1234"
+        assert [e.read_sha for e in entries] == ["", ""]
+
+
+class TestAnUnroutableEntryIsDroppedAndSaid:
+    """A drop is now stated, where it used to be a branch falling through.
+
+    `approval` and an unrecognised verdict both reach no bucket, which is
+    correct and was also silent. The restructure makes both drop sites one
+    statement, so saying so costs a line.
+    """
+
+    def test_a_non_actionable_classification_is_dropped(self):
+        trail = MagicMock()
+        entries = [CommentItem(
+            id="t1", classification=Classification.APPROVAL, state=ThreadState.NEW,
+        )]
+        assert not triage_round.classify_entries(entries, trail=trail).any_entry
+        trail.info.assert_called_once()
+
+    def test_an_unroutable_verification_is_dropped(self):
+        trail = MagicMock()
+        entries = [CommentItem(
+            id="t1", classification=Classification.ACTIONABLE_SUGGESTION,
+            verification=Verification.UNSET, state=ThreadState.NEW,
+        )]
+        assert not triage_round.classify_entries(entries, trail=trail).any_entry
+        trail.info.assert_called_once()
+
+    def test_a_drop_without_a_trail_is_fine(self):
+        """`trail` is optional everywhere else in this module; keep it so."""
+        entries = [CommentItem(id="t1", classification=Classification.APPROVAL)]
+        assert not triage_round.classify_entries(entries).any_entry

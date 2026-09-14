@@ -7924,6 +7924,7 @@ class TestUnsupportedVerdictDowngrade:
         triage.downgrade_unsupported_verdicts([item], tmp_path)
         assert "reviewer misread the guard" in item.reasoning
         assert "cited no line" in item.reasoning
+        assert "downgraded from invalid" in item.reasoning
 
     def test_cited_verdict_that_exists_in_the_tree_survives(self, tmp_path):
         (tmp_path / "app.py").write_text("x = 1\n")

@@ -350,8 +350,8 @@ class ClassificationResult:
         """Every id this side gave a disposition to.
 
         What `has_unaccounted` is measured against: a thread on the PR that
-        appears under none of every disposition is one this round never
-        reached, and the summary it publishes is partial until someone does.
+        appears under no disposition is one this round never reached, and
+        the summary it publishes is partial until someone does.
         """
         return {e.id for d in Disposition for e in self.bucket(d)}
 

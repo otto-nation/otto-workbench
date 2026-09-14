@@ -1,11 +1,11 @@
 """Matching review-comment text against the workbench's coding rules.
 
-Loads each rule file under `ai/guidelines/rules/` into passages — its bullets,
-table rows and paragraphs — and finds the rule nearest a piece of comment text
-by the best passage either has in common. `extract_keywords` is the vocabulary
-primitive both rule loading and bullet matching are built on — `retro.report`
-reuses it to find which bullet inside a matched rule is closest to the comment
-being annotated.
+Loads each rule file under `ai/guidelines/rules/` into passages — its list
+items, bulleted or numbered, its table rows and its paragraphs — and finds the
+rule nearest a piece of comment text by the best passage either has in common.
+`extract_keywords` is the vocabulary primitive both rule loading and bullet
+matching are built on — `retro.report` reuses it to find which bullet inside a
+matched rule is closest to the comment being annotated.
 
 Scoring is deliberately per-passage, IDF-weighted and normalized, because the
 question the retro asks is whether any rule *covers* a finding, not which rule
@@ -45,11 +45,18 @@ STOP_WORDS = frozenset({
 
 KEYWORD_PATTERN = re.compile(r"[a-z][a-z_-]{2,}")
 
-# A passage opens on its own line: a list item, or a table row. Anything else
-# accumulates into the paragraph being read, and a heading closes one without
-# joining it — a heading shares a comment's words too readily for how little it
-# says, and the passage under it states the rule anyway.
-PASSAGE_START = re.compile(r"^\s*(?:[-*]\s+|\|)")
+# A passage opens on its own line: a list item — bulleted or numbered — or a
+# table row. Anything else accumulates into the paragraph being read, and a
+# heading closes one without joining it — a heading shares a comment's words
+# too readily for how little it says, and the passage under it states the rule
+# anyway.
+#
+# A numbered item counts because a ladder is a list of separate rules, not one
+# rule in several parts: merging "1. Scope clear? … 4. Build" into a paragraph
+# is the whole-file blob this module exists to break up, at list scope. The
+# ordinal is capped at two digits and must be followed by a space, so a decimal
+# (`1.5 seconds`) and a year (`2026. was`) opening a line stay prose.
+PASSAGE_START = re.compile(r"^\s*(?:[-*]\s+|\d{1,2}[.)]\s+|\|)")
 HEADING = re.compile(r"^#{1,6}\s")
 
 # A rule file's frontmatter says which files the rule applies to, not what it
@@ -64,8 +71,8 @@ MIN_PASSAGE_KEYWORDS = 5
 # How much of a passage's meaning a comment has to share before the rule is
 # called its nearest. Below this the best match is the least-bad one rather
 # than a rule about the same subject, and reporting it hides a genuine gap.
-# Calibrated over 1381 real review findings: the median best score is 0.14 and
-# the 90th percentile 0.20, so this admits roughly the top decile.
+# Calibrated over 1410 real review findings: the median best score is 0.12 and
+# the 90th percentile 0.19, so this admits roughly the top decile.
 MIN_MATCH_SCORE = 0.18
 
 # Terms a comment and a passage must literally share, independent of the score.
@@ -87,10 +94,12 @@ def extract_keywords(text: str) -> set[str]:
 def split_passages(content: str) -> list[str]:
     """The self-contained statements `content` is made of.
 
-    A rule file states one rule per bullet or table row, with prose paragraphs
-    between them, so those are the units that can be about a single subject.
-    The whole file is not: it is every subject its section headings cover, and
-    comparing against that union is what let file length decide the match.
+    A rule file states one rule per list item or table row, with prose
+    paragraphs between them, so those are the units that can be about a single
+    subject. The whole file is not: it is every subject its section headings
+    cover, and comparing against that union is what let file length decide the
+    match. Neither is a whole numbered list — a ladder's steps are separate
+    rules, and merging them recreates that union inside one passage.
     """
     passages: list[str] = []
     paragraph: list[str] = []
@@ -114,31 +123,38 @@ def split_passages(content: str) -> list[str]:
     return passages
 
 
+def build_rule(filename: str, content: str) -> dict:
+    """One rule file's text as the dict the scorer and the report read.
+
+    The one place a rule dict is built, so a caller holding rule text that did
+    not come off disk — a test fixture, or a file grown for comparison — gets
+    the same vocabulary, bullets and passages `load_rules` would have given it
+    rather than a hand-copy that drifts the next time this changes.
+    """
+    return {
+        "filename": filename,
+        "keywords": extract_keywords(content),
+        "bullets": [
+            line.strip().removeprefix("- ")
+            for line in content.splitlines()
+            if line.strip().startswith("- ")
+        ],
+        "passages": [
+            kw for kw in map(extract_keywords, split_passages(content))
+            if len(kw) >= MIN_PASSAGE_KEYWORDS
+        ],
+        "content": content,
+    }
+
+
 def load_rules(workbench: Path) -> list[dict]:
     rules_dir = workbench / RULES_REL
     if not rules_dir.exists():
         return []
-    results = []
-    for f in sorted(rules_dir.glob("*.md")):
-        content = f.read_text(encoding="utf-8")
-        keywords = extract_keywords(content)
-        bullets = [
-            line.strip().removeprefix("- ")
-            for line in content.splitlines()
-            if line.strip().startswith("- ")
-        ]
-        passages = [
-            kw for kw in map(extract_keywords, split_passages(content))
-            if len(kw) >= MIN_PASSAGE_KEYWORDS
-        ]
-        results.append({
-            "filename": f.name,
-            "keywords": keywords,
-            "bullets": bullets,
-            "passages": passages,
-            "content": content,
-        })
-    return results
+    return [
+        build_rule(f.name, f.read_text(encoding="utf-8"))
+        for f in sorted(rules_dir.glob("*.md"))
+    ]
 
 
 # ── Scoring ──────────────────────────────────────────────────────────────────
@@ -183,8 +199,13 @@ def term_weights(rules: list[dict]) -> TermWeights:
 
 def passage_similarity(
     comment_keywords: set[str], passage: set[str], weights: TermWeights,
+    shared: set[str] | None = None,
 ) -> float:
     """Weighted cosine similarity of a comment and a rule passage, in [0, 1].
+
+    `shared` is the two sides' common terms where the caller has already had
+    to compute them; it is derived here when omitted, so the call reads the
+    same either way.
 
     Cosine rather than Jaccard: the two texts are of very different lengths —
     a review finding against a one-line rule — and Jaccard puts their union in
@@ -192,10 +213,12 @@ def passage_similarity(
     Dividing by the geometric mean instead means neither side's length alone
     moves the score.
     """
+    if shared is None:
+        shared = comment_keywords & passage
     magnitude = math.sqrt(weights.of(comment_keywords) * weights.of(passage))
     if not magnitude:
         return 0.0
-    return weights.of(comment_keywords & passage) / magnitude
+    return weights.of(shared) / magnitude
 
 
 @dataclass(frozen=True)
@@ -221,18 +244,26 @@ def best_passage_score(
     highly off one uncommon word in common, which is a coincidence rather than
     a subject.
     """
-    return max(
-        (
-            passage_similarity(comment_keywords, passage, weights)
-            for passage in rule["passages"]
-            if len(comment_keywords & passage) >= MIN_SHARED_TERMS
-        ),
-        default=0.0,
-    )
+    best = 0.0
+    for passage in rule["passages"]:
+        shared = comment_keywords & passage
+        if len(shared) < MIN_SHARED_TERMS:
+            continue
+        score = passage_similarity(comment_keywords, passage, weights, shared)
+        if score > best:
+            best = score
+    return best
 
 
-def score_rules(comment_body: str, rules: list[dict]) -> RuleMatch | None:
+def score_rules(
+    comment_body: str, rules: list[dict], weights: TermWeights | None = None,
+) -> RuleMatch | None:
     """The best-scoring rule for `comment_body`, before any quality floor.
+
+    `weights` is the IDF over `rules`, derived here when the caller has none.
+    It depends on the rule set alone, so a caller scoring many comments against
+    one set computes it once with `term_weights` and passes it in rather than
+    paying for the whole pass per comment.
 
     Published alongside `find_nearest_rule` so a caller tuning or reporting on
     match quality can see the score the decision was made on, rather than
@@ -241,7 +272,8 @@ def score_rules(comment_body: str, rules: list[dict]) -> RuleMatch | None:
     comment_keywords = extract_keywords(comment_body)
     if not comment_keywords:
         return None
-    weights = term_weights(rules)
+    if weights is None:
+        weights = term_weights(rules)
     best: RuleMatch | None = None
     for rule in rules:
         score = best_passage_score(comment_keywords, rule, weights)
@@ -250,15 +282,20 @@ def score_rules(comment_body: str, rules: list[dict]) -> RuleMatch | None:
     return best
 
 
-def find_nearest_rule(comment_body: str, rules: list[dict]) -> dict | None:
+def find_nearest_rule(
+    comment_body: str, rules: list[dict], weights: TermWeights | None = None,
+) -> dict | None:
     """The rule `comment_body` is about, or None when no rule covers it.
+
+    `weights` is threaded straight to `score_rules` — a scan calls this once
+    per finding, so the IDF pass belongs outside that loop.
 
     None is the answer the retro is actually after: a finding no rule claims is
     a gap in the rules, and it is the whole output of a scan. A scorer with no
     floor returns the least-bad rule for every comment and so reports no gaps
     at all, which is how this read as healthy while matching nothing topical.
     """
-    best = score_rules(comment_body, rules)
+    best = score_rules(comment_body, rules, weights)
     if best is None or best.score < MIN_MATCH_SCORE:
         return None
     return best.rule

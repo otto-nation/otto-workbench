@@ -20,7 +20,7 @@ from review.document import ReviewDocument
 from review.paths import ReviewEntry, ReviewEntryKind, iter_review_entries
 from review.types import Finding
 from retro.report import best_matching_bullet
-from retro.rules import find_nearest_rule
+from retro.rules import TermWeights, find_nearest_rule, term_weights
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -80,6 +80,7 @@ class RuleMatch:
 def _finding_to_comment(
     finding: Finding, source: str, review_file: Path,
     rules: list[dict], rule_match_counts: dict[str, dict],
+    weights: TermWeights,
 ) -> RuleMatch:
     comment = {
         "author": source,
@@ -90,7 +91,7 @@ def _finding_to_comment(
         "direction": "received",
         "source_file": str(review_file),
     }
-    nearest = find_nearest_rule(comment["body"], rules)
+    nearest = find_nearest_rule(comment["body"], rules, weights)
     if nearest:
         comment["nearest_rule"] = {
             "filename": nearest["filename"],
@@ -117,7 +118,7 @@ class ScannedReview:
 
 def _scan_review_entry(
     entry: ReviewEntry, rules: list[dict],
-    rule_match_counts: dict[str, dict],
+    rule_match_counts: dict[str, dict], weights: TermWeights,
 ) -> ScannedReview | None:
     review_file = entry.review_file
     # A REVIEW-kind entry had its review file when the walk classified it, so a
@@ -139,7 +140,7 @@ def _scan_review_entry(
     comments: list[dict] = []
     for f in findings:
         match = _finding_to_comment(
-            f, source, review_file, rules, rule_match_counts,
+            f, source, review_file, rules, rule_match_counts, weights,
         )
         if not match.matched:
             unmatched += 1
@@ -173,8 +174,16 @@ class LocalReviewScan:
 
 def scan_local_reviews(
     reviews_dir: Path, rules: list[dict], rule_match_counts: dict[str, dict],
+    weights: TermWeights | None = None,
 ) -> LocalReviewScan:
-    """Scan every local review under `reviews_dir` into a `LocalReviewScan`."""
+    """Scan every local review under `reviews_dir` into a `LocalReviewScan`.
+
+    `weights` is the IDF over `rules`, derived here when the caller has none.
+    A caller scanning GitHub comments against the same rule set computes it
+    once and passes it in, so the pass is not repeated per finding.
+    """
+    if weights is None:
+        weights = term_weights(rules)
     local_repos: dict[str, list[dict]] = {}
     consumed_dirs: list[str] = []
     unmatched = 0
@@ -184,7 +193,7 @@ def scan_local_reviews(
             continue
         # `is None`, not truthiness — a `ScannedReview` is always truthy, so a
         # falsy test here would read as a skip that can never fire.
-        scanned = _scan_review_entry(entry, rules, rule_match_counts)
+        scanned = _scan_review_entry(entry, rules, rule_match_counts, weights)
         if scanned is None:
             continue
         unmatched += scanned.unmatched

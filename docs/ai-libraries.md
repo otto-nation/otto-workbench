@@ -3533,12 +3533,12 @@ the exact bullet on the page is `retro.report`'s.
 
 Matching review-comment text against the workbench's coding rules.
 
-Loads each rule file under `ai/guidelines/rules/` into passages — its bullets,
-table rows and paragraphs — and finds the rule nearest a piece of comment text
-by the best passage either has in common. `extract_keywords` is the vocabulary
-primitive both rule loading and bullet matching are built on — `retro.report`
-reuses it to find which bullet inside a matched rule is closest to the comment
-being annotated.
+Loads each rule file under `ai/guidelines/rules/` into passages — its list
+items, bulleted or numbered, its table rows and its paragraphs — and finds the
+rule nearest a piece of comment text by the best passage either has in common.
+`extract_keywords` is the vocabulary primitive both rule loading and bullet
+matching are built on — `retro.report` reuses it to find which bullet inside a
+matched rule is closest to the comment being annotated.
 
 Scoring is deliberately per-passage, IDF-weighted and normalized, because the
 question the retro asks is whether any rule *covers* a finding, not which rule

@@ -7,6 +7,7 @@ longest, and a matcher that always matches reports no gaps — which is the
 entire output `retro-scan` exists to produce.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -14,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from retro.rules import (  # noqa: E402
     MIN_MATCH_SCORE,
-    MIN_PASSAGE_KEYWORDS,
     best_passage_score,
+    build_rule,
     extract_keywords,
     find_nearest_rule,
     load_rules,
@@ -27,8 +28,30 @@ from retro.rules import (  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+# A numbered item whose text opens in bold: what a ladder step looks like in
+# these files, and specific enough that prose quoting "1. " cannot match it.
+NUMBERED_HEADING = re.compile(r"(?:^|\s)\d{1,2}[.)]\s\*\*")
+ORDERED_ITEM = re.compile(r"^\d{1,2}[.)]\s")
+
+
 def _rules():
     return load_rules(REPO_ROOT)
+
+
+def _rule_texts() -> dict[str, str]:
+    """Every rule file's raw text off disk, keyed by filename."""
+    return {
+        p.name: p.read_text(encoding="utf-8")
+        for p in sorted((REPO_ROOT / "ai" / "guidelines" / "rules").glob("*.md"))
+    }
+
+
+def _ordered_items(content: str) -> list[str]:
+    """The numbered list items `content` states, one string each."""
+    return [
+        line.strip() for line in content.splitlines()
+        if ORDERED_ITEM.match(line.strip())
+    ]
 
 
 def _vocab_rank(rules: list[dict]) -> list[str]:
@@ -72,31 +95,26 @@ def _pad_rule(filename: str, padding: str = OFF_TOPIC_PADDING) -> list[dict]:
 
     The padded file ends up with the biggest vocabulary in the set while saying
     nothing it did not already say, so any match it gains it bought with length.
+    Built through `build_rule`, the same constructor `load_rules` uses, so the
+    grown file is a rule the loader could have produced rather than a hand-copy
+    that stops simulating one the next time construction changes.
     """
-    rules = _rules()
-    for rule in rules:
-        if rule["filename"] != filename:
-            continue
-        rule["content"] = rule["content"] + "\n\n" + padding
-        rule["keywords"] = extract_keywords(rule["content"])
-        rule["bullets"] += [
-            line.strip().removeprefix("- ")
-            for line in padding.splitlines()
-            if line.strip().startswith("- ")
-        ]
-        rule["passages"] = [
-            kw
-            for kw in map(extract_keywords, split_passages(rule["content"]))
-            if len(kw) >= MIN_PASSAGE_KEYWORDS
-        ]
-    return rules
+    return [
+        build_rule(rule["filename"], rule["content"] + "\n\n" + padding)
+        if rule["filename"] == filename
+        else rule
+        for rule in _rules()
+    ]
 
 
 # A comment per topic, each written the way a reviewer writes one, paired with
 # the rule file that actually covers it. Deliberately spread across rule files
 # of very different sizes so a size-ranking scorer cannot score well by luck:
-# the expected files rank 6th, 8th, 11th, 13th and 17th by vocabulary size, and
-# not one of them is among the four that took 96% of matches in the field.
+# none of the expected files is among the four that took 96% of matches in the
+# field, and between them they cover both halves of the corpus by vocabulary
+# size. Both properties are asserted below rather than stated here, because a
+# ranking written into a comment goes stale the next time a rule file is
+# edited and nothing re-reads it.
 TOPICAL_COMMENTS = [
     (
         "The API token is hardcoded in the script. Read the secret from the "
@@ -164,6 +182,22 @@ class TestSizeBias:
 
         assert matched
         assert not biggest.intersection(matched)
+
+    def test_the_paired_rules_span_the_size_range_of_the_corpus(self):
+        """What makes the pairings evidence rather than a lucky draw.
+
+        A scorer that ranks by file size can be right about a comment paired
+        with a big file by accident. These pairings are only a test of that if
+        they reach both ends of the size ordering, so the spread is asserted
+        from the corpus rather than described in a comment that cannot drift
+        with it.
+        """
+        by_size = _vocab_rank(_rules())
+        half = len(by_size) // 2
+        ranks = {by_size.index(expected) for _, expected in TOPICAL_COMMENTS}
+
+        assert any(r < half for r in ranks), "none is in the larger half"
+        assert any(r >= half for r in ranks), "none is in the smaller half"
 
     def test_a_rule_is_reachable_from_outside_the_largest_files(self):
         """Every topical comment matches a file outside the top four by size."""
@@ -324,6 +358,61 @@ class TestPassages:
             "- second bullet",
             "| a | b |",
         ]
+
+    def test_an_ordered_list_item_is_its_own_passage(self):
+        """A numbered step states one rule, the same as a bullet does."""
+        content = "1. first step\n2. second step\n3) third step\n"
+        assert split_passages(content) == [
+            "1. first step",
+            "2. second step",
+            "3) third step",
+        ]
+
+    def test_an_indented_ordered_item_is_its_own_passage(self):
+        content = "1. outer step\n   2. nested step\n"
+        assert split_passages(content) == ["1. outer step", "2. nested step"]
+
+    def test_a_number_inside_prose_does_not_open_a_passage(self):
+        """A decimal or a year opening a line is prose, not a list item."""
+        content = (
+            "1.5 seconds is the timeout,\n"
+            "2026. was a typo nobody fixed,\n"
+            "1234. neither is this.\n"
+        )
+        assert split_passages(content) == [
+            "1.5 seconds is the timeout, 2026. was a typo nobody fixed, "
+            "1234. neither is this."
+        ]
+
+    def test_no_passage_merges_two_ordered_list_items(self):
+        """The blob problem at list scope: a ladder is not a single subject.
+
+        `general.md`'s Planning ladder is four distinct rules, and merging
+        them dilutes each one's weight while letting the merged passage match
+        on the union of all four vocabularies — which is the size bias this
+        module exists to remove, reintroduced inside one list.
+        """
+        blobs = [
+            f"{name}: {passage[:70]}"
+            for name, content in _rule_texts().items()
+            for passage in split_passages(content)
+            if len(NUMBERED_HEADING.findall(passage)) > 1
+        ]
+        assert not blobs
+
+    def test_every_ordered_list_item_in_the_corpus_stands_alone(self):
+        """Stated over the real rule files, item by item rather than in bulk."""
+        texts = _rule_texts()
+        merged = [
+            f"{name}: {item[:70]}"
+            for name, content in texts.items()
+            for item in _ordered_items(content)
+            if item not in split_passages(content)
+        ]
+        assert not merged
+        assert sum(
+            len(_ordered_items(c)) for c in texts.values()
+        ), "the rule corpus should hold some ordered list items"
 
     def test_a_heading_closes_a_paragraph_without_joining_it(self):
         content = "first para\n## Heading\nsecond para\n"

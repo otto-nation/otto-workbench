@@ -406,8 +406,9 @@ PY
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
 counts = {r["filename"]: {"matched": 0} for r in rules}
+weights = mod.term_weights(rules)
 comment = {"author": "isaac", "body": "Responding to my own review", "path": None, "line": None}
-status = mod._annotate_comment(comment, "isaac", "isaac", rules, counts)
+status = mod._annotate_comment(comment, "isaac", "isaac", rules, counts, weights)
 print(status)
 PY
 )
@@ -421,8 +422,9 @@ PY
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
 counts = {r["filename"]: {"matched": 0} for r in rules}
+weights = mod.term_weights(rules)
 comment = {"author": "isaac", "body": "This needs more test coverage for general solutions", "path": None, "line": None}
-mod._annotate_comment(comment, "other-dev", "isaac", rules, counts)
+mod._annotate_comment(comment, "other-dev", "isaac", rules, counts, weights)
 print(comment["direction"])
 PY
 )
@@ -436,8 +438,9 @@ PY
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
 counts = {r["filename"]: {"matched": 0} for r in rules}
+weights = mod.term_weights(rules)
 comment = {"author": "reviewer1", "body": "This needs more test coverage for general solutions", "path": None, "line": None}
-mod._annotate_comment(comment, "isaac", "isaac", rules, counts)
+mod._annotate_comment(comment, "isaac", "isaac", rules, counts, weights)
 print(comment["direction"])
 PY
 )
@@ -451,8 +454,9 @@ PY
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
 counts = {r["filename"]: {"matched": 0} for r in rules}
+weights = mod.term_weights(rules)
 comment = {"author": "reviewer1", "body": "This needs more test coverage for general solutions", "path": None, "line": None}
-mod._annotate_comment(comment, "other-dev", "isaac", rules, counts)
+mod._annotate_comment(comment, "other-dev", "isaac", rules, counts, weights)
 print(comment["direction"])
 PY
 )

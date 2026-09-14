@@ -25,7 +25,8 @@ import pytest  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import (  # noqa: E402
-    CommentItem, ReplyOutcome, TrackingResult,
+    Classification, CommentItem, Complexity, ReplyOutcome, TrackingResult,
+    Verification, _coerce_vocab,
 )
 
 
@@ -162,3 +163,81 @@ class TestReplyOutcomeAccumulates:
         first.plus(second)
         assert first.posted == 1 and first.resolved == (ThreadState.NEW,)
         assert second.posted == 1 and second.resolved == (ThreadState.ADDRESSED,)
+
+
+class TestTheVocabularyEnums:
+    """The three fields triage answers in, declared once.
+
+    `UNSET` is not cosmetic: the prompt asks for an empty string where a field
+    does not apply, and two routing behaviours read it.
+    """
+
+    def test_the_values_are_the_strings_that_cross_the_wire(self):
+        assert Classification.ACTIONABLE_SUGGESTION == "actionable_suggestion"
+        assert Verification.ALREADY_ADDRESSED == "already_addressed"
+        assert Complexity.HIGH == "high"
+        assert f"{Verification.INVALID}" == "invalid"
+
+    def test_unset_is_the_empty_string_the_prompt_asks_for(self):
+        assert Classification.UNSET == ""
+        assert Verification.UNSET == ""
+        assert Complexity.UNSET == ""
+
+    def test_a_member_serialises_as_a_bare_json_string(self):
+        """stdout is `json.dump(asdict(...))`, which does not convert enums."""
+        import dataclasses
+        import json
+
+        @dataclasses.dataclass
+        class Holder:
+            v: Verification = Verification.UNSET
+
+        dumped = json.dumps(dataclasses.asdict(Holder(Verification.VALID)))
+        assert dumped == '{"v": "valid"}'
+
+    def test_the_evidence_bearing_verdicts_say_so_themselves(self):
+        """The two verdicts posted back to a reviewer as a claim about code."""
+        assert Verification.ALREADY_ADDRESSED.needs_evidence
+        assert Verification.INVALID.needs_evidence
+        assert not Verification.VALID.needs_evidence
+        assert not Verification.NEEDS_DISCUSSION.needs_evidence
+        assert not Verification.UNSET.needs_evidence
+
+    def test_an_unknown_member_lookup_is_unset(self):
+        """serde constructs with `hint(value)`; `_missing_` is what that call hits."""
+        assert Verification("banana") is Verification.UNSET
+        assert Classification("praise") is Classification.UNSET
+        assert Complexity("huge") is Complexity.UNSET
+
+    def test_serde_keeps_the_rest_of_the_item_when_a_verdict_is_unknown(self):
+        import dataclasses
+        from core import serde
+
+        @dataclasses.dataclass
+        class Holder:
+            id: str = ""
+            verification: Verification = Verification.UNSET
+
+        item = serde.from_dict(Holder, {"id": "t1", "verification": "banana"})
+        assert item.verification is Verification.UNSET
+        assert item.id == "t1"
+
+
+class TestVocabularyCoercion:
+    """An unrecognised verdict must cost its own entry, not the batch."""
+
+    def test_a_known_value_becomes_its_member(self):
+        assert _coerce_vocab(Verification, "invalid") is Verification.INVALID
+
+    def test_a_member_passes_through(self):
+        assert _coerce_vocab(Verification, Verification.VALID) is Verification.VALID
+
+    def test_an_unknown_value_becomes_unset(self):
+        assert _coerce_vocab(Classification, "praise") is Classification.UNSET
+
+    def test_an_empty_value_becomes_unset(self):
+        assert _coerce_vocab(Complexity, "") is Complexity.UNSET
+
+    def test_a_non_string_becomes_unset(self):
+        assert _coerce_vocab(Complexity, 7) is Complexity.UNSET
+        assert _coerce_vocab(Complexity, None) is Complexity.UNSET

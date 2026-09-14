@@ -10,6 +10,7 @@ fix-pass results.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace as dataclass_replace
+from enum import StrEnum
 
 from core import serde
 from pr.comments_state import ThreadState
@@ -17,6 +18,121 @@ from pr.fix import FixOutcome, ItemOutcome, SettledBy
 
 
 # ── Core types ─────────────────────────────────────────────────────────────
+
+
+class Classification(StrEnum):
+    """What kind of thing a reviewer's comment is.
+
+    The vocabulary the triage prompt asks for, owned here so the prompt that
+    names these values and the code that branches on them cannot drift. A
+    `StrEnum` because the stdout report is `json.dump(asdict(...))`, which
+    passes a plain `Enum` through unconverted and raises.
+
+    `UNSET` is what an unrecognised or absent answer becomes. It routes
+    nowhere, which is the same treatment `approval` gets: neither reaches a
+    bucket.
+    """
+
+    ACTIONABLE_SUGGESTION = "actionable_suggestion"
+    QUESTION = "question"
+    APPROVAL = "approval"
+    CONFLICTING = "conflicting"
+    UNSET = ""
+
+    @classmethod
+    def _missing_(cls, value):
+        """The serde-path half of the leniency; `__post_init__` is the other.
+
+        An unrecognised verdict must cost its own entry, not the batch.
+        `from_dict` constructs the field with `hint(value)` and never reaches
+        `__post_init__` if that raises — `_lenient_from_dict` then returns an
+        empty item. Direct construction never asks the enum, so the same
+        unknown still needs the post-init coerce.
+        """
+        return cls.UNSET
+
+
+class Verification(StrEnum):
+    """Whether an actionable suggestion holds, and how it is answered.
+
+    Only asked for when the classification is `actionable_suggestion`; the
+    prompt says to leave it empty otherwise, which is `UNSET`.
+    """
+
+    VALID = "valid"
+    ALREADY_ADDRESSED = "already_addressed"
+    INVALID = "invalid"
+    NEEDS_DISCUSSION = "needs_discussion"
+    UNSET = ""
+
+    @classmethod
+    def _missing_(cls, value):
+        """The serde-path half of the leniency; `__post_init__` is the other.
+
+        An unrecognised verdict must cost its own entry, not the batch.
+        `from_dict` constructs the field with `hint(value)` and never reaches
+        `__post_init__` if that raises — `_lenient_from_dict` then returns an
+        empty item. Direct construction never asks the enum, so the same
+        unknown still needs the post-init coerce.
+        """
+        return cls.UNSET
+
+    @property
+    def needs_evidence(self) -> bool:
+        """Whether this verdict has to cite a line to be posted.
+
+        These two are claims about the reviewer's own code — that it already
+        does what they asked, or that their premise is wrong — and a claim with
+        no line to point at is not one that can be made. `triage` demotes an
+        uncitable one to `NEEDS_DISCUSSION` rather than post it.
+
+        The property lives on the member because it is a fact about the
+        verdict. Held as a tuple beside the function that read it, a new
+        evidence-bearing verdict would be added here and silently not be one.
+        """
+        return self in (Verification.ALREADY_ADDRESSED, Verification.INVALID)
+
+
+class Complexity(StrEnum):
+    """How large a change a valid suggestion asks for.
+
+    Only asked for when the verification is `valid`. `UNSET` is a valid
+    answer and deliberately stays fixable — an entry the model gave no
+    complexity to is not thereby a job for a person.
+    """
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    UNSET = ""
+
+    @classmethod
+    def _missing_(cls, value):
+        """The serde-path half of the leniency; `__post_init__` is the other.
+
+        An unrecognised verdict must cost its own entry, not the batch.
+        `from_dict` constructs the field with `hint(value)` and never reaches
+        `__post_init__` if that raises — `_lenient_from_dict` then returns an
+        empty item. Direct construction never asks the enum, so the same
+        unknown still needs the post-init coerce.
+        """
+        return cls.UNSET
+
+
+def _coerce_vocab(enum_cls, value):
+    """One of `enum_cls`'s members, or its `UNSET`.
+
+    The lenient boundary for the three fields a model fills in. `serde` would
+    reach these through `_coerce_enum`, whose bare `hint(value)` raises on an
+    unknown value — and `_lenient_from_dict` answers a raise by returning an
+    empty `CommentItem`, losing the id and every other field the model got
+    right. A made-up verdict costs its own entry here instead: it becomes
+    `UNSET`, routes to no bucket, and the rest of the batch is untouched.
+    """
+    try:
+        return enum_cls(value)
+    except (ValueError, TypeError):
+        return enum_cls.UNSET
 
 
 @dataclass

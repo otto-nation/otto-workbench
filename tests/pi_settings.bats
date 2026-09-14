@@ -297,10 +297,13 @@ _live() {
 }
 
 @test "the shipped template pins superpowers to a ref" {
-  # Tracking main would take 100 commits a quarter unreviewed, and two of the
+  # Tracking main would take 100 commits a quarter unreviewed, and three of the
   # package's skills are overridden by name from ai/skills/ — a changed upstream
   # contract has to be a decision, not a sync. `sync-settings.jq` identifies
   # entries by source with the ref stripped, so the pin survives reconciliation.
+  #
+  # That the shims record this pin is validate-skills' check, not this one: it
+  # runs on every push rather than only when a path this suite names changes.
   run jq -r '.packages[] | select(startswith("git:github.com/obra/superpowers"))' \
     "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -eq 0 ]
@@ -317,23 +320,7 @@ _live() {
   [ "$status" -eq 0 ]
   [ -f "$REPO_ROOT/ai/skills/using-git-worktrees/SKILL.md" ]
   [ -f "$REPO_ROOT/ai/skills/finishing-a-development-branch/SKILL.md" ]
-}
-
-@test "each shim records the upstream version it was written against" {
-  # The shims are written against a specific upstream contract and their
-  # callers reference them by name, so bumping the pin has to be paired with
-  # re-reading them. Recording the version is what makes that checkable.
-  local pinned
-  pinned=$(jq -r '.packages[] | select(startswith("git:github.com/obra/superpowers"))' \
-    "$REPO_ROOT/ai/pi/settings.json")
-  pinned="${pinned##*@}"
-  [ -n "$pinned" ]
-
-  local skill
-  for skill in using-git-worktrees finishing-a-development-branch; do
-    run grep -q "superpowers $pinned" "$REPO_ROOT/ai/skills/$skill/SKILL.md"
-    [ "$status" -eq 0 ]
-  done
+  [ -f "$REPO_ROOT/ai/skills/writing-skills/SKILL.md" ]
 }
 
 @test "the shipped template filters no superpowers skills" {

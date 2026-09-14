@@ -26,9 +26,12 @@ skip: "Do not use while work is still in progress, or on a branch whose PR is al
      is the gate. A caller's residual findings still reach your human partner
      through that caller's own final message.
 
-     Written against superpowers v6.3.0. When bumping the pin, re-read the
-     upstream skill — executing-plans and subagent-driven-development both hand
-     off to it by name. -->
+     Written against superpowers v6.3.0, which validate-skills holds against
+     the pin in ai/pi/settings.json. When bumping the pin, re-read the upstream
+     skill and update that line — executing-plans and subagent-driven-development
+     both hand off to it by name, and of the three shims this is the one whose
+     callers encode real behaviour (executing-plans calls it a REQUIRED SUB-SKILL
+     and names "verify tests, present options, execute choice"). -->
 
 # Finishing a Development Branch
 

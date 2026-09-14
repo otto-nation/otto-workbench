@@ -9,6 +9,33 @@ version: "3"
 
 env:
   TASKFILE_DIR: '{{.TASKFILE_DIR}}'
+  # The checkout whose libraries these tasks load. Defaults to the Taskfile's
+  # own directory, which through the ~/.config/task symlink is always main/ —
+  # so a change to lib/ai/*.sh cannot be exercised from the branch that makes
+  # it unless the run pins this:
+  #
+  #   task --global WORKBENCH_LIB_DIR=/path/to/worktree commit
+  #
+  # It pins the checkout root, not lib/ alone: lib/ai/core.sh derives
+  # WORKBENCH_ROOT from the same value, so ai/lib/git/push.py and
+  # lib/config_cli.py come from the tree that owns the shell libs calling them.
+  # Pinning only the source lines would load a branch's core.sh over main's
+  # conventions.sh and compact_diff.sh, which is a build neither tree has.
+  #
+  # REPO_DIR is unrelated and unchanged — it sets the working directory, so git
+  # runs against the intended worktree. This sets where the code comes from.
+  #
+  # Unset takes the first exit and stats nothing, leaving the default path
+  # exactly as it was before this entry existed. An override is checked because
+  # one left behind in an environment must not quietly route a PR through
+  # library code nobody reviewed.
+  WORKBENCH_LIB_DIR:
+    sh: >-
+      d='{{.WORKBENCH_LIB_DIR | default ""}}';
+      [ -n "$d" ] || { printf %s '{{.TASKFILE_DIR}}'; exit 0; };
+      case "$d" in /*) ;; *) echo "WORKBENCH_LIB_DIR must be an absolute path: $d" >&2; exit 1;; esac;
+      [ -f "$d/lib/ai/core.sh" ] || { echo "WORKBENCH_LIB_DIR does not contain lib/ai/core.sh: $d" >&2; exit 1; };
+      printf %s "$d"
 
 tasks:
   # ============================================================================
@@ -75,9 +102,9 @@ tasks:
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/commit.sh"
         load_ai_command || exit 1
 
         # Auto-heal: core.hooksPath=/dev/null silently disables all git hooks
@@ -124,9 +151,9 @@ tasks:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/commit.sh"
         load_ai_command || exit 1
 
         # CLI_ARGS contains everything after "--"; strip whitespace so empty args become HEAD
@@ -225,9 +252,9 @@ tasks:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
         load_pr "$_CLI_ARGS" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
@@ -249,9 +276,9 @@ tasks:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
         load_pr "$_CLI_ARGS" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
@@ -287,9 +314,9 @@ tasks:
       _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
         load_pr "$_CLI_ARGS" || exit 1
 
         echo "→ Checking for existing PR..."
@@ -332,9 +359,9 @@ tasks:
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/review.sh"
         load_ai_command || exit 1
 
         STAGED=$(git diff --cached --no-color)
@@ -371,9 +398,9 @@ tasks:
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
-        . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
+        . "$WORKBENCH_LIB_DIR/lib/ai/review.sh"
         load_ai_command || exit 1
         load_gh_token || exit 1
 

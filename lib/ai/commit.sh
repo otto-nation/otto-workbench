@@ -17,7 +17,7 @@
 if [ -n "${BASH_SOURCE:-}" ]; then
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compact_diff.sh"
 else
-  . "${TASKFILE_DIR:?commit.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai/compact_diff.sh"
+  . "${WORKBENCH_LIB_DIR:-${TASKFILE_DIR:?commit.sh requires BASH_SOURCE, WORKBENCH_LIB_DIR, or TASKFILE_DIR}}/lib/ai/compact_diff.sh"
 fi
 
 # find_commitlint_config

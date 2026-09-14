@@ -18,7 +18,11 @@
 # Git convention constants (COMMIT_TYPES, COMMIT_HEADER_MAX_LEN, COMMIT_BODY_MAX_LEN)
 # are defined in lib/conventions.sh — sourced here so AI automation inherits them.
 # When sourced from bash (bin scripts), BASH_SOURCE resolves the path.
-# When sourced from sh (Taskfile tasks), TASKFILE_DIR is set by go-task.
+# When sourced from sh (Taskfile tasks), the root is WORKBENCH_LIB_DIR when the
+# run pinned one and TASKFILE_DIR otherwise — both are set by go-task. Only this
+# branch honours the pin: BASH_SOURCE names the file actually being read, and a
+# stale WORKBENCH_LIB_DIR must never make a bash caller resolve its siblings out
+# of a different checkout than the one it just loaded.
 #
 # Both branches resolve to a physical path, because the installed Taskfile is a
 # symlink farm: `~/.config/task` holds a `lib` link into the checkout and nothing
@@ -28,10 +32,13 @@
 if [ -n "${BASH_SOURCE:-}" ]; then
   _ai_core_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 else
-  _ai_core_dir="$(cd "${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai" && pwd -P)" || {
-    echo "lib/ai/core.sh: cannot resolve TASKFILE_DIR/lib/ai (TASKFILE_DIR=${TASKFILE_DIR:-})" >&2
+  _ai_lib_root="${WORKBENCH_LIB_DIR:-${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE, WORKBENCH_LIB_DIR, or TASKFILE_DIR}}"
+  _ai_core_dir="$(cd "$_ai_lib_root/lib/ai" && pwd -P)" || {
+    echo "lib/ai/core.sh: cannot resolve $_ai_lib_root/lib/ai (WORKBENCH_LIB_DIR=${WORKBENCH_LIB_DIR:-}, TASKFILE_DIR=${TASKFILE_DIR:-})" >&2
+    unset _ai_lib_root
     return 1
   }
+  unset _ai_lib_root
 fi
 # shellcheck source=/dev/null
 . "$(dirname "$_ai_core_dir")/conventions.sh"

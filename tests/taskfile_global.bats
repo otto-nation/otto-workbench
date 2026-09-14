@@ -78,15 +78,100 @@ teardown() {
   [ -f "$output/ai/lib/git/push.py" ]
 }
 
-# ─── All tasks source core.sh with TASKFILE_DIR template ────────────────────
+# ─── All lib/ai sourcing goes through the pin ────────────────────────────────
 
-@test "all task cmds that source core.sh use TASKFILE_DIR template variable" {
-  # Every `. "{{.TASKFILE_DIR}}/lib/ai/core.sh"` must use the template var,
-  # not a hardcoded path — otherwise go-task won't resolve it.
-  local core_sources
-  core_sources=$(grep -c '{{\.TASKFILE_DIR}}/lib/ai/core\.sh' "$REPO_ROOT/Taskfile.global.yml")
-  local raw_sources
-  raw_sources=$(grep -c 'lib/ai/core\.sh' "$REPO_ROOT/Taskfile.global.yml")
-  # Every reference to core.sh should go through the template variable
-  [ "$core_sources" -eq "$raw_sources" ]
+@test "every lib/ai source line in a task body goes through \$WORKBENCH_LIB_DIR" {
+  # Supersedes a count of '{{.TASKFILE_DIR}}/lib/ai/core.sh' lines against a
+  # count of 'lib/ai/core.sh' lines. The property is the same one — no source
+  # line escapes the indirection — but asserted over every lib/ai module
+  # rather than core.sh alone, because a hardcoded path on any one of them
+  # pins that module to the installed checkout while its siblings follow
+  # WORKBENCH_LIB_DIR, and a branch's core.sh over main's compact_diff.sh is a
+  # build neither tree has.
+  #
+  # yq over the task bodies, not grep over the raw YAML: the env entry that
+  # validates the pin names lib/ai/core.sh twice and is not a source line, so
+  # any count taken over the whole file now measures the guard as well.
+  local bad
+  bad=$(yq -r '.tasks[].cmds[]' "$REPO_ROOT/Taskfile.global.yml" \
+    | grep -E '^[[:space:]]*\.[[:space:]]' \
+    | grep '/lib/ai/' \
+    | grep -v '^[[:space:]]*\. "\$WORKBENCH_LIB_DIR/lib/ai/') || true
+  [ -z "$bad" ]
+}
+
+@test "the global Taskfile still sources lib/ai through the pin" {
+  # Vacuity guard for the test above: a yq path that stopped matching, or a
+  # grep that stopped selecting, would let it pass having examined nothing.
+  local n
+  n=$(yq -r '.tasks[].cmds[]' "$REPO_ROOT/Taskfile.global.yml" \
+    | grep -c '^[[:space:]]*\. "\$WORKBENCH_LIB_DIR/lib/ai/') || true
+  [ "$n" -gt 0 ]
+}
+
+# ─── WORKBENCH_LIB_DIR — opt-in library pin ──────────────────────────────────
+
+@test "Taskfile.global.yml defaults WORKBENCH_LIB_DIR to TASKFILE_DIR" {
+  local script
+  script=$(yq '.env.WORKBENCH_LIB_DIR.sh' "$REPO_ROOT/Taskfile.global.yml")
+  [[ "$script" == *'{{.TASKFILE_DIR}}'* ]]
+  [[ "$script" == *'lib/ai/core.sh'* ]]
+}
+
+@test "core.sh prefers WORKBENCH_LIB_DIR over TASKFILE_DIR" {
+  # dash for the same reason as the test above: /bin/sh is bash on macOS and
+  # would take the BASH_SOURCE branch, which deliberately ignores the pin.
+  # TASKFILE_DIR is pointed somewhere unusable, so a WORKBENCH_ROOT that still
+  # reaches ai/ proves the pin was the value that resolved it.
+  local fake_task_dir
+  fake_task_dir=$(make_fake_task_dir "$REPO_ROOT")
+
+  run dash -c "TASKFILE_DIR='/nonexistent' WORKBENCH_LIB_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
+  [ "$status" -eq 0 ]
+  [ -f "$output/ai/lib/git/push.py" ]
+}
+
+@test "core.sh falls back to TASKFILE_DIR when WORKBENCH_LIB_DIR is unset" {
+  # The default path, asserted directly: an unset pin must resolve exactly what
+  # TASKFILE_DIR resolved before the variable existed.
+  local fake_task_dir
+  fake_task_dir=$(make_fake_task_dir "$REPO_ROOT")
+
+  run dash -c "unset WORKBENCH_LIB_DIR; TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
+  [ "$status" -eq 0 ]
+  [ -f "$output/ai/lib/git/push.py" ]
+}
+
+@test "core.sh ignores WORKBENCH_LIB_DIR when BASH_SOURCE resolves the path" {
+  # A stale pin in an interactive environment must not redirect a bash caller
+  # away from the file it just sourced.
+  run bash -c "WORKBENCH_LIB_DIR='/nonexistent' . '$REPO_ROOT/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
+  [ "$status" -eq 0 ]
+  [ "$output" = "$REPO_ROOT" ]
+}
+
+@test "commit.sh and review.sh honour the same pin as core.sh" {
+  # Neither has a runnable test for its fallback branch: compact_diff.sh uses
+  # `local chunks=()`, which dash cannot parse, and bash always sets
+  # BASH_SOURCE — so that branch only ever executes under go-task's shell.
+  # A textual assertion is the honest cover, and it catches the regression
+  # that matters: a module left on TASKFILE_DIR while core.sh follows the pin.
+  grep -q '${WORKBENCH_LIB_DIR:-${TASKFILE_DIR' "$REPO_ROOT/lib/ai/commit.sh"
+  grep -q '${WORKBENCH_LIB_DIR:-${TASKFILE_DIR' "$REPO_ROOT/lib/ai/review.sh"
+}
+
+@test "a bogus WORKBENCH_LIB_DIR fails the task by name" {
+  command -v task >/dev/null 2>&1 || skip "task not installed"
+  run task --taskfile "$REPO_ROOT/Taskfile.global.yml" \
+    "WORKBENCH_LIB_DIR=$BATS_TEST_TMPDIR/nope" commit
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"WORKBENCH_LIB_DIR"* ]]
+}
+
+@test "a relative WORKBENCH_LIB_DIR is refused" {
+  command -v task >/dev/null 2>&1 || skip "task not installed"
+  run task --taskfile "$REPO_ROOT/Taskfile.global.yml" \
+    "WORKBENCH_LIB_DIR=relative/path" commit
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"absolute path"* ]]
 }

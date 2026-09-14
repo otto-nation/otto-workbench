@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 437 -->
+<!-- doc-budget: 458 -->
 
 # AI Automation
 
@@ -328,6 +328,27 @@ A related hazard exists one level down, for the AI subprocess rather than the
 shell task: a backend CLI inherits the launching process's working directory
 unless it is told otherwise. Every `ai_backend` entry point therefore takes a
 required `cwd` — see [`agent/backend.py`](ai-libraries.md#agentbackendpy).
+
+### Running a branch's own libraries
+
+`REPO_DIR` sets the working directory. It does not change where the task's
+libraries come from — that is the Taskfile's own directory, which through the
+`~/.config/task` symlink is always `main/`. A change to `lib/ai/*.sh` therefore
+runs `main`'s copy unless the run pins `WORKBENCH_LIB_DIR` at the worktree:
+
+```bash
+task --global WORKBENCH_LIB_DIR=/path/to/worktree REPO_DIR=/path/to/worktree commit
+```
+
+Both are go-task variables, written after `--global` — not a `VAR=value` shell
+prefix, which `claude-bash-guard` blocks.
+
+It pins the checkout root rather than `lib/` alone, so `ai/lib/git/push.py` and
+`lib/config_cli.py` come from the same tree as the shell libraries calling them.
+Unset, nothing is resolved differently than before the variable existed. Set, it
+must be absolute and contain `lib/ai/core.sh`, or the task fails naming the
+variable — one left behind in an environment must not quietly route a PR through
+library code nobody reviewed.
 
 ### How `pr` decides what a bare token is
 

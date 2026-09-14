@@ -369,11 +369,10 @@ if [[ -f "$GIT_OPS_RULE" ]]; then
 fi
 
 # A skill that displaces a superpowers skill by name was written against one
-# version of what it displaces, and upstream keeps moving — each of the three
-# displaced skills had accumulated double-digit commits by the time the pin was
-# first set. Bumping the pin without re-reading them leaves a shim answering a
-# question upstream no longer asks, and nothing about the override stops working
-# to say so — the name still wins, it just wins for a contract that changed.
+# version of what it displaces, and upstream keeps moving under it. Bumping the
+# pin without re-reading them leaves a shim answering a question upstream no
+# longer asks, and nothing about the override stops working to say so — the name
+# still wins, it just wins for a contract that changed.
 #
 # Recording the version in the shim is what makes the re-read checkable, and
 # holding it against the pin is what makes skipping the re-read loud. The pin is

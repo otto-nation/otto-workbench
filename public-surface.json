@@ -35,6 +35,7 @@
     "config:agent.phases=ci_fix",
     "config:agent.phases=comments_fix",
     "config:agent.phases=comments_triage",
+    "config:agent.phases=comments_verify",
     "config:agent.phases=describe",
     "config:agent.phases=disprove",
     "config:agent.phases=fix",

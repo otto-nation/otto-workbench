@@ -292,7 +292,7 @@ prevent.
 | `SYMLINK_MODE=no-prompt` | `bin/otto-workbench sync` | Skips the interactive overwrite prompt in `install_symlink` — real files at the target path are warned about and skipped instead of prompting |
 | `NO_COLOR` | shell environment | Disables all ANSI color output from `lib/ui.sh` helpers (follows [no-color.org](https://no-color.org)) |
 | `WORKBENCH_DIR` | auto-derived or caller | Override the repo root; set by `install.sh` and auto-derived from `lib/constants.sh` otherwise |
-| `WORKBENCH_LIB_DIR` | `task --global` variable | Pins the checkout whose `lib/ai/` and `ai/lib/` the global tasks load, so a change to them can be exercised from the branch that makes it. Defaults to the Taskfile's own directory (always `main/`). Must be absolute and contain `lib/ai/core.sh`, or the task fails before running |
+| `WORKBENCH_LIB_DIR` | `task --global` variable | Pins the checkout whose `lib/ai/` and `ai/lib/` the global tasks load, so a change to them can be exercised from the branch that makes it. Defaults to the Taskfile's own directory (always `main/`). Must be absolute and contain every path those tasks reach (`lib/ai/core.sh`, `lib/conventions.sh`, `ai/lib/git/push.py`, `lib/config_cli.py`), or the task fails before running, naming the missing one. Checked by the `_lib-dir-guard` task the library-loading tasks depend on, so tasks that load no library are unaffected |
 
 ## Versioning & breaking changes
 

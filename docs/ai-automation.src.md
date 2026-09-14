@@ -341,14 +341,14 @@ task --global WORKBENCH_LIB_DIR=/path/to/worktree REPO_DIR=/path/to/worktree com
 ```
 
 Both are go-task variables, written after `--global` — not a `VAR=value` shell
-prefix, which `claude-bash-guard` blocks.
-
-It pins the checkout root rather than `lib/` alone, so `ai/lib/git/push.py` and
-`lib/config_cli.py` come from the same tree as the shell libraries calling them.
-Unset, nothing is resolved differently than before the variable existed. Set, it
-must be absolute and contain `lib/ai/core.sh`, or the task fails naming the
-variable — one left behind in an environment must not quietly route a PR through
-library code nobody reviewed.
+prefix, which `claude-bash-guard` blocks. It pins the checkout root rather than
+`lib/` alone, so `ai/lib/git/push.py` and `lib/config_cli.py` come from the same
+tree as the shell libraries calling them. Unset, nothing resolves differently
+than before. Set, `_lib-dir-guard` — in `deps:` on every task that sources
+`lib/ai` and on none that does not — requires it to be absolute and to hold each
+of the four paths those tasks reach, so a partial checkout is refused by the
+missing path's name, not by a later `python3` failure naming nothing. The value
+reaches the guard through the environment, never spliced into script text.
 
 ### How `pr` decides what a bare token is
 

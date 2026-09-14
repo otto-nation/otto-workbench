@@ -301,16 +301,11 @@ class Disposition(StrEnum):
     ALREADY_ADDRESSED = "already_addressed"
 
 
-def _empty_disposition_buckets() -> dict[Disposition, list[CommentItem]]:
-    """A fresh list per member. Not `dict.fromkeys` — that shares one list."""
-    return {d: [] for d in Disposition}
-
-
 @dataclass
 class ClassificationResult:
     """What one side of triage decided about each entry it was given.
 
-    The four dispositions the fix pass routes on, ahead of the agent: what it
+    Every disposition the fix pass routes on, ahead of the agent: what it
     will be asked to fix, what a person has to answer, what does not hold, and
     what the code already does. They are not `FixOutcome`s and must not be
     confused for them — `fixable` is a question the agent has yet to answer,
@@ -326,65 +321,39 @@ class ClassificationResult:
     them alike.
     """
 
-    _buckets: dict[Disposition, list[CommentItem]] = field(
-        default_factory=_empty_disposition_buckets, init=False, repr=False,
-    )
-
-    def __init__(self, **named: list[CommentItem]) -> None:
-        unknown = named.keys() - {d.value for d in Disposition}
-        if unknown:
-            extra = ", ".join(sorted(unknown))
-            raise TypeError(
-                f"ClassificationResult() got unexpected keyword argument(s): {extra}"
-            )
-        self._buckets = _empty_disposition_buckets()
-        for d in Disposition:
-            supplied = named.get(d.value)
-            if supplied is not None:
-                self._buckets[d] = supplied
+    fixable: list[CommentItem] = field(default_factory=list)
+    needs_human: list[CommentItem] = field(default_factory=list)
+    dismissed: list[CommentItem] = field(default_factory=list)
+    already_addressed: list[CommentItem] = field(default_factory=list)
 
     def bucket(self, disposition: Disposition) -> list[CommentItem]:
         """The entries filed under one disposition.
 
         A `Disposition` is not a `FixOutcome`. `FIXABLE` is a question the
         agent has yet to answer; `TrackingResult.bucket` is the same verb on
-        the container keyed by what came back.
+        the container keyed by what came back. Appending to what this returns
+        files the entry; `TrackingResult.bucket` does not work that way — it
+        returns a throwaway list on a miss, and writing goes through `add()`.
+
+        Each `Disposition` value must equal a field name on this class;
+        `getattr(self, disposition.value)` is the lookup. The drift test on
+        `ClassificationResult` guards that coupling.
         """
-        return self._buckets[disposition]
-
-    @property
-    def fixable(self) -> list[CommentItem]:
-        return self.bucket(Disposition.FIXABLE)
-
-    @property
-    def needs_human(self) -> list[CommentItem]:
-        return self.bucket(Disposition.NEEDS_HUMAN)
-
-    @property
-    def dismissed(self) -> list[CommentItem]:
-        return self.bucket(Disposition.DISMISSED)
-
-    @property
-    def already_addressed(self) -> list[CommentItem]:
-        return self.bucket(Disposition.ALREADY_ADDRESSED)
+        return getattr(self, disposition.value)
 
     @property
     def any_entry(self) -> bool:
         """Whether triage put anything at all in this side's buckets."""
-        return any(self._buckets.values())
+        return any(self.bucket(d) for d in Disposition)
 
     def ids(self) -> set[str]:
         """Every id this side gave a disposition to.
 
         What `has_unaccounted` is measured against: a thread on the PR that
-        appears in none of the four buckets is one this round never reached,
-        and the summary it publishes is partial until someone does.
+        appears under none of every disposition is one this round never
+        reached, and the summary it publishes is partial until someone does.
         """
-        return {
-            entry.id
-            for bucket in self._buckets.values()
-            for entry in bucket
-        }
+        return {e.id for d in Disposition for e in self.bucket(d)}
 
 
 # ── Fix tracking types ────────────────────────────────────────────────────

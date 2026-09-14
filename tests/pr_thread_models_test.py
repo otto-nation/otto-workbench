@@ -12,6 +12,7 @@ happens to an id neither side knows, and which verdicts get a reason invented
 for them when the agent gave none.
 """
 
+import dataclasses
 import sys
 
 from conftest import REPO_ROOT
@@ -326,3 +327,16 @@ class TestTheResultKnowsItsOwnBuckets:
         a.bucket(Disposition.FIXABLE).append(CommentItem(id="t1"))
         assert b.bucket(Disposition.FIXABLE) == []
         assert a.fixable is not b.fixable
+
+    def test_every_disposition_value_is_a_field(self):
+        assert {d.value for d in Disposition} <= {
+            f.name for f in dataclasses.fields(ClassificationResult)
+        }
+
+    def test_replace_preserves_bucket_contents(self):
+        entry = CommentItem(id="t1")
+        original = ClassificationResult(fixable=[entry])
+        copied = dataclasses.replace(original)
+        assert copied.fixable == [entry]
+        assert "t1" in repr(original)
+        assert repr(original) != "ClassificationResult()"

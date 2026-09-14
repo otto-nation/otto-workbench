@@ -618,17 +618,17 @@ def run(
     ]
     max_turns = max((b.max_turns for b in results), default=0)
 
-    settled = _settle(
-        adapter, results, {item.id: item for item in items}, max_turns, trail,
-    )
+    # The items as the domain rendered them, which both the retry and the gate
+    # key back into: one asks for the item behind a deferred id, the other for
+    # the reviewer's own words behind a fixed one.
+    by_id = {item.id: item for item in items}
+
+    settled = _settle(adapter, results, by_id, max_turns, trail)
 
     # Before the scope is read and before anything is committed: a fix the gate
     # falsifies must not reach `landing` as a fix, or the commit and the record
     # would disagree about what the pass did.
-    _verify(
-        settled.outcomes, verify, adapter,
-        {item.id: item for item in items}, trail,
-    )
+    _verify(settled.outcomes, verify, adapter, by_id, trail)
 
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.

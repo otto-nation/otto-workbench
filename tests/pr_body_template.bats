@@ -115,6 +115,45 @@ no template here"
   [[ "$output" == *"does not use this repo's template"* ]]
 }
 
+@test "a refused body stops the task instead of opening an empty PR" {
+  # The refusal is only worth having if a caller acts on it. Every `task pr:*`
+  # target calls `generate_pr_content` unguarded at first, so the non-zero
+  # return printed an error and the script carried on to `create_pr` with
+  # `PR_TITLE` and `PR_DESCRIPTION` never assigned — an empty PR, opened after
+  # an error message saying it would not be.
+  local script
+  script=$(awk '/^  pr:create:/{f=1} /^  pr:update:/{f=0} f' \
+    "$REPO_ROOT/Taskfile.global.yml")
+  [[ "$script" == *'generate_pr_content "$BRANCH" "$TARGET_BASE" || exit 1'* ]]
+}
+
+@test "every pr target guards the call, not just the one that opens a PR" {
+  # `pr:content` prints what would be posted and `pr:update` replaces a live
+  # body; both take the same override flags and owe the same refusal.
+  local unguarded
+  unguarded=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE"$' \
+    "$REPO_ROOT/Taskfile.global.yml" || true)
+  [ "$unguarded" -eq 0 ]
+}
+
+@test "the refused body leaves no title or description behind" {
+  # What the unguarded caller went on to use. Asserted directly so the failure
+  # reads as "empty PR" rather than as a missing `|| exit 1`.
+  PR_TITLE=""
+  PR_DESCRIPTION=""
+  PR_TITLE_OVERRIDE="fix: thing"
+  PR_BODY_OVERRIDE="## Summary
+
+off template"
+
+  run generate_pr_content "isaac/fix/thing" "main"
+  [ "$status" -eq 1 ]
+
+  generate_pr_content "isaac/fix/thing" "main" || true
+  [ -z "$PR_TITLE" ]
+  [ -z "$PR_DESCRIPTION" ]
+}
+
 @test "generate_pr_content accepts a conforming body override without calling AI" {
   PR_TITLE_OVERRIDE="fix: thing"
   PR_BODY_OVERRIDE="## What

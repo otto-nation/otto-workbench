@@ -232,7 +232,7 @@ tasks:
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$TARGET_BASE"
+        generate_pr_content "$BRANCH" "$TARGET_BASE" || exit 1
         echo "✓ Content ready"
         echo ""
         echo "→ PR Title:"
@@ -270,7 +270,7 @@ tasks:
         push_branch "$BRANCH" || exit 1
 
         echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$TARGET_BASE"
+        generate_pr_content "$BRANCH" "$TARGET_BASE" || exit 1
         echo "✓ Content ready"
         echo "→ Creating PR..."
 
@@ -310,7 +310,7 @@ tasks:
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$TARGET_BASE"
+        generate_pr_content "$BRANCH" "$TARGET_BASE" || exit 1
 
         # The regenerated body replaces the published one wholesale, so a
         # closing reference already on the PR would be dropped here — and

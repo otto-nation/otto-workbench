@@ -508,7 +508,10 @@ _pr_check_body_against_template() {
   local missing="" header
   while IFS= read -r header; do
     [ -n "$header" ] || continue
-    if ! echo "$body" | grep -qF -- "$header"; then
+    # A literal substring test, not a pattern one: `$header` is the right-hand
+    # side of `==` and would be read as a glob, so it is quoted. This is what
+    # `grep -qF` was doing, without two forks per header.
+    if [[ "$body" != *"$header"* ]]; then
       missing+="  $header"$'\n'
     fi
   done <<< "$(_pr_template_headers)"

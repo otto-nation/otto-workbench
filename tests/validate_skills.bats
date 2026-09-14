@@ -621,8 +621,11 @@ _make_protocol_tables() {
 # _make_shim NAME PIN RECORDED — a skill carrying the override marker, with the
 # pin written into ai/pi/settings.json and RECORDED into the shim's header.
 # RECORDED may be empty, for a shim that records no version at all.
+# The override comment goes between the frontmatter and the first heading, where
+# every real shim carries it — the check reads the header, not the whole file.
 _make_shim() {
   local name="$1" pin="$2" recorded="${3:-}"
+  local dir="$FAKE_WORKBENCH/ai/skills/$name"
   _make_skill "$name"
 
   mkdir -p "$FAKE_WORKBENCH/ai/pi"
@@ -634,11 +637,19 @@ _make_shim() {
 }
 JSON
 
-  {
-    echo ""
-    echo "<!-- Overrides superpowers:$name, which does it the upstream way."
-    [[ -n "$recorded" ]] && echo "     Written against superpowers $recorded. -->" || echo "     -->"
-  } >> "$FAKE_WORKBENCH/ai/skills/$name/SKILL.md"
+  local version_line="     -->"
+  [[ -n "$recorded" ]] && version_line="     Written against superpowers $recorded. -->"
+
+  # Insert above the `# NAME` heading _make_skill wrote. awk rather than sed:
+  # BSD sed rejects a literal newline in a substitution replacement.
+  local tmp="$dir/SKILL.md.tmp"
+  awk -v heading="# $name" \
+      -v open="<!-- Overrides superpowers:$name, which does it the upstream way." \
+      -v version="$version_line" '
+    $0 == heading && !done { print open; print version; print ""; done = 1 }
+    { print }
+  ' "$dir/SKILL.md" > "$tmp"
+  mv "$tmp" "$dir/SKILL.md"
 }
 
 @test "a shim recording the pinned version passes" {
@@ -713,4 +724,20 @@ JSON
   _run_validate --quiet
   [ "$status" -eq 1 ]
   [[ "$output" == *"pins v6.3.0"* ]]
+}
+
+@test "a version quoted in the body does not stand in for the header" {
+  # Only the header is searched. Body prose discussing another version must not
+  # satisfy the check for a header that was never updated.
+  _make_shim using-git-worktrees v6.4.0 v6.3.0
+  cat >> "$FAKE_WORKBENCH/ai/skills/using-git-worktrees/SKILL.md" <<'BODY'
+
+# Using Git Worktrees
+
+Written against superpowers v6.4.0 is the kind of line a migration note carries.
+BODY
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"written against superpowers v6.3.0"* ]]
 }

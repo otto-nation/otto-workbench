@@ -15,7 +15,7 @@
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
 #   - every non-programmatic agent has a matching agent-backed skill
 #   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/CLAUDE.md's
-#   - flagged `task … pr:create` invocations match git-operations.md's
+#   - flagged `task ... pr:create` invocations match git-operations.md's
 #   - every superpowers shim records the version ai/pi/settings.json pins
 #
 # Exit code: 0 if all checks pass (or no skills found), 1 if any fail.
@@ -369,11 +369,11 @@ if [[ -f "$GIT_OPS_RULE" ]]; then
 fi
 
 # A skill that displaces a superpowers skill by name was written against one
-# version of what it displaces, and upstream keeps moving: the displaced skills
-# carry 9, 12 and 28 commits behind the current pin. Bumping the pin without
-# re-reading them leaves a shim answering a question upstream no longer asks,
-# and nothing about the override stops working to say so — the name still wins,
-# it just wins for a contract that changed.
+# version of what it displaces, and upstream keeps moving — each of the three
+# displaced skills had accumulated double-digit commits by the time the pin was
+# first set. Bumping the pin without re-reading them leaves a shim answering a
+# question upstream no longer asks, and nothing about the override stops working
+# to say so — the name still wins, it just wins for a contract that changed.
 #
 # Recording the version in the shim is what makes the re-read checkable, and
 # holding it against the pin is what makes skipping the re-read loud. The pin is
@@ -385,16 +385,17 @@ fi
 # check exists.
 SHIM_MARKER='Overrides superpowers:'
 
-# _superpowers_pin — the pinned ref from the package entry, without its leading
-# @ (e.g. v6.3.0). Empty when the package is not declared, which is not a
-# finding: the shims are what make the package safe to install, so a tree
-# carrying them before the entry lands is a legitimate mid-adoption state.
+# _superpowers_pin SETTINGS_FILE — the pinned ref from the package entry,
+# without its leading @ (e.g. v6.3.0). Empty when the package is not declared,
+# which is not a finding: the shims are what make the package safe to install,
+# so a tree carrying them before the entry lands is a legitimate mid-adoption
+# state.
 _superpowers_pin() {
-  local entry
+  local settings_file="$1" entry
   entry=$(jq -r '.packages // [] | .[]
                  | if type == "object" then .source else . end
                  | select(startswith("git:github.com/obra/superpowers"))' \
-    "$PI_SETTINGS" 2> /dev/null) || return 0
+    "$settings_file" 2> /dev/null) || return 0
   [[ "$entry" == *@* ]] || return 0
   printf '%s\n' "${entry##*@}"
 }
@@ -402,12 +403,14 @@ _superpowers_pin() {
 # _check_shim_pin FILE DISPLAY PIN — holds one shim's recorded version against
 # the pin.
 #
-# The recorded version is matched on its own line rather than anywhere in the
-# file, so the body quoting an older version in prose cannot satisfy the check
-# for a header that was never updated.
+# Only the header is searched — everything above the first markdown heading,
+# which is the frontmatter and the override comment. A shim body is free to
+# discuss other versions in prose (a migration note, a changelog line) without
+# one of them standing in for a header that was never updated.
 _check_shim_pin() {
   local skill_file="$1" display="$2" pin="$3" recorded
-  recorded=$(grep -oE 'Written against superpowers v[0-9]+(\.[0-9]+)*' "$skill_file" \
+  recorded=$(sed '/^# /q' "$skill_file" \
+    | grep -oE 'Written against superpowers v[0-9]+(\.[0-9]+)*' \
     | head -1 | sed 's/.* //')
 
   if [[ -z "$recorded" ]]; then
@@ -423,15 +426,25 @@ _check_shim_pin() {
   return 0
 }
 
+# _check_every_shim_pin PIN — holds every shim in the tree against the pin.
+_check_every_shim_pin() {
+  local pin="$1" skill_file
+  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+    [[ -f "$skill_file" ]] || continue
+    grep -q "$SHIM_MARKER" "$skill_file" || continue
+    _check_shim_pin "$skill_file" "skills/$(basename "$(dirname "$skill_file")")" "$pin"
+  done
+  return 0
+}
+
 PI_SETTINGS="$WORKBENCH_DIR/ai/pi/settings.json"
 if [[ -f "$PI_SETTINGS" ]]; then
-  superpowers_pin="$(_superpowers_pin)"
+  superpowers_pin="$(_superpowers_pin "$PI_SETTINGS")"
+  # Guarded rather than `[[ ... ]] && _check`: an undeclared package makes the
+  # test false, which would be the `if` block's exit status and would trip the
+  # errexit at the top of this file.
   if [[ -n "$superpowers_pin" ]]; then
-    for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
-      [[ -f "$skill_file" ]] || continue
-      grep -q "$SHIM_MARKER" "$skill_file" || continue
-      _check_shim_pin "$skill_file" "skills/$(basename "$(dirname "$skill_file")")" "$superpowers_pin"
-    done
+    _check_every_shim_pin "$superpowers_pin"
   fi
 fi
 

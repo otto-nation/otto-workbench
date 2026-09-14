@@ -18,6 +18,26 @@ def plural(n: int) -> str:
     return "" if n == 1 else "s"
 
 
+def join_or(items: list[str]) -> str:
+    """Join `items` into an English alternative — `"a dash, a colon, or italics"`.
+
+    Correct at every length, which the slice-and-concatenate form callers reach
+    for first is not: `', '.join(items[:-1])` is empty at one item and emits a
+    stray leading comma before the last, and raises `IndexError` at none. Both
+    lengths are unreachable in a caller joining a constant map today and become
+    reachable the moment the map is trimmed, silently in the first case.
+
+    Two items take no comma, as the serial comma separates three or more.
+    """
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} or {items[1]}"
+    return f"{', '.join(items[:-1])}, or {items[-1]}"
+
+
 def slugify(text: str, sep: str = "-") -> str:
     """Lowercase `text` with every run of non-alphanumerics collapsed to `sep`.
 

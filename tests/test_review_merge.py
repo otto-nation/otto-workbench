@@ -178,6 +178,49 @@ class TestPriorDisposition:
         )
         assert PriorDisposition.parse("Still open.") is PriorDisposition.STILL_OPEN
 
+    def test_a_verdict_with_italicised_detail_is_still_a_verdict(self):
+        """Emphasis carries no meaning here — the same line parses unitalicised."""
+        assert (
+            PriorDisposition.parse("Fixed *(removed entirely in 89f66d9)*")
+            is PriorDisposition.FIXED
+        )
+        assert (
+            PriorDisposition.parse("Still open *the guard is still there*")
+            is PriorDisposition.STILL_OPEN
+        )
+        assert (
+            PriorDisposition.parse("Declined *(documented `ceiling:` tradeoff)*")
+            is PriorDisposition.DECLINED
+        )
+
+    def test_underscore_emphasis_reads_the_same_as_asterisk(self):
+        assert (
+            PriorDisposition.parse("Fixed _(removed entirely in 89f66d9)_")
+            is PriorDisposition.FIXED
+        )
+        assert (
+            PriorDisposition.parse("Still open _the guard is still there_")
+            is PriorDisposition.STILL_OPEN
+        )
+        assert (
+            PriorDisposition.parse("Declined _(documented `ceiling:` tradeoff)_")
+            is PriorDisposition.DECLINED
+        )
+
+    def test_a_verdict_a_word_is_glued_to_is_not_a_verdict(self):
+        """`-` and `_` join words, so a glued one is inside one, not a break."""
+        assert PriorDisposition.parse("Fixed_up in a follow-up branch") is None
+        assert PriorDisposition.parse("Fixed-up in a follow-up branch") is None
+        assert PriorDisposition.parse("Still open_ended, see below") is None
+
+    def test_a_dash_glued_to_the_verdict_still_breaks_the_line(self):
+        """Only the two word-joining characters are read as part of a word."""
+        assert (
+            PriorDisposition.parse("Fixed\u2014the guard is gone")
+            is PriorDisposition.FIXED
+        )
+        assert PriorDisposition.parse("Fixed: the guard is gone") is PriorDisposition.FIXED
+
     def test_parses_a_declined_verdict(self):
         assert PriorDisposition.parse("Declined") is PriorDisposition.DECLINED
         assert (

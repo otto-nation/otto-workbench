@@ -23,8 +23,12 @@ from review import reconcile as review_reconcile
 from review.document import SECTION_PRIOR_FINDINGS
 from review.paths import FILENAME_PRIOR_FINDINGS
 from review.grammar import FindingIdentity
-from review.reconcile import DispositionSource, UndecidedReason
-from review.types import PriorDisposition
+from review.reconcile import _VERDICT_SHAPE, DispositionSource, UndecidedReason
+from review.grammar import parse_ledger_line
+from review.types import (
+    DISPOSITION_TAIL_PUNCTUATION, DISPOSITION_TAIL_WORD_JOINERS,
+    PriorDisposition,
+)
 
 PRIOR_ONE_FINDING = (
     "## Must fix\n"
@@ -623,3 +627,55 @@ class TestRecordPriorFindings:
         err = capsys.readouterr().err
         assert "undecided" not in err
         assert "Reconciled 2 prior findings" in err
+
+
+class TestVerdictShapeDescribesWhatParses:
+    """The diagnostic an operator follows after a verdict failed to parse.
+
+    Operator-facing, not a prompt: it is read beside the line that did not
+    parse, so glyphs are the right vocabulary — the reader is matching
+    characters, not composing prose. What it must not do is print `-` and `_`
+    among the unconditional breaks, because those two break a verdict only
+    where a space precedes them or a non-word character follows, and a reader
+    who glues one mid-word on this message's word reproduces the exact line
+    the parser rejects. Both halves come from `review.types`, so a character
+    moved between them restates this message rather than staling it.
+    """
+
+    def test_every_unconditional_break_is_shown(self):
+        unconditional = [
+            c for c in DISPOSITION_TAIL_PUNCTUATION
+            if c not in DISPOSITION_TAIL_WORD_JOINERS
+        ]
+        for char in unconditional:
+            assert char in _VERDICT_SHAPE, f"{char!r} breaks a verdict but is not shown"
+
+    def test_every_word_joiner_is_shown_apart_from_them(self):
+        head, _, tail = _VERDICT_SHAPE.partition("(also ")
+        assert "only where a space precedes" in tail, (
+            "the message never states the word-joiner condition"
+        )
+        for char in DISPOSITION_TAIL_WORD_JOINERS:
+            assert char in tail, f"{char!r} is a word joiner but is not under its rule"
+            assert char not in head, (
+                f"{char!r} is shown as an unconditional break, which it is not"
+            )
+
+    def test_the_shape_it_describes_is_one_the_parser_reads(self):
+        """A message naming a break the parser rejects is worse than none."""
+        for char in DISPOSITION_TAIL_PUNCTUATION:
+            joiner = char in DISPOSITION_TAIL_WORD_JOINERS
+            line = f"- **[M1]** `docs.py` — {PriorDisposition.FIXED}{' ' if joiner else ''}{char}detail"
+            entry = parse_ledger_line(line)
+            assert entry and entry.disposition is PriorDisposition.FIXED, (
+                f"{char!r} is shown in the diagnostic but breaks no verdict"
+            )
+
+    def test_gluing_a_joiner_mid_word_is_what_the_message_warns_against(self):
+        """The case the old glyph list invited, pinned so the warning stays earned."""
+        for char in DISPOSITION_TAIL_WORD_JOINERS:
+            line = f"- **[M1]** `docs.py` — {PriorDisposition.FIXED}{char}detail"
+            entry = parse_ledger_line(line)
+            assert entry and entry.disposition is None, (
+                f"{char!r} glued mid-word now parses — the caveat is stale"
+            )

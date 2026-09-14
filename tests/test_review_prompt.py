@@ -2,6 +2,7 @@
 
 import json
 import re
+import string
 import sys
 from pathlib import Path
 
@@ -20,7 +21,8 @@ from review.grouping import ReviewProfile, ReviewRule, format_profiles_section
 from review.collect import build_project_context, format_preflight_data
 from gh.types import PRContext, PRMetadata
 from review.types import (
-    FindingRef, PreflightData, PriorDisposition, PriorFinding, ReviewJob,
+    DISPOSITION_TAIL_PROSE, DISPOSITION_TAIL_PUNCTUATION, FindingRef,
+    PreflightData, PriorDisposition, PriorFinding, ReviewJob,
 )
 from core.phases import Effort, Mode, Phase
 from dataclasses import asdict
@@ -968,3 +970,54 @@ class TestLedgerInstructionParses:
             entry = parse_ledger_line(example)
             assert entry, f"the instruction's example does not parse: {example}"
             assert entry.disposition and entry.disposition.value in example
+
+
+class TestLedgerInstructionNamesEveryBreak:
+    """Every break the parser takes is one the instruction told an agent about.
+
+    The prose has gone stale twice — once omitting the opening bracket and the
+    en dash, once the emphasis characters the same commit added. The prose is
+    built from `DISPOSITION_TAIL_PROSE` rather than retyped, so what this pins
+    is the map itself: a character added to the parser's class with no words for
+    it, or with words the sentence never reaches, fails here instead of leaving
+    the prompt describing a shape the parser has outgrown.
+    """
+
+    def test_every_accepted_character_has_words_for_it(self):
+        for char in DISPOSITION_TAIL_PUNCTUATION:
+            assert DISPOSITION_TAIL_PROSE.get(char), f"no prose names {char!r}"
+
+    def test_the_instruction_says_every_one_of_those_words(self):
+        for char, prose in DISPOSITION_TAIL_PROSE.items():
+            assert prose in _LEDGER_INSTRUCTION, (
+                f"the instruction never says {prose!r}, the wording for {char!r}"
+            )
+
+    def test_a_verdict_broken_by_each_character_parses(self):
+        """The words are only worth pinning if what they describe is accepted."""
+        for char in DISPOSITION_TAIL_PUNCTUATION:
+            line = f"- **[M1]** `handler.go` — {PriorDisposition.FIXED} {char}detail{char}"
+            entry = parse_ledger_line(line)
+            assert entry and entry.disposition is PriorDisposition.FIXED, (
+                f"{char!r} is named in the instruction but breaks no verdict"
+            )
+
+    def test_the_parser_accepts_nothing_the_instruction_does_not_name(self):
+        """Asked of the parser, not of the map it is built from.
+
+        Widening the accepted set by editing the regex rather than the map would
+        satisfy every assertion above — they all iterate the map, so a character
+        missing from it is a character they never ask about. This probes the
+        parser with every punctuation mark instead, so whichever end is widened,
+        an unnamed break fails here.
+        """
+        candidates = set(string.punctuation) | set("—–―−")
+        accepted = {
+            c for c in candidates
+            if PriorDisposition.parse(f"{PriorDisposition.FIXED} {c}detail")
+            is PriorDisposition.FIXED
+        }
+        assert accepted == set(DISPOSITION_TAIL_PROSE), (
+            "the parser breaks a verdict on characters the instruction never "
+            f"names: {sorted(accepted - set(DISPOSITION_TAIL_PROSE))}"
+        )

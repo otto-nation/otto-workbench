@@ -3329,6 +3329,23 @@ commit and the tree is clean. The retry passes `--no-verify`, so it costs the
 transfer rather than the gates; that is not a gate bypass, because the gates
 already passed for this exact commit, and the guard is what keeps that true.
 
+A push git did not survive is verified rather than refused. When the connection
+drops mid-transfer — `Connection reset by peer`, a broken pipe, or a git that
+took a signal and said nothing at all — git cannot report what arrived, so the
+remote is asked instead of the operator being told their checks failed. That is
+`Refusal.DROPPED`, and it is the one refusal that does not end at `REFUSED`: the
+commit turns out to be on the remote, it is `LOST` and takes the retry above, or
+the remote could not be asked either and it is `UNVERIFIED` with neither account
+of it left — which is the one `UNVERIFIED` that may not be reported as a push
+git made.
+The keepalive in the managed ssh config answers an *idle* connection; it cannot
+answer a reset arriving from the far end, which is why this path exists at all.
+
+`repairable` is the question the two callers that repair a failed push ask, and
+a dropped connection answers no: the gates passed before git reached the
+transfer, so there is nothing in the tree for a regeneration commit or an AI fix
+pass to act on.
+
 This module pushes, verifies, retries, and reports. It does not commit, and it
 does not perform the hook-regenerated-files recovery `land` owns — that sits
 above it, which is what keeps this module's answer to "did it land" independent

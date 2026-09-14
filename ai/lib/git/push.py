@@ -33,6 +33,23 @@ commit and the tree is clean. The retry passes `--no-verify`, so it costs the
 transfer rather than the gates; that is not a gate bypass, because the gates
 already passed for this exact commit, and the guard is what keeps that true.
 
+A push git did not survive is verified rather than refused. When the connection
+drops mid-transfer — `Connection reset by peer`, a broken pipe, or a git that
+took a signal and said nothing at all — git cannot report what arrived, so the
+remote is asked instead of the operator being told their checks failed. That is
+`Refusal.DROPPED`, and it is the one refusal that does not end at `REFUSED`: the
+commit turns out to be on the remote, it is `LOST` and takes the retry above, or
+the remote could not be asked either and it is `UNVERIFIED` with neither account
+of it left — which is the one `UNVERIFIED` that may not be reported as a push
+git made.
+The keepalive in the managed ssh config answers an *idle* connection; it cannot
+answer a reset arriving from the far end, which is why this path exists at all.
+
+`repairable` is the question the two callers that repair a failed push ask, and
+a dropped connection answers no: the gates passed before git reached the
+transfer, so there is nothing in the tree for a regeneration commit or an AI fix
+pass to act on.
+
 This module pushes, verifies, retries, and reports. It does not commit, and it
 does not perform the hook-regenerated-files recovery `land` owns — that sits
 above it, which is what keeps this module's answer to "did it land" independent
@@ -105,11 +122,16 @@ class Refusal(StrEnum):
     where it stands: a hook rejection names something to fix in the tree, a
     divergence names something to reconcile with the remote, and a transport
     failure names nothing the caller did wrong.
+
+    A dropped connection names nothing at all. It is the one refusal where the
+    remote still has to be asked what it kept, because git stopped being able to
+    say — so it is the one that does not end at `REFUSED`.
     """
 
     HOOK = "hook"
     DIVERGED = "diverged"
     TRANSPORT = "transport"
+    DROPPED = "dropped"
     OTHER = "other"
 
 
@@ -155,6 +177,20 @@ class PushResult:
         """The commit is on the remote."""
         return self.status is PushStatus.PUSHED
 
+    @property
+    def repairable(self) -> bool:
+        """git refused, and named something in the tree to fix.
+
+        A dropped connection is a refusal with nothing to repair: git only
+        reaches the transfer once `pre-push` has returned zero, so the gates
+        passed and handing this to a fix pass asks an agent to rewrite work
+        nobody rejected. The two callers that gate repair work on a refusal read
+        this rather than the status, which is what keeps that distinction in one
+        place instead of in each of them.
+        """
+        return (self.status is PushStatus.REFUSED
+                and self.refusal is not Refusal.DROPPED)
+
 
 _DIVERGED_MARKERS = (
     "! [rejected]",
@@ -176,13 +212,36 @@ _TRANSPORT_MARKERS = (
     "repository not found",
 )
 
+# The signatures of a connection that was established and then died mid-transfer.
+# Their own set rather than more `_TRANSPORT_MARKERS`, because the two need
+# opposite answers: nothing was ever sent through a refused key or an
+# unresolvable host, so the remote has nothing to be asked about — and asking it
+# with the credentials that just failed would report a push that never happened
+# as one that could not be confirmed.
+#
+# "connection closed" stays on the transport side deliberately: it spells both a
+# mid-transfer close and a pre-auth one ("kex_exchange_identification: Connection
+# closed by remote host"), and an ambiguous marker here buys that regression
+# back. Promoting it is a one-line change once a log shows it is worth making.
+_DROPPED_MARKERS = (
+    "connection reset",
+    "broken pipe",
+    "the remote end hung up unexpectedly",
+    "unexpected disconnect",
+)
+
 _PUSH_REFUSED = "failed to push some refs"
 
-# What the LOST report says about the retry. A message claiming an attempt that
-# never ran is the same class of wrong reporting this module exists to remove,
-# so every state names itself and a test asserts the map covers the enum.
+# What a report says about the retry. A message claiming an attempt that never
+# ran is the same class of wrong reporting this module exists to remove, so
+# every state names itself and a test asserts the map covers the enum.
+#
+# Retry state only: what the remote holds is the caller's line to print, because
+# the two reports that read this know different things about it. A LOST report
+# has just been told the remote's answer and prints it on its own `origin:` line
+# above; an UNVERIFIED one was told nothing.
 _RETRY_NOTE = {
-    Retry.ATTEMPTED: "Retried once without the gates; the remote still does not hold it.",
+    Retry.ATTEMPTED: "Retried once without the gates.",
     Retry.HEAD_MOVED: "HEAD moved since the push; not retried.",
     Retry.DIRTY: "The worktree is dirty; not retried.",
     Retry.NONE: "Not retried.",
@@ -197,15 +256,62 @@ def classify(output: str) -> Refusal:
     the transport or auth diagnostics a real network failure carries. That
     absence is the only signal separating a hook rejection from the rest, which
     is why the generic line is checked last: every other cause prints it too.
+
+    A drop outranks the transport markers for the same reason. A connection reset
+    mid-push prints the ssh diagnostic, then `Could not read from remote
+    repository`, then the generic refusal line — so the least specific of the
+    three would otherwise win and tell the operator their checks failed.
     """
     lowered = output.lower()
     if any(marker in lowered for marker in _DIVERGED_MARKERS):
         return Refusal.DIVERGED
+    if any(marker in lowered for marker in _DROPPED_MARKERS):
+        return Refusal.DROPPED
     if any(marker in lowered for marker in _TRANSPORT_MARKERS):
         return Refusal.TRANSPORT
     if _PUSH_REFUSED in lowered:
         return Refusal.HOOK
     return Refusal.OTHER
+
+
+def _dropped(r: proc.CmdResult) -> bool:
+    """The connection died mid-transfer, so only the remote knows what it kept.
+
+    Two shapes of one failure. git usually says so, and the text is what tells
+    this apart from the transport failures where nothing was established. But a
+    git that took a signal on the way down writes nothing at all — `proc.run`
+    reports that as a negative return code with both streams empty, so the exit
+    code is the only evidence there is. A shell's 141 never arrives here.
+
+    `signalled` rather than `proc.externally_killed`: the question is whether the
+    transfer completed, not who is to blame for it stopping. A git killed by a
+    fault signal leaves the remote in exactly the same doubt.
+    """
+    return r.signalled or classify(r.combined_output) is Refusal.DROPPED
+
+
+def _push_output(r: proc.CmdResult) -> str:
+    """What the push said, or what killed it when it said nothing.
+
+    A killed git leaves an empty excerpt under the report's headline, which is
+    the unreadable failure this path exists to remove. The signal is then the
+    whole account, and `proc.signal_description` is the one place it is spelled.
+
+    The signal is named and no cause is inferred from it. `_dropped` routes
+    every signal here, not only the network ones, so the git a supervisor or an
+    operator ended arrives by the same path as the one a reset killed — and
+    "the connection died" is then a cause nothing established. What every signal
+    death does establish is the narrower thing worth saying: git stopped before
+    it could report what the remote received.
+
+    `proc.failure_message` is deliberately not reused: it appends a contention
+    note telling the reader to re-run rather than bisect, and the far end
+    resetting the connection is not the machine running out of cores.
+    """
+    if r.combined_output.strip() or not r.signalled:
+        return r.combined_output
+    return (f"git was killed by {proc.signal_description(r.returncode)} — "
+            "what the remote received is unconfirmed")
 
 
 def remote_head(
@@ -316,8 +422,8 @@ def _retry_lost(
     log.warn("push did not land — retrying once without the gates")
 
     r = git_client.run("push", "--no-verify", *args, cwd=wt_path)
-    if not r.ok:
-        output = r.combined_output
+    output = _push_output(r)
+    if not r.ok and not _dropped(r):
         artifact = trail.failure(
             "push", "the retry without the gates was refused too", output=output,
             data={"sha": lost.sha, "branch": lost.branch}) if trail else None
@@ -326,8 +432,13 @@ def _retry_lost(
             output=output, retry=Retry.ATTEMPTED, log=artifact,
         )
 
-    verified = _verify(wt_path, lost.sha, lost.branch, remote, r.combined_output)
-    return dataclasses.replace(verified, retry=Retry.ATTEMPTED, args=lost.args)
+    # A retry the connection dropped is verified for the same reason the first
+    # attempt was: git stopped being able to say what arrived, and reporting it
+    # as refused without asking is the misreading this module exists to remove.
+    verified = _verify(wt_path, lost.sha, lost.branch, remote, output)
+    return dataclasses.replace(
+        verified, retry=Retry.ATTEMPTED, args=lost.args,
+        refusal=None if r.ok else Refusal.DROPPED)
 
 
 def push(
@@ -362,16 +473,23 @@ def push(
     branch = branch or git_client.current_branch(cwd=wt_path)
 
     r = git_client.run("push", *argv, cwd=wt_path)
-    if not r.ok:
-        output = r.combined_output
+    output = _push_output(r)
+    if not r.ok and not _dropped(r):
         artifact = trail.failure(
             "push", "git refused the push", output=output,
             data={"sha": sha, "branch": branch}) if trail else None
         return PushResult(PushStatus.REFUSED, sha, branch, refusal=classify(output),
                           output=output, remote=remote, args=argv, log=artifact)
 
-    verified = _verify(wt_path, sha, branch, remote, r.combined_output)
-    result = dataclasses.replace(verified, args=argv)
+    # A drop is not yet a failure: the packfile may have arrived whole and only
+    # the acknowledgement been lost, which `_verify` settles in one round trip.
+    if not r.ok and trail:
+        trail.warn("push", "the connection dropped mid-push — asking the remote "
+                           "what it holds", data={"sha": sha, "branch": branch})
+
+    verified = _verify(wt_path, sha, branch, remote, output)
+    result = dataclasses.replace(
+        verified, args=argv, refusal=None if r.ok else Refusal.DROPPED)
     if result.status is not PushStatus.LOST:
         return result
     return _retry_lost(wt_path, result, remote, argv, trail)
@@ -416,10 +534,58 @@ def resume_command(result: PushResult, wt_path: str | Path) -> str:
     return _push_command(wt_path, args)
 
 
+def _refused_headline(result: PushResult) -> str:
+    """What to lead a refused push with.
+
+    A push that died on a dropped connection was not refused by anybody, and
+    "nothing reached the remote" is a claim nothing has established — whether
+    anything reached it is precisely what the drop left open.
+    """
+    if result.refusal is Refusal.DROPPED:
+        return "push dropped mid-transfer — what the remote took is unconfirmed"
+    return f"push refused ({result.refusal}) — nothing reached the remote"
+
+
+def _unverified_headline(result: PushResult) -> str:
+    """What to lead a push the remote could not be asked about with.
+
+    "pushed" is a claim about what git did, and it holds for the ordinary
+    unverified push: git exited zero and only the confirming round trip failed.
+    A drop makes it false. There the local `git push` errored and was routed to
+    the remote rather than to `REFUSED` precisely because nobody could say what
+    arrived — and the remote then could not say either, so both accounts of this
+    push are missing and neither may be reported as the other. The commit is
+    still named, because the reader's next move is to ask about that SHA.
+    """
+    if result.refusal is Refusal.DROPPED:
+        return (f"the connection dropped and the remote could not be asked "
+                f"whether it holds {git_client.abbrev(result.sha)}")
+    return (f"pushed {git_client.abbrev(result.sha)} but could not reach the "
+            f"remote to confirm it landed")
+
+
+def _lost_headline(result: PushResult) -> str:
+    """What to lead a lost push with.
+
+    git reporting success is what makes the classic lost push so hard to notice,
+    and it is the one thing that did not happen when the connection dropped.
+    Saying it anyway sends the reader looking for a clean push in a scrollback
+    that holds a screen of ssh diagnostics instead.
+    """
+    if result.refusal is Refusal.DROPPED:
+        return "the connection dropped and the remote does not hold the commit"
+    return "push reported success but the remote did not move"
+
+
 def report(result: PushResult, wt_path: str | Path) -> None:
     """Say what happened, in the terms the reader has to act on."""
     if result.status is PushStatus.PUSHED:
         log.ok(f"Pushed {git_client.abbrev(result.sha)} to {result.branch}")
+        # The terminal is full of red ssh diagnostics at this point, and the one
+        # thing the reader needs is that none of it cost them the push.
+        if result.refusal is Refusal.DROPPED:
+            log.dim("the connection dropped during the transfer — the remote "
+                    "holds it anyway, nothing to do")
         return
 
     # A draft is not a failure, and `publishing.draft` has already said so.
@@ -429,14 +595,17 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     resume = resume_command(result, wt_path)
 
     if result.status is PushStatus.UNVERIFIED:
-        log.warn(
-            f"pushed {git_client.abbrev(result.sha)} but could not reach the "
-            f"remote to confirm it landed — check with: {resume}"
-        )
+        log.warn(f"{_unverified_headline(result)} — check with: {resume}")
+        # Only a push that was lost and then retried can reach here having made
+        # two transfers, and the reader has to know that to read the check above:
+        # what `ls-remote` answers is the fate of the retry, not of the push they
+        # watched fail.
+        if result.retry is not Retry.NONE:
+            log.dim(_RETRY_NOTE[result.retry])
         return
 
     if result.status is PushStatus.REFUSED:
-        log.error(f"push refused ({result.refusal}) — nothing reached the remote")
+        log.error(_refused_headline(result))
         for line in proc.tail(result.output).splitlines():
             log.dim(line)
         if result.log:
@@ -444,7 +613,12 @@ def report(result: PushResult, wt_path: str | Path) -> None:
         log.dim(f"Resume: {resume}")
         return
 
-    log.error("push reported success but the remote did not move")
+    log.error(_lost_headline(result))
+    # A lost push's output is a clean push's chatter and worth nothing to the
+    # reader. A dropped one's is the only account of what killed it.
+    if result.refusal is Refusal.DROPPED:
+        for line in proc.tail(result.output).splitlines():
+            log.dim(line)
     # Named rather than left to the resume line below, because the reader is not
     # always standing in the repository this happened in: `push_intent` reports a
     # push made in another terminal, and a review fix pass pushes from a worktree

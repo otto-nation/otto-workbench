@@ -489,6 +489,30 @@ def test_a_refusal_that_regenerated_nothing_stands(landable, tmp_path, live_git_
     assert _remote_head(remote) == before
 
 
+def test_a_dropped_refusal_is_not_handed_to_the_regen_retry(regenerating):
+    """A dropped connection regenerated nothing, so there is nothing to commit.
+
+    `push` has already asked the remote and retried it itself; a second pass
+    here would commit a regeneration that never happened.
+    """
+    wt, _ = regenerating
+    (wt / "src.py").write_text("edited\n")
+    dropped = push.PushResult(
+        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="main",
+        refusal=push.Refusal.DROPPED, output="Connection reset by peer",
+    )
+
+    with patch.object(push, "push", return_value=dropped), \
+         patch.object(land, "_retry_after_regen") as retry:
+        landed = land.land(
+            wt, message="fix: work", gated=False, regen="chore: regenerate",
+        )
+
+    assert landed.status is CommitStatus.PUSH_FAILED
+    retry.assert_not_called()
+    assert git_out(wt, "log", "-1", "--pretty=%s").strip() == "fix: work"
+
+
 def test_a_retry_that_falls_short_too_keeps_the_original(regenerating, tmp_path):
     """The commit the caller made is still the one its work is in.
 

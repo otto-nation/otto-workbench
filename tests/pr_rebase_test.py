@@ -88,6 +88,14 @@ def _held() -> land.LandResult:
     return land.LandResult(CommitStatus.PUSH_HELD, sha=_LANDED_SHA, resume=_RESUME)
 
 
+# Ssh's half of what a push killed by a mid-transfer reset prints. Nothing in it
+# is a complaint about the worktree, which is the point of the test below.
+_RESET_DUMP_SSH = (
+    "Read from remote host github.com: Connection reset by peer\n"
+    "client_loop: send disconnect: Broken pipe\n"
+)
+
+
 def _refused(error: str = "✗ gofmt: server.go") -> land.LandResult:
     """The owner's answer when a pre-push hook rejected the branch."""
     return land.LandResult(
@@ -3072,6 +3080,30 @@ def test_only_a_refusal_reaches_the_ai_fix(result):
          mock.patch.object(prepush, "fix_push_failures") as mock_fix:
         assert rebase_land.land_rebased(
             "/fake", resolved_files=["server.go"]) is result
+
+    mock_fix.assert_not_called()
+
+
+def test_a_dropped_refusal_is_not_handed_to_the_ai_fix():
+    """A dropped connection is a refusal with nothing to repair.
+
+    The gates passed — git only reaches the transfer once `pre-push` returns
+    zero — so handing this to the fix pass asks an agent to rewrite code nobody
+    rejected.
+    """
+    dropped = land.LandResult(
+        CommitStatus.PUSH_FAILED, sha=_LANDED_SHA, error=_RESET_DUMP_SSH,
+        resume=_RESUME,
+        push=push.PushResult(
+            push.PushStatus.REFUSED, sha=_LANDED_SHA, branch="isaac/feat/x",
+            refusal=push.Refusal.DROPPED, output=_RESET_DUMP_SSH,
+        ),
+    )
+
+    with _owner_reports(dropped), \
+         mock.patch.object(prepush, "fix_push_failures") as mock_fix:
+        assert rebase_land.land_rebased(
+            "/fake", resolved_files=["server.go"]) is dropped
 
     mock_fix.assert_not_called()
 

@@ -159,6 +159,24 @@ If a push failed this way before the block was in place, `otto-workbench sync gi
 git ls-remote origin <branch>   # compare against git rev-parse HEAD
 ```
 
+### The second signature: a reset rather than an idle timeout
+
+The keepalive does not close the class. A longer run hits a different failure, which looks like this:
+
+```
+→ Running pytest... Read from remote host github.com: Connection reset by peer
+client_loop: send disconnect: Broken pipe
+✓ (7462 tests, 664s)
+```
+
+The shell reports exit 141 — SIGPIPE. The difference from the message above is where the failure came from: the keepalive answers a connection the *server judged idle*, and a reset arrives from the far end while the keepalives are being sent and answered. `ServerAliveCountMax 10` never comes into it, because `ssh` is not the one giving up.
+
+What makes it reproducible is duration rather than anything about the branch. The pre-push suite takes around 250s on an unloaded machine here and has been measured at 664s under load — `bin/local/run-tests` sizes its worker count from the one-minute load average, so a busy machine resolves fewer workers and the suite stretches. The longer the hook runs, the wider the window in which something can reset the connection. Quiescing the machine and pushing again with nothing else in flight is the reliable workaround.
+
+Every push the `ai/` tooling makes now reads this signature rather than reporting it as a rejected push. `ai/lib/git/push.py` classifies a reset, a broken pipe, or a git that died on a signal as a *dropped* connection, and a drop is verified instead of refused: `git ls-remote` is asked what the remote actually holds, the push is reported as landed when it did, and retried once without the gates when it did not. A push killed before it could say anything is reported as `git was killed by SIGPIPE (signal 13)` rather than as an empty failure.
+
+A bare interactive `git push` is **not** covered by any of that — it never enters the Python owner, so the keepalive is still the only thing standing between a hand-typed push and this failure. When one dies this way, ask the remote yourself with the `ls-remote` above and push again if the ref did not move.
+
 ## "Refusing to branch from a stale 'main'"
 
 `wt switch --create` runs a `fetch-default` pre-switch hook that `otto-workbench sync git` installs, and worktrunk aborts the switch when a pre-switch hook fails. The hook is [`git/bin/wt-fetch-default`](../git/bin/wt-fetch-default), whose one job is to bring the default branch up to date before the new branch is cut from it — `wt` bases a new branch on the *local* default branch ref, so a stale ref means a branch that starts life behind `origin`.

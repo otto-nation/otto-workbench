@@ -83,16 +83,23 @@ and pass `--base <branch>` in Step 4.
 Required before any PR:
 
 ```bash
-pr review --self
+pr review --self --fix
 ```
 
 From another directory, add `--repo-dir /path/to/worktree`.
 
-Read the review from `~/.local/state/workbench/reviews/`, present the findings
-summary, and work through them as your human partner directs. A review covers
-exactly the SHA in its `<!-- head_sha: -->` — so if you commit fixes for what it
-found, those fixes are themselves unreviewed. Re-run before opening the PR, and
-check `head_sha` against `git rev-parse HEAD` to be sure.
+`--fix` is part of the command. Without it you get a findings list somebody then
+applies by hand — slower and sloppier than the pass the fix agent runs, and a
+round trip before the branch is shippable. Leave it off only when you want the
+findings without the edits, which at this step you do not: the next step opens
+the PR. No `--push` here — `task pr:create` pushes in Step 4.
+
+Read the review from `~/.local/state/workbench/reviews/`, present what the fix
+pass did — fixed, skipped, and why — and work through whatever it left open as
+your human partner directs. A review covers exactly the SHA in its
+`<!-- head_sha: -->`, and the fix pass commits, so its own commit is unreviewed.
+Re-run before opening the PR, and check `head_sha` against `git rev-parse HEAD`
+to be sure.
 
 Skip only if your human partner explicitly says to.
 
@@ -150,7 +157,9 @@ If you do have to push again before the PR merges:
   wastes the review already done
 - Never push to a PR marked ready without commenting first — ready is the author
   declaring the branch finished, and a later push retracts that
-- Re-run `pr review --self`; the earlier review said nothing about the new commit
+- Re-run `pr review --self --fix --push`; the earlier review said nothing about
+  the new commit, and on an open PR the fix commit has to reach the branch being
+  read
 - `cannot lock ref` on push usually means the branch merged and was deleted.
   Check `git log --oneline origin/main..HEAD` and open a follow-up PR for
   whatever did not land
@@ -165,8 +174,8 @@ If you do have to push again before the PR merges:
 | Uncommitted files in the tree | Commit them or say why not — the PR will not carry them |
 | Branch targets something other than `main` | Substitute it, and pass `--base` in Step 4 |
 | Detached HEAD | `git switch -c` a branch first — `pr:create` has nothing to push otherwise |
-| Review findings open | Work through them, then re-run the review |
-| HEAD moved since the review | Re-run `pr review --self` before the PR |
+| Review findings open after the fix pass | Work through them, then re-run the review |
+| HEAD moved since the review | Re-run `pr review --self --fix` before the PR |
 | Ready to ship | `task --global pr:create -- --no-issue --draft` |
 | Human partner named a next step | Do that directly |
 | PR open, more work needed | Follow-up PR by default; if pushing, comment first |
@@ -180,7 +189,8 @@ If you do have to push again before the PR merges:
 | "It's a small change — merge it into main locally" | Every change reaches `main` through a merged PR, no exceptions. |
 | "I'll open it ready, it's finished" | `--draft`. Ready is the reviewer's signal, not yours. |
 | "`gh pr create` is right here" | `task pr:create` applies the template, issue linking, and assignee rules. |
-| "The review passed earlier" | It covered one SHA. If HEAD moved — including for review fixes — re-run. |
+| "The review passed earlier" | It covered one SHA. If HEAD moved — including for the fix pass's own commit — re-run. |
+| "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
 | "I'll push the last fix quietly" | A branch with an open PR is shared. Say what changed. |
 | "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |
 | "The worktree is done, I'll clean it up" | `wt remove`, after the merge — and never the default branch's worktree. |

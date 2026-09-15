@@ -3740,8 +3740,8 @@ Turning locally-saved reviews into the same comment shape GitHub PRs produce.
 Walks the reviews root `review.paths` already tracks and reads each review's
 findings into the retro's per-repo, per-PR comment structure, so `retro.report`
 renders a local self-review indistinguishably from a GitHub one. Deciding
-which rule a finding is nearest to is `retro.rules`'; matching the comment to
-the exact bullet on the page is `retro.report`'s.
+which rule a finding is nearest to is `retro.rules`'; quoting the passage on
+the page it matched is `retro.report`'s.
 
 ### retro/rules.py
 
@@ -3750,9 +3750,9 @@ Matching review-comment text against the workbench's coding rules.
 Loads each rule file under `ai/guidelines/rules/` into passages — its list
 items, bulleted or numbered, its table rows and its paragraphs — and finds the
 rule nearest a piece of comment text by the best passage either has in common.
-`extract_keywords` is the vocabulary primitive both rule loading and bullet
-matching are built on — `retro.report` reuses it to find which bullet inside a
-matched rule is closest to the comment being annotated.
+A passage carries its own text beside its vocabulary, so `retro.report` quotes
+the passage the match was made on rather than re-deriving a snippet by some
+other reading of the file.
 
 Scoring is deliberately per-passage, IDF-weighted and normalized, because the
 question the retro asks is whether any rule *covers* a finding, not which rule

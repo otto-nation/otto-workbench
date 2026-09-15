@@ -12,12 +12,19 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from retro.rules import extract_keywords
+from retro.rules import TermWeights, best_passage, extract_keywords
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 COMMENT_BODY_MAX = 500
+
+# How much of the matched passage the report quotes. A passage is a whole list
+# item or table row, and the corpus runs to 1466 characters for the longest of
+# them, which is a wall of text on a line a reader is scanning. The median is
+# 153 and the 75th percentile 250, so this shows roughly seven passages in ten
+# whole and keeps the rest to something a scan can read.
+MATCH_SNIPPET_MAX = 200
 
 DATE_FMT = "%Y-%m-%d"
 
@@ -44,8 +51,13 @@ def _format_comment(comment: dict) -> list[str]:
     if comment.get("direction"):
         lines.append(f"  - Direction: {comment['direction']}")
     nr = comment.get("nearest_rule")
-    if nr:
-        lines.append(f"  - Nearest rule: {nr['filename']} (\"{nr.get('match_snippet', '')}\")")
+    if nr and nr.get("match_snippet"):
+        lines.append(f"  - Nearest rule: {nr['filename']} (\"{nr['match_snippet']}\")")
+    elif nr:
+        # No snippet means no passage of the rule cleared the shared-term floor
+        # against this comment. The filename is all that is known, and quoting
+        # an empty string beside it reads as a rule that states nothing.
+        lines.append(f"  - Nearest rule: {nr['filename']}")
     else:
         lines.append("  - Nearest rule: (none)")
     lines.append("")
@@ -142,19 +154,32 @@ def format_report(scan_data: dict, version: str) -> str:
     return "\n".join(lines)
 
 
-def best_matching_bullet(comment_body: str, rule: dict) -> str:
-    """The bullet in `rule` closest to `comment_body`, or the rule's filename.
+def best_matching_passage(
+    comment_body: str, rule: dict, weights: TermWeights,
+) -> str:
+    """The passage of `rule` that `comment_body` matched on, quotable.
+
+    The snippet comes off the same per-passage scoring that chose the rule, so
+    the report quotes the text the match was actually made on. A scan for the
+    best `- ` bullet answered a different question and could not answer it at
+    all for a rule file written in prose — `artifacts.md` and `self-review.md`
+    state every rule they have without a single top-level bullet, and the old
+    fallback showed the reader the filename it already had rather than any
+    rule text.
+
+    Empty when no passage of `rule` shares `MIN_SHARED_TERMS` with the
+    comment. On the path both callers use that cannot happen — a rule reaches
+    here only because `find_nearest_rule` scored it above the match floor, and
+    a rule with no candidate passage scores zero — but the function is public
+    and says what it does for a rule the scorer did not pick.
 
     Called by both retro-scan's GitHub-comment path and `retro.reviews`'
     local-finding path, so it is published rather than kept private to either.
     """
-    comment_kw = extract_keywords(comment_body)
-    best_bullet = ""
-    best_overlap = 0
-    for bullet in rule.get("bullets", []):
-        bullet_kw = extract_keywords(bullet)
-        overlap = len(comment_kw & bullet_kw)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_bullet = bullet
-    return best_bullet[:100] if best_bullet else rule["filename"]
+    match = best_passage(extract_keywords(comment_body), rule, weights)
+    if match is None:
+        return ""
+    text = match.passage.text
+    if len(text) <= MATCH_SNIPPET_MAX:
+        return text
+    return text[:MATCH_SNIPPET_MAX - 1] + "…"

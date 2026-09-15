@@ -3,9 +3,9 @@
 Loads each rule file under `ai/guidelines/rules/` into passages — its list
 items, bulleted or numbered, its table rows and its paragraphs — and finds the
 rule nearest a piece of comment text by the best passage either has in common.
-`extract_keywords` is the vocabulary primitive both rule loading and bullet
-matching are built on — `retro.report` reuses it to find which bullet inside a
-matched rule is closest to the comment being annotated.
+A passage carries its own text beside its vocabulary, so `retro.report` quotes
+the passage the match was made on rather than re-deriving a snippet by some
+other reading of the file.
 
 Scoring is deliberately per-passage, IDF-weighted and normalized, because the
 question the retro asks is whether any rule *covers* a finding, not which rule
@@ -164,17 +164,12 @@ def build_rule(filename: str, content: str) -> dict:
 
     The one place a rule dict is built, so a caller holding rule text that did
     not come off disk — a test fixture, or a file grown for comparison — gets
-    the same vocabulary, bullets and passages `load_rules` would have given it
-    rather than a hand-copy that drifts the next time this changes.
+    the same vocabulary and passages `load_rules` would have given it rather
+    than a hand-copy that drifts the next time this changes.
     """
     return {
         "filename": filename,
         "keywords": extract_keywords(content),
-        "bullets": [
-            line.strip().removeprefix("- ")
-            for line in content.splitlines()
-            if line.strip().startswith("- ")
-        ],
         "passages": [
             p for p in map(Passage.of, split_passages(content))
             if len(p.keywords) >= MIN_PASSAGE_KEYWORDS

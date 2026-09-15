@@ -659,11 +659,11 @@ class TestLoadRules:
     def test_missing_rules_directory_loads_nothing(self, tmp_path):
         assert load_rules(tmp_path) == []
 
-    def test_every_rule_keeps_its_bullets_and_content(self):
+    def test_every_rule_keeps_its_passages_and_content(self):
         rules = _rules()
         assert rules
         for rule in rules:
             assert rule["filename"].endswith(".md")
             assert rule["content"]
-            assert isinstance(rule["bullets"], list)
+            assert isinstance(rule["passages"], list)
             assert isinstance(rule["keywords"], set)

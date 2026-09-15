@@ -57,6 +57,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI |
 | `validate-all` | Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI |
+| `with-tree-lock` | Declares a tree under validation while a command runs — the lock that tells editors a gate is in flight |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |

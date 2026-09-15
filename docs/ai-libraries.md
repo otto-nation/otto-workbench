@@ -3077,6 +3077,42 @@ bytes (2 MiB) of its command's tail under a line saying what was dropped, and an
 artifact month ages out on the same six-month cutoff the JSONL files take — a
 record and the output it names go together.
 
+### core/tree_lock.py
+
+Advisory lock declaring that a tree is being validated.
+
+Editing a working tree while a gate validates it silently invalidates the run:
+the job reports against a tree that no longer exists, and nothing in its output
+says so. A green gate is exactly as green when its inputs changed underneath it.
+
+Rather than have every consumer infer which background jobs are validating —
+matching command strings against a job registry no harness reliably exposes —
+the validator declares itself here and anything that wants to know reads one
+file.
+
+Shared, not exclusive: several validators legitimately run over one tree
+(``pre-push`` calls ``validate-all`` then ``run-tests``), so they hold
+``LOCK_SH`` and coexist. A reader asks "is anyone validating?" by probing for
+``LOCK_EX``, which fails exactly when at least one holder exists.
+
+Uses ``fcntl.flock`` on ``<git-dir>/workbench-validate.lock``. The kernel drops
+the lock when the holder exits for any reason, including SIGKILL, so there is
+no stale-lock state to reap. That is the whole reason for flock over a pid
+file: a crash under a pid file leaves every edit in the worktree blocked until
+someone finds and deletes it, which is worse than the bug this prevents.
+
+Distinct from ``run_lock.py``: that one is exclusive, keyed on an arbitrary
+target directory, and serializes ``pr`` runs. This one is shared, keyed on a
+git worktree, and serializes nothing — it only publishes a fact.
+
+### core/tree_lock_cli.py
+
+Command-line face of the tree validation lock.
+
+Separate from tree_lock.py so the library stays importable without argparse
+ceremony, and so bash has one file to invoke. See that module for why the lock
+must wrap a child process rather than be claimed and returned from.
+
 ### core/workbench_paths.py
 
 Where the workbench keeps things.

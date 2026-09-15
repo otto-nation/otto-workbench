@@ -6,6 +6,7 @@ setup() {
   load 'test_helper'
   common_setup
   TASKFILE="$REPO_ROOT/Taskfile.yml"
+  [ -f "$TASKFILE" ]
 }
 
 @test "no task target invokes bats directly" {
@@ -21,8 +22,12 @@ setup() {
 }
 
 @test "test:* routes a single file through run-tests" {
+  # Filename must be the VALUE of --files, not an argument after a bare --.
+  # Passing it after -- would run the entire tests/ tree plus a stray
+  # argument. Matching only the substrings run-tests and --files would still
+  # pass that regression.
   run yq -r '.tasks."test:*".cmds[0]' "$TASKFILE"
   [ "$status" -eq 0 ]
   [[ "$output" == *"run-tests"* ]]
-  [[ "$output" == *"--files"* ]]
+  [[ "$output" == *'--files "tests/{{.FILENAME}}"'* ]]
 }

@@ -246,12 +246,13 @@ The lock is an advisory `flock` on the target's `run.lock`, so the kernel releas
 
 Both files live outside every checkout, in the target's own directory: `~/.config/workbench/pr/<repo-key>-<branch-slug>/` (rooted at `WORKBENCH_STATE_DIR` when you set it). The two components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the lock reach across checkouts. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
 
-## A tree validation lock is blocking edits
+## A tree is declared under validation
 
 While a gate runs — `task test`, `bin/local/validate-all`, or a `git push` that
-triggers the pre-push hook — the worktree is declared under validation. Agent
-edits are refused for the duration, because an edit landing mid-run invalidates
-the result without anything in the output saying so.
+triggers the pre-push hook — the worktree is declared under validation. Editing
+a tree mid-validation silently invalidates the run, and nothing in the output
+says so; the lock makes that state visible. Automatic refusal of edits is not
+yet implemented — the lock is currently a signal to read, not a gate.
 
 See what holds it:
 

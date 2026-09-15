@@ -11,6 +11,14 @@ one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
 repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
 terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
 
+One user command is several processes: ``pr review`` spawns ``claude-review``,
+which spawns ``review-orchestrate``, and each opens its own trail with its own
+``invocation``. They are tied together by ``root`` — the invocation of the
+outermost recorded run, carried down the process tree in ``TRAIL_ROOT_ENV`` and
+recorded on every event a descendant writes. ``otto-log show <root>`` renders
+the whole command as one timeline and ``otto-log query --root <id>`` selects it,
+while ``--invocation`` still addresses one process on its own.
+
 The root keeps six months, counting the month in progress
 (``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it
 opens, so growth is bounded whatever writes to the root, and
@@ -84,6 +92,21 @@ SCHEMA_VERSION = 1
 # 16.7M. Readers match the field whole, so records minted at the old width keep
 # resolving.
 INVOCATION_HEX_WIDTH = 12
+
+# How a run tells the processes it spawns which invocation they descend from.
+# The environment rather than an argument because the spawn sites are not the
+# place that knows: `pr` hands its delegates a `--repo-dir` and a `--pr` from
+# nine call sites across three files, and a tenth added later would silently
+# orphan its child. A child inherits this by existing, so the correlation holds
+# however deep the tree goes and whatever spawns what.
+TRAIL_ROOT_ENV = "WORKBENCH_TRAIL_ROOT"
+
+# What this module will accept as an inherited root. The variable is ordinary
+# process environment, so it can arrive holding anything — an export left in a
+# shell profile, a value mangled by a wrapper. A run that cannot trust what it
+# read becomes its own root instead, which loses a correlation but never writes
+# a `root` that resolves to nothing.
+_ROOT_FORMAT = re.compile(r"[0-9a-f]{1,32}\Z")
 
 # Months of history the root keeps, counting the month in progress. Nothing
 # used to drop anything, which was survivable while every writer was a human at
@@ -178,6 +201,18 @@ def oldest_kept_month(now: datetime, keep_months: int) -> str:
     return f"{months // 12:04d}-{months % 12 + 1:02d}"
 
 
+def inherited_root() -> str | None:
+    """The invocation this process descends from, or None when it is the root.
+
+    None for the outermost run and for anything launched outside a trailed one
+    — a delegate invoked by hand is its own root, which is the same answer.
+    A value that is not shaped like an invocation ID is discarded rather than
+    recorded: see ``_ROOT_FORMAT``.
+    """
+    value = os.environ.get(TRAIL_ROOT_ENV, "").strip()
+    return value if _ROOT_FORMAT.match(value) else None
+
+
 def artifacts_dir() -> Path:
     """Where the full output of a failure is kept, by month.
 
@@ -266,6 +301,11 @@ class TrailEvent:
     ts: str
     schema_version: int
     invocation: str
+    # The invocation of the outermost recorded run in this process tree, and
+    # absent on that run's own events: it is its own root, so a reader takes
+    # `root or invocation` and a record written before this field existed reads
+    # correctly as a run that answers only for itself.
+    root: str | None
     script: str
     level: Level
     event_type: EventType
@@ -299,10 +339,12 @@ class Trail:
         debug: bool,
         start_ns: int,
         record: bool = True,
+        root: str | None = None,
     ):
         self._script = script
         self._context = context
         self.invocation = invocation
+        self._root = root
         self._debug = debug
         self._start_ns = start_ns
         self._record = record
@@ -332,13 +374,23 @@ class Trail:
         if record:
             workbench_paths.trail_dir().mkdir(parents=True, exist_ok=True)
             prune_trail()
+        invocation = uuid4().hex[:INVOCATION_HEX_WIDTH]
+        root = inherited_root()
+        if record:
+            # Published after the root is read, so this run's own children
+            # descend from it while it still descends from whatever spawned it.
+            # Only a recorded run publishes: an unrecorded one writes nothing to
+            # be the root of, and adopting its ID would point every child at a
+            # parent no query can resolve.
+            os.environ[TRAIL_ROOT_ENV] = root or invocation
         return cls(
             script=script,
             context=context,
-            invocation=uuid4().hex[:INVOCATION_HEX_WIDTH],
+            invocation=invocation,
             debug=debug,
             start_ns=time.monotonic_ns(),
             record=record,
+            root=root,
         )
 
     def _append(self, event: TrailEvent) -> None:
@@ -392,6 +444,7 @@ class Trail:
             ts=datetime.now(timezone.utc).strftime(TS_FORMAT),
             schema_version=SCHEMA_VERSION,
             invocation=self.invocation,
+            root=self._root,
             script=self._script,
             level=level,
             event_type=event_type,
@@ -405,6 +458,17 @@ class Trail:
             duration_ms=duration_ms,
             data=data,
         )
+
+    @property
+    def root(self) -> str:
+        """The invocation identifying the whole user command this run is part of.
+
+        Its own when it is the outermost run, so a caller correlating work
+        across the tree — the ID a console line prints for `otto-log show` —
+        gets an answer that resolves either way, rather than the None the
+        recorded field holds on a root's own events.
+        """
+        return self._root or self.invocation
 
     @property
     def context(self) -> dict:

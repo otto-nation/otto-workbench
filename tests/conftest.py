@@ -300,6 +300,28 @@ def _isolate_installed_schema(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_trail_root_env():
+    """Never inherit a trail root across tests, or out of a real run.
+
+    ``Trail.start`` publishes its invocation into the environment so the
+    processes it spawns record which command they belong to. In a test process
+    that environment outlives the test: without this, the second trail any
+    module opens is recorded as a child of the first one some earlier test
+    started, and assertions about a root run against an ID from another file.
+    Same floor as ``_clear_lock_env``, for the other variable a run exports.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from core import trail
+
+    saved = os.environ.pop(trail.TRAIL_ROOT_ENV, None)
+    yield
+    os.environ.pop(trail.TRAIL_ROOT_ENV, None)
+    if saved is not None:
+        os.environ[trail.TRAIL_ROOT_ENV] = saved
+
+
+@pytest.fixture(autouse=True)
 def _clear_lock_env():
     """Never inherit a run lock marker across tests, or out of a real run.
 

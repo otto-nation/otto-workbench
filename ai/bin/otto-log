@@ -4,6 +4,12 @@
 Trails are discovered from one root — `workbench_paths.trail_dir()`, monthly
 files under the state root. The `stats` subcommand reads the global AI usage
 ledger instead — a separate, monthly-rotated store that every AI call appends to.
+
+One user command spans several processes, each with its own `invocation` and all
+sharing a `root` (see `core.trail`). `show` takes either ID and renders the whole
+command, labelling each event with the script that wrote it; `--only` narrows it
+back to the single process named. `list` rows are whole commands for the same
+reason, so `pr review` is one row rather than three.
 """
 
 from __future__ import annotations
@@ -107,6 +113,16 @@ def load_trail_events(since: str | None) -> list[dict]:
 
 # ── Filtering ─────────────────────────────────────────────────────────────
 
+def _root_of(event: dict) -> str:
+    """The command *event* belongs to — its `root`, or its own invocation.
+
+    A root's own events carry no `root` field, and neither does anything written
+    before the field existed, so both read as a command of one process. Every
+    grouping goes through this rather than the raw key, which is what lets one
+    query span records from either side of the cutover.
+    """
+    return event.get("root") or event.get("invocation", "?")
+
 # What a window with no recognizable unit suffix is read as. A query is not
 # worth failing over a typo, and the narrowest useful window shows less rather
 # than the wrong thing — the same hour `recent` defaults to.
@@ -146,6 +162,7 @@ def filter_events(
     level: str | None = None,
     event_type: str | None = None,
     invocation: str | None = None,
+    root: str | None = None,
     pr: int | str | None = None,
     repo: str | None = None,
     since: str | None = None,
@@ -159,6 +176,8 @@ def filter_events(
         result = [e for e in result if e.get("event_type") == event_type]
     if invocation:
         result = [e for e in result if e.get("invocation") == invocation]
+    if root:
+        result = [e for e in result if _root_of(e) == root]
     if pr is not None:
         pr_str = str(pr)
         result = [e for e in result if str(e.get("context", {}).get("pr", "")) == pr_str]
@@ -204,16 +223,27 @@ _SCRIPT_WIDTH = 20
 _EVENT_COUNT_WIDTH = 3
 
 
-def _format_event_line(e: dict) -> str:
+def _format_event_line(e: dict, script_width: int = 0) -> str:
+    """One event as a line, optionally naming the script that wrote it.
+
+    *script_width* is 0 for a listing whose records all come from one process,
+    where the name would be the same on every line. A timeline spanning a whole
+    command passes a width, because there the script is the only thing
+    distinguishing `pr`'s dispatch from the review its child ran.
+    """
     ts = e.get("ts", "")[TS_TIME_OF_DAY]
     level = e.get("level", "?").upper().ljust(LEVEL_WIDTH)
     etype = e.get("event_type", "?").ljust(EVENT_TYPE_WIDTH)
     action = e.get("action", "?").ljust(_ACTION_WIDTH)
     detail = e.get("detail", "")
     color = ANSI_LEVELS.get(e.get("level", ""), "")
-    parts = [f"{ts} {color}{level}{ANSI_RESET} {etype} {action} {detail}"]
+    origin = f"{e.get('script', '?'):<{script_width}} " if script_width else ""
+    parts = [f"{ts} {origin}{color}{level}{ANSI_RESET} {etype} {action} {detail}"]
+    # The continuation lines indent past the script column too, so a reason or a
+    # log path still lands under the detail it belongs to.
+    hang = _DETAIL_COLUMN + (script_width + 1 if script_width else 0)
     if e.get("reason"):
-        parts.append(f"\n{'':>{_DETAIL_COLUMN}}reason: {e['reason']}")
+        parts.append(f"\n{'':>{hang}}reason: {e['reason']}")
     if e.get("duration_ms") is not None:
         parts.append(f" ({e['duration_ms']}ms)")
     artifact = (e.get("data") or {}).get("log")
@@ -221,42 +251,86 @@ def _format_event_line(e: dict) -> str:
         # Absolute, because the reader's next move is to open it, and the record
         # stores it relative so a state root that moves still resolves.
         full = workbench_paths.trail_dir() / artifact
-        parts.append(f"\n{'':>{_DETAIL_COLUMN}}log: {full}")
+        parts.append(f"\n{'':>{hang}}log: {full}")
     return "".join(parts)
 
 
-def _finish_event(events: list[dict]) -> dict | None:
-    """The one summary that reports the run's own duration.
+def _finish_event(events: list[dict], invocation: str | None = None) -> dict | None:
+    """The one summary that reports a run's own duration.
 
     `summary` is no longer a single kind of event — `pr gc` writes a terminal
     per-PR outcome with the same type and no duration — so the run-end event is
     selected by action.
+
+    *invocation* names which process's finish to take. A command spans several,
+    each writing its own, and the outermost one's is the only one that measures
+    the command: a child's covers the part of it that child ran. Omitted, the
+    first finish in the list wins, which is the same event whenever the records
+    come from a single process.
     """
     for e in events:
-        if e.get("event_type") == "summary" and e.get("action") == FINISH_ACTION:
+        if e.get("event_type") != "summary" or e.get("action") != FINISH_ACTION:
+            continue
+        if invocation is None or e.get("invocation") == invocation:
             return e
     return None
 
 
-def _format_show(events: list[dict]) -> str:
+def _command_label(scripts: list[str]) -> str:
+    """How a listing names a command: its outermost script, and how many others.
+
+    A row stands for every process in the command, so a `pr review` reads
+    `pr +2` rather than claiming to be `pr` alone. A command of one process —
+    which is every pre-cutover record — is named exactly as it always was.
+    """
+    outermost = scripts[0] if scripts else "?"
+    return f"{outermost} +{len(scripts) - 1}" if len(scripts) > 1 else outermost
+
+
+def _scripts_in_order(events: list[dict]) -> list[str]:
+    """The distinct scripts that wrote *events*, outermost first.
+
+    Ordered by first appearance rather than sorted: the events are already in
+    timestamp order, so this is the order the processes started in, which is the
+    order the reader watched them run.
+    """
+    return list(dict.fromkeys(e.get("script", "?") for e in events))
+
+
+def _format_show(events: list[dict], focus: str | None = None) -> str:
+    """One command's events as a timeline, headed by what it was.
+
+    The header names the root invocation and every script that ran under it, so
+    a `pr review` reads as the three processes it is. A command of one process
+    renders as it always did, which is also what a pre-cutover record gives.
+
+    *focus* names the run the header reports on, for a listing narrowed to one
+    process inside a command: without it the header would name the whole
+    command's root, and look for a duration under an ID no surviving event
+    carries. Defaults to the root, which is what the events describe.
+    """
     if not events:
         return "No events found."
     first = events[0]
-    inv = first.get("invocation", "?")
-    script = first.get("script", "?")
+    root = focus or _root_of(first)
+    scripts = _scripts_in_order(events)
     ts = first.get("ts", "?")
-    finish = _finish_event(events)
+    # That run's own finish, not whichever process ended first: a child's
+    # duration covers its part, and only the headline run's covers the whole.
+    finish = _finish_event(events, invocation=root)
     duration = f" — {finish['duration_ms'] / _MS_PER_SECOND:.1f}s" if finish else ""
     ctx = first.get("context", {})
     ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items())
 
+    # Only worth a column when there is more than one name to tell apart.
+    width = max((len(s) for s in scripts), default=0) if len(scripts) > 1 else 0
     lines = [
-        f"{ANSI_BOLD}Invocation {inv}{ANSI_RESET} — {script} — {ts}{duration}",
+        f"{ANSI_BOLD}Invocation {root}{ANSI_RESET} — {' → '.join(scripts)} — {ts}{duration}",
         f"Context: {ctx_str}",
         "",
     ]
     for e in events:
-        lines.append(_format_event_line(e))
+        lines.append(_format_event_line(e, script_width=width))
     return "\n".join(lines)
 
 
@@ -473,6 +547,7 @@ def cmd_query(args):
         level=args.level,
         event_type=args.event_type,
         invocation=args.invocation,
+        root=args.root,
         pr=args.pr,
         repo=args.repo,
         since=args.since,
@@ -485,37 +560,67 @@ def cmd_query(args):
             print(_format_event_line(e))
 
 
+def _command_events(events: list[dict], invocation: str) -> list[dict]:
+    """Every event of the command *invocation* names, from either end of it.
+
+    A user has one ID in hand and does not know whether it was the outermost
+    process or one of its children — `pr` logs its own, a delegate's console
+    line logs the delegate's. Both resolve to the same command: the named
+    record's root is found first, then everything sharing it.
+    """
+    named = [e for e in events if e.get("invocation") == invocation]
+    root = _root_of(named[0]) if named else invocation
+    return filter_events(events, root=root)
+
+
 def cmd_show(args):
     events = load_trail_events(None)
-    filtered = filter_events(events, invocation=args.invocation)
+    if args.only:
+        filtered = filter_events(events, invocation=args.invocation)
+    else:
+        filtered = _command_events(events, args.invocation)
     if args.json:
         for e in filtered:
             print(json.dumps(e, separators=(",", ":")))
     else:
-        print(_format_show(filtered))
+        print(_format_show(filtered, focus=args.invocation if args.only else None))
 
 
 def cmd_list(args):
-    events = load_trail_events(args.since)
-    events = filter_events(
-        events, since=args.since, repo=args.repo, script=args.script)
+    """One row per user command, not per process.
 
-    # Group by invocation
-    invocations: dict[str, list[dict]] = {}
+    `--script` still selects by the script that wrote a record, but the row it
+    produces is the whole command that record belongs to — asking for
+    `review-orchestrate` lists the `pr review`s that reached it, with their own
+    durations, rather than the fragment of each that one process logged.
+    """
+    events = load_trail_events(args.since)
+    selected = filter_events(
+        events, since=args.since, repo=args.repo, script=args.script)
+    roots = {_root_of(e) for e in selected}
+    # Re-read from the unfiltered set, so a row covers the command's whole tree
+    # even when the filter matched only one process in it.
+    commands: dict[str, list[dict]] = {}
     for e in events:
-        inv = e.get("invocation", "?")
-        invocations.setdefault(inv, []).append(e)
+        root = _root_of(e)
+        if root in roots:
+            commands.setdefault(root, []).append(e)
 
     # Sort by first event timestamp, most recent first
-    sorted_invs = sorted(invocations.items(), key=lambda x: x[1][0].get("ts", ""), reverse=True)
+    sorted_invs = sorted(commands.items(), key=lambda x: x[1][0].get("ts", ""), reverse=True)
 
     if args.json:
         for inv_id, inv_events in sorted_invs:
             first = inv_events[0]
-            finish = _finish_event(inv_events)
+            finish = _finish_event(inv_events, invocation=inv_id)
+            scripts = _scripts_in_order(inv_events)
             print(json.dumps({
                 "invocation": inv_id,
+                # The outermost script, as before. `scripts` beside it is the
+                # whole tree, so a consumer reading the old key still gets the
+                # same answer it always did.
                 "script": first.get("script"),
+                "scripts": scripts,
                 "ts": first.get("ts"),
                 "event_count": len(inv_events),
                 "duration_ms": finish.get("duration_ms") if finish else None,
@@ -523,11 +628,11 @@ def cmd_list(args):
     else:
         for inv_id, inv_events in sorted_invs:
             first = inv_events[0]
-            finish = _finish_event(inv_events)
+            finish = _finish_event(inv_events, invocation=inv_id)
             duration = (
                 f"{finish['duration_ms'] / _MS_PER_SECOND:.1f}s" if finish else "?")
             ts = first.get("ts", "?")[TS_TO_SECONDS]
-            script = first.get("script", "?")
+            script = _command_label(_scripts_in_order(inv_events))
             n = len(inv_events)
             # Padded to the current width so records minted before it widened
             # do not shift every column to their right.
@@ -585,15 +690,21 @@ def main():
     p_query.add_argument("--script", help="Filter by script name")
     p_query.add_argument("--level", help="Filter by level (debug, info, warn, error)")
     p_query.add_argument("--event-type", help="Filter by event type")
-    p_query.add_argument("--invocation", help="Filter by invocation ID")
+    p_query.add_argument("--invocation", help="Filter by invocation ID (one process)")
+    p_query.add_argument(
+        "--root", help="Filter by root invocation ID (one whole user command)")
     p_query.add_argument("--pr", type=int, help="Filter by PR number")
     p_query.add_argument("--repo", help="Filter by repo (org/repo)")
     p_query.add_argument("--since", help="Time window (e.g. 2h, 1d)")
     p_query.add_argument("--json", action="store_true", help="Output raw JSONL")
 
     # show
-    p_show = sub.add_parser("show", help="Show a single invocation timeline")
-    p_show.add_argument("invocation", help="Invocation ID")
+    p_show = sub.add_parser("show", help="Show one command's timeline")
+    p_show.add_argument(
+        "invocation", help="Invocation ID — the command's own, or any process under it")
+    p_show.add_argument(
+        "--only", action="store_true",
+        help="Just the named process, not the whole command it belongs to")
     p_show.add_argument("--json", action="store_true", help="Output raw JSONL")
 
     # list

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -30,6 +31,33 @@ def _make_trail(script: str, events: list[tuple[str, str]]) -> str:
         trail.info(action, detail)
     trail.finish()
     return trail.invocation
+
+
+def _make_command(*scripts: str) -> list[str]:
+    """One user command as the process tree it really is; return its invocations.
+
+    Each trail is opened while the one before it is still the published root, so
+    the records land exactly as `pr` → `claude-review` → `review-orchestrate`
+    writes them — without paying for three subprocesses per test. The spawn
+    itself is covered in `trail_test.py`, which is where that mechanism lives.
+
+    The environment is put back at the end, because that is what really happens
+    when the outermost process exits: the next command the user runs inherits
+    nothing from this one. Without it these trails would adopt each other as
+    roots across calls, and a test could not write two separate commands.
+    """
+    saved = os.environ.get(trail_module.TRAIL_ROOT_ENV)
+    trails = []
+    for script in scripts:
+        trail = Trail.start(script=script, context={"repo": "org/repo", "pr": 42})
+        trail.info("work", f"{script} ran")
+        trails.append(trail)
+    for trail in reversed(trails):
+        trail.finish()
+    os.environ.pop(trail_module.TRAIL_ROOT_ENV, None)
+    if saved is not None:
+        os.environ[trail_module.TRAIL_ROOT_ENV] = saved
+    return [t.invocation for t in trails]
 
 
 class TestTrailDiscovery:
@@ -93,6 +121,126 @@ class TestQueryFiltering:
         assert [e["script"] for e in old] == ["old-run"]
         assert all(e["script"] == "test" for e in
                    otto_log.filter_events(events, invocation=new_inv))
+
+
+class TestCommandCorrelation:
+    """A user command spans several processes; the reader treats it as one."""
+
+    def test_filter_by_root_selects_every_process_in_the_command(self):
+        root, _, _ = _make_command("pr", "claude-review", "review-orchestrate")
+        _make_trail("pr", [("other", "unrelated run")])
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, root=root)
+        assert {e["script"] for e in filtered} == {
+            "pr", "claude-review", "review-orchestrate"}
+
+    def test_filter_by_invocation_still_selects_one_process(self):
+        """The narrow question is still askable — `--root` is an addition."""
+        _, child, _ = _make_command("pr", "claude-review", "review-orchestrate")
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, invocation=child)
+        assert {e["script"] for e in filtered} == {"claude-review"}
+
+    def test_a_record_predating_the_root_field_is_its_own_command(self):
+        """Every grouping goes through `_root_of`, so history written before the
+        field existed still answers a root query — as a command of one."""
+        inv = _make_trail("ci-check", [("a", "first")])
+        events = otto_log.load_events(otto_log.discover_trails())
+        assert all(e["script"] == "ci-check"
+                   for e in otto_log.filter_events(events, root=inv))
+
+    def test_show_renders_the_whole_command_from_its_root(self, capsys):
+        root, _, _ = _make_command("pr", "claude-review", "review-orchestrate")
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=root, only=False, json=False))
+        out = capsys.readouterr().out
+        assert "pr → claude-review → review-orchestrate" in out
+        assert "review-orchestrate ran" in out
+
+    def test_show_finds_the_command_from_a_child_id(self, capsys):
+        """A user has one ID in hand and does not know which end it came from."""
+        root, child, _ = _make_command("pr", "claude-review", "review-orchestrate")
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=child, only=False, json=False))
+        out = capsys.readouterr().out
+        assert f"Invocation {root}" in out
+        assert "review-orchestrate ran" in out
+
+    def test_show_reports_the_whole_commands_duration(self, capsys):
+        """The root's own finish, not whichever child happened to end first."""
+        root, _ = _make_command("pr", "claude-review")
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=root, only=False, json=False))
+        header = capsys.readouterr().out.splitlines()[0]
+        assert re.search(r"\d+\.\d+s", header)
+
+    def test_show_labels_each_event_with_the_script_that_wrote_it(self, capsys):
+        root, _ = _make_command("pr", "claude-review")
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=root, only=False, json=False))
+        body = capsys.readouterr().out.splitlines()[3:]
+        assert any("claude-review" in line for line in body)
+
+    def test_a_single_process_command_keeps_the_unlabelled_layout(self, capsys):
+        """Nothing to tell apart, so the column would be the same on every line."""
+        inv = _make_trail("ci-check", [("fetch", "fetched")])
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=inv, only=False, json=False))
+        body = capsys.readouterr().out.splitlines()[3:]
+        assert not any("ci-check" in line for line in body)
+
+    def test_only_narrows_back_to_one_process(self, capsys):
+        _, child, _ = _make_command("pr", "claude-review", "review-orchestrate")
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=child, only=True, json=False))
+        out = capsys.readouterr().out
+        assert f"Invocation {child}" in out
+        assert "review-orchestrate ran" not in out
+
+    def test_only_reports_that_processs_own_duration(self, capsys):
+        """The header must not go looking for a finish under the root's ID when
+        no event in the narrowed listing carries it."""
+        _, child = _make_command("pr", "claude-review")
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=child, only=True, json=False))
+        header = capsys.readouterr().out.splitlines()[0]
+        assert re.search(r"\d+\.\d+s", header)
+
+    def test_list_prints_one_row_per_command(self, capsys):
+        _make_command("pr", "claude-review", "review-orchestrate")
+        otto_log.cmd_list(argparse.Namespace(
+            script=None, since=None, repo=None, json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert len(rows) == 1
+        assert rows[0]["scripts"] == ["pr", "claude-review", "review-orchestrate"]
+        assert rows[0]["script"] == "pr"
+
+    def test_list_counts_every_event_in_the_command(self, capsys):
+        root, _ = _make_command("pr", "claude-review")
+        otto_log.cmd_list(argparse.Namespace(
+            script=None, since=None, repo=None, json=True))
+        row = json.loads(capsys.readouterr().out.splitlines()[0])
+        assert row["invocation"] == root
+        # Two `work` events and two `finish`es, from the two processes.
+        assert row["event_count"] == 4
+
+    def test_list_by_script_reports_the_commands_that_reached_it(self, capsys):
+        """Filtering on an inner script still yields whole commands: the row is
+        the `pr review` that got there, not the fragment one process logged."""
+        root, _, _ = _make_command("pr", "claude-review", "review-orchestrate")
+        _make_trail("ci-check", [("a", "unrelated")])
+        otto_log.cmd_list(argparse.Namespace(
+            script="review-orchestrate", since=None, repo=None, json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert len(rows) == 1
+        assert rows[0]["invocation"] == root
+        assert rows[0]["scripts"] == ["pr", "claude-review", "review-orchestrate"]
+
+    def test_list_names_the_command_by_its_outermost_script(self, capsys):
+        _make_command("pr", "claude-review", "review-orchestrate")
+        otto_log.cmd_list(argparse.Namespace(
+            script=None, since=None, repo=None, json=False))
+        assert "pr +2" in capsys.readouterr().out
 
 
 class TestSinceSkipsFilesByName:
@@ -375,7 +523,8 @@ class TestSummaryIsNotAlwaysFinish:
         trail = Trail.start(script="pr", context={"repo": "org/repo"})
         trail.info("act", "did")
         trail.finish()
-        otto_log.cmd_show(argparse.Namespace(invocation=trail.invocation, json=False))
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=trail.invocation, only=False, json=False))
         # A duration, not merely a line that happens to end in "s" — the point of
         # the test is that `finish` is found and its duration_ms rendered.
         assert re.search(r"\d+\.\d+s", capsys.readouterr().out)
@@ -384,7 +533,8 @@ class TestSummaryIsNotAlwaysFinish:
         """A terminal `pr_outcome` event carries no duration and must not raise."""
         trail = Trail.start(script="pr", context={"repo": "org/repo"})
         trail.summary("pr_outcome", "org/repo#7 merged", data={"outcome": "MERGED"})
-        otto_log.cmd_show(argparse.Namespace(invocation=trail.invocation, json=False))
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=trail.invocation, only=False, json=False))
         assert "pr_outcome" in capsys.readouterr().out
 
     def test_list_survives_a_summary_with_no_duration(self, capsys):

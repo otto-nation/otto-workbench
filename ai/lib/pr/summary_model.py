@@ -443,7 +443,7 @@ class ActionCell(_ActionVocabulary):
             return f"{cls.DEFERRED} → [{issue_id}]({issue_url})"
         if issue_id:
             return f"{cls.DEFERRED} → {issue_id}"
-        return str(cls.DEFERRED)
+        return cls.DEFERRED
 
 
 class RetiredActionCell(_ActionVocabulary):

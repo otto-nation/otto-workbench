@@ -6166,6 +6166,15 @@ HAND_EDITED_ROW = ROUND_ONE_ROW.replace(
     _GENERATED_ACTION_CELL, _HAND_WRITTEN_ACTION_CELL)
 
 
+# Every shape `ActionCell.deferred` is asked for: a filed issue with a link, one
+# without, and a deferral that has neither. Shared by the two tests that sweep
+# the dynamic cells, so a shape added to one is added to both — a formatter
+# branch no test reaches is a wording that can drift from its opening.
+_DEFERRED_ARGS = (
+    ("ENG-1", "https://linear.app/i/ENG-1"), ("ENG-1", ""), ("", ""),
+)
+
+
 class TestGeneratedActionCell:
     """A cell no generated opening claims was written by a person."""
 
@@ -6324,8 +6333,7 @@ class TestActionCellOutcome:
             for r in (True, False)
             for sha in ("9f2e1a0", "")
         ]
-        cells += [ActionCell.deferred(i, u) for i, u in (
-            ("ENG-1", "https://linear.app/i/ENG-1"), ("ENG-1", ""), ("", ""))]
+        cells += [ActionCell.deferred(i, u) for i, u in _DEFERRED_ARGS]
         cells += [summary_model.HumanReason.prose_for(r) for r in (
             *(m.value for m in summary_model.HumanReason), "wat_is_this", "")]
         cells += [ActionCell.DISMISSED, ActionCell.RECONCILED]
@@ -6432,7 +6440,7 @@ class TestActionCellOutcome:
             cell = ActionCell.fixed_in("9f2e1a0", "owner/repo", verified=verified)
             assert cell.startswith(ActionCell.FIXED_IN)
             assert summary_model.action_outcome(cell) is FixOutcome.FIXED
-        for args in (("ENG-1", "https://linear.app/i/ENG-1"), ("ENG-1", ""), ("", "")):
+        for args in _DEFERRED_ARGS:
             cell = ActionCell.deferred(*args)
             assert cell.startswith(ActionCell.DEFERRED)
             assert summary_model.action_outcome(cell) is FixOutcome.DEFERRED

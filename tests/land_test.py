@@ -517,6 +517,27 @@ class TestTheRegenCommitHoldsOnlyHookOutput:
             wt, "show", "--name-only", "--pretty=", "HEAD")
         assert _remote_head(remote) == git_out(wt, "rev-parse", "HEAD").strip()
 
+    def test_the_refusal_says_which_leftovers_were_already_the_operators(
+            self, regenerating, tmp_path, capsys):
+        """A hook that creates a file leaves one too, and it is not the
+        operator's — calling it theirs is the misattribution this fix is about.
+        """
+        wt, _ = regenerating
+        hook = tmp_path / "hooks" / "pre-push"
+        hook.write_text(_UNTRACKED_REGEN_HOOK)
+        (wt / "src.py").write_text("edited\n")
+        git_out(wt, "add", "src.py")
+        git_out(wt, "commit", "-qm", "fix: work")
+        (wt / "src.py").write_text("work in progress\n")
+
+        land.land_head(wt, gated=False, regen="chore: regenerate")
+
+        err = capsys.readouterr().err
+        assert "src.py  (yours, already modified)" in err
+        # The hook wrote this one during the push; it is listed, but unmarked.
+        assert "extra.txt" in err
+        assert "extra.txt  (yours" not in err
+
     def test_a_file_the_operator_and_the_hook_both_touched_stays_uncommitted(
             self, regenerating):
         """Indistinguishable from an edit, so the work is kept over the artifact.

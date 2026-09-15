@@ -284,20 +284,22 @@ def _regenerated(wt_path: str | Path, before: set[str]) -> list[str]:
     return sorted(_modified(wt_path) - before)
 
 
-def _validated(wt_path: str | Path, trail: Trail | None) -> bool:
+def _validated(wt_path: str | Path, trail: Trail | None,
+               dirty_before: set[str] = frozenset()) -> bool:
     """Whether the tree the pre-push hooks read is the one about to be pushed.
 
     A hook validates the worktree, not the commits under it, so a recovery that
     leaves anything uncommitted lets the hooks pass on content no commit holds —
     and the green run then says nothing about the HEAD that reaches the remote.
-    Two things reach here uncommitted: a hook that wrote a *new* generated file,
-    which `_regenerated()`'s `" M "`-only filter does not see, and the
-    operator's own edits, which it now deliberately excludes.
+    Two things reach here uncommitted: the operator's own edits, which
+    `_regenerated` deliberately excludes, and a file the hook *created*, which
+    its `" M "`-only filter never saw in the first place.
 
-    The second is the common one and refusing is the point of it. The work is
-    the operator's to commit or discard, and the alternative — sweeping it into
-    a regeneration commit and force-pushing it — is how a branch comes to carry
-    a commit nobody wrote.
+    Refusing is right for both, but they are not the same news, so
+    *dirty_before* — what was already modified when the push began — sorts the
+    leftovers into work that was the operator's and output that appeared during
+    the push. Defaulting it to empty attributes nothing rather than
+    misattributing it: a caller that did not snapshot cannot tell them apart.
 
     A `status` that cannot be read counts as dirty, for the reason `is_dirty`
     gives: this answer gates a push, and "don't know" must not be spelled the
@@ -315,17 +317,23 @@ def _validated(wt_path: str | Path, trail: Trail | None) -> bool:
     leftover = [line[3:] for line in r.stdout.splitlines() if line.strip()]
     if not leftover:
         return True
+    yours = [p for p in leftover if p in dirty_before]
     if trail:
         trail.error("push", "recovery left the worktree dirty",
-                    data={"files": leftover})
+                    data={"files": leftover, "pre_existing": yours})
     log.error("Recovery left uncommitted changes — not pushing:")
     for path in leftover:
-        log.dim(f"  {path}")
-    # Named because the usual cause is the operator's own work, and the usual
-    # next move is to commit it: without this the message reads as a fault in
-    # the recovery rather than as a decision it made on their behalf.
-    log.info("These are yours to commit or discard — the pre-push hooks read "
-             "them, so pushing without them would send a HEAD nothing checked.")
+        # Marked per file rather than described in one line below the list:
+        # the two kinds routinely appear together, and the operator's next move
+        # differs per file.
+        log.dim(f"  {path}{'  (yours, already modified)' if path in yours else ''}")
+    # The usual case, and the one the operator can act on. Without saying so the
+    # refusal reads as a fault in the recovery rather than as a decision it made
+    # on their behalf.
+    if yours:
+        log.info("Marked files were already modified when the push started — "
+                 "yours to commit or discard. The pre-push hooks read them, so "
+                 "pushing without them would send a HEAD nothing checked.")
     return False
 
 
@@ -382,7 +390,7 @@ def _retry_after_regen(
     if not committed.ok:
         _record_commit_failure(trail, committed.combined_output)
         return None
-    if not _validated(wt_path, trail):
+    if not _validated(wt_path, trail, dirty_before):
         return None
 
     # Reported whichever way it went: a second push happened, and the operator

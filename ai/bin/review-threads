@@ -73,7 +73,6 @@ def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord
     return resolved
 
 
-
 def _warn_if_snapshot_stale(state: pr_state.PRState, wt_path: Path) -> None:
     """Say so when the snapshot describes a tree that is no longer checked out.
 
@@ -176,7 +175,6 @@ def _push_held_commit(
     record.commit_status = CommitStatus.PUSHED
 
 
-
 def _post_pending_fix_replies(
     state: pr_state.PRState,
     repo: str,
@@ -269,7 +267,6 @@ def _post_pending_fix_replies(
         if attribution.commit_unpushed(record.commit_status):
             record.commit_status = CommitStatus.PUSHED
         fix.replies_pending = False
-
 
 
 def _run_threads(trail, args, ctx) -> None:

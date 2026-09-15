@@ -23,7 +23,7 @@ from pathlib import Path
 
 from git import client as git_client
 from pr.fix import ItemOutcome
-from pr.thread_models import CommentItem, ReportThread
+from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread
 
 
 def blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
@@ -161,23 +161,32 @@ class CommentSource:
     and "which comment" are asked together everywhere they are asked.
     """
 
-    type: str = ""
+    type: CommentSourceKind = CommentSourceKind.UNSET
     id: str = ""
+
+    def __post_init__(self) -> None:
+        # Coerced rather than required, because every caller that builds one
+        # from a persisted entry has a plain string in hand. `Vocabulary` turns
+        # an unrecognised token into UNSET, which `permalink` answers with None
+        # — the same answer it gave when the two `if`s here simply fell through.
+        object.__setattr__(self, "type", CommentSourceKind(self.type))
 
     @property
     def ok(self) -> bool:
         return bool(self.id)
 
     def permalink(self, repo: str, pr_number: int) -> str | None:
-        """The anchor a reader follows back to the comment, or None."""
-        if not self.ok:
+        """The anchor a reader follows back to the comment, or None.
+
+        None for a source with no id, and for one whose kind is UNSET — a
+        review thread, or a token this version does not know. Neither has an
+        anchor to build from, and a URL with the fragment left off would point
+        at the PR rather than at the comment being cited.
+        """
+        if not self.ok or self.type is CommentSourceKind.UNSET:
             return None
         base = f"https://github.com/{repo}/pull/{pr_number}"
-        if self.type == "issue_comment":
-            return f"{base}#issuecomment-{self.id}"
-        if self.type == "review_body":
-            return f"{base}#pullrequestreview-{self.id}"
-        return None
+        return f"{base}#{self.type.anchor}-{self.id}"
 
 
 def comment_item_source(entry: CommentItem | ItemOutcome) -> CommentSource:
@@ -190,14 +199,14 @@ def comment_item_source(entry: CommentItem | ItemOutcome) -> CommentSource:
     source_id = getattr(entry, "source_id", "")
     source_type = getattr(entry, "source_type", "")
     if not source_id and not source_type:
-        # Parse the synthetic id: ic-{source_id}-{index} or rb-{source_id}-{index}
-        eid = entry.id
-        if eid.startswith("ic-"):
-            source_type = "issue_comment"
-            source_id = "-".join(eid.split("-")[1:-1])
-        elif eid.startswith("rb-"):
-            source_type = "review_body"
-            source_id = "-".join(eid.split("-")[1:-1])
+        # Parse the synthetic id `{prefix}-{source_id}-{index}` that
+        # `triage.assign_item_ids` writes. The prefix is read back off the same
+        # member that wrote it, so the two cannot name different kinds.
+        head, sep, rest = entry.id.partition("-")
+        kind = CommentSourceKind.from_id_prefix(head) if sep else CommentSourceKind.UNSET
+        if kind is not CommentSourceKind.UNSET:
+            source_type = kind
+            source_id = "-".join(rest.split("-")[:-1])
     return CommentSource(source_type, source_id)
 
 
@@ -219,5 +228,5 @@ def thread_permalink(
     if thread and thread.comments:
         db_id = thread.comments[0].get("databaseId")
         if db_id:
-            return f"https://github.com/{repo}/pull/{pr_number}#discussion_r{db_id}"
+            return f"https://github.com/{repo}/pull/{pr_number}#{THREAD_ANCHOR}{db_id}"
     return comment_item_permalink(entry, repo, pr_number)

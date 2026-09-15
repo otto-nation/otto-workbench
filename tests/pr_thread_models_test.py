@@ -26,7 +26,8 @@ import pytest  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import (  # noqa: E402
-    Classification, ClassificationResult, CommentItem, Complexity, Disposition,
+    Classification, ClassificationResult, CommentItem, CommentSourceKind,
+    Complexity, Disposition,
     ReplyOutcome, TrackingResult, Verification, Vocabulary, _coerce_vocab,
     triage_result_from_dict,
 )
@@ -222,16 +223,40 @@ class TestTheVocabularyEnums:
         assert item.verification is Verification.UNSET
         assert item.id == "t1"
 
-    def test_the_three_vocabularies_share_the_leniency_base(self):
+    def test_the_vocabularies_share_the_leniency_base(self):
         """A future enum added without Vocabulary would re-triplicate `_missing_`."""
-        for enum_cls in (Classification, Verification, Complexity):
+        for enum_cls in (Classification, Verification, Complexity, CommentSourceKind):
             assert issubclass(enum_cls, Vocabulary)
             assert enum_cls._missing_.__func__ is Vocabulary._missing_.__func__
 
     def test_a_subclass_without_unset_fails_at_definition(self):
-        with pytest.raises(TypeError, match="MustHaveUnset must define UNSET"):
+        with pytest.raises(TypeError, match="MustHaveUnset must define an UNSET"):
             class MustHaveUnset(Vocabulary):
                 FOO = "foo"
+
+    def test_every_unset_is_empty_whatever_its_spelling(self):
+        """Callers test a vocabulary field for emptiness, not for the member."""
+        for enum_cls in (Classification, Verification, Complexity, CommentSourceKind):
+            assert enum_cls.UNSET.value == ""
+            assert not enum_cls.UNSET
+
+    def test_a_tuple_subclass_with_a_non_empty_unset_fails_at_definition(self):
+        """The guard reads the value, so a tuple spelling cannot smuggle one past.
+
+        A member whose extra spellings are declared in a tuple satisfies the
+        membership check however its first element reads. Without this the
+        contract would hold only for subclasses that happen to be plain.
+        """
+        with pytest.raises(TypeError, match="UNSET must have the empty string"):
+            class Tupled(Vocabulary):
+                REAL = ("real", "r")
+                UNSET = ("none", "")
+
+                def __new__(cls, value: str, short: str):
+                    obj = str.__new__(cls, value)
+                    obj._value_ = value
+                    obj.short = short
+                    return obj
 
 
 class TestVocabularyCoercion:

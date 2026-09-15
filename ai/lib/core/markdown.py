@@ -35,6 +35,31 @@ def escape_cell(text: str) -> str:
     return text.replace("|", "\\|")
 
 
+def render_row(cells: list[str]) -> str:
+    """One table row, from its cells. The inverse of `row_cells`.
+
+    Here rather than beside either table that writes one, because both of them
+    are read back through `row_cells` above and the two operations have to
+    agree about where a cell boundary is. A writer that spelled its own
+    `f"| {...} |"` would be a second answer to that question, which is how the
+    padding convention drifts from the splitter that has to survive it.
+
+    Trivial on purpose: a row is its cells, and anything that reads as more
+    than that belongs in the cell that carries it.
+    """
+    return f"| {' | '.join(cells)} |"
+
+
+def table_divider(columns: int) -> str:
+    """The `|---|` line under a header of `columns` cells.
+
+    A divider is a fact about how many columns the table has, and nothing else.
+    Two tables spelled theirs by hand with different dash counts, which renders
+    identically and so reads as a convention where there was none.
+    """
+    return "|" + "|".join("-" * 8 for _ in range(columns)) + "|"
+
+
 def row_cells(row: str) -> list[str]:
     """The cells of one rendered table row, stripped of their padding."""
     return [cell.strip() for cell in CELL_SPLIT_RE.split(row.strip().strip("|"))]

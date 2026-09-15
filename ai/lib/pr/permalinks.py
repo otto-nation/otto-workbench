@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from core import markdown
 from git import client as git_client
 from pr.fix import ItemOutcome
 from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread
@@ -230,3 +231,34 @@ def thread_permalink(
         if db_id:
             return f"https://github.com/{repo}/pull/{pr_number}#{THREAD_ANCHOR}{db_id}"
     return comment_item_permalink(entry, repo, pr_number)
+
+
+def thread_cell(
+    entry: CommentItem,
+    threads_by_id: dict[str, ReportThread],
+    repo: str, pr_number: int,
+) -> str:
+    """The entry's summary as a table cell, linked back to the thread it names.
+
+    Two tables print this cell — the summary comment's row
+    (`summary_row.row_cells_for`) and the deferred tracking issue's
+    (`review.deferred_issue`) — and both have to escape the label *inside* the
+    link rather than around it. Escaping the whole link instead would put a
+    backslash in the URL, and the summary's row key is recovered by reading the
+    label back out with `markdown.plain_cell`, so a cell escaped the other way
+    stops matching itself between rounds.
+
+    That is one rule with two readers, which is why it is here beside the
+    permalink rather than copied into each table. The two spellings were
+    byte-identical across every input before they were merged; what made the
+    duplication worth removing is that only one of them was under test for the
+    pipe case, so the rule was being maintained in a place that could not see
+    when it broke.
+
+    The em dash for an entry with no summary is the same placeholder every
+    other empty cell uses: an empty cell reads as a table bug, a dash reads as
+    nothing to say.
+    """
+    summary = markdown.escape_cell(entry.summary or "—")
+    url = thread_permalink(entry, threads_by_id, repo, pr_number)
+    return f"[{summary}]({url})" if url else summary

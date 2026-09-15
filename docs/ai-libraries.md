@@ -1588,6 +1588,30 @@ still owed. The two used to be kept in order by sitting near each other in one
 function; here the ordering is the type's, since there is no `TriagedRound` that
 predates its own holds.
 
+### review/deferred_issue.py
+
+The tracking issue a fix pass owes the threads it deferred.
+
+A deferred thread is a reviewer's finding that nobody has answered and nobody
+has fixed. The PR carries no record of it once the round closes, so this files
+one: an issue listing every deferred thread, linked from a reply on each. What
+makes it worth a module rather than a function is the failure mode — nothing
+gets filed and the threads have no home — which is silent in four distinct
+ways, and `IssueResult` exists so each of them reaches `pr status` instead of
+only the trail.
+
+Layer 6, beside `review.issue`, which owns issue creation and the
+`CreatedIssue`/`IssueDelivery`/`IssueResult` vocabulary this reads. That
+dependency is the whole reason this is not at layer 4 with the rest of the
+comment pass: everything else it touches is `pr` (4) or below, so if those
+types ever moved down, this module would follow them rather than stay.
+
+What is not here: who decides a thread is deferred (`pr.triage`, `fix.comments`),
+how the replies pointing at the issue are written (`pr.thread_replies`), and the
+summary comment that renders the same deferral as a row
+(`pr.summary_render`) — see `finalize_deferred` for the one ordering
+dependency between that surface and this one.
+
 ### review/issue.py
 
 Issue tracking integration for claude-review.

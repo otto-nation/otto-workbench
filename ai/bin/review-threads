@@ -21,7 +21,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from core import log
-from core import markdown
 from fix import comments as fix_comments
 from git import client as git_client
 from git import land
@@ -35,7 +34,6 @@ from pr import history_rewrite
 from pr import comments_state as pcs
 from pr import context as pr_context
 from pr import domains as pr_domains
-from pr import permalinks
 from pr import settlement
 from pr import state as pr_state
 from core import run_lock
@@ -44,7 +42,8 @@ from git import push
 from git.land import CommitStatus
 from pr.comments_state import ThreadRecord, ThreadState
 from pr.fix import FixOutcome
-from review import issue as review_issue
+from review import deferred_issue
+from review.deferred_issue import TRACK_ALL
 from pr.thread_models import (
     THREAD_ANCHOR,
     CommentItem,
@@ -52,7 +51,6 @@ from pr.thread_models import (
     ReportThread,
 )
 from gh.pr_reads import fetch_pr_data
-from review.issue import CreatedIssue, IssueDelivery, IssueResult
 from pr import summary_publish
 from core.tool_parser import handle_value_flags
 from core.trail import Trail, add_trail_args
@@ -74,131 +72,6 @@ def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord
         resolved += 1
     return resolved
 
-
-_NO_ISSUE = CreatedIssue()
-
-
-class _TrackAll(frozenset):
-    """Sentinel for --track-all: every id is selected.
-
-    A frozenset subclass rather than a truthy string so `t.id in track` reads
-    the same for the ordinary per-thread case and this one.
-    """
-
-    def __contains__(self, item) -> bool:
-        return True
-
-    def __bool__(self) -> bool:
-        # Inherited from frozenset, this would be False: the instance holds no
-        # elements. It selects every id, so reporting itself as empty is the
-        # opposite of the truth for anyone who asks.
-        return True
-
-
-TRACK_ALL = _TrackAll()
-
-
-def _validate_track(state: pr_state.PRState, track) -> None:
-    """Exit if --track named anything that is not a deferred thread.
-
-    A typo'd id would otherwise be indistinguishable from a thread the tool
-    chose not to file, and the user would read "filed nothing" as agreement.
-    """
-    if track is TRACK_ALL:
-        return
-    deferred_ids = {
-        o.id for o in state.fix.fix.items if o.outcome == FixOutcome.DEFERRED
-    }
-    unknown = set(track) - deferred_ids
-    if unknown:
-        log.error(f"--track named threads that are not deferred: {sorted(unknown)}")
-        sys.exit(1)
-
-
-def _finalize_deferred(
-    state: pr_state.PRState,
-    ctx: pr_context.ResolvedContext,
-    threads_by_id: dict,
-    trail: Trail | None = None,
-    *,
-    track=frozenset(),
-) -> CreatedIssue:
-    """Create tracking issue and post deferred replies for threads named by --track.
-
-    Mutates `state` and leaves the save to the caller, which mutates the same
-    object either side of this call. Reading the file again here and saving
-    that copy would drop whatever the caller had already written.
-
-    `track` defaults to selecting nothing. Filing a thread on the tracking
-    issue posts a reply, under the PR author's name, saying a reviewer's
-    finding was triaged and postponed — a deferral is a decision someone makes
-    per thread, never the fallback disposition for whatever a fix pass failed
-    to fix.
-    """
-    if not state.fix.fix.items:
-        return _NO_ISSUE
-
-    _validate_track(state, track)
-
-    # `reason` carries why the thread was held back, and it is the only column
-    # in the tracking issue that distinguishes an agent that gave up from a
-    # decision anyone made — so the outcome's reason lands there rather than in
-    # the `reasoning` the reply templates read.
-    deferred = [
-        CommentItem.from_outcome(o, state.fix.reviewers.get(o.id, ""))
-        for o in state.fix.fix.items
-        if o.outcome == FixOutcome.DEFERRED and o.id in track
-    ]
-    if not deferred:
-        return _NO_ISSUE
-
-    pr_number = ctx.pr_number
-    if not pr_number:
-        return _NO_ISSUE
-
-    result = _create_or_update_deferred_issue(
-        deferred, ctx.repo, pr_number, threads_by_id,
-        ctx, state.fix.deferred_issue_id, trail,
-        state.fix.deferred_issue_url,
-    )
-    issue = result.issue
-
-    if issue.id:
-        thread_replies.post_deferred_replies(
-            deferred, threads_by_id, ctx.repo, pr_number,
-            issue.id, issue.url, ctx.require_worktree(),
-        )
-
-    state.fix.deferred_issue_id = issue.id
-    state.fix.deferred_issue_url = issue.url
-    # An issue that was owed and did not get filed leaves these threads pointing
-    # at something that does not exist. The trail records that too, but nobody
-    # reads the trail to decide whether a PR is safe to merge — they read
-    # `pr status`, which reads this.
-    state.fix.deferred_issue_pending = result.owed
-    return issue
-
-
-def _report_unfiled_deferrals(state: pr_state.PRState, track) -> None:
-    """Name the deferrals nobody asked to file, so the omission is visible.
-
-    Filing nothing is the correct default, but a silent nothing reads as "there
-    was nothing to file". List the ids so the user can pass the ones they meant.
-
-    Membership, not truthiness: a partial selection leaves the unnamed threads
-    just as unfiled as no selection does, and they are the easiest ones to lose
-    — the run reports success for the few that were named.
-    """
-    still = [
-        o for o in state.fix.fix.items
-        if o.outcome == FixOutcome.DEFERRED and o.id not in track
-    ]
-    if not still:
-        return
-    log.info(
-        f"{len(still)} deferred thread(s) not filed — pass --track <id> for "
-        f"each one to track, or --track-all: {', '.join(o.id for o in still)}"
-    )
 
 
 def _warn_if_snapshot_stale(state: pr_state.PRState, wt_path: Path) -> None:
@@ -255,8 +128,12 @@ def _finish_deferred_work(
     settlement.reconcile_fix_snapshot(state, threads_by_id, settlement.answered_comment_sources(
         state.fix.fix.items, ctx.repo, ctx.pr_number, report.my_login,
     ))
-    _finalize_deferred(state, ctx, threads_by_id, trail=trail, track=track)
-    _report_unfiled_deferrals(state, track)
+    # Order is load-bearing twice over: `validate_track` inside the first call
+    # exits on a typo'd --track before the second prints a list the operator
+    # would read as the whole story, and the summary below renders the issue
+    # link from the ids the first call writes into `state.fix`.
+    deferred_issue.finalize_deferred(state, ctx, threads_by_id, trail=trail, track=track)
+    deferred_issue.report_unfiled_deferrals(state, track)
     summary_publish.render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id,
     )
@@ -298,177 +175,6 @@ def _push_held_commit(
     log.info(f"Pushed held fixes ({record.commit_sha})")
     record.commit_status = CommitStatus.PUSHED
 
-
-def _build_deferred_issue_body(
-    deferred: list[CommentItem],
-    repo: str,
-    pr_number: int,
-    threads_by_id: dict[str, ReportThread],
-) -> str:
-    """Build markdown description for the deferred threads tracking issue."""
-    pr_url = f"https://github.com/{repo}/pull/{pr_number}"
-    parts = [
-        f"## Deferred Review Comments — [PR #{pr_number}]({pr_url})",
-        "",
-        "| Thread | File | Reason |",
-        "|--------|------|--------|",
-    ]
-    for entry in deferred:
-        summary = markdown.escape_cell(entry.summary or "—")
-        permalink = permalinks.thread_permalink(entry, threads_by_id, repo, pr_number)
-        thread_cell = f"[{summary}]({permalink})" if permalink else summary
-        file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
-        reason = markdown.escape_cell(entry.reason or "—")
-        parts.append(f"| {thread_cell} | {file_cell} | {reason} |")
-    parts.append("")
-    return "\n".join(parts)
-
-
-def _update_deferred_issue(
-    provider: str, issue_id: str, body: str, repo: str, opts: dict | None,
-) -> IssueResult:
-    """Refresh the tracking issue that already exists for this cycle.
-
-    Filed either way: an update that did not land leaves the issue stale rather
-    than missing, so the deferred threads still have the home the closeout debt
-    exists to insist on.
-    """
-    ok = review_issue.update_issue(provider, issue_id, body, repo=repo, opts=opts)
-    if not ok:
-        log.error(f"Failed to update deferred issue {issue_id}")
-        return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id))
-    url = review_issue.get_issue_url(provider, issue_id)
-    return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id, url=url))
-
-
-def _no_team_key(
-    provider: str, trail: Trail | None, *, publishing_open: bool,
-) -> IssueResult:
-    """Report a tracker this run cannot address, and say what it costs.
-
-    A provider that keys issues by team with no team to name is a fourth route
-    to the outcome the closeout debt exists to catch: nothing gets filed and the
-    deferred threads have no home. So it is owed while the gate is open, and a
-    non-event while it is shut — a draft run has failed at nothing it would
-    otherwise have attempted.
-    """
-    if not publishing_open:
-        log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
-        if trail:
-            trail.info("deferred_issue", "skipped — no team key")
-        return IssueResult(IssueDelivery.SKIPPED)
-
-    log.error(
-        f"Cannot determine team key for {provider} — deferred tracking issue not filed",
-    )
-    if trail:
-        trail.error("deferred_issue", "no team key")
-    return IssueResult(IssueDelivery.UNDELIVERED)
-
-
-def _create_deferred_issue(
-    provider: str,
-    body: str,
-    ctx: pr_context.ResolvedContext,
-    repo: str,
-    pr_number: int,
-    opts: dict | None,
-    trail: Trail | None,
-    *,
-    publishing_open: bool,
-) -> IssueResult:
-    parent_id = review_issue.extract_issue_id(provider, ctx.branch)
-    # The configured team wins over the one implied by the branch: it is
-    # what the repo declared, while the branch prefix is an inference from
-    # whatever issue happened to name it.
-    team = (opts or {}).get("team", "")
-    if not team and parent_id and "-" in parent_id:
-        team = parent_id.split("-", 1)[0]
-    if not team and review_issue.needs_team_key(provider):
-        return _no_team_key(provider, trail, publishing_open=publishing_open)
-
-    title = f"fix(review): deferred review comments — PR #{pr_number}"
-    result = review_issue.create_issue(
-        provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
-    )
-    if result.filed:
-        if trail:
-            trail.info(
-                "deferred_issue",
-                f"created {result.issue.id}",
-                data={"url": result.issue.url},
-            )
-        return result
-    if result.owed:
-        log.error("Failed to create deferred tracking issue")
-        if trail:
-            trail.error("deferred_issue", "creation failed")
-        return result
-
-    # The publishing gate declined the write, which is the gate working. Saying
-    # it failed here would put a spurious error in the closeout `pr status`
-    # reads, on every draft run.
-    log.dim("Deferred tracking issue not filed — publishing is off")
-    if trail:
-        trail.info("deferred_issue", "skipped — publishing off")
-    return result
-
-
-def _create_or_update_deferred_issue(
-    deferred: list[CommentItem],
-    repo: str,
-    pr_number: int,
-    threads_by_id: dict[str, ReportThread],
-    ctx: pr_context.ResolvedContext,
-    existing_issue_id: str,
-    trail: Trail | None,
-    existing_issue_url: str = "",
-) -> IssueResult:
-    """Create or update the deferred threads tracking issue.
-
-    Reports whether the issue was delivered, not only what it produced: the
-    caller records an owed-and-unfiled issue in state, which is what puts it in
-    front of `pr status` instead of leaving it in the trail alone.
-    """
-    if not deferred:
-        return IssueResult(IssueDelivery.SKIPPED, CreatedIssue(id=existing_issue_id))
-
-    worktree = str(ctx.require_worktree())
-    publishing_open = publishing.enabled()
-    # A draft run files nothing — create_issue gates on publishing.enabled() —
-    # so asking which tracker to file to would be a question with no consequence.
-    if publishing_open:
-        provider_info = review_issue.ensure_issue_provider(worktree)
-    else:
-        provider_info = review_issue.load_issue_provider(worktree)
-    if not provider_info.resolved:
-        # ensure_issue_provider has already said why. The delivery is what the
-        # caller records, and what `pr status` reads: with the gate open the
-        # deferred threads are owed an issue nothing can file, while a draft run
-        # has failed at nothing it would otherwise have attempted.
-        if trail and publishing_open:
-            trail.error("deferred_issue", "no issue tracker configured")
-        elif trail:
-            trail.info("deferred_issue", "skipped — no issue tracker configured")
-        return IssueResult(
-            IssueDelivery.UNDELIVERED if publishing_open else IssueDelivery.SKIPPED,
-        )
-    provider = provider_info.name
-
-    body = _build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)
-
-    if existing_issue_id:
-        updated = _update_deferred_issue(
-            provider, existing_issue_id, body, repo, provider_info.options,
-        )
-        return IssueResult(updated.delivery, CreatedIssue(
-            id=updated.issue.id, url=updated.issue.url or existing_issue_url,
-        ))
-
-    return _create_deferred_issue(
-        provider, body, ctx, repo, pr_number, provider_info.options, trail,
-        publishing_open=publishing_open,
-    )
 
 
 def _post_pending_fix_replies(

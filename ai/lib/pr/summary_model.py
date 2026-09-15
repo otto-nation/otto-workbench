@@ -39,10 +39,10 @@ from pr.thread_models import (
 TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
 
 
-TABLE_HEADER = f"| {' | '.join(TABLE_COLUMNS)} |"
+TABLE_HEADER = markdown.render_row(list(TABLE_COLUMNS))
 
 
-TABLE_DIVIDER = "|" + "|".join("-" * 8 for _ in TABLE_COLUMNS) + "|"
+TABLE_DIVIDER = markdown.table_divider(len(TABLE_COLUMNS))
 
 
 # The outcomes the summary shows a reviewer under one heading. A thread the

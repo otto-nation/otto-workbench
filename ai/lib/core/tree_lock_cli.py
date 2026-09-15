@@ -41,12 +41,13 @@ def _check(tree_root: Path) -> int:
 def _run_child(child: list[str]) -> int:
     """Run *child* in its own process group and wait until that group is gone.
 
-    SIGINT and SIGTERM are forwarded to the group rather than killing this
-    process. The lock is held for as long as we wait, so dropping it while
+    SIGINT, SIGTERM, and SIGHUP are forwarded to the group rather than killing
+    this process. The lock is held for as long as we wait, so dropping it while
     descendants are still running is the failure this wrapper exists to
     prevent. A terminal Ctrl-C no longer reaches the child by process-group
     membership (it is in a new session), so the SIGINT handler is what
-    delivers it.
+    delivers it. SIGHUP is the same gap for a closed terminal: without a
+    handler the wrapper dies, the flock drops, and the suite keeps running.
     """
     proc = subprocess.Popen(child, start_new_session=True)
 
@@ -58,7 +59,7 @@ def _run_child(child: list[str]) -> int:
 
     previous = {
         signum: signal.signal(signum, _forward)
-        for signum in (signal.SIGINT, signal.SIGTERM)
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     }
     try:
         try:

@@ -124,10 +124,30 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+@test "with-tree-lock on a non-repo terminates with the child's status" {
+  local plain="$BATS_TEST_TMPDIR/plain"
+  mkdir -p "$plain"
+  run "$WITH_LOCK" "$plain" -- sh -c 'exit 7'
+  [ "$status" -eq 7 ]
+}
+
+@test "with-tree-lock exports WORKBENCH_TREE_LOCK even outside a repo" {
+  local plain="$BATS_TEST_TMPDIR/plain"
+  mkdir -p "$plain"
+  run "$WITH_LOCK" "$plain" -- sh -c '[ -n "$WORKBENCH_TREE_LOCK" ]'
+  [ "$status" -eq 0 ]
+}
+
+@test "with-tree-lock rejects --label with no value" {
+  run "$WITH_LOCK" "$TREE" --label -- true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--label needs a name"* ]]
+}
+
 @test "with-tree-lock rejects a missing command" {
   run "$WITH_LOCK" "$TREE"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--"* ]]
+  [[ "$output" == *"expected -- before the command"* ]]
 }
 
 @test "with-tree-lock documents usage" {

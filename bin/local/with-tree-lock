@@ -4,7 +4,9 @@
 # A flock lives only as long as the process holding its file descriptor, and
 # Python opens descriptors close-on-exec — so a bash script cannot take the
 # lock and carry on. The lock has to wrap the work, which is what this does:
-# it holds LOCK_SH and runs the validating command as a child.
+# it holds LOCK_SH and runs the validating command as a child. The lock covers
+# the child's process group for as long as the wrapper waits — a writer that
+# daemonizes and returns drops the flock while work continues.
 #
 # Usage:
 #   with-tree-lock <tree-root> [--label TEXT] -- <command> [args...]

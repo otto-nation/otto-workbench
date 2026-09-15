@@ -1,6 +1,5 @@
 """Tests for the tree validation lock."""
 
-import json
 import os
 import subprocess
 import sys
@@ -14,7 +13,6 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-from core import tree_lock
 from core.tree_lock import LOCK_ENV, LOCK_FILE, acquire, holders, is_locked, lock_path
 
 
@@ -23,9 +21,6 @@ def _clear_lock_env():
     """Never inherit a real validation's marker into a test."""
     saved = os.environ.pop(LOCK_ENV, None)
     yield
-    for handle in tree_lock._HELD:
-        handle.close()
-    tree_lock._HELD.clear()
     os.environ.pop(LOCK_ENV, None)
     if saved is not None:
         os.environ[LOCK_ENV] = saved
@@ -212,8 +207,49 @@ def test_lock_survives_only_while_the_holder_lives(worktree):
             child.wait(timeout=10)
 
 
-def test_non_repo_path_has_no_lock(worktree, tmp_path):
+def test_non_repo_path_has_no_lock(tmp_path):
     """Outside a git repo there is nothing to lock and nothing to block."""
     plain = tmp_path / "plain"
     plain.mkdir()
     assert is_locked(plain) is False
+
+
+def test_non_repo_acquire_sets_the_env_marker(tmp_path):
+    """Writers re-exec on the marker; a missing one here is a fork bomb."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with acquire(plain, command="run-tests", started="t"):
+        assert os.environ[LOCK_ENV] == str(plain.resolve())
+        assert is_locked(plain) is False
+    assert LOCK_ENV not in os.environ
+
+
+def test_git_timeout_is_treated_as_no_lock(tmp_path, monkeypatch):
+    """A hung git must fail-soft; TimeoutExpired is not CalledProcessError."""
+
+    def boom(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert lock_path(tmp_path) is None
+    assert is_locked(tmp_path) is False
+
+
+def test_inherited_git_dir_does_not_hijack_resolution(tmp_path, monkeypatch):
+    """Hooks export GIT_DIR; git -C must still resolve the asked-about tree."""
+    tree = tmp_path / "tree"
+    other = tmp_path / "other"
+    tree.mkdir()
+    other.mkdir()
+    subprocess.run(["git", "init", "-q", str(tree)], check=True)
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    other_git = subprocess.run(
+        ["git", "-C", str(other), "rev-parse", "--absolute-git-dir"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    monkeypatch.setenv("GIT_DIR", other_git)
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    path = lock_path(tree)
+    assert path == (tree / ".git" / LOCK_FILE).resolve()

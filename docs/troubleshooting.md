@@ -272,6 +272,10 @@ The kernel releases the lock when the holder exits, for any reason including a
 crash or SIGKILL — so there is no stale lock to clean up by hand and no file to
 delete. A tree that reports as validated has a live validator behind it.
 
+`WORKBENCH_TREE_LOCK` is the writers' reentrancy marker only: it tells
+`validate-all` and `run-tests` they are already inside the wrapper, so they do
+not re-exec. A reader must never consult it — the flock is the only verdict.
+
 ## "`state.json` is unreadable — discarding it"
 
 The run target's PR state file did not parse — truncated by a killed write, hand-edited, or written by an older schema. Nothing in it is authoritative: every field is rebuilt by the command that wrote it, so `pr` commands carry on with no cached state rather than failing.

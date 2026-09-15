@@ -41,10 +41,6 @@ from core import timeouts
 LOCK_FILE = "workbench-validate.lock"
 LOCK_ENV = "WORKBENCH_TREE_LOCK"
 
-# Handles held for the lifetime of the process. Kept only so they stay open —
-# the kernel drops their flocks when we exit.
-_HELD: list = []
-
 
 def _git_dir(tree_root: Path) -> Path | None:
     """The worktree's private git dir, or None outside a repo.
@@ -53,6 +49,12 @@ def _git_dir(tree_root: Path) -> Path | None:
     that path is a file pointing at ``<bare>/worktrees/<name>``, and writing a
     lock there would put every worktree's lock in one place.
     """
+    # GIT_DIR / GIT_WORK_TREE skip discovery: git -C then answers the caller's
+    # repo, not tree_root. Hooks export both; strip them so a reader inside a
+    # hook still resolves the tree it was asked about.
+    env = os.environ.copy()
+    env.pop("GIT_DIR", None)
+    env.pop("GIT_WORK_TREE", None)
     try:
         out = subprocess.run(
             ["git", "-C", str(tree_root), "rev-parse", "--absolute-git-dir"],
@@ -60,8 +62,9 @@ def _git_dir(tree_root: Path) -> Path | None:
             text=True,
             check=True,
             timeout=timeouts.LOCAL,
+            env=env,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.SubprocessError):
         return None
     path = out.stdout.strip()
     return Path(path) if path else None
@@ -183,6 +186,13 @@ def _record(handle, command: str, started: str, tree_root: Path) -> None:
     handle.flush()
 
 
+def _restore_lock_env(previous: str | None) -> None:
+    if previous is None:
+        os.environ.pop(LOCK_ENV, None)
+    else:
+        os.environ[LOCK_ENV] = previous
+
+
 @contextlib.contextmanager
 def acquire(tree_root: Path, command: str, started: str):
     """Declare this tree under validation for the duration of the block.
@@ -201,7 +211,16 @@ def acquire(tree_root: Path, command: str, started: str):
     if path is None:
         # Not a git repo: nothing to declare, and refusing to run the suite
         # over a plain directory would be a regression for no safety gain.
-        yield
+        # Still set LOCK_ENV so writers that re-exec under this wrapper stop
+        # rather than looping: lock_path is None whenever git cannot answer
+        # (no .git, dubious ownership, a moved bare repo), not only "not a
+        # repo", and those writers key their re-exec on the marker being set.
+        previous = os.environ.get(LOCK_ENV)
+        os.environ[LOCK_ENV] = target
+        try:
+            yield
+        finally:
+            _restore_lock_env(previous)
         return
 
     # "a+" rather than "w": opening must not destroy a co-holder's record.
@@ -222,9 +241,6 @@ def acquire(tree_root: Path, command: str, started: str):
         os.environ[LOCK_ENV] = target
         yield
     finally:
-        if previous is None:
-            os.environ.pop(LOCK_ENV, None)
-        else:
-            os.environ[LOCK_ENV] = previous
+        _restore_lock_env(previous)
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()

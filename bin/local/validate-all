@@ -86,13 +86,7 @@ fi
 #
 # Re-exec rather than call: a flock lasts only as long as the process holding
 # its descriptor. WORKBENCH_TREE_LOCK marks that we are already inside it.
-#
-# ceiling: skip the wrap when VALIDATOR_ROOT is not a git repo. Upgrade trigger: if
-# acquire() sets WORKBENCH_TREE_LOCK on its no-op path.
-# with-tree-lock no-ops there without setting WORKBENCH_TREE_LOCK, so wrapping
-# again would recurse. Fixture tests point VALIDATOR_ROOT at a temp directory.
-if [[ -z "${WORKBENCH_TREE_LOCK:-}" ]] \
-    && git -C "$VALIDATOR_ROOT" rev-parse --absolute-git-dir >/dev/null 2>&1; then
+if [[ -z "${WORKBENCH_TREE_LOCK:-}" ]]; then
   exec "$_SCRIPT_ROOT/bin/local/with-tree-lock" "$VALIDATOR_ROOT" \
     --label "bin/local/validate-all" -- "$_SCRIPT_ROOT/bin/local/validate-all" \
     "${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}"

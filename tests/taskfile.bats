@@ -12,12 +12,12 @@ setup() {
 @test "no task target invokes bats directly" {
   # Every suite must go through run-tests, which declares the tree. A direct
   # bats call is a validation nothing can see.
-  run grep -nE '^\s+- bats ' "$TASKFILE"
+  run grep -nE '^[[:space:]]+- bats ' "$TASKFILE"
   [ "$status" -ne 0 ]
 }
 
 @test "no task target invokes pytest directly" {
-  run grep -nE '^\s+- pytest ' "$TASKFILE"
+  run grep -nE '^[[:space:]]+- pytest ' "$TASKFILE"
   [ "$status" -ne 0 ]
 }
 

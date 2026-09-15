@@ -3544,6 +3544,35 @@ class TestBuildDeferredIssueBody:
         body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
         assert "—" in body
 
+    def test_prose_cells_keep_the_row_three_columns_wide(self, rt):
+        """A pipe in prose would otherwise shift every later cell of the row.
+
+        The summary and the reason are free text written per round. One literal
+        pipe splits the row into more cells than the table has columns, so the
+        reason lands under File and the tracking issue reads as a table bug.
+        """
+        deferred = [
+            CommentItem(id="t1", file="a.go", line=1,
+                        summary="use a | b", reason="see x | y"),
+        ]
+        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        row = next(line for line in body.splitlines() if "use a" in line)
+        assert markdown.row_cells(row) == ["use a \\| b", "`a.go:1`", "see x \\| y"]
+
+    def test_a_piped_summary_survives_inside_its_permalink_label(self, rt):
+        """The escape goes on the label, not around the link, as in summary_row."""
+        deferred = [
+            CommentItem(id="t1", file="a.go", line=1,
+                        summary="use a | b", reason="r"),
+        ]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 12345}]),
+        }
+        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, threads_by_id)
+        row = next(line for line in body.splitlines() if "use a" in line)
+        assert len(markdown.row_cells(row)) == 3
+        assert "[use a \\| b](" in row
+
 
 # ── _finalize_deferred ────────────────────────────────────────────────────
 

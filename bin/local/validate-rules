@@ -171,18 +171,31 @@ _check_vocabulary() {
 # deferring to the scoped file rather than restating its reasoning, which is
 # exactly the shape a cross-reference should take. A file-wide exemption would
 # let one citation license every other line in it.
+# Hits are collected across every phrase and deduplicated by line number before
+# any are reported. One line can match several phrases at once ("the permission
+# allow list keys on prefixes" matches two), and that is one violation with one
+# fix — failing per phrase would count it twice in the summary and print the
+# same remedy twice.
 _check_permission_model() {
-  local file="$1" display="$2" phrase found=false hits
+  local file="$1" display="$2" phrase hits line
+  local -a lines=()
   for phrase in "${CLAUDE_PERMISSION_PHRASES[@]}"; do
     hits="$(grep -nEi "$phrase" "$file" | grep -v 'bash-tool\.md' || true)"
     [[ -z "$hits" ]] && continue
     while IFS= read -r hit; do
       [[ -z "$hit" ]] && continue
-      _fail "$display:${hit%%:*}: reasons from Claude Code's permission model but reaches Pi — scope it with 'harness: [claude]', or cite bash-tool.md instead of restating it"
-      found=true
+      lines+=( "${hit%%:*}" )
     done <<< "$hits"
   done
-  $found || _pass "$display: no Claude-only permission reasoning"
+
+  if (( ${#lines[@]} == 0 )); then
+    _pass "$display: no Claude-only permission reasoning"
+    return 0
+  fi
+
+  while IFS= read -r line; do
+    _fail "$display:$line: reasons from Claude Code's permission model but reaches Pi — scope it with 'harness: [claude]', or cite bash-tool.md instead of restating it"
+  done < <(printf '%s\n' "${lines[@]}" | sort -n -u)
 }
 
 RULES_DIR="$WORKBENCH_DIR/ai/guidelines/rules"

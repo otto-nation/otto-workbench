@@ -141,3 +141,13 @@ _rule() {
   WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
   [ "$status" -eq 1 ]
 }
+
+@test "one line matching several phrases is reported once" {
+  # "permission allow list" and "allow-list keys on" both match here; it is one
+  # violation with one fix, so it must not be counted or printed twice.
+  _rule bash.md "$(printf -- '# Bash\n\n- the permission allow list keys on per-subcommand prefixes')"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
+  [ "$status" -eq 1 ]
+  [ "$(grep -c 'reasons from' <<< "$output")" -eq 1 ]
+}

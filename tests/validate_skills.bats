@@ -822,3 +822,26 @@ _make_hook() {
   _run_validate --quiet
   [ "$status" -eq 0 ]
 }
+
+@test "a larger number ending in the floor's digit does not satisfy it" {
+  # "25 sessions" must not satisfy MIN_SESSIONS=5 on its last digit — a skill
+  # documenting the wrong number is the case this check exists to catch.
+  _make_skill widget "24h" per-project "Auto-triggers once 24h and 25 sessions have passed"
+  _make_hook widget 24 5
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIN_SESSIONS=5"* ]]
+}
+
+@test "an unparseable cadence is reported as unrecognized, not as 0h" {
+  # Bash arithmetic reads a non-numeric prefix as 0, which would otherwise
+  # report "(0h) disagrees" and send the reader hunting a constant mismatch.
+  _make_skill widget "several days" per-project
+  _make_hook widget 24
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a recognized duration"* ]]
+  [[ "$output" != *"(0h)"* ]]
+}

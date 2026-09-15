@@ -181,10 +181,18 @@ _validate_cadence_matches_hook() {
 
   # "24h" and "7 days" both reach hours; anything else is left as-is and will
   # fail the comparison loudly rather than being silently treated as agreeing.
+  # A cadence that parses to neither form is reported as unrecognized rather
+  # than coerced: bash arithmetic reads a non-numeric prefix as 0, so "several
+  # days" would otherwise disagree with its hook as "(0h)" and send the reader
+  # looking for a constant mismatch that does not exist.
   case "$cadence" in
-    *h) cadence_hours="${cadence%h}" ;;
-    *" days"|*" day") cadence_hours=$(( ${cadence%% *} * 24 )) ;;
-    *) cadence_hours="$cadence" ;;
+    [0-9]*h) cadence_hours="${cadence%h}" ;;
+    [0-9]*" days"|[0-9]*" day") cadence_hours=$(( ${cadence%% *} * 24 )) ;;
+    [0-9]*) cadence_hours="$cadence" ;;
+    *)
+      _fail "$display: lifecycle_cadence '$cadence' is not a recognized duration (expected '24h' or '7 days')"
+      return 0
+      ;;
   esac
 
   if [[ -n "$hook_hours" ]]; then
@@ -197,11 +205,14 @@ _validate_cadence_matches_hook() {
 
   # The floor is satisfied by the number standing before the word session, with
   # room for a qualifier between them ("5 or more sessions", "10 new sessions").
-  # The reverse order is deliberately not accepted: matching a bare number
-  # within N characters of "session" passed dream on the sentence "a session
-  # from March 15", reporting a floor documented that nowhere appears.
+  #
+  # Bounded on both sides. Without the leading \b, "25 sessions" satisfies a
+  # MIN_SESSIONS=5 floor on its last digit — so a skill documenting the wrong
+  # number passes, which is the one thing this check exists to catch. Without
+  # the trailing one, matching a bare number within N characters of "session"
+  # passed dream on the sentence "a session from March 15".
   if [[ -n "$hook_sessions" ]]; then
-    if grep -qiE "${hook_sessions}\+?( [a-z]+){0,2} sessions?\b" "$dir/SKILL.md"; then
+    if grep -qiE "\b${hook_sessions}\+?( [a-z]+){0,2} sessions?\b" "$dir/SKILL.md"; then
       _pass "$display: states $(basename "$hook")'s ${hook_sessions}-session floor"
     else
       _fail "$display: $(basename "$hook") also gates on MIN_SESSIONS=$hook_sessions, which the skill never states — it reads as firing on the ${cadence} timer alone"

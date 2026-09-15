@@ -277,8 +277,14 @@ def create_deferred_issue(
     parent_id = review_issue.extract_issue_id(provider, ctx.branch)
     # The configured team wins over the one implied by the branch: it is
     # what the repo declared, while the branch prefix is an inference from
-    # whatever issue happened to name it. That the inference exists at all is
-    # #1318 — it makes filing depend on what the run was invoked against.
+    # whatever issue happened to name it.
+    #
+    # ceiling: the inference is what makes `issues.team` optional, so whether a
+    # repo files its tracking issue depends on what the run was invoked against
+    # rather than on how the repo is configured — a branch carrying a parent id
+    # files, the same repo on a branch without one reports no team key. Upgrade
+    # trigger: when a repo is seen filing on one branch and failing on another,
+    # require `issues.team` and drop the inference (#1318).
     team = (opts or {}).get("team", "")
     if not team and parent_id and "-" in parent_id:
         team = parent_id.split("-", 1)[0]

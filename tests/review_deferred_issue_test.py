@@ -22,7 +22,6 @@ contract questions the moment these functions were public.
 """
 
 import sys
-from pathlib import Path
 from unittest.mock import patch
 
 from conftest import REPO_ROOT, make_ctx

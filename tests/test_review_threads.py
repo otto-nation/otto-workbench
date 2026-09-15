@@ -3509,7 +3509,7 @@ class TestSummarizeCommentBody:
         assert result.endswith("…")
 
 
-# ── _build_deferred_issue_body ────────────────────────────────────────────
+# ── deferred_issue.build_deferred_issue_body ──────────────────────────────
 
 
 class TestBuildDeferredIssueBody:
@@ -3574,7 +3574,7 @@ class TestBuildDeferredIssueBody:
         assert "[use a \\| b](" in row
 
 
-# ── _finalize_deferred ────────────────────────────────────────────────────
+# ── deferred_issue.finalize_deferred ──────────────────────────────────────
 
 
 class TestFinalizeDeferredCarriesTheReason:

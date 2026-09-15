@@ -3,7 +3,7 @@ name: wiki-capture
 description: "Reviews the session that just ended for anything worth keeping and logs it to the knowledge base, without writing articles. TRIGGER when: a session ends in a repo with a knowledge base and a capture is due. SKIP: writing or editing articles (use wiki compile); one-off answers already in the codebase."
 source: otto-workbench/ai/skills/wiki-capture/SKILL.md
 invocation: "/wiki-capture"
-trigger: "Auto-triggers at session end, at most once every 24h per repo, in repos that have a knowledge base."
+trigger: "Auto-triggers at session end in repos that have a knowledge base, once 24h and 3 sessions have both passed since the last capture."
 skip: "Never writes or edits an article — /wiki compile processes what this logs, deliberately."
 output: "SESSION_OBSERVATION entries appended to the knowledge base's _log.md"
 lifecycle_cadence: "24h"
@@ -14,6 +14,10 @@ lifecycle_scope: per-project
 
 Passive knowledge capture. The session that just ended is reviewed for anything
 durable, and what turns up is **logged** — never written into an article.
+
+Capture runs at session end once the repo is both 24 hours and 3 sessions past
+its last one — `should-wiki-capture.sh` gates on the two together, so a single
+session the next day does not trigger one.
 
 Passive capture is the half of the wiki pattern that makes it compound. Without
 it every article enters the knowledge base because a human remembered to run

@@ -741,3 +741,126 @@ BODY
   [ "$status" -eq 1 ]
   [[ "$output" == *"written against superpowers v6.3.0"* ]]
 }
+
+# ── lifecycle cadence vs the hook that gates it ──────────────────────────────
+
+# Writes a should-*.sh beside a skill. Only the two constants are read, so the
+# body is whatever makes the file plausible.
+_make_hook() {
+  local name="$1" hours="$2" sessions="${3:-}"
+  local dir="$FAKE_WORKBENCH/ai/skills/$name"
+  mkdir -p "$dir"
+  {
+    echo "#!/usr/bin/env bash"
+    echo "UPPER_INTERVAL_HOURS=$hours"
+    [[ -n "$sessions" ]] && echo "MIN_SESSIONS=$sessions"
+    # Not an early exit: a false [[ ]] as the last statement would become the
+    # function's exit status and fail the calling test under set -e whenever
+    # sessions is empty. See bash.md's function-last-statement pitfall.
+    return 0
+  } > "$dir/should-$name.sh"
+}
+
+@test "a cadence matching its hook passes" {
+  _make_skill widget "24h" per-project
+  _make_hook widget 24
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a cadence disagreeing with its hook fails" {
+  _make_skill widget "24h" per-project
+  _make_hook widget 72
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"disagrees"* ]]
+}
+
+@test "a day-form cadence is compared in hours" {
+  # "7 days" and 168 are the same bound written two ways.
+  _make_skill widget "7 days" per-project
+  _make_hook widget 168
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a skill omitting its hook's session floor fails" {
+  # The drift this check exists for: every lifecycle skill advertised only its
+  # interval, so all four read as firing on a timer when none of them does.
+  _make_skill widget "24h" per-project
+  _make_hook widget 24 5
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIN_SESSIONS=5"* ]]
+}
+
+@test "a skill stating its hook's session floor passes" {
+  _make_skill widget "24h" per-project "Auto-triggers once 24h and 5 sessions have both passed"
+  _make_hook widget 24 5
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a bare number near the word session does not satisfy the floor" {
+  # dream passed this check on the sentence "a session from March 15" before the
+  # pattern required the number to stand before the noun.
+  _make_skill widget "24h" per-project "Convert relative dates: yesterday in a session from March 5 becomes absolute"
+  _make_hook widget 24 5
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIN_SESSIONS=5"* ]]
+}
+
+@test "a skill with no should-script is not checked for cadence agreement" {
+  # machine's cadence lives in a generator, not a gate — there is nothing to
+  # disagree with.
+  _make_skill widget "24h" global
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a larger number ending in the floor's digit does not satisfy it" {
+  # "25 sessions" must not satisfy MIN_SESSIONS=5 on its last digit — a skill
+  # documenting the wrong number is the case this check exists to catch.
+  _make_skill widget "24h" per-project "Auto-triggers once 24h and 25 sessions have passed"
+  _make_hook widget 24 5
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIN_SESSIONS=5"* ]]
+}
+
+@test "an unparseable cadence is reported as unrecognized, not as 0h" {
+  # Bash arithmetic reads a non-numeric prefix as 0, which would otherwise
+  # report "(0h) disagrees" and send the reader hunting a constant mismatch.
+  _make_skill widget "several days" per-project
+  _make_hook widget 24
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a recognized duration"* ]]
+  [[ "$output" != *"(0h)"* ]]
+}
+
+@test "a fractional day-form cadence fails cleanly instead of aborting the run" {
+  # A case glob pins only the characters it names, so "3.5 days" reached $(( ))
+  # as a syntax error and set -e took the whole run down — every other skill
+  # left unchecked, with no diagnostic. The second skill here must still be
+  # reported.
+  _make_skill widget "3.5 days" per-project
+  _make_hook widget 24
+  _make_skill gadget "24h" per-project
+  _make_hook gadget 72
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a recognized duration"* ]]
+  [[ "$output" == *"gadget"* ]]
+}

@@ -134,7 +134,7 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 
 **Output:** `memory/ topic files`
 **Auto-trigger:** 24h (via Stop hook)
-**Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h.
+**Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers once 24h and 5 sessions have both passed since the last run.
 **Skip:** Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead).
 
 ### `/finishing-a-development-branch`
@@ -191,7 +191,7 @@ Reviews accumulated Claude Code memories for promotion into durable workbench ar
 
 **Output:** `ai/memory/PROMOTE.md`
 **Auto-trigger:** 7 days (via Stop hook)
-**Trigger:** Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers every 7 days.
+**Trigger:** Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers once 7 days and 10 sessions have both passed since the last run.
 **Skip:** Do not use when the user wants to directly edit a rule or script — just edit it. Do not use for memory consolidation (use dream instead).
 
 ### `/reference`
@@ -216,7 +216,7 @@ Analyze PR review comments to identify gaps in coding rules. Fetches comments fr
 
 **Output:** `ai/memory/RETRO.md`
 **Auto-trigger:** 72h (via Stop hook)
-**Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers every 72h.
+**Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers once 72h and 5 sessions have both passed since the last run.
 **Skip:** Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead).
 
 ### `/self-review-fix [branch_name]`
@@ -261,7 +261,7 @@ Reviews the session that just ended for anything worth keeping and logs it to th
 
 **Output:** `SESSION_OBSERVATION entries appended to the knowledge base's _log.md`
 **Auto-trigger:** 24h (via Stop hook)
-**Trigger:** Auto-triggers at session end, at most once every 24h per repo, in repos that have a knowledge base.
+**Trigger:** Auto-triggers at session end in repos that have a knowledge base, once 24h and 3 sessions have both passed since the last capture.
 **Skip:** Never writes or edits an article — /wiki compile processes what this logs, deliberately.
 
 ### `/writing-skills`

@@ -3,7 +3,7 @@ name: promote
 description: "Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. TRIGGER when: user wants to review memories for promotion, or after dream has consolidated corrections. SKIP: direct rule/script edits — just edit them; memory consolidation (use dream)."
 source: otto-workbench/ai/skills/promote/SKILL.md
 invocation: "/promote"
-trigger: "Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers every 7 days."
+trigger: "Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers once 7 days and 10 sessions have both passed since the last run."
 skip: "Do not use when the user wants to directly edit a rule or script — just edit it. Do not use for memory consolidation (use dream instead)."
 output: "ai/memory/PROMOTE.md"
 lifecycle_cadence: "7 days"
@@ -16,8 +16,10 @@ Reviews accumulated Claude Code memories across all projects and evaluates wheth
 each one should be promoted into a durable workbench artifact. Prioritizes lint rules
 and scripts (mechanical enforcement) over prose rules.
 
-Run manually with `/promote`. Auto-triggers every 7 days via the Stop hook managed
-by `otto-workbench sync`.
+Run manually with `/promote`. Auto-triggers via the Stop hook managed
+by `otto-workbench sync`, once 7 days and 10 sessions have both passed since the
+last run — `should-promote.sh` gates on the two together, so a week of light use
+does not trigger one.
 
 ---
 

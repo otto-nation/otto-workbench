@@ -4,7 +4,9 @@ harness: [claude]
 
 # Bash Tool — Permission Patterns
 
-Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer, plus one silent-failure pattern (§ Subagents Reset the Working Directory) that produces no prompt but breaks correctness the same way. These apply to Bash tool usage, not to writing shell scripts. Every pattern here describes Claude Code's own static analyzer or its file-access gate, so the file is scoped to that harness — under another one the rules would forbid commands that were never going to prompt. Its § Subagents Reset the Working Directory may be the exception, but whether Pi's extension-supplied subagents share the cwd-reset behaviour is unverified; the section stays here until someone checks.
+Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer, plus one silent-failure pattern (§ Subagents Reset the Working Directory) that produces no prompt but breaks correctness the same way. These apply to Bash tool usage, not to writing shell scripts. Every pattern here describes Claude Code's own static analyzer or its file-access gate, so the file is scoped to that harness — under another one the rules would forbid commands that were never going to prompt.
+
+§ Subagents Reset the Working Directory is the exception, and it has now been checked rather than assumed. A Pi subagent given a bare `cd` into a feature worktree answered `main` to `git rev-parse --abbrev-ref HEAD` on its very next call — the same silent wrong-tree failure, under the other harness. The harness-independent statement of it therefore lives in `git-operations.md` § Cross-Worktree Safety, which every harness loads, and that is the copy to read if you only read one. The section below restates it in full rather than deferring — a Claude session that hit the permission detail would otherwise have to follow a pointer to learn why any of it matters — and adds what only applies here: the Write-tool wrapper, `Bash(bash:*)` versus `sh`, and the grant shapes. The duplication is deliberate; when the two disagree, `git-operations.md` is the one to correct.
 
 `ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool, enforces the patterns below that can be matched mechanically — not every section has a guard rule. Each block message cites the section holding its alternatives (`See bash-tool.md § <Section>`), so a new guard rule needs a section here to cite; `tests/claude_settings.bats` fails if it has none.
 
@@ -64,6 +66,13 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 - Resolving a version manager's shim to the versioned binary behind it is not a reason either. The shim is on `PATH` and picks the same version the project pins; the resolved path only adds a prompt and goes stale on the next upgrade
 - This is the opposite of the `bin/local/` rule: workbench *repo* scripts must use the *relative* path, installed binaries must use the *bare* name. Both exist so a single allow-list entry covers every invocation
 - Like the other statement-anchored checks below, the hook enforcing this scans every line of the command with quoted spans stripped — a later line counts, but such a path inside a quoted argument or a heredoc body is left alone
+
+## Invoke Repo Scripts by Relative Path
+
+- Never invoke a workbench repo script by absolute path — use the relative path from the repo root (`bin/local/validate-skills`, not `/Users/.../bin/local/validate-skills`). Permission rules match the first word of the command; an absolute path triggers a permission prompt every time. This applies wherever a statement begins, not just at the start of the command: `ls; /Users/.../bin/local/validate-skills` counts
+- Never prefix that relative path with `./` either — `bin/otto-workbench sync` and `./bin/otto-workbench sync` run the same script, but the grant is written `Bash(bin/*)` and only the first form matches it. The `./` form is a separate prompt and earns its own one-off entry
+- In otto-workbench the granted directories are `bin/`, `git/bin/`, `ai/bin/`, and `ai/claude/bin/`, from the repo's tracked `.claude/settings.json`. A script outside them has no grant, so it prompts however it is spelled — see CONTRIBUTING.md § Permission grants
+- **A subagent is the exception, and it overrides this section.** A relative path only resolves from the repo root when the call starts there, which in a subagent it does not — see § Subagents Reset the Working Directory. There the absolute path is correct and the prompt is the price; a relative one silently runs the parent worktree's copy of the script. Correctness first, grant shape second
 
 ## Avoid Env-Var Prefix Syntax
 

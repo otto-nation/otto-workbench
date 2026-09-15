@@ -53,6 +53,7 @@ from gh.types import PRContext, PRMetadata  # noqa: E402
 from pr import ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
+from pr.thread_models import PRReport  # noqa: E402
 from pr.triage_round import TriagedRound  # noqa: E402
 from review.budget import MAX_PROMPT_BYTES  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
@@ -600,11 +601,11 @@ def _render_fix_ci(wt_path) -> str:
     ))
 
 
-def _render_fix_comments(rt, wt_path) -> str:
+def _render_fix_comments(wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    pr_number=1, worktree_root=wt_path, target_dir=wt_path)
     adapter = fix_comments.CommentFixAdapter(
-        rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
+        PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
         TriagedRound(),
     )
     # The default-branch checkout is a fetch and a reset against a second
@@ -613,7 +614,7 @@ def _render_fix_comments(rt, wt_path) -> str:
     return _render_adapter(adapter)
 
 
-def _render_verify_fixes(rt, wt_path) -> str:
+def _render_verify_fixes(wt_path) -> str:
     """Render the verify gate's prompt the way `fix_verify.run` renders it.
 
     Driven through the real runner with the agent call stubbed out, for the
@@ -623,7 +624,7 @@ def _render_verify_fixes(rt, wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    pr_number=1, worktree_root=wt_path, target_dir=wt_path)
     adapter = fix_comments.CommentFixAdapter(
-        rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
+        PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
         TriagedRound(),
     )
     adapter.__dict__["main_wt"] = None
@@ -666,10 +667,10 @@ def _render_fix_prepush(wt_path) -> str:
 # One list, so a fourth domain adopting the engine is added to the contracts by
 # adding its renderer here rather than to each test in turn.
 _FIX_RENDERERS = {
-    "ci": lambda rt, wt: _render_fix_ci(wt),
-    "comments": lambda rt, wt: _render_fix_comments(rt, wt),
-    "findings": lambda rt, wt: _render_fix_findings(wt),
-    "prepush": lambda rt, wt: _render_fix_prepush(wt),
+    "ci": _render_fix_ci,
+    "comments": _render_fix_comments,
+    "findings": _render_fix_findings,
+    "prepush": _render_fix_prepush,
 }
 
 # Every template a fix-shaped agent is handed, including the verify gate's.
@@ -681,7 +682,7 @@ _FIX_RENDERERS = {
 # is held to those here rather than left outside the check because the wider set
 # did not fit.
 _AGENT_RENDERERS = _FIX_RENDERERS | {
-    "verify": lambda rt, wt: _render_verify_fixes(rt, wt),
+    "verify": _render_verify_fixes,
 }
 
 
@@ -741,16 +742,16 @@ class TestTemplateRendering:
         left = _unsubstituted(_render_fix_ci(tmp_path))
         assert not left, f"fix-ci.md left: {left}"
 
-    def test_fix_comments_template_fully_substituted(self, rt, tmp_path):
-        left = _unsubstituted(_render_fix_comments(rt, tmp_path))
+    def test_fix_comments_template_fully_substituted(self, tmp_path):
+        left = _unsubstituted(_render_fix_comments(tmp_path))
         assert not left, f"fix-comments.md left: {left}"
 
     def test_fix_findings_template_fully_substituted(self, tmp_path):
         left = _unsubstituted(_render_fix_findings(tmp_path))
         assert not left, f"fix-findings.md left: {left}"
 
-    def test_verify_fixes_template_fully_substituted(self, rt, tmp_path):
-        left = _unsubstituted(_render_verify_fixes(rt, tmp_path))
+    def test_verify_fixes_template_fully_substituted(self, tmp_path):
+        left = _unsubstituted(_render_verify_fixes(tmp_path))
         assert not left, f"verify-fixes.md left: {left}"
 
     def test_every_template_is_covered(self):
@@ -788,8 +789,8 @@ class TestOutputBlockContract:
         self._assert_no_mandate(_template_of(key), _render_via_build_prompt(key))
 
     @pytest.mark.parametrize("render", sorted(_AGENT_RENDERERS))
-    def test_fix_templates_have_no_write_tool_mandate(self, render, rt, tmp_path):
-        self._assert_no_mandate(render, _AGENT_RENDERERS[render](rt, tmp_path))
+    def test_fix_templates_have_no_write_tool_mandate(self, render, tmp_path):
+        self._assert_no_mandate(render, _AGENT_RENDERERS[render](tmp_path))
 
     def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
@@ -835,24 +836,24 @@ class TestOutputBlockContract:
         assert expected == checked
 
     @pytest.mark.parametrize("render", sorted(_AGENT_RENDERERS))
-    def test_fix_templates_share_the_worktree_block(self, render, rt, tmp_path):
-        rendered = _AGENT_RENDERERS[render](rt, tmp_path)
+    def test_fix_templates_share_the_worktree_block(self, render, tmp_path):
+        rendered = _AGENT_RENDERERS[render](tmp_path)
         assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
-    def test_fix_templates_share_the_generated_block(self, render, rt, tmp_path):
+    def test_fix_templates_share_the_generated_block(self, render, tmp_path):
         """Any fix pass can edit a source whose artifact then needs rebuilding.
 
         Not a property of the domain — a CI fix, a comment fix and a finding fix
         all reach `lib/` docstrings and `.src` documents — so every template
         carries it and none of them words it for itself.
         """
-        rendered = _FIX_RENDERERS[render](rt, tmp_path)
+        rendered = _FIX_RENDERERS[render](tmp_path)
         assert agent_templates.GENERATED_BLOCK in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(
-        self, render, rt, tmp_path,
+        self, render, tmp_path,
     ):
         """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
 
@@ -861,7 +862,7 @@ class TestOutputBlockContract:
         a checklist the agent is not looking at. No template has to say it the
         same way — each only has to still be talking about all of them.
         """
-        task = _FIX_RENDERERS[render](rt, tmp_path).split("## Task", 1)[1]
+        task = _FIX_RENDERERS[render](tmp_path).split("## Task", 1)[1]
         for box in fix_tracking._BOXES:
             why = (
                 f" — {fix_tracking._WHY}"

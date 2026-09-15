@@ -41,17 +41,17 @@ The fixtures are byte-exact renderer output and are written, never hand-edited.
 and its trailing separator — which an editor set to trim trailing whitespace on
 save will silently eat.
 
-Regenerate the fixtures by calling `_write_goldens(rt)` from a throwaway test in
-this directory — the `rt` fixture only exists under pytest, and `conftest.py` is
-the one place allowed to load a script from a path. Prose rather than a flag
-for the same reason `test_mcp_server.py` uses prose: one regeneration idiom in
-the repo is better than two.
+Regenerate the fixtures by calling `_write_goldens()` from a throwaway test in
+this directory. It takes no arguments — the renderer is imported directly, as
+every module this file drives now is. Prose rather than a flag for the same
+reason `test_mcp_server.py` uses prose: one regeneration idiom in the repo is
+better than two.
 
 A diff in one of these files is a change to the published summary format and is
 read as one — check `summary_model.row_key_from_cells`,
 `summary_scope.carried_over_rows` and `summary_scope.hand_written_rows` before
-accepting it. During the decomposition this render
-is being split for, the golden must be **re-run and re-asserted, never
+accepting it. Through the decomposition this render
+was split for, the golden was **re-run and re-asserted, never
 regenerated**: regenerating it records whatever the split produced and asserts
 nothing about it.
 """
@@ -92,7 +92,7 @@ _LINK_SHA = "abc1234"
 _SCOPE_SINCE = "2026-06-01T00:00:00Z"
 
 
-def _round_content(rt, **buckets):
+def _round_content(**buckets):
     """A `RoundContent` from the buckets named, and no others.
 
     The same shape `test_review_threads.py` builds, spelled again here because
@@ -146,7 +146,7 @@ def _threads():
     }
 
 
-def _full_body(rt):
+def _full_body():
     """One body reaching every branch that composes with the others.
 
     Fourteen entries over every outcome bucket, rendering thirteen rows: three
@@ -168,7 +168,6 @@ def _full_body(rt):
     `_uncommitted_body` records.
     """
     content = _round_content(
-        rt,
         fixed=[
             # Stamped with the pass's own commit, which is what lets the Action
             # cell cite a SHA — `_attribute_commit` refuses to name one for an
@@ -299,7 +298,7 @@ def _full_body(rt):
     )
 
 
-def _empty_body(rt):
+def _empty_body():
     """A round with nothing to put in the table.
 
     Two different rounds reach this same body — one with no entries at all, and
@@ -307,7 +306,7 @@ def _empty_body(rt):
     it is the shape a reader sees when the pass has nothing to report.
     """
     return summary_render.build_summary_body(
-        _round_content(rt),
+        _round_content(),
         attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
         _PR,
@@ -317,17 +316,17 @@ def _empty_body(rt):
     )
 
 
-def _suppressed_body(rt):
+def _suppressed_body():
     """Unseen top-level comments, suppressed because triage already split them.
 
     `has_comment_items` is the caller saying the raw sections would restate what
     the table already carries as rows. Same inputs as `_raw_sections_body`
     apart from that flag, so the pair isolates what the flag does.
     """
-    return _raw_sections_body(rt, has_comment_items=True)
+    return _raw_sections_body(has_comment_items=True)
 
 
-def _raw_sections_body(rt, *, has_comment_items: bool = False):
+def _raw_sections_body(*, has_comment_items: bool = False):
     """The two raw comment sections, which the full body suppresses.
 
     Covers what `_render_raw_comment_sections` does with a review body carrying
@@ -337,7 +336,6 @@ def _raw_sections_body(rt, *, has_comment_items: bool = False):
     """
     return summary_render.build_summary_body(
         _round_content(
-            rt,
             issue_comments=[
                 {"id": "901", "user": "kgn", "body": "Can we add tests?"},
                 {"id": "902", "user": "amp",
@@ -361,7 +359,7 @@ def _raw_sections_body(rt, *, has_comment_items: bool = False):
     )
 
 
-def _uncommitted_body(rt):
+def _uncommitted_body():
     """A round that committed nothing, and a deferral with no issue URL.
 
     Two branches the full body cannot reach, both of which render *cells* and
@@ -374,7 +372,6 @@ def _uncommitted_body(rt):
     """
     return summary_render.build_summary_body(
         _round_content(
-            rt,
             deferred=[
                 CommentItem(id="t1", summary="needs a plan", reviewer="kgn",
                             file="a.py", line=10),
@@ -403,24 +400,24 @@ class TestTheRenderedSummaryIsRecorded:
     from both.
     """
 
-    def test_the_full_body_matches_the_golden(self, rt):
-        assert _full_body(rt) == GOLDEN_FULL.read_text(encoding="utf-8")
+    def test_the_full_body_matches_the_golden(self):
+        assert _full_body() == GOLDEN_FULL.read_text(encoding="utf-8")
 
-    def test_a_round_with_nothing_to_say_matches_the_golden(self, rt):
-        assert _empty_body(rt) == GOLDEN_MINIMAL.read_text(encoding="utf-8")
+    def test_a_round_with_nothing_to_say_matches_the_golden(self):
+        assert _empty_body() == GOLDEN_MINIMAL.read_text(encoding="utf-8")
 
-    def test_unseen_top_level_comments_match_the_golden(self, rt):
-        assert _raw_sections_body(rt) == GOLDEN_RAW.read_text(encoding="utf-8")
+    def test_unseen_top_level_comments_match_the_golden(self):
+        assert _raw_sections_body() == GOLDEN_RAW.read_text(encoding="utf-8")
 
-    def test_a_round_with_no_commit_matches_the_golden(self, rt):
-        assert _uncommitted_body(rt) == GOLDEN_UNCOMMITTED.read_text(
+    def test_a_round_with_no_commit_matches_the_golden(self):
+        assert _uncommitted_body() == GOLDEN_UNCOMMITTED.read_text(
             encoding="utf-8")
 
-    def test_decomposed_items_suppress_the_raw_sections(self, rt):
+    def test_decomposed_items_suppress_the_raw_sections(self):
         """An unseen comment already split into rows adds no section of its own."""
-        assert _suppressed_body(rt) == GOLDEN_MINIMAL.read_text(encoding="utf-8")
+        assert _suppressed_body() == GOLDEN_MINIMAL.read_text(encoding="utf-8")
 
-    def test_the_render_carries_no_state_between_calls(self, rt):
+    def test_the_render_carries_no_state_between_calls(self):
         """Two renders of one input agree.
 
         Narrower than it looks: the golden above is what answers ordering, and
@@ -428,10 +425,10 @@ class TestTheRenderedSummaryIsRecorded:
         accumulates across calls — a counter, a memo, a list built at module
         scope — which a single assertion against a fixture cannot see.
         """
-        assert _full_body(rt) == _full_body(rt)
+        assert _full_body() == _full_body()
 
 
-def _write_goldens(rt) -> None:
+def _write_goldens() -> None:
     """Rewrite the fixtures from the current renderer.
 
     Called by hand when a rendering change is intended. Never call it to make a
@@ -439,7 +436,7 @@ def _write_goldens(rt) -> None:
     files is that they predate it.
     """
     FIXTURES.mkdir(exist_ok=True)
-    GOLDEN_FULL.write_text(_full_body(rt), encoding="utf-8")
-    GOLDEN_MINIMAL.write_text(_empty_body(rt), encoding="utf-8")
-    GOLDEN_RAW.write_text(_raw_sections_body(rt), encoding="utf-8")
-    GOLDEN_UNCOMMITTED.write_text(_uncommitted_body(rt), encoding="utf-8")
+    GOLDEN_FULL.write_text(_full_body(), encoding="utf-8")
+    GOLDEN_MINIMAL.write_text(_empty_body(), encoding="utf-8")
+    GOLDEN_RAW.write_text(_raw_sections_body(), encoding="utf-8")
+    GOLDEN_UNCOMMITTED.write_text(_uncommitted_body(), encoding="utf-8")

@@ -547,7 +547,6 @@ def _guard_repo_config():
     _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
-REVIEW_THREADS = REPO_ROOT / "ai" / "bin" / "review-threads"
 EVAL_MODELS = REPO_ROOT / "ai" / "bin" / "eval-models"
 REUSE_SESSION_START = REPO_ROOT / "ai" / "claude" / "bin" / "reuse-session-start"
 
@@ -1074,11 +1073,6 @@ def ro():
         sys.path.insert(0, LIB_DIR)
     from cli import review_orchestrate
     return review_orchestrate
-
-
-@pytest.fixture(scope="session")
-def rt():
-    return load_script("review_threads", REVIEW_THREADS)
 
 
 @pytest.fixture(scope="session")

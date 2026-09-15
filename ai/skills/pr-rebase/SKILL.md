@@ -105,8 +105,8 @@ JSON output is on stdout; status messages are on stderr.
 
 ### 1b. Reading a run in flight
 
-Don't. The job messages you when it finishes, and the JSON step 2 needs only
-exists at the end.
+Don't. The job messages you when it finishes, and the JSON that step 2 parses
+does not exist until the run is over.
 
 When the user asks what it is doing, or a run has gone long enough that you want
 to know whether it is progressing or wedged, read the trail — not the tail of

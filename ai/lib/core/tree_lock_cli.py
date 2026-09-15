@@ -62,14 +62,7 @@ def _run_child(child: list[str]) -> int:
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     }
     try:
-        try:
-            code = proc.wait(timeout=timeouts.UNBOUNDED)
-        except KeyboardInterrupt:
-            # Popen.wait translates SIGINT into KeyboardInterrupt and re-raises
-            # after a brief wait, assuming the child got the terminal's ^C too.
-            # The child is in a new session, so it did not; forward and wait.
-            _forward(signal.SIGINT, None)
-            code = proc.wait(timeout=timeouts.UNBOUNDED)
+        code = proc.wait(timeout=timeouts.UNBOUNDED)
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)

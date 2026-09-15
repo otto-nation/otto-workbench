@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core import timeouts
 from core.tree_lock import acquire, holders, is_locked
 
 
@@ -52,7 +53,7 @@ def main(argv: list[str], child: list[str]) -> int:
     label = args.label or " ".join(child)
     started = datetime.datetime.now().isoformat(timespec="seconds")
     with acquire(Path(args.tree), command=label, started=started):
-        code = subprocess.run(child).returncode
+        code = subprocess.run(child, timeout=timeouts.UNBOUNDED).returncode
         # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
         # callers expect the shell convention 128+N (SIGTERM -> 143).
         return 128 + (-code) if code < 0 else code

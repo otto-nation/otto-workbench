@@ -25,9 +25,11 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 from pr import settlement  # noqa: E402
+from pr import state as pr_state  # noqa: E402
 from pr import thread_replies  # noqa: E402
+from pr.comments_fix import FixSummary  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
-from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
+from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
 
@@ -39,6 +41,19 @@ def _thread(
         id=tid, state=state, is_resolved=is_resolved, reviewer=reviewer,
         file=file, line=line,
         comments=[{"body": b} for b in bodies],
+    )
+
+
+def _state(*items, reviewers=None):
+    """A PRState whose fix snapshot holds exactly these outcomes."""
+    return pr_state.PRState(
+        identity=pr_state.PRIdentity(
+            repo="owner/repo", branch="feat", pr_number=1, head_sha="abc1234",
+            worktree_root="/tmp/wt",
+        ),
+        fix=FixSummary(
+            fix=FixRecord(items=list(items)), reviewers=dict(reviewers or {}),
+        ),
     )
 
 
@@ -139,6 +154,136 @@ class TestALocationTwoSettledThreadsShare:
         assert set(settlement.settled_locations({"t1": mine, "t2": theirs})) == {
             "kgn|a.py:10", "ana|a.py:10",
         }
+
+
+# ── adopt_settled_threads: the thread no round ever saw ───────────────────
+
+
+class TestAThreadNoRoundEverGaveADispositionTo:
+    """An answered-but-unresolved thread must not be dropped by every stage.
+
+    `run_triage` excludes ADDRESSED threads, rightly — re-triaging one writes a
+    fresh reply over the answer already standing. What had no owner was the
+    thread afterwards: it reached no bucket, so it was never a snapshot row, so
+    reconciliation had nothing to rewrite and resolution was never handed it.
+    Five hand-answered threads stayed open for the life of a PR that way, with
+    every run reporting `0 fixable` and `5 open`.
+    """
+
+    def _addressed(self, **kw):
+        kw.setdefault("bodies", ["please rename this", "done by hand"])
+        return _thread(state=ThreadState.ADDRESSED, **kw)
+
+    def test_an_answered_thread_becomes_a_row_nothing_had_before(self):
+        state = _state()
+        assert settlement.adopt_settled_threads(
+            state, {"t1": self._addressed()},
+        ) == 1
+        assert [o.id for o in state.fix.fix.items] == ["t1"]
+
+    def test_the_row_claims_only_what_the_evidence_supports(self):
+        """Speaking last is not a fix — it says the thread is nobody's to answer."""
+        state = _state()
+        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        assert state.fix.fix.items[0].outcome is FixOutcome.SETTLED_ELSEWHERE
+
+    def test_a_reply_naming_the_verdict_is_graded_as_a_fix(self):
+        """The grade is `settlement_for`'s, not a constant this stage picks."""
+        state = _state()
+        thread = self._addressed(bodies=[
+            "please rename this",
+            f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard.",
+        ])
+        settlement.adopt_settled_threads(state, {"t1": thread})
+        assert state.fix.fix.items[0].outcome is FixOutcome.FIXED
+
+    def test_the_row_is_not_credited_to_the_running_pass(self):
+        """`attribution.handled_outside` reads this, and the Action cell reads that."""
+        state = _state()
+        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        outcome = state.fix.fix.items[0]
+        assert outcome.settled_by is SettledBy.RECONCILIATION
+        assert "reconciled" in outcome.reason
+        assert not outcome.commit_sha
+
+    def test_the_row_carries_the_location_the_table_renders(self):
+        state = _state()
+        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        outcome = state.fix.fix.items[0]
+        assert (outcome.file, outcome.line) == ("a.py", 10)
+
+    def test_the_summary_comes_off_the_reviewer_s_own_words(self):
+        """No round ran, so there is no model-written summary to read."""
+        state = _state()
+        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        assert state.fix.fix.items[0].summary == "please rename this"
+
+    def test_a_thread_with_no_line_is_still_recorded(self):
+        """`ReportThread.line` is optional; `ItemOutcome.line` is not."""
+        state = _state()
+        settlement.adopt_settled_threads(
+            state, {"t1": self._addressed(file="", line=None)},
+        )
+        assert state.fix.fix.items[0].line == 0
+
+    def test_the_reviewer_login_lands_where_the_row_can_find_it(self):
+        state = _state()
+        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        assert state.fix.reviewers == {"t1": "kgn"}
+
+    def test_a_thread_github_named_no_reviewer_for_contributes_no_key(self):
+        """A missing key misses; an empty one asserts an anonymous reviewer."""
+        state = _state()
+        settlement.adopt_settled_threads(
+            state, {"t1": self._addressed(reviewer="")},
+        )
+        assert state.fix.reviewers == {}
+
+    def test_a_resolved_thread_is_left_where_github_already_shows_it(self):
+        """Adopting every resolved thread would add a permanent row per thread.
+
+        The button collapsed the thread and the person who pressed it already
+        said how it ended. The defect is the answered thread still open.
+        """
+        state = _state()
+        resolved = _thread(state=ThreadState.RESOLVED, is_resolved=True,
+                           bodies=["please rename this"])
+        assert settlement.adopt_settled_threads(state, {"t1": resolved}) == 0
+        assert state.fix.fix.items == []
+
+    def test_a_thread_awaiting_a_reviewer_is_not_adopted(self):
+        """Nobody has answered it, so there is nothing for this stage to record."""
+        state = _state()
+        open_thread = _thread(bodies=["please rename this"])
+        assert settlement.adopt_settled_threads(state, {"t1": open_thread}) == 0
+
+    def test_a_thread_the_round_already_recorded_is_left_alone(self):
+        """The round's own verdict outranks a grade inferred after the fact."""
+        state = _state(ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED))
+        assert settlement.adopt_settled_threads(
+            state, {"t1": self._addressed()},
+        ) == 0
+        assert state.fix.fix.items[0].outcome is FixOutcome.DEFERRED
+
+    def test_a_second_run_adopts_nothing(self):
+        """`--finish` runs repeatedly, and this path saves state directly.
+
+        `FixRecord.merge_into` keys by id, but `_finish_deferred_work` mutates
+        the record in place and saves it rather than folding it through
+        `pr_state.apply`, so the guard has to be this function's own.
+        """
+        state = _state()
+        threads = {"t1": self._addressed()}
+        settlement.adopt_settled_threads(state, threads)
+        assert settlement.adopt_settled_threads(state, threads) == 0
+        assert len(state.fix.fix.items) == 1
+
+    def test_a_row_this_wrote_is_never_reconciled_over(self):
+        """Both grades sit outside UNSETTLED_OUTCOMES, so the row is stable."""
+        state = _state()
+        threads = {"t1": self._addressed()}
+        settlement.adopt_settled_threads(state, threads)
+        assert settlement.reconcile_fix_snapshot(state, threads) == 0
 
 
 # ── entry_settlement: the three ways a row can be settled ─────────────────

@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core import log
+from core import text
 from git import client as git_client
 from git import push
 from pr import attribution
@@ -212,6 +213,66 @@ def settled_locations(
         if settlement.counts_as_fixed or key not in located:
             located[key] = settlement
     return located
+
+
+def adopt_settled_threads(
+    state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
+) -> int:
+    """Record the answered threads no round ever gave a disposition to. Returns the count.
+
+    A thread whose last comment is ours is `ThreadState.ADDRESSED`, and
+    `triage.run_triage` excludes those from the round — rightly, since
+    re-triaging one regenerates a reply over the answer already standing. But
+    nothing then picked it up: it reached no bucket, so it never became a row in
+    the snapshot, so `reconcile_fix_snapshot` had nothing to rewrite and
+    `resolve_fixed_threads` was never handed it. The thread stayed open for the
+    life of the PR and no stage reported it.
+
+    Graded through `settlement_for` rather than re-triaged, which is the
+    read-only path that already answers this exact question. The grade decides
+    what the row may claim: our reply naming a verdict supports FIXED, and the
+    bare fact that we spoke last supports only SETTLED_ELSEWHERE.
+
+    Idempotent by id: a thread already in the snapshot is skipped, so a second
+    `--finish` adds nothing. `FixRecord.merge_into` cannot be relied on here —
+    `_finish_deferred_work` mutates the record in place and saves it directly
+    rather than folding it through `pr_state.apply`.
+
+    Resolved threads are deliberately out of scope. `settlement_for` grades one
+    SETTLED_ELSEWHERE too, but a resolved thread is collapsed on GitHub and the
+    person who pressed the button has already said how it ended — adopting every
+    one would add a permanent summary row per historical thread. The defect is
+    the answered thread that is still open and reads exactly like an unanswered
+    one.
+    """
+    recorded = {o.id for o in state.fix.fix.items if o.id}
+    adopted = 0
+    for thread in threads_by_id.values():
+        if not thread.id or thread.id in recorded:
+            continue
+        if thread.is_resolved or thread.state is not ThreadState.ADDRESSED:
+            continue
+        settlement = settlement_for(thread)
+        if settlement is None:
+            continue
+        root = thread.comments[0] if thread.comments else {}
+        state.fix.fix.items.append(ItemOutcome(
+            id=thread.id,
+            outcome=settlement,
+            settled_by=SettledBy.RECONCILIATION,
+            reason=RECONCILED_REASON,
+            summary=text.summarize_comment_body(str(root.get("body", ""))),
+            file=thread.file,
+            line=thread.line or 0,
+        ))
+        # Only when GitHub named one — see `fix_state.reviewers_for`. An absent
+        # key misses on lookup rather than asserting an anonymous reviewer.
+        if thread.reviewer:
+            state.fix.reviewers[thread.id] = thread.reviewer
+        adopted += 1
+    if adopted:
+        log.info(f"Recorded {adopted} thread(s) answered outside the fix pass")
+    return adopted
 
 
 def reconcile_fix_snapshot(

@@ -8708,6 +8708,71 @@ class TestFinishReconcilesCommentItems:
         assert saved.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
 
+class TestFinishAdoptsThreadsNoRoundSaw:
+    """The wiring: --finish is the stage an answered thread finally reaches.
+
+    Triage excludes an ADDRESSED thread from the round and nothing downstream
+    picked it up, so it reached no bucket, was never a snapshot row, and every
+    later stage read past it. Five hand-answered threads stayed open through
+    three consecutive runs that way.
+    """
+
+    def _save(self, worktree, items=()):
+        pr_state.save_state(worktree / "target", PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="aaaaaaa", worktree_root=str(worktree)),
+            fix=_fix(head_sha="aaaaaaa", items=list(items)),
+        ))
+        return make_ctx(branch="b", worktree_root=worktree, head_sha="aaaaaaa",
+                        target_dir=worktree / "target")
+
+    def _report(self, *, bodies=("rename this", "done by hand")):
+        return PRReport(my_login="me", threads=[ReportThread(
+            id="t1", state=ThreadState.ADDRESSED, reviewer="kgn",
+            file="a.go", line=7, my_login="me",
+            comments=[{"body": b} for b in bodies],
+        )])
+
+    def _run(self, rt, ctx, report):
+        with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
+                _fetches([]), \
+                patch.object(summary_publish, "render_deferred_summary"):
+            rt._finish_deferred_work(ctx, report)
+
+    def test_the_answered_thread_is_persisted_rather_than_dropped(self, rt, worktree):
+        ctx = self._save(worktree)
+        self._run(rt, ctx, self._report())
+        saved = pr_state.load_state(worktree / "target")
+        assert [o.id for o in saved.fix.fix.items] == ["t1"]
+        assert saved.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
+
+    def test_the_summary_is_re_armed_so_the_row_reaches_a_reader(self, rt, worktree):
+        """A row nobody has published is a summary the PR is still owed."""
+        ctx = self._save(worktree)
+        self._run(rt, ctx, self._report())
+        assert pr_state.load_state(worktree / "target").fix.summary_deferred
+
+    def test_a_second_finish_adds_no_second_row(self, rt, worktree):
+        ctx = self._save(worktree)
+        self._run(rt, ctx, self._report())
+        self._run(rt, ctx, self._report())
+        saved = pr_state.load_state(worktree / "target")
+        assert len(saved.fix.fix.items) == 1
+
+    def test_a_thread_still_awaiting_a_reviewer_is_reported_not_recorded(
+        self, rt, worktree,
+    ):
+        """NEW is a thread nobody has answered — there is no ending to record."""
+        ctx = self._save(worktree)
+        report = PRReport(my_login="me", threads=[ReportThread(
+            id="t1", state=ThreadState.NEW, reviewer="kgn", my_login="me",
+            file="a.go", line=7, comments=[{"body": "rename this"}],
+        )])
+        self._run(rt, ctx, report)
+        saved = pr_state.load_state(worktree / "target")
+        assert saved.fix.fix.items == []
+
+
 class TestDuplicateFindingRendersOnce:
     """One review point that arrived twice is still one row in the table."""
 

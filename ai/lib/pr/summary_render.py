@@ -32,24 +32,10 @@ from pr.thread_models import CommentItem, ReportThread
 
 SUMMARY_MARKER = "<!-- pr-comments:summary -->"
 
-def summarize_comment_body(body: str, max_len: int = 120) -> str:
-    """Extract first meaningful line from a comment body, truncated."""
-    in_html_comment = False
-    for raw_line in body.splitlines():
-        stripped = raw_line.strip()
-        if in_html_comment:
-            in_html_comment = "-->" not in stripped
-            continue
-        if stripped.startswith("<!--"):
-            in_html_comment = "-->" not in stripped
-            continue
-        line = stripped.lstrip("#").strip()
-        if not line:
-            continue
-        if len(line) > max_len:
-            return line[:max_len - 1] + "…"
-        return line
-    return "(empty)"
+# Re-exported rather than defined here: `pr.settlement` names a thread the same
+# way and sits below this module, so the one implementation lives in `core.text`
+# and this name stays the spelling the raw-comment sections below already use.
+summarize_comment_body = text.summarize_comment_body
 
 
 def build_summary_body(

@@ -1743,7 +1743,7 @@ class TestRenderDeferredSummary:
         )])
         with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as mock_post:
-            rt._finish_deferred_work(ctx, report, track=rt.TRACK_ALL)
+            rt._finish_deferred_work(ctx, report, track=rt.deferred_issue.TRACK_ALL)
         body = mock_post.call_args[0][2]
         assert "premise disputed" in body
         assert "Addressed outside the fix pass" in body
@@ -2599,7 +2599,7 @@ class TestFollowHistoryRewrite:
         ctx = make_ctx(branch="feature", worktree_root=repo.path,
                        head_sha=repo.replay, target_dir=repo.path / "target")
         with patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt.deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
             rt._finish_deferred_work(ctx, PRReport())
         saved = pr_state.load_state(repo.path / "target")
@@ -3509,7 +3509,7 @@ class TestSummarizeCommentBody:
         assert result.endswith("…")
 
 
-# ── _build_deferred_issue_body ────────────────────────────────────────────
+# ── deferred_issue.build_deferred_issue_body ──────────────────────────────
 
 
 class TestBuildDeferredIssueBody:
@@ -3522,7 +3522,7 @@ class TestBuildDeferredIssueBody:
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[{"databaseId": 12345}]),
         }
-        body = rt._build_deferred_issue_body(deferred, "owner/repo", 42, threads_by_id)
+        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 42, threads_by_id)
         assert "PR #42" in body
         assert "src/foo.go:10" in body
         assert "fix it" in body
@@ -3534,14 +3534,14 @@ class TestBuildDeferredIssueBody:
             CommentItem(id="t1", file="a.go", line=1,
                             summary="do thing", reason="r"),
         ]
-        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
         assert "do thing" in body
         assert "a.go:1" in body
 
     def test_a_missing_reason_renders_a_placeholder(self, rt):
         """An empty cell would read as a table bug; a dash reads as "unstated"."""
         deferred = [CommentItem(id="t1", file="a.go", line=1, summary="do thing")]
-        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
         assert "—" in body
 
     def test_prose_cells_keep_the_row_three_columns_wide(self, rt):
@@ -3555,7 +3555,7 @@ class TestBuildDeferredIssueBody:
             CommentItem(id="t1", file="a.go", line=1,
                         summary="use a | b", reason="see x | y"),
         ]
-        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
         row = next(line for line in body.splitlines() if "use a" in line)
         assert markdown.row_cells(row) == ["use a \\| b", "`a.go:1`", "see x \\| y"]
 
@@ -3568,13 +3568,13 @@ class TestBuildDeferredIssueBody:
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[{"databaseId": 12345}]),
         }
-        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, threads_by_id)
+        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, threads_by_id)
         row = next(line for line in body.splitlines() if "use a" in line)
         assert len(markdown.row_cells(row)) == 3
         assert "[use a \\| b](" in row
 
 
-# ── _finalize_deferred ────────────────────────────────────────────────────
+# ── deferred_issue.finalize_deferred ──────────────────────────────────────
 
 
 class TestFinalizeDeferredCarriesTheReason:
@@ -3602,12 +3602,12 @@ class TestFinalizeDeferredCarriesTheReason:
 
     def _run(self, rt, state, ctx):
         captured = []
-        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+        with patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies"):
             create.side_effect = lambda deferred, *a, **kw: (
                 captured.extend(deferred) or _filed("I_1", "u")
             )
-            rt._finalize_deferred(state, ctx, {}, track={"t1"})
+            rt.deferred_issue.finalize_deferred(state, ctx, {}, track={"t1"})
         return captured
 
     def test_reason_survives_into_the_tracking_issue(self, rt, worktree):
@@ -3659,12 +3659,12 @@ class TestDeferralRequiresAChoice:
 
     def _run(self, rt, state, ctx, track):
         captured = []
-        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+        with patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies") as reply:
             create.side_effect = lambda deferred, *a, **kw: (
                 captured.extend(deferred) or _filed("I_1", "u")
             )
-            rt._finalize_deferred(state, ctx, {}, track=track)
+            rt.deferred_issue.finalize_deferred(state, ctx, {}, track=track)
         return captured, create, reply
 
     def test_no_selection_files_nothing(self, rt, worktree):
@@ -3678,9 +3678,9 @@ class TestDeferralRequiresAChoice:
     def test_default_is_no_selection(self, rt, worktree):
         """Omitting track entirely must not fall back to filing everything."""
         state = self._state(worktree, ["t1", "t2"])
-        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+        with patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies"):
-            rt._finalize_deferred(state, self._ctx(worktree), {})
+            rt.deferred_issue.finalize_deferred(state, self._ctx(worktree), {})
         create.assert_not_called()
 
     def test_only_selected_threads_are_filed(self, rt, worktree):
@@ -3692,7 +3692,7 @@ class TestDeferralRequiresAChoice:
     def test_track_all_files_everything(self, rt, worktree):
         state = self._state(worktree, ["t1", "t2"])
         captured, _, _ = self._run(
-            rt, state, self._ctx(worktree), track=rt.TRACK_ALL)
+            rt, state, self._ctx(worktree), track=rt.deferred_issue.TRACK_ALL)
         assert [e.id for e in captured] == ["t1", "t2"]
 
     def test_unknown_id_is_an_error_not_a_silent_skip(self, rt, worktree):
@@ -3720,7 +3720,7 @@ class TestUnfiledDeferralsAreNamed:
             ]),
         )
         with patch.object(rt.log, "info") as info:
-            rt._report_unfiled_deferrals(state, track)
+            rt.deferred_issue.report_unfiled_deferrals(state, track)
         return " ".join(str(c) for c in info.call_args_list)
 
     def test_no_selection_names_every_deferral(self, rt):
@@ -3734,14 +3734,14 @@ class TestUnfiledDeferralsAreNamed:
         assert "t2" not in msg
 
     def test_track_all_leaves_nothing_unfiled(self, rt):
-        assert self._report(rt, ["t1", "t2"], rt.TRACK_ALL) == ""
+        assert self._report(rt, ["t1", "t2"], rt.deferred_issue.TRACK_ALL) == ""
 
     def test_nothing_deferred_says_nothing(self, rt):
         assert self._report(rt, [], frozenset()) == ""
 
     def test_the_sentinel_is_not_an_empty_set(self, rt):
         """It selects everything; code that asks `if track:` must hear yes."""
-        assert bool(rt.TRACK_ALL) is True
+        assert bool(rt.deferred_issue.TRACK_ALL) is True
 
 
 class TestTrackFlagParsing:
@@ -3785,7 +3785,7 @@ class TestFinishDeferredWork:
         order = []
         with patch.object(rt, "_post_pending_fix_replies",
                           side_effect=lambda *a, **k: order.append("replies")), \
-                patch.object(rt, "_finalize_deferred",
+                patch.object(rt.deferred_issue, "finalize_deferred",
                              side_effect=lambda *a, **k: order.append("issue")), \
                 patch.object(summary_publish, "render_deferred_summary",
                              side_effect=lambda *a, **k: order.append("summary")):
@@ -3800,7 +3800,7 @@ class TestFinishDeferredWork:
             state.fix.fix.commit_status = CommitStatus.PUSHED
 
         with patch.object(rt, "_post_pending_fix_replies", side_effect=mark), \
-                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt.deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
         on_disk = pr_state.load_state(worktree / "target")
@@ -3814,7 +3814,7 @@ class TestFinishDeferredWork:
         seen = []
         with patch.object(rt, "_post_pending_fix_replies",
                           side_effect=lambda st, *a, **k: seen.extend(st.fix.fix.items)), \
-                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt.deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
         assert [t.id for t in seen] == ["t9"]
@@ -3836,7 +3836,7 @@ class TestFinishDeferredWork:
         draft.write_text("A rewritten description.\n")
         with patch.object(rt.pc, "update_pr_body", return_value=True) as update, \
                 patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt.deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
         update.assert_called_once_with(
@@ -3848,7 +3848,7 @@ class TestFinishDeferredWork:
         self._save(worktree)
         with patch.object(rt.pc, "deliver_pr_body") as deliver, \
                 patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt.deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
         deliver.assert_not_called()
@@ -3857,7 +3857,7 @@ class TestFinishDeferredWork:
         """A caller closing the loop needs a failure to be an error, not a log line."""
         self._save(worktree)
         with patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt, "_finalize_deferred",
+                patch.object(rt.deferred_issue, "finalize_deferred",
                              side_effect=RuntimeError("gh down")), \
                 patch.object(summary_publish, "render_deferred_summary"):
             with pytest.raises(RuntimeError):
@@ -4041,10 +4041,10 @@ class TestReconcileRunsBeforeTheWrites:
             comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
         )])
         with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
-                patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies") as reply, \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(ctx, report, track=rt.TRACK_ALL)
+            rt._finish_deferred_work(ctx, report, track=rt.deferred_issue.TRACK_ALL)
         create.assert_not_called()
         reply.assert_not_called()
 
@@ -4100,7 +4100,7 @@ class TestStaleSnapshotIsAnnounced:
                 patch.object(rt.log, "warn", side_effect=seen.append), \
                 patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(summary_publish, "render_deferred_summary"), \
-                patch.object(rt, "_finalize_deferred"):
+                patch.object(rt.deferred_issue, "finalize_deferred"):
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
         return seen
 
@@ -8922,7 +8922,7 @@ class TestDeferredIssueProvider:
             threads_by_id={}, ctx=make_ctx(), existing_issue_id="", trail=None,
         )
         kwargs.update(overrides)
-        return rt._create_or_update_deferred_issue(**kwargs)
+        return rt.deferred_issue.create_or_update_deferred_issue(**kwargs)
 
     def test_stops_when_no_tracker_is_configured(self, rt, publishing_on):
         """An unset provider must report, not quietly file nothing."""
@@ -9053,7 +9053,7 @@ class TestDeferredIssueDraftIsNotAFailure:
                  review_issue, "create_issue",
                  return_value=IssueResult(delivery),
              ):
-            return rt._create_or_update_deferred_issue(
+            return rt.deferred_issue.create_or_update_deferred_issue(
                 deferred=[CommentItem(id="t1", summary="fix regex")],
                 repo="owner/repo", pr_number=1, threads_by_id={},
                 ctx=make_ctx(), existing_issue_id="", trail=trail,
@@ -9100,7 +9100,7 @@ class TestUndeliveredDeferredIssueReachesTheState:
         with patch.object(review_issue, "ensure_issue_provider", return_value=provider), \
                 patch.object(review_issue, "load_issue_provider", return_value=provider), \
                 patch.object(thread_replies, "post_deferred_replies"), creation:
-            rt._finalize_deferred(state, ctx, {}, track={"t1"})
+            rt.deferred_issue.finalize_deferred(state, ctx, {}, track={"t1"})
         return state.fix
 
     def _provider(self, name):

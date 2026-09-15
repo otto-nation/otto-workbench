@@ -125,19 +125,6 @@ def addressed_status_for(framing: attribution.AddressedFraming, repo: str) -> st
     return ActionCell.ALREADY_ADDRESSED
 
 
-def _summary_cell(
-    entry: CommentItem,
-    threads_by_id: dict[str, ReportThread],
-    repo: str, pr_number: int,
-) -> str:
-    """Thread summary as a markdown link if a permalink is available, plain text otherwise."""
-    summary = markdown.escape_cell(entry.summary or "—")
-    url = permalinks.thread_permalink(entry, threads_by_id, repo, pr_number)
-    if url:
-        return f"[{summary}]({url})"
-    return summary
-
-
 def row_cells_for(
     entry: CommentItem, status: str,
     threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
@@ -166,7 +153,7 @@ def row_cells_for(
     ever reaches a published table again, type this parameter as `ActionCell`
     so a bare string cannot be passed at all.
     """
-    summary = _summary_cell(entry, threads_by_id, repo, pr_number)
+    summary = permalinks.thread_cell(entry, threads_by_id, repo, pr_number)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
     if entry.file and head_sha:
         anchor = permalinks.anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
@@ -183,11 +170,11 @@ def row_cells_for(
 
 
 def render_row(cells: list[str]) -> str:
-    """One table row, from its cells.
+    """One summary row, from its cells.
 
-    The only place a summary row becomes markdown. Kept apart from
-    `row_cells_for` so the cells can be keyed before they are rendered, and
-    trivial on purpose: a row is its cells, and anything that reads as more than
-    that belongs in the cell that carries it.
+    Kept apart from `row_cells_for` so the cells can be keyed before they are
+    rendered. The rendering itself is `markdown.render_row`'s, beside the
+    `row_cells` that reads it back — a row this writes is split by that
+    splitter on the next round, so where the padding goes is one decision.
     """
-    return f"| {' | '.join(cells)} |"
+    return markdown.render_row(cells)

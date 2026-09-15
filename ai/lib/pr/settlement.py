@@ -367,8 +367,9 @@ def settle_targets(record: FixRecord, targets: list[str]) -> list[ItemOutcome] |
     replace.
 
     An unknown id is an error rather than a silent skip, for the reason
-    `_validate_track` gives: "settled nothing" and "settled the thread you meant"
-    are indistinguishable from the outside, so a typo would read as agreement.
+    `review.deferred_issue.validate_track` gives: "settled nothing" and "settled
+    the thread you meant" are indistinguishable from the outside, so a typo
+    would read as agreement.
     """
     by_id = {o.id: o for o in record.items if o.id}
     unknown = sorted({t for t in targets if t not in by_id})

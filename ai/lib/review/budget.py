@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agent.phases import ModelAlias, collect_phase_models
 from review.grouping import classify_tier, format_profiles_section
 
 # ── The token ceiling, and the bytes it buys ─────────────────────────────────
@@ -187,8 +188,6 @@ def model_window_tokens(model: str) -> int:
     A concrete id is looked up; an unresolved tier alias takes the conservative
     floor its tier guarantees. Anything else raises `UnknownModelWindow`.
     """
-    from agent.phases import ModelAlias
-
     window = MODEL_CONTEXT_TOKENS.get(model)
     if window is not None:
         return window
@@ -227,7 +226,9 @@ def prompt_budget_bytes(model: str) -> int:
     return min(capability, MAX_SPEND_BYTES) - RENDER_MARKUP_RESERVE_BYTES
 
 
-def collection_budget_bytes(explicit_model: str | None = None) -> int:
+def collection_budget_bytes(
+    explicit_model: str | None = None, project_root: str | None = None,
+) -> int:
     """The ceiling collection may gather against, across every review phase.
 
     Collection runs once and its result is read by every phase, so it has no
@@ -235,12 +236,15 @@ def collection_budget_bytes(explicit_model: str | None = None) -> int:
     fits the tightest-windowed phase fits all of them, whereas the largest
     would hand a phase more than its model can hold. Raises
     `UnknownModelWindow` if any phase resolves a model with no recorded window.
-    """
-    from agent.phases import collect_phase_models
 
+    ``project_root`` is the worktree being reviewed, so a per-phase model set
+    in its `.workbench.yml` is one of the models this minimum is taken over.
+    Without it the phases resolve against the global scope alone and collection
+    can be sized against a ceiling no phase actually budgets to.
+    """
     return min(
         prompt_budget_bytes(model)
-        for model in collect_phase_models(explicit_model)
+        for model in collect_phase_models(explicit_model, project_root)
     )
 
 

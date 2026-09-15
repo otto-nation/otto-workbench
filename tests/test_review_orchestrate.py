@@ -224,6 +224,26 @@ class TestPhaseModel:
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         assert ro.phase_model("scout", "claude-opus-5") == "claude-opus-5"
 
+    def test_collect_reads_the_worktree_config_when_given_one(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """Preflight must resolve the models the review will actually run.
+
+        `ReviewJob.config` is project- and container-scoped, so a repo setting
+        `agent.model` in its own `.workbench.yml` runs a model the global scope
+        never names. Checking without the worktree cleared a model the review
+        never uses and missed the one it does — the unknown-window failure then
+        landed inside `build_prompt`, after metadata and collection were paid
+        for, which is the cost the preflight check exists to avoid.
+        """
+        self._clean_env(ro, monkeypatch)
+        (tmp_path / ".workbench.yml").write_text(
+            "agent:\n  model: claude-haiku-4-5\n",
+        )
+        models = ro.collect_phase_models("", tmp_path)
+        assert set(models) == {"claude-haiku-4-5"}
+        assert "sonnet" not in models
+
     def test_collect_groups_phases_by_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")

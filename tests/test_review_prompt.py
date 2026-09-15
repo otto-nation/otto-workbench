@@ -1204,18 +1204,37 @@ class TestCollectionBudgetsForEveryPhase:
     """
 
     def test_it_takes_the_tightest_phase_budget(self, monkeypatch):
-        from agent import phases as agent_phases
         from review import budget as review_budget
 
-        # `collection_budget_bytes` imports this inside the function, so the
-        # owning module is what has to be patched.
+        # Patched on `review.budget`, which binds the name at import time —
+        # patching `agent.phases` would leave this reading the real resolution
+        # and asserting nothing.
         monkeypatch.setattr(
-            agent_phases, "collect_phase_models",
-            lambda _: {"claude-sonnet-5": [], "claude-sonnet-4-6": []},
+            review_budget, "collect_phase_models",
+            lambda *_: {"claude-sonnet-5": [], "claude-sonnet-4-6": []},
         )
         assert review_budget.collection_budget_bytes() == prompt_budget_bytes(
             "claude-sonnet-4-6",
         )
+
+    def test_it_resolves_against_the_worktree_it_is_given(self, monkeypatch):
+        """Collection budgets to the same models the phases will run.
+
+        A repo naming a model in its own `.workbench.yml` resolves it only when
+        the worktree is passed down, so dropping it here would size collection
+        against a ceiling no phase budgets to.
+        """
+        from review import budget as review_budget
+
+        seen = {}
+
+        def _record(explicit, project_root=None):
+            seen["explicit"], seen["root"] = explicit, project_root
+            return {"claude-sonnet-5": []}
+
+        monkeypatch.setattr(review_budget, "collect_phase_models", _record)
+        review_budget.collection_budget_bytes("m", "/wt")
+        assert seen == {"explicit": "m", "root": "/wt"}
 
 
 class TestTheLadderDoesNotReserveTwice:

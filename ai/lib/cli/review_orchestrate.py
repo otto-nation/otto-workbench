@@ -145,10 +145,10 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
         alias = ModelAlias.parse(model)
         if alias is not None:
             log.warn(
-                f"{model!r} is an unresolved tier alias, so {named} budget "
-                f"against the tier floor ({budget // 1024}KB) rather than the "
-                f"model's own window. Set {alias.env_key} to budget against "
-                f"the real one."
+                f"{model!r} is an unresolved tier alias, so the tier floor "
+                f"({budget // 1024}KB) is the budget for {named} rather than "
+                f"the model's own window. Set {alias.env_key} to budget "
+                f"against the real one."
             )
             trail.decision(
                 "prompt_budget", "budgeting against the tier floor",
@@ -315,7 +315,10 @@ def _run_phases(trail, args, job) -> Pipeline:
 
 def _run_orchestrate(trail, args, repo, session_log) -> int:
     _log_ai_backend(trail)
-    phase_models = collect_phase_models(args.model)
+    # Against the worktree's own config, not just the global scope: this is the
+    # same resolution `ReviewJob.config` makes, and checking a different one
+    # would clear a model the review never runs while missing the one it does.
+    phase_models = collect_phase_models(args.model, args.repo_dir)
     if not ai_backend.preflight(phase_models, trail):
         return 1
     if not _budgets_are_derivable(phase_models, trail):

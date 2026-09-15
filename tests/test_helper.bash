@@ -84,6 +84,18 @@ common_setup() {
   # Only set when the caller has not: a test whose subject is mise's own config
   # resolution points this elsewhere and keeps control.
   export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
+
+  # Leave no Vertex endpoint for a test to reach. `review.prompt` takes an
+  # exact token count of every rendered prompt unless WORKBENCH_AI_MEASURE_TOKENS
+  # is 0, and it is on by default — right for a real review, since a
+  # measurement nobody takes calibrates nothing. Here it makes each
+  # `build_prompt` a live round trip with a 30s timeout, under the developer's
+  # own credentials, and the suite still passes: the cost reads as a hang
+  # rather than as a test reaching the network. `count_tokens` returns None
+  # when `vertex_env()` does, so clearing the endpoint covers every caller of
+  # it rather than the one flag that happens to be on. The pytest suite draws
+  # the same floor in `conftest._no_vertex_endpoint`.
+  unset CLAUDE_CODE_USE_VERTEX ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION
 }
 
 # common_teardown — call last in every test's teardown().

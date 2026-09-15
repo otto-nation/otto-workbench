@@ -693,7 +693,7 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
     )
     fit = _fit_to_budget(
         all_contents, all_permissions, file_changes, base_size,
-        collection_budget_bytes(job.model or None),
+        collection_budget_bytes(job.model or None, job.wt_path),
     )
 
     delta = _collect_delta(job)

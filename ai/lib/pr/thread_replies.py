@@ -15,6 +15,12 @@ Four builders sit on one driver. They look alike and are not: each reads a
 different field, links through a different permalink helper with a different
 fallback, and words its log line differently. The differences are load-bearing
 and are named where they occur.
+
+The hand-written reply (`run_reply`, at the foot of this module) goes through
+the same upsert as all four. It used to post straight to the REST endpoint with
+no dedup on that path at all, which is how one thread ends up carrying three of
+our comments that contradict each other — so the one-per-thread rule is the
+module's, not the fix pass's.
 """
 
 # doc-group: publishing
@@ -22,15 +28,19 @@ and are named where they occur.
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 from core import log
+from core import publishing
+from gh.pr_reads import fetch_pr_data
 from git import client as git_client
 from pr import attribution
 from pr import comments as pc
+from pr import context as pr_context
 from pr import permalinks
-from pr.thread_models import CommentItem, ReportThread
+from pr.thread_models import THREAD_ANCHOR, CommentItem, ReportThread
 
 
 APPLIED_REPLY_PREFIX = "Applied"
@@ -435,3 +445,97 @@ def post_deferred_replies(
     if posted:
         log.info(f"Replied on {posted} deferred thread(s)")
     return posted
+
+
+def find_reply_target(
+    threads_raw: list[dict], target: str, my_login: str,
+) -> ReportThread | None:
+    """Resolve a thread by node ID or by any comment ID inside it.
+
+    Both, because the two are handed out by different things: the report prints
+    the node ID, while a reviewer sends a link ending `#discussion_r3717174529`
+    — which is a comment ID, and the only identifier a human ever has.
+    """
+    wanted = target.strip().rsplit("#", 1)[-1].removeprefix(THREAD_ANCHOR)
+    for data in threads_raw:
+        comments = data.get("comments", {}).get("nodes", [])
+        ids = {str(c.get("databaseId")) for c in comments}
+        if data.get("id") != target and wanted not in ids:
+            continue
+        is_resolved = data.get("isResolved", False)
+        return ReportThread(
+            id=data.get("id", ""),
+            state=pc.compute_thread_state(comments, is_resolved, my_login),
+            reviewer=(comments[0].get("author") or {}).get("login", "") if comments else "",
+            comments=comments,
+            is_resolved=is_resolved,
+            file=data.get("path", ""),
+            line=data.get("line"),
+            my_login=my_login,
+        )
+    return None
+
+
+def read_reply_body(body_file: str | None) -> str | None:
+    """Read a reply body from a file, or from stdin when given '-'.
+
+    None for a path that is not there, "" for a file that is: a mistyped path
+    and an empty draft need different advice.
+    """
+    if not body_file:
+        return None
+    if body_file == "-":
+        return sys.stdin.read().strip()
+    path = Path(body_file)
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8").strip()
+
+
+def run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | None) -> int:
+    """Post one hand-written reply through the same upsert the fix pass uses.
+
+    Manual replies used to go straight to the REST replies endpoint, with no
+    dedup on that path at all — which is how a thread ends up carrying three of
+    our comments that contradict each other. Routing them here holds a manual
+    reply to the same one-per-thread rule as a generated one.
+    """
+    body = read_reply_body(body_file)
+    if body is None:
+        missing = f"--body-file not found: {body_file}" if body_file else "--reply needs --body-file"
+        log.error(missing)
+        return 1
+    if not body:
+        log.error(f"--body-file is empty: {body_file}")
+        return 1
+
+    repo = ctx.repo
+    pr_number = ctx.pr_number
+    owner, repo_name = repo.split("/", 1)
+    pr_data = fetch_pr_data(repo, str(pr_number))
+    threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+
+    thread = find_reply_target(threads_raw, target, pr_data.viewer_login)
+    if thread is None:
+        log.error(f"no review thread on PR #{pr_number} matches {target!r}")
+        return 1
+
+    if "/blob/" not in body:
+        log.warn(
+            "reply cites no permalink — a claim about the code needs a link to "
+            "the line that settles it"
+        )
+
+    existing_id = our_last_reply_id(thread)
+    wrote = upsert_thread_reply(thread, repo, pr_number, body, existing_id)
+    if not publishing.enabled():
+        # The closing line is the one read as the outcome, so it carries the
+        # same label the body was printed under rather than a past tense the
+        # run never earned.
+        publishing.draft(f"{'edit' if existing_id else 'post'} reply on {thread.id}")
+        return 0
+    if not wrote:
+        log.error(f"failed to reply on {thread.id}")
+        return 1
+    log.info(f"{'Edited' if existing_id else 'Posted'} reply on {thread.id}")
+    return 0

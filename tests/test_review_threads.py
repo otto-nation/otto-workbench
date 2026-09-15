@@ -33,10 +33,14 @@ from pr import state as pr_state
 from core import proc
 from core.proc import CmdResult
 from pr.comments_state import ThreadState
+from core import log
 from core import markdown
 from git import client as git_client
+from git import land
+from git import push
 from git import topology as git_topology
 from git.land import CommitStatus
+from pr import comments as pc
 from pr import thread_replies
 from pr import attribution
 from pr import thread_context
@@ -66,6 +70,8 @@ from pr.thread_models import (
     ReportThread, TrackingResult, TriageResult, TriageStats, Verification,
     triage_result_from_dict,
 )
+from review import closeout
+from review import deferred_issue
 from review.document import SECTION_PRIOR_FINDINGS
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
 from review.grammar import FindingIdentity, sid_marker
@@ -1150,7 +1156,7 @@ class TestCommentFixLanding:
 
     @staticmethod
     def _recorded(rt, landed, *, short="abc1234"):
-        with patch.object(rt.git_client, "run",
+        with patch.object(git_client, "run",
                           return_value=_git_ran(0, stdout=f"{short}\n")):
             return attribution.pass_commit(Path("/fake"), landed)
 
@@ -1185,21 +1191,21 @@ class TestCommentFixLanding:
 
     def test_the_sha_is_recorded_at_the_width_the_state_file_uses(self, rt):
         """A commit recorded twice at two widths reads as two commits."""
-        landed = rt.land.LandResult(rt.CommitStatus.PUSHED, sha="abc1234def56789")
+        landed = land.LandResult(CommitStatus.PUSHED, sha="abc1234def56789")
         result = self._recorded(rt, landed)
 
         assert result.sha == "abc1234"
         assert result.status == "pushed"
 
     def test_a_landing_with_no_commit_records_no_sha(self, rt):
-        result = self._recorded(rt, rt.land.LandResult(rt.CommitStatus.NO_CHANGES))
+        result = self._recorded(rt, land.LandResult(CommitStatus.NO_CHANGES))
 
         assert result.sha is None
         assert result.status == "no_changes"
 
     def test_what_went_wrong_is_carried_through(self, rt):
-        landed = rt.land.LandResult(
-            rt.CommitStatus.PUSH_FAILED, sha="abc1234def", error="rejected",
+        landed = land.LandResult(
+            CommitStatus.PUSH_FAILED, sha="abc1234def", error="rejected",
         )
         result = self._recorded(rt, landed)
 
@@ -1743,7 +1749,7 @@ class TestRenderDeferredSummary:
         )])
         with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as mock_post:
-            rt._finish_deferred_work(ctx, report, track=rt.deferred_issue.TRACK_ALL)
+            closeout.finish_deferred_work(ctx, report, track=deferred_issue.TRACK_ALL)
         body = mock_post.call_args[0][2]
         assert "premise disputed" in body
         assert "Addressed outside the fix pass" in body
@@ -1777,7 +1783,7 @@ class TestRenderDeferredSummary:
         state = _make_state(fix)
         report = PRReport()
         with patch("pr.comments.post_issue_comment") as mock_post:
-            with patch.object(rt.push, "holds", return_value=False):
+            with patch.object(push, "holds", return_value=False):
                 summary_publish.render_deferred_summary(state, report, "owner/repo", 1, {})
         mock_post.assert_not_called()
         assert fix.summary_deferred is True
@@ -1794,7 +1800,7 @@ class TestRenderDeferredSummary:
         state = _make_state(fix)
         report = PRReport()
         with patch("pr.comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
-            with patch.object(rt.push, "holds", return_value=True):
+            with patch.object(push, "holds", return_value=True):
                 summary_publish.render_deferred_summary(state, report, "owner/repo", 1, {})
         mock_post.assert_called_once()
         assert fix.summary_deferred is False
@@ -1815,7 +1821,7 @@ class TestRenderDeferredSummary:
         )
         state = _make_state(fix)
         with patch("pr.comments.post_issue_comment") as mock_post:
-            with patch.object(rt.push, "holds", return_value=False):
+            with patch.object(push, "holds", return_value=False):
                 summary_publish.render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         mock_post.assert_not_called()
         assert fix.summary_deferred is True
@@ -1831,7 +1837,7 @@ class TestRenderDeferredSummary:
             summary_deferred=True,
         )
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=True):
+        with patch.object(push, "holds", return_value=True):
             summary_publish.render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         assert fix.fix.commit_status == "push_failed"
         assert fix.summary_deferred is True
@@ -1980,7 +1986,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist") as persist, \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(mock_run, sha="aaa1111")), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u"), \
@@ -2031,7 +2037,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             summary_deferred=True,
         )
         with patch.object(git_client, "head_sha", return_value="ccc3333"), \
-             patch.object(rt.push, "holds", return_value=True), \
+             patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             summary_publish.render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
@@ -2051,7 +2057,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             summary_deferred=True,
         )
         with patch.object(git_client, "head_sha", return_value="bbb2222"), \
-             patch.object(rt.push, "holds", return_value=False), \
+             patch.object(push, "holds", return_value=False), \
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             summary_publish.render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
@@ -2334,11 +2340,11 @@ class TestPushHeldCommit:
 
     def test_pushes_and_marks_it_pushed(self, rt, publishing_on):
         state = self._state()
-        with patch.object(rt.push, "holds", return_value=False), \
-             patch.object(rt.git_client, "run",
+        with patch.object(push, "holds", return_value=False), \
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))) as run:
-            rt._push_held_commit(state, Path("/fake"))
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "pushed"
         assert ("push",) in [call.args for call in run.call_args_list]
 
@@ -2355,11 +2361,11 @@ class TestPushHeldCommit:
             return _git_ran(0, stdout="abc1234\n")
 
         state = self._state()
-        with patch.object(rt.push, "holds", return_value=False), \
-             patch.object(rt.git_client, "run",
+        with patch.object(push, "holds", return_value=False), \
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               clean_tree, _LOST_SHA)) as run:
-            rt._push_held_commit(state, Path("/fake"))
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "push_lost"
         pushes = [c.args for c in run.call_args_list if c.args[:1] == ("push",)]
         assert pushes == [("push",), ("push", "--no-verify")]
@@ -2370,9 +2376,9 @@ class TestPushHeldCommit:
             raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
 
         state = self._state()
-        with patch.object(rt.push, "holds", return_value=False), \
-             patch.object(rt.git_client, "run", boom):
-            rt._push_held_commit(state, Path("/fake"))
+        with patch.object(push, "holds", return_value=False), \
+             patch.object(git_client, "run", boom):
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "push_held"
 
     def test_a_hold_placed_this_run_outranks_post(self, rt, publishing_on):
@@ -2384,17 +2390,17 @@ class TestPushHeldCommit:
             raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
 
         state = self._state()
-        with patch.object(rt.push, "holds", return_value=False), \
-             patch.object(rt.git_client, "run", boom):
-            rt._push_held_commit(state, Path("/fake"))
+        with patch.object(push, "holds", return_value=False), \
+             patch.object(git_client, "run", boom):
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "push_held"
 
     def test_a_failed_push_is_recorded_as_such(self, rt, publishing_on):
         state = self._state()
-        with patch.object(rt.push, "holds", return_value=False), \
-             patch.object(rt.git_client, "run",
+        with patch.object(push, "holds", return_value=False), \
+             patch.object(git_client, "run",
                           return_value=_git_ran(1, stderr="rejected\n")):
-            rt._push_held_commit(state, Path("/fake"))
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "push_failed"
 
     def test_a_failed_push_reaches_the_trail(self, rt, publishing_on):
@@ -2402,10 +2408,10 @@ class TestPushHeldCommit:
         trail = MagicMock()
         trail.failure.return_value = Path("/trail/push.log")
         state = self._state()
-        with patch.object(rt.push, "holds", return_value=False), \
-             patch.object(rt.git_client, "run",
+        with patch.object(push, "holds", return_value=False), \
+             patch.object(git_client, "run",
                           return_value=_git_ran(1, stderr="rejected\n")):
-            rt._push_held_commit(state, Path("/fake"), trail)
+            closeout.push_held_commit(state, Path("/fake"), trail)
         trail.failure.assert_called_once()
         assert trail.failure.call_args.kwargs["output"] == "rejected\n"
 
@@ -2415,9 +2421,9 @@ class TestPushHeldCommit:
             raise AssertionError(f"pushed a commit the remote already had: {a}")
 
         state = self._state()
-        with patch.object(rt.push, "holds", return_value=True), \
-             patch.object(rt.git_client, "run", boom):
-            rt._push_held_commit(state, Path("/fake"))
+        with patch.object(push, "holds", return_value=True), \
+             patch.object(git_client, "run", boom):
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "pushed"
 
     def test_noop_when_the_commit_already_went_out(self, rt, publishing_on):
@@ -2425,8 +2431,8 @@ class TestPushHeldCommit:
             raise AssertionError(f"pushed an already-pushed commit: {a}")
 
         state = self._state(status="pushed")
-        with patch.object(rt.git_client, "run", boom):
-            rt._push_held_commit(state, Path("/fake"))
+        with patch.object(git_client, "run", boom):
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "pushed"
 
     def test_noop_when_the_pass_made_no_commit(self, rt, publishing_on):
@@ -2434,8 +2440,8 @@ class TestPushHeldCommit:
             raise AssertionError(f"pushed with no commit to push: {a}")
 
         state = self._state(status="no_changes", sha="")
-        with patch.object(rt.git_client, "run", boom):
-            rt._push_held_commit(state, Path("/fake"))
+        with patch.object(git_client, "run", boom):
+            closeout.push_held_commit(state, Path("/fake"))
         assert state.fix.fix.commit_status == "no_changes"
 
 
@@ -2580,10 +2586,10 @@ class TestFollowHistoryRewrite:
     def test_the_replay_is_what_the_remote_has(self, rt, tmp_path):
         """The point of following it: the hold is over a name, not the work."""
         repo = _held_fix_branch(tmp_path)
-        assert rt.push.holds(repo.path, repo.held) is False
+        assert push.holds(repo.path, repo.held) is False
         state = self._state(repo)
         history_rewrite.follow_history_rewrite(state, repo.path)
-        assert rt.push.holds(repo.path, state.fix.fix.commit_sha) is True
+        assert push.holds(repo.path, state.fix.fix.commit_sha) is True
 
     def test_the_closeout_stops_holding_after_a_rebase(
         self, rt, tmp_path, publishing_on,
@@ -2598,10 +2604,10 @@ class TestFollowHistoryRewrite:
         ))
         ctx = make_ctx(branch="feature", worktree_root=repo.path,
                        head_sha=repo.replay, target_dir=repo.path / "target")
-        with patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt.deferred_issue, "finalize_deferred"), \
+        with patch.object(closeout, "post_pending_fix_replies"), \
+                patch.object(deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(ctx, PRReport())
+            closeout.finish_deferred_work(ctx, PRReport())
         saved = pr_state.load_state(repo.path / "target")
         assert saved.fix.fix.commit_sha == repo.replay
         assert saved.fix.fix.commit_status == CommitStatus.PUSHED
@@ -2640,7 +2646,7 @@ class TestFollowHistoryRewrite:
             head_sha=repo.held,
         ))
         warned = []
-        with patch.object(rt.log, "warn", side_effect=warned.append):
+        with patch.object(log, "warn", side_effect=warned.append):
             history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.held
         assert any(repo.held in w and "pr comments --fix" in w for w in warned)
@@ -2652,11 +2658,11 @@ class TestFollowHistoryRewrite:
         state.identity.worktree_root = str(repo.path)
         state.fix.replies_pending = True
         logged = []
-        with patch.object(rt.log, "info", side_effect=logged.append), \
+        with patch.object(log, "info", side_effect=logged.append), \
                 patch.object(thread_replies, "reply_to_fixed", return_value=1) as reply, \
                 patch.object(settlement, "resolve_fixed_threads"):
             history_rewrite.follow_history_rewrite(state, repo.path)
-            rt._post_pending_fix_replies(state, "owner/repo", 42, {})
+            closeout.post_pending_fix_replies(state, "owner/repo", 42, {})
         assert not any("Push still pending" in m for m in logged)
         assert reply.call_args[0][4].sha == repo.replay
 
@@ -2666,8 +2672,8 @@ class TestFollowHistoryRewrite:
         state = self._state(repo)
         history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.replay
-        assert rt.push.holds(repo.path, state.fix.fix.commit_sha) is False
-        rt._push_held_commit(state, repo.path)
+        assert push.holds(repo.path, state.fix.fix.commit_sha) is False
+        closeout.push_held_commit(state, repo.path)
         assert state.fix.fix.commit_status == CommitStatus.PUSH_HELD
 
     def test_a_commit_that_was_never_pushed_is_left_alone(self, rt, tmp_path):
@@ -2676,8 +2682,8 @@ class TestFollowHistoryRewrite:
         state = self._state(repo)
         history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.held
-        assert rt.push.holds(repo.path, state.fix.fix.commit_sha) is False
-        rt._push_held_commit(state, repo.path)
+        assert push.holds(repo.path, state.fix.fix.commit_sha) is False
+        closeout.push_held_commit(state, repo.path)
         assert state.fix.fix.commit_status == CommitStatus.PUSH_HELD
 
     def test_an_orphan_with_no_replay_holds_and_says_how_to_recover(
@@ -2687,7 +2693,7 @@ class TestFollowHistoryRewrite:
         repo = _held_fix_branch(tmp_path, drop=True)
         state = self._state(repo)
         warned = []
-        with patch.object(rt.log, "warn", side_effect=warned.append):
+        with patch.object(log, "warn", side_effect=warned.append):
             history_rewrite.follow_history_rewrite(state, repo.path)
         assert state.fix.fix.commit_sha == repo.held
         assert any(repo.held in w and "pr comments --fix" in w for w in warned)
@@ -2697,7 +2703,7 @@ class TestFollowHistoryRewrite:
         repo = _held_fix_branch(tmp_path, drop=True)
         state = self._state(repo, status=CommitStatus.PUSHED)
         warned = []
-        with patch.object(rt.log, "warn", side_effect=warned.append):
+        with patch.object(log, "warn", side_effect=warned.append):
             history_rewrite.follow_history_rewrite(state, repo.path)
         assert warned == []
 
@@ -2706,7 +2712,7 @@ class TestFollowHistoryRewrite:
             raise AssertionError(f"a snapshot with nothing recorded ran git: {a}")
 
         state = _make_state(_fix(items=[ItemOutcome(id="t1")]))
-        with patch.object(rt.git_client, "run", boom):
+        with patch.object(git_client, "run", boom):
             history_rewrite.follow_history_rewrite(state, Path("/fake"))
         assert state.fix.fix.commit_sha == ""
 
@@ -2747,7 +2753,7 @@ class TestDeliverPrBody:
         lived at the call site instead, this call would publish.
         """
         self._draft(rt, worktree)
-        with patch.object(rt.pc, "_gh_post", return_value=CmdResult(1)) as post:
+        with patch.object(pc, "_gh_post", return_value=CmdResult(1)) as post:
             pr_comments.deliver_pr_body(worktree, "owner/repo", 42)
         post.assert_called_once()
 
@@ -2766,7 +2772,7 @@ class TestDeliverPrBody:
 
     def test_a_delivered_rewrite_is_not_sent_twice(self, rt, worktree, publishing_on):
         draft = self._draft(rt, worktree)
-        with patch.object(rt.pc, "update_pr_body", return_value=True):
+        with patch.object(pc, "update_pr_body", return_value=True):
             pr_comments.deliver_pr_body(worktree, "owner/repo", 42)
         assert not draft.exists()
 
@@ -2792,7 +2798,7 @@ class TestDeliverPrBody:
                                                           publishing_on):
         """Sending it would blank the description the reviewer is reading."""
         draft = self._draft(rt, worktree, body="   \n")
-        with patch.object(rt.pc, "update_pr_body") as update:
+        with patch.object(pc, "update_pr_body") as update:
             assert pr_comments.deliver_pr_body(worktree, "owner/repo", 42) is False
         update.assert_not_called()
         assert not draft.exists()
@@ -2833,10 +2839,10 @@ class TestPendingFixReplies:
     def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt, publishing_on):
         fix, threads_by_id = self._queue(2, commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=True), \
+        with patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert mock_reply.call_count == 2
         assert mock_resolve.call_count == 2
         assert fix.fix.commit_status == "pushed"
@@ -2844,9 +2850,9 @@ class TestPendingFixReplies:
     def test_skips_when_still_unpushed(self, rt):
         fix, _ = self._queue(commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=False), \
+        with patch.object(push, "holds", return_value=False), \
              patch("pr.comments.post_thread_reply") as mock_reply:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, {})
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
         assert fix.fix.commit_status == "push_failed"
 
@@ -2854,7 +2860,7 @@ class TestPendingFixReplies:
         fix = _fix(commit_status="pushed", summary_deferred=True)
         state = _make_state(fix)
         with patch("pr.comments.post_thread_reply") as mock_reply:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, {})
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
 
     def test_a_thread_settled_on_the_forge_is_neither_replied_to_nor_resolved(
@@ -2870,18 +2876,18 @@ class TestPendingFixReplies:
         fix.fix.items[0].outcome = FixOutcome.SETTLED_ELSEWHERE
         fix.fix.items[0].settled_by = SettledBy.RECONCILIATION
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=True), \
+        with patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         mock_reply.assert_not_called()
         mock_resolve.assert_not_called()
 
     def test_draft_run_keeps_the_queue_for_a_later_post(self, rt):
         fix, threads_by_id = self._queue(commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        with patch.object(push, "holds", return_value=True):
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.fix.commit_status == "push_failed"
 
     def test_drains_the_queue_a_drafted_fix_pass_left_behind(self, rt, publishing_on):
@@ -2892,10 +2898,10 @@ class TestPendingFixReplies:
         """
         fix, threads_by_id = self._queue(commit_status="pushed", replies_pending=True)
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=True), \
+        with patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert mock_reply.call_count == 1
         assert fix.replies_pending is False
 
@@ -2905,10 +2911,10 @@ class TestPendingFixReplies:
             2, commit_status="pushed", replies_pending=True, replies_posted=0,
         )
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=True), \
+        with patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.replies_posted == 2
 
     def test_draft_drain_counts_nothing(self, rt):
@@ -2917,15 +2923,15 @@ class TestPendingFixReplies:
             commit_status="pushed", replies_pending=True, replies_posted=0,
         )
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        with patch.object(push, "holds", return_value=True):
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.replies_posted == 0
 
     def test_noop_once_the_replies_have_gone_out(self, rt, publishing_on):
         fix, _ = self._queue(commit_status="pushed", replies_pending=False)
         state = _make_state(fix)
         with patch("pr.comments.post_thread_reply") as mock_reply:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, {})
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
 
     def test_a_hand_landed_commit_pins_the_tree_without_being_credited(
@@ -2950,10 +2956,10 @@ class TestPendingFixReplies:
         )
         state = _make_state(fix)
         with patch.object(git_client, "head_sha", return_value="def5678"), \
-             patch.object(rt.push, "holds", return_value=True), \
+             patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         body = mock_reply.call_args[0][3]
         assert "Fixed in" not in body
         assert "owner/repo/blob/def5678/x.py" in body
@@ -2969,11 +2975,11 @@ class TestPendingFixReplies:
         )
         state = _make_state(fix)
         with patch.object(git_client, "head_sha", return_value="abc1234"), \
-             patch.object(rt.push, "holds", return_value=True), \
+             patch.object(push, "holds", return_value=True), \
              patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         body = mock_reply.call_args[0][3]
         assert "Fixed in" not in body
         assert "/commit/)" not in body
@@ -3026,7 +3032,7 @@ class TestTriageOnlyPassQueue:
              patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert mock_reply.call_count == 2
         assert fix.replies_posted == 2
         assert fix.replies_pending is False
@@ -3041,7 +3047,7 @@ class TestTriageOnlyPassQueue:
              patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert [c.args[0] for c in mock_resolve.call_args_list] == [self._ADDRESSED]
 
     def test_a_drained_dismissal_still_carries_its_reasoning(self, rt, publishing_on):
@@ -3055,19 +3061,19 @@ class TestTriageOnlyPassQueue:
         state = _make_state(fix)
         with patch.object(git_client, "head_sha", return_value="deadbee"), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert "because the dismissed premise says so" in mock_reply.call_args.args[3]
 
     def test_a_commitless_queue_does_not_wait_on_a_push(self, rt, publishing_on):
         """These replies cite HEAD, not a fix commit, so there is nothing to wait for."""
         fix, threads_by_id = self._queue(FixOutcome.ALREADY_ADDRESSED)
         state = _make_state(fix)
-        with patch.object(rt.push, "holds", return_value=False) as mock_pushed, \
+        with patch.object(push, "holds", return_value=False) as mock_pushed, \
              patch.object(git_client, "head_sha", return_value="deadbee"), \
              patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         mock_pushed.assert_not_called()
         assert mock_reply.call_count == 1
 
@@ -3079,7 +3085,7 @@ class TestTriageOnlyPassQueue:
              patch.object(attribution, "find_addressing_commit", return_value=None), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.fix.commit_status == "no_changes"
 
     def test_a_draft_drain_keeps_the_queue(self, rt):
@@ -3088,7 +3094,7 @@ class TestTriageOnlyPassQueue:
         state = _make_state(fix)
         with patch.object(git_client, "head_sha", return_value="deadbee"), \
              patch.object(attribution, "find_addressing_commit", return_value=None):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.replies_posted == 0
         assert fix.replies_pending is True
 
@@ -3098,7 +3104,7 @@ class TestTriageOnlyPassQueue:
         )
         state = _make_state(fix)
         with patch("pr.comments.post_thread_reply") as mock_reply:
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         mock_reply.assert_not_called()
 
 
@@ -3141,10 +3147,10 @@ class TestResolutionsReachThePersistedTally:
         }
         state = _make_state(fix)
         state.comments.by_state = dict(by_state)
-        with patch.object(rt.push, "holds", return_value=True), \
+        with patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", side_effect=_gated), \
              patch("pr.comments.resolve_thread", side_effect=_gated):
-            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         return state.comments
 
     def test_resolved_threads_leave_their_prior_bucket(self, rt, publishing_on):
@@ -3216,10 +3222,10 @@ class TestReplyAttributionAcrossRounds:
                                comments=[{"databaseId": 100 + n}])
             for n, o in enumerate(outcomes)
         }
-        with patch.object(rt.push, "holds", return_value=True), \
+        with patch.object(push, "holds", return_value=True), \
              patch("pr.comments.post_thread_reply", return_value=True) as reply, \
              patch("pr.comments.resolve_thread", return_value=True):
-            rt._post_pending_fix_replies(_make_state(fix), "owner/repo", 1, threads_by_id)
+            closeout.post_pending_fix_replies(_make_state(fix), "owner/repo", 1, threads_by_id)
         bodies = [call[0][3] for call in reply.call_args_list]
         return dict(zip([o.id for o in outcomes], bodies))
 
@@ -3522,7 +3528,7 @@ class TestBuildDeferredIssueBody:
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[{"databaseId": 12345}]),
         }
-        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 42, threads_by_id)
+        body = deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 42, threads_by_id)
         assert "PR #42" in body
         assert "src/foo.go:10" in body
         assert "fix it" in body
@@ -3534,14 +3540,14 @@ class TestBuildDeferredIssueBody:
             CommentItem(id="t1", file="a.go", line=1,
                             summary="do thing", reason="r"),
         ]
-        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        body = deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
         assert "do thing" in body
         assert "a.go:1" in body
 
     def test_a_missing_reason_renders_a_placeholder(self, rt):
         """An empty cell would read as a table bug; a dash reads as "unstated"."""
         deferred = [CommentItem(id="t1", file="a.go", line=1, summary="do thing")]
-        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        body = deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
         assert "—" in body
 
     def test_prose_cells_keep_the_row_three_columns_wide(self, rt):
@@ -3555,7 +3561,7 @@ class TestBuildDeferredIssueBody:
             CommentItem(id="t1", file="a.go", line=1,
                         summary="use a | b", reason="see x | y"),
         ]
-        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        body = deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, {})
         row = next(line for line in body.splitlines() if "use a" in line)
         assert markdown.row_cells(row) == ["use a \\| b", "`a.go:1`", "see x \\| y"]
 
@@ -3568,7 +3574,7 @@ class TestBuildDeferredIssueBody:
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[{"databaseId": 12345}]),
         }
-        body = rt.deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, threads_by_id)
+        body = deferred_issue.build_deferred_issue_body(deferred, "owner/repo", 1, threads_by_id)
         row = next(line for line in body.splitlines() if "use a" in line)
         assert len(markdown.row_cells(row)) == 3
         assert "[use a \\| b](" in row
@@ -3602,12 +3608,12 @@ class TestFinalizeDeferredCarriesTheReason:
 
     def _run(self, rt, state, ctx):
         captured = []
-        with patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
+        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies"):
             create.side_effect = lambda deferred, *a, **kw: (
                 captured.extend(deferred) or _filed("I_1", "u")
             )
-            rt.deferred_issue.finalize_deferred(state, ctx, {}, track={"t1"})
+            deferred_issue.finalize_deferred(state, ctx, {}, track={"t1"})
         return captured
 
     def test_reason_survives_into_the_tracking_issue(self, rt, worktree):
@@ -3659,12 +3665,12 @@ class TestDeferralRequiresAChoice:
 
     def _run(self, rt, state, ctx, track):
         captured = []
-        with patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
+        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies") as reply:
             create.side_effect = lambda deferred, *a, **kw: (
                 captured.extend(deferred) or _filed("I_1", "u")
             )
-            rt.deferred_issue.finalize_deferred(state, ctx, {}, track=track)
+            deferred_issue.finalize_deferred(state, ctx, {}, track=track)
         return captured, create, reply
 
     def test_no_selection_files_nothing(self, rt, worktree):
@@ -3678,9 +3684,9 @@ class TestDeferralRequiresAChoice:
     def test_default_is_no_selection(self, rt, worktree):
         """Omitting track entirely must not fall back to filing everything."""
         state = self._state(worktree, ["t1", "t2"])
-        with patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
+        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies"):
-            rt.deferred_issue.finalize_deferred(state, self._ctx(worktree), {})
+            deferred_issue.finalize_deferred(state, self._ctx(worktree), {})
         create.assert_not_called()
 
     def test_only_selected_threads_are_filed(self, rt, worktree):
@@ -3692,7 +3698,7 @@ class TestDeferralRequiresAChoice:
     def test_track_all_files_everything(self, rt, worktree):
         state = self._state(worktree, ["t1", "t2"])
         captured, _, _ = self._run(
-            rt, state, self._ctx(worktree), track=rt.deferred_issue.TRACK_ALL)
+            rt, state, self._ctx(worktree), track=deferred_issue.TRACK_ALL)
         assert [e.id for e in captured] == ["t1", "t2"]
 
     def test_unknown_id_is_an_error_not_a_silent_skip(self, rt, worktree):
@@ -3719,8 +3725,8 @@ class TestUnfiledDeferralsAreNamed:
                 ItemOutcome(id=i, outcome=FixOutcome.DEFERRED) for i in ids
             ]),
         )
-        with patch.object(rt.log, "info") as info:
-            rt.deferred_issue.report_unfiled_deferrals(state, track)
+        with patch.object(log, "info") as info:
+            deferred_issue.report_unfiled_deferrals(state, track)
         return " ".join(str(c) for c in info.call_args_list)
 
     def test_no_selection_names_every_deferral(self, rt):
@@ -3734,14 +3740,14 @@ class TestUnfiledDeferralsAreNamed:
         assert "t2" not in msg
 
     def test_track_all_leaves_nothing_unfiled(self, rt):
-        assert self._report(rt, ["t1", "t2"], rt.deferred_issue.TRACK_ALL) == ""
+        assert self._report(rt, ["t1", "t2"], deferred_issue.TRACK_ALL) == ""
 
     def test_nothing_deferred_says_nothing(self, rt):
         assert self._report(rt, [], frozenset()) == ""
 
     def test_the_sentinel_is_not_an_empty_set(self, rt):
         """It selects everything; code that asks `if track:` must hear yes."""
-        assert bool(rt.deferred_issue.TRACK_ALL) is True
+        assert bool(deferred_issue.TRACK_ALL) is True
 
 
 class TestTrackFlagParsing:
@@ -3783,13 +3789,13 @@ class TestFinishDeferredWork:
     def test_all_three_steps_run_in_order(self, rt, worktree):
         self._save(worktree)
         order = []
-        with patch.object(rt, "_post_pending_fix_replies",
+        with patch.object(closeout, "post_pending_fix_replies",
                           side_effect=lambda *a, **k: order.append("replies")), \
-                patch.object(rt.deferred_issue, "finalize_deferred",
+                patch.object(deferred_issue, "finalize_deferred",
                              side_effect=lambda *a, **k: order.append("issue")), \
                 patch.object(summary_publish, "render_deferred_summary",
                              side_effect=lambda *a, **k: order.append("summary")):
-            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+            closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         assert order == ["replies", "issue", "summary"]
 
     def test_state_written_by_the_steps_is_persisted(self, rt, worktree):
@@ -3799,10 +3805,10 @@ class TestFinishDeferredWork:
         def mark(state, *a, **k):
             state.fix.fix.commit_status = CommitStatus.PUSHED
 
-        with patch.object(rt, "_post_pending_fix_replies", side_effect=mark), \
-                patch.object(rt.deferred_issue, "finalize_deferred"), \
+        with patch.object(closeout, "post_pending_fix_replies", side_effect=mark), \
+                patch.object(deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+            closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         on_disk = pr_state.load_state(worktree / "target")
         assert on_disk.fix.fix.commit_status == CommitStatus.PUSHED
 
@@ -3812,16 +3818,16 @@ class TestFinishDeferredWork:
             ItemOutcome(id="t9", outcome=FixOutcome.DEFERRED, reason="r"),
         ])
         seen = []
-        with patch.object(rt, "_post_pending_fix_replies",
+        with patch.object(closeout, "post_pending_fix_replies",
                           side_effect=lambda st, *a, **k: seen.extend(st.fix.fix.items)), \
-                patch.object(rt.deferred_issue, "finalize_deferred"), \
+                patch.object(deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+            closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         assert [t.id for t in seen] == ["t9"]
 
     def test_no_state_on_disk_is_a_no_op(self, rt, worktree):
-        with patch.object(rt, "_post_pending_fix_replies") as replies:
-            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+        with patch.object(closeout, "post_pending_fix_replies") as replies:
+            closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         replies.assert_not_called()
 
     def test_a_held_pr_description_is_delivered_and_the_debt_cleared(
@@ -3834,11 +3840,11 @@ class TestFinishDeferredWork:
             pr_comments.artifacts_dir(worktree / "target"))
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_text("A rewritten description.\n")
-        with patch.object(rt.pc, "update_pr_body", return_value=True) as update, \
-                patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt.deferred_issue, "finalize_deferred"), \
+        with patch.object(pc, "update_pr_body", return_value=True) as update, \
+                patch.object(closeout, "post_pending_fix_replies"), \
+                patch.object(deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+            closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         update.assert_called_once_with(
             "owner/repo", 42, "A rewritten description.",
         )
@@ -3846,22 +3852,22 @@ class TestFinishDeferredWork:
 
     def test_a_description_nobody_drafted_is_not_looked_for(self, rt, worktree):
         self._save(worktree)
-        with patch.object(rt.pc, "deliver_pr_body") as deliver, \
-                patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt.deferred_issue, "finalize_deferred"), \
+        with patch.object(pc, "deliver_pr_body") as deliver, \
+                patch.object(closeout, "post_pending_fix_replies"), \
+                patch.object(deferred_issue, "finalize_deferred"), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+            closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         deliver.assert_not_called()
 
     def test_a_failing_step_propagates(self, rt, worktree):
         """A caller closing the loop needs a failure to be an error, not a log line."""
         self._save(worktree)
-        with patch.object(rt, "_post_pending_fix_replies"), \
-                patch.object(rt.deferred_issue, "finalize_deferred",
+        with patch.object(closeout, "post_pending_fix_replies"), \
+                patch.object(deferred_issue, "finalize_deferred",
                              side_effect=RuntimeError("gh down")), \
                 patch.object(summary_publish, "render_deferred_summary"):
             with pytest.raises(RuntimeError):
-                rt._finish_deferred_work(self._ctx(worktree), PRReport())
+                closeout.finish_deferred_work(self._ctx(worktree), PRReport())
 
 
 class TestReconcileFixSnapshot:
@@ -4041,10 +4047,10 @@ class TestReconcileRunsBeforeTheWrites:
             comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
         )])
         with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
-                patch.object(rt.deferred_issue, "create_or_update_deferred_issue") as create, \
+                patch.object(deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(thread_replies, "post_deferred_replies") as reply, \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(ctx, report, track=rt.deferred_issue.TRACK_ALL)
+            closeout.finish_deferred_work(ctx, report, track=deferred_issue.TRACK_ALL)
         create.assert_not_called()
         reply.assert_not_called()
 
@@ -4065,7 +4071,7 @@ class TestReconcileRunsBeforeTheWrites:
         )])
         with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(ctx, report)
+            closeout.finish_deferred_work(ctx, report)
         on_disk = pr_state.load_state(worktree / "target")
         assert on_disk.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
         assert on_disk.fix.fix.items[0].settled_by is SettledBy.RECONCILIATION
@@ -4097,11 +4103,11 @@ class TestStaleSnapshotIsAnnounced:
     def _warnings(self, rt, worktree, current_sha):
         seen = []
         with patch.object(git_client, "head_sha", return_value=current_sha), \
-                patch.object(rt.log, "warn", side_effect=seen.append), \
-                patch.object(rt, "_post_pending_fix_replies"), \
+                patch.object(log, "warn", side_effect=seen.append), \
+                patch.object(closeout, "post_pending_fix_replies"), \
                 patch.object(summary_publish, "render_deferred_summary"), \
-                patch.object(rt.deferred_issue, "finalize_deferred"):
-            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+                patch.object(deferred_issue, "finalize_deferred"):
+            closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         return seen
 
     def test_head_moved_is_announced(self, rt, worktree):
@@ -4186,22 +4192,22 @@ class TestFindReplyTarget:
     ])
     def test_resolves_every_identifier_a_human_might_paste(self, rt, target):
         raw = [_raw_thread("PRRT_zzz", [999]), _raw_thread("PRRT_abc", [111, 222])]
-        thread = rt._find_reply_target(raw, target, "me")
+        thread = thread_replies.find_reply_target(raw, target, "me")
         assert thread is not None
         assert thread.id == "PRRT_abc"
 
     def test_returns_none_when_nothing_matches(self, rt):
         raw = [_raw_thread("PRRT_abc", [111])]
-        assert rt._find_reply_target(raw, "discussion_r404", "me") is None
+        assert thread_replies.find_reply_target(raw, "discussion_r404", "me") is None
 
     def test_carries_the_lifecycle_state_the_upsert_needs(self, rt):
         raw = [_raw_thread("PRRT_abc", [111, 222], login="me")]
-        assert rt._find_reply_target(raw, "PRRT_abc", "me").state == ThreadState.ADDRESSED
+        assert thread_replies.find_reply_target(raw, "PRRT_abc", "me").state == ThreadState.ADDRESSED
 
     def test_carries_the_viewer_login_the_upsert_needs(self, rt):
         """Without it the upsert cannot tell our own reply from a reviewer's."""
         raw = [_raw_answered_thread(resolved=True)]
-        thread = rt._find_reply_target(raw, "PRRT_abc", "me")
+        thread = thread_replies.find_reply_target(raw, "PRRT_abc", "me")
         assert thread.my_login == "me"
         assert thread_replies.our_last_reply_id(thread) == 222
 
@@ -4214,9 +4220,9 @@ class TestRunReply:
 
     def _patches(self, rt, raw, login="reviewer"):
         return (
-            patch.object(rt, "fetch_pr_data",
+            patch.object(thread_replies, "fetch_pr_data",
                          return_value=SimpleNamespace(viewer_login=login)),
-            patch.object(rt.pc, "fetch_threads", return_value=raw),
+            patch.object(pc, "fetch_threads", return_value=raw),
         )
 
     def test_posts_the_body_from_the_file(self, rt, tmp_path):
@@ -4225,7 +4231,7 @@ class TestRunReply:
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
-            code = rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body))
+            code = thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body))
         assert code == 0
         assert post.call_args[0][2] == 111
 
@@ -4237,7 +4243,7 @@ class TestRunReply:
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply") as post, \
              patch("pr.comments.patch_thread_reply", return_value=True) as edit:
-            code = rt._run_reply(self._ctx(tmp_path), "discussion_r222", str(body))
+            code = thread_replies.run_reply(self._ctx(tmp_path), "discussion_r222", str(body))
         assert code == 0
         post.assert_not_called()
         assert edit.call_args[0][1] == 222
@@ -4248,8 +4254,8 @@ class TestRunReply:
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=True), \
-             patch.object(rt.log, "warn") as warn:
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+             patch.object(log, "warn") as warn:
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
         warn.assert_called_once()
 
     def test_errors_on_an_unknown_thread(self, rt, tmp_path):
@@ -4258,7 +4264,7 @@ class TestRunReply:
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply") as post:
-            assert rt._run_reply(self._ctx(tmp_path), "discussion_r404", str(body)) == 1
+            assert thread_replies.run_reply(self._ctx(tmp_path), "discussion_r404", str(body)) == 1
         post.assert_not_called()
 
     def test_errors_when_the_reply_call_fails(self, rt, tmp_path, publishing_on):
@@ -4267,8 +4273,8 @@ class TestRunReply:
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=False), \
-             patch.object(rt.log, "error") as err:
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 1
+             patch.object(log, "error") as err:
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 1
         err.assert_called_once()
 
     def test_a_drafted_reply_is_not_a_failure(self, rt, tmp_path):
@@ -4278,8 +4284,8 @@ class TestRunReply:
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=False), \
-             patch.object(rt.log, "error") as err:
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+             patch.object(log, "error") as err:
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
         err.assert_not_called()
 
     def test_a_drafted_reply_says_draft_and_sends_nothing(self, rt, tmp_path):
@@ -4289,8 +4295,8 @@ class TestRunReply:
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("core.proc.subprocess.run") as run, \
-             patch.object(rt.log, "info") as info:
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+             patch.object(log, "info") as info:
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
         run.assert_not_called()
         lines = [c[0][0] for c in info.call_args_list]
         assert any("DRAFT (not published)" in line for line in lines)
@@ -4308,8 +4314,8 @@ class TestRunReply:
         fetch_pr, fetch_threads = self._patches(rt, raw, login="me")
         with fetch_pr, fetch_threads, \
              patch(f"pr.comments.{call}", return_value=True), \
-             patch.object(rt.log, "info") as info:
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+             patch.object(log, "info") as info:
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
         assert f"{verb} reply on PRRT_abc" in [c[0][0] for c in info.call_args_list]
 
     def test_edits_the_standing_reply_on_a_resolved_thread(
@@ -4324,18 +4330,18 @@ class TestRunReply:
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply") as post, \
              patch("pr.comments.patch_thread_reply", return_value=True) as edit:
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
         post.assert_not_called()
         assert edit.call_args[0][1] == 222
 
     def test_distinguishes_a_missing_body_file_from_an_empty_one(self, rt, tmp_path):
         empty = tmp_path / "empty.md"
         empty.write_text("   ")
-        with patch.object(rt, "fetch_pr_data") as fetch_pr, \
-             patch.object(rt.log, "error") as err:
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", None) == 1
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", "/nope.md") == 1
-            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(empty)) == 1
+        with patch.object(thread_replies, "fetch_pr_data") as fetch_pr, \
+             patch.object(log, "error") as err:
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", None) == 1
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", "/nope.md") == 1
+            assert thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(empty)) == 1
         fetch_pr.assert_not_called()
         messages = [c[0][0] for c in err.call_args_list]
         assert "not found" in messages[1]
@@ -5413,7 +5419,7 @@ class TestFixPassHoldsWhenContested:
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(mock_run)), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="u"), \
@@ -5590,7 +5596,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_thread_reply", return_value=True), \
@@ -5640,7 +5646,7 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
         with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))):
             return fix_comments.run_pass(TriageResult(), report, tmp_path, ctx)
@@ -5687,7 +5693,7 @@ class TestTheRoundWithNothingToFixTakesTheSameTail:
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist") as persist, \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_thread_reply", return_value=True), \
@@ -5783,7 +5789,7 @@ class TestARoundWithNoFixablesRecordsItsCommentItems:
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist") as persist, \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_thread_reply", return_value=True), \
@@ -5858,7 +5864,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_thread_reply", return_value=True), \
@@ -5906,7 +5912,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
         with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
-             patch.object(rt.git_client, "run",
+             patch.object(git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
              patch("pr.comments.post_issue_comment",
@@ -6112,7 +6118,7 @@ class TestPublishedRowsSurviveTheEdit:
         assert twice == once
 
     def test_a_run_that_warns_says_how_many(self, rt):
-        with patch.object(rt.log, "warn") as warn:
+        with patch.object(log, "warn") as warn:
             self._render(rt, _published_summary(rt, ROUND_ONE_ROW))
         assert "1 row(s)" in warn.call_args[0][0]
 
@@ -6616,7 +6622,7 @@ class TestHandEditedCellsSurviveTheRender:
     def test_the_run_names_the_row_and_what_it_would_have_said(self, rt):
         """An overwritten hand edit was silent — the warning listed only the
         rows the run kept, never the one it replaced."""
-        with patch.object(rt.log, "warn") as warn:
+        with patch.object(log, "warn") as warn:
             self._render(rt, _published_summary(rt, HAND_EDITED_ROW))
         held = next(c[0][0] for c in warn.call_args_list if "hand-written" in c[0][0])
         assert "#discussion_r111" in held
@@ -7589,7 +7595,7 @@ def _undetermined_pass(rt, branch):
     record = FixRecord(
         commit_status=CommitStatus.NO_CHANGES, head_sha=branch.snapshot,
     )
-    with patch.object(rt.push, "holds", return_value=True):
+    with patch.object(push, "holds", return_value=True):
         cp = history_rewrite.reconciled_commit(record, CommitStatus.NO_CHANGES, branch.path)
     assert cp.claim is attribution.CommitClaim.UNDETERMINED, "fixture must reach the gap"
     return cp
@@ -8000,7 +8006,7 @@ class TestCommitLookupsUseDefaultBranch:
     def test_branch_commit_log_uses_resolved_branch(self, rt, tmp_path):
         with (
             patch.object(git_topology, "default_branch_cached", return_value="trunk"),
-            patch.object(rt.git_client, "run") as run,
+            patch.object(git_client, "run") as run,
         ):
             run.return_value = _git_ran(0, stdout="abc1234 fix: thing\n")
             assert thread_context.branch_commit_log(tmp_path) == "abc1234 fix: thing"
@@ -8009,7 +8015,7 @@ class TestCommitLookupsUseDefaultBranch:
     def test_find_addressing_commit_uses_resolved_branch(self, rt, tmp_path):
         with (
             patch.object(git_topology, "default_branch_cached", return_value="trunk"),
-            patch.object(rt.git_client, "run") as run,
+            patch.object(git_client, "run") as run,
         ):
             run.return_value = _git_ran(0, stdout="deadbeef\n")
             assert attribution.find_addressing_commit(tmp_path, "a.py", 10) == "deadbeef"
@@ -8258,7 +8264,7 @@ class TestWorktreeGuard:
 
     def test_finish_deferred_work_exits_with_guidance(self, rt, capsys):
         assert_no_worktree_exit(capsys, "isaac/feat/x",
-                                rt._finish_deferred_work, self._ctx(), PRReport())
+                                closeout.finish_deferred_work, self._ctx(), PRReport())
 
     def test_settle_exits_before_reading_the_snapshot(self, rt, capsys):
         """A settled fix is attributed to a commit, which needs a checkout to find."""
@@ -8700,7 +8706,7 @@ class TestFinishReconcilesCommentItems:
         with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 _fetches(comments), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(ctx, PRReport(my_login="me"))
+            closeout.finish_deferred_work(ctx, PRReport(my_login="me"))
 
     def test_the_answered_item_is_persisted_as_fixed(self, rt, worktree):
         ctx = self._save(worktree)
@@ -8922,7 +8928,7 @@ class TestDeferredIssueProvider:
             threads_by_id={}, ctx=make_ctx(), existing_issue_id="", trail=None,
         )
         kwargs.update(overrides)
-        return rt.deferred_issue.create_or_update_deferred_issue(**kwargs)
+        return deferred_issue.create_or_update_deferred_issue(**kwargs)
 
     def test_stops_when_no_tracker_is_configured(self, rt, publishing_on):
         """An unset provider must report, not quietly file nothing."""
@@ -9053,7 +9059,7 @@ class TestDeferredIssueDraftIsNotAFailure:
                  review_issue, "create_issue",
                  return_value=IssueResult(delivery),
              ):
-            return rt.deferred_issue.create_or_update_deferred_issue(
+            return deferred_issue.create_or_update_deferred_issue(
                 deferred=[CommentItem(id="t1", summary="fix regex")],
                 repo="owner/repo", pr_number=1, threads_by_id={},
                 ctx=make_ctx(), existing_issue_id="", trail=trail,
@@ -9100,7 +9106,7 @@ class TestUndeliveredDeferredIssueReachesTheState:
         with patch.object(review_issue, "ensure_issue_provider", return_value=provider), \
                 patch.object(review_issue, "load_issue_provider", return_value=provider), \
                 patch.object(thread_replies, "post_deferred_replies"), creation:
-            rt.deferred_issue.finalize_deferred(state, ctx, {}, track={"t1"})
+            deferred_issue.finalize_deferred(state, ctx, {}, track={"t1"})
         return state.fix
 
     def _provider(self, name):

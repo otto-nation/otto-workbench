@@ -1532,6 +1532,12 @@ different field, links through a different permalink helper with a different
 fallback, and words its log line differently. The differences are load-bearing
 and are named where they occur.
 
+The hand-written reply (`run_reply`, at the foot of this module) goes through
+the same upsert as all four. It used to post straight to the REST endpoint with
+no dedup on that path at all, which is how one thread ends up carrying three of
+our comments that contradict each other — so the one-per-thread rule is the
+module's, not the fix pass's.
+
 ### pr/triage.py
 
 One round of thread triage: ask the model, then refuse what it cannot back.
@@ -1587,6 +1593,30 @@ pass reads that flag afterwards to decide whether the replies it rendered are
 still owed. The two used to be kept in order by sitting near each other in one
 function; here the ordering is the type's, since there is no `TriagedRound` that
 predates its own holds.
+
+### review/closeout.py
+
+What `--finish` owes the PR after the fix pass has run.
+
+The fix pass stops at the point a person has to read something. It holds the
+push while a thread is still being discussed, queues the replies it drafted but
+could not send, and defers the summary until the needs-human threads have been
+answered — so by the time it returns, four separate things may be owed to a PR
+that looks, from the outside, finished. This is the phase that pays them.
+
+Order is the whole design here, and it is not incidental. The push goes first,
+because every surface below cites a commit and a reviewer cannot follow a SHA
+that is not on the remote. The replies go before the summary, because the
+summary reports what the replies say. The tracking issue goes before the
+summary too, for a subtler reason named on `deferred_issue.finalize_deferred`:
+the summary renders the issue link out of state that call writes. Reordering
+any of those drops a link or publishes a claim about a commit nobody can see.
+
+Layer 6, not 4, and the reason is worth stating because it was got wrong once:
+`finish_deferred_work` calls into `review.deferred_issue`, which reaches
+`review.issue` for the tracking issue. A `pr/closeout.py` at layer 4 cannot
+import either, and the validator would have said so — but only after the code
+was written.
 
 ### review/deferred_issue.py
 

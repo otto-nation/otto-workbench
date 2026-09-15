@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -63,6 +62,31 @@ def _make_command(*scripts: str) -> list[str]:
 _PR_REVIEW = ("pr", "claude-review", "review-orchestrate")
 
 
+def _raw_record(**fields) -> str:
+    """One trail record as a line, with every required field defaulted.
+
+    For the tests that cannot go through `Trail` — history from before a field
+    existed, or a stamp hours in the past. Each names only what it is about and
+    inherits the rest, so a new required field is added here rather than in
+    every literal that predates it.
+    """
+    return json.dumps({
+        "ts": "2026-01-01T00:00:00Z", "script": "old-run",
+        "invocation": "a1b2c3d4", "level": "info", "event_type": "action",
+        "action": "x", "detail": "", "context": {},
+        **fields,
+    }) + "\n"
+
+
+def _write_raw(name: str, *records: str) -> Path:
+    """Put pre-built *records* in the trail root under *name*."""
+    root = workbench_paths.trail_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / name
+    path.write_text("".join(records))
+    return path
+
+
 class TestTrailDiscovery:
     def test_finds_the_month_file_every_writer_appends_to(self):
         _make_trail("ci-check", [("fetch", "fetched")])
@@ -111,13 +135,7 @@ class TestQueryFiltering:
         same root forever. The match is on the whole field, so both widths select
         their own run and neither one prefix-matches the other."""
         new_inv = _make_trail("test", [("a", "first")])
-        root = workbench_paths.trail_dir()
-        root.mkdir(parents=True, exist_ok=True)
-        (root / "legacy.jsonl").write_text(json.dumps({
-            "ts": "2026-01-01T00:00:00Z", "script": "old-run",
-            "invocation": new_inv[:8], "level": "info", "event_type": "action",
-            "action": "x", "detail": "", "context": {},
-        }) + "\n")
+        _write_raw("legacy.jsonl", _raw_record(invocation=new_inv[:8]))
 
         events = otto_log.load_events(otto_log.discover_trails())
         old = otto_log.filter_events(events, invocation=new_inv[:8])
@@ -199,7 +217,7 @@ class TestCommandCorrelation:
         assert f"Invocation {child}" in out
         assert "review-orchestrate ran" not in out
 
-    def test_only_reports_that_processs_own_duration(self, capsys):
+    def test_only_reports_that_processes_own_duration(self, capsys):
         """The header must not go looking for a finish under the root's ID when
         no event in the narrowed listing carries it."""
         _, child = _make_command("pr", "claude-review")
@@ -247,19 +265,14 @@ class TestCommandCorrelation:
         """
         now = datetime.now(timezone.utc)
         started = now - timedelta(hours=10)
-        root_dir = workbench_paths.trail_dir()
-        root_dir.mkdir(parents=True, exist_ok=True)
-        records = [
-            {"ts": f"{started:%Y-%m-%dT%H:%M:%SZ}", "invocation": "aaaa",
-             "script": "pr", "level": "info", "event_type": "action",
-             "action": "dispatch", "detail": "", "context": {}},
-            {"ts": f"{now - timedelta(minutes=5):%Y-%m-%dT%H:%M:%SZ}",
-             "invocation": "bbbb", "root": "aaaa", "script": "claude-review",
-             "level": "info", "event_type": "action", "action": "work",
-             "detail": "", "context": {}},
-        ]
-        (root_dir / f"{now:%Y-%m}.jsonl").write_text(
-            "".join(json.dumps(r) + "\n" for r in records))
+        _write_raw(
+            f"{now:%Y-%m}.jsonl",
+            _raw_record(ts=f"{started:%Y-%m-%dT%H:%M:%SZ}",
+                        invocation="aaaa", script="pr", action="dispatch"),
+            _raw_record(ts=f"{now - timedelta(minutes=5):%Y-%m-%dT%H:%M:%SZ}",
+                        invocation="bbbb", root="aaaa",
+                        script="claude-review", action="work"),
+        )
 
         otto_log.cmd_list(argparse.Namespace(
             script=None, since="1h", repo=None, json=True))
@@ -277,13 +290,7 @@ class TestCommandCorrelation:
 
 class TestSinceSkipsFilesByName:
     def _write(self, name: str, script: str):
-        root = workbench_paths.trail_dir()
-        root.mkdir(parents=True, exist_ok=True)
-        (root / name).write_text(json.dumps({
-            "ts": "2026-01-01T00:00:00Z", "script": script, "invocation": "a1b2c3d4",
-            "level": "info", "event_type": "action", "action": "x", "detail": "",
-            "context": {},
-        }) + "\n")
+        _write_raw(name, _raw_record(script=script))
 
     def test_drops_a_month_below_the_cutoff(self):
         self._write("2026-01.jsonl", "old")

@@ -6,11 +6,13 @@ The cells are what the row's identity is derived from — see
 cells once and gets a row and a key that cannot disagree. Rendering straight to
 markdown and reading the key back out of it is what this shape replaces.
 
-The Action cell is the graded half of the row and is built here, in the five
-functions that spell what happened to a thread. What that cell *reports* once
-published is `summary_model.action_outcome`'s to say: the wordings are written
-here and parsed there, and the two are kept in step by a sweep test until
-#1252 gives each wording one owner.
+The Action cell is the graded half of the row. Which cell a thread earns is
+decided here; what the cell *says* belongs to `summary_model.ActionCell`, which
+is the one declaration the builders below write and the parse side reads back
+out of the published comment. A builder names a member or calls one of its two
+formatters, and never spells a wording of its own — a wording with no member
+behind it reads as hand-written, and freezes its row at whatever the published
+comment already said.
 """
 
 # doc-group: publishing
@@ -22,57 +24,39 @@ from pathlib import Path
 from core import markdown
 from git.land import CommitStatus
 from pr import attribution
-from pr import comments_fix as pr_comments_fix
 from pr import permalinks
+from pr.summary_model import ActionCell
 from pr.thread_models import CommentItem, ReportThread
-
-def fixed_in_cell(sha: str, repo: str, *, verified: bool | None = None) -> str:
-    """The status cell that names the commit carrying a row.
-
-    One spelling for every surface that claims a fix landed: the fixed rows,
-    and the satisfied rows a commit made true after the reviewer asked.
-
-    The hedge is a suffix rather than a different opening, so `action_outcome`
-    still reads the row as FIXED from its prefix. A wording that changed the
-    opening would make an unverified row differ from its own published copy on
-    every comparison, and restate it for the life of the PR.
-
-    Only an explicit False hedges. None is a pass that never ran the gate —
-    including every satisfied row, where the reviewer themself confirmed the
-    behaviour and no gate could say more than they did.
-    """
-    cell = f"Fixed in [`{sha}`]({permalinks.commit_permalink(repo, sha)})"
-    return f"{cell} (unverified)" if verified is False else cell
 
 
 def fixed_status_text(cp: attribution.CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
     if cp.sha and cp.status == CommitStatus.PUSHED:
-        return fixed_in_cell(cp.sha, repo)
+        return ActionCell.fixed_in(cp.sha, repo)
     if cp.status == CommitStatus.NO_CHANGES:
         # "A fix was applied" and "nothing was committed" contradict each other,
         # and which half is wrong is not knowable from here — a hook may have
         # rejected the commit, or the edit may have been a no-op. Publishing the
         # confident reading ("no commit needed") over a rejected commit asserts
         # more than is known, so the cell states only what is certain.
-        return pr_comments_fix.UNATTRIBUTED_STATUS_TEXT
+        return ActionCell.UNATTRIBUTED
     if cp.status == CommitStatus.COMMIT_FAILED:
-        return "Fix applied (commit failed — pre-commit hook?)"
+        return ActionCell.COMMIT_FAILED
     if cp.status == CommitStatus.RECONCILED:
-        return pr_comments_fix.RECONCILED_STATUS_TEXT
+        return ActionCell.RECONCILED
     # Both callers refuse to render an unpushed commit, so these four are not
     # reachable today. They are spelled out anyway: the fallback below reads as
     # "not done yet", which would be a false claim about a commit that exists
     # and is only waiting to be published.
     if cp.status == CommitStatus.PUSH_HELD:
-        return "Fix committed locally (push held pending discussion)"
+        return ActionCell.PUSH_HELD
     if cp.status == CommitStatus.PUSH_FAILED:
-        return "Fix committed locally (push failed)"
+        return ActionCell.PUSH_FAILED
     if cp.status == CommitStatus.PUSH_LOST:
-        return "Fix committed locally (push reported success, remote does not have it)"
+        return ActionCell.PUSH_LOST
     if cp.status == CommitStatus.PUSH_UNVERIFIED:
-        return "Fix committed and pushed (could not reach the remote to confirm)"
-    return "Fix pending"
+        return ActionCell.PUSH_UNVERIFIED
+    return ActionCell.PENDING
 
 
 def settled_outside_the_pass(entry: CommentItem, cp: attribution.CommitPushResult) -> bool:
@@ -117,15 +101,15 @@ def fixed_status_for(
         # Only the cited cell carries the hedge. The others already withhold the
         # claim for a different reason — they cannot name a commit at all — and
         # stacking a second caveat on those would say less, not more.
-        return fixed_in_cell(attributed.sha, repo, verified=entry.verified)
+        return ActionCell.fixed_in(attributed.sha, repo, verified=entry.verified)
     # A row settled outside the pass landed in a commit this run could not
     # resolve. That is true of the row whatever the running pass did, so it is
     # answered before the pass-level text gets a say.
     if settled_outside_the_pass(entry, cp):
-        return pr_comments_fix.RECONCILED_STATUS_TEXT
+        return ActionCell.RECONCILED
     if attributed.claim is attribution.CommitClaim.PASS:
         return fixed_status_text(cp, repo)
-    return pr_comments_fix.UNATTRIBUTED_STATUS_TEXT
+    return ActionCell.UNATTRIBUTED
 
 
 def addressed_status_for(framing: attribution.AddressedFraming, repo: str) -> str:
@@ -137,8 +121,8 @@ def addressed_status_for(framing: attribution.AddressedFraming, repo: str) -> st
     about one thread.
     """
     if framing.in_response and framing.cited:
-        return fixed_in_cell(framing.sha, repo)
-    return "Already addressed"
+        return ActionCell.fixed_in(framing.sha, repo)
+    return ActionCell.ALREADY_ADDRESSED
 
 
 def _summary_cell(
@@ -173,6 +157,14 @@ def row_cells_for(
     identity for the row it is actually publishing. The alternative this
     replaced — render, then parse the row back to recover its key — made every
     change to how a cell renders a silent change to row identity.
+
+    ceiling: `status` is a plain `str`, so what the vocabulary guarantees is
+    "every cell the builders in this module write opens with a registered
+    opening", not "every cell the table carries does" — a caller can still pass
+    a literal straight past `summary_model.ActionCell`. The sweep test over the
+    builders is what closes that gap. Upgrade trigger: if a literal Action cell
+    ever reaches a published table again, type this parameter as `ActionCell`
+    so a bare string cannot be passed at all.
     """
     summary = _summary_cell(entry, threads_by_id, repo, pr_number)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"

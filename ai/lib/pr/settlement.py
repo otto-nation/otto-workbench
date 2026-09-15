@@ -46,6 +46,7 @@ from pr import comments_fix as pr_comments_fix
 from pr import context as pr_context
 from pr import permalinks
 from pr import state as pr_state
+from pr import summary_model
 from pr import thread_replies
 from pr.comments_state import ThreadState
 from pr.fix import (
@@ -449,7 +450,7 @@ def report_settlement(
         log.info(
             f"{outcome.id}: no pushed commit found for {outcome.file}:"
             f"{outcome.line} — the summary row will read "
-            f"\"{pr_comments_fix.RECONCILED_STATUS_TEXT}\". Push the fix and re-run "
+            f"\"{summary_model.ActionCell.RECONCILED}\". Push the fix and re-run "
             f"--settle, or name it with --commit, to cite it"
         )
 

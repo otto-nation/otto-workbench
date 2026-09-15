@@ -1458,11 +1458,13 @@ The cells are what the row's identity is derived from — see
 cells once and gets a row and a key that cannot disagree. Rendering straight to
 markdown and reading the key back out of it is what this shape replaces.
 
-The Action cell is the graded half of the row and is built here, in the five
-functions that spell what happened to a thread. What that cell *reports* once
-published is `summary_model.action_outcome`'s to say: the wordings are written
-here and parsed there, and the two are kept in step by a sweep test until
-#1252 gives each wording one owner.
+The Action cell is the graded half of the row. Which cell a thread earns is
+decided here; what the cell *says* belongs to `summary_model.ActionCell`, which
+is the one declaration the builders below write and the parse side reads back
+out of the published comment. A builder names a member or calls one of its two
+formatters, and never spells a wording of its own — a wording with no member
+behind it reads as hand-written, and freezes its row at whatever the published
+comment already said.
 
 ### pr/summary_scope.py
 

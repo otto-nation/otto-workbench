@@ -1,3 +1,4 @@
+import contextlib
 import difflib
 import importlib.machinery
 import importlib.util
@@ -297,6 +298,45 @@ def _isolate_installed_schema(monkeypatch):
     monkeypatch.setattr(workbench_config_write.shutil, "which", lambda name, *a, **kw: (
         None if name == launcher else real_which(name, *a, **kw)
     ))
+
+
+@contextlib.contextmanager
+def reset_trail_root():
+    """Run the block with no inherited trail root, and restore it afterwards.
+
+    What really happens when a command's outermost process exits: the next one
+    the user runs inherits nothing from it. A test that writes two separate
+    commands needs the same boundary, or the second adopts the first as its
+    root — so the autouse fixture below and any test building more than one
+    command both go through this rather than keeping their own copy of the
+    save/pop/restore.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from core import trail
+
+    saved = os.environ.pop(trail.TRAIL_ROOT_ENV, None)
+    try:
+        yield
+    finally:
+        os.environ.pop(trail.TRAIL_ROOT_ENV, None)
+        if saved is not None:
+            os.environ[trail.TRAIL_ROOT_ENV] = saved
+
+
+@pytest.fixture(autouse=True)
+def _clear_trail_root_env():
+    """Never inherit a trail root across tests, or out of a real run.
+
+    ``Trail.start`` publishes its invocation into the environment so the
+    processes it spawns record which command they belong to. In a test process
+    that environment outlives the test: without this, the second trail any
+    module opens is recorded as a child of the first one some earlier test
+    started, and assertions about a root run against an ID from another file.
+    Same floor as ``_clear_lock_env``, for the other variable a run exports.
+    """
+    with reset_trail_root():
+        yield
 
 
 @pytest.fixture(autouse=True)

@@ -22,12 +22,14 @@ from core.trail import (
     INVOCATION_HEX_WIDTH,
     SCHEMA_VERSION,
     TRAIL_KEEP_MONTHS,
+    TRAIL_ROOT_ENV,
     EventType,
     Level,
     Trail,
     add_trail_args,
     artifacts_dir,
     billed_to,
+    inherited_root,
     prune_trail,
     tdecision,
     terr,
@@ -186,6 +188,89 @@ class TestTrailRetention:
     def test_prune_without_a_root_yet_is_not_an_error(self):
         assert prune_trail() == []
         assert not workbench_paths.trail_dir().exists()
+
+
+class TestCommandCorrelation:
+    """One user command is several processes; `root` is what ties them together.
+
+    `pr review` spawns `claude-review`, which spawns `review-orchestrate`. Each
+    opens its own trail, so each has its own invocation, and only the root says
+    they were one command.
+    """
+
+    def test_the_outermost_run_is_its_own_root(self):
+        trail = Trail.start(script="pr", context={})
+        assert trail.root == trail.invocation
+
+    def test_a_roots_own_events_carry_no_root_field(self):
+        """Absent rather than self-referential, so a pre-cutover record — which
+        has no `root` either — reads as exactly what it is: a command of one."""
+        trail = Trail.start(script="pr", context={})
+        trail.info("dispatch", "routing")
+        assert "root" not in _read_events()[0]
+
+    def test_a_run_publishes_its_id_for_the_processes_it_spawns(self):
+        trail = Trail.start(script="pr", context={})
+        assert os.environ[TRAIL_ROOT_ENV] == trail.invocation
+
+    def test_a_descendant_records_the_root_it_was_spawned_under(self):
+        root = Trail.start(script="pr", context={})
+        child = Trail.start(script="claude-review", context={})
+        child.info("review", "running")
+        assert child.invocation != root.invocation
+        assert child.root == root.invocation
+        assert _read_events()[-1]["root"] == root.invocation
+
+    def test_the_root_survives_the_whole_depth_of_the_tree(self):
+        """`pr` → `claude-review` → `review-orchestrate` is three deep, and the
+        middle one must pass down the root it inherited rather than its own."""
+        root = Trail.start(script="pr", context={})
+        Trail.start(script="claude-review", context={})
+        grandchild = Trail.start(script="review-orchestrate", context={})
+        assert grandchild.root == root.invocation
+
+    def test_it_reaches_a_real_child_process(self):
+        """The env is the whole mechanism, so the test that matters spawns."""
+        root = Trail.start(script="pr", context={})
+        child = textwrap.dedent(f"""
+            import sys
+            sys.path.insert(0, {str(LIB_DIR)!r})
+            from core.trail import Trail
+            trail = Trail.start(script="claude-review", context={{}})
+            trail.info("review", "running")
+        """)
+        run_checked([sys.executable, "-c", child])
+        spawned = _read_events()[-1]
+        assert spawned["script"] == "claude-review"
+        assert spawned["root"] == root.invocation
+
+    def test_a_run_launched_by_hand_is_its_own_root(self):
+        """A delegate invoked directly descends from nothing."""
+        assert inherited_root() is None
+        trail = Trail.start(script="ci-check", context={})
+        assert trail.root == trail.invocation
+
+    def test_a_root_that_is_not_an_invocation_id_is_discarded(self, monkeypatch):
+        """Ordinary process environment can hold anything. Becoming our own root
+        loses a correlation; recording the junk writes a pointer to nothing."""
+        monkeypatch.setenv(TRAIL_ROOT_ENV, "../../etc/passwd")
+        trail = Trail.start(script="pr", context={})
+        trail.info("dispatch", "routing")
+        assert trail.root == trail.invocation
+        assert "root" not in _read_events()[0]
+
+    def test_an_unrecorded_run_does_not_become_a_root(self, monkeypatch):
+        """It writes nothing to be the root of, so adopting its ID would point
+        every child at a parent no query can resolve."""
+        monkeypatch.delenv(TRAIL_ROOT_ENV, raising=False)
+        Trail.start(script="pr", context={}, record=False)
+        assert TRAIL_ROOT_ENV not in os.environ
+
+    def test_an_unrecorded_run_still_passes_down_the_root_above_it(self):
+        root = Trail.start(script="pr", context={})
+        unrecorded = Trail.start(script="pr", context={}, record=False)
+        assert unrecorded.root == root.invocation
+        assert os.environ[TRAIL_ROOT_ENV] == root.invocation
 
 
 class TestUnrecordedTrail:

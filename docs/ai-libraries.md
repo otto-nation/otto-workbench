@@ -3052,6 +3052,14 @@ one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
 repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
 terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
 
+One user command is several processes: ``pr review`` spawns ``claude-review``,
+which spawns ``review-orchestrate``, and each opens its own trail with its own
+``invocation``. They are tied together by ``root`` — the invocation of the
+outermost recorded run, carried down the process tree in ``TRAIL_ROOT_ENV`` and
+recorded on every event a descendant writes. ``otto-log show <root>`` renders
+the whole command as one timeline and ``otto-log query --root <id>`` selects it,
+while ``--invocation`` still addresses one process on its own.
+
 The root keeps six months, counting the month in progress
 (``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it
 opens, so growth is bounded whatever writes to the root, and

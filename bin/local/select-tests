@@ -69,6 +69,7 @@ NO_REFS_TESTS=(
   session_count
   step_install_claude
   step_install_pi
+  taskfile
   test_helper_isolation
   validate_commit_msg
 )

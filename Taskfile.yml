@@ -31,7 +31,7 @@ tasks:
       - sh: 'test -f tests/{{.FILENAME}}'
         msg: "File not found: tests/{{.FILENAME}}"
     cmds:
-      - bats tests/{{.FILENAME}} --recursive --timing --show-output-of-passing-tests
+      - bin/local/run-tests --bats --files "tests/{{.FILENAME}}" -- --show-output-of-passing-tests
 
   lint:
     desc: "Run ShellCheck on all shell scripts"

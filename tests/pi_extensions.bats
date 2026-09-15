@@ -467,9 +467,12 @@ curl -sI localhost:3000'
   # Claude's hook and this extension enforce the same rule for different
   # harnesses. The regexes are written in two languages, so they cannot be
   # compared textually — these are the cases where a divergence would show.
+  # Matched with -F: the patterns are regexes themselves, and BSD and GNU grep
+  # disagree on whether a mid-pattern $ is an anchor, so an escaped form that
+  # matches locally reads as an anchor under GNU grep and matches nothing.
   local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
-  grep -q "re_background='(\^|\[^&>|;\])&(\[^&>\]|\$)'" "$guard"
-  grep -q "re_nohup='(\^|\[;&|\]\[\[:space:\]\]\*)nohup\[\[:space:\]\]'" "$guard"
+  grep -qF "re_background='(^|[^&>|;])&([^&>]|\$)'" "$guard"
+  grep -qF "re_nohup='(^|[;&|][[:space:]]*)nohup[[:space:]]'" "$guard"
 }
 
 @test "sleep-guard: the two harnesses share one threshold" {

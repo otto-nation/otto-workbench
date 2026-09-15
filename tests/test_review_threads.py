@@ -8772,6 +8772,19 @@ class TestFinishAdoptsThreadsNoRoundSaw:
         assert [o.id for o in saved.fix.fix.items] == ["t1"]
         assert saved.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
+    def _run(self, ctx, report):
+        with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
+                _fetches([]), \
+                patch.object(summary_publish, "render_deferred_summary"):
+            closeout.finish_deferred_work(ctx, report)
+
+    def test_the_answered_thread_is_persisted_rather_than_dropped(self, worktree):
+        ctx = self._save(worktree)
+        self._run(ctx, self._report())
+        saved = pr_state.load_state(worktree / "target")
+        assert len(saved.fix.fix.items) == 1
+
+    def test_a_thread_still_awaiting_a_reviewer_is_reported_not_recorded(
     def test_the_summary_is_re_armed_so_the_row_reaches_a_reader(self, worktree):
         """A row nobody has published is a summary the PR is still owed."""
         ctx = self._save(worktree)
@@ -8782,11 +8795,6 @@ class TestFinishAdoptsThreadsNoRoundSaw:
         ctx = self._save(worktree)
         self._run(ctx, self._report())
         self._run(ctx, self._report())
-        saved = pr_state.load_state(worktree / "target")
-        assert len(saved.fix.fix.items) == 1
-
-    def test_a_thread_still_awaiting_a_reviewer_is_reported_not_recorded(
-        self, worktree,
     ):
         """NEW is a thread nobody has answered — there is no ending to record."""
         ctx = self._save(worktree)
@@ -8794,7 +8802,8 @@ class TestFinishAdoptsThreadsNoRoundSaw:
             id="t1", state=ThreadState.NEW, reviewer="kgn", my_login="me",
             file="a.go", line=7, comments=[{"body": "rename this"}],
         )])
-        self._run(ctx, report)
+        self._run(ctx, self._report())
+        self._run(ctx, self._report())
         saved = pr_state.load_state(worktree / "target")
         assert saved.fix.fix.items == []
 

@@ -64,7 +64,6 @@ def _authored(*comments, my_login="me", **kw):
         **kw,
     )
 
-
 def _state(*items, reviewers=None):
     """A PRState whose fix snapshot holds exactly these outcomes."""
     return pr_state.PRState(

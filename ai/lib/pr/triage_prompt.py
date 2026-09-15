@@ -95,9 +95,9 @@ def _vocab_schema_lines() -> str:
     return (
         f'      "classification": "{joined(Classification)}",\n'
         f'      "verification": "{joined(Verification)}'
-        f' (only for actionable_suggestion, empty string otherwise)",\n'
+        f' (only for {Classification.ACTIONABLE_SUGGESTION}, empty string otherwise)",\n'
         f'      "complexity": "{joined(Complexity)}'
-        f' (only for actionable_suggestion with verification=valid, empty string otherwise)",'
+        f' (only for {Classification.ACTIONABLE_SUGGESTION} with verification={Verification.VALID}, empty string otherwise)",'
     )
 
 
@@ -165,7 +165,9 @@ Top-level comments:
       "file": "file path if referenced in the item (empty string if not)",
       "line": 0,
       "body": "relevant excerpt from the comment for this item",
-      "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
+      "evidence_file": "file proving the verdict (required for """
+            + f"{Verification.ALREADY_ADDRESSED}/{Verification.INVALID}"
+            + """)",
       "evidence_line": 0
     }
   ],"""
@@ -175,7 +177,7 @@ Top-level comments:
     # the rest of the prompt sits in so a longer option list reflows instead of
     # overflowing the line the rest of the prompt uses.
     verification_line = textwrap.fill(
-        f"2. verification (only for actionable_suggestion): one of {_options(Verification)}",
+        f"2. verification (only for {Classification.ACTIONABLE_SUGGESTION}): one of {_options(Verification)}",
         width=88,
         subsequent_indent="   ",
     )
@@ -186,12 +188,12 @@ For each thread, provide:
 1. classification: one of {_options(Classification)}
 {verification_line}
 {_guidance_lines(Verification, VERIFICATION_GUIDANCE)}
-3. complexity (only for actionable_suggestion with verification=valid): one of {_options(Complexity)}
+3. complexity (only for {Classification.ACTIONABLE_SUGGESTION} with verification={Verification.VALID}): one of {_options(Complexity)}
 {_guidance_lines(Complexity, COMPLEXITY_GUIDANCE)}
 4. reasoning: one sentence explaining your classification/verification
 5. summary: one-line summary of the thread
 6. evidence_file / evidence_line: the file and 1-based line that prove your verdict.
-   REQUIRED for already_addressed and invalid — those verdicts get posted back to the
+   REQUIRED for {Verification.ALREADY_ADDRESSED} and {Verification.INVALID} — those verdicts get posted back to the
    reviewer as a claim about their code, and a claim with no line to point at is not one
    you can make. Cite the line that already does what the reviewer asked
    (already_addressed) or the line that contradicts their premise (invalid). If you
@@ -212,7 +214,7 @@ Return JSON matching this exact schema:
       "line": "line from input",
       "reviewer": "reviewer from input",
       "summary": "one-line summary",
-      "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
+      "evidence_file": "file proving the verdict (required for {Verification.ALREADY_ADDRESSED}/{Verification.INVALID})",
       "evidence_line": 0
     }}
   ],{comment_items_schema}

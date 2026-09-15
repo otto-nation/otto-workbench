@@ -600,10 +600,12 @@ def _lenient_from_dict(cls, raw):
     way this raises is the non-dict case, not a missing-field one.
 
     `ValueError` is caught beside it because `CommentItem` carries enum fields
-    the replay path sets, and `serde` raises rather than defaulting for an enum
-    value it does not recognise. Those keys are not in the triage schema, so a
-    model emitting one has invented it — that entry defaults rather than taking
-    the batch down with it.
+    the replay path sets (`FixOutcome`, `SettledBy`). Those have no `_missing_`,
+    so `serde` still raises rather than defaulting for a value it does not
+    recognise. The three vocabulary enums (`Classification`, `Verification`,
+    `Complexity`) do not raise: `Vocabulary._missing_` returns `UNSET`. Those
+    replay keys are not in the triage schema, so a model emitting one has
+    invented it — that entry defaults rather than taking the batch down with it.
 
     Catching it widens the net past the enums, and deliberately: `__post_init__`
     coerces `line`, `index` and `evidence_line` with `int()`, which raises the

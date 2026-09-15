@@ -39,12 +39,12 @@ setup() {
   # still running. Poll rather than sleep: spawn and reap are both racy on a
   # loaded runner, and a fixed window would pass a slow signal as success.
   local pidfile="$BATS_TEST_TMPDIR/grandchild.pid"
-  local i holder grandchild
+  local holder grandchild
   "$WITH_LOCK" "$TREE" -- sh -c "sleep 30 & echo \$! > \"$pidfile\"; wait" &
   local wrapper=$!
 
   holder=""
-  for i in $(seq 1 50); do
+  for _ in $(seq 1 50); do
     if [[ -f "$pidfile" ]]; then
       run "$WITH_LOCK" --check "$TREE"
       if [[ "$status" -eq 0 ]]; then
@@ -60,7 +60,7 @@ setup() {
 
   kill -TERM "$holder"
 
-  for i in $(seq 1 50); do
+  for _ in $(seq 1 50); do
     kill -0 "$grandchild" 2>/dev/null || break
     sleep 0.1
   done

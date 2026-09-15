@@ -185,15 +185,21 @@ _validate_cadence_matches_hook() {
   # than coerced: bash arithmetic reads a non-numeric prefix as 0, so "several
   # days" would otherwise disagree with its hook as "(0h)" and send the reader
   # looking for a constant mismatch that does not exist.
-  case "$cadence" in
-    [0-9]*h) cadence_hours="${cadence%h}" ;;
-    [0-9]*" days"|[0-9]*" day") cadence_hours=$(( ${cadence%% *} * 24 )) ;;
-    [0-9]*) cadence_hours="$cadence" ;;
-    *)
-      _fail "$display: lifecycle_cadence '$cadence' is not a recognized duration (expected '24h' or '7 days')"
-      return 0
-      ;;
-  esac
+  #
+  # The forms are matched with anchored regexes, not case globs. A glob pins
+  # only the characters it names — `[0-9]*" days"` accepts "3.5 days", whose
+  # prefix then reaches $(( )) as a syntax error and, under set -e, takes the
+  # whole run down with no diagnostic for any skill.
+  if [[ "$cadence" =~ ^([0-9]+)h$ ]]; then
+    cadence_hours="${BASH_REMATCH[1]}"
+  elif [[ "$cadence" =~ ^([0-9]+)" "days?$ ]]; then
+    cadence_hours=$(( BASH_REMATCH[1] * 24 ))
+  elif [[ "$cadence" =~ ^[0-9]+$ ]]; then
+    cadence_hours="$cadence"
+  else
+    _fail "$display: lifecycle_cadence '$cadence' is not a recognized duration (expected '24h' or '7 days')"
+    return 0
+  fi
 
   if [[ -n "$hook_hours" ]]; then
     if [[ "$cadence_hours" == "$hook_hours" ]]; then

@@ -754,6 +754,9 @@ _make_hook() {
     echo "#!/usr/bin/env bash"
     echo "UPPER_INTERVAL_HOURS=$hours"
     [[ -n "$sessions" ]] && echo "MIN_SESSIONS=$sessions"
+    # Not an early exit: a false [[ ]] as the last statement would become the
+    # function's exit status and fail the calling test under set -e whenever
+    # sessions is empty. See bash.md's function-last-statement pitfall.
     return 0
   } > "$dir/should-$name.sh"
 }
@@ -844,4 +847,20 @@ _make_hook() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"not a recognized duration"* ]]
   [[ "$output" != *"(0h)"* ]]
+}
+
+@test "a fractional day-form cadence fails cleanly instead of aborting the run" {
+  # A case glob pins only the characters it names, so "3.5 days" reached $(( ))
+  # as a syntax error and set -e took the whole run down — every other skill
+  # left unchecked, with no diagnostic. The second skill here must still be
+  # reported.
+  _make_skill widget "3.5 days" per-project
+  _make_hook widget 24
+  _make_skill gadget "24h" per-project
+  _make_hook gadget 72
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a recognized duration"* ]]
+  [[ "$output" == *"gadget"* ]]
 }

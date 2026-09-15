@@ -75,6 +75,25 @@ def _route(
     return _VERIFICATION_ROUTES.get(tt.verification)
 
 
+def _report_drop(tt: CommentItem, trail: Trail | None) -> None:
+    """Say that an entry reached no bucket, where nothing used to say it.
+
+    Two routes end here — a classification that is not an actionable
+    suggestion, and a verification no route claims — and both were silent
+    falls through an if/elif chain. Routing them through one function is what
+    makes the drop a statement rather than the absence of one, and gives a
+    round that quietly disposed of a thread somewhere to be read.
+    """
+    if not trail:
+        return
+    trail.info(
+        "triage_drop",
+        f"{tt.id}: no disposition for "
+        f"classification={tt.classification!s} "
+        f"verification={tt.verification!s}",
+    )
+
+
 def classify_entries(
     triage_entries: list[CommentItem], *,
     trail: Trail | None = None,
@@ -100,13 +119,7 @@ def classify_entries(
     for tt in triage_entries:
         routed = _route(tt)
         if routed is None:
-            if trail:
-                trail.info(
-                    "triage_drop",
-                    f"{tt.id}: no disposition for "
-                    f"classification={tt.classification!s} "
-                    f"verification={tt.verification!s}",
-                )
+            _report_drop(tt, trail)
             continue
         disposition, reason = routed
         # The one copy, and the only place a classified entry is made.

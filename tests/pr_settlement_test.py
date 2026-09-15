@@ -44,6 +44,22 @@ def _thread(
     )
 
 
+def _authored(*comments, my_login="me", **kw):
+    """A thread whose comments name their authors — `(login, body)` pairs.
+
+    `_thread` leaves the author out, which is the shape every test of the
+    template arm wants. A hand-typed verdict is only ours if the login says so,
+    so the tests of that arm need the field the grader reads.
+    """
+    return ReportThread(
+        id=kw.pop("tid", "t1"), reviewer="kgn", file="a.py", line=10,
+        my_login=my_login,
+        comments=[{"author": {"login": who}, "body": body}
+                  for who, body in comments],
+        **kw,
+    )
+
+
 def _state(*items, reviewers=None):
     """A PRState whose fix snapshot holds exactly these outcomes."""
     return pr_state.PRState(
@@ -154,6 +170,117 @@ class TestALocationTwoSettledThreadsShare:
         assert set(settlement.settled_locations({"t1": mine, "t2": theirs})) == {
             "kgn|a.py:10", "ana|a.py:10",
         }
+
+
+# ── a verdict a person typed rather than a template wrote ────────────────
+
+
+class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
+    """The contract is "names a verdict", not "came out of one of our templates".
+
+    A reply written by hand — during a skill pass, or by the author answering a
+    reviewer directly — says the same thing in different words, and testing the
+    template openings made every one of them invisible. Five threads each
+    carrying `Fixed — <what changed>` with a pinned permalink went unrecognised,
+    unreconciled and unresolved.
+
+    What keeps the widening safe is the author check. The words are ordinary
+    English and a reviewer can type them too; reading theirs as ours would
+    settle the thread on the strength of the complaint.
+    """
+
+    def test_our_hand_written_verdict_reads_as_fixed(self):
+        thread = _authored(
+            ("kgn", "please rename this"),
+            ("me", "Fixed — renamed the guard, see abc1234."),
+        )
+        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+
+    @pytest.mark.parametrize(
+        "body",
+        ["Fixed — renamed it.", "Fixed: renamed it.", "Fixed in abc1234.",
+         "Done.", "Done — dropped the guard.", "Dismissed: the premise fails."],
+    )
+    def test_the_ways_a_person_spells_a_verdict(self, body):
+        thread = _authored(("kgn", "please rename this"), ("me", body))
+        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+
+    def test_a_reviewer_using_our_wording_is_not_our_verdict(self):
+        """The negative the widening is bought with.
+
+        "Fixed in my branch, please rebase" is the reviewer talking about their
+        own tree. Grading it as our settlement resolves their thread and
+        publishes a claim about code nobody here changed.
+        """
+        thread = _authored(
+            ("kgn", "please rename this"),
+            ("kgn", "Fixed in my branch — please rebase onto it."),
+        )
+        assert settlement.settlement_for(thread) is None
+
+    def test_a_reviewer_verdict_does_not_even_settle_the_thread(self):
+        """Not merely 'not FIXED' — nothing about their comment ends the thread."""
+        thread = _authored(
+            ("kgn", "please rename this"), ("kgn", "Done, on my side."),
+        )
+        assert settlement.settlement_for(thread) is None
+
+    @pytest.mark.parametrize(
+        "body",
+        ["Fixing this now, one moment.", "Doneness is not a word.",
+         "Addressed your first point but not the second.",
+         "Resolved the conflict, but the API question stands.",
+         "Good catch — will sort it.", "Agreed, that needs doing.",
+         "This is fixed now.", "Should be fixed — have a look."],
+    )
+    def test_a_wording_that_settles_nothing_is_not_read_as_a_verdict(self, body):
+        """Scope-ambiguous openings, acknowledgements, and work in flight.
+
+        A false match publishes a claim about someone else's code; a miss only
+        leaves the thread open. The vocabulary is sized for that asymmetry, and
+        the anchor at the start of the body is half of what enforces it.
+        """
+        thread = _authored(("kgn", "please rename this"), ("me", body))
+        assert settlement.settlement_for(thread) is None
+
+    def test_a_hand_written_deferral_still_says_the_opposite(self):
+        """Counting it would settle every thread on the second --finish."""
+        thread = _authored(
+            ("kgn", "please rename this"),
+            ("me", f"{thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1."),
+        )
+        assert settlement.settlement_for(thread) is None
+
+    def test_a_template_is_ours_even_with_no_login_to_check(self):
+        """Nothing but this tool writes one, so authorship needs no second source."""
+        thread = _authored(
+            ("kgn", "please rename this"),
+            ("me", f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed it."),
+            my_login="",
+        )
+        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+
+    def test_without_a_login_a_typed_verdict_belongs_to_nobody(self):
+        """Ours and the reviewer's are indistinguishable, so neither counts."""
+        thread = _authored(
+            ("kgn", "please rename this"), ("me", "Fixed — renamed it."),
+            my_login="",
+        )
+        assert settlement.settlement_for(thread) is None
+
+    def test_the_login_match_ignores_case(self):
+        thread = _authored(
+            ("kgn", "please rename this"), ("Me", "Fixed — renamed it."),
+            my_login="me",
+        )
+        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+
+    def test_a_typed_verdict_outranks_an_unresolved_button(self):
+        thread = _authored(
+            ("kgn", "please rename this"), ("me", "Fixed — renamed it."),
+            is_resolved=False,
+        )
+        assert settlement.settlement_for(thread) is FixOutcome.FIXED
 
 
 # ── adopt_settled_threads: the thread no round ever saw ───────────────────
@@ -284,6 +411,33 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         threads = {"t1": self._addressed()}
         settlement.adopt_settled_threads(state, threads)
         assert settlement.reconcile_fix_snapshot(state, threads) == 0
+
+    def test_a_hand_answered_thread_keeps_the_reply_a_person_wrote(self):
+        """The one outward act this stage enables, and its guard.
+
+        A thread adopted as FIXED joins the reply queue, and `resolve_fixed_threads`
+        closes it. What must not happen alongside is the three-line template
+        being written over the answer a person typed — there is no undo but the
+        edit history. `has_hand_written_reply` is the guard, and it holds here
+        because a typed verdict matches none of the generated openings.
+        """
+        thread = _authored(
+            ("kgn", "please rename this"), ("me", "Fixed — renamed the guard."),
+            state=ThreadState.ADDRESSED,
+        )
+        state = _state()
+        settlement.adopt_settled_threads(state, {"t1": thread})
+        assert state.fix.fix.items[0].outcome is FixOutcome.FIXED
+        assert thread_replies.has_hand_written_reply(thread)
+
+    def test_our_own_template_is_still_ours_to_rewrite(self):
+        """The converse: a generated reply may be replaced, so the guard is off."""
+        thread = _authored(
+            ("kgn", "please rename this"),
+            ("me", f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard."),
+            state=ThreadState.ADDRESSED,
+        )
+        assert not thread_replies.has_hand_written_reply(thread)
 
 
 # ── entry_settlement: the three ways a row can be settled ─────────────────

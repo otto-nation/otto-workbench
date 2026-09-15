@@ -92,13 +92,41 @@ _SOURCE_ANCHOR_RE = re.compile(
     r"#(?:" + "|".join(re.escape(a) for a in CommentSourceKind.anchors()) + r")-(\d+)")
 
 
+def _our_verdict_stands(thread: ReportThread) -> bool:
+    """Whether a reply of ours on this thread opens by naming a verdict.
+
+    Two tests, and the author half is the load-bearing one. What counts as a
+    verdict is `thread_replies.names_a_verdict`, which accepts a wording a
+    person typed as well as one of our templates — and a wording a person typed
+    is a wording a reviewer can type too. Reading theirs as ours would settle
+    the thread on the strength of the complaint.
+
+    Our login is the thread's own `my_login`, the same field the reply upsert
+    decides edit-vs-post from. Without one there is no telling the two apart, so
+    only the templates count: those are ours by construction, since nothing but
+    this tool writes them.
+    """
+    login = (thread.my_login or "").lower()
+    for comment in thread.comments:
+        body = str(comment.get("body", ""))
+        if body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
+            return True
+        if not login:
+            continue
+        author = ((comment.get("author") or {}).get("login") or "").lower()
+        if author == login and thread_replies.names_a_verdict(body):
+            return True
+    return False
+
+
 def settlement_for(thread: ReportThread | None) -> FixOutcome | None:
     """What GitHub shows became of this thread, or None when it shows nothing.
 
     Two grades of evidence, and which one it is decides what may be claimed. A
-    standing reply of ours — applied, already addressed, dismissed — names the
-    verdict outright, so the thread reads as FIXED however its resolve button
-    stands.
+    standing reply of ours — applied, already addressed, dismissed, or the same
+    verdict a person typed in their own words — names the ending outright, so
+    the thread reads as FIXED however its resolve button stands. What makes a
+    wording ours is the login behind it: see `_our_verdict_stands`.
 
     Resolution on its own names nothing of the sort. The button covers a
     reviewer who was answered, who deferred the point, or who withdrew it, as
@@ -109,10 +137,7 @@ def settlement_for(thread: ReportThread | None) -> FixOutcome | None:
     """
     if not thread:
         return None
-    if any(
-        str(c.get("body", "")).startswith(thread_replies.HANDLED_REPLY_PREFIXES)
-        for c in thread.comments
-    ):
+    if _our_verdict_stands(thread):
         return FixOutcome.FIXED
     if thread.is_resolved or thread.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED):
         return FixOutcome.SETTLED_ELSEWHERE
@@ -156,8 +181,11 @@ def answered_comment_sources(
     ):
         if str(comment.get("user", "")).lower() != mine:
             continue
+        # Safe to accept a hand-typed verdict here without a second author
+        # test: the login check above already dropped every comment but ours,
+        # and the early return above refuses to run at all without a login.
         body = str(comment.get("body", ""))
-        if not body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
+        if not thread_replies.names_a_verdict(body):
             continue
         answered.update(m.group(1) for m in _SOURCE_ANCHOR_RE.finditer(body))
     return frozenset(answered)

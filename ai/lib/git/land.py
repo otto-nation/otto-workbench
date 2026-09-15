@@ -251,8 +251,8 @@ def _landed(wt_path: str | Path, sha: str, result: PushResult) -> LandResult:
     )
 
 
-def _regenerated(wt_path: str | Path) -> list[str]:
-    """The tracked files something rewrote under us, from git's own status.
+def _modified(wt_path: str | Path) -> set[str]:
+    """The tracked files with unstaged modifications, from git's own status.
 
     `run` rather than `lines`: the marker this reads is in the first two columns,
     and stripping the output would take the leading space off the first line and
@@ -261,17 +261,45 @@ def _regenerated(wt_path: str | Path) -> list[str]:
     status = git_client.run(
         "status", "--porcelain", "--untracked-files=no", cwd=wt_path,
     )
-    return [line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")]
+    return {line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")}
 
 
-def _validated(wt_path: str | Path, trail: Trail | None) -> bool:
+def _regenerated(wt_path: str | Path, before: set[str]) -> list[str]:
+    """The tracked files the hook rewrote, and none the operator had edited.
+
+    A hook runs against a worktree that may already be dirty — `pr rebase`
+    stashes, but the stash is popped back before the push, and `pr ci --fix`
+    never stashes at all. Status alone cannot tell a file the hook just
+    regenerated from one the operator was midway through editing: both read
+    ` M `. Committing the difference rather than the whole set is what keeps
+    this commit to hook-authored content, which is the only content it claims
+    to hold and the only content `--no-verify` is defensible for.
+
+    A file the operator had already modified *and* the hook then rewrote is
+    excluded, which loses the regeneration rather than committing an edit
+    nobody offered. The push is refused either way, and the operator is left
+    holding their own work — the outcome to prefer when the two cannot be told
+    apart.
+    """
+    return sorted(_modified(wt_path) - before)
+
+
+def _validated(wt_path: str | Path, trail: Trail | None,
+               dirty_before: set[str] = frozenset()) -> bool:
     """Whether the tree the pre-push hooks read is the one about to be pushed.
 
     A hook validates the worktree, not the commits under it, so a recovery that
     leaves anything uncommitted lets the hooks pass on content no commit holds —
     and the green run then says nothing about the HEAD that reaches the remote.
-    `_regenerated()`'s `" M "`-only filter reaches tracked files only, so a hook
-    that writes a *new* generated file leaves exactly that gap.
+    Two things reach here uncommitted: the operator's own edits, which
+    `_regenerated` deliberately excludes, and a file the hook *created*, which
+    its `" M "`-only filter never saw in the first place.
+
+    Refusing is right for both, but they are not the same news, so
+    *dirty_before* — what was already modified when the push began — sorts the
+    leftovers into work that was the operator's and output that appeared during
+    the push. Defaulting it to empty attributes nothing rather than
+    misattributing it: a caller that did not snapshot cannot tell them apart.
 
     A `status` that cannot be read counts as dirty, for the reason `is_dirty`
     gives: this answer gates a push, and "don't know" must not be spelled the
@@ -289,12 +317,23 @@ def _validated(wt_path: str | Path, trail: Trail | None) -> bool:
     leftover = [line[3:] for line in r.stdout.splitlines() if line.strip()]
     if not leftover:
         return True
+    yours = [p for p in leftover if p in dirty_before]
     if trail:
         trail.error("push", "recovery left the worktree dirty",
-                    data={"files": leftover})
+                    data={"files": leftover, "pre_existing": yours})
     log.error("Recovery left uncommitted changes — not pushing:")
     for path in leftover:
-        log.dim(f"  {path}")
+        # Marked per file rather than described in one line below the list:
+        # the two kinds routinely appear together, and the operator's next move
+        # differs per file.
+        log.dim(f"  {path}{'  (yours, already modified)' if path in yours else ''}")
+    # The usual case, and the one the operator can act on. Without saying so the
+    # refusal reads as a fault in the recovery rather than as a decision it made
+    # on their behalf.
+    if yours:
+        log.info("Marked files were already modified when the push started — "
+                 "yours to commit or discard. The pre-push hooks read them, so "
+                 "pushing without them would send a HEAD nothing checked.")
     return False
 
 
@@ -305,6 +344,7 @@ def _retry_after_regen(
     gated: bool,
     args: Sequence[str],
     trail: Trail | None,
+    dirty_before: set[str],
 ) -> PushResult | None:
     """Commit what a pre-push hook regenerated and push once more, or None.
 
@@ -313,8 +353,12 @@ def _retry_after_regen(
     the tree dirty anyway. The caller then reports its original push, which is
     the honest answer: the commit it made is still the one its work is in. When
     the retry does run, its own result comes back whatever it says.
+
+    `dirty_before` is what the worktree had modified before the push, so the
+    hook's output can be told from the operator's own uncommitted work. See
+    `_regenerated`.
     """
-    modified = _regenerated(wt_path)
+    modified = _regenerated(wt_path, dirty_before)
     if not modified:
         return None
 
@@ -333,11 +377,20 @@ def _retry_after_regen(
     # has already been checked, on the recovery path where a failure is
     # most expensive (the 2026-09-04 incident: 5m25s then a stranded
     # rebase).  The narrowed staging above ensures nothing else rides in.
-    committed = git_client.run("commit", "--no-verify", "-m", message, cwd=wt_path)
+    #
+    # A pathspec commit for the same reason `_commit` uses one: staging is not
+    # the whole of the scope, and a bare `commit` takes everything already in
+    # the index — including content the operator staged before the push began,
+    # which would then be force-pushed under a message describing a
+    # regeneration.
+    committed = git_client.run(
+        "commit", "--no-verify", "-m", message, "--", *_pathspecs(modified),
+        cwd=wt_path,
+    )
     if not committed.ok:
         _record_commit_failure(trail, committed.combined_output)
         return None
-    if not _validated(wt_path, trail):
+    if not _validated(wt_path, trail, dirty_before):
         return None
 
     # Reported whichever way it went: a second push happened, and the operator
@@ -497,6 +550,10 @@ def _push_and_retry(
     out by a second attempt that failed silently. The SHA is the caller's
     either way — the regeneration rides above it.
     """
+    # Read before the push, because the hook runs during it: afterwards there is
+    # no way to tell a file the hook rewrote from one the operator had already
+    # edited, and the regeneration commit would carry both.
+    dirty_before = _modified(wt_path) if regen is not None else set()
     result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
     push.report(result, wt_path)
     # Only a repairable refusal can be a regenerating hook: a push the remote
@@ -505,7 +562,8 @@ def _push_and_retry(
     if not result.repairable or regen is None:
         return _landed(wt_path, sha, result)
 
-    retried = _retry_after_regen(wt_path, regen, gated=gated, args=args, trail=trail)
+    retried = _retry_after_regen(wt_path, regen, gated=gated, args=args,
+                                 trail=trail, dirty_before=dirty_before)
     if retried is not None and (retried.ok or retried.output.strip()):
         return _landed(wt_path, sha, retried)
     return _landed(wt_path, sha, result)

@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
+from conftest import init_worktree, seed_repo  # noqa: E402
 from core.tree_lock import LOCK_ENV, LOCK_FILE, acquire, holders, is_locked, lock_path
 
 
@@ -26,13 +27,6 @@ def _clear_lock_env():
         os.environ[LOCK_ENV] = saved
 
 
-@pytest.fixture
-def worktree(tmp_path):
-    """A real git repo, so git rev-parse --git-dir has something to answer."""
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    return tmp_path
-
-
 def test_lock_path_is_inside_the_git_dir(worktree):
     """The lock belongs to the worktree's private git dir, not the tree."""
     path = lock_path(worktree)
@@ -42,10 +36,7 @@ def test_lock_path_is_inside_the_git_dir(worktree):
 
 def test_lock_path_follows_a_linked_worktree(worktree, tmp_path):
     """A linked worktree has a private git dir; .git there is a file."""
-    subprocess.run(
-        ["git", "-C", str(worktree), "commit", "-q", "--allow-empty", "-m", "init"],
-        check=True,
-    )
+    seed_repo(worktree)
     linked = tmp_path / "linked"
     subprocess.run(
         ["git", "-C", str(worktree), "worktree", "add", "-q", "-b", "feat", str(linked)],
@@ -113,8 +104,7 @@ def test_holder_record_carries_the_diagnostic_fields(worktree):
 
 def test_two_trees_lock_independently(worktree, tmp_path):
     """A suite in worktree A must not freeze edits in worktree B."""
-    other = tmp_path / "other"
-    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    other = init_worktree(tmp_path / "other")
     with acquire(worktree, command="run-tests", started="t"):
         assert is_locked(worktree) is True
         assert is_locked(other) is False
@@ -130,8 +120,7 @@ def test_reentrant_acquire_in_same_process_tree(worktree):
 
 def test_reentrancy_is_keyed_on_the_tree(worktree, tmp_path):
     """Holding A's lock does not wave through a claim on B."""
-    other = tmp_path / "other"
-    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    other = init_worktree(tmp_path / "other")
     with acquire(worktree, command="outer", started="t"):
         with acquire(other, command="inner", started="t"):
             assert is_locked(other) is True
@@ -237,12 +226,8 @@ def test_git_timeout_is_treated_as_no_lock(tmp_path, monkeypatch):
 
 def test_inherited_git_dir_does_not_hijack_resolution(tmp_path, monkeypatch):
     """Hooks export GIT_DIR; git -C must still resolve the asked-about tree."""
-    tree = tmp_path / "tree"
-    other = tmp_path / "other"
-    tree.mkdir()
-    other.mkdir()
-    subprocess.run(["git", "init", "-q", str(tree)], check=True)
-    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    tree = init_worktree(tmp_path / "tree")
+    other = init_worktree(tmp_path / "other")
     other_git = subprocess.run(
         ["git", "-C", str(other), "rev-parse", "--absolute-git-dir"],
         capture_output=True,

@@ -622,11 +622,9 @@ def _render_verify_fixes(rt, wt_path) -> str:
     """
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    pr_number=1, worktree_root=wt_path, target_dir=wt_path)
-    adapter = rt.CommentFixAdapter(
+    adapter = fix_comments.CommentFixAdapter(
         rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
-        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
-        already_addressed=[], resolved=[], triage_replies=0,
-        has_unaccounted=False, has_items=False,
+        TriagedRound(),
     )
     adapter.__dict__["main_wt"] = None
 

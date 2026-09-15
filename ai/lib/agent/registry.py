@@ -103,6 +103,24 @@ _SPECS: tuple[PhaseSpec, ...] = (
                             budget_per_item=0.5, budget_cap=5.0),
         retry=RetryBudget(ceiling=120, turns_min=30, bump=15),
     ),
+    # The verify gate. Cheap and bounded like the disprove gate it mirrors: it
+    # runs nothing of its own beyond what the project already affords, and its
+    # job is to reach a verdict per fix rather than to do more work.
+    #
+    # Not `optional`: that flag is the review pipeline's own, driving its --no-X
+    # flags and effort skips (`optional_review_phases`), and nothing reads it
+    # outside REVIEW_PHASES. What makes this gate skippable is the `verify`
+    # argument to `fix_engine.run` — a pass that does not pass one never reaches
+    # the phase at all.
+    PhaseSpec(
+        Phase.COMMENTS_VERIFY, PhaseDomain.COMMENTS, "Verify gate",
+        template="verify-fixes.md",
+        thinking=Thinking.LOW, max_turns=15, max_budget=1.5,
+        shape=PhaseShape.FIX,
+        scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=4, turns_cap=40,
+                            budget_per_item=0.4, budget_cap=3.0),
+    ),
     # The CI fix pass gets the same 20 turns and $3 whatever it is handed: the
     # rates below sit at exactly that flat budget divided by the ten failures it
     # was always implicitly sized for, and the caps match the flat numbers, so

@@ -82,6 +82,31 @@ pr comments --fix --pr <NUMBER>
 
 Run synchronously — do **not** background this command.
 
+### The verify gate
+
+After the agent applies its fixes and before anything is committed, a second
+cheap pass holds each claimed fix against what actually runs — the reviewer's
+own repro when their comment carries one, the changed path called directly, or
+the project's checks. It reaches one of three verdicts per fix:
+
+| Verdict | What happens |
+|---|---|
+| verified | Stays fixed. The reply and summary claim the fix plainly |
+| not verified | Stays fixed, and every surface says so — the reply carries `Not verified automatically` with the reason, the summary cell reads `(unverified)` |
+| broken | Demoted to needs-a-person before the commit. The reviewer is never told it was fixed |
+
+A ticked `fixed` box means an edit was made, which is not the same claim as the
+edit working — and publishing the second on the strength of the first is what
+turns a wrong guess into a retraction under your name.
+
+A green suite is not automatically a verdict: where the tests covering a path
+mock the thing that was fixed, the gate is told to report `not verified` rather
+than pass it.
+
+`--no-verify` skips the gate. Everything then publishes as unverified, which is
+honest but weaker — reach for it when the gate cannot run at all, not to save a
+minute.
+
 A PR with more fixable items than one agent pass can afford is split into
 batches, each run as its own invocation with its own turn and dollar budget.
 Progress lines read `Fix pass (batch N/M)`, and the JSON report's `batches`

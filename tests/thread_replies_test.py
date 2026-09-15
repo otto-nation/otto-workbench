@@ -132,6 +132,22 @@ class TestTheFollowupPatternKnowsEveryLead:
         self._assert_all_ours(captured)
         assert "Result is in" in captured[0]
 
+    def test_an_unverified_fix_reply_is_recognised(self, captured, threads):
+        """The hedge is a trailing paragraph like any other.
+
+        A reply the pattern does not recognise reads as hand-written and is
+        never updated again for the life of the PR, so a new sentence has to be
+        added to `_GENERATED_FOLLOWUP_RE` as well as to the builder.
+        """
+        unverified = CommentItem(
+            id="t1", summary="s", reviewer="kgn", commit_sha=_SHA,
+            verified=False, verify_detail="no runnable check for this path",
+        )
+        thread_replies.post_fix_replies(
+            [unverified], threads, _REPO, _PR,
+            attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
+        self._assert_all_ours(captured)
+
     def test_a_fixed_reply_with_no_file_is_recognised(self, captured, threads):
         bare = CommentItem(id="t1", summary="s", reviewer="kgn", commit_sha=_SHA)
         thread_replies.post_fix_replies(
@@ -275,3 +291,65 @@ class TestWhatTheDriverReports:
         with patch.object(thread_replies.pc, "post_thread_reply",
                           return_value=False):
             assert self._run([entry], {"t1": _thread()}) == 0
+
+
+class TestAReplySaysWhatWasEstablished:
+    """A fix reply is a claim about behaviour, and claims what was checked.
+
+    The defect behind #1275: a fix that was applied but never exercised reads
+    identically to one that was run and passed. Both closed the thread and
+    spent the reviewer's trust; only one had earned it.
+
+    Overlaps `TestTheFollowupPatternKnowsEveryLead` on purpose, and the two
+    should not be merged: that one asserts the hedge is still *recognised* as
+    our own reply (an unrecognised one is never updated again for the life of
+    the PR), this one asserts it *says* the right thing. A single test would
+    drop whichever property its assertions did not happen to cover.
+    """
+
+    @pytest.fixture
+    def captured(self):
+        bodies = []
+
+        def record(thread, repo, pr_number, body, existing_id):
+            bodies.append(body)
+            return True
+
+        with patch.object(thread_replies, "upsert_thread_reply", record):
+            yield bodies
+
+    @pytest.fixture
+    def threads(self):
+        return {"t1": _thread()}
+
+    def _post(self, entry, captured, threads):
+        thread_replies.post_fix_replies(
+            [entry], threads, _REPO, _PR,
+            attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
+        return captured[0]
+
+    def test_an_unverified_fix_says_so(self, captured, threads):
+        body = self._post(
+            CommentItem(id="t1", summary="s", reviewer="kgn", commit_sha=_SHA,
+                        verified=False, verify_detail="no runnable check"),
+            captured, threads,
+        )
+        assert "not verified" in body.lower()
+        assert "no runnable check" in body
+
+    def test_a_verified_fix_does_not_hedge(self, captured, threads):
+        body = self._post(
+            CommentItem(id="t1", summary="s", reviewer="kgn", commit_sha=_SHA,
+                        verified=True, verify_detail="suite green"),
+            captured, threads,
+        )
+        assert "not verified" not in body.lower()
+
+    def test_an_unverified_fix_with_no_detail_still_hedges(self, captured, threads):
+        """The hedge is the claim being weakened, not the detail decorating it."""
+        body = self._post(
+            CommentItem(id="t1", summary="s", reviewer="kgn", commit_sha=_SHA,
+                        verified=False),
+            captured, threads,
+        )
+        assert "not verified" in body.lower()

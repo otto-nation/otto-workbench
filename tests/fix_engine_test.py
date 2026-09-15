@@ -624,3 +624,152 @@ def test_the_pass_is_billed_to_the_phase_and_the_pr(tmp_path, landed, head):
 def test_a_pass_off_a_pr_names_no_pr(tmp_path, landed, head):
     _, inv = _run(StubAdapter(tmp_path))
     assert inv.call_args.kwargs["pr"] is None
+
+
+# ── the verify gate ─────────────────────────────────────────────────────────
+#
+# A fix the agent ticked is a claim it edited something, not a claim the edit
+# works. The gate is what turns the first into evidence for the second before a
+# commit is made or a reviewer is told anything.
+
+
+def _verdicts(*pairs):
+    """A `run_verify` stub answering the ids it was given, in one dict."""
+    def run_verify(_phase, _prompt, **_kwargs):
+        return dict(pairs)
+    return run_verify
+
+
+def test_a_fix_the_gate_falsifies_does_not_reach_the_commit(tmp_path, landed, head):
+    """The defect this gate exists for: a wrong fix reported as fixed.
+
+    Demotion happens before `landing` is asked for a spec, so the outcome the
+    domain records and the outcome the commit carries cannot disagree.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(ok=False, detail="repro still exits 3"))),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.NEEDS_HUMAN
+    assert "repro still exits 3" in run.outcomes[0].reason
+    assert all(o.outcome is not FixOutcome.FIXED for o in adapter.landing_saw)
+
+
+def test_a_fix_the_gate_confirms_stays_fixed(tmp_path, landed, head):
+    adapter = StubAdapter(tmp_path, count=1)
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(ok=True, detail="suite green"))),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.FIXED
+    assert run.outcomes[0].verified is True
+
+
+def test_a_fix_the_gate_cannot_judge_stays_fixed_but_unverified(tmp_path, landed, head):
+    """Inconclusive is not falsified.
+
+    Blocking every fix the gate cannot exercise would make the pass useless on
+    any project without a runnable check. The fix stands; what is withheld is
+    the claim that anything ran.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    run, _ = _run(adapter, verify=_verdicts(("i0", fix_engine.Verdict(ok=None, detail="no runnable check"))))
+
+    assert run.outcomes[0].outcome is FixOutcome.FIXED
+    assert run.outcomes[0].verified is False
+    assert "no runnable check" in run.outcomes[0].verify_detail
+
+
+def test_an_id_the_gate_never_answered_is_unverified_not_falsified(tmp_path, landed, head):
+    """Silence is not a verdict.
+
+    An agent that answers two of three items has not falsified the third, and
+    demoting on absence would punish a fix for the gate running out of turns.
+    """
+    adapter = StubAdapter(tmp_path, count=2)
+    run, _ = _run(adapter, verify=_verdicts(("i0", fix_engine.Verdict(ok=True))))
+
+    by_id = {o.id: o for o in run.outcomes}
+    assert by_id["i1"].outcome is FixOutcome.FIXED
+    assert by_id["i1"].verified is False
+
+
+def test_only_fixed_items_are_sent_to_the_gate(tmp_path, landed, head):
+    """Verifying a declined item asks the gate about work nobody did."""
+    adapter = StubAdapter(tmp_path, count=2)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["ids"] = [i.id for i in (items or [])]
+        return {}
+
+    _run(adapter, verify=run_verify, run_fix=_answer(adapter, ids={"i0"}))
+
+    assert seen["ids"] == ["i0"]
+
+
+def test_no_fixed_items_means_the_gate_never_runs(tmp_path, landed, head):
+    """A pass that fixed nothing has nothing to verify, and pays for nothing."""
+    adapter = StubAdapter(tmp_path, count=1)
+    calls = []
+
+    def run_verify(*a, **k):
+        calls.append(1)
+        return {}
+
+    _run(adapter, verify=run_verify, run_fix=_answer(adapter, tick="declined"))
+
+    assert calls == []
+
+
+def test_the_gate_is_off_by_default(tmp_path, landed, head):
+    """Opt-in, like the disprove gate it mirrors.
+
+    Every pass sharing this engine would otherwise start paying for an extra
+    agent call the moment this lands.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    run, _ = _run(adapter)
+
+    assert run.outcomes[0].outcome is FixOutcome.FIXED
+    assert run.outcomes[0].verified is None, "a pass that never gated claims nothing either way"
+    assert run.outcomes[0].verify_detail == ""
+
+
+def test_the_gate_is_told_what_the_reviewer_asked_for(tmp_path, landed, head):
+    """The gate judges a fix against the ask, so it has to be given the ask.
+
+    An outcome carries a location and a verdict: `parse` reads the anchor back
+    out of the section heading and never the label, so a gate handed only
+    outcomes sees `a.py:1` and three empty boxes. Its own prompt opens by
+    telling it to run the reviewer's repro — which is in the body.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["items"] = list(items or [])
+        return {}
+
+    _run(adapter, verify=run_verify)
+
+    assert seen["items"][0].body == "body 0", "the reviewer's words never reached the gate"
+    assert seen["items"][0].label == "item 0"
+
+
+def test_the_gate_looks_where_the_fix_landed(tmp_path, landed, head):
+    """The anchor is the outcome's, since the agent may have moved the code."""
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["items"] = list(items or [])
+        return {}
+
+    _run(adapter, verify=run_verify)
+
+    assert seen["items"][0].file == "a.py"
+    assert seen["items"][0].line == 1

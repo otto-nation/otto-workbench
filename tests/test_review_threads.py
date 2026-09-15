@@ -5287,6 +5287,37 @@ class TestAnEntryAndAnOutcomeAreInverses:
         )
         assert CommentItem.from_outcome(outcome).to_outcome() == outcome
 
+    def test_whether_the_fix_was_exercised_survives_the_round_trip(self):
+        """An unverified fix that replays as verified is the claim the gate exists to stop.
+
+        `--finish` renders replies out of state rather than out of the pass that
+        wrote them, so a field the drain drops is a field the published reply
+        has to guess at — and the confident reading is the wrong one.
+        """
+        outcome = ItemOutcome(
+            id="t1", summary="fix it", outcome=FixOutcome.FIXED,
+            verified=True, verify_detail="suite green",
+        )
+        assert CommentItem.from_outcome(outcome).to_outcome() == outcome
+
+    def test_an_entry_no_gate_saw_claims_nothing_either_way(self):
+        """None, not False: "nobody asked" is not "nobody could tell".
+
+        Recording the second for the first would hedge every row a gate-less
+        pass renders, which is every row on every PR until the gate is turned
+        on for that pass.
+        """
+        recorded = CommentItem(id="t1", summary="fix it").to_outcome()
+        assert recorded.verified is None
+        assert recorded.verify_detail == ""
+
+    def test_the_gate_having_run_and_failed_to_tell_survives_the_round_trip(self):
+        outcome = ItemOutcome(
+            id="t1", summary="fix it", outcome=FixOutcome.FIXED,
+            verified=False, verify_detail="no runnable check",
+        )
+        assert CommentItem.from_outcome(outcome).to_outcome() == outcome
+
     def test_an_entry_nobody_decided_records_as_still_owed(self):
         """An entry triage just built carries no verdict, and defaults to owed."""
         recorded = CommentItem(id="t1", summary="fix it").to_outcome()
@@ -6106,6 +6137,24 @@ class TestGeneratedActionCell:
             assert summary_model.is_generated_action(summary_row.fixed_status_text(cp, "owner/repo")) is True
             bare = attribution.CommitPushResult(None, status, "")
             assert summary_model.is_generated_action(summary_row.fixed_status_text(bare, "owner/repo")) is True
+
+    def test_an_unverified_fix_cell_is_recognised_and_still_reads_as_fixed(self, rt):
+        """The hedge is a suffix, so the prefix table still places the row.
+
+        `action_outcome` matches on the opening, and both sides of
+        `RoundScope.covers` read it: a cell that stopped reading as FIXED would
+        make an unverified row differ from its own published copy every round
+        and restate it for the life of the PR.
+        """
+        cell = summary_row.fixed_in_cell("9f2e1a0", "owner/repo", verified=False)
+        assert summary_model.is_generated_action(cell) is True
+        assert summary_model.action_outcome(cell) is FixOutcome.FIXED
+        assert "unverified" in cell.lower()
+
+    def test_a_verified_fix_cell_does_not_hedge(self, rt):
+        cell = summary_row.fixed_in_cell("9f2e1a0", "owner/repo", verified=True)
+        assert summary_model.action_outcome(cell) is FixOutcome.FIXED
+        assert "unverified" not in cell.lower()
 
     def test_every_human_reason_prose_is_recognised(self, rt):
         for reason in summary_model.HumanReason:

@@ -563,6 +563,7 @@ def _post_pending_fix_replies(
         fix.replies_pending = False
 
 
+
 def _run_threads(trail, args, ctx) -> None:
     repo = ctx.repo
     pr_number = ctx.pr_number
@@ -708,7 +709,9 @@ def _run_threads(trail, args, ctx) -> None:
                       "total_items": len(triage_result.comment_items)},
             )
             fix_pass = fix_comments.run_pass(
-                triage_result, report, toplevel, ctx, trail=trail)
+                triage_result, report, toplevel, ctx, trail=trail,
+                verify=not args.no_verify,
+            )
             trail.info("fix_result", "fix pass complete",
                        data={"fixable": fixable_count,
                              "deferred": len(fix_pass.deferred),
@@ -852,6 +855,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fix", action="store_true",
                         help="Phase: triage threads and apply mechanical fixes via "
                              "Claude agent")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="Skip the verify gate after --fix. The gate runs the "
+                             "project's own checks against each claimed fix and "
+                             "demotes the ones that do not hold up; without it "
+                             "every fix publishes as unverified")
     parser.add_argument("--finish", action="store_true", dest="finish",
                         help="Phase: close out deferred work — replies, tracking "
                              "issue, summary. Drafts them unless --post is given")

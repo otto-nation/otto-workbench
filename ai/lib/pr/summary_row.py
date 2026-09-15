@@ -26,13 +26,23 @@ from pr import comments_fix as pr_comments_fix
 from pr import permalinks
 from pr.thread_models import CommentItem, ReportThread
 
-def fixed_in_cell(sha: str, repo: str) -> str:
+def fixed_in_cell(sha: str, repo: str, *, verified: bool | None = None) -> str:
     """The status cell that names the commit carrying a row.
 
     One spelling for every surface that claims a fix landed: the fixed rows,
     and the satisfied rows a commit made true after the reviewer asked.
+
+    The hedge is a suffix rather than a different opening, so `action_outcome`
+    still reads the row as FIXED from its prefix. A wording that changed the
+    opening would make an unverified row differ from its own published copy on
+    every comparison, and restate it for the life of the PR.
+
+    Only an explicit False hedges. None is a pass that never ran the gate —
+    including every satisfied row, where the reviewer themself confirmed the
+    behaviour and no gate could say more than they did.
     """
-    return f"Fixed in [`{sha}`]({permalinks.commit_permalink(repo, sha)})"
+    cell = f"Fixed in [`{sha}`]({permalinks.commit_permalink(repo, sha)})"
+    return f"{cell} (unverified)" if verified is False else cell
 
 
 def fixed_status_text(cp: attribution.CommitPushResult, repo: str) -> str:
@@ -104,7 +114,10 @@ def fixed_status_for(
     """
     attributed = attribution.attribute_commit(entry, cp, history, thread)
     if attributed.cited:
-        return fixed_in_cell(attributed.sha, repo)
+        # Only the cited cell carries the hedge. The others already withhold the
+        # claim for a different reason — they cannot name a commit at all — and
+        # stacking a second caveat on those would say less, not more.
+        return fixed_in_cell(attributed.sha, repo, verified=entry.verified)
     # A row settled outside the pass landed in a commit this run could not
     # resolve. That is true of the row whatever the running pass did, so it is
     # answered before the pass-level text gets a say.

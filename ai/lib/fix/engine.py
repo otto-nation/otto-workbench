@@ -35,7 +35,7 @@ be a fix pass asserting something outward nobody approved.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -190,6 +190,21 @@ class FixAdapter(ABC):
     def session_log(self) -> Path:
         """Where the agent streams its session, so a thrash can be diagnosed."""
         return self.artifacts / "fix-session.jsonl"
+
+    @property
+    def verify_tracking_path(self) -> Path:
+        """The checklist the verify gate answers on.
+
+        Beside the fix pass's rather than replacing it: the two are answered in
+        different vocabularies, and the fix file is the evidence for what the
+        gate was asked about. Overwriting it would destroy the record of what
+        was claimed at the moment the claim is being checked.
+        """
+        return self.artifacts / "verify-tracking.md"
+
+    @property
+    def verify_session_log(self) -> Path:
+        return self.artifacts / "verify-session.jsonl"
 
     @abstractmethod
     def items(self) -> list[FixItem]:
@@ -408,6 +423,132 @@ def _settle(
     )
 
 
+@dataclass(frozen=True)
+class Verdict:
+    """What the gate established about one fix.
+
+    ``ok`` is three-valued on purpose. True is "something ran against the
+    changed path and passed", False is "something ran and it failed", and None
+    is "nothing could be run". Collapsing the last two would demote a fix on a
+    project with no runnable check, which is the whole class of work the gate is
+    least able to judge and has the least right to overrule.
+
+    ``detail`` is what ran and what came of it, in the words a reply prints. It
+    matters most when ``ok`` is None: an unverified row is only actionable if it
+    says why nobody could check it.
+    """
+
+    ok: bool | None
+    detail: str = ""
+
+
+# What the gate is handed and what it gives back: the fixed items, and a verdict
+# per item id. An id the gate does not answer is not a verdict — see `_verify`.
+VerifyFn = Callable[..., dict[str, Verdict]]
+
+
+def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
+    """One claimed fix as the gate is asked about it.
+
+    The body is the domain's own rendering of what the reviewer said, carried
+    over verbatim: the gate's job is to judge the fix against what was asked
+    for, and the ask is not recoverable from the outcome. Falling back to the
+    outcome alone keeps a gate that is merely under-informed rather than one
+    that crashes, for an id the pass answered but never handed out.
+    """
+    if source is None:
+        return FixItem(id=outcome.id, file=outcome.file, line=outcome.line,
+                       label=outcome.summary)
+    return FixItem(
+        id=outcome.id,
+        # The outcome's anchor, not the source's: the agent may have moved the
+        # code, and the gate should look where the fix landed.
+        file=outcome.file or source.file,
+        line=outcome.line or source.line,
+        label=source.label or outcome.summary,
+        body=source.body,
+    )
+
+
+def _verify(
+    outcomes: list[ItemOutcome], verify: VerifyFn | None, adapter: FixAdapter,
+    by_id: dict[str, FixItem], trail: Trail | None,
+) -> None:
+    """Hold each claimed fix against what actually runs, before anything lands.
+
+    A ticked `fixed` box is the agent saying it applied an edit. That is not the
+    same claim as the edit working, and the two are indistinguishable in a fix
+    pass's output: both produce a ticked box, a commit, and a summary row. This
+    is where they stop being indistinguishable.
+
+    Only falsification demotes. A verdict of None, and an id the gate never
+    answered at all, both leave the outcome FIXED and unverified — silence is
+    not evidence, and a gate that ran out of turns has not established that a
+    fix is wrong. Demoting on absence would make the gate's own flakiness look
+    like the fix's.
+
+    Mutates in place, before `landing` is asked for a spec, so the outcome the
+    domain records and the outcome the commit carries cannot disagree.
+
+    `by_id` is the items as the domain rendered them, which is where the
+    reviewer's own words are. An outcome carries a location and a verdict and
+    nothing else — `parse` reads the anchor back out of the section heading and
+    never the label — so a gate handed only outcomes would be asked whether a
+    fix at `a.py:2` works without being told what it was meant to do. The
+    prompt's first instruction is to run the reviewer's repro; this is what
+    puts that repro in front of it.
+    """
+    if verify is None:
+        return
+    claimed = [o for o in outcomes if o.outcome.counts_as_fixed]
+    if not claimed:
+        return
+
+    items = [_verify_item(o, by_id.get(o.id)) for o in claimed]
+    verdicts = verify(adapter.phase, "", items=items, adapter=adapter) or {}
+
+    falsified = 0
+    for outcome in claimed:
+        verdict = verdicts.get(outcome.id)
+        if verdict is None:
+            # The gate ran and this id was not in its answer. That is a fix
+            # nothing established, which is what False means — distinct from the
+            # None of a pass that never gated at all.
+            outcome.verified = False
+            continue
+        outcome.verify_detail = verdict.detail
+        if verdict.ok is True:
+            outcome.verified = True
+            continue
+        if verdict.ok is None:
+            outcome.verified = False
+            continue
+        # Falsified. NEEDS_HUMAN rather than DEFERRED: the pass already had its
+        # retry, and an edit that is present but wrong is not work the next
+        # identical attempt gets right — it is a call for a person, and the
+        # reason carries what the gate saw so they do not start from nothing.
+        outcome.outcome = FixOutcome.NEEDS_HUMAN
+        outcome.reason = verdict.detail or "the fix did not hold up when run"
+        outcome.verified = False
+        falsified += 1
+
+    if falsified:
+        log.warn(
+            f"Verify gate: {falsified} of {len(claimed)} claimed "
+            f"fix{'es' if len(claimed) != 1 else ''} did not hold up — "
+            "demoted, not committed as fixed"
+        )
+    if trail:
+        trail.info(
+            "fix_verify", "verify gate complete",
+            data={
+                "claimed": len(claimed),
+                "falsified": falsified,
+                "verified": sum(1 for o in claimed if o.verified),
+            },
+        )
+
+
 def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
     """Anchor each outcome to the tree it was decided in and the commit it landed in.
 
@@ -422,7 +563,10 @@ def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
             outcome.commit_sha = commit_sha
 
 
-def run(adapter: FixAdapter, *, trail: Trail | None = None) -> FixRun:
+def run(
+    adapter: FixAdapter, *, trail: Trail | None = None,
+    verify: VerifyFn | None = None,
+) -> FixRun:
     """Run `adapter`'s fix pass end to end and hand it back what happened.
 
     Batches the adapter's items at the phase's chunk size, runs each under the
@@ -474,9 +618,17 @@ def run(adapter: FixAdapter, *, trail: Trail | None = None) -> FixRun:
     ]
     max_turns = max((b.max_turns for b in results), default=0)
 
-    settled = _settle(
-        adapter, results, {item.id: item for item in items}, max_turns, trail,
-    )
+    # The items as the domain rendered them, which both the retry and the gate
+    # key back into: one asks for the item behind a deferred id, the other for
+    # the reviewer's own words behind a fixed one.
+    by_id = {item.id: item for item in items}
+
+    settled = _settle(adapter, results, by_id, max_turns, trail)
+
+    # Before the scope is read and before anything is committed: a fix the gate
+    # falsifies must not reach `landing` as a fix, or the commit and the record
+    # would disagree about what the pass did.
+    _verify(settled.outcomes, verify, adapter, by_id, trail)
 
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.

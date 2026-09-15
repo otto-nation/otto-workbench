@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -32,10 +33,13 @@ from conftest import make_ctx  # noqa: E402
 
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
+from agent import invoke as agent_invoke  # noqa: E402
 from fix import ci as fix_ci  # noqa: E402
 from fix import comments as fix_comments  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
+from fix import types as fix_types  # noqa: E402
+from fix import verify as fix_verify  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 from core.phases import Mode, Phase, PhaseShape  # noqa: E402
 from rebase import prepush as rebase_prepush  # noqa: E402
@@ -609,6 +613,36 @@ def _render_fix_comments(rt, wt_path) -> str:
     return _render_adapter(adapter)
 
 
+def _render_verify_fixes(rt, wt_path) -> str:
+    """Render the verify gate's prompt the way `fix_verify.run` renders it.
+
+    Driven through the real runner with the agent call stubbed out, for the
+    reason `_render_adapter` gives: a placeholder the runner stopped supplying
+    has to show up here rather than pass against a call nobody makes.
+    """
+    ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
+                   pr_number=1, worktree_root=wt_path, target_dir=wt_path)
+    adapter = fix_comments.CommentFixAdapter(
+        rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
+        TriagedRound(),
+    )
+    adapter.__dict__["main_wt"] = None
+
+    rendered = {}
+
+    def capture(_phase, prompt, **_kwargs):
+        rendered["prompt"] = prompt
+        return agent_invoke.FixResult(0, None)
+
+    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=capture):
+        fix_verify.run(
+            Phase.COMMENTS_VERIFY, "",
+            items=[fix_types.FixItem(id="t1", file="a.py", line=2, label="x")],
+            adapter=adapter,
+        )
+    return rendered["prompt"]
+
+
 def _render_fix_findings(wt_path) -> str:
     job = _make_review_job(
         wt_path=str(wt_path),
@@ -636,6 +670,18 @@ _FIX_RENDERERS = {
     "comments": lambda rt, wt: _render_fix_comments(rt, wt),
     "findings": lambda rt, wt: _render_fix_findings(wt),
     "prepush": lambda rt, wt: _render_fix_prepush(wt),
+}
+
+# Every template a fix-shaped agent is handed, including the verify gate's.
+# Wider than `_FIX_RENDERERS` because the gate does not share two of the four
+# contracts those renderers are held to: it edits nothing, so it carries no
+# generated-artifact block, and it answers in `VERIFY_BOXES` rather than the fix
+# pass's vocabulary. The contracts it does share — no Write-tool mandate, and a
+# worktree block — apply for exactly the reasons they apply to the others, so it
+# is held to those here rather than left outside the check because the wider set
+# did not fit.
+_AGENT_RENDERERS = _FIX_RENDERERS | {
+    "verify": lambda rt, wt: _render_verify_fixes(rt, wt),
 }
 
 
@@ -703,6 +749,10 @@ class TestTemplateRendering:
         left = _unsubstituted(_render_fix_findings(tmp_path))
         assert not left, f"fix-findings.md left: {left}"
 
+    def test_verify_fixes_template_fully_substituted(self, rt, tmp_path):
+        left = _unsubstituted(_render_verify_fixes(rt, tmp_path))
+        assert not left, f"verify-fixes.md left: {left}"
+
     def test_every_template_is_covered(self):
         """A new template must be added to this file's render coverage."""
         covered = {_template_of(key) for key in _BUILD_PROMPT_EXTRAS} | {
@@ -710,6 +760,7 @@ class TestTemplateRendering:
             PHASES[Phase.CI_FIX].template_for(),
             PHASES[Phase.COMMENTS_FIX].template_for(),
             PHASES[Phase.PREPUSH_FIX].template_for(),
+            PHASES[Phase.COMMENTS_VERIFY].template_for(),
         }
         uncovered = sorted(
             name for name in _template_files() - covered
@@ -736,9 +787,9 @@ class TestOutputBlockContract:
     def test_no_write_tool_mandate(self, key):
         self._assert_no_mandate(_template_of(key), _render_via_build_prompt(key))
 
-    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    @pytest.mark.parametrize("render", sorted(_AGENT_RENDERERS))
     def test_fix_templates_have_no_write_tool_mandate(self, render, rt, tmp_path):
-        self._assert_no_mandate(render, _FIX_RENDERERS[render](rt, tmp_path))
+        self._assert_no_mandate(render, _AGENT_RENDERERS[render](rt, tmp_path))
 
     def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
@@ -783,9 +834,9 @@ class TestOutputBlockContract:
         }
         assert expected == checked
 
-    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    @pytest.mark.parametrize("render", sorted(_AGENT_RENDERERS))
     def test_fix_templates_share_the_worktree_block(self, render, rt, tmp_path):
-        rendered = _FIX_RENDERERS[render](rt, tmp_path)
+        rendered = _AGENT_RENDERERS[render](rt, tmp_path)
         assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))

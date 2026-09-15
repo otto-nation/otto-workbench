@@ -227,3 +227,112 @@ class TestChecked:
 
     def test_a_file_the_pass_never_wrote_counts_nothing(self, tmp_path):
         assert fix_tracking.checked(tmp_path / "absent.md") == 0
+
+
+# ── the verify gate's vocabulary ────────────────────────────────────────────
+
+
+class TestVerifyVerdicts:
+    """The gate answers whether a fix holds up, not whether one was applied.
+
+    A separate vocabulary rather than a reuse of the fix boxes: an agent that
+    ticked `fixed` here would be answering the wrong question, and the parser
+    must not accept it as an answer to this one.
+    """
+
+    def _file(self, tmp_path, body):
+        path = tmp_path / "verify.md"
+        path.write_text(body)
+        return path
+
+    def test_a_verified_box_reads_as_true_with_its_evidence(self, tmp_path):
+        path = self._file(tmp_path, (
+            "# Verify\n\n## <!-- fix:t1 --> a.py:1 — x\n\n"
+            "- [x] verified — ran the reviewer's repro, exits 0 now\n"
+        ))
+        assert fix_tracking.parse_verdicts(path) == {
+            "t1": (True, "ran the reviewer's repro, exits 0 now"),
+        }
+
+    def test_a_broken_box_reads_as_false(self, tmp_path):
+        path = self._file(tmp_path, (
+            "# Verify\n\n## <!-- fix:t1 --> a.py:1 — x\n\n"
+            "- [x] broken — repro still exits 3\n"
+        ))
+        assert fix_tracking.parse_verdicts(path) == {"t1": (False, "repro still exits 3")}
+
+    def test_not_verified_reads_as_none_and_keeps_its_reason(self, tmp_path):
+        """The middle answer is the one most fixes will get, and why matters."""
+        path = self._file(tmp_path, (
+            "# Verify\n\n## <!-- fix:t1 --> a.py:1 — x\n\n"
+            "- [x] not verified — every test on this path mocks the parser\n"
+        ))
+        assert fix_tracking.parse_verdicts(path) == {
+            "t1": (None, "every test on this path mocks the parser"),
+        }
+
+    def test_an_unanswered_section_is_absent_rather_than_none(self, tmp_path):
+        """Absent and None are different: one has a reason, the other has nothing.
+
+        Collapsing them would print an empty explanation on a row the gate
+        simply never reached.
+        """
+        path = self._file(tmp_path, (
+            "# Verify\n\n## <!-- fix:t1 --> a.py:1 — x\n\n"
+            "- [ ] verified — <why>\n- [ ] not verified — <why>\n"
+        ))
+        assert fix_tracking.parse_verdicts(path) == {}
+
+    def test_a_fix_pass_box_is_not_an_answer_here(self, tmp_path):
+        """`fixed` answers a different question and must not read as a verdict."""
+        path = self._file(tmp_path, (
+            "# Verify\n\n## <!-- fix:t1 --> a.py:1 — x\n\n- [x] fixed\n"
+        ))
+        assert fix_tracking.parse_verdicts(path) == {}
+
+    def test_several_sections_each_get_their_own_verdict(self, tmp_path):
+        path = self._file(tmp_path, (
+            "# Verify\n\n"
+            "## <!-- fix:t1 --> a.py:1 — x\n\n- [x] verified — ran it\n\n"
+            "## <!-- fix:t2 --> b.py:2 — y\n\n- [x] broken — still fails\n"
+        ))
+        assert fix_tracking.parse_verdicts(path) == {
+            "t1": (True, "ran it"), "t2": (False, "still fails"),
+        }
+
+    def test_a_file_that_was_never_written_is_no_verdicts(self, tmp_path):
+        assert fix_tracking.parse_verdicts(tmp_path / "absent.md") == {}
+
+    def test_the_render_writes_the_verify_boxes(self, tmp_path):
+        text = fix_tracking.render(
+            "Verify", [FixItem(id="t1", file="a.py", line=1, label="x")],
+            fix_tracking.VERIFY_BOXES,
+        )
+        assert "- [ ] verified" in text
+        assert "- [ ] not verified" in text
+        assert "- [ ] broken" in text
+        assert "- [ ] fixed\n" not in text
+
+
+class TestEveryVerifyVerdictAsksForEvidence:
+    """A verdict with no reason is a verdict nobody can act on.
+
+    The fix boxes and the verify boxes disagree about this: a fix needs no
+    reason because the change speaks for itself, while "what did you run" is
+    the entire evidentiary value of a verify verdict — including the passing
+    one, which is the claim a reviewer will rely on.
+    """
+
+    def test_all_three_boxes_carry_the_placeholder(self):
+        text = fix_tracking.render(
+            "Verify", [FixItem(id="t1", file="a.py", line=1, label="x")],
+            fix_tracking.VERIFY_BOXES,
+        )
+        for label in ("verified", "not verified", "broken"):
+            assert f"- [ ] {label} — <why>" in text, f"{label} asks for no evidence"
+
+    def test_the_fix_boxes_are_unchanged_by_the_verify_vocabulary(self):
+        """FIXED still renders bare — the two sets must not leak into each other."""
+        text = fix_tracking.render("Fix", [FixItem(id="t1", file="a.py", line=1)])
+        assert "- [ ] fixed\n" in text
+        assert "- [ ] declined — <why>" in text

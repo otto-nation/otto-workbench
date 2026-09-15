@@ -344,6 +344,34 @@ worktree could not be read, so the pass cannot tell its own work from what was
 already there — which is the one case where committing nothing is right and
 committing everything is how unreviewed content reaches a branch.
 
+### fix/verify.py
+
+The agent behind the verify gate: does a claimed fix actually work?
+
+`fix.engine` owns when the gate runs and what its verdicts mean; this owns the
+one call that produces them. The split is the same one the engine already makes
+for the fix pass itself — the pipeline is domain-neutral, and what it dispatches
+is swappable, which is what lets `engine.run(verify=...)` be a stub in a test
+and an agent in production.
+
+The gate exists because a ticked `fixed` box is a claim that an edit was made,
+not a claim that the edit works. Those are different claims and a fix pass
+publishes the second while only ever establishing the first.
+
+Why an agent rather than a fixed command: what verifies a fix is not knowable
+in advance. Sometimes it is the reviewer's own repro in the comment body,
+sometimes calling the changed function, sometimes the project's suite — and on
+a path nothing covers, honestly nothing. A hardcoded `run the tests` goes green
+on precisely the case that motivated this (a suite whose tests mock the thing
+that was fixed), which is worse than no gate: it launders an unverified fix as a
+checked one.
+
+Nothing here executes anything from a PR comment. The agent reads the fix and
+decides what to run in the repo; reviewer text is context it reasons about, not
+a script the host shells out to. That distinction is the whole security story —
+running a fenced block out of a public PR comment would be arbitrary code
+execution as the operator, with their credentials and their network.
+
 ### review/budget.py
 
 Every bound on what a prompt may carry, and the one fit that spends them.

@@ -246,6 +246,31 @@ The lock is an advisory `flock` on the target's `run.lock`, so the kernel releas
 
 Both files live outside every checkout, in the target's own directory: `~/.config/workbench/pr/<repo-key>-<branch-slug>/` (rooted at `WORKBENCH_STATE_DIR` when you set it). The two components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the lock reach across checkouts. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
 
+## A tree validation lock is blocking edits
+
+While a gate runs — `task test`, `bin/local/validate-all`, or a `git push` that
+triggers the pre-push hook — the worktree is declared under validation. Agent
+edits are refused for the duration, because an edit landing mid-run invalidates
+the result without anything in the output saying so.
+
+See what holds it:
+
+```bash
+bin/local/with-tree-lock --check "$(git rev-parse --show-toplevel)"
+```
+
+It names each holder's pid, command, and start time. To stop the validator:
+
+```bash
+kill <pid>
+```
+
+The wrapper forwards the signal to the validation process group, so killing the
+named pid stops the run — it does not release the lock while work continues.
+The kernel releases the lock when the holder exits, for any reason including a
+crash or SIGKILL — so there is no stale lock to clean up by hand and no file to
+delete. A tree that reports as validated has a live validator behind it.
+
 ## "`state.json` is unreadable — discarding it"
 
 The run target's PR state file did not parse — truncated by a killed write, hand-edited, or written by an older schema. Nothing in it is authoritative: every field is rebuilt by the command that wrote it, so `pr` commands carry on with no cached state rather than failing.

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +38,45 @@ def _check(tree_root: Path) -> int:
     return 0
 
 
+def _run_child(child: list[str]) -> int:
+    """Run *child* in its own process group and wait until that group is gone.
+
+    SIGINT and SIGTERM are forwarded to the group rather than killing this
+    process. The lock is held for as long as we wait, so dropping it while
+    descendants are still running is the failure this wrapper exists to
+    prevent. A terminal Ctrl-C no longer reaches the child by process-group
+    membership (it is in a new session), so the SIGINT handler is what
+    delivers it.
+    """
+    proc = subprocess.Popen(child, start_new_session=True)
+
+    def _forward(signum: int, _frame: object) -> None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signum)
+        except ProcessLookupError:
+            pass
+
+    previous = {
+        signum: signal.signal(signum, _forward)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        try:
+            code = proc.wait(timeout=timeouts.UNBOUNDED)
+        except KeyboardInterrupt:
+            # Popen.wait translates SIGINT into KeyboardInterrupt and re-raises
+            # after a brief wait, assuming the child got the terminal's ^C too.
+            # The child is in a new session, so it did not; forward and wait.
+            _forward(signal.SIGINT, None)
+            code = proc.wait(timeout=timeouts.UNBOUNDED)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
+    # callers expect the shell convention 128+N (SIGTERM -> 143).
+    return 128 + (-code) if code < 0 else code
+
+
 def main(argv: list[str], child: list[str]) -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--check", dest="check")
@@ -53,10 +94,7 @@ def main(argv: list[str], child: list[str]) -> int:
     label = args.label or " ".join(child)
     started = datetime.datetime.now().isoformat(timespec="seconds")
     with acquire(Path(args.tree), command=label, started=started):
-        code = subprocess.run(child, timeout=timeouts.UNBOUNDED).returncode
-        # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
-        # callers expect the shell convention 128+N (SIGTERM -> 143).
-        return 128 + (-code) if code < 0 else code
+        return _run_child(child)
 
 
 if __name__ == "__main__":

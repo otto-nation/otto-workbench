@@ -33,6 +33,49 @@ setup() {
   [ "$status" -eq 1 ]
 }
 
+@test "killing the holder stops the child's descendants" {
+  # The pid --check prints is the Python wrapper. Signalling it must take the
+  # child's process group with it, or the tree reads as free while work is
+  # still running. Poll rather than sleep: spawn and reap are both racy on a
+  # loaded runner, and a fixed window would pass a slow signal as success.
+  local pidfile="$BATS_TEST_TMPDIR/grandchild.pid"
+  local i holder grandchild
+  "$WITH_LOCK" "$TREE" -- sh -c "sleep 30 & echo \$! > \"$pidfile\"; wait" &
+  local wrapper=$!
+
+  holder=""
+  for i in $(seq 1 50); do
+    if [[ -f "$pidfile" ]]; then
+      run "$WITH_LOCK" --check "$TREE"
+      if [[ "$status" -eq 0 ]]; then
+        holder=$(printf '%s\n' "$output" | awk '/^  pid / { print $2; exit }')
+        [[ -n "$holder" ]] && break
+      fi
+    fi
+    sleep 0.1
+  done
+  [[ -n "$holder" ]]
+  grandchild=$(cat "$pidfile")
+  kill -0 "$grandchild"
+
+  kill -TERM "$holder"
+
+  for i in $(seq 1 50); do
+    kill -0 "$grandchild" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$grandchild" 2>/dev/null; then
+    kill -9 "$grandchild" 2>/dev/null || true
+    printf 'grandchild %s survived kill of holder %s\n' "$grandchild" "$holder" >&2
+    wait "$wrapper" || true
+    return 1
+  fi
+
+  wait "$wrapper" || true
+  run "$WITH_LOCK" --check "$TREE"
+  [ "$status" -eq 1 ]
+}
+
 @test "holder records do not accumulate across runs" {
   "$WITH_LOCK" "$TREE" -- true
   "$WITH_LOCK" "$TREE" -- true

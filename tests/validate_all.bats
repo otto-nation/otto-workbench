@@ -328,7 +328,7 @@ EOF
 @test "validate-all --list does not take the lock" {
   # --list and --help are metadata, not validation.
   local lock_line list_line
-  lock_line=$(grep -n 'with-tree-lock' "$REPO_ROOT/bin/local/validate-all" | head -1 | cut -d: -f1)
+  lock_line=$(grep -n 'with-tree-lock" "\$VALIDATOR_ROOT"' "$REPO_ROOT/bin/local/validate-all" | cut -d: -f1)
   list_line=$(grep -n 'if \$LIST; then' "$REPO_ROOT/bin/local/validate-all" | cut -d: -f1)
   [ "$lock_line" -gt "$list_line" ]
 }

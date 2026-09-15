@@ -623,9 +623,16 @@ A `--fix` run that ends with open `needs_human` threads, or that runs without
 `--post`, holds back the summary comment and the per-thread replies and records
 that in state. A tracking issue that was owed for the deferred threads and could
 not be filed — no tracker configured, a provider that cannot create issues, a
-tracker keyed by team with no team to name, or a creation that failed — is
-recorded the same way. `pr status` reads those flags back out, so the debt is
-visible after the stderr line has scrolled past:
+tracker keyed by team with `issues.team` unset, or a creation that failed — is
+recorded the same way. The team key is read from config alone — never inferred
+from the branch — so the unset-team case is fixed once, by running:
+
+```
+otto-workbench config set issues.team TEAM --project
+```
+
+`pr status` reads those flags back out, so the debt is visible after the stderr
+line has scrolled past:
 
 ```
 **Fix**: 11 fixed · 2 need discussion · 1 dismissed · 3 already addressed (commit: 9f2c1ab, push_held)

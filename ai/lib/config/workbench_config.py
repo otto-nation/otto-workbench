@@ -120,6 +120,7 @@ CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"
 ISSUE_PROVIDER_KEY = "issues.provider"
+ISSUE_TEAM_KEY = "issues.team"
 ISSUE_LABELS_KEY = "issues.labels"
 WIKI_DIR_KEY = "wiki.dir"
 # Read from bash rather than written: git/steps.sh asks for this one through

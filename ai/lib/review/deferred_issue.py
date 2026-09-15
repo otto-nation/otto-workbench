@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import sys
 
+from config import workbench_config
 from core import log
 from core import markdown
 from core import publishing
@@ -258,15 +259,29 @@ def _no_team_key(
     deferred threads have no home. So it is owed while the gate is open, and a
     non-event while it is shut — a draft run has failed at nothing it would
     otherwise have attempted.
+
+    The key comes from configuration alone, so the remediation is one command
+    and the message names it. Both wordings spell the command rather than the
+    file: told only the key, a reader writes the config by hand under whatever
+    name the worktree in front of them happens to use, while the command is
+    what checks that name against the workbench doing the reading.
     """
+    remedy = (
+        f"run otto-workbench config set {workbench_config.ISSUE_TEAM_KEY} TEAM"
+        " --project"
+    )
     if not publishing_open:
-        log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
+        log.dim(
+            f"No team key for {provider} issue creation — skipping;"
+            f" to file these, {remedy}",
+        )
         if trail:
             trail.info("deferred_issue", "skipped — no team key")
         return IssueResult(IssueDelivery.SKIPPED)
 
     log.error(
-        f"Cannot determine team key for {provider} — deferred tracking issue not filed",
+        f"No team key for {provider} — deferred tracking issue not filed;"
+        f" {remedy}",
     )
     if trail:
         trail.error("deferred_issue", "no team key")
@@ -284,20 +299,15 @@ def create_deferred_issue(
     *,
     publishing_open: bool,
 ) -> IssueResult:
+    # Kept for the tracker's own use rather than for the team key: Linear takes
+    # it as `--parent`, so the tracking issue hangs off whatever issue the
+    # branch names.
     parent_id = review_issue.extract_issue_id(provider, ctx.branch)
-    # The configured team wins over the one implied by the branch: it is
-    # what the repo declared, while the branch prefix is an inference from
-    # whatever issue happened to name it.
-    #
-    # ceiling: the inference is what makes `issues.team` optional, so whether a
-    # repo files its tracking issue depends on what the run was invoked against
-    # rather than on how the repo is configured — a branch carrying a parent id
-    # files, the same repo on a branch without one reports no team key. Upgrade
-    # trigger: when a repo is seen filing on one branch and failing on another,
-    # require `issues.team` and drop the inference (#1318).
+    # The team comes from configuration and nowhere else. Splitting it out of a
+    # parent issue id made filing depend on what the run was invoked against
+    # rather than on how the repo is configured, and assumed an id format that
+    # `needs_team_key` deliberately keeps as a per-provider fact.
     team = (opts or {}).get("team", "")
-    if not team and parent_id and "-" in parent_id:
-        team = parent_id.split("-", 1)[0]
     if not team and review_issue.needs_team_key(provider):
         return _no_team_key(provider, trail, publishing_open=publishing_open)
 

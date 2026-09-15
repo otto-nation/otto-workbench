@@ -32,6 +32,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
+from config import workbench_config  # noqa: E402
 from core import markdown  # noqa: E402
 from pr import summary_publish  # noqa: E402
 from pr import thread_replies  # noqa: E402
@@ -187,6 +188,19 @@ class TestATrackerWithNoTeamKey:
         assert result.delivery is IssueDelivery.SKIPPED
         assert result.owed is False
         assert records == [("info", "deferred_issue", "skipped — no team key")]
+
+    @pytest.mark.parametrize("publishing_open", [True, False])
+    def test_the_message_names_the_key_and_the_command(self, capsys, publishing_open):
+        """#1318: the key comes from config, so the remediation is one command.
+
+        Named in both wordings, not only the erroring one: a draft run is the
+        run most likely to be the first to notice, and telling it to go look
+        something up is what makes the message unactionable.
+        """
+        self._call(publishing_open=publishing_open)
+        err = capsys.readouterr().err
+        assert workbench_config.ISSUE_TEAM_KEY in err
+        assert f"otto-workbench config set {workbench_config.ISSUE_TEAM_KEY}" in err
 
 
 class TestTrackValidation:

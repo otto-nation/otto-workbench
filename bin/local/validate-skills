@@ -10,6 +10,8 @@
 #   - source matches otto-workbench/ai/skills/<name>/SKILL.md
 #   - lifecycle_cadence and lifecycle_scope must appear together
 #   - lifecycle_scope is one of: per-project, global
+#   - lifecycle_cadence matches the sibling should-*.sh's *_INTERVAL_HOURS, and
+#     the skill states that script's MIN_SESSIONS floor where it has one
 #   - agent (optional) resolves to an ai/claude/agents/<name>.md file
 #   - invocation is required unless the skill declares an agent
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
@@ -148,6 +150,65 @@ _validate_output_schema() {
   fi
 }
 
+# _validate_cadence_matches_hook DIR CADENCE DISPLAY — holds a skill's stated
+# cadence to the should-*.sh that actually gates it.
+#
+# Two separate drifts, because the hook gates on a conjunction:
+#
+#   1. lifecycle_cadence must equal *_INTERVAL_HOURS. "7 days" and 168 are the
+#      same bound written two ways, so the cadence is normalized to hours
+#      before comparing rather than matched as a string.
+#   2. Where the hook also requires MIN_SESSIONS, the skill body must say so.
+#      Every one of dream, retro, promote and wiki-capture advertised only its
+#      interval, so all four read as firing on a timer when none of them does —
+#      a skill that says "auto-triggers every 24h" and then does not is read as
+#      broken by whoever waited for it.
+#
+# Skills with no sibling should-*.sh (machine's cadence lives in a generator)
+# are silently skipped: this checks agreement, and there is nothing to disagree
+# with.
+_validate_cadence_matches_hook() {
+  local dir="$1" cadence="$2" display="$3"
+  [[ -n "$cadence" ]] || return 0
+
+  local hook
+  hook="$(find "$dir" -maxdepth 1 -name 'should-*.sh' -print -quit 2>/dev/null || true)"
+  [[ -n "$hook" ]] || return 0
+
+  local hook_hours hook_sessions cadence_hours
+  hook_hours="$(sed -n 's/^[A-Z_]*INTERVAL_HOURS=\([0-9][0-9]*\).*/\1/p' "$hook" | head -1)"
+  hook_sessions="$(sed -n 's/^MIN_SESSIONS=\([0-9][0-9]*\).*/\1/p' "$hook" | head -1)"
+
+  # "24h" and "7 days" both reach hours; anything else is left as-is and will
+  # fail the comparison loudly rather than being silently treated as agreeing.
+  case "$cadence" in
+    *h) cadence_hours="${cadence%h}" ;;
+    *" days"|*" day") cadence_hours=$(( ${cadence%% *} * 24 )) ;;
+    *) cadence_hours="$cadence" ;;
+  esac
+
+  if [[ -n "$hook_hours" ]]; then
+    if [[ "$cadence_hours" == "$hook_hours" ]]; then
+      _pass "$display: lifecycle_cadence matches $(basename "$hook")"
+    else
+      _fail "$display: lifecycle_cadence '$cadence' (${cadence_hours}h) disagrees with $(basename "$hook")'s ${hook_hours}h"
+    fi
+  fi
+
+  # The floor is satisfied by the number standing before the word session, with
+  # room for a qualifier between them ("5 or more sessions", "10 new sessions").
+  # The reverse order is deliberately not accepted: matching a bare number
+  # within N characters of "session" passed dream on the sentence "a session
+  # from March 15", reporting a floor documented that nowhere appears.
+  if [[ -n "$hook_sessions" ]]; then
+    if grep -qiE "${hook_sessions}\+?( [a-z]+){0,2} sessions?\b" "$dir/SKILL.md"; then
+      _pass "$display: states $(basename "$hook")'s ${hook_sessions}-session floor"
+    else
+      _fail "$display: $(basename "$hook") also gates on MIN_SESSIONS=$hook_sessions, which the skill never states — it reads as firing on the ${cadence} timer alone"
+    fi
+  fi
+}
+
 SKILLS_DIR="$SKILLS_SRC_DIR"
 
 for skill_dir in "$SKILLS_DIR"/*/; do
@@ -254,6 +315,8 @@ for skill_dir in "$SKILLS_DIR"/*/; do
       && _pass "$display: lifecycle_scope valid" \
       || _fail "$display: lifecycle_scope '$local_scope' must be 'per-project' or 'global'"
   fi
+
+  _validate_cadence_matches_hook "$skill_dir" "$local_cadence" "$display"
 
   _validate_output_schema "$skill_file" "$display"
 done

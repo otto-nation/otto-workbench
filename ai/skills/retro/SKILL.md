@@ -3,7 +3,7 @@ name: retro
 description: "Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. TRIGGER when: user wants to analyze review patterns for rule gaps, after a batch of PR reviews. SKIP: addressing comments on a specific PR (use pr-comments); memory consolidation (use dream)."
 source: otto-workbench/ai/skills/retro/SKILL.md
 invocation: "/retro"
-trigger: "Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers every 72h."
+trigger: "Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers once 72h and 5 sessions have both passed since the last run."
 skip: "Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead)."
 output: "ai/memory/RETRO.md"
 lifecycle_cadence: "72h"
@@ -17,8 +17,10 @@ false negatives in coding rules. Proposes rule changes at the right level: globa
 rules in `ai/guidelines/rules/` for cross-project patterns, project rules in each
 repo's `CLAUDE.md` for repo-specific conventions.
 
-Run manually with `/retro`. Auto-triggers every 3 days via the Stop hook managed
-by `otto-workbench sync`.
+Run manually with `/retro`. Auto-triggers via the Stop hook managed
+by `otto-workbench sync`, once 72 hours and 5 sessions have both passed since
+the last run — `should-retro.sh` gates on the two together, so three quiet days
+do not trigger one.
 
 ---
 

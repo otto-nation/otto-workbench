@@ -99,3 +99,45 @@ _rule() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"TodoWrite"* ]]
 }
+
+@test "permission-model reasoning in a rule that reaches Pi fails" {
+  # The regression this check exists for: bash.md's Script Invocation told every
+  # harness never to invoke a script by absolute path, for a reason that only
+  # holds where a permission matcher reads the command.
+  _rule bash.md "$(printf -- '# Bash\n\n- Never invoke scripts by absolute path. Permission rules match the first word of the command')"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"permission model"* ]]
+}
+
+@test "a grant shape in a rule that reaches Pi fails" {
+  _rule bash.md "$(printf -- '# Bash\n\n- the grant is written `Bash(bin/*)` and only that form matches it')"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
+  [ "$status" -eq 1 ]
+}
+
+@test "permission-model reasoning in a claude-scoped rule passes" {
+  _rule bash-tool.md "$(printf -- '---\nharness: [claude]\n---\n- An absolute path triggers a permission prompt; the grant is `Bash(bin/*)`')"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a line citing bash-tool.md may mention the permission model" {
+  # The documented way to keep such a sentence in an unscoped rule: defer to the
+  # scoped file rather than restating its reasoning. Exemption is per line, so
+  # the second line here is still checked.
+  _rule issue-tracker.md "$(printf -- '# Issue Tracker\n\n- Pass --repo after the subcommand; under Claude Code the other form costs a permission prompt (see bash-tool.md)')"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "the bash-tool.md exemption does not license other lines in the file" {
+  _rule issue-tracker.md "$(printf -- '# Issue Tracker\n\n- A line that cites bash-tool.md for its permission prompt\n- A later line that just says the permission matcher sees VAR=value as the command')"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
+  [ "$status" -eq 1 ]
+}

@@ -3,7 +3,7 @@ name: dream
 description: "Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use architecture); machine profile updates (use machine)."
 source: otto-workbench/ai/skills/dream/SKILL.md
 invocation: "/dream"
-trigger: "Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h."
+trigger: "Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers once 24h and 5 sessions have both passed since the last run."
 skip: "Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead)."
 output: "memory/ topic files"
 lifecycle_cadence: "24h"
@@ -14,7 +14,7 @@ lifecycle_scope: per-project
 
 Consolidates scattered auto-memory notes into a clean, organized knowledge base by scanning recent session transcripts for corrections, decisions, preferences, and patterns.
 
-Run manually with `/dream`. Auto-triggers every 24 hours via the Stop hook managed by `otto-workbench sync`.
+Run manually with `/dream`. Auto-triggers via the Stop hook managed by `otto-workbench sync`, once a project is both 24 hours and 5 sessions past its last dream — `should-dream.sh` gates on the two together, so a quiet day does not trigger one and neither does a busy hour.
 
 ---
 

@@ -741,3 +741,84 @@ BODY
   [ "$status" -eq 1 ]
   [[ "$output" == *"written against superpowers v6.3.0"* ]]
 }
+
+# ── lifecycle cadence vs the hook that gates it ──────────────────────────────
+
+# Writes a should-*.sh beside a skill. Only the two constants are read, so the
+# body is whatever makes the file plausible.
+_make_hook() {
+  local name="$1" hours="$2" sessions="${3:-}"
+  local dir="$FAKE_WORKBENCH/ai/skills/$name"
+  mkdir -p "$dir"
+  {
+    echo "#!/usr/bin/env bash"
+    echo "UPPER_INTERVAL_HOURS=$hours"
+    [[ -n "$sessions" ]] && echo "MIN_SESSIONS=$sessions"
+    return 0
+  } > "$dir/should-$name.sh"
+}
+
+@test "a cadence matching its hook passes" {
+  _make_skill widget "24h" per-project
+  _make_hook widget 24
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a cadence disagreeing with its hook fails" {
+  _make_skill widget "24h" per-project
+  _make_hook widget 72
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"disagrees"* ]]
+}
+
+@test "a day-form cadence is compared in hours" {
+  # "7 days" and 168 are the same bound written two ways.
+  _make_skill widget "7 days" per-project
+  _make_hook widget 168
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a skill omitting its hook's session floor fails" {
+  # The drift this check exists for: every lifecycle skill advertised only its
+  # interval, so all four read as firing on a timer when none of them does.
+  _make_skill widget "24h" per-project
+  _make_hook widget 24 5
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIN_SESSIONS=5"* ]]
+}
+
+@test "a skill stating its hook's session floor passes" {
+  _make_skill widget "24h" per-project "Auto-triggers once 24h and 5 sessions have both passed"
+  _make_hook widget 24 5
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a bare number near the word session does not satisfy the floor" {
+  # dream passed this check on the sentence "a session from March 15" before the
+  # pattern required the number to stand before the noun.
+  _make_skill widget "24h" per-project "Convert relative dates: yesterday in a session from March 5 becomes absolute"
+  _make_hook widget 24 5
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIN_SESSIONS=5"* ]]
+}
+
+@test "a skill with no should-script is not checked for cadence agreement" {
+  # machine's cadence lives in a generator, not a gate — there is nothing to
+  # disagree with.
+  _make_skill widget "24h" global
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}

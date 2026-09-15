@@ -46,6 +46,16 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
 ## Steps
 
+### 0. Do not preflight
+
+Go straight to step 1. `pr rebase` fetches, resolves its own base, detects an
+in-progress rebase, and refuses the branches step 2's exit 4 describes — and it
+records each of those decisions with its reason, so the answers arrive in the
+trail rather than costing a turn each up front. Running `git fetch`,
+`rev-list --count`, or `gh pr view` before it asks the script's own questions in
+a worse form: the answer you get is from a second fetch, a moment earlier, with
+no bearing on what the run then decides.
+
 ### 1. Run pr rebase
 
 - **Default mode** (auto-fix):
@@ -54,18 +64,26 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
   pr rebase --fix --branch <branch>
   ```
 
-  **Start this as a background job, not a foreground command.** In Claude Code
-  that is the Bash tool's `run_in_background`. In any other harness, use whatever
-  background-job facility it offers, and do not block a foreground call on this
-  run. Give it at least 30 minutes.
+  **Start this as a background job, not a foreground command** — the Bash tool's
+  `run_in_background` under Claude Code, `job_start` under Pi. Use the harness's
+  own job facility, never a detached `&` or `nohup`: a job it started messages you
+  on completion, while a detached shell leaves you polling for an exit you are
+  never told about. Give it 90 minutes.
 
-  AI conflict resolution takes one to three minutes per conflicted file, so a
-  rebase with a dozen conflicts outlives every harness's default foreground
-  timeout. A timeout there is not a clean retry: the kill does not abort the
-  rebase, it leaves a partial one in the worktree, and the next run resumes it —
-  announced on the console, but invisible in the JSON step 2 parses. What looks
-  like "it timed out, run it again" is a mid-flight handoff to a second run that
-  inherits an unfinished rebase.
+  Ninety because that clears the longest run on record. Across 90 days of trails
+  (`otto-log list --script pr-rebase --since 90d`), runs that hit at least one
+  conflict took a median of under 4 minutes, but the p90 was 24 minutes and the
+  slowest 74 — the distribution has a long tail, and the tail is what the bound
+  has to cover. Per file, resolution is faster than it looks from the outside:
+  10 seconds at the median, 83 at p90.
+
+  So most runs finish well inside any harness's foreground timeout and the tail
+  does not come close to it. Background it for the tail, not for the median. A
+  timeout is not a clean retry: the kill does not abort the rebase, it leaves a
+  partial one in the worktree, and the next run resumes it — announced on the
+  console, but invisible in the JSON step 2 parses. What looks like "it timed
+  out, run it again" is a mid-flight handoff to a second run that inherits an
+  unfinished rebase.
 
   Backgrounding is safe here because nothing downstream reads the run's output
   mid-flight: step 2 parses the JSON the completed job returns, and the script
@@ -84,6 +102,29 @@ is printed for the user to run instead.
 When no branch argument is provided, omit `--branch` (uses CWD's branch).
 
 JSON output is on stdout; status messages are on stderr.
+
+### 1b. Reading a run in flight
+
+Don't. The job messages you when it finishes, and the JSON that step 2 parses
+does not exist until the run is over.
+
+When the user asks what it is doing, or a run has gone long enough that you want
+to know whether it is progressing or wedged, read the trail — not the tail of
+the job's output, which is the last status line and says nothing about rate:
+
+```bash
+otto-log list --script pr-rebase --since 1h      # find the invocation
+otto-log show <invocation>                        # every decision, timed
+otto-log show <invocation> --json                 # adds each event's data field
+```
+
+The run logs its target ref and why, the mode, whether it started fresh or
+resumed, and a timed pair of events per conflicted file — which is what answers
+"is this nearly done", since the gap between the pair is the rate. The count of
+commits still to replay rides in the `step` event's `data.remaining`, and the
+default rendering omits `data`, so that one needs `--json`. Either way it is one
+call, and no files written into the worktree to hold output the job facility
+already has.
 
 ### 2. Handle the result
 
@@ -239,5 +280,14 @@ they then ask for the branch to be pushed.
   rebase cannot stash (the index is mid-rebase), so uncommitted work is still
   present while its hooks run
 - Never run `pr rebase --fix` in the foreground, and never under a timeout below
-  30 minutes — a killed run leaves a partial rebase that the next run resumes
+  90 minutes — a killed run leaves a partial rebase that the next run resumes
   without the JSON saying so
+- Background it through the harness's job facility and nothing else. A detached
+  `&`/`nohup` run reports no completion, which is what turns a finished rebase
+  into a poll loop, and `general.md` § Waiting on Background Work forbids it
+  under every harness
+- Never redirect a run's output into the worktree to read back later
+  (`> ignore/rebase.json`). The job facility returns stdout on completion and
+  `otto-log show` holds the detail; files written for the agent's own benefit are
+  litter, which is why `pr` stopped writing its trail into working trees
+- Never preflight with `git fetch`, `rev-list`, or `gh pr view` — see step 0

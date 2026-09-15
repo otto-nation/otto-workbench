@@ -381,6 +381,100 @@ curl -sI localhost:8931'
   [ "$output" = true ]
 }
 
+# ─── background-guard ─────────────────────────────────────────────────────
+# The half of the no-detached-backgrounding rule that runs under Pi. Same split
+# as sleep-guard above: the predicate is in detect.ts, which imports nothing.
+
+# _backgrounds COMMAND — prints true or false for isDetachedBackground(COMMAND).
+_backgrounds() {
+  run node --input-type=module -e "
+    const { isDetachedBackground } = await import('$REPO_ROOT/ai/pi/extensions/background-guard/detect.ts');
+    process.stdout.write(String(isDetachedBackground(process.argv[1])));
+  " -- "$1"
+}
+
+@test "background-guard: a detached run with output redirected to the repo is a finding" {
+  # The shape this guard exists for: a long job detached, its output parked in
+  # the worktree, and nothing to report completion.
+  _backgrounds 'nohup pr rebase --fix > ignore/rebase.json 2> ignore/rebase.err < /dev/null & echo "pid=$!"'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "background-guard: a trailing & is a finding" {
+  _backgrounds 'npm run dev &'
+  [ "$output" = true ]
+}
+
+@test "background-guard: a conjunction is not backgrounding" {
+  _backgrounds 'git fetch && git rebase origin/main'
+  [ "$output" = false ]
+}
+
+@test "background-guard: redirects and pipes are not backgrounding" {
+  # 2>&1, &>, and |& all contain an ampersand and none of them detach anything.
+  _backgrounds 'make build 2>&1 | tee /tmp/out.log'
+  [ "$output" = false ]
+  _backgrounds 'make build &> /tmp/out.log'
+  [ "$output" = false ]
+  _backgrounds 'make build |& tee /tmp/out.log'
+  [ "$output" = false ]
+}
+
+@test "background-guard: a case fallthrough is not backgrounding" {
+  _backgrounds 'case "$x" in a) run_a ;;& b) run_b ;; esac'
+  [ "$output" = false ]
+}
+
+@test "background-guard: an ampersand inside quotes is a literal" {
+  _backgrounds "grep 'foo & bar' file.txt"
+  [ "$output" = false ]
+}
+
+@test "background-guard: nohup as an argument is not an invocation" {
+  _backgrounds 'grep -rn nohup ai/guidelines/rules'
+  [ "$output" = false ]
+}
+
+@test "background-guard: backgrounding inside a heredoc body is not a finding" {
+  # Content being written to a file, not a command being run — the same
+  # exemption sleep-guard and Claude's hook make.
+  _backgrounds 'cat > /tmp/x/serve.sh <<EOF
+npm run dev &
+EOF'
+  [ "$output" = false ]
+}
+
+@test "background-guard: an indented terminator closes only a <<- heredoc" {
+  _backgrounds 'cat > /tmp/x/serve.sh <<-EOF
+npm run dev &
+  EOF
+curl -sI localhost:3000'
+  [ "$output" = false ]
+}
+
+@test "background-guard: an unquoted query string is a finding, as it is in bash" {
+  # Looks like a false positive and is not: unquoted, `curl http://x?a=1&b=2` is
+  # a backgrounded curl followed by the assignment `b=2`. Claude's hook blocks it
+  # too. The fix is to quote the URL, so do not "correct" this to false.
+  _backgrounds 'curl http://x?a=1&b=2'
+  [ "$output" = true ]
+  _backgrounds 'curl "http://x?a=1&b=2"'
+  [ "$output" = false ]
+}
+
+@test "background-guard: the two harnesses agree on the operators" {
+  # Claude's hook and this extension enforce the same rule for different
+  # harnesses. The regexes are written in two languages, so they cannot be
+  # compared textually — these are the cases where a divergence would show.
+  # Matched with -F: the patterns are regexes themselves, and BSD and GNU grep
+  # disagree on whether a mid-pattern $ is an anchor, so an escaped form that
+  # matches locally reads as an anchor under GNU grep and matches nothing.
+  local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+  grep -qF "re_background='(^|[^&>|;])&([^&>]|\$)'" "$guard"
+  grep -qF "re_nohup='(^|[;&|][[:space:]]*)nohup[[:space:]]'" "$guard"
+}
+
 @test "sleep-guard: the two harnesses share one threshold" {
   # Claude's hook and this extension enforce the same rule for different
   # harnesses. Two constants that drift apart are one rule with two meanings, and

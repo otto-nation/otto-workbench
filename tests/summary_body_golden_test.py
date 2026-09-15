@@ -42,16 +42,16 @@ and its trailing separator — which an editor set to trim trailing whitespace o
 save will silently eat.
 
 Regenerate the fixtures by calling `_write_goldens()` from a throwaway test in
-this directory — the `rt` fixture only exists under pytest, and `conftest.py` is
-the one place allowed to load a script from a path. Prose rather than a flag
-for the same reason `test_mcp_server.py` uses prose: one regeneration idiom in
-the repo is better than two.
+this directory. It takes no arguments — the renderer is imported directly, as
+every module this file drives now is. Prose rather than a flag for the same
+reason `test_mcp_server.py` uses prose: one regeneration idiom in the repo is
+better than two.
 
 A diff in one of these files is a change to the published summary format and is
 read as one — check `summary_model.row_key_from_cells`,
 `summary_scope.carried_over_rows` and `summary_scope.hand_written_rows` before
-accepting it. During the decomposition this render
-is being split for, the golden must be **re-run and re-asserted, never
+accepting it. Through the decomposition this render
+was split for, the golden was **re-run and re-asserted, never
 regenerated**: regenerating it records whatever the split produced and asserts
 nothing about it.
 """

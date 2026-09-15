@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Fetch PR review threads, compute lifecycle states, and output status.
 
 Renders a human-readable dashboard to stderr and structured JSON to stdout.
@@ -26,6 +25,8 @@ Usage:
 """
 
 # doc-group: cli
+
+from __future__ import annotations
 
 import argparse
 import dataclasses

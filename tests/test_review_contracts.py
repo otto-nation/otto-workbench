@@ -667,10 +667,10 @@ def _render_fix_prepush(wt_path) -> str:
 # One list, so a fourth domain adopting the engine is added to the contracts by
 # adding its renderer here rather than to each test in turn.
 _FIX_RENDERERS = {
-    "ci": lambda wt: _render_fix_ci(wt),
-    "comments": lambda wt: _render_fix_comments(wt),
-    "findings": lambda wt: _render_fix_findings(wt),
-    "prepush": lambda wt: _render_fix_prepush(wt),
+    "ci": _render_fix_ci,
+    "comments": _render_fix_comments,
+    "findings": _render_fix_findings,
+    "prepush": _render_fix_prepush,
 }
 
 # Every template a fix-shaped agent is handed, including the verify gate's.
@@ -682,7 +682,7 @@ _FIX_RENDERERS = {
 # is held to those here rather than left outside the check because the wider set
 # did not fit.
 _AGENT_RENDERERS = _FIX_RENDERERS | {
-    "verify": lambda wt: _render_verify_fixes(wt),
+    "verify": _render_verify_fixes,
 }
 
 

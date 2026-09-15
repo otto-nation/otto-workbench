@@ -253,9 +253,21 @@ def test_prune_merged_targets_counts_a_partial_prune_failure_as_not_pruned(tmp_p
     the target's continued existence must agree, or a later sweep whose
     state.json alone went would never revisit it."""
     target = _seed_target(tmp_path)
-    (target / "leftover").mkdir()
+    (target / "leftover").write_text("")
     monkeypatch.setattr(review_gc, "_pr_closure",
                         lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
+
+    # A directory used to stand in for an entry that will not unlink, which is
+    # the pr-rebase artifacts case and prunes cleanly now. The refusal has to
+    # come from the filesystem call itself to still mean what it did.
+    real_unlink = Path.unlink
+
+    def refusing_unlink(self, **kwargs):
+        if self.name == "leftover":
+            raise PermissionError("Operation not permitted")
+        real_unlink(self, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", refusing_unlink)
 
     assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
     assert target.exists()
@@ -301,6 +313,39 @@ def test_prune_one_target_unlinks_the_lock_file_last(tmp_path):
 
     assert unlinked[-1] == run_lock.LOCK_FILE
     assert pr_state.STATE_FILE in unlinked[:-1]
+
+
+def test_prune_one_target_removes_a_subdirectory(tmp_path):
+    """`pr-rebase` writes its tracking file and session log to a directory under
+    the target, so a target holding one has to prune like any other."""
+    target = _seed_target(tmp_path)
+    artifacts = target / "pr-rebase"
+    artifacts.mkdir()
+    (artifacts / "fix-session.jsonl").write_text("{}\n")
+    (artifacts / "fix-tracking.md").write_text("# tracking\n")
+
+    assert review_gc._prune_one_target(target) is True
+    assert not target.exists()
+
+
+def test_prune_one_target_unlinks_the_lock_file_last_past_a_subdirectory(tmp_path):
+    """The lock pins the inode a contender would have to agree with, so a
+    subdirectory's removal must not reorder it to the front."""
+    target = _seed_target(tmp_path)
+    (target / "pr-rebase").mkdir()
+    (target / "pr-rebase" / "fix-session.jsonl").write_text("{}\n")
+
+    unlinked = []
+    real_unlink = Path.unlink
+
+    def recording_unlink(self, **kwargs):
+        unlinked.append(self.name)
+        real_unlink(self, **kwargs)
+
+    with patch.object(Path, "unlink", recording_unlink):
+        assert review_gc._prune_one_target(target) is True
+
+    assert unlinked[-1] == run_lock.LOCK_FILE
 
 
 def test_prune_merged_targets_respects_the_budget(tmp_path, monkeypatch):

@@ -33,10 +33,9 @@ from pr import thread_context
 from pr import triage_prompt
 from pr.comments_state import ThreadState
 from pr.thread_models import (
-    CommentItem, PRReport, TriageResult, triage_result_from_dict,
+    CommentItem, Complexity, PRReport, TriageResult, Verification,
+    triage_result_from_dict,
 )
-
-_UNSUPPORTED_VERDICTS = ("already_addressed", "invalid")
 
 _DOWNGRADE_REASON = (
     "downgraded from {verdict}: triage cited no line in this repo to back the claim"
@@ -114,7 +113,7 @@ def downgrade_unsupported_verdicts(
     """
     downgraded = 0
     for entry in entries:
-        if entry.verification not in _UNSUPPORTED_VERDICTS:
+        if not entry.verification.needs_evidence:
             continue
         if permalinks.evidence_is_real(repo_dir, entry):
             continue
@@ -122,8 +121,8 @@ def downgrade_unsupported_verdicts(
         if trail:
             trail.info("triage_downgrade", reason, data={"thread": entry.id})
         log.warn(f"{entry.id}: {reason} — routing to needs_discussion")
-        entry.verification = "needs_discussion"
-        entry.complexity = ""
+        entry.verification = Verification.NEEDS_DISCUSSION
+        entry.complexity = Complexity.UNSET
         entry.evidence_file = ""
         entry.evidence_line = 0
         entry.reasoning = f"{entry.reasoning} ({reason})".strip()
@@ -188,7 +187,7 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     if downgraded:
         # The model's own count is stale once a verdict moves.
         triage_result.stats.invalid = sum(
-            1 for t in triage_result.threads if t.verification == "invalid"
+            1 for t in triage_result.threads if t.verification is Verification.INVALID
         )
 
     # Update triage state

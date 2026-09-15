@@ -63,8 +63,9 @@ from pr.fix import (
 )
 from pr.state import PRIdentity, PRState
 from pr.thread_models import (
-    ClassificationResult, CommentItem, PRReport, ReplyOutcome, ReportThread,
-    TrackingResult, TriageResult, TriageStats, triage_result_from_dict,
+    ClassificationResult, CommentItem, Complexity, PRReport, ReplyOutcome,
+    ReportThread, TrackingResult, TriageResult, TriageStats, Verification,
+    triage_result_from_dict,
 )
 from review.document import SECTION_PRIOR_FINDINGS
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
@@ -5436,10 +5437,21 @@ class TestFixPassHoldsWhenContested:
 class TestTriagePromptVerificationValues:
     """The prompt must define every verification value it asks for."""
 
-    def test_defines_all_four_values(self):
+    def test_defines_every_verification_value(self):
+        """Iterating the enum, so a new verdict cannot be added unexplained."""
         prompt = triage_prompt.build_triage_prompt([], "diff")
-        for value in ("valid", "already_addressed", "invalid", "needs_discussion"):
-            assert f"- {value}:" in prompt
+        for member in Verification:
+            if member is Verification.UNSET:
+                continue
+            assert f"- {member.value}:" in prompt
+
+    def test_every_verification_member_has_guidance(self):
+        expected = {m for m in Verification if m is not Verification.UNSET}
+        assert set(triage_prompt.VERIFICATION_GUIDANCE) == expected
+
+    def test_every_complexity_member_has_guidance(self):
+        expected = {m for m in Complexity if m is not Complexity.UNSET}
+        assert set(triage_prompt.COMPLEXITY_GUIDANCE) == expected
 
     def test_steers_away_from_invalid_for_satisfied_code(self):
         prompt = triage_prompt.build_triage_prompt([], "diff")
@@ -7897,11 +7909,22 @@ class TestUnsupportedVerdictDowngrade:
         assert triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 
+    def test_every_evidence_bearing_verdict_is_downgraded(self, tmp_path):
+        """Driven by the enum, so a new citing verdict is covered on arrival."""
+        citing = [m for m in Verification if m.needs_evidence]
+        assert citing, "no verdict claims to need evidence"
+        for member in citing:
+            entry = CommentItem(id="t1", verification=member)
+            downgraded = triage.downgrade_unsupported_verdicts([entry], tmp_path)
+            assert downgraded == 1, f"{member} not downgraded"
+            assert entry.verification is Verification.NEEDS_DISCUSSION
+
     def test_reason_is_recorded_so_the_author_knows_why(self, tmp_path):
         item = self._item(reasoning="reviewer misread the guard")
         triage.downgrade_unsupported_verdicts([item], tmp_path)
         assert "reviewer misread the guard" in item.reasoning
         assert "cited no line" in item.reasoning
+        assert "downgraded from invalid" in item.reasoning
 
     def test_cited_verdict_that_exists_in_the_tree_survives(self, tmp_path):
         (tmp_path / "app.py").write_text("x = 1\n")

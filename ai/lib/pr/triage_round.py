@@ -32,69 +32,104 @@ from pr import supersession
 from pr.comments_state import ThreadState
 from pr.fix import FixOutcome
 from pr.thread_models import (
-    ClassificationResult, CommentItem, PRReport, ReplyOutcome, TrackingResult,
-    TriageResult,
+    Classification, ClassificationResult, CommentItem, Complexity, Disposition,
+    PRReport, ReplyOutcome, TrackingResult, TriageResult, Verification,
 )
 
 
-def classify_entries(triage_entries: list[CommentItem]) -> ClassificationResult:
+_HUMAN_CLASSIFICATIONS = {
+    Classification.CONFLICTING: summary_model.HumanReason.CONFLICTING,
+    Classification.QUESTION: summary_model.HumanReason.QUESTION,
+}
+
+_VERIFICATION_ROUTES = {
+    Verification.VALID: (Disposition.FIXABLE, None),
+    Verification.NEEDS_DISCUSSION: (
+        Disposition.NEEDS_HUMAN, summary_model.HumanReason.NEEDS_DISCUSSION,
+    ),
+    Verification.ALREADY_ADDRESSED: (Disposition.ALREADY_ADDRESSED, None),
+    Verification.INVALID: (Disposition.DISMISSED, None),
+}
+
+
+def _route(
+    tt: CommentItem,
+) -> tuple[Disposition, summary_model.HumanReason | None] | None:
+    """Where one entry goes, or None to drop it.
+
+    Order is the rule. Contested state overrides the model; a question never
+    reaches verification; valid + high is a person before VALID is fixable.
+    """
+    if tt.state == ThreadState.CONTESTED:
+        return (Disposition.NEEDS_HUMAN, summary_model.HumanReason.CONTESTED)
+    reason = _HUMAN_CLASSIFICATIONS.get(tt.classification)
+    if reason is not None:
+        return (Disposition.NEEDS_HUMAN, reason)
+    if tt.classification is not Classification.ACTIONABLE_SUGGESTION:
+        return None
+    if (
+        tt.verification is Verification.VALID
+        and tt.complexity is Complexity.HIGH
+    ):
+        return (Disposition.NEEDS_HUMAN, summary_model.HumanReason.COMPLEX)
+    return _VERIFICATION_ROUTES.get(tt.verification)
+
+
+def _report_drop(tt: CommentItem, trail: Trail | None) -> None:
+    """Say that an entry reached no bucket, where nothing used to say it.
+
+    Two routes end here — a classification that is not an actionable
+    suggestion, and a verification no route claims — and both were silent
+    falls through an if/elif chain. Routing them through one function is what
+    makes the drop a statement rather than the absence of one, and gives a
+    round that quietly disposed of a thread somewhere to be read.
+    """
+    if not trail:
+        return
+    trail.info(
+        "triage_drop",
+        f"{tt.id}: no disposition for "
+        f"classification={tt.classification.name} "
+        f"verification={tt.verification.name}",
+    )
+
+
+def classify_entries(
+    triage_entries: list[CommentItem], *,
+    trail: Trail | None = None,
+) -> ClassificationResult:
     """Sort one side's triage verdicts into the dispositions the pass routes on.
 
     Works for threads and for the entries decomposed out of top-level comments
     alike: the vocabulary the model answers in is the same for both, and which
     side an entry came from is the caller's to remember.
 
-    The order of the checks is the rule. A contested thread is a person's
-    before it is anything else — the state overrides whatever the model called
-    it — and a question never reaches the verification clauses at all. Only an
-    `actionable_suggestion` gets that far, and a valid one the model called
-    complex goes to a person rather than to the agent, which is the clause a
-    predicate written out elsewhere kept forgetting.
+    Routing order is the rule. A contested thread is a person's before it is
+    anything else — the state overrides whatever the model called it — and a
+    question never reaches verification at all. Only an `actionable_suggestion`
+    gets that far, and a valid one the model called complex goes to a person
+    rather than to the agent.
+
+    Every disposition takes a copy of the model's entry at one append. That
+    single statement is what makes the four agree about object identity, so a
+    later stamp on a bucket cannot write through to the original.
     """
     result = ClassificationResult()
 
     for tt in triage_entries:
-        if tt.state == ThreadState.CONTESTED:
-            result.needs_human.append(
-                dataclass_replace(tt, reason=summary_model.HumanReason.CONTESTED.value))
+        routed = _route(tt)
+        if routed is None:
+            _report_drop(tt, trail)
             continue
-
-        if tt.classification == "conflicting":
-            result.needs_human.append(
-                dataclass_replace(tt, reason=summary_model.HumanReason.CONFLICTING.value))
-            continue
-
-        if tt.classification == "question":
-            result.needs_human.append(
-                dataclass_replace(tt, reason=summary_model.HumanReason.QUESTION.value))
-            continue
-
-        if tt.classification != "actionable_suggestion":
-            continue
-
-        if tt.verification == "valid" and tt.complexity == "high":
-            result.needs_human.append(
-                dataclass_replace(tt, reason=summary_model.HumanReason.COMPLEX.value))
-            continue
-
-        if tt.verification == "valid":
-            result.fixable.append(tt)
-        elif tt.verification == "needs_discussion":
-            result.needs_human.append(
-                dataclass_replace(tt, reason=summary_model.HumanReason.NEEDS_DISCUSSION.value))
-        elif tt.verification == "already_addressed":
-            result.already_addressed.append(tt)
-        elif tt.verification == "invalid":
-            # A copy, and the only branch that makes one. It was written as a
-            # `replace` of `reasoning` with its own value, which reads as a
-            # transformation and is not one — but removing it is not a no-op
-            # either: `attribution.stamp_read_sha` writes through these entries
-            # before the pass runs, and `--triage --fix` serialises the triage
-            # result to stdout afterwards. The aliasing branches show the stamp
-            # there and this one does not. Which of the two is right is #1289;
-            # what is not in doubt is that the three should agree, and picking
-            # one here would change the JSON a caller parses.
-            result.dismissed.append(dataclass_replace(tt))
+        disposition, reason = routed
+        # The one copy, and the only place a classified entry is made.
+        # Whether the entry a bucket holds is the model's object or a copy of
+        # it used to be nine independent answers that happened to be two; it
+        # is one answer here because there is one statement of it.
+        result.bucket(disposition).append(
+            dataclass_replace(tt, reason=reason.value) if reason
+            else dataclass_replace(tt)
+        )
 
     return result
 
@@ -294,8 +329,8 @@ def triage_the_round(
     the PR's own open threads against the ids both sides gave a disposition to,
     and both halves of that comparison are this function's.
     """
-    threads = classify_entries(triage_result.threads)
-    items = classify_entries(triage_result.comment_items)
+    threads = classify_entries(triage_result.threads, trail=trail)
+    items = classify_entries(triage_result.comment_items, trail=trail)
 
     hold_if_superseded(
         supersession.detect_cached(

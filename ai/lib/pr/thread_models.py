@@ -10,6 +10,7 @@ fix-pass results.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace as dataclass_replace
+from enum import StrEnum
 
 from core import serde
 from pr.comments_state import ThreadState
@@ -17,6 +18,112 @@ from pr.fix import FixOutcome, ItemOutcome, SettledBy
 
 
 # ── Core types ─────────────────────────────────────────────────────────────
+
+
+class Vocabulary(StrEnum):
+    """Shared leniency for the three triage vocabularies.
+
+    An unrecognised value from a model becomes UNSET rather than raising.
+    That contract is declared once here so Classification, Verification, and
+    Complexity cannot drift. Every subclass MUST define UNSET = "": `_missing_`
+    returns it.
+
+    This is the serde-path half of the leniency. `serde.from_dict` constructs
+    a field with `hint(value)` and never reaches `__post_init__`. Direct
+    construction never consults the enum at all — a dataclass does not coerce
+    its own field types — so `_coerce_vocab` in `__post_init__` is the other
+    half. Both are load-bearing.
+    """
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "UNSET" not in cls.__members__:
+            raise TypeError(f"{cls.__name__} must define UNSET = \"\"")
+
+    @classmethod
+    def _missing_(cls, value):
+        return cls.UNSET
+
+
+class Classification(Vocabulary):
+    """What kind of thing a reviewer's comment is.
+
+    The vocabulary the triage prompt asks for, owned here so the prompt that
+    names these values and the code that branches on them cannot drift. A
+    `StrEnum` because the stdout report is `json.dump(asdict(...))`, which
+    passes a plain `Enum` through unconverted and raises.
+
+    `UNSET` is what an unrecognised or absent answer becomes. It routes
+    nowhere, which is the same treatment `approval` gets: neither reaches a
+    bucket.
+    """
+
+    ACTIONABLE_SUGGESTION = "actionable_suggestion"
+    QUESTION = "question"
+    APPROVAL = "approval"
+    CONFLICTING = "conflicting"
+    UNSET = ""
+
+
+class Verification(Vocabulary):
+    """Whether an actionable suggestion holds, and how it is answered.
+
+    Only asked for when the classification is `actionable_suggestion`; the
+    prompt says to leave it empty otherwise, which is `UNSET`.
+    """
+
+    VALID = "valid"
+    ALREADY_ADDRESSED = "already_addressed"
+    INVALID = "invalid"
+    NEEDS_DISCUSSION = "needs_discussion"
+    UNSET = ""
+
+    @property
+    def needs_evidence(self) -> bool:
+        """Whether this verdict has to cite a line to be posted.
+
+        These two are claims about the reviewer's own code — that it already
+        does what they asked, or that their premise is wrong — and a claim with
+        no line to point at is not one that can be made. `triage` demotes an
+        uncitable one to `NEEDS_DISCUSSION` rather than post it.
+
+        The property lives on the member because it is a fact about the
+        verdict. Held as a tuple beside the function that read it, a new
+        evidence-bearing verdict would be added here and silently not be one.
+        """
+        return self in (Verification.ALREADY_ADDRESSED, Verification.INVALID)
+
+
+class Complexity(Vocabulary):
+    """How large a change a valid suggestion asks for.
+
+    Only asked for when the verification is `valid`. `UNSET` is a valid
+    answer and deliberately stays fixable — an entry the model gave no
+    complexity to is not thereby a job for a person.
+    """
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    UNSET = ""
+
+
+def _coerce_vocab(enum_cls, value):
+    """One of `enum_cls`'s members, or its `UNSET`.
+
+    The two hooks cover two different construction paths. `_missing_` on
+    `Vocabulary` covers construction through serde, which never reaches
+    `__post_init__`. This function in `__post_init__` covers DIRECT
+    construction, which never consults the enum at all — a dataclass does not
+    coerce its own field types, so `CommentItem(verification="banana")` would
+    otherwise store the raw string. Every existing test in this repo constructs
+    `CommentItem` directly with bare strings, so both are load-bearing.
+
+    With `_missing_` inherited, `enum_cls(value)` never raises: an unrecognised
+    or non-string input becomes `UNSET` inside the enum constructor. The
+    conversion is therefore a direct call.
+    """
+    return enum_cls(value)
 
 
 @dataclass
@@ -39,9 +146,9 @@ class CommentItem:
     source_id: str = ""
     source_type: str = ""
     index: int = 0
-    classification: str = ""
-    verification: str = ""
-    complexity: str = ""
+    classification: Classification = Classification.UNSET
+    verification: Verification = Verification.UNSET
+    complexity: Complexity = Complexity.UNSET
     body: str = ""
     # Where in the tree the verdict can be checked. A verdict posted back to a
     # reviewer has to point at code, so triage cites the location it read.
@@ -80,6 +187,14 @@ class CommentItem:
         self.line = int(self.line or 0)
         self.index = int(self.index or 0)
         self.evidence_line = int(self.evidence_line or 0)
+        # The three fields a model fills in, coerced where the ints already
+        # are. Not left to `serde`: its enum coercion raises on an unknown
+        # value, and `_lenient_from_dict` answers a raise by discarding the
+        # whole entry. An invented verdict should cost itself, not the id and
+        # summary the model got right.
+        self.classification = _coerce_vocab(Classification, self.classification)
+        self.verification = _coerce_vocab(Verification, self.verification)
+        self.complexity = _coerce_vocab(Complexity, self.complexity)
 
     def has_evidence(self) -> bool:
         """Whether this item cites a location a permalink can point at."""
@@ -178,11 +293,24 @@ class TriageResult:
     stats: TriageStats = field(default_factory=TriageStats)
 
 
+class Disposition(StrEnum):
+    """Where a classified entry goes.
+
+    Not a `FixOutcome`: `FIXABLE` is a question the agent has yet to answer,
+    and comes back from it as FIXED, DEFERRED, NEEDS_HUMAN or DECLINED.
+    """
+
+    FIXABLE = "fixable"
+    NEEDS_HUMAN = "needs_human"
+    DISMISSED = "dismissed"
+    ALREADY_ADDRESSED = "already_addressed"
+
+
 @dataclass
 class ClassificationResult:
     """What one side of triage decided about each entry it was given.
 
-    The four dispositions the fix pass routes on, ahead of the agent: what it
+    Every disposition the fix pass routes on, ahead of the agent: what it
     will be asked to fix, what a person has to answer, what does not hold, and
     what the code already does. They are not `FixOutcome`s and must not be
     confused for them — `fixable` is a question the agent has yet to answer,
@@ -203,25 +331,34 @@ class ClassificationResult:
     dismissed: list[CommentItem] = field(default_factory=list)
     already_addressed: list[CommentItem] = field(default_factory=list)
 
+    def bucket(self, disposition: Disposition) -> list[CommentItem]:
+        """The entries filed under one disposition.
+
+        A `Disposition` is not a `FixOutcome`. `FIXABLE` is a question the
+        agent has yet to answer; `TrackingResult.bucket` is the same verb on
+        the container keyed by what came back. Appending to what this returns
+        files the entry; `TrackingResult.bucket` does not work that way — it
+        returns a throwaway list on a miss, and writing goes through `add()`.
+
+        Each `Disposition` value must equal a field name on this class;
+        `getattr(self, disposition.value)` is the lookup. The drift test on
+        `ClassificationResult` guards that coupling.
+        """
+        return getattr(self, disposition.value)
+
     @property
     def any_entry(self) -> bool:
         """Whether triage put anything at all in this side's buckets."""
-        return bool(self.fixable or self.needs_human
-                    or self.dismissed or self.already_addressed)
+        return any(self.bucket(d) for d in Disposition)
 
     def ids(self) -> set[str]:
         """Every id this side gave a disposition to.
 
         What `has_unaccounted` is measured against: a thread on the PR that
-        appears in none of the four buckets is one this round never reached,
-        and the summary it publishes is partial until someone does.
+        appears under no disposition is one this round never reached, and
+        the summary it publishes is partial until someone does.
         """
-        return {
-            entry.id
-            for bucket in (self.fixable, self.needs_human,
-                           self.dismissed, self.already_addressed)
-            for entry in bucket
-        }
+        return {e.id for d in Disposition for e in self.bucket(d)}
 
 
 # ── Fix tracking types ────────────────────────────────────────────────────
@@ -468,10 +605,12 @@ def _lenient_from_dict(cls, raw):
     way this raises is the non-dict case, not a missing-field one.
 
     `ValueError` is caught beside it because `CommentItem` carries enum fields
-    the replay path sets, and `serde` raises rather than defaulting for an enum
-    value it does not recognise. Those keys are not in the triage schema, so a
-    model emitting one has invented it — that entry defaults rather than taking
-    the batch down with it.
+    the replay path sets (`FixOutcome`, `SettledBy`). Those have no `_missing_`,
+    so `serde` still raises rather than defaulting for a value it does not
+    recognise. The three vocabulary enums (`Classification`, `Verification`,
+    `Complexity`) do not raise: `Vocabulary._missing_` returns `UNSET`. Those
+    replay keys are not in the triage schema, so a model emitting one has
+    invented it — that entry defaults rather than taking the batch down with it.
 
     Catching it widens the net past the enums, and deliberately: `__post_init__`
     coerces `line`, `index` and `evidence_line` with `int()`, which raises the

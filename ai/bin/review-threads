@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from core import log
+from core import markdown
 from fix import comments as fix_comments
 from git import client as git_client
 from git import land
@@ -312,11 +313,11 @@ def _build_deferred_issue_body(
         "|--------|------|--------|",
     ]
     for entry in deferred:
-        summary = entry.summary or "—"
+        summary = markdown.escape_cell(entry.summary or "—")
         permalink = permalinks.thread_permalink(entry, threads_by_id, repo, pr_number)
         thread_cell = f"[{summary}]({permalink})" if permalink else summary
         file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
-        reason = entry.reason or "—"
+        reason = markdown.escape_cell(entry.reason or "—")
         parts.append(f"| {thread_cell} | {file_cell} | {reason} |")
     parts.append("")
     return "\n".join(parts)

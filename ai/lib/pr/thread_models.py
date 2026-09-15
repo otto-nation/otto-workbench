@@ -24,9 +24,14 @@ class Vocabulary(StrEnum):
     """Shared leniency for the three triage vocabularies.
 
     An unrecognised value from a model becomes UNSET rather than raising.
-    That contract is declared once here so Classification, Verification, and
-    Complexity cannot drift. Every subclass MUST define UNSET = "": `_missing_`
-    returns it.
+    That contract is declared once here so the vocabularies below cannot
+    drift. Every subclass MUST define an `UNSET` member whose value is the
+    empty string: `_missing_` returns it.
+
+    The member's *value* is what the rule governs, not how it is spelled in
+    the class body. A plain subclass writes `UNSET = ""`; one whose members
+    carry several spellings writes the empty case of its tuple, and `__new__`
+    unpacks that to the same empty value.
 
     This is the serde-path half of the leniency. `serde.from_dict` constructs
     a field with `hint(value)` and never reaches `__post_init__`. Direct
@@ -38,7 +43,14 @@ class Vocabulary(StrEnum):
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if "UNSET" not in cls.__members__:
-            raise TypeError(f"{cls.__name__} must define UNSET = \"\"")
+            raise TypeError(f"{cls.__name__} must define an UNSET member")
+        # The value, not the spelling. A tuple-valued subclass declaring a
+        # non-empty UNSET would satisfy the membership check while breaking
+        # every caller that tests a vocabulary field for emptiness.
+        if cls.UNSET.value != "":
+            raise TypeError(
+                f"{cls.__name__}.UNSET must have the empty string as its value, "
+                f"not {cls.UNSET.value!r}")
 
     @classmethod
     def _missing_(cls, value):

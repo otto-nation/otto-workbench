@@ -3954,3 +3954,30 @@ Rebuild review.md from group finding files.
 Reads group-N.md files from the review directory, merges findings,
 post-processes them, and writes a new review.md. Used to recover from
 synthesis agent formatting drift or corrupted review files.
+
+### cli/review_threads.py
+
+Fetch PR review threads, compute lifecycle states, and output status.
+
+Renders a human-readable dashboard to stderr and structured JSON to stdout.
+Manages local state in <worktree>/ignore/pr-comments/state.json.
+
+What is left here is what an entry point is: argument parsing, the flag
+conflicts that have to be refused before anything runs, context resolution, the
+run lock and the trail, and the dispatch that picks one of five phases. Every
+phase body lives in the module that owns its subject — `pr.triage`,
+`fix.comments`, `pr.settlement`, `pr.thread_replies`, `review.closeout` — and
+this module knows only which one to call and in what order.
+
+`main` returns rather than exits, as every module under `cli/` does; the shim at
+`ai/bin/review-threads` owns the process exit. The one exception is deliberate
+and lives a layer down: `deferred_issue.validate_track` still calls `sys.exit`,
+because library modules at every layer in this repo do, and the rule that holds
+uniformly is about `cli/`, not about libraries.
+
+Usage:
+  review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
+  review-threads --triage
+  review-threads --fix
+  review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
+  review-threads --finish

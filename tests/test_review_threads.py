@@ -8582,6 +8582,68 @@ class TestAnsweredCommentSources:
         assert answered == frozenset()
 
     def test_an_acknowledgement_of_ours_answers_nothing(self):
+        """The same widening the thread evidence got, on the only surface a
+        decomposed item has. A reply naming the verdict in a person's own words
+        is the same evidence as one that came out of a template.
+        """
+        with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset({"77"})
+
+    def test_a_hand_written_verdict_answers_its_source_too(self):
+        """The same widening the thread evidence got, on the only surface a
+        decomposed item has. A reply naming the verdict in a person's own words
+        is the same evidence as one that came out of a template.
+        """
+        with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset({"77"})
+
+    def test_the_reviewer_typing_the_same_verdict_answers_nothing(self):
+        """The negative the widening is bought with — the login test is what
+        stops their words settling the item they themselves raised.
+        """
+        with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —", user="kgn")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset()
+
+    def test_an_acknowledgement_of_ours_answers_nothing(self):
+        """Being heard is not being handled."""
+        with _fetches([_our_reply("#issuecomment-77", prefix="Good catch —")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset()
+        """The negative the widening is bought with — the login test is what
+        stops their words settling the item they themselves raised.
+        """
+        with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —", user="kgn")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset()
+
+    def test_a_hand_written_verdict_answers_its_source_too(self):
+        """The same widening the thread evidence got, on the only surface a
+        decomposed item has. A reply naming the verdict in a person's own words
+        is the same evidence as one that came out of a template.
+        """
+        with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset({"77"})
+
+    def test_the_reviewer_typing_the_same_verdict_answers_nothing(self):
+        """The negative the widening is bought with — the login test is what
+        stops their words settling the item they themselves raised.
+        """
+        with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —", user="kgn")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset()
+
+    def test_an_acknowledgement_of_ours_answers_nothing(self):
         """Being heard is not being handled."""
         with _fetches([_our_reply("#issuecomment-77", prefix="Good catch —")]):
             answered = settlement.answered_comment_sources(

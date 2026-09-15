@@ -339,7 +339,10 @@ def _remove_target(target: Path) -> None:
     for entry in target.iterdir():
         if entry in (lock_path, state_path):
             continue
-        if entry.is_dir():
+        # is_symlink first: `is_dir` follows the link, and `rmtree` refuses a
+        # symlink outright — so a link to a directory would be reported as a
+        # target we could not remove rather than unlinked like the entry it is.
+        if entry.is_dir() and not entry.is_symlink():
             shutil.rmtree(entry)
             continue
         entry.unlink()

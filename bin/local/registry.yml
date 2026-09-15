@@ -19,6 +19,11 @@ tools:
     visibility: brief
     description: "Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI"
 
+  - name: with-tree-lock
+    permission: false
+    visibility: brief
+    description: "Declares a tree under validation while a command runs — the lock that tells editors a gate is in flight"
+
   - name: validate-registries
     permission: false
     visibility: brief

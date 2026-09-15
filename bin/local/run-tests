@@ -256,6 +256,7 @@ SHARD=""
 BATS_FILES=""
 
 main() {
+  local -a ORIGINAL_ARGS=("$@")
   local suite=all
   local -a runner_args=()
   while [[ $# -gt 0 ]]; do
@@ -302,6 +303,19 @@ main() {
   # one-minute figure, so sizing pytest after bats has finished would size it
   # from the load our own bats run just produced and floor every second suite.
   JOBS=$(test_jobs)
+
+  # Declare the tree under validation for the length of the run, so an agent
+  # editing mid-suite is refused rather than silently invalidating it.
+  #
+  # Re-exec rather than call: a flock lives only as long as the process holding
+  # its descriptor, so the lock has to wrap this script rather than be taken
+  # from inside it. WORKBENCH_TREE_LOCK is already set when with-tree-lock has
+  # re-entered us, which is what stops this recursing.
+  if [[ -z "${WORKBENCH_TREE_LOCK:-}" ]]; then
+    exec "$WORKBENCH_DIR/bin/local/with-tree-lock" "$WORKBENCH_DIR" \
+      --label "bin/local/run-tests" -- "$WORKBENCH_DIR/bin/local/run-tests" \
+      "${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}"
+  fi
 
   [[ "$suite" == pytest ]] || run_bats "${runner_args[@]+"${runner_args[@]}"}"
   [[ "$suite" == bats ]] || run_pytest "${runner_args[@]+"${runner_args[@]}"}"

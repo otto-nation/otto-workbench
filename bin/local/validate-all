@@ -31,6 +31,8 @@ _SCRIPT_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # not WORKBENCH_DIR: setup code assigns that to the main worktree, and picking
 # it up here would silently validate the wrong tree from a feature worktree.
 VALIDATOR_ROOT="${VALIDATOR_ROOT:-$_SCRIPT_ROOT}"
+# Kept so the re-exec under the tree lock can replay them verbatim.
+ORIGINAL_ARGS=("$@")
 # shellcheck source=/dev/null
 . "$_SCRIPT_ROOT/lib/ui.sh"
 
@@ -73,6 +75,21 @@ if $LIST; then
     printf '%s\n' "${VALIDATORS[@]}"
   fi
   exit 0
+fi
+
+# Declare the tree under validation, so an edit landing mid-run is refused
+# rather than quietly invalidating every validator's verdict.
+#
+# Keyed on VALIDATOR_ROOT rather than this script's own location: the tests
+# point that at a fixture directory, and locking the script's checkout would
+# freeze the operator's real worktree for the length of the suite.
+#
+# Re-exec rather than call: a flock lasts only as long as the process holding
+# its descriptor. WORKBENCH_TREE_LOCK marks that we are already inside it.
+if [[ -z "${WORKBENCH_TREE_LOCK:-}" ]]; then
+  exec "$_SCRIPT_ROOT/bin/local/with-tree-lock" "$VALIDATOR_ROOT" \
+    --label "bin/local/validate-all" -- "$_SCRIPT_ROOT/bin/local/validate-all" \
+    "${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}"
 fi
 
 # One CPU per validator. The work is a mix of process spawning and file reads

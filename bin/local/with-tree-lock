@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Declare a tree under validation for the lifetime of a command.
+#
+# A flock lives only as long as the process holding its file descriptor, and
+# Python opens descriptors close-on-exec — so a bash script cannot take the
+# lock and carry on. The lock has to wrap the work, which is what this does:
+# it holds LOCK_SH and runs the validating command as a child. The lock covers
+# the child's process group for as long as the wrapper waits — a writer that
+# daemonizes and returns drops the flock while work continues.
+#
+# Usage:
+#   with-tree-lock <tree-root> [--label TEXT] -- <command> [args...]
+#   with-tree-lock --check <tree-root>
+#
+# Exit status: the command's own, or 1 from --check when nothing holds the
+# lock (so `if with-tree-lock --check "$t"` reads as "is it being validated").
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+with-tree-lock — declare a tree under validation while a command runs
+
+Usage:
+  with-tree-lock <tree-root> [--label TEXT] -- <command> [args...]
+  with-tree-lock --check <tree-root>
+
+Options:
+  --label TEXT   Name recorded as the holder. Defaults to the command.
+  --check        Report whether anything is validating the tree.
+  -h, --help     Show this message.
+USAGE
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+if [[ "${1:-}" == "--check" ]]; then
+  [[ -n "${2:-}" ]] || { echo "with-tree-lock: --check needs a tree root" >&2; exit 2; }
+  PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+    exec python3 "$REPO_ROOT/ai/lib/core/tree_lock_cli.py" --check "$2"
+fi
+
+tree_root="${1:-}"
+[[ -n "$tree_root" ]] || { echo "with-tree-lock: need a tree root" >&2; usage >&2; exit 2; }
+shift
+
+label=""
+if [[ "${1:-}" == "--label" ]]; then
+  shift
+  if [[ -z "${1:-}" || "${1:-}" == "--" ]]; then
+    echo "with-tree-lock: --label needs a name" >&2
+    exit 2
+  fi
+  label="$1"
+  shift
+fi
+
+[[ "${1:-}" == "--" ]] || {
+  echo "with-tree-lock: expected -- before the command" >&2
+  usage >&2
+  exit 2
+}
+shift
+
+[[ $# -gt 0 ]] || { echo "with-tree-lock: no command given after --" >&2; exit 2; }
+
+PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+  exec python3 "$REPO_ROOT/ai/lib/core/tree_lock_cli.py" \
+  --tree "$tree_root" --label "$label" -- "$@"

@@ -196,3 +196,26 @@ machine() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"expected N/M"* ]]
 }
+
+# ── Tree validation lock ─────────────────────────────────────────────────────
+
+@test "run-tests declares the tree while a suite runs" {
+  grep -q 'with-tree-lock' "$REPO_ROOT/bin/local/run-tests"
+}
+
+@test "run-tests acquires inside main, not at file scope" {
+  # Sourcing the script must not lock: tests/run_tests.bats sources it to
+  # reach the sizing helpers, and a file-scope acquire would lock the real
+  # worktree for the length of this suite.
+  local acquire_line main_line
+  acquire_line=$(grep -n 'with-tree-lock' "$REPO_ROOT/bin/local/run-tests" | head -1 | cut -d: -f1)
+  main_line=$(grep -n '^main() {' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  [ -n "$acquire_line" ]
+  [ -n "$main_line" ]
+  [ "$acquire_line" -gt "$main_line" ]
+}
+
+@test "run-tests re-execs itself under the lock only once" {
+  # The guard variable stops the re-exec recursing forever.
+  grep -q 'WORKBENCH_TREE_LOCK' "$REPO_ROOT/bin/local/run-tests"
+}

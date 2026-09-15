@@ -26,6 +26,7 @@ import textwrap
 
 from pr.thread_models import (
     Classification,
+    CommentSourceKind,
     Complexity,
     ReportThread,
     Verification,
@@ -160,7 +161,9 @@ Top-level comments:
   "comment_items": [
     {
       "source_id": "id from input comment",
-      "source_type": "issue_comment or review_body (from input)",
+      "source_type": \""""
+            + " or ".join(m.value for m in _members(CommentSourceKind))
+            + """ (from input)",
       "index": 0,
       "reviewer": "user from input comment",
 """

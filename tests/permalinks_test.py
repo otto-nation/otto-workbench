@@ -22,8 +22,15 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 from pr import permalinks  # noqa: E402
+from pr import settlement  # noqa: E402
+from pr import summary_model  # noqa: E402
+from pr import triage  # noqa: E402
 from pr.fix import ItemOutcome  # noqa: E402
-from pr.thread_models import CommentItem, ReportThread  # noqa: E402
+from pr.thread_models import (  # noqa: E402
+    THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread,
+)
+
+_KINDS = [k for k in CommentSourceKind if k is not CommentSourceKind.UNSET]
 
 _REPO = "owner/repo"
 _SHA = "abc1234"
@@ -252,3 +259,111 @@ class TestThreadPermalink:
     def test_an_unknown_entry_has_no_permalink(self):
         assert permalinks.thread_permalink(
             CommentItem(id="t9"), {}, _REPO, 42) is None
+
+
+class TestTheAnchorSpellingsAreGitHubs:
+    """The anchors are pinned as literals, because GitHub chose them.
+
+    Every other test here reads the spelling off the same member that wrote it,
+    so they hold for any spelling at all — swap two members' anchors and they
+    stay green. Two things make that insufficient. A fragment GitHub does not
+    serve is a link that 404s for the reviewer it was written for. And the
+    anchors on every summary comment already published are the real ones: a
+    reader that stops matching them reads each of those rows as new, so the
+    whole table duplicates on the next round.
+
+    So these values are an external contract, and changing one is a breaking
+    change to comments this tool has already posted rather than a rename.
+    """
+
+    def test_the_anchors_are_the_ones_github_serves(self):
+        assert CommentSourceKind.ISSUE_COMMENT.anchor == "issuecomment"
+        assert CommentSourceKind.REVIEW_BODY.anchor == "pullrequestreview"
+        assert THREAD_ANCHOR == "discussion_r"
+
+    def test_the_persisted_tokens_are_unchanged(self):
+        """State files written before this enum existed still load."""
+        assert CommentSourceKind.ISSUE_COMMENT.value == "issue_comment"
+        assert CommentSourceKind.REVIEW_BODY.value == "review_body"
+
+    def test_the_id_prefixes_are_unchanged(self):
+        """A synthetic id in a live state file has to keep resolving."""
+        assert CommentSourceKind.ISSUE_COMMENT.id_prefix == "ic"
+        assert CommentSourceKind.REVIEW_BODY.id_prefix == "rb"
+
+    def test_a_published_anchor_is_still_recognised(self):
+        """Read as the published comments hold it, not as the writer builds it."""
+        published = (
+            "| [x](https://github.com/owner/repo/pull/42#pullrequestreview-88) "
+            "| @kgn | `a.go:7` | Fixed |"
+        )
+        assert summary_model.ITEM_ANCHOR_RE.search(published).group(0) == (
+            "#pullrequestreview-88")
+
+
+class TestEveryKindRoundTrips:
+    """The writer and both readers are held to one vocabulary.
+
+    Parametrized over the enum rather than over a literal list, so a kind added
+    to `CommentSourceKind` and wired nowhere fails here instead of shipping a
+    permalink that no reader recognises — which is a published row losing its
+    identity between rounds, the failure this vocabulary exists to prevent.
+    """
+
+    @pytest.mark.parametrize("kind", _KINDS, ids=lambda k: k.value)
+    def test_the_summary_reader_matches_what_the_writer_emits(self, kind):
+        url = permalinks.CommentSource(kind, "900").permalink(_REPO, 42)
+        assert summary_model.ITEM_ANCHOR_RE.search(url)
+
+    @pytest.mark.parametrize("kind", _KINDS, ids=lambda k: k.value)
+    def test_the_settlement_reader_recovers_the_id(self, kind):
+        url = permalinks.CommentSource(kind, "900").permalink(_REPO, 42)
+        assert settlement._SOURCE_ANCHOR_RE.search(url).group(1) == "900"
+
+    @pytest.mark.parametrize("kind", _KINDS, ids=lambda k: k.value)
+    def test_a_synthetic_id_parses_back_to_the_kind_that_wrote_it(self, kind):
+        """`assign_item_ids` is the writer; `comment_item_source` is the reader.
+
+        Read through both rather than asserting the id's spelling: what matters
+        is that the prefix one writes is the prefix the other resolves, not
+        which two letters they agreed on.
+        """
+        item = CommentItem(source_id="900", source_type=kind, index=2)
+        triage.assign_item_ids([item])
+        assert permalinks.comment_item_source(
+            CommentItem(id=item.id)) == permalinks.CommentSource(kind, "900")
+
+    @pytest.mark.parametrize("kind", _KINDS, ids=lambda k: k.value)
+    def test_a_thread_anchor_is_not_read_as_a_comment_item(self, kind):
+        """The two anchors are alternatives, and identity branches on which."""
+        thread_url = f"https://github.com/{_REPO}/pull/42#{THREAD_ANCHOR}111"
+        assert summary_model.ITEM_ANCHOR_RE.search(thread_url) is None
+        assert summary_model.THREAD_ANCHOR_RE.search(thread_url)
+
+
+class TestAnUnknownKindDegradesRatherThanMisreports:
+    """An unrecognised token is UNSET, and UNSET claims nothing.
+
+    The old ternary in `assign_item_ids` had no such case: anything that was
+    not `issue_comment` was called a review body, so a drifted token produced
+    an `rb-` id and a `#pullrequestreview` link to a review that never existed.
+    A row with no permalink is recoverable; one pointing at the wrong comment
+    is not.
+    """
+
+    def test_an_invented_token_becomes_unset(self):
+        assert CommentItem(source_type="banana").source_type is CommentSourceKind.UNSET
+
+    def test_an_unset_source_has_no_permalink(self):
+        source = permalinks.CommentSource(CommentSourceKind.UNSET, "900")
+        assert source.permalink(_REPO, 42) is None
+
+    def test_an_invented_token_is_not_filed_under_a_real_kind(self):
+        item = CommentItem(source_id="900", source_type="banana", index=0)
+        triage.assign_item_ids([item])
+        assert not item.id.startswith(CommentSourceKind.REVIEW_BODY.id_prefix)
+        assert permalinks.comment_item_source(CommentItem(id=item.id)).ok is False
+
+    def test_a_thread_id_is_claimed_by_no_kind(self):
+        assert CommentSourceKind.from_id_prefix("") is CommentSourceKind.UNSET
+        assert CommentSourceKind.from_id_prefix("zz") is CommentSourceKind.UNSET

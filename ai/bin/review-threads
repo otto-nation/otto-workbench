@@ -46,6 +46,7 @@ from pr.comments_state import ThreadRecord, ThreadState
 from pr.fix import FixOutcome
 from review import issue as review_issue
 from pr.thread_models import (
+    THREAD_ANCHOR,
     CommentItem,
     PRReport,
     ReportThread,
@@ -755,7 +756,7 @@ def _find_reply_target(
     the node ID, while a reviewer sends a link ending `#discussion_r3717174529`
     — which is a comment ID, and the only identifier a human ever has.
     """
-    wanted = target.strip().rsplit("#", 1)[-1].removeprefix("discussion_r")
+    wanted = target.strip().rsplit("#", 1)[-1].removeprefix(THREAD_ANCHOR)
     for data in threads_raw:
         comments = data.get("comments", {}).get("nodes", [])
         ids = {str(c.get("databaseId")) for c in comments}

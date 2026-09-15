@@ -108,6 +108,77 @@ class Complexity(Vocabulary):
     UNSET = ""
 
 
+class CommentSourceKind(Vocabulary):
+    """Which kind of top-level comment a decomposed item was cut from.
+
+    Unlike its three siblings this is not a vocabulary a model chooses: triage
+    stamps it from the list the comment was read out of. It is a `Vocabulary`
+    anyway because the value survives a state-file round trip and reaches the
+    same `_lenient_from_dict` path, where a raise costs the whole entry rather
+    than the one field.
+
+    Each kind is spelled three ways, and every one of them used to be written
+    out separately:
+
+    - `value` is the token on `CommentItem.source_type`, persisted and shown to
+      the model in the triage schema
+    - `id_prefix` opens the synthetic id triage assigns, `{prefix}-{source}-{n}`
+    - `anchor` is the GitHub URL fragment a permalink to that comment ends in
+
+    Holding them on one member is what makes a new kind one declaration. Held
+    apart, the id prefix and the token were related by a two-armed ternary
+    whose else-branch claimed every unrecognised token was a review body, so a
+    drifted `source_type` produced an `rb-` id for an issue comment and a
+    permalink that resolved to nothing.
+
+    `UNSET` has no anchor and no prefix. A review thread is not a comment item
+    at all, so its entries hold this and `permalink` answers None.
+    """
+
+    ISSUE_COMMENT = ("issue_comment", "ic", "issuecomment")
+    REVIEW_BODY = ("review_body", "rb", "pullrequestreview")
+    UNSET = ("", "", "")
+
+    def __new__(cls, value: str, id_prefix: str, anchor: str) -> CommentSourceKind:
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.id_prefix = id_prefix
+        obj.anchor = anchor
+        return obj
+
+    @classmethod
+    def from_id_prefix(cls, prefix: str) -> CommentSourceKind:
+        """The kind whose synthetic ids open with `prefix`, or `UNSET`.
+
+        `UNSET`'s own prefix is empty and is deliberately not matchable: a
+        caller asking about `""` is asking about a thread id, which belongs to
+        no kind.
+        """
+        if not prefix:
+            return cls.UNSET
+        for kind in cls:
+            if kind is not cls.UNSET and kind.id_prefix == prefix:
+                return kind
+        return cls.UNSET
+
+    @classmethod
+    def anchors(cls) -> tuple[str, ...]:
+        """Every real kind's anchor, in definition order.
+
+        The readers compile their patterns from this rather than restating the
+        alternation, so a kind added here is one a published permalink can be
+        recognised by without a second edit.
+        """
+        return tuple(k.anchor for k in cls if k is not cls.UNSET)
+
+
+# The fragment a permalink to a review thread ends in. Not a member of the enum
+# above: a thread is what a comment item is not, and the two are alternatives
+# everywhere they are read. It lives here so the writer in `permalinks` and the
+# readers in `summary_model` and the reply path share one spelling.
+THREAD_ANCHOR = "discussion_r"
+
+
 def _coerce_vocab(enum_cls, value):
     """One of `enum_cls`'s members, or its `UNSET`.
 
@@ -144,7 +215,7 @@ class CommentItem:
     reasoning: str = ""
     state: str = ""
     source_id: str = ""
-    source_type: str = ""
+    source_type: CommentSourceKind = CommentSourceKind.UNSET
     index: int = 0
     classification: Classification = Classification.UNSET
     verification: Verification = Verification.UNSET
@@ -195,6 +266,10 @@ class CommentItem:
         self.classification = _coerce_vocab(Classification, self.classification)
         self.verification = _coerce_vocab(Verification, self.verification)
         self.complexity = _coerce_vocab(Complexity, self.complexity)
+        # Not a field the model invents, but one that arrives from a state file
+        # and from every test that builds an entry with a bare string, so it
+        # needs the same direct-construction coercion the three above do.
+        self.source_type = _coerce_vocab(CommentSourceKind, self.source_type)
 
     def has_evidence(self) -> bool:
         """Whether this item cites a location a permalink can point at."""

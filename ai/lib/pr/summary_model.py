@@ -33,7 +33,9 @@ from core import markdown
 from pr import comments_fix as pr_comments_fix
 from pr import permalinks
 from pr.fix import FixOutcome
-from pr.thread_models import CommentItem, ReportThread, finding_location
+from pr.thread_models import (
+    THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread, finding_location,
+)
 
 TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
 
@@ -229,9 +231,14 @@ def _every_entry(content: RoundContent) -> list[CommentItem]:
 #
 # They live beside `row_key_from_cells` rather than beside the re-parser
 # because identity is what reads them, and identity has one definition that
-# both a freshly rendered row and a published one go through.
-ITEM_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-\d+")
-THREAD_ANCHOR_RE = re.compile(r"#discussion_r\d+")
+# both a freshly rendered row and a published one go through. What they are
+# built from lives on `CommentSourceKind`, with the writer: a reader that
+# restated the alternation would stop recognising a permalink this tool itself
+# emits the moment a kind was added, and a row whose anchor no reader matches
+# loses its identity between rounds.
+ITEM_ANCHOR_RE = re.compile(
+    r"#(?:" + "|".join(re.escape(a) for a in CommentSourceKind.anchors()) + r")-\d+")
+THREAD_ANCHOR_RE = re.compile(r"#" + re.escape(THREAD_ANCHOR) + r"\d+")
 
 
 def row_key_from_cells(cells: list[str]) -> str:

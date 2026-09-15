@@ -52,7 +52,9 @@ from pr.fix import (
     RECONCILED_REASON, SETTLED_REASON, FixOutcome, FixRecord, ItemOutcome,
     SettledBy,
 )
-from pr.thread_models import CommentItem, ReportThread, finding_location
+from pr.thread_models import (
+    CommentItem, CommentSourceKind, ReportThread, finding_location,
+)
 
 
 # The terminal outcomes --settle can record. Each is one of the three the
@@ -80,9 +82,12 @@ UNSETTLED_OUTCOMES = (
     FixOutcome.DECLINED,
 )
 
-# The id in a permalink back to a top-level comment. Capturing, unlike the
-# summary's `_ITEM_ANCHOR_RE`, because the id is the whole point here.
-_SOURCE_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-(\d+)")
+# The id in a permalink back to a top-level comment. Capturing, unlike
+# `summary_model.ITEM_ANCHOR_RE`, because the id is the whole point here — the
+# two differ in what they extract, not in what they recognise, so both build
+# their alternation from the kinds rather than restating it.
+_SOURCE_ANCHOR_RE = re.compile(
+    r"#(?:" + "|".join(re.escape(a) for a in CommentSourceKind.anchors()) + r")-(\d+)")
 
 
 def settlement_for(thread: ReportThread | None) -> FixOutcome | None:

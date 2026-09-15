@@ -33,8 +33,8 @@ from pr import thread_context
 from pr import triage_prompt
 from pr.comments_state import ThreadState
 from pr.thread_models import (
-    CommentItem, Complexity, PRReport, TriageResult, Verification,
-    triage_result_from_dict,
+    CommentItem, CommentSourceKind, Complexity, PRReport, TriageResult,
+    Verification, triage_result_from_dict,
 )
 
 _DOWNGRADE_REASON = (
@@ -78,7 +78,7 @@ def collect_unseen_comments(report: PRReport) -> list[dict]:
         if not c.get("seen"):
             unseen.append({
                 "id": c["id"],
-                "source_type": "issue_comment",
+                "source_type": CommentSourceKind.ISSUE_COMMENT.value,
                 "user": c.get("user", ""),
                 "body": c.get("body", ""),
             })
@@ -86,7 +86,7 @@ def collect_unseen_comments(report: PRReport) -> list[dict]:
         if not c.get("seen"):
             unseen.append({
                 "id": c["id"],
-                "source_type": "review_body",
+                "source_type": CommentSourceKind.REVIEW_BODY.value,
                 "user": c.get("user", ""),
                 "body": c.get("body", ""),
             })
@@ -94,10 +94,20 @@ def collect_unseen_comments(report: PRReport) -> list[dict]:
 
 
 def assign_item_ids(comment_items: list[CommentItem]) -> None:
-    """Assign synthetic IDs to decomposed comment items in place."""
+    """Assign synthetic IDs to decomposed comment items in place.
+
+    The prefix comes off the kind itself, so the id this writes is one
+    `permalinks.comment_item_source` can read back. The two-armed ternary this
+    replaced called everything that was not an issue comment a review body,
+    which gave an entry with a drifted `source_type` an `rb-` id and a
+    permalink pointing at a review that does not exist.
+
+    An item whose kind is UNSET gets a bare `-{source_id}-{index}`, which
+    parses back to no source and so renders without a permalink. That is the
+    honest outcome: nothing here knows which comment it came from.
+    """
     for item in comment_items:
-        prefix = "ic" if item.source_type == "issue_comment" else "rb"
-        item.id = f"{prefix}-{item.source_id}-{item.index}"
+        item.id = f"{item.source_type.id_prefix}-{item.source_id}-{item.index}"
 
 
 def downgrade_unsupported_verdicts(

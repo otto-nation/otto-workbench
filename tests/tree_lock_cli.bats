@@ -19,9 +19,18 @@ setup() {
 
 @test "with-tree-lock does not eat the child command's own flags" {
   # argparse must never see the child command: as a positional it claims
-  # leading flags and dies on "unrecognized arguments".
-  run "$WITH_LOCK" "$TREE" -- grep --version
+  # leading flags and dies on "unrecognized arguments". The extra --flag
+  # tokens belong to the child (sh -c ignores them after the script).
+  run "$WITH_LOCK" "$TREE" -- sh -c 'exit 0' -- --version --flag
   [ "$status" -eq 0 ]
+  [[ "$output" != *"unrecognized arguments"* ]]
+}
+
+@test "a child killed by a signal reports the shell's status convention" {
+  run "$WITH_LOCK" "$TREE" -- sh -c 'kill -TERM $$'
+  [ "$status" -eq 143 ]
+  run "$WITH_LOCK" --check "$TREE"
+  [ "$status" -eq 1 ]
 }
 
 @test "holder records do not accumulate across runs" {

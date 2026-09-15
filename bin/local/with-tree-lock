@@ -37,8 +37,7 @@ USAGE
 if [[ "${1:-}" == "--check" ]]; then
   [[ -n "${2:-}" ]] || { echo "with-tree-lock: --check needs a tree root" >&2; exit 2; }
   PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 "$REPO_ROOT/ai/lib/core/tree_lock_cli.py" --check "$2"
-  exit $?
+    exec python3 "$REPO_ROOT/ai/lib/core/tree_lock_cli.py" --check "$2"
 fi
 
 tree_root="${1:-}"
@@ -48,7 +47,11 @@ shift
 label=""
 if [[ "${1:-}" == "--label" ]]; then
   shift
-  label="${1:-}"
+  if [[ -z "${1:-}" || "${1:-}" == "--" ]]; then
+    echo "with-tree-lock: --label needs a name" >&2
+    exit 2
+  fi
+  label="$1"
   shift
 fi
 

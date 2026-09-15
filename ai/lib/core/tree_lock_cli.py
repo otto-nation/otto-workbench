@@ -52,7 +52,10 @@ def main(argv: list[str], child: list[str]) -> int:
     label = args.label or " ".join(child)
     started = datetime.datetime.now().isoformat(timespec="seconds")
     with acquire(Path(args.tree), command=label, started=started):
-        return subprocess.run(child).returncode
+        code = subprocess.run(child).returncode
+        # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
+        # callers expect the shell convention 128+N (SIGTERM -> 143).
+        return 128 + (-code) if code < 0 else code
 
 
 if __name__ == "__main__":

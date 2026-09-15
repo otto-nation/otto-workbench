@@ -212,7 +212,7 @@ def acquire(tree_root: Path, command: str, started: str):
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             handle.seek(0)
             handle.truncate()
-        except OSError:
+        except BlockingIOError:
             pass
         fcntl.flock(handle, fcntl.LOCK_SH)
         _record(handle, command, started, root)

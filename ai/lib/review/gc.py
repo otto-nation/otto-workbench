@@ -325,18 +325,27 @@ def _remove_target(target: Path) -> None:
     Raises OSError if anything is left — an entry that would not unlink, or a
     run that recreated one in the window below, which surfaces as ENOTEMPTY
     from the non-recursive rmdir.
+
+    A target is not flat: `pr-rebase` keys its tracking file and session log to
+    a directory under the target, so an entry here can be one. Recursing into
+    it costs the lock nothing — run.lock sits at the top level, which no
+    subtree walk reaches — and the guarantee that matters is the one below,
+    where the lock goes last and the rmdir is non-recursive.
     """
     lock_path = target / run_lock.LOCK_FILE
     state_path = target / pr_state.STATE_FILE
-    # ceiling: a target directory is flat — state.json and run.lock — so an
-    # entry that is itself a directory raises OSError here (EISDIR on Linux,
-    # EPERM on macOS) and the target is reported as not pruned rather than
-    # removed. Upgrade trigger: anything that starts writing a subdirectory
-    # under a target. state.json goes after that loop so a target we fail to
-    # empty keeps the file the next sweep's glob finds it by.
+    # state.json goes after this loop so a target we fail to empty keeps the
+    # file the next sweep's glob finds it by.
     for entry in target.iterdir():
-        if entry not in (lock_path, state_path):
-            entry.unlink()
+        if entry in (lock_path, state_path):
+            continue
+        # is_symlink first: `is_dir` follows the link, and `rmtree` refuses a
+        # symlink outright — so a link to a directory would be reported as a
+        # target we could not remove rather than unlinked like the entry it is.
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+            continue
+        entry.unlink()
     state_path.unlink(missing_ok=True)
     lock_path.unlink(missing_ok=True)
     target.rmdir()
@@ -369,10 +378,13 @@ def _prune_one_target(target: Path) -> bool:
             _remove_target(target)
     except run_lock.LockBusy:
         return False
-    except OSError:
+    except OSError as exc:
         # Reported, not raised: one target we could not empty must not abort
         # the sweep, and `not target.exists()` below already says what happened.
-        log.warn(f"GC: could not remove {target.name} — leaving it in place")
+        # The exception rides along because the name alone does not distinguish
+        # a target a live run recreated from one gc cannot read at all, and a
+        # sweep that runs unattended is only ever read through this line.
+        log.warn(f"GC: could not remove {target.name} ({exc}) — leaving it in place")
     return not target.exists()
 
 

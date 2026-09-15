@@ -458,6 +458,84 @@ def test_the_retry_reports_the_commit_the_pass_made(regenerating):
     assert git_out(wt, "log", "-1", "--pretty=%s", landed.sha).strip() == "fix: work"
 
 
+class TestTheRegenCommitHoldsOnlyHookOutput:
+    """The recovery commits what the hook wrote, and nothing of the operator's.
+
+    It runs `--no-verify` and force-pushes, so anything that rides along reaches
+    the remote unchecked under a message describing a regeneration. A worktree
+    is routinely dirty when a push starts — `pr ci --fix` never stashes, and
+    `pr rebase` has popped its stash back by this point.
+    """
+
+    def test_an_unstaged_edit_is_left_for_its_author(self, regenerating):
+        wt, remote = regenerating
+        (wt / "src.py").write_text("edited\n")
+        git_out(wt, "add", "src.py")
+        git_out(wt, "commit", "-qm", "fix: work")
+        (wt / "src.py").write_text("work in progress\n")
+
+        landed = land.land_head(wt, gated=False, regen="chore: regenerate")
+
+        assert "src.py" not in git_out(
+            wt, "show", "--name-only", "--pretty=", "HEAD")
+        assert (wt / "src.py").read_text() == "work in progress\n"
+        # The hooks read that edit, so a push without it sends a HEAD nothing
+        # checked. Refusing is the outcome, and the work stays the author's.
+        assert landed.status is CommitStatus.PUSH_FAILED
+        assert _remote_head(remote) != git_out(wt, "rev-parse", "HEAD").strip()
+
+    def test_a_staged_file_does_not_ride_in_on_the_commit(self, regenerating):
+        """`git commit` with no pathspec takes the whole index, not what was
+        staged for it."""
+        wt, _ = regenerating
+        (wt / "src.py").write_text("edited\n")
+        git_out(wt, "add", "src.py")
+        git_out(wt, "commit", "-qm", "fix: work")
+        (wt / "staged.py").write_text("staged by the operator\n")
+        git_out(wt, "add", "staged.py")
+
+        land.land_head(wt, gated=False, regen="chore: regenerate")
+
+        regen_commit = git_out(wt, "log", "--pretty=%s", "-1").strip()
+        assert regen_commit == "chore: regenerate"
+        assert "staged.py" not in git_out(
+            wt, "show", "--name-only", "--pretty=", "HEAD")
+        assert git_out(wt, "status", "--porcelain", "staged.py").startswith("A ")
+
+    def test_the_hooks_own_output_is_still_committed(self, regenerating):
+        """The narrowing must not cost the recovery its whole reason to exist."""
+        wt, remote = regenerating
+        (wt / "src.py").write_text("edited\n")
+
+        landed = land.land(
+            wt, message="fix: work", gated=False, regen="chore: regenerate",
+        )
+
+        assert landed.status is CommitStatus.PUSHED
+        assert (wt / "gen.txt").read_text() == "regenerated\n"
+        assert "gen.txt" in git_out(
+            wt, "show", "--name-only", "--pretty=", "HEAD")
+        assert _remote_head(remote) == git_out(wt, "rev-parse", "HEAD").strip()
+
+    def test_a_file_the_operator_and_the_hook_both_touched_stays_uncommitted(
+            self, regenerating):
+        """Indistinguishable from an edit, so the work is kept over the artifact.
+
+        The operator edits the same generated file the hook rewrites. Both read
+        ` M `, and committing on a guess would force-push their edit.
+        """
+        wt, _ = regenerating
+        (wt / "src.py").write_text("edited\n")
+        git_out(wt, "add", "src.py")
+        git_out(wt, "commit", "-qm", "fix: work")
+        (wt / "gen.txt").write_text("hand-edited by the operator\n")
+
+        landed = land.land_head(wt, gated=False, regen="chore: regenerate")
+
+        assert git_out(wt, "log", "--pretty=%s", "-1").strip() == "fix: work"
+        assert landed.status is CommitStatus.PUSH_FAILED
+
+
 def test_a_caller_that_did_not_ask_for_the_retry_keeps_the_refusal(regenerating):
     wt, remote = regenerating
     before = _remote_head(remote)

@@ -29,7 +29,7 @@ from pr.fix import FixOutcome, FixRecord  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import CommentItem  # noqa: E402
 
-_STATE_WORKTREE = "/wt"
+_STATE_WORKTREE = Path("/wt")
 
 
 def _fix(items=(), *, commit_sha="", commit_status=None, head_sha="", **kwargs):
@@ -48,7 +48,7 @@ def _make_state(fix=None):
     return PRState(
         identity=PRIdentity(
             repo="owner/repo", branch="feat", pr_number=1,
-            head_sha="abc1234", worktree_root=_STATE_WORKTREE,
+            head_sha="abc1234", worktree_root=str(_STATE_WORKTREE),
         ),
         fix=fix or _fix(),
     )
@@ -69,7 +69,7 @@ class TestFixPassResolutionsReachTheTally:
         state.comments.by_state = dict(by_state)
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state") as save:
-            fix_state.persist(_fix(), Path("/wt"), ctx, None,
+            fix_state.persist(_fix(), _STATE_WORKTREE, ctx, None,
                                   resolved=resolved)
         assert save.called, "the pass must still save what it persisted"
         return state.comments
@@ -93,7 +93,7 @@ class TestFixPassResolutionsReachTheTally:
         state.comments.by_state = {"new": 2}
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state"):
-            fix_state.persist(_fix(), Path("/wt"), ctx, None)
+            fix_state.persist(_fix(), _STATE_WORKTREE, ctx, None)
         assert state.comments.by_state == {"new": 2}
 
 
@@ -169,7 +169,7 @@ class TestThePassWritesOnce:
         state.comments.by_state = {"new": 2}
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state") as save:
-            fix_state.persist(_fix(), Path("/wt"), make_ctx(), None,
+            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None,
                               resolved=resolved)
         return save, state
 
@@ -186,7 +186,7 @@ class TestThePassWritesOnce:
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state",
                    side_effect=lambda *_: seen.update(state.comments.by_state)):
-            fix_state.persist(_fix(), Path("/wt"), make_ctx(), None,
+            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None,
                               resolved=[ThreadState.NEW])
         assert seen.get(ThreadState.RESOLVED) == 1
 
@@ -201,13 +201,13 @@ class TestAFailedWriteDoesNotTakeThePassDown:
 
     def test_the_failure_is_logged_and_swallowed(self, capsys):
         with patch("pr.state.load_or_init", side_effect=OSError("disk full")):
-            fix_state.persist(_fix(), Path("/wt"), make_ctx(), None)
+            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None)
         assert "fix state update failed" in capsys.readouterr().err
 
     def test_the_failure_reaches_the_trail(self):
         trail = MagicMock()
         with patch("pr.state.load_or_init", side_effect=OSError("disk full")):
-            fix_state.persist(_fix(), Path("/wt"), make_ctx(), trail)
+            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), trail)
         assert trail.error.called
         assert "disk full" in trail.error.call_args[0][1]
 
@@ -229,7 +229,7 @@ class TestTheRecordAndTheIdentityNameDifferentCommits:
                    side_effect=lambda **kw: captured.update(kw) or state), \
              patch("pr.state.save_state"):
             fix_state.persist(
-                _fix(head_sha="fff9999"), Path("/wt"),
+                _fix(head_sha="fff9999"), _STATE_WORKTREE,
                 make_ctx(head_sha="aaa1111"), None,
             )
         assert captured["head_sha"] == "aaa1111"
@@ -239,7 +239,7 @@ class TestTheRecordAndTheIdentityNameDifferentCommits:
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state"):
             fix_state.persist(
-                _fix(head_sha="fff9999"), Path("/wt"),
+                _fix(head_sha="fff9999"), _STATE_WORKTREE,
                 make_ctx(head_sha="aaa1111"), None,
             )
         assert state.fix.fix.head_sha == "fff9999"

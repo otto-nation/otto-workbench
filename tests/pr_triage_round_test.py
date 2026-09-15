@@ -20,10 +20,10 @@ import sys
 from unittest.mock import MagicMock, patch
 
 from conftest import (
-    make_ctx, supersession_context, supersession_evidence, supersession_verdict,
+    REPO_ROOT, make_ctx, supersession_context, supersession_evidence,
+    supersession_verdict,
 )
 
-REPO_ROOT = __import__("conftest").REPO_ROOT
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -131,7 +131,34 @@ class TestFixableCountMatchesTheClassifier:
         assert _fixable_count([entry]) == 0
 
 
-# ── already_addressed verification ─────────────────────────────────────────
+class TestClassifyAlreadyAddressed:
+    """A suggestion the code already satisfies must not be routed to dismissed.
+
+    Triage sees current HEAD, which already contains fixes made earlier in the
+    same review cycle. Treating "the code already does this" as `invalid` posts
+    a reply telling the reviewer their suggestion was inapplicable — when it was
+    in fact the reason for the change.
+    """
+
+    def _entry(self, verification):
+        return CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn",
+            summary="drop the nil-logger guard",
+            classification="actionable_suggestion",
+            verification=verification, complexity="low", state=ThreadState.NEW,
+        )
+
+    def test_already_addressed_gets_own_bucket(self):
+        result = triage_round.classify_entries([self._entry("already_addressed")])
+        assert len(result.already_addressed) == 1
+        assert result.dismissed == []
+        assert result.fixable == []
+        assert result.needs_human == []
+
+    def test_invalid_still_dismissed(self):
+        result = triage_round.classify_entries([self._entry("invalid")])
+        assert len(result.dismissed) == 1
+        assert result.already_addressed == []
 
 
 class TestHoldIfSuperseded:
@@ -215,8 +242,6 @@ class TestHoldWhileContested:
         trail.decision.assert_called_once()
         data = trail.decision.call_args.kwargs["data"]
         assert data["reasons"] == ["needs_discussion", "question"]
-
-
 
 
 class TestTheRoundMergesItsTwoSides:

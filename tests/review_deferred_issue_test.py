@@ -11,7 +11,7 @@ those 50 never reached, found by tracing the module rather than the surface:
   `url or existing_issue_url` fallback had never been evaluated
 - `_no_team_key` was reached only transitively, and neither of its two trail
   records was asserted
-- `validate_track` is skipped entirely on an empty snapshot, which is #1319
+- `validate_track` was skipped entirely on an empty snapshot, which is #1319
 - the tracking issue's link reaches the summary comment only because
   `finalize_deferred` runs first and writes it into the same in-memory state —
   an ordering nothing tested and nothing on the writer's side documented
@@ -205,22 +205,33 @@ class TestTrackValidation:
         with pytest.raises(SystemExit):
             deferred_issue.validate_track(state, {"t2"})
 
-    def test_an_empty_snapshot_accepts_an_id_that_cannot_exist(self, worktree):
-        """#1319, pinned as it behaves today rather than as it should.
+    def test_an_empty_snapshot_rejects_an_id_that_cannot_exist(self, worktree):
+        """#1319: the one case where "filed nothing" reads as agreement.
 
-        `finalize_deferred` returns before `validate_track` when the snapshot
-        holds no items, so a typo'd --track is neither filed nor reported: the
-        run exits 0 in silence. That is the "filed nothing reads as agreement"
-        failure the validator exists to prevent, surviving in the one case
-        where nothing else speaks either.
-
-        Asserted so the fix in #1319 has to change a test that says what the
-        old behaviour was, rather than discovering it.
+        `finalize_deferred` used to return before `validate_track` when the
+        snapshot held no items, so a typo'd --track was neither filed nor
+        reported and the run exited 0 in silence. An id that names no deferred
+        thread is now reported whether or not the snapshot has items.
         """
         state = PRState(identity=_identity())
         with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
-            deferred_issue.finalize_deferred(state, _ctx(worktree), {}, track={"nope"})
+            with pytest.raises(SystemExit):
+                deferred_issue.finalize_deferred(
+                    state, _ctx(worktree), {}, track={"nope"})
         create.assert_not_called()
+
+    def test_an_empty_snapshot_with_no_track_stays_silent(self, worktree, capsys):
+        """The companion case #1319 insists the fix keeps apart.
+
+        A snapshot with no items and no --track is an ordinary no-op: there is
+        no unknown id, so validating one more time must not turn a quiet run
+        into a noisy one.
+        """
+        state = PRState(identity=_identity())
+        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
+            deferred_issue.finalize_deferred(state, _ctx(worktree), {})
+        create.assert_not_called()
+        assert capsys.readouterr().err == ""
 
 
 class TestTheIssueLinkReachesTheSummary:

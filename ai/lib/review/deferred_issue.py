@@ -84,6 +84,10 @@ def validate_track(state: pr_state.PRState, track) -> None:
     A typo'd id would otherwise be indistinguishable from a thread the tool
     chose not to file, and the user would read "filed nothing" as agreement.
 
+    Runs against an empty snapshot too. An empty selection has no unknown ids
+    and says nothing, so the guard costs an ordinary no-op run no noise while
+    still catching the id that could never have matched.
+
     ceiling: this exits rather than returning a complaint, which is why it can
     only be called from a path the CLI owns. The alternative — returning the
     unknown ids and letting the caller exit — is what `pr.settlement`'s
@@ -127,10 +131,16 @@ def finalize_deferred(
     per thread, never the fallback disposition for whatever a fix pass failed
     to fix.
     """
+    # Validation precedes the empty-snapshot return rather than following it.
+    # An id naming no deferred thread is an operator asking for something that
+    # cannot happen, and an empty snapshot is the one case where nothing else
+    # would say so — filing nothing there is indistinguishable from success.
+    # The ordinary no-op stays silent on its own: no `--track` selects nothing,
+    # so there is no unknown id to report.
+    validate_track(state, track)
+
     if not state.fix.fix.items:
         return
-
-    validate_track(state, track)
 
     # `reason` carries why the thread was held back, and it is the only column
     # in the tracking issue that distinguishes an agent that gave up from a

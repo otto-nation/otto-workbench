@@ -6,10 +6,14 @@ files under the state root. The `stats` subcommand reads the global AI usage
 ledger instead — a separate, monthly-rotated store that every AI call appends to.
 
 One user command spans several processes, each with its own `invocation` and all
-sharing a `root` (see `core.trail`). `show` takes either ID and renders the whole
-command, labelling each event with the script that wrote it; `--only` narrows it
-back to the single process named. `list` rows are whole commands for the same
-reason, so `pr review` is one row rather than three.
+sharing a `root` (see `core.trail`). `show` takes any of those IDs and renders
+the whole command, labelling each event with the script that wrote it; `--only`
+narrows it back to the single process named. `list` rows are whole commands for
+the same reason, so `pr review` is one row rather than three.
+
+A window selects *commands*, not events: a command whose first event predates the
+window is listed whole when any part of it falls inside, because half a timeline
+answers no question anyone asks of it.
 """
 
 from __future__ import annotations
@@ -709,8 +713,13 @@ def main():
 
     # list
     p_list = sub.add_parser("list", help="List invocations")
-    p_list.add_argument("--script", help="Filter by script name")
-    p_list.add_argument("--since", help="Time window (e.g. 2h, 1d)")
+    p_list.add_argument(
+        "--script",
+        help="Filter by script name — lists the whole command that reached it")
+    p_list.add_argument(
+        "--since",
+        help="Time window (e.g. 2h, 1d) — selects commands active in it, "
+             "each listed whole even if it started earlier")
     p_list.add_argument("--repo", help="Filter by repo (org/repo)")
     p_list.add_argument("--json", action="store_true", help="Output raw JSONL")
 

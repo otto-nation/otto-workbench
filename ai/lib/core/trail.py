@@ -369,6 +369,15 @@ class Trail:
 
         ``--debug`` echoes either way, because the flag is about watching what a
         run decided rather than about what is worth keeping.
+
+        The root is published process-wide, which is what lets a spawned child
+        inherit it without every spawn site knowing to pass it. The cost is that
+        two *unrelated* top-level runs in one process would nest the second
+        under the first: nothing distinguishes "a child inherited this" from "a
+        sibling set it a moment ago". Every entry point opens exactly one trail
+        in ``main()``, so this is a constraint on how to call it rather than a
+        live bug — a caller that genuinely needs two independent roots in one
+        process has to clear ``TRAIL_ROOT_ENV`` between them.
         """
         debug = debug or os.environ.get("WORKBENCH_DEBUG", "") == "1"
         if record:

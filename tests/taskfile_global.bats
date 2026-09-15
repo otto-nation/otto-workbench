@@ -5,6 +5,11 @@
 setup() {
   load 'test_helper'
   common_setup
+  # go-task's env: block exports these into every child, including this suite
+  # when it runs under `task pr:create`. Tests that assert on the pin assume
+  # a clean environment and set the value themselves; an inherited value wins
+  # over `task WORKBENCH_LIB_DIR=...` CLI assignments and hides the case.
+  unset WORKBENCH_LIB_DIR TASKFILE_DIR 2>/dev/null || true
 }
 
 teardown() {

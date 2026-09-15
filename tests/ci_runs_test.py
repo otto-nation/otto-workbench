@@ -98,6 +98,69 @@ def test_merge_runs_in_progress_preserves_failure():
     assert result["status"] == "in_progress"
 
 
+# ── fetch_merged ─────────────────────────────────────────────────────────
+
+
+def _fetch_merged(payloads):
+    """Run `fetch_merged` over payloads GitHub would have served, in list order."""
+    by_id = {p["databaseId"]: p for p in payloads}
+    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: by_id[rid]):
+        return ci_runs.fetch_merged("owner/repo", [p["databaseId"] for p in payloads])
+
+
+def test_a_jobless_cancelled_run_does_not_become_the_merged_conclusion():
+    """`Release` is routinely cancelled with no jobs at a commit whose CI passed.
+
+    Leading the merge with it would leave the commit reported as `cancelled`,
+    which `CIDomain.readiness` turns into a spurious `CI failing` blocker.
+    """
+    fetched = _fetch_merged([
+        {"databaseId": 300, "conclusion": "cancelled", "status": "completed", "jobs": []},
+        {"databaseId": 200, "conclusion": "success", "status": "completed",
+         "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]},
+    ])
+    assert fetched.merged["conclusion"] == "success"
+
+
+def test_a_cancelled_run_that_has_jobs_may_lead_the_merge():
+    """The jobs are the evidence — a run holding them keeps its claim to lead."""
+    fetched = _fetch_merged([
+        {"databaseId": 300, "conclusion": "cancelled", "status": "completed",
+         "jobs": [{"name": "test", "status": "completed", "conclusion": "cancelled"}]},
+        {"databaseId": 200, "conclusion": "success", "status": "completed", "jobs": []},
+    ])
+    assert fetched.merged["conclusion"] == "cancelled"
+
+
+def test_a_failure_still_wins_over_a_jobless_cancelled_run():
+    fetched = _fetch_merged([
+        {"databaseId": 300, "conclusion": "cancelled", "status": "completed", "jobs": []},
+        {"databaseId": 200, "conclusion": "failure", "status": "completed",
+         "jobs": [{"name": "test", "status": "completed", "conclusion": "failure"}]},
+    ])
+    assert fetched.merged["conclusion"] == "failure"
+
+
+def test_every_fetched_run_is_still_reported_when_one_is_reordered():
+    """Reordering picks the leader; it must not drop a payload or its jobs."""
+    fetched = _fetch_merged([
+        {"databaseId": 300, "conclusion": "cancelled", "status": "completed", "jobs": []},
+        {"databaseId": 200, "conclusion": "success", "status": "completed",
+         "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]},
+    ])
+    assert [p["_run_id"] for p in fetched.payloads] == [300, 200]
+    assert len(fetched.merged["jobs"]) == 1
+
+
+def test_all_runs_cancelled_and_jobless_still_merges():
+    """With no better leader available, the original order stands."""
+    fetched = _fetch_merged([
+        {"databaseId": 300, "conclusion": "cancelled", "status": "completed", "jobs": []},
+        {"databaseId": 200, "conclusion": "cancelled", "status": "completed", "jobs": []},
+    ])
+    assert fetched.merged["conclusion"] == "cancelled"
+
+
 # ── parse_run ────────────────────────────────────────────────────────────
 
 
@@ -287,6 +350,42 @@ def test_parse_run_does_not_enrich_lint_with_uninformative_annotations():
         with patch("pr.ci_annotations.log_fallback") as mock_fallback:
             ci_runs.parse_run("owner/repo", run_data)
     mock_fallback.assert_not_called()
+
+
+def test_parse_run_does_not_double_count_a_job_reported_by_two_runs():
+    """A cancelled run and the real run of one workflow both reach merge_runs.
+
+    Their job lists are concatenated, so the same job name arrives twice and its
+    failures land in one group — the item count must still be the real one.
+    """
+    run_data = _make_run_data([
+        {"name": "Test", "conclusion": "failure", "databaseId": 10, "_source_run_id": 300},
+        {"name": "Test", "conclusion": "failure", "databaseId": 11, "_source_run_id": 200},
+    ])
+    annotations = [
+        {"annotation_level": "failure", "message": "boom", "path": "a.py", "start_line": 3, "title": "E1"},
+    ]
+    with patch("gh.run_reads.fetch_annotations", return_value=annotations):
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.LINT)):
+            result = ci_runs.parse_run("owner/repo", run_data)
+    group = list(result.failures.values())[0]
+    assert len(group.items) == 1
+
+
+def test_parse_run_keeps_distinct_failures_sharing_one_id():
+    """Two annotations on one file and line share an id but are two failures."""
+    run_data = _make_run_data([
+        {"name": "Lint", "conclusion": "failure", "databaseId": 10},
+    ])
+    annotations = [
+        {"annotation_level": "failure", "message": "unused import", "path": "a.py", "start_line": 3, "title": "E1"},
+        {"annotation_level": "failure", "message": "line too long", "path": "a.py", "start_line": 3, "title": "E1"},
+    ]
+    with patch("gh.run_reads.fetch_annotations", return_value=annotations):
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.LINT)):
+            result = ci_runs.parse_run("owner/repo", run_data)
+    group = list(result.failures.values())[0]
+    assert len(group.items) == 2
 
 
 # ── count_job_states ─────────────────────────────────────────────────────

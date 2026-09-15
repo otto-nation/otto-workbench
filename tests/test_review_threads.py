@@ -54,9 +54,8 @@ from pr import summary_scope
 from pr import summary_row
 from pr import comments as pr_comments
 from pr import settlement
-from pr.comments_fix import (
-    RECONCILED_STATUS_TEXT, UNATTRIBUTED_STATUS_TEXT, FixSummary,
-)
+from pr.comments_fix import FixSummary
+from pr.summary_model import ActionCell, RetiredActionCell
 from pr.fix import (
     FixOutcome, FixRecord, ItemOutcome, RECONCILED_REASON, SETTLED_REASON,
     SettledBy,
@@ -1257,7 +1256,7 @@ class TestFixedStatusText:
         """"Fixed" and "nothing committed" cannot both be true."""
         cp = attribution.CommitPushResult(None, "no_changes", "")
         text = summary_row.fixed_status_text(cp, "owner/repo")
-        assert text == UNATTRIBUTED_STATUS_TEXT
+        assert text == ActionCell.UNATTRIBUTED
         assert "no commit needed" not in text
 
     def test_commit_failed(self, rt):
@@ -1368,7 +1367,7 @@ class TestBuildSummaryBody:
         body = summary_render.build_summary_body(
             content(fixed=[self._fixed_entry()]), cp, "owner/repo", 1, {},
         )
-        assert UNATTRIBUTED_STATUS_TEXT in body
+        assert ActionCell.UNATTRIBUTED in body
         assert "no commit needed" not in body
 
     def test_commit_failed_shows_precommit_hint(self, rt, content):
@@ -1863,7 +1862,7 @@ class TestSummaryUsesPerThreadCommit:
             id="t1", summary="fix regex", file="p.py", line=10,
             outcome=FixOutcome.FIXED,
         ))
-        assert UNATTRIBUTED_STATUS_TEXT in body
+        assert ActionCell.UNATTRIBUTED in body
 
     def test_each_round_keeps_its_own_attribution(self, rt):
         """The failure: one pass's envelope SHA relabelled every round."""
@@ -1909,7 +1908,7 @@ class TestSummaryUsesPerThreadCommit:
                           reason=RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert RECONCILED_STATUS_TEXT in body
+        assert ActionCell.RECONCILED in body
         assert "fixed**" not in body
         assert "1 settled elsewhere" in body
 
@@ -1927,7 +1926,7 @@ class TestSummaryUsesPerThreadCommit:
                           outcome=FixOutcome.FIXED),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert UNATTRIBUTED_STATUS_TEXT in body
+        assert ActionCell.UNATTRIBUTED in body
         assert "Fixed in" not in body
         assert "/blob/def5678/a.py" in body
 
@@ -2036,7 +2035,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             summary_publish.render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert UNATTRIBUTED_STATUS_TEXT in body
+        assert ActionCell.UNATTRIBUTED in body
         assert "Fixed in" not in body
         assert "no commit needed" not in body
         # Where to look stays knowable even when who landed it does not: the
@@ -2056,7 +2055,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             summary_publish.render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert RECONCILED_STATUS_TEXT in body
+        assert ActionCell.RECONCILED in body
         assert "bbb2222" not in body
 
     def test_a_still_unmoved_head_keeps_the_failure(self, rt):
@@ -2135,7 +2134,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         warned = int(re.search(
             r"(\d+) fixed row\(s\) have no commit", capsys.readouterr().err,
         ).group(1))
-        assert warned == body.count(UNATTRIBUTED_STATUS_TEXT)
+        assert warned == body.count(ActionCell.UNATTRIBUTED)
 
     def test_the_folded_row_is_neither_counted_nor_rendered(self, rt, capsys):
         body = self._publish(rt, self._threads(rt))
@@ -2148,8 +2147,8 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         # Three rows carry no commit link; only two of them claim nothing. The
         # third says where its fix went, which is why "uncited" is the wrong
         # test and the rendered cell is the right one.
-        assert body.count(RECONCILED_STATUS_TEXT) == 1
-        assert body.count(UNATTRIBUTED_STATUS_TEXT) == 2
+        assert body.count(ActionCell.RECONCILED) == 1
+        assert body.count(ActionCell.UNATTRIBUTED) == 2
         assert "2 fixed row(s) have no commit" in err
 
     def test_a_table_with_nothing_to_report_stays_quiet(self, rt, capsys):
@@ -2157,7 +2156,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         body = self._publish(rt, [
             self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION),
         ])
-        assert RECONCILED_STATUS_TEXT in body
+        assert ActionCell.RECONCILED in body
         assert "no commit to attribute" not in capsys.readouterr().err
 
 
@@ -4668,7 +4667,7 @@ class TestRunSettle:
         with self._resolves_to(rt, ""):
             assert settlement.run_settle(ctx, ["t1"], "fixed", "", "") == 0
         err = capsys.readouterr().err
-        assert RECONCILED_STATUS_TEXT in err
+        assert ActionCell.RECONCILED in err
         assert "--commit" in err
 
 
@@ -4716,8 +4715,8 @@ class TestSettledRowsAreNotCreditedToThePass:
                             settled_by=SettledBy.OPERATOR)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = summary_row.fixed_status_for(entry, cp, "owner/repo")
-        assert cell == RECONCILED_STATUS_TEXT
-        assert cell != UNATTRIBUTED_STATUS_TEXT
+        assert cell == ActionCell.RECONCILED
+        assert cell != ActionCell.UNATTRIBUTED
 
     def test_a_settled_row_that_resolved_a_commit_cites_that_one(self, rt):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
@@ -4738,7 +4737,7 @@ class TestSettledRowsAreNotCreditedToThePass:
                             reason=RECONCILED_REASON)
         cp = attribution.CommitPushResult("aaa1111", "pushed", "")
         assert summary_row.fixed_status_for(entry, cp, "owner/repo") == (
-            UNATTRIBUTED_STATUS_TEXT
+            ActionCell.UNATTRIBUTED
         )
 
 
@@ -6187,13 +6186,13 @@ class TestGeneratedActionCell:
         make an unverified row differ from its own published copy every round
         and restate it for the life of the PR.
         """
-        cell = summary_row.fixed_in_cell("9f2e1a0", "owner/repo", verified=False)
+        cell = ActionCell.fixed_in("9f2e1a0", "owner/repo", verified=False)
         assert summary_model.is_generated_action(cell) is True
         assert summary_model.action_outcome(cell) is FixOutcome.FIXED
         assert "unverified" in cell.lower()
 
     def test_a_verified_fix_cell_does_not_hedge(self, rt):
-        cell = summary_row.fixed_in_cell("9f2e1a0", "owner/repo", verified=True)
+        cell = ActionCell.fixed_in("9f2e1a0", "owner/repo", verified=True)
         assert summary_model.action_outcome(cell) is FixOutcome.FIXED
         assert "unverified" not in cell.lower()
 
@@ -6211,11 +6210,6 @@ class TestGeneratedActionCell:
     ])
     def test_the_literal_cells_are_recognised(self, rt, cell):
         assert summary_model.is_generated_action(cell) is True
-
-    def test_a_retired_wording_is_still_recognised(self, rt):
-        """A published summary outlives the builder that wrote its cells, so an
-        opening no builder produces any more still opens rows on live PRs."""
-        assert summary_model.is_generated_action("Added to the PR description (no commit)") is True
 
     @pytest.mark.parametrize("cell", [
         "",
@@ -6305,12 +6299,14 @@ class TestActionCellOutcome:
             assert summary_model.action_outcome(
                 summary_row.fixed_status_text(bare, "owner/repo")) is expected
 
-    def test_every_cell_a_status_builder_can_emit_is_one_we_recognise(self, rt):
-        """A wording with no entry reads as hand-written and freezes its row.
+    def test_every_cell_a_status_builder_can_emit_is_a_live_wording(self, rt):
+        """A wording with no member reads as hand-written and freezes its row.
 
         Swept over the builders rather than listed, because the list is what
-        goes stale: the wording is added in one place and the table it has to be
-        registered in is somewhere else entirely.
+        goes stale. The assertion is `ActionCell` and not merely "recognised":
+        a builder emitting a `RetiredActionCell` opening parses fine and so
+        would pass the weaker test, while meaning the wording was retired out
+        from under a live caller.
         """
         entry = CommentItem(id="t1", summary="s", file="a.py", line=1)
         settled = CommentItem(id="t2", summary="s", file="a.py", line=1,
@@ -6328,14 +6324,52 @@ class TestActionCellOutcome:
             for r in (True, False)
             for sha in ("9f2e1a0", "")
         ]
-        assert [c for c in cells if summary_model.action_outcome(c) is None] == []
+        cells += [ActionCell.deferred(i, u) for i, u in (
+            ("ENG-1", "https://linear.app/i/ENG-1"), ("ENG-1", ""), ("", ""))]
+        cells += [summary_model.HumanReason.prose_for(r) for r in (
+            *(m.value for m in summary_model.HumanReason), "wat_is_this", "")]
+        cells += [ActionCell.DISMISSED, ActionCell.RECONCILED]
+        stale = [c for c in cells
+                 if not isinstance(summary_model._ActionVocabulary.matching(c), ActionCell)]
+        assert stale == []
+
+    def test_no_live_wording_is_unreachable_from_the_builders(self, rt):
+        """A member nobody emits is a retired wording still filed as live.
+
+        The inverse of the sweep above, and the half that has no other guard:
+        a wording drops out of use silently, because nothing fails when a
+        builder stops producing one. "Added to the PR description (no commit)"
+        sat in the live table for as long as it did for exactly that reason.
+        """
+        entry = CommentItem(id="t1", summary="s", file="a.py", line=1)
+        settled = CommentItem(id="t2", summary="s", file="a.py", line=1,
+                              settled_by=SettledBy.RECONCILIATION)
+        emitted = {
+            summary_model._ActionVocabulary.matching(
+                summary_row.fixed_status_for(
+                    e, attribution.CommitPushResult(sha, status, ""), "owner/repo"))
+            for status in CommitStatus
+            for sha in ("9f2e1a0", None)
+            for e in (entry, settled)
+        }
+        emitted |= {
+            summary_model._ActionVocabulary.matching(
+                summary_row.addressed_status_for(
+                    attribution.AddressedFraming(in_response=r, sha=sha), "owner/repo"))
+            for r in (True, False)
+            for sha in ("9f2e1a0", "")
+        }
+        # The three the renderer writes directly, and the five HumanReason names.
+        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.RECONCILED}
+        emitted |= {m.cell for m in summary_model.HumanReason}
+        assert set(ActionCell) - emitted == set()
 
     def test_a_fix_reported_two_ways_reads_the_same(self, rt):
         """The false positive a cell comparison produces: same outcome, two
         wordings, because one round resolved a commit and the next did not."""
-        cited = summary_row.fixed_in_cell("9f2e1a0", "owner/repo")
+        cited = ActionCell.fixed_in("9f2e1a0", "owner/repo")
         assert summary_model.action_outcome(cited) is summary_model.action_outcome(
-            UNATTRIBUTED_STATUS_TEXT)
+            ActionCell.UNATTRIBUTED)
 
     def test_every_human_reason_prose_reads_as_open(self, rt):
         for reason in summary_model.HumanReason:
@@ -6358,18 +6392,129 @@ class TestActionCellOutcome:
         re-classification — the row is the hand-held path's business, not this."""
         assert summary_model.action_outcome(cell) is None
 
-    def test_no_opening_opens_another_under_a_different_outcome(self, rt):
-        """What lets `_action_outcome` scan `_ACTION_OUTCOMES` in any order. Add
-        an opening that another one opens and the cell reports whichever the
-        scan reached first, so the row is restated every round or frozen holding
-        the outcome it left — with no wording anywhere to show which."""
-        overlaps = [
-            f"{opening!r} ({outcome}) opens {longer!r} ({other})"
-            for opening, outcome in summary_model.ACTION_OUTCOMES.items()
-            for longer, other in summary_model.ACTION_OUTCOMES.items()
-            if longer != opening and longer.startswith(opening) and other is not outcome
-        ]
-        assert overlaps == []
+    def test_no_two_openings_are_equal(self, rt):
+        """Two members declared with the same opening are silently one member.
+
+        `StrEnum` aliases the second to the first and raises nothing, so the
+        aliased member's outcome is simply gone and every cell it was meant to
+        grade reports the survivor's. `@enum.unique` would catch it within one
+        enum; nothing catches it across the live and retired halves, which is
+        the pair most at risk — retiring a wording without deleting the live
+        member is exactly how a duplicate arises.
+        """
+        openings = [m.value for m in summary_model._ActionVocabulary.members()]
+        assert sorted(openings) == sorted(set(openings))
+
+    def test_a_longer_opening_wins_over_the_one_it_extends(self, rt):
+        """The scan order, which replaced the rule forbidding overlap.
+
+        An opening extending another is not a collision to legislate away: the
+        longer one is the more specific claim about what the cell says, and
+        resolving to it is right. Scanning longest-first makes that the answer
+        whatever order the members are declared in — the predecessor walked a
+        dict in insertion order, so the answer moved when a line did.
+        """
+        assert summary_model._ActionVocabulary.matching(
+            "Fix applied (commit not recorded)") is ActionCell.UNATTRIBUTED
+        assert summary_model._ActionVocabulary.matching(
+            "Fix committed locally (push failed)") is ActionCell.PUSH_FAILED
+        assert summary_model._ActionVocabulary.matching(
+            "Fix applied") is RetiredActionCell.APPLIED
+
+    def test_a_dynamic_cell_opens_with_its_own_member(self, rt):
+        """The two cells with a variable tail, pinned to the opening they carry.
+
+        This is what makes the vocabulary closed by construction rather than by
+        a sweep: a formatter interpolating a literal instead of its member
+        could drift from the parse side, and nothing else would notice.
+        """
+        for verified in (True, False, None):
+            cell = ActionCell.fixed_in("9f2e1a0", "owner/repo", verified=verified)
+            assert cell.startswith(ActionCell.FIXED_IN)
+            assert summary_model.action_outcome(cell) is FixOutcome.FIXED
+        for args in (("ENG-1", "https://linear.app/i/ENG-1"), ("ENG-1", ""), ("", "")):
+            cell = ActionCell.deferred(*args)
+            assert cell.startswith(ActionCell.DEFERRED)
+            assert summary_model.action_outcome(cell) is FixOutcome.DEFERRED
+
+    def test_every_live_opening_is_spelled_exactly(self, rt):
+        """The literal spellings, pinned as literals. The only test that can
+        catch a reworded cell.
+
+        Every other assertion here reads a wording off the member that wrote
+        it, so it holds for whatever the member says — render-then-reparse is
+        self-consistent and passes a swapped or reworded cell without comment.
+        What a silent reword costs is not a duplicate row: the Action cell is
+        excluded from `row_key_from_cells`, so the row keeps its identity. It
+        is that every *already published* row carrying the old wording stops
+        being recognised as ours, is held by `hand_written_rows`, and freezes
+        for the life of the PR — while `RoundScope` loses the outcome it needed
+        to see the row change.
+
+        So a reword is a deliberate two-step: pin the new spelling here, and
+        move the old one to `RetiredActionCell` so the published rows keep
+        parsing.
+        """
+        assert {m.value: m.outcome for m in ActionCell} == {
+            "Fixed in ": FixOutcome.FIXED,
+            "Fix applied (commit failed — pre-commit hook?)": FixOutcome.FIXED,
+            "Fix applied (commit not recorded)": FixOutcome.FIXED,
+            "Fix committed locally (push held pending discussion)": FixOutcome.FIXED,
+            "Fix committed locally (push failed)": FixOutcome.FIXED,
+            "Fix committed locally (push reported success, remote does not have it)":
+                FixOutcome.FIXED,
+            "Fix committed and pushed (could not reach the remote to confirm)":
+                FixOutcome.FIXED,
+            "Fix pending": FixOutcome.FIXED,
+            "Addressed outside the fix pass": FixOutcome.SETTLED_ELSEWHERE,
+            "Deferred": FixOutcome.DEFERRED,
+            "Already addressed": FixOutcome.ALREADY_ADDRESSED,
+            "Dismissed (invalid)": FixOutcome.DISMISSED,
+            "Contested — needs discussion": FixOutcome.NEEDS_HUMAN,
+            "Conflicting reviewer feedback": FixOutcome.NEEDS_HUMAN,
+            "Question for the author": FixOutcome.NEEDS_HUMAN,
+            "Too complex to auto-fix": FixOutcome.NEEDS_HUMAN,
+            "Needs discussion": FixOutcome.NEEDS_HUMAN,
+        }
+
+    def test_every_retired_opening_is_spelled_exactly(self, rt):
+        """The retired half, where the literal is the entire contract.
+
+        A live wording can at least be derived from the builder that writes it.
+        A retired one has no builder, so nothing but this test says what it was
+        — and the rows depending on it are on PRs already published.
+        """
+        assert {m.value: m.outcome for m in RetiredActionCell} == {
+            "Fix applied": FixOutcome.FIXED,
+            "Fix committed locally": FixOutcome.FIXED,
+            "Fix committed and pushed": FixOutcome.FIXED,
+            "Added to the PR description (no commit)": FixOutcome.FIXED,
+        }
+
+    def test_a_retired_wording_still_parses_and_is_not_emittable(self, rt):
+        """A published summary outlives the builder that wrote its cells, so an
+        opening no builder produces any more still opens rows on live PRs — and
+        must not be reachable from a builder."""
+        cell = "Added to the PR description (no commit)"
+        assert summary_model.is_generated_action(cell) is True
+        assert summary_model.action_outcome(cell) is FixOutcome.FIXED
+        assert summary_model._ActionVocabulary.matching(cell) is (
+            RetiredActionCell.IN_DESCRIPTION)
+        assert "IN_DESCRIPTION" not in ActionCell.__members__
+
+    def test_the_reconciled_cell_reports_settled_elsewhere_from_a_fixed_row(self, rt):
+        """What the cell reports is the member's to say, not the bucket's.
+
+        A FIXED-bucket builder renders this deliberately: the cell says the
+        work landed somewhere this run cannot name, which is what a
+        settled-elsewhere row says. Tying the outcome to the emitting bucket
+        would make the row read as a fix and contradict its own wording.
+        """
+        entry = CommentItem(id="t1", summary="s", file="a.py", line=1)
+        cp = attribution.CommitPushResult(None, CommitStatus.RECONCILED, "")
+        cell = summary_row.fixed_status_for(entry, cp, "owner/repo")
+        assert cell == ActionCell.RECONCILED
+        assert summary_model.action_outcome(cell) is FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_row_with_no_action_cell_is_re_rendered(self, rt):
         """A shape this renderer no longer produces is repaired, not frozen."""
@@ -7595,7 +7740,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert RECONCILED_STATUS_TEXT in body
+        assert ActionCell.RECONCILED in body
 
     def test_a_settled_row_declines_it_too(self, rt, content, hand_landed_branch):
         """`--settle` already promises this cell when no commit resolves."""
@@ -7605,7 +7750,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert RECONCILED_STATUS_TEXT in body
+        assert ActionCell.RECONCILED in body
 
     def test_the_reply_declines_the_commit_the_table_declined(
         self, rt, hand_landed_branch,
@@ -7798,7 +7943,7 @@ class TestOneHandLandedCommitIsStillAskedOfEachRow:
             {"t3": _reviewed("t3", 333)},
         )
         assert "Fixed in [`" not in body
-        assert UNATTRIBUTED_STATUS_TEXT in body
+        assert ActionCell.UNATTRIBUTED in body
         # Where to look stays knowable even when who landed it does not: the
         # file cell pins the tree that holds the work.
         assert f"/blob/{branch.landed[:7]}/a.py" in body
@@ -7819,7 +7964,7 @@ class TestOneHandLandedCommitIsStillAskedOfEachRow:
         )
         body = _summary_over(rt, content, branch, [entry], {})
         assert "Fixed in [`" not in body
-        assert UNATTRIBUTED_STATUS_TEXT in body
+        assert ActionCell.UNATTRIBUTED in body
 
     def test_the_reply_names_the_commit_the_table_names(
         self, rt, one_hand_landed_commit,
@@ -8281,6 +8426,19 @@ class TestHumanReason:
         assert [m.value for m in summary_model.HumanReason] == [
             "contested", "conflicting", "question", "complex", "needs_discussion",
         ]
+
+    def test_every_reason_names_an_action_cell(self, rt):
+        """The prose is the member's, not a second copy of it.
+
+        These five openings are Action cells like any other and are declared
+        with the rest. A reason carrying its own string would put the
+        needs-human wordings back outside the vocabulary the parse side reads,
+        which is the whole of the defect.
+        """
+        for reason in summary_model.HumanReason:
+            assert isinstance(reason.cell, summary_model.ActionCell)
+            assert reason.prose == reason.cell.value
+            assert summary_model.action_outcome(reason.prose) is FixOutcome.NEEDS_HUMAN
 
     def test_triage_stamps_the_token_not_the_prose(self, rt):
         """`reason` stays machine-readable — the state file and JSON report carry it."""

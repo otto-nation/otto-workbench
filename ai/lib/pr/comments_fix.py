@@ -39,16 +39,13 @@ from core.serde import from_dict as _serde_from_dict
 # merge-readiness blocker, and the docs cannot drift from each other.
 CLOSEOUT_COMMAND = "pr comments --finish --post"
 
-# The two status cells that decline to name a commit. Both exist because the
-# alternative is a confident wrong claim: the pass either knows someone else
-# landed the work, or knows only that it cannot say who did.
-#
-# Public and spelled here for the reason STATUS_LABELS is: these reach the
-# published summary comment, and the next round recovers a row's outcome by
-# matching the cell text it published. A reword is a changed row identity, so
-# the wording needs one owner rather than one per surface that prints it.
-RECONCILED_STATUS_TEXT = "Addressed outside the fix pass"
-UNATTRIBUTED_STATUS_TEXT = "Fix applied (commit not recorded)"
+# The two status cells that decline to name a commit used to be spelled here,
+# for the reason STATUS_LABELS below still is. They now live on
+# `summary_model.ActionCell`, as RECONCILED and UNATTRIBUTED, beside every other
+# Action-cell wording: they reach the published summary comment and nothing
+# else, so the summary vocabulary is where their one owner belongs. STATUS_LABELS
+# stays because it is the *counts* vocabulary, printed on the state dashboard as
+# well as in the summary header, and this module is the one below both.
 
 # The three reply buckets --finish drains (`_post_pending_fix_replies` in
 # review-threads). Threads with any other outcome owe no reply, so they must

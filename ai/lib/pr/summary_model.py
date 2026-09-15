@@ -27,10 +27,9 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 
 from core import markdown
-from pr import comments_fix as pr_comments_fix
 from pr import permalinks
 from pr.fix import FixOutcome
 from pr.thread_models import (
@@ -290,6 +289,190 @@ def row_key_from_cells(cells: list[str]) -> str:
     )
 
 
+class _ActionVocabulary(StrEnum):
+    """Shared shape for the two halves of the Action-cell vocabulary.
+
+    A member's *value* is its opening — the prefix a published cell is
+    recognised by — so the member is its own parse key, and an f-string built
+    on the member writes exactly what `matching` will later read back out of
+    the published comment. That is the whole of what one owner buys: the
+    wording cannot be declared in one place and parsed in another, because
+    there is only the one place.
+
+    `outcome` is what a cell carrying this opening *reports*, which is not the
+    same question as which bucket rendered it. `ActionCell.RECONCILED` is the
+    case that makes the distinction load-bearing — a FIXED row renders it
+    deliberately — so the outcome rides on the member and the bucket stays a
+    fact about the caller.
+
+    Subclassing `StrEnum` rather than holding a table of dataclasses keeps the
+    member set closed at class-definition time. A registry populated as modules
+    import is only complete once every module that contributes to it has been
+    imported, which is the sweep test's weakness moved into the type.
+    """
+
+    def __new__(cls, opening: str, outcome: FixOutcome) -> _ActionVocabulary:
+        obj = str.__new__(cls, opening)
+        obj._value_ = opening
+        obj.outcome = outcome
+        return obj
+
+    @classmethod
+    def vocabularies(cls) -> tuple[type[_ActionVocabulary], ...]:
+        """Both halves, live and retired, in the order a reader should see them.
+
+        Every reader goes through this rather than naming one enum, because a
+        published cell is as likely to carry a retired opening as a live one —
+        the comment outlives the builder.
+        """
+        return (ActionCell, RetiredActionCell)
+
+    @classmethod
+    def members(cls) -> tuple[_ActionVocabulary, ...]:
+        """Every opening either half declares, longest first.
+
+        Longest-first is the scan order, and it is what makes an opening that
+        extends another safe. "Fix applied (commit not recorded)" opens with
+        the retired "Fix applied", and the longer one is the more specific
+        claim about what the cell says — so resolving to it is right, not a
+        collision to be legislated away. The predecessor of this scan walked a
+        dict in insertion order, which made the answer depend on declaration
+        order and needed a test forbidding overlap to stay correct.
+        """
+        return tuple(sorted(
+            (m for v in cls.vocabularies() for m in v),
+            key=lambda m: len(m.value), reverse=True,
+        ))
+
+    @classmethod
+    def matching(cls, cell: str) -> _ActionVocabulary | None:
+        """The member whose opening this cell carries, or None for one we did not write."""
+        for member in cls.members():
+            if cell.startswith(member.value):
+                return member
+        return None
+
+    @classmethod
+    def openings(cls) -> tuple[str, ...]:
+        """Every opening as a plain string, for `str.startswith`."""
+        return tuple(m.value for m in cls.members())
+
+
+class ActionCell(_ActionVocabulary):
+    """Every Action cell this renderer writes, and what each one reports.
+
+    One declaration per wording, read by the builder that prints it and by the
+    table that parses it back. The reply-side counterpart of
+    `thread_replies.GENERATED_REPLY_PREFIXES`, and read two ways: to tell a
+    cell we produced apart from one somebody rewrote by hand, and to tell a
+    round that changed a row's outcome from one that only re-worded it.
+
+    Naming the outcome on the member is what makes the second reading possible.
+    One outcome is written several ways — a fix reported with a commit one
+    round and without one the next, see `summary_row.fixed_status_for` — so a
+    cell compared against a cell reports a change that did not happen, and
+    restates the row for the life of the PR.
+
+    The two members with a variable tail are built through `fixed_in` and
+    `deferred` rather than by interpolating a literal. Both write the member as
+    their opening, so a dynamic cell cannot carry a wording this enum has not
+    declared — which is the half of the invariant a sweep test used to be the
+    only guard for.
+
+    A wording no builder produces any more belongs in `RetiredActionCell`, not
+    here: a published summary outlives the code that wrote it, and dropping an
+    opening freezes every row still carrying it.
+    """
+
+    FIXED_IN = ("Fixed in ", FixOutcome.FIXED)
+    COMMIT_FAILED = ("Fix applied (commit failed — pre-commit hook?)", FixOutcome.FIXED)
+    UNATTRIBUTED = ("Fix applied (commit not recorded)", FixOutcome.FIXED)
+    PUSH_HELD = ("Fix committed locally (push held pending discussion)", FixOutcome.FIXED)
+    PUSH_FAILED = ("Fix committed locally (push failed)", FixOutcome.FIXED)
+    PUSH_LOST = (
+        "Fix committed locally (push reported success, remote does not have it)",
+        FixOutcome.FIXED)
+    PUSH_UNVERIFIED = (
+        "Fix committed and pushed (could not reach the remote to confirm)",
+        FixOutcome.FIXED)
+    PENDING = ("Fix pending", FixOutcome.FIXED)
+    # Not FIXED, though a fixed row can render it: the cell says the work landed
+    # somewhere this run cannot name, which is the same thing a settled-elsewhere
+    # row says. Both sides of the comparison read the cell, so a fixed row
+    # reading back as this one is not a change and does not restate the row.
+    RECONCILED = ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE)
+    DEFERRED = ("Deferred", FixOutcome.DEFERRED)
+    ALREADY_ADDRESSED = ("Already addressed", FixOutcome.ALREADY_ADDRESSED)
+    DISMISSED = ("Dismissed (invalid)", FixOutcome.DISMISSED)
+    CONTESTED = ("Contested — needs discussion", FixOutcome.NEEDS_HUMAN)
+    CONFLICTING = ("Conflicting reviewer feedback", FixOutcome.NEEDS_HUMAN)
+    QUESTION = ("Question for the author", FixOutcome.NEEDS_HUMAN)
+    COMPLEX = ("Too complex to auto-fix", FixOutcome.NEEDS_HUMAN)
+    NEEDS_DISCUSSION = ("Needs discussion", FixOutcome.NEEDS_HUMAN)
+
+    @classmethod
+    def fixed_in(cls, sha: str, repo: str, *, verified: bool | None = None) -> str:
+        """The status cell that names the commit carrying a row.
+
+        One spelling for every surface that claims a fix landed: the fixed rows,
+        and the satisfied rows a commit made true after the reviewer asked.
+
+        The hedge is a suffix rather than a different opening, so `matching`
+        still reads the row as FIXED from `FIXED_IN`. A wording that changed the
+        opening would make an unverified row differ from its own published copy
+        on every comparison, and restate it for the life of the PR.
+
+        Only an explicit False hedges. None is a pass that never ran the gate —
+        including every satisfied row, where the reviewer themself confirmed the
+        behaviour and no gate could say more than they did.
+        """
+        cell = f"{cls.FIXED_IN}[`{sha}`]({permalinks.commit_permalink(repo, sha)})"
+        return f"{cell} (unverified)" if verified is False else cell
+
+    @classmethod
+    def deferred(cls, issue_id: str = "", issue_url: str = "") -> str:
+        """The status cell for a deferred row, naming its tracking issue if it has one.
+
+        A deferral with no issue behind it renders the bare opening, which is
+        also what a run that could not file the issue leaves — see
+        `comments_fix.CloseoutDebt.deferred_issue`, which is what tells the two
+        apart for the operator. The row reads the same either way, and reads as
+        DEFERRED in all three shapes.
+        """
+        if issue_id and issue_url:
+            return f"{cls.DEFERRED} → [{issue_id}]({issue_url})"
+        if issue_id:
+            return f"{cls.DEFERRED} → {issue_id}"
+        return str(cls.DEFERRED)
+
+
+class RetiredActionCell(_ActionVocabulary):
+    """Openings no builder produces any more, kept so live PRs keep parsing.
+
+    A summary comment outlives the code that wrote its cells. An opening this
+    tool has stopped emitting still opens rows on open PRs, and dropping it
+    reads every one of them as hand-written — frozen at whatever the published
+    comment said, for the life of the PR. So a wording is retired here, never
+    deleted.
+
+    A separate enum rather than a flag on `ActionCell`, so a builder cannot
+    reach one by accident: there is no live member to name, and the sweep test
+    asserts that every cell a builder emits matches an `ActionCell` and not one
+    of these. A flag would leave a retired member exactly as reachable as a live
+    one, and "not emittable" would be a naming convention.
+
+    The three bare `Fix…` openings are what the live wordings used to be
+    matched by — one opening standing in for a family of longer cells. Each
+    full cell is now its own member, so the bare forms emit nothing, but a
+    comment published before that change carries them and must still parse.
+    """
+
+    APPLIED = ("Fix applied", FixOutcome.FIXED)
+    COMMITTED_LOCALLY = ("Fix committed locally", FixOutcome.FIXED)
+    COMMITTED_AND_PUSHED = ("Fix committed and pushed", FixOutcome.FIXED)
+    IN_DESCRIPTION = ("Added to the PR description (no commit)", FixOutcome.FIXED)
+
+
 class HumanReason(Enum):
     """Why a thread was routed to a human, in both spellings it is written in.
 
@@ -304,22 +487,29 @@ class HumanReason(Enum):
     bucket, whose `reason` is free text ("agent could not auto-fix") and never
     a member of this enum.
 
-    `prose` is what the summary table's Action cell shows, alongside "Already
-    addressed" and "Dismissed (invalid)". One member owns both, so a token
-    cannot reach the published comment the way `needs_discussion` once did.
+    `cell` is the `ActionCell` the summary table shows for this reason, and
+    `prose` is that member's wording. The member is named rather than the
+    wording restated, so the five needs-human openings are declared once,
+    beside every other Action cell, and a token cannot reach the published
+    comment the way `needs_discussion` once did.
     """
 
-    CONTESTED = ("contested", "Contested — needs discussion")
-    CONFLICTING = ("conflicting", "Conflicting reviewer feedback")
-    QUESTION = ("question", "Question for the author")
-    COMPLEX = ("complex", "Too complex to auto-fix")
-    NEEDS_DISCUSSION = ("needs_discussion", "Needs discussion")
+    CONTESTED = ("contested", ActionCell.CONTESTED)
+    CONFLICTING = ("conflicting", ActionCell.CONFLICTING)
+    QUESTION = ("question", ActionCell.QUESTION)
+    COMPLEX = ("complex", ActionCell.COMPLEX)
+    NEEDS_DISCUSSION = ("needs_discussion", ActionCell.NEEDS_DISCUSSION)
 
-    def __new__(cls, value: str, prose: str) -> HumanReason:
+    def __new__(cls, value: str, cell: ActionCell) -> HumanReason:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.prose = prose
+        obj.cell = cell
         return obj
+
+    @property
+    def prose(self) -> str:
+        """The Action cell text for this reason — the member's own wording."""
+        return self.cell.value
 
     @classmethod
     def prose_for(cls, reason: str) -> str:
@@ -335,53 +525,10 @@ class HumanReason(Enum):
             return cls.NEEDS_DISCUSSION.prose
 
 
-# Every opening an Action cell this renderer wrote can have, under the outcome
-# that cell reports. The reply-side counterpart of `thread_replies.GENERATED_REPLY_PREFIXES`,
-# and read two ways: to tell a cell we produced apart from one somebody rewrote
-# by hand, and to tell a round that changed a row's outcome from one that only
-# re-worded it.
-#
-# Naming the outcome is what makes the second reading possible. One outcome is
-# written several ways — a fix reported with a commit one round and without one
-# the next, see `summary_row.fixed_status_for` — so a cell compared against a
-# cell reports a change that did not happen, and restates the row for the life
-# of the PR.
-#
-# No opening may open another under a different outcome, which is what lets
-# `action_outcome` scan in any order; the mapping cannot express the rule, so a
-# test asserts it. Its absence would be silent — the row is restated every
-# round, or left behind holding a stale outcome, with no wording to show which.
-#
-# Kept in step with the four places a status cell is built —
-# `summary_row.fixed_status_for` and `summary_row.fixed_status_text` (every
-# "Fix…" opening), the literal cells in `summary_render.build_summary_body`,
-# and `HumanReason.prose`. A new wording that is not covered here reads as
-# hand-written, and its row is then frozen at whatever the published comment
-# already said.
-#
-# Retired wordings stay in the table. A summary comment outlives the code that
-# wrote it, so an opening no builder produces any more still opens rows on live
-# PRs, and dropping it here freezes every one of them.
-ACTION_OUTCOMES: Mapping[str, FixOutcome] = {
-    "Fixed in ": FixOutcome.FIXED,
-    "Fix applied": FixOutcome.FIXED,
-    "Fix committed locally": FixOutcome.FIXED,
-    "Fix committed and pushed": FixOutcome.FIXED,
-    "Fix pending": FixOutcome.FIXED,
-    "Added to the PR description (no commit)": FixOutcome.FIXED,
-    # Not FIXED, though a fixed row can render it: the cell says the work landed
-    # somewhere this run cannot name, which is the same thing a settled-elsewhere
-    # row says. Both sides of the comparison read the cell, so a fixed row
-    # reading back as this one is not a change and does not restate the row.
-    pr_comments_fix.RECONCILED_STATUS_TEXT: FixOutcome.SETTLED_ELSEWHERE,
-    "Deferred": FixOutcome.DEFERRED,
-    "Already addressed": FixOutcome.ALREADY_ADDRESSED,
-    "Dismissed (invalid)": FixOutcome.DISMISSED,
-    **{reason.prose: FixOutcome.NEEDS_HUMAN for reason in HumanReason},
-}
-
-
-GENERATED_ACTION_PREFIXES = tuple(ACTION_OUTCOMES)
+# Every opening either half of the vocabulary declares, for `str.startswith`.
+# Derived rather than listed: a wording added to `ActionCell` is one this
+# recognises without a second edit, which is the duplication that froze rows.
+GENERATED_ACTION_PREFIXES = _ActionVocabulary.openings()
 
 
 def action_outcome(cell: str) -> FixOutcome | None:
@@ -393,15 +540,13 @@ def action_outcome(cell: str) -> FixOutcome | None:
     the table exists to answer, so both sides have to come through here.
 
     None is not "some outcome we cannot name" but "no claim to compare
-    against": a cell a person wrote, or a wording retired before this table was.
-    Both are rows `summary_scope.hand_written_rows` owns, and reading either as
-    an outcome would let every round's own render differ from it and restate
-    the row.
+    against": a cell a person wrote, or a wording retired before this
+    vocabulary was. Both are rows `summary_scope.hand_written_rows` owns, and
+    reading either as an outcome would let every round's own render differ from
+    it and restate the row.
     """
-    for prefix, outcome in ACTION_OUTCOMES.items():
-        if cell.startswith(prefix):
-            return outcome
-    return None
+    member = _ActionVocabulary.matching(cell)
+    return member.outcome if member else None
 
 
 def is_generated_action(cell: str) -> bool:

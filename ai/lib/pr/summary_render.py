@@ -131,12 +131,8 @@ def build_summary_body(
     # The fix commit is the tree the table describes; fall back to the reviewed
     # head when nothing was committed.
     link_sha = cp.sha or head_sha
-    if deferred_issue_id and deferred_issue_url:
-        deferred_status = f"Deferred → [{deferred_issue_id}]({deferred_issue_url})"
-    elif deferred_issue_id:
-        deferred_status = f"Deferred → {deferred_issue_id}"
-    else:
-        deferred_status = "Deferred"
+    deferred_status = summary_model.ActionCell.deferred(
+        deferred_issue_id, deferred_issue_url)
 
     def emit(
         entry: CommentItem, status: str, sha: str, *, open_thread: bool = False,
@@ -204,13 +200,15 @@ def build_summary_body(
     addressed_count = sum(
         1 for f, shown in addressed_shown if shown and not f.in_response
     )
-    dismissed_count = sum([emit(e, "Dismissed (invalid)", link_sha) for e in dismissed])
+    dismissed_count = sum([
+        emit(e, summary_model.ActionCell.DISMISSED, link_sha) for e in dismissed
+    ])
     # Its own count, kept out of the fixed one. The row reports that the thread
     # is no longer owed, which is all its evidence supports: GitHub's resolve
     # button covers a reviewer who was answered or who withdrew the point as
     # readily as one whose fix landed.
     settled_count = sum([
-        emit(e, pr_comments_fix.RECONCILED_STATUS_TEXT, link_sha) for e in settled_elsewhere
+        emit(e, summary_model.ActionCell.RECONCILED, link_sha) for e in settled_elsewhere
     ])
     human_count = sum([
         emit(e, summary_model.HumanReason.prose_for(e.reason), link_sha, open_thread=True)

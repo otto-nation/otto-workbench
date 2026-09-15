@@ -187,7 +187,6 @@ class TestTheVocabularyEnums:
 
     def test_a_member_serialises_as_a_bare_json_string(self):
         """stdout is `json.dump(asdict(...))`, which does not convert enums."""
-        import dataclasses
         import json
 
         @dataclasses.dataclass
@@ -212,7 +211,6 @@ class TestTheVocabularyEnums:
         assert Complexity("huge") is Complexity.UNSET
 
     def test_serde_keeps_the_rest_of_the_item_when_a_verdict_is_unknown(self):
-        import dataclasses
         from core import serde
 
         @dataclasses.dataclass
@@ -229,6 +227,11 @@ class TestTheVocabularyEnums:
         for enum_cls in (Classification, Verification, Complexity):
             assert issubclass(enum_cls, Vocabulary)
             assert enum_cls._missing_.__func__ is Vocabulary._missing_.__func__
+
+    def test_a_subclass_without_unset_fails_at_definition(self):
+        with pytest.raises(TypeError, match="MustHaveUnset must define UNSET"):
+            class MustHaveUnset(Vocabulary):
+                FOO = "foo"
 
 
 class TestVocabularyCoercion:
@@ -282,7 +285,6 @@ class TestTheEntryCoercesItsVocabulary:
 
     def test_the_entry_still_serialises_as_bare_strings(self):
         """The stdout contract: `asdict` then `json.dump`, no enum conversion."""
-        import dataclasses
         import json
         entry = CommentItem(
             id="t1", classification="actionable_suggestion",

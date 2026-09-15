@@ -536,6 +536,7 @@ class TestAnUnroutableEntryIsDroppedAndSaid:
         )]
         assert not triage_round.classify_entries(entries, trail=trail).any_entry
         trail.info.assert_called_once()
+        assert "verification=UNSET" in trail.info.call_args.args[1]
 
     def test_a_drop_without_a_trail_is_fine(self):
         """`trail` is optional everywhere else in this module; keep it so."""

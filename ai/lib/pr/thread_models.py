@@ -35,6 +35,11 @@ class Vocabulary(StrEnum):
     half. Both are load-bearing.
     """
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "UNSET" not in cls.__members__:
+            raise TypeError(f"{cls.__name__} must define UNSET = \"\"")
+
     @classmethod
     def _missing_(cls, value):
         return cls.UNSET

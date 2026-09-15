@@ -75,11 +75,18 @@ COMPLEXITY_GUIDANCE = {
 }
 
 
+def _members(enum_cls):
+    """Non-UNSET members, in definition order.
+
+    UNSET is never offered to the model: the prompt asks for an empty string
+    where a field does not apply; it is not a value the model chooses.
+    """
+    return tuple(m for m in enum_cls if m is not enum_cls.UNSET)
+
+
 def _options(enum_cls) -> str:
     """The members as the prompt offers them: `'a', 'b', 'c'`."""
-    return ", ".join(
-        f"'{m.value}'" for m in enum_cls if m is not enum_cls.UNSET
-    )
+    return ", ".join(f"'{m.value}'" for m in _members(enum_cls))
 
 
 def _vocab_schema_lines() -> str:
@@ -90,7 +97,7 @@ def _vocab_schema_lines() -> str:
     contradictory schemas for the two halves of one answer.
     """
     def joined(enum_cls):
-        return "|".join(m.value for m in enum_cls if m is not enum_cls.UNSET)
+        return "|".join(m.value for m in _members(enum_cls))
 
     return (
         f'      "classification": "{joined(Classification)}",\n'
@@ -104,8 +111,7 @@ def _vocab_schema_lines() -> str:
 def _guidance_lines(enum_cls, guidance: dict) -> str:
     return "\n".join(
         f"   - {member.value}: {guidance[member]}"
-        for member in enum_cls
-        if member is not enum_cls.UNSET
+        for member in _members(enum_cls)
     )
 
 

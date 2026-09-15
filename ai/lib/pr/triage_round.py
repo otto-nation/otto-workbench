@@ -89,8 +89,8 @@ def _report_drop(tt: CommentItem, trail: Trail | None) -> None:
     trail.info(
         "triage_drop",
         f"{tt.id}: no disposition for "
-        f"classification={tt.classification!s} "
-        f"verification={tt.verification!s}",
+        f"classification={tt.classification.name} "
+        f"verification={tt.verification.name}",
     )
 
 

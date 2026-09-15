@@ -313,3 +313,27 @@ EOF
     "$REPO_ROOT/.github/workflows/ci.yml"
   [ "$output" -eq 0 ]
 }
+
+# ── Tree validation lock ────────────────────────────────────────────────
+
+@test "validate-all declares the tree it is scanning" {
+  grep -q 'with-tree-lock' "$REPO_ROOT/bin/local/validate-all"
+}
+
+@test "validate-all locks VALIDATOR_ROOT, not its own checkout" {
+  # A fixture run must not flock the operator's live worktree.
+  grep -q 'with-tree-lock" "\$VALIDATOR_ROOT"' "$REPO_ROOT/bin/local/validate-all"
+}
+
+@test "validate-all --list does not take the lock" {
+  # --list and --help are metadata, not validation.
+  local lock_line list_line
+  lock_line=$(grep -n 'with-tree-lock' "$REPO_ROOT/bin/local/validate-all" | head -1 | cut -d: -f1)
+  list_line=$(grep -n 'if \$LIST; then' "$REPO_ROOT/bin/local/validate-all" | cut -d: -f1)
+  [ "$lock_line" -gt "$list_line" ]
+}
+
+@test "validate-all --list still works under a fixture root" {
+  run env VALIDATOR_ROOT="$BATS_TEST_TMPDIR" "$REPO_ROOT/bin/local/validate-all" --list
+  [ "$status" -eq 0 ]
+}

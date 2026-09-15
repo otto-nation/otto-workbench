@@ -17,7 +17,10 @@ from retro.rules import (  # noqa: E402
     FRONTMATTER,
     HEADING,
     MIN_MATCH_SCORE,
+    MIN_PASSAGE_KEYWORDS,
     PASSAGE_START,
+    Passage,
+    best_passage,
     best_passage_score,
     build_rule,
     extract_keywords,
@@ -587,7 +590,69 @@ class TestPassages:
         for rule in _rules():
             assert rule["passages"], rule["filename"]
             for passage in rule["passages"]:
-                assert passage < rule["keywords"], rule["filename"]
+                assert passage.keywords < rule["keywords"], rule["filename"]
+
+    def test_a_passage_carries_the_text_its_keywords_came_from(self):
+        """The pairing the report depends on to quote what the scorer matched.
+
+        Keyword sets and passage texts kept as two lists drift the moment one
+        is filtered and the other is not, and the report then quotes some
+        other passage's words beside the score. Stated as a round trip: each
+        passage's own text must re-derive its own keywords.
+        """
+        for rule in _rules():
+            for passage in rule["passages"]:
+                assert passage.text
+                assert passage.keywords == extract_keywords(passage.text), (
+                    f"{rule['filename']}: {passage.text[:70]}"
+                )
+                assert passage.text in rule["content"] or " " in passage.text
+
+    def test_every_passage_of_every_rule_clears_the_keyword_floor(self):
+        """`MIN_PASSAGE_KEYWORDS` filters the pair, not one half of it."""
+        for rule in _rules():
+            for passage in rule["passages"]:
+                assert len(passage.keywords) >= MIN_PASSAGE_KEYWORDS, (
+                    f"{rule['filename']}: {passage.text[:70]}"
+                )
+
+
+class TestBestPassage:
+    """The passage a rule matched on, beside the score it matched with."""
+
+    def test_the_scored_passage_is_the_one_returned(self):
+        """`best_passage_score` is the score of `best_passage`'s passage.
+
+        Two scans with their own tie-breaking can disagree about which
+        passage a rule matched on, so the score and the text a report shows
+        must come off the same one.
+        """
+        rules = _rules()
+        weights = term_weights(rules)
+        for body, expected in TOPICAL_COMMENTS:
+            keywords = extract_keywords(body)
+            rule = next(r for r in rules if r["filename"] == expected)
+            match = best_passage(keywords, rule, weights)
+            assert match is not None, expected
+            assert match.score == best_passage_score(keywords, rule, weights)
+            assert match.passage in rule["passages"]
+
+    def test_a_rule_sharing_nothing_with_the_comment_has_no_passage(self):
+        """No candidate passage is None, and scores zero rather than low."""
+        rules = _rules()
+        weights = term_weights(rules)
+        keywords = extract_keywords(
+            "The arctic tern migrates eleven thousand miles each season."
+        )
+        for rule in rules:
+            if best_passage(keywords, rule, weights) is None:
+                assert best_passage_score(keywords, rule, weights) == 0.0
+
+    def test_a_passage_derives_its_own_keywords(self):
+        passage = Passage.of("- Quote the variable expansion in every script")
+        assert passage.text == "- Quote the variable expansion in every script"
+        assert passage.keywords == extract_keywords(passage.text)
+        assert "variable" in passage.keywords
 
 
 class TestLoadRules:

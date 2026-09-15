@@ -136,6 +136,29 @@ def split_passages(content: str) -> list[str]:
     return passages
 
 
+@dataclass(frozen=True)
+class Passage:
+    """One statement a rule file makes, and the vocabulary it makes it in.
+
+    The scorer picks a passage by its keywords and the report quotes the text
+    of the passage picked, so the two are one value rather than two lists a
+    caller indexes in parallel: a filter applied to one of those lists and not
+    the other — `MIN_PASSAGE_KEYWORDS` is exactly such a filter — silently
+    pairs every keyword set with some other passage's words.
+
+    `keywords` is a frozenset so the dataclass stays hashable, which a mutable
+    set field would take away at the first `hash()` rather than at definition.
+    """
+
+    text: str
+    keywords: frozenset[str]
+
+    @classmethod
+    def of(cls, text: str) -> Passage:
+        """`text` as a passage, with its vocabulary derived the one way."""
+        return cls(text=text, keywords=frozenset(extract_keywords(text)))
+
+
 def build_rule(filename: str, content: str) -> dict:
     """One rule file's text as the dict the scorer and the report read.
 
@@ -153,8 +176,8 @@ def build_rule(filename: str, content: str) -> dict:
             if line.strip().startswith("- ")
         ],
         "passages": [
-            kw for kw in map(extract_keywords, split_passages(content))
-            if len(kw) >= MIN_PASSAGE_KEYWORDS
+            p for p in map(Passage.of, split_passages(content))
+            if len(p.keywords) >= MIN_PASSAGE_KEYWORDS
         ],
         "content": content,
     }
@@ -211,7 +234,7 @@ def term_weights(rules: list[dict]) -> TermWeights:
 
 
 def passage_similarity(
-    comment_keywords: set[str], passage: set[str], weights: TermWeights,
+    comment_keywords: set[str], passage: frozenset[str], weights: TermWeights,
     shared: set[str] | None = None,
 ) -> float:
     """Weighted cosine similarity of a comment and a rule passage, in [0, 1].
@@ -247,25 +270,54 @@ class RuleMatch:
     score: float
 
 
+@dataclass(frozen=True)
+class PassageMatch:
+    """The passage of one rule nearest some comment text, and how near.
+
+    The report quotes the passage and the scorer compares the score, and both
+    come off the same scan so the line a reader is shown is the line the match
+    was made on — a second scan with its own tie-breaking can name a different
+    passage than the score reported beside it.
+    """
+
+    passage: Passage
+    score: float
+
+
+def best_passage(
+    comment_keywords: set[str], rule: dict, weights: TermWeights,
+) -> PassageMatch | None:
+    """`rule`'s passage closest to `comment_keywords`, or None if none is.
+
+    A passage sharing fewer than `MIN_SHARED_TERMS` with the comment is not a
+    candidate however the normalization would rate it: two short texts can
+    score highly off one uncommon word in common, which is a coincidence
+    rather than a subject. None when no passage clears that floor — the rule
+    says nothing about the comment, and there is no passage to quote for it.
+    """
+    best: PassageMatch | None = None
+    for passage in rule["passages"]:
+        shared = comment_keywords & passage.keywords
+        if len(shared) < MIN_SHARED_TERMS:
+            continue
+        score = passage_similarity(
+            comment_keywords, passage.keywords, weights, shared,
+        )
+        if best is None or score > best.score:
+            best = PassageMatch(passage=passage, score=score)
+    return best
+
+
 def best_passage_score(
     comment_keywords: set[str], rule: dict, weights: TermWeights,
 ) -> float:
     """How well `rule`'s closest passage matches `comment_keywords`.
 
-    A passage sharing fewer than `MIN_SHARED_TERMS` with the comment scores
-    zero however the normalization would rate it: two short texts can score
-    highly off one uncommon word in common, which is a coincidence rather than
-    a subject.
+    Zero when no passage of `rule` is a candidate at all, which is the score a
+    rule that says nothing about the comment has to earn.
     """
-    best = 0.0
-    for passage in rule["passages"]:
-        shared = comment_keywords & passage
-        if len(shared) < MIN_SHARED_TERMS:
-            continue
-        score = passage_similarity(comment_keywords, passage, weights, shared)
-        if score > best:
-            best = score
-    return best
+    best = best_passage(comment_keywords, rule, weights)
+    return best.score if best else 0.0
 
 
 def score_rules(

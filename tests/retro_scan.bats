@@ -454,8 +454,17 @@ PY
   # are all broken, and it must be refused the same way.
   run "$RETRO_SCAN" --home "$TMPDIR"
   [[ "$status" -eq 1 ]]
-  [[ "$output" == *"refusing to bank a scan window"* ]]
+  [[ "$output" == *"Refusing to bank a scan window"* ]]
   [[ "$output" != *"Retro Scan Report"* ]]
+}
+
+@test "retro-scan: an empty registry is named as such, not as 0 projects resolving" {
+  # The two no-repo faults need different remedies, so they must not share a
+  # message: "none of the 0 registered projects resolved" names neither.
+  run "$RETRO_SCAN" --home "$TMPDIR"
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"lists no projects"* ]]
+  [[ "$output" != *"none of the 0"* ]]
 }
 
 @test "retro-scan: a registry that resolves to no GitHub repo fails the run" {
@@ -466,7 +475,8 @@ PY
 
   run "$RETRO_SCAN" --home "$TMPDIR"
   [[ "$status" -eq 1 ]]
-  [[ "$output" == *"refusing to bank a scan window"* ]]
+  [[ "$output" == *"none of the 1 registered projects"* ]]
+  [[ "$output" == *"Project Registry paths"* ]]
   [[ "$output" != *"Retro Scan Report"* ]]
 }
 

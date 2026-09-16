@@ -347,11 +347,20 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
         # ceiling: no override for a machine whose repos are all non-GitHub --
         # such a machine cannot run retro at all. Add an opt-out flag if one
         # registers a repo on another forge.
-        log.error(
-            f"None of the {len(projects)} registered projects resolved to a GitHub repo "
-            "— refusing to bank a scan window over local reviews alone. "
-            "Check the Project Registry paths in the machine profile."
-        )
+        # Both arrive here as "no repos", but they are different faults with
+        # different remedies, and the count alone reads as nonsense for the
+        # first ("none of the 0 registered projects resolved").
+        if projects:
+            detail = (
+                f"none of the {len(projects)} registered projects resolved to a GitHub repo "
+                "— check the Project Registry paths in the machine profile"
+            )
+        else:
+            detail = (
+                f"the Project Registry in {machine_md} lists no projects "
+                "— run `otto-workbench projects` to register one, or refresh the machine profile"
+            )
+        log.error(f"Refusing to bank a scan window over local reviews alone: {detail}.")
         trail.error("resolve_remotes", f"0 GitHub repos from {len(projects)} projects")
         sys.exit(1)
 

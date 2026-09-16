@@ -219,8 +219,14 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
     Order: ``explicit_dir`` if it is a directory; else the current git toplevel
     when its basename (or its parent's — the bare-container heuristic) matches
-    the slug's repo name; else ``gh repo view`` plus a depth-2 walk of
-    ``~/git``. Returns "" when nothing matches.
+    the slug's repo name; else a depth-2 walk of ``~/git`` for that name.
+    Returns "" when nothing matches.
+
+    The match is case-insensitive: ``repo`` can be the canonical, case-folded
+    label ``pr.context.detect_repo`` returns for an ordinary origin remote
+    (see ``pr_target.RepoIdentity``), while a checkout's directory name keeps
+    whatever case it was cloned with. GitHub itself treats the two as the same
+    repo, so this does too.
     """
     repo_name = repo.split("/")[-1]
 
@@ -240,21 +246,24 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
     except OSError:
         git_toplevel = ""
 
+    folded_repo_name = repo_name.lower()
     if git_toplevel:
-        if os.path.basename(git_toplevel) == repo_name:
+        if os.path.basename(git_toplevel).lower() == folded_repo_name:
             return git_toplevel
         parent_dir = os.path.dirname(git_toplevel)
-        if os.path.basename(parent_dir) == repo_name:
+        if os.path.basename(parent_dir).lower() == folded_repo_name:
             return parent_dir
 
-    name = gh_client.out("repo", "view", repo, "--json", "name", "--jq", ".name")
-    if not name:
+    # The repo's own name, which `repo_name` above already is: `gh repo view
+    # --json name` returned the same half of the slug it was handed, over
+    # GraphQL, once per call.
+    if not repo_name:
         return ""
 
     home_git = os.path.expanduser("~/git")
     try:
         r2 = subprocess.run(
-            ["find", home_git, "-maxdepth", "2", "-name", name, "-type", "d"],
+            ["find", home_git, "-maxdepth", "2", "-iname", repo_name, "-type", "d"],
             capture_output=True, text=True, timeout=timeouts.LOCAL,
         )
         found = r2.stdout.strip().splitlines()

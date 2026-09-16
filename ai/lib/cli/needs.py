@@ -32,7 +32,10 @@ class Need:
     still locks, because it deletes the directory other runs key on.
 
     * ``depth`` — how far ``pr_context`` resolves. LOCAL is git alone; REMOTE
-      adds the ``gh`` calls that name the repo and the PR.
+      adds the ``gh`` calls that name the repo and the PR. LOCAL never learns a
+      branch's PR number, even when one already exists — `resolve_local`'s
+      `pr_number` is unconditionally None, so a caller reaching for LOCAL to
+      skip a repo-naming `gh` call also loses PR-number discovery, silently.
     * ``update`` — whether to fetch and fast-forward the worktree
       (``update_to_remote``) before the handler runs.
     * ``lock`` — whether to hold the target's run lock for the whole dispatch.
@@ -68,6 +71,22 @@ class Need:
 # thing. The fetch belongs to this one invocation — it is the only one whose
 # subject is the branch's current state.
 REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, lock=True)
+
+# What `pr review --self` needs: the same run against the local branch, which
+# has no PR to name. Its subject is the working tree, so nothing it resolves
+# comes from the network — the repo label it does need is the one
+# `repo_identity_from_origin` reads off the git remote. That label is not
+# byte-identical to what `gh repo view` would return: it folds case and drops
+# the host (see `pr_target.RepoIdentity`), which is fine for what a self-review
+# uses it for.
+#
+# LOCAL rather than REMOTE because a self-review is the pass that runs *before*
+# a PR exists, routinely on a branch the remote has never seen. Spending a
+# `gh` call to name a repo git already names made the pre-PR gate fail for
+# reasons that have nothing to do with the branch: an exhausted GraphQL budget,
+# an expired token, a plane. `resolve_at` still escalates to REMOTE if a `--pr`
+# is passed, so `--self --pr` is not silently downgraded.
+REVIEW_SELF_NEED = Need(LOCAL, update=True, lock=True)
 
 # What a mode flag needs unless it declares otherwise. Every mode acts on a
 # review that already exists on disk, at the commit that review describes, so
@@ -131,6 +150,15 @@ def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:
     differs between them. Reading the declaration off the mode table is what
     keeps each mode off the paths it does not need structurally, rather than by
     an exemption someone has to remember.
+
+    `--self` is not in that table: it selects the subject rather than acting on
+    an existing review, and it composes with `--fix` and `--post`, which a mode
+    may not. It still lowers the depth, because a branch with no PR is the one
+    subject `gh` cannot name.
     """
     found = review_modes(argv, modes)
-    return modes[found[0]].need if found else REVIEW_DEFAULT_NEED
+    if found:
+        return modes[found[0]].need
+    if "--self" in argv:
+        return REVIEW_SELF_NEED
+    return REVIEW_DEFAULT_NEED

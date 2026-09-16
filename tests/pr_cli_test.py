@@ -150,14 +150,23 @@ def test_every_command_declares_a_need():
 
 def test_review_declares_a_need_per_invocation():
     """`review` is the one entry whose declaration its argv resolves. A bare
-    invocation is about to review the branch, so it wants the branch current;
-    `--self` is not a mode flag and changes nothing about that."""
+    invocation is about to review a PR, so it wants the branch current and it
+    needs `gh` to name the PR.
+
+    `--self` keeps the fetch and the lock — its subject is still the branch's
+    current state, and a `--fix` pass still commits to the worktree — but drops
+    to LOCAL, because a self-review runs before a PR exists and has no PR for
+    `gh` to name.
+    """
     entry = pr_cli._COMMANDS["review"]
     assert callable(entry["need"])
 
     plain = pr_cli._need_for(entry, [])
     assert plain == pr_cli.Need(pr_cli._REMOTE, update=True, lock=True)
-    assert pr_cli._need_for(entry, ["--self"]) == plain
+
+    self_need = pr_cli._need_for(entry, ["--self"])
+    assert self_need == pr_cli.Need(pr_cli._LOCAL, update=True, lock=True)
+    assert (self_need.update, self_need.lock) == (plain.update, plain.lock)
 
 
 @pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])
@@ -1514,8 +1523,13 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
 # needs were declared — spelled out rather than read off _COMMANDS, since a
 # table derived from the declaration it checks would pass whatever it said.
 
-# Which commands resolve with git alone. Only status: the rest need `gh` to
-# name the repo and the PR.
+# Which commands resolve with git alone, invoked bare. Only status: the rest
+# need `gh` to name the PR.
+#
+# `review` is False here because these tables are keyed on the command alone,
+# and a bare `pr review` does resolve remotely. `pr review --self` resolves
+# locally — that is an argv-level decision, covered by
+# test_review_declares_a_need_per_invocation above.
 _RESOLVES_LOCALLY = {
     "create": False, "status": True, "ci": False, "review": False,
     "comments": False, "fix": False, "rebase": False, "describe": False,

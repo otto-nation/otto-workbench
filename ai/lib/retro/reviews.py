@@ -3,8 +3,8 @@
 Walks the reviews root `review.paths` already tracks and reads each review's
 findings into the retro's per-repo, per-PR comment structure, so `retro.report`
 renders a local self-review indistinguishably from a GitHub one. Deciding
-which rule a finding is nearest to is `retro.rules`'; matching the comment to
-the exact bullet on the page is `retro.report`'s.
+which rule a finding is nearest to is `retro.rules`'; quoting the passage on
+the page it matched is `retro.report`'s.
 """
 
 # doc-group: platform
@@ -19,7 +19,7 @@ from core import log
 from review.document import ReviewDocument
 from review.paths import ReviewEntry, ReviewEntryKind, iter_review_entries
 from review.types import Finding
-from retro.report import best_matching_bullet
+from retro.report import format_matched_snippet
 from retro.rules import TermWeights, find_nearest_rule, term_weights
 
 
@@ -95,7 +95,9 @@ def _finding_to_comment(
     if nearest:
         comment["nearest_rule"] = {
             "filename": nearest["filename"],
-            "match_snippet": best_matching_bullet(comment["body"], nearest),
+            "match_snippet": format_matched_snippet(
+                comment["body"], nearest, weights,
+            ),
         }
         rule_match_counts[nearest["filename"]]["matched"] += 1
         return RuleMatch(comment, matched=True)

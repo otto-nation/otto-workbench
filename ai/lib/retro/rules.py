@@ -3,9 +3,9 @@
 Loads each rule file under `ai/guidelines/rules/` into passages — its list
 items, bulleted or numbered, its table rows and its paragraphs — and finds the
 rule nearest a piece of comment text by the best passage either has in common.
-`extract_keywords` is the vocabulary primitive both rule loading and bullet
-matching are built on — `retro.report` reuses it to find which bullet inside a
-matched rule is closest to the comment being annotated.
+A passage carries its own text beside its vocabulary, so `retro.report` quotes
+the passage the match was made on rather than re-deriving a snippet by some
+other reading of the file.
 
 Scoring is deliberately per-passage, IDF-weighted and normalized, because the
 question the retro asks is whether any rule *covers* a finding, not which rule
@@ -64,6 +64,11 @@ KEYWORD_PATTERN = re.compile(r"[a-z][a-z_-]{2,}")
 # (`1.5 seconds`) and a year (`2026. was`) opening a line stay prose.
 PASSAGE_START = re.compile(r"^\s*(?:[-*]\s+|\d{1,2}[.)]\s+|\|)")
 HEADING = re.compile(r"^#{1,6}\s")
+
+# The marker `PASSAGE_START` opened the passage on, dropped from the text a
+# passage carries for quoting — a reader is shown the rule's wording, not the
+# markdown syntax that set it apart from the paragraph around it.
+PASSAGE_MARKER = re.compile(r"^(?:[-*]\s+|\d{1,2}[.)]\s+|\|\s*)")
 
 # A rule file's frontmatter says which files the rule applies to, not what it
 # requires. Its path globs are read as a bullet list otherwise, and a comment
@@ -136,25 +141,50 @@ def split_passages(content: str) -> list[str]:
     return passages
 
 
+@dataclass(frozen=True)
+class Passage:
+    """One statement a rule file makes, and the vocabulary it makes it in.
+
+    The scorer picks a passage by its keywords and the report quotes the text
+    of the passage picked, so the two are one value rather than two lists a
+    caller indexes in parallel: a filter applied to one of those lists and not
+    the other — `MIN_PASSAGE_KEYWORDS` is exactly such a filter — silently
+    pairs every keyword set with some other passage's words.
+
+    `keywords` is a frozenset so the dataclass stays hashable, which a mutable
+    set field would take away at the first `hash()` rather than at definition.
+    """
+
+    text: str
+    keywords: frozenset[str]
+
+    @classmethod
+    def of(cls, text: str) -> Passage:
+        """`text` as a passage, with its vocabulary derived the one way.
+
+        A table row's own cell separators are markdown syntax too, the same as
+        the leading `|` `PASSAGE_MARKER` already drops — left in, a matched row
+        would quote a run of literal `|` characters as if it were prose.
+        """
+        quoted = PASSAGE_MARKER.sub("", text).replace("|", " ")
+        quoted = " ".join(quoted.split())
+        return cls(text=quoted, keywords=frozenset(extract_keywords(quoted)))
+
+
 def build_rule(filename: str, content: str) -> dict:
     """One rule file's text as the dict the scorer and the report read.
 
     The one place a rule dict is built, so a caller holding rule text that did
     not come off disk — a test fixture, or a file grown for comparison — gets
-    the same vocabulary, bullets and passages `load_rules` would have given it
-    rather than a hand-copy that drifts the next time this changes.
+    the same vocabulary and passages `load_rules` would have given it rather
+    than a hand-copy that drifts the next time this changes.
     """
     return {
         "filename": filename,
         "keywords": extract_keywords(content),
-        "bullets": [
-            line.strip().removeprefix("- ")
-            for line in content.splitlines()
-            if line.strip().startswith("- ")
-        ],
         "passages": [
-            kw for kw in map(extract_keywords, split_passages(content))
-            if len(kw) >= MIN_PASSAGE_KEYWORDS
+            p for p in map(Passage.of, split_passages(content))
+            if len(p.keywords) >= MIN_PASSAGE_KEYWORDS
         ],
         "content": content,
     }
@@ -211,7 +241,7 @@ def term_weights(rules: list[dict]) -> TermWeights:
 
 
 def passage_similarity(
-    comment_keywords: set[str], passage: set[str], weights: TermWeights,
+    comment_keywords: set[str], passage: frozenset[str], weights: TermWeights,
     shared: set[str] | None = None,
 ) -> float:
     """Weighted cosine similarity of a comment and a rule passage, in [0, 1].
@@ -247,25 +277,54 @@ class RuleMatch:
     score: float
 
 
+@dataclass(frozen=True)
+class PassageMatch:
+    """The passage of one rule nearest some comment text, and how near.
+
+    The report quotes the passage and the scorer compares the score, and both
+    come off the same scan so the line a reader is shown is the line the match
+    was made on — a second scan with its own tie-breaking can name a different
+    passage than the score reported beside it.
+    """
+
+    passage: Passage
+    score: float
+
+
+def best_passage(
+    comment_keywords: set[str], rule: dict, weights: TermWeights,
+) -> PassageMatch | None:
+    """`rule`'s passage closest to `comment_keywords`, or None if none is.
+
+    A passage sharing fewer than `MIN_SHARED_TERMS` with the comment is not a
+    candidate however the normalization would rate it: two short texts can
+    score highly off one uncommon word in common, which is a coincidence
+    rather than a subject. None when no passage clears that floor — the rule
+    says nothing about the comment, and there is no passage to quote for it.
+    """
+    best: PassageMatch | None = None
+    for passage in rule["passages"]:
+        shared = comment_keywords & passage.keywords
+        if len(shared) < MIN_SHARED_TERMS:
+            continue
+        score = passage_similarity(
+            comment_keywords, passage.keywords, weights, shared,
+        )
+        if best is None or score > best.score:
+            best = PassageMatch(passage=passage, score=score)
+    return best
+
+
 def best_passage_score(
     comment_keywords: set[str], rule: dict, weights: TermWeights,
 ) -> float:
     """How well `rule`'s closest passage matches `comment_keywords`.
 
-    A passage sharing fewer than `MIN_SHARED_TERMS` with the comment scores
-    zero however the normalization would rate it: two short texts can score
-    highly off one uncommon word in common, which is a coincidence rather than
-    a subject.
+    Zero when no passage of `rule` is a candidate at all, which is the score a
+    rule that says nothing about the comment has to earn.
     """
-    best = 0.0
-    for passage in rule["passages"]:
-        shared = comment_keywords & passage
-        if len(shared) < MIN_SHARED_TERMS:
-            continue
-        score = passage_similarity(comment_keywords, passage, weights, shared)
-        if score > best:
-            best = score
-    return best
+    best = best_passage(comment_keywords, rule, weights)
+    return best.score if best else 0.0
 
 
 def score_rules(

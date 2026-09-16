@@ -17,7 +17,10 @@ from retro.rules import (  # noqa: E402
     FRONTMATTER,
     HEADING,
     MIN_MATCH_SCORE,
+    MIN_PASSAGE_KEYWORDS,
     PASSAGE_START,
+    Passage,
+    best_passage,
     best_passage_score,
     build_rule,
     extract_keywords,
@@ -39,6 +42,18 @@ ORDERED_ITEM = re.compile(r"^\d{1,2}[.)]\s")
 
 def _rules():
     return load_rules(REPO_ROOT)
+
+
+def _every_passage():
+    """Each rule's passages, flattened to `(filename, content, passage)` triples.
+
+    A corpus-wide assertion about passages is a rule loop around a passage loop,
+    which is one level past what `validate-nesting` allows once the assertion
+    itself is a block. Flattening here keeps each such test a single loop.
+    """
+    for rule in _rules():
+        for passage in rule["passages"]:
+            yield rule["filename"], rule["content"], passage
 
 
 def _rule_texts() -> dict[str, str]:
@@ -587,18 +602,81 @@ class TestPassages:
         for rule in _rules():
             assert rule["passages"], rule["filename"]
             for passage in rule["passages"]:
-                assert passage < rule["keywords"], rule["filename"]
+                assert passage.keywords < rule["keywords"], rule["filename"]
+
+    def test_a_passage_carries_the_text_its_keywords_came_from(self):
+        """The pairing the report depends on to quote what the scorer matched.
+
+        Keyword sets and passage texts kept as two lists drift the moment one
+        is filtered and the other is not, and the report then quotes some
+        other passage's words beside the score. Stated as a round trip: each
+        passage's own text must re-derive its own keywords.
+        """
+        for filename, content, passage in _every_passage():
+            where = f"{filename}: {passage.text[:70]}"
+            assert passage.text
+            assert passage.keywords == extract_keywords(passage.text), where
+            # A wrapped item's lines are joined by a single space, and its
+            # opening marker is dropped, so the whole string is not a substring
+            # of the file verbatim — but every one of its words is, which a
+            # fabricated or misattributed text would not be.
+            assert all(word in content for word in passage.text.split()), where
+
+    def test_every_passage_of_every_rule_clears_the_keyword_floor(self):
+        """`MIN_PASSAGE_KEYWORDS` filters the pair, not one half of it."""
+        for filename, _content, passage in _every_passage():
+            assert len(passage.keywords) >= MIN_PASSAGE_KEYWORDS, (
+                f"{filename}: {passage.text[:70]}"
+            )
+
+
+class TestBestPassage:
+    """The passage a rule matched on, beside the score it matched with."""
+
+    def test_the_scored_passage_is_the_one_returned(self):
+        """`best_passage_score` is the score of `best_passage`'s passage.
+
+        Two scans with their own tie-breaking can disagree about which
+        passage a rule matched on, so the score and the text a report shows
+        must come off the same one.
+        """
+        rules = _rules()
+        weights = term_weights(rules)
+        for body, expected in TOPICAL_COMMENTS:
+            keywords = extract_keywords(body)
+            rule = next(r for r in rules if r["filename"] == expected)
+            match = best_passage(keywords, rule, weights)
+            assert match is not None, expected
+            assert match.score == best_passage_score(keywords, rule, weights)
+            assert match.passage in rule["passages"]
+
+    def test_a_rule_sharing_nothing_with_the_comment_has_no_passage(self):
+        """No candidate passage is None, and scores zero rather than low."""
+        rules = _rules()
+        weights = term_weights(rules)
+        keywords = extract_keywords(
+            "The arctic tern migrates eleven thousand miles each season."
+        )
+        for rule in rules:
+            if best_passage(keywords, rule, weights) is None:
+                assert best_passage_score(keywords, rule, weights) == 0.0
+
+    def test_a_passage_derives_its_own_keywords(self):
+        passage = Passage.of("- Quote the variable expansion in every script")
+        assert passage.text == "Quote the variable expansion in every script"
+        assert passage.keywords == extract_keywords(passage.text)
+        assert "variable" in passage.keywords
 
 
 class TestLoadRules:
     def test_missing_rules_directory_loads_nothing(self, tmp_path):
         assert load_rules(tmp_path) == []
 
-    def test_every_rule_keeps_its_bullets_and_content(self):
+    def test_every_rule_keeps_its_passages_and_content(self):
         rules = _rules()
         assert rules
         for rule in rules:
             assert rule["filename"].endswith(".md")
             assert rule["content"]
-            assert isinstance(rule["bullets"], list)
+            assert isinstance(rule["passages"], list)
             assert isinstance(rule["keywords"], set)

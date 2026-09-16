@@ -78,11 +78,54 @@ def test_filters_skipped_runs():
     assert result == [200]
 
 
-def test_filters_cancelled_runs():
-    """Cancelled workflows should be excluded from results."""
+def test_keeps_cancelled_runs_so_their_failed_jobs_are_seen():
+    """Cancelling a run does not un-fail the jobs that had already failed in it."""
     runs = [
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Old CI", "conclusion": "cancelled"},
+    ]
+    with patch("gh.client.json_out", return_value=runs):
+        result = run_reads.fetch_latest_run_ids("owner/repo", "main")
+    assert result == [200, 201]
+
+
+def test_cancelled_run_does_not_shadow_a_later_real_run():
+    """A cancelled run is selected but claims no workflow name.
+
+    Were it to claim one, the older real run of that workflow — the one holding
+    the failures worth reporting — would be deduplicated away behind it.
+    """
+    runs = [
+        {"databaseId": 300, "headSha": "abc", "workflowName": "CI", "conclusion": "cancelled"},
+        {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
+    ]
+    with patch("gh.client.json_out", return_value=runs):
+        result = run_reads.fetch_latest_run_ids("owner/repo", "main")
+    assert result == [300, 200]
+
+
+def test_a_real_run_does_not_shadow_a_cancelled_run_of_its_workflow():
+    """The shape of a re-run after a cancellation: the newer row is the real one.
+
+    The cancelled row is older and still holds the jobs that had failed before
+    it was cancelled, so it is selected even though its workflow name was
+    already claimed. Testing the name check before the cancelled branch drops
+    it, which is the whole defect running the other way round.
+    """
+    runs = [
+        {"databaseId": 300, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
+        {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "cancelled"},
+    ]
+    with patch("gh.client.json_out", return_value=runs):
+        result = run_reads.fetch_latest_run_ids("owner/repo", "main")
+    assert result == [300, 200]
+
+
+def test_skipped_run_does_not_shadow_a_later_real_run():
+    """A skipped row is dropped outright, so the next row of that workflow is taken."""
+    runs = [
+        {"databaseId": 300, "headSha": "abc", "workflowName": "CI", "conclusion": "skipped"},
+        {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
     ]
     with patch("gh.client.json_out", return_value=runs):
         result = run_reads.fetch_latest_run_ids("owner/repo", "main")
@@ -93,11 +136,22 @@ def test_all_skipped_returns_empty():
     """When all runs at the latest SHA are skipped, return empty list."""
     runs = [
         {"databaseId": 200, "headSha": "abc", "workflowName": "A", "conclusion": "skipped"},
-        {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "cancelled"},
+        {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "skipped"},
     ]
     with patch("gh.client.json_out", return_value=runs):
         result = run_reads.fetch_latest_run_ids("owner/repo", "main")
     assert result == []
+
+
+def test_cancelled_run_is_selected_when_it_is_all_there_is():
+    """A commit whose only run was cancelled still has a run to report on."""
+    runs = [
+        {"databaseId": 200, "headSha": "abc", "workflowName": "A", "conclusion": "skipped"},
+        {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "cancelled"},
+    ]
+    with patch("gh.client.json_out", return_value=runs):
+        result = run_reads.fetch_latest_run_ids("owner/repo", "main")
+    assert result == [201]
 
 
 def test_in_progress_runs_kept():

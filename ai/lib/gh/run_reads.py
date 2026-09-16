@@ -27,7 +27,7 @@ from contextlib import contextmanager
 
 from gh import client as gh_client
 
-SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))
+SKIP_CONCLUSIONS = frozenset(("skipped",))
 FAILURE_CONCLUSIONS = frozenset(
     ("failure", "timed_out", "action_required", "stale", "startup_failure"),
 )
@@ -36,10 +36,16 @@ FAILURE_CONCLUSIONS = frozenset(
 def fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
     """Workflow run IDs for the latest commit on `branch`, one per workflow.
 
-    Filters out skipped and cancelled runs before deduplication.
     When a workflow is re-run, both the original and re-run share the same
     SHA.  gh run list returns newest first, so we deduplicate by workflow
     name to keep only the most recent run of each workflow.
+
+    A run's conclusion decides which row may *claim* a workflow name, never
+    whether the run is fetched. A skipped run ran nothing and is dropped. A
+    cancelled run is returned — cancelling a run does not un-fail the jobs that
+    had already failed in it, and dropping the run took those failures with it —
+    but it claims no workflow name, so it can never shadow an older real run of
+    the same workflow that would otherwise have been the one reported.
     """
     runs = gh_client.json_out(
         "run", "list", "--repo", repo, "--branch", branch,
@@ -50,6 +56,7 @@ def fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
         return []
     latest_sha = runs[0]["headSha"]
     seen_workflows: set[str] = set()
+    seen_cancelled: set[str] = set()
     ids: list[int] = []
     for r in runs:
         if r["headSha"] != latest_sha:
@@ -57,9 +64,15 @@ def fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
         if r.get("conclusion") in SKIP_CONCLUSIONS:
             continue
         wf = r.get("workflowName", "")
-        if wf in seen_workflows:
+        # Which set a run dedupes against is the whole of the claim rule. A
+        # cancelled run answers to its own, so it never occupies the name a real
+        # run of that workflow would claim and can never shadow one — while
+        # still collapsing its own repeats, since gh run list returns newest
+        # first and an older cancelled attempt carries nothing the newest lacks.
+        claimed = seen_cancelled if r.get("conclusion") == "cancelled" else seen_workflows
+        if wf in claimed:
             continue
-        seen_workflows.add(wf)
+        claimed.add(wf)
         ids.append(r["databaseId"])
     return ids
 

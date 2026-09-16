@@ -34,6 +34,26 @@ class RunUnavailable(Exception):
     """
 
 
+def _dedupe_items(items: tuple[ci.FailureItem, ...]) -> tuple[ci.FailureItem, ...]:
+    """Drop repeats of a failure one job reported in more than one run.
+
+    A commit can have two runs of the same workflow — a cancelled one and the
+    real one — and `merge_runs` concatenates their job lists, so the same job
+    name arrives twice and its failures land in one group. Identity is the
+    failure's id together with its text: the id alone is not enough, because two
+    distinct annotations anchored on the same file and line share one.
+    """
+    seen: set[tuple[str, str]] = set()
+    kept: list[ci.FailureItem] = []
+    for item in items:
+        key = (item.id, item.annotation)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(item)
+    return tuple(kept)
+
+
 def parse_run(repo: str, run_data: dict) -> ci.RunState:
     """Parse gh run data into a RunState with classified failures."""
     failed_jobs = [j for j in run_data.get("jobs", []) if j.get("conclusion") in FAILURE_CONCLUSIONS]
@@ -50,7 +70,8 @@ def parse_run(repo: str, run_data: dict) -> ci.RunState:
         job_key = r.job_name.lower().replace(" ", "-").replace("/", "-")
         prior_items = failures[job_key].items if job_key in failures else ()
         failures[job_key] = ci.FailureGroup(
-            job=r.job_name, kind=r.kind, items=prior_items + tuple(r.items),
+            job=r.job_name, kind=r.kind,
+            items=_dedupe_items(prior_items + tuple(r.items)),
             failed_step=r.failed_step,
         )
 
@@ -108,6 +129,29 @@ class MergedRun:
     merged: dict
 
 
+def _primary_first(payloads: list[dict]) -> list[dict]:
+    """Reorder so the run whose conclusion should stand for the commit leads.
+
+    `merge_runs` keeps the leading payload's conclusion whenever no other run
+    failed, which makes the choice of leader a verdict. A cancelled run that
+    contributed no job is the one payload that must not lead: it is selected
+    only so its failed jobs are not lost, it has none, and leading would leave
+    the merged conclusion `cancelled` over a commit whose real runs all passed
+    — which `CIDomain.readiness` reports as a `CI failing` blocker.
+
+    Order is otherwise preserved, and a run with jobs leads normally however it
+    concluded: the jobs are the evidence, and a run that has them has a claim.
+    """
+    lead_index = next(
+        (i for i, p in enumerate(payloads) if p.get("conclusion") != "cancelled" or p.get("jobs")),
+        None,
+    )
+    if lead_index is None:
+        return payloads
+    rest = payloads[:lead_index] + payloads[lead_index + 1:]
+    return [payloads[lead_index], *rest]
+
+
 def fetch_merged(repo: str, run_ids: list[int]) -> MergedRun | None:
     """Fetch each run's payload in parallel and fold them into one.
 
@@ -123,7 +167,8 @@ def fetch_merged(repo: str, run_ids: list[int]) -> MergedRun | None:
     # merge_runs writes the combined conclusion, status and job list onto the
     # first payload it is given, so it gets a copy of that one: each payload's
     # own conclusion and status stay as they were fetched.
-    merged = merge_runs([dict(payloads[0]), *payloads[1:]])
+    ordered = _primary_first(payloads)
+    merged = merge_runs([dict(ordered[0]), *ordered[1:]])
     return MergedRun(payloads=payloads, merged=merged)
 
 

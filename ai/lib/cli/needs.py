@@ -75,8 +75,10 @@ REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, lock=True)
 # What `pr review --self` needs: the same run against the local branch, which
 # has no PR to name. Its subject is the working tree, so nothing it resolves
 # comes from the network — the repo label it does need is the one
-# `repo_identity_from_origin` reads off the git remote, and `resolve_local`
-# returns the identical string `gh repo view` would have.
+# `repo_identity_from_origin` reads off the git remote. That label is not
+# byte-identical to what `gh repo view` would return: it folds case and drops
+# the host (see `pr_target.RepoIdentity`), which is fine for what a self-review
+# uses it for.
 #
 # LOCAL rather than REMOTE because a self-review is the pass that runs *before*
 # a PR exists, routinely on a branch the remote has never seen. Spending a

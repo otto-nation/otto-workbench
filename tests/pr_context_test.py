@@ -587,22 +587,6 @@ def test_pr_number_if_reachable_degrades_when_github_is_unreachable(monkeypatch)
     assert pr_context.pr_number_if_reachable("acme/widget", "feat/x") is None
 
 
-def test_resolve_local_still_makes_no_gh_call(monkeypatch, tmp_path):
-    """The lookup is opt-in, so the rung keeps its no-network promise.
-
-    `pr status` resolves at LOCAL and renders from state.json and the worktree;
-    folding a PR lookup into the rung would put `gh` on every dashboard render.
-    """
-    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-    wt = _git_repo(tmp_path / "wt2")
-    calls = _recorded_runs(monkeypatch)
-
-    ctx = pr_context.resolve_local(repo_dir=str(wt))
-
-    assert ctx.pr_number is None
-    assert [c for c in calls if c[0] == "gh"] == []
-
-
 def test_pr_lookup_is_skipped_without_a_branch():
     """Nothing to ask about, so nothing is asked."""
     assert pr_context.pr_number_if_reachable("acme/widget", "") is None

@@ -742,10 +742,6 @@ def test_find_repo_root_unusable_git_falls_through_to_gh(monkeypatch):
         MagicMock(side_effect=OSError("git not found")),
     )
     monkeypatch.setattr(
-        "review.worktree.gh_client.out",
-        lambda *a, **kw: "widget",
-    )
-    monkeypatch.setattr(
         "review.worktree.os.path.expanduser", lambda p: "/home/me/git")
     monkeypatch.setattr(
         "review.worktree.subprocess.run",
@@ -758,10 +754,6 @@ def test_find_repo_root_find_exception_returns_empty(monkeypatch):
     monkeypatch.setattr(
         "review.worktree.git_client.out",
         lambda *a, **kw: "/somewhere/else",
-    )
-    monkeypatch.setattr(
-        "review.worktree.gh_client.out",
-        lambda *a, **kw: "widget",
     )
     monkeypatch.setattr(
         "review.worktree.subprocess.run",

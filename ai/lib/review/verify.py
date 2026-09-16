@@ -194,9 +194,15 @@ def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     if evidence is None or not resolved.exists():
         detail["match_result"] = resolved.exists() and evidence is None
         return detail
+    # A file that will not decode costs this one finding its evidence, not the
+    # run: `UnicodeDecodeError` is a `ValueError`, so an `OSError`-only guard
+    # let a latin-1 script or a binary asset in the diff kill post-processing
+    # and lose the whole review. Not `errors="replace"` — a binary's fragments
+    # match nothing anyway, and False already means "could not read it to
+    # verify".
     try:
         file_content = resolved.read_text()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         detail["match_result"] = False
         return detail
     detail.update(_check_fragments(evidence, file_content))

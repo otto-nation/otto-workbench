@@ -107,6 +107,21 @@ class TestMatchEvidence:
     def test_file_not_found_fails(self, tmp_path):
         assert _verifies("missing.go", "any code", str(tmp_path)) is False
 
+    def test_a_file_that_will_not_decode_fails_rather_than_raising(self, tmp_path):
+        """An undecodable file costs one finding its evidence, not the run.
+
+        `UnicodeDecodeError` is a `ValueError`, so it walked straight through a
+        guard naming only `OSError` and killed post-processing after every
+        agent had run. A latin-1 script is the case that surfaced it — text to
+        git, and so reachable from a finding's path like any other file.
+        """
+        (tmp_path / "latin1.sh").write_bytes(b"echo \xb2\xb2 done\n")
+        assert _verifies("latin1.sh", "echo done", str(tmp_path)) is False
+
+    def test_a_binary_file_fails_rather_than_raising(self, tmp_path):
+        (tmp_path / "font.woff2").write_bytes(b"wOF2\x00\x01\xff\xfe\x00bad")
+        assert _verifies("font.woff2", "any code", str(tmp_path)) is False
+
     def test_none_evidence_file_exists_passes(self, tmp_path):
         src = tmp_path / "handler.go"
         src.write_text("package main\n")
@@ -878,6 +893,38 @@ class TestPostProcessFindings:
 
         assert "- **[M1]** **`handler.go:4`** — real problem" in result
         assert "revisit once [removed] lands" in result
+
+    def test_an_undecodable_file_costs_its_finding_and_not_the_pass(self, tmp_path):
+        """The whole pass still finishes and still writes the review file.
+
+        This is the property the unit case cannot state: the abort was in
+        post-processing, so what it destroyed was not one evidence match but
+        every agent's output, the review file left unwritten. The finding
+        naming the undecodable file goes — nothing could verify it — and the
+        one beside it survives and is renumbered into its place.
+        """
+        (tmp_path / "latin1.sh").write_bytes(b"echo \xb2\xb2 done\n")
+        (tmp_path / "handler.go").write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- **[M1]** **`latin1.sh:1`** — cannot be read to verify\n"
+            "  > ```sh\n"
+            "  > echo done\n"
+            "  > ```\n"
+            "- **[M2]** **`handler.go:4`** — real problem\n"
+            "  > ```go\n"
+            "  > \tx := 1\n"
+            "  > ```\n"
+        )
+
+        verification = post_process_findings(str(review), str(tmp_path))
+
+        result = review.read_text()
+        assert "- **[M1]** **`handler.go:4`** — real problem" in result
+        assert "cannot be read to verify" not in result
+        # The drop note still names the file, which is the record of why.
+        assert verification["dropped"] == ["M1"]
 
     def test_strips_the_prior_findings_ledger(self, tmp_path):
         review = tmp_path / "review.md"

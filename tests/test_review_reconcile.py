@@ -263,6 +263,24 @@ class TestInferredFromTheTree:
         assert record.disposition is None
         assert record.basis == "`imagined.go` is in neither tree"
 
+    def test_a_file_that_will_not_decode_settles_nothing_rather_than_aborting(self, repo):
+        """Reading the prior blob must not kill the pass that reads it.
+
+        `_before_text` shells out to `git show <sha>:<path>`, and the pipe
+        raised `UnicodeDecodeError` on a file git calls text but UTF-8 cannot
+        decode — a second way for one latin-1 file in the diff to destroy a
+        review in post-processing, independent of the evidence check.
+        """
+        (repo / "latin1.sh").write_bytes(b"echo \xb2\xb2 handle\n")
+        prior_sha = _commit(repo, "before")
+        (repo / "latin1.sh").write_bytes(b"echo \xb2\xb2 handled\n")
+        _commit(repo, "after")
+
+        prior = _prior(
+            "- **[M1]** **`latin1.sh:1`** — `echo handle` is wrong\n", sha=prior_sha)
+        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        assert record is not None
+
     def test_a_missing_file_settles_nothing_without_a_prior_commit(self, repo):
         (repo / "gone.go").write_text(_BEFORE)
         _commit(repo, "before")

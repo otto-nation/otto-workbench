@@ -1841,10 +1841,13 @@ issue it had accumulated rather than resuming from an empty one.
 
 The review-thread ledger, and the one state file that is not a snapshot.
 
-``ignore/pr-comments/state.json`` records where every review thread on a PR
-stood at the end of the last run. Most of what it holds — the lifecycle state,
-the reviewer, the last reply seen, the file and line — is re-fetched from the
-API on every run, so losing it costs nothing. Three fields are not:
+``<target_dir>/pr-comments/state.json`` records where every review thread on a
+PR stood at the end of the last run. ``pr.comments.threads_state_path`` owns
+that join; this module is handed the path rather than deriving it.
+
+Most of what the file holds — the lifecycle state, the reviewer, the last reply
+seen, the file and line — is re-fetched from the API on every run, so losing it
+costs nothing. Three fields are not:
 ``classification``, ``summary`` and ``decided_at`` are triage decisions made
 locally, and no API call reproduces them.
 
@@ -3975,7 +3978,8 @@ synthesis agent formatting drift or corrupted review files.
 Fetch PR review threads, compute lifecycle states, and output status.
 
 Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in <worktree>/ignore/pr-comments/state.json.
+Manages local state in the run's target directory, at pr-comments/state.json;
+`pr.comments.threads_state_path` owns that join.
 
 What is left here is what an entry point is: argument parsing, the flag
 conflicts that have to be refused before anything runs, context resolution, the

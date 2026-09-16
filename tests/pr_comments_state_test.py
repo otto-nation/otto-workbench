@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core import serde
+from pr import comments as pr_comments
 from pr.comments_state import (
     CommentsState, ThreadRecord, ThreadState, load_state, save_state,
 )
@@ -44,6 +45,37 @@ def _state(**overrides) -> CommentsState:
 
 
 # ── The file ───────────────────────────────────────────────────────────────
+
+
+def test_the_ledger_sits_under_the_run_target(tmp_path):
+    """Not in the worktree. A target repo that does not gitignore ``ignore/``
+    tracked this file, and it is scratch state rather than anything the repo
+    should hold."""
+    target = tmp_path / "state" / "pr" / "acme-widget-abc-main"
+
+    path = pr_comments.threads_state_path(target)
+
+    assert path == target / "pr-comments" / "state.json"
+    assert "ignore" not in path.parts
+
+
+def test_the_ledger_sits_beside_the_rest_of_the_pass(tmp_path):
+    """One directory holds everything the comments pass produced, so the join
+    has one owner and a sweep of the target reclaims the ledger with the
+    artifacts rather than leaving it behind."""
+    target = tmp_path / "target"
+
+    assert pr_comments.threads_state_path(target).parent == \
+        pr_comments.artifacts_dir(target)
+
+
+def test_two_branches_in_one_worktree_get_separate_ledgers(tmp_path):
+    """What keying on the target buys over keying on the worktree: the old path
+    gave one file to whichever branch the worktree currently held."""
+    first = pr_comments.threads_state_path(tmp_path / "acme-widget-main")
+    second = pr_comments.threads_state_path(tmp_path / "acme-widget-feature")
+
+    assert first != second
 
 
 def test_load_state_missing_file(tmp_path):

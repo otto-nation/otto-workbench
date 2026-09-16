@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Rebuild review.md from group finding files."""
 
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+# ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
+_AI_LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
 
 from cli.review_rebuild import main  # noqa: E402
 

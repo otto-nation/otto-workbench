@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 458 -->
+<!-- doc-budget: 466 -->
 
 # AI Automation
 
@@ -349,6 +349,14 @@ requires it absolute and holding the four paths that witness a whole checkout,
 so a partial one is refused by the missing path's name, not by a later `python3`
 failure naming nothing. A module sourced by name is not among them: it fails on
 the body's first lines. The value is read from the environment, never spliced.
+
+That covers what `task --global` loads. The Python entry points route through
+no task and take their own pin, since `~/.local/bin/pr` is a symlink into
+`main/` and `Path(__file__).resolve()` follows it — see `ai/bin/_libdir.py`:
+
+```bash
+WORKBENCH_AI_LIB_DIR=/path/to/worktree pr review --self --fix
+```
 
 ### How `pr` decides what a bare token is
 

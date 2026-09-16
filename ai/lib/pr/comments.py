@@ -244,6 +244,26 @@ def artifacts_dir(target_dir: Path) -> Path:
     return target_dir / "pr-comments"
 
 
+def threads_state_path(target_dir: Path) -> Path:
+    """The review-thread ledger, beside the rest of the pass's bookkeeping.
+
+    The last part of the worktree this tool treated as its own. A target repo
+    that does not gitignore ``ignore/`` tracked it, and it is scratch state
+    rather than anything a repo should hold.
+
+    It is not simply another artifact, which is why it moved later than the
+    rest: those are rewritten from scratch each run and this one is read across
+    runs, so an existing file has to be carried to the new location rather than
+    abandoned — ``ai/claude/migrations/20260915-pr-comments-state-root.sh``
+    does that once per registered checkout.
+
+    Under the run's target directory, so the ledger is keyed on what the run
+    targets exactly like ``pr/state.json`` beside it: one worktree used for two
+    branches in turn no longer has one file answering for both.
+    """
+    return artifacts_dir(target_dir) / "state.json"
+
+
 def pr_body_draft(artifacts: Path) -> Path:
     """Where the fix agent leaves a PR description it was asked to rewrite.
 

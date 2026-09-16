@@ -1,7 +1,8 @@
 """Fetch PR review threads, compute lifecycle states, and output status.
 
 Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in <worktree>/ignore/pr-comments/state.json.
+Manages local state in the run's target directory, at pr-comments/state.json;
+`pr.comments.threads_state_path` owns that join.
 
 What is left here is what an entry point is: argument parsing, the flag
 conflicts that have to be refused before anything runs, context resolution, the
@@ -90,7 +91,7 @@ def _run_threads(trail, args, ctx) -> int:
     pr_data = fetch_pr_data(repo, str(pr_number))
     my_login = pr_data.viewer_login
 
-    state_path = toplevel / "ignore" / "pr-comments" / "state.json"
+    state_path = pc.threads_state_path(ctx.target_dir)
 
     # Load prior state
     prior_state = pcs.load_state(state_path)

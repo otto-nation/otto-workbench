@@ -15,6 +15,7 @@ observation of "a workbench-managed session ran in this repo" the machine has.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -24,7 +25,14 @@ BIN_DIR = Path(__file__).resolve().parent
 AI_BIN_DIR = BIN_DIR.parent.parent / "bin"
 # ai/lib goes after this script's own directory, not in front of it: a module
 # named the same in both belongs to the hook.
-sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
+# ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
+_AI_LIB_DIR = BIN_DIR.parent.parent / "lib"
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
 sys.path.insert(0, str(BIN_DIR))
 # lib/ at the workbench root, for the bare-repo layout this hook has to
 # resolve. Ahead of the two above only because nothing in it shares a name with

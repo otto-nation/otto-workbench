@@ -112,6 +112,7 @@ _reshape_one_flat_review() {
   local reviews="$1" dir_name="$2"
   local review_dir="$reviews/$dir_name"
   local archive_dir="$review_dir/archives"
+  local name
 
   mkdir -p "$review_dir"
   mv "$reviews/$dir_name.md" "$review_dir/review.md"
@@ -134,7 +135,7 @@ _reshape_one_flat_review() {
   # layout, not the current convention. A phase added to the enum tomorrow
   # never wrote a file here, so deriving these from Phase would claim
   # otherwise.
-  local intermediate name
+  local intermediate
   for intermediate in \
     "$reviews/$dir_name".group-*.md \
     "$reviews/$dir_name".group-*.jsonl \
@@ -152,7 +153,7 @@ _reshape_one_flat_review() {
   # whose name merely begins with a 2 after the dot, burying repo.2fa-42.md
   # under repo/archives/2fa-42.md — the candidates are filtered through
   # _owning_review, so both sides share one definition of what a stamp is.
-  local candidate name rest
+  local candidate rest
   for candidate in "$reviews/$dir_name."*.md "$reviews/$dir_name."*.jsonl; do
     [[ -f "$candidate" ]] || continue
     name="${candidate##*/}"

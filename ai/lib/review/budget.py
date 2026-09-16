@@ -110,6 +110,11 @@ MAX_DELTA_LOG_BYTES = 20_000
 # `unaccounted_bytes` across 86 recorded renders — 2.3KB median, 9.6KB worst —
 # with room above the worst case.
 #
+# Held back by `ladder_target_bytes`, which is what the ladder plans against,
+# rather than by `prompt_budget_bytes`, which is where a prompt is refused. The
+# two have to differ: the ladder fills its sections to whatever target it is
+# given, so a target equal to the ceiling is overshot by exactly this markup.
+#
 # ceiling: a reserve, because the markup is generated during the render the
 # budget precedes. Upgrade to a measurement if a render is ever recorded with
 # `unaccounted_bytes` above this figure, which is the same record that would
@@ -224,7 +229,19 @@ def prompt_budget_bytes(model: str) -> int:
     `UnknownModelWindow` for a model with no recorded window.
     """
     capability = int(prompt_budget_tokens(model) * BYTES_PER_TOKEN_FLOOR)
-    return min(capability, MAX_SPEND_BYTES) - RENDER_MARKUP_RESERVE_BYTES
+    return min(capability, MAX_SPEND_BYTES)
+
+
+def ladder_target_bytes(model: str) -> int:
+    """What the budget ladder may plan to spend, below the refusal ceiling.
+
+    `prompt_budget_bytes` is where a prompt is refused; this is what the ladder
+    aims at, and the gap between them is `RENDER_MARKUP_RESERVE_BYTES`. They
+    have to be two numbers: the ladder plans its sections up to whatever it is
+    given and the render then adds markup no lever sized, so a ladder aimed at
+    the ceiling overshoots it by exactly the bytes the reserve exists to cover.
+    """
+    return prompt_budget_bytes(model) - RENDER_MARKUP_RESERVE_BYTES
 
 
 def collection_budget_bytes(
@@ -245,7 +262,7 @@ def collection_budget_bytes(
     can be sized against a ceiling no phase actually budgets to.
     """
     return min(
-        prompt_budget_bytes(model)
+        ladder_target_bytes(model)
         for model in collect_phase_models(explicit_model, project_root)
     )
 

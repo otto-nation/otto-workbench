@@ -1114,6 +1114,21 @@ class TestTheBudgetComesFromTheModel:
         assert model_window_tokens("sonnet") == ALIAS_FLOOR_TOKENS
         assert prompt_budget_bytes("sonnet") == prompt_budget_bytes("claude-sonnet-4-6")
 
+    def test_the_ladder_plans_below_the_ceiling_it_is_refused_at(self):
+        """The reserve only holds bytes back if the ladder never sees them.
+
+        Subtracting it from the ceiling alone and then handing the ladder that
+        same figure spends it: the ladder fills its sections to whatever target
+        it is given, and the markup the render adds lands on top. A group
+        prompt planned to exactly its allowance rendered 2,759 bytes over and
+        was refused.
+        """
+        from review.budget import RENDER_MARKUP_RESERVE_BYTES, ladder_target_bytes
+
+        for model in ("claude-sonnet-5", "sonnet"):
+            gap = prompt_budget_bytes(model) - ladder_target_bytes(model)
+            assert gap == RENDER_MARKUP_RESERVE_BYTES, model
+
     def test_a_window_its_reserves_exhaust_is_refused(self, monkeypatch):
         """A negative budget would be absorbed rather than noticed.
 
@@ -1145,15 +1160,22 @@ class TestTheBudgetComesFromTheModel:
         with pytest.raises(UnknownModelWindow, match="claude-sonnet-5"):
             prompt_budget_bytes("gpt-5")
 
-    def test_the_record_says_which_model_the_budget_came_from(self, tmp_path):
+    def test_the_record_says_which_model_the_budget_came_from(
+        self, tmp_path, monkeypatch,
+    ):
         """A density without its tokenizer is not interpretable.
 
         The tokenizer is generation-specific — sonnet-5 counts the same text
         ~27% denser than sonnet-4-5 — so a budget recorded without its model
         cannot be compared against another run's.
+
+        The alias is resolved explicitly rather than left to the environment:
+        a developer's shell exports `ANTHROPIC_DEFAULT_SONNET_MODEL` and CI
+        does not, so reading it would assert a different model in each place.
         """
         from review.registry import build_prompt
 
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", TEST_MODEL)
         job = _make_job(_make_preflight())
         job.review_file = str(tmp_path / "review.md")
         build_prompt(Phase.SCOUT, job, max_turns=10)
@@ -1221,8 +1243,10 @@ class TestCollectionBudgetsForEveryPhase:
             review_budget, "collect_phase_models",
             lambda *_: {"claude-sonnet-5": [], "claude-sonnet-4-6": []},
         )
-        assert review_budget.collection_budget_bytes() == prompt_budget_bytes(
-            "claude-sonnet-4-6",
+        # The ladder's target, since collection is sizing what the ladder will
+        # later be handed rather than the ceiling it is refused at.
+        assert review_budget.collection_budget_bytes() == (
+            review_budget.ladder_target_bytes("claude-sonnet-4-6")
         )
 
     def test_it_resolves_against_the_worktree_it_is_given(self, monkeypatch):

@@ -572,12 +572,17 @@ TEST_MODEL = "claude-sonnet-5"
 
 
 def model_budget_bytes() -> int:
-    """`prompt_budget_bytes(TEST_MODEL)`, imported lazily like the other lib reaches."""
+    """What the ladder may plan to spend for `TEST_MODEL`.
+
+    The ladder's target rather than the refusal ceiling, because that is the
+    figure a test driving `_fit_budget` is asserting against. Imported lazily,
+    like the other reaches into ai/lib here.
+    """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from review.budget import prompt_budget_bytes
+    from review.budget import ladder_target_bytes
 
-    return prompt_budget_bytes(TEST_MODEL)
+    return ladder_target_bytes(TEST_MODEL)
 
 
 class MachineContention(AssertionError):

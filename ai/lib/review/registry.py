@@ -22,7 +22,7 @@ from core import log
 from agent.registry import PHASES
 from core.phases import Phase
 from agent.phases import phase_model
-from review.budget import prompt_budget_bytes
+from review.budget import ladder_target_bytes, prompt_budget_bytes
 from review.paths import phase_output_path
 from review.prompt import (
     BuiltPrompt, PromptTooLarge, _build_common_sections, _log_prompt_size,
@@ -122,10 +122,13 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     template_name = spec.template_for(job.mode)
 
     model = phase_model(phase, job.model or None, job.config)
+    # Two numbers, deliberately: the ladder plans against the lower one so the
+    # markup the render adds afterwards still lands under the ceiling the
+    # prompt is refused at.
     budget_bytes = prompt_budget_bytes(model)
 
     common = _build_common_sections(
-        job, max_turns=max_turns, budget_bytes=budget_bytes,
+        job, max_turns=max_turns, budget_bytes=ladder_target_bytes(model),
     )
     built = entry.build(job, common, extra, output)
     template_vars = built.builder.vars

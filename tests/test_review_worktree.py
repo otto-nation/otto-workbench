@@ -13,8 +13,9 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review.worktree import (
-    WorktreeResult, cleanup_worktree, detached_worktree_at, setup_pr_worktree,
-    switch_to_branch, switch_to_pr_branch,
+    WorktreeResult, cleanup_self_review_worktree, cleanup_worktree,
+    detached_worktree_at, find_repo_root, resolve_branch_input, resolve_wt_path,
+    setup_pr_worktree, switch_to_branch, switch_to_pr_branch,
 )
 
 
@@ -527,3 +528,218 @@ def test_cleanup_worktree_fallback_swallows_errors(mock_run):
         is_fallback=True,
     )
     cleanup_worktree(result, "/repos/repo")
+
+
+# ── cleanup_self_review_worktree ──────────────────────────────────────────────
+
+
+def test_cleanup_self_review_worktree_uses_explicit_repo_dir(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "review.worktree.cleanup_worktree",
+        lambda result, repo_dir: seen.append((result, repo_dir)),
+    )
+    wt = WorktreeResult(path="/tmp/wt", cleanup_ref="x", is_fallback=True)
+    cleanup_self_review_worktree(wt, "/explicit")
+    assert seen == [(wt, "/explicit")]
+
+
+def test_cleanup_self_review_worktree_falls_back_to_toplevel(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out", lambda *a, **kw: "/from/git")
+    seen = []
+    monkeypatch.setattr(
+        "review.worktree.cleanup_worktree",
+        lambda result, repo_dir: seen.append(repo_dir),
+    )
+    cleanup_self_review_worktree(None, "")
+    assert seen == ["/from/git"]
+
+
+def test_cleanup_self_review_worktree_swallows_unusable_git(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        MagicMock(side_effect=OSError("git not found")),
+    )
+    cleanup = MagicMock()
+    monkeypatch.setattr("review.worktree.cleanup_worktree", cleanup)
+    cleanup_self_review_worktree(None, "")
+    cleanup.assert_not_called()
+
+
+# ── resolve_wt_path ───────────────────────────────────────────────────────────
+
+
+def test_resolve_wt_path_returns_git_toplevel(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **k: "/repos/widget",
+    )
+    assert resolve_wt_path("", "feat/x") == "/repos/widget"
+    assert resolve_wt_path("/ignored", "feat/x") == "/repos/widget"
+
+
+def test_resolve_wt_path_bare_repo_uses_topology(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "review.worktree.git_topology.is_bare_repo", lambda cwd=None: True)
+    monkeypatch.setattr(
+        "review.worktree.git_topology.resolve_bare_repo_worktree",
+        lambda cwd, branch: Path("/repos/widget/feat-x"),
+    )
+    assert resolve_wt_path("", "feat/x") == "/repos/widget/feat-x"
+
+
+def test_resolve_wt_path_bare_repo_missing_worktree_exits(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "review.worktree.git_topology.is_bare_repo", lambda cwd=None: True)
+    monkeypatch.setattr(
+        "review.worktree.git_topology.resolve_bare_repo_worktree",
+        lambda cwd, branch: None,
+    )
+    monkeypatch.setattr(
+        "review.worktree.git_topology.default_branch", lambda cwd=None: "main")
+    with pytest.raises(SystemExit) as exc:
+        resolve_wt_path("", "feat/x")
+    assert exc.value.code == 1
+
+
+def test_resolve_wt_path_not_a_repo_exits(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "review.worktree.git_topology.is_bare_repo", lambda cwd=None: False)
+    with pytest.raises(SystemExit) as exc:
+        resolve_wt_path("/not/git", "")
+    assert exc.value.code == 1
+
+
+# ── resolve_branch_input ──────────────────────────────────────────────────────
+
+
+def test_resolve_branch_input_uses_resolve_branch(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.subprocess.run",
+        lambda *a, **kw: MagicMock(returncode=0, stdout="feat/real\n"),
+    )
+    assert resolve_branch_input("feat/fuzzy", "/repo") == "feat/real"
+
+
+def test_resolve_branch_input_falls_back_on_failure(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.subprocess.run",
+        lambda *a, **kw: MagicMock(returncode=1, stdout=""),
+    )
+    assert resolve_branch_input("feat/fuzzy", "/repo") == "feat/fuzzy"
+
+
+def test_resolve_branch_input_falls_back_on_exception(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.subprocess.run",
+        MagicMock(side_effect=FileNotFoundError("resolve-branch")),
+    )
+    assert resolve_branch_input("feat/fuzzy", "") == "feat/fuzzy"
+
+
+# ── find_repo_root ────────────────────────────────────────────────────────────
+
+
+def test_find_repo_root_explicit_dir_that_exists(tmp_path, monkeypatch):
+    gh = MagicMock(side_effect=AssertionError("gh should not run"))
+    monkeypatch.setattr("review.worktree.gh_client.out", gh)
+    assert find_repo_root("owner/widget", str(tmp_path)) == str(tmp_path)
+    gh.assert_not_called()
+
+
+def test_find_repo_root_explicit_dir_missing_is_empty(tmp_path, monkeypatch):
+    gh = MagicMock(side_effect=AssertionError("gh should not run"))
+    monkeypatch.setattr("review.worktree.gh_client.out", gh)
+    assert find_repo_root("owner/widget", str(tmp_path / "nope")) == ""
+
+
+def test_find_repo_root_toplevel_basename_match(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/Users/me/git/personal/widget",
+    )
+    gh = MagicMock(side_effect=AssertionError("gh should not run"))
+    monkeypatch.setattr("review.worktree.gh_client.out", gh)
+    assert find_repo_root("owner/widget") == "/Users/me/git/personal/widget"
+
+
+def test_find_repo_root_bare_container_parent_heuristic(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/Users/me/git/personal/widget/main",
+    )
+    gh = MagicMock(side_effect=AssertionError("gh should not run"))
+    monkeypatch.setattr("review.worktree.gh_client.out", gh)
+    assert find_repo_root("owner/widget") == "/Users/me/git/personal/widget"
+
+
+def test_find_repo_root_falls_through_to_gh_and_find(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/somewhere/else",
+    )
+    monkeypatch.setattr(
+        "review.worktree.gh_client.out",
+        lambda *a, **kw: "widget",
+    )
+    monkeypatch.setattr(
+        "review.worktree.os.path.expanduser", lambda p: "/home/me/git")
+    monkeypatch.setattr(
+        "review.worktree.subprocess.run",
+        lambda *a, **kw: MagicMock(
+            stdout="/home/me/git/org/widget\n", returncode=0),
+    )
+    assert find_repo_root("owner/widget") == "/home/me/git/org/widget"
+
+
+def test_find_repo_root_gh_empty_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/somewhere/else",
+    )
+    monkeypatch.setattr("review.worktree.gh_client.out", lambda *a, **kw: "")
+    find_run = MagicMock(side_effect=AssertionError("find should not run"))
+    monkeypatch.setattr("review.worktree.subprocess.run", find_run)
+    assert find_repo_root("owner/widget") == ""
+    find_run.assert_not_called()
+
+
+def test_find_repo_root_unusable_git_falls_through_to_gh(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        MagicMock(side_effect=OSError("git not found")),
+    )
+    monkeypatch.setattr(
+        "review.worktree.gh_client.out",
+        lambda *a, **kw: "widget",
+    )
+    monkeypatch.setattr(
+        "review.worktree.os.path.expanduser", lambda p: "/home/me/git")
+    monkeypatch.setattr(
+        "review.worktree.subprocess.run",
+        lambda *a, **kw: MagicMock(stdout="", returncode=0),
+    )
+    assert find_repo_root("owner/widget") == ""
+
+
+def test_find_repo_root_find_exception_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/somewhere/else",
+    )
+    monkeypatch.setattr(
+        "review.worktree.gh_client.out",
+        lambda *a, **kw: "widget",
+    )
+    monkeypatch.setattr(
+        "review.worktree.subprocess.run",
+        MagicMock(side_effect=TimeoutError("find hung")),
+    )
+    assert find_repo_root("owner/widget") == ""

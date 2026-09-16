@@ -667,14 +667,25 @@ def test_cmd_comments_finish_passes_flag(mock_run):
 # ── cmd_review --repair ────────────────────────────────────────────────────
 
 
-@patch("pr_cli._update_review_state")
-def test_cmd_review_repair_succeeds_with_review_file(mock_update, reviews_dir):
+@patch("pr_cli.sync_review_domain")
+@patch("pr_cli.subprocess.run")
+def test_cmd_review_does_not_rewrite_domain_after_delegate(
+        mock_run, mock_sync, reviews_dir):
+    """claude-review already wrote the domain; pr must not write it again."""
+    mock_run.return_value = MagicMock(returncode=0)
+    rc = pr_cli.cmd_review(["123"], make_ctx(pr_number=42))
+    assert rc == 0
+    mock_sync.assert_not_called()
+
+
+@patch("pr_cli.sync_review_domain")
+def test_cmd_review_repair_succeeds_with_review_file(mock_sync, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
     rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42))
     assert rc == 0
-    mock_update.assert_called_once()
+    mock_sync.assert_called_once()
 
 
 @patch("pr_cli.subprocess.run")
@@ -1394,58 +1405,6 @@ def test_status_refreshes_push_without_writing_it_to_state(worktree, capsys):
 def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
     assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_fix,
                             [], make_ctx(worktree_root=None))
-
-
-def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
-    """A team review from a repo root must not clobber that root's own state."""
-    from pr import context as pr_context
-    caller = tmp_path / "repo-root"
-    caller.mkdir()
-    target = tmp_path / "pr" / "widget-feat-login"
-    ctx = pr_context.ResolvedContext(
-        repo="acme/widget", branch="feat/login", pr_number=2973,
-        worktree_root=caller, head_sha="pr-sha", current_branch="main",
-        target_dir=target,
-    )
-
-    pr_cli._update_review_state(
-        {"review_file": "r.md", "verdict": "approve", "head_sha": "pr-sha",
-         "findings": {"total": 0}},
-        ctx,
-    )
-
-    assert (target / pr_state.STATE_FILE).is_file()
-    # Nothing at all under the caller's checkout: state is keyed on the run's
-    # target now, so the caller's tree should not gain a state file anywhere.
-    assert not list(caller.rglob(pr_state.STATE_FILE))
-    written = pr_state.load_state(target)
-    assert written.identity.pr_number == 2973
-    assert written.identity.head_sha == "pr-sha"
-    assert written.identity.worktree_root == str(caller)
-
-
-def test_a_summary_with_no_recover_verdict_records_unknown(tmp_path, monkeypatch):
-    """A summary predating the field is unknown, not "not recoverable".
-
-    `ReviewSummary.render_status` suppresses the recover hint only on an
-    explicit False, so defaulting a missing key to False here would hide a
-    recovery that works — the version-skew case the `None` default exists for.
-    """
-    from pr import context as pr_context
-    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    target = tmp_path / "pr" / "widget-feat-login"
-    ctx = pr_context.ResolvedContext(
-        repo="acme/widget", branch="feat/login", pr_number=2973,
-        worktree_root=tmp_path / "caller", head_sha="pr-sha",
-        current_branch="main", target_dir=target,
-    )
-
-    pr_cli._update_review_state(
-        {"review_file": "r.md", "head_sha": "pr-sha", "findings": {"total": 0}},
-        ctx,
-    )
-
-    assert pr_state.load_state(target).review.recoverable is None
 
 
 # ── run lock wiring ─────────────────────────────────────────────────────────

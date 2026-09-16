@@ -43,8 +43,8 @@ from core import timeouts
 from config import workbench_projects
 from core import run_lock
 from review.paths import find_review_file, review_file_path
-from review.summary import build_review_summary, json_summary
-from review.types import ReviewType
+from review.summary import ReviewSummaryReport, build_review_summary, json_summary
+from pr.review_sync import sync_review_domain
 from core.tool_parser import VALUE_FLAGS_FLAG
 from core.trail import Trail, add_trail_args
 
@@ -224,18 +224,6 @@ def _positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
     return -1
 
 
-def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
-    """Load existing state or create a fresh one from resolved context."""
-    return pr_state.load_or_init(
-        target_dir=ctx.target_dir,
-        repo=ctx.repo,
-        branch=ctx.branch,
-        pr_number=ctx.pr_number,
-        head_sha=ctx.head_sha,
-        worktree_root=str(ctx.worktree_root) if ctx.worktree_root else "",
-    )
-
-
 def _parse_review_summary(output: str) -> dict | None:
     """Extract REVIEW_SUMMARY:{json} from claude-review output."""
     prefix = "REVIEW_SUMMARY:"
@@ -248,46 +236,38 @@ def _parse_review_summary(output: str) -> dict | None:
         return None
 
 
-def _update_review_state(summary_data: dict,
-                         ctx: pr_context.ResolvedContext) -> None:
-    """Update pr_state from a parsed review summary dict.
-
-    Best-effort: the caller has already done the real work (a review, a repair),
-    and the review file it produced is user-scoped and survives.
-    """
-    findings = summary_data.get("findings", {})
-    finding_counts = {
-        k: v for k, v in findings.items()
-        if k != "total" and isinstance(v, int) and v > 0
-    }
-    state = _load_or_init(ctx)
-    pr_state.apply(state, pr_domains.ReviewSummary(
-        review_file=summary_data.get("review_file", ""),
-        # The summary carries the type the review recorded; the stored value is
-        # the fallback for a summary that predates the field. "pr" was never a
-        # review type — that is a mode, and it is not this field's vocabulary.
-        review_type=summary_data.get("review_type") or state.review.review_type or ReviewType.FULL,
-        head_sha=summary_data.get("head_sha", ""),
-        finding_counts=finding_counts,
-        verdict=summary_data.get("verdict", ""),
-        status=summary_data.get("status", pr_domains.ReviewStatus.COMPLETED.value),
-        failure_detail=summary_data.get("failure_detail", ""),
-        # No default: a summary with no verdict is unknown, not "not
-        # recoverable", and only an explicit False suppresses the recover hint.
-        recoverable=summary_data.get("recoverable"),
-        cost_usd=summary_data.get("cost_usd", 0.0),
-        updated_at=pr_state.now_iso(),
-    ))
-    pr_state.save_state(ctx.target_dir, state)
-
-
 def _update_review_state_from_output(output: str,
                                      ctx: pr_context.ResolvedContext) -> None:
-    """Parse REVIEW_SUMMARY from output and update pr_state."""
+    """Parse REVIEW_SUMMARY from output and update pr_state.
+
+    review-rebuild does not emit the marker today, so this is a no-op on that
+    path. The marker protocol itself should be deleted once the JSON-marker
+    protocol it implements is retired.
+    """
     summary_data = _parse_review_summary(output)
     if not summary_data:
         return
-    _update_review_state(summary_data, ctx)
+    sync_review_domain(ctx, ReviewSummaryReport(
+        repo=summary_data.get("repo", ""),
+        pr_number=summary_data.get("pr_number"),
+        head_sha=summary_data.get("head_sha"),
+        head_ref=summary_data.get("head_ref"),
+        base_ref=summary_data.get("base_ref"),
+        review_type=summary_data.get("review_type"),
+        review_file=summary_data.get("review_file", ""),
+        review_content=summary_data.get("review_content"),
+        findings=summary_data.get("findings") or {},
+        verdict=summary_data.get("verdict", ""),
+        status=summary_data.get("status", ""),
+        failure_detail=summary_data.get("failure_detail", ""),
+        recoverable=summary_data.get("recoverable"),
+        cost_usd=summary_data.get("cost_usd", 0.0),
+        input_tokens=summary_data.get("input_tokens", 0),
+        output_tokens=summary_data.get("output_tokens", 0),
+        cache_read_tokens=summary_data.get("cache_read_tokens", 0),
+        cache_write_tokens=summary_data.get("cache_write_tokens", 0),
+        duration_ms=summary_data.get("duration_ms", 0),
+    ))
 
 
 def _is_pr_target(target: str | None) -> bool:
@@ -352,17 +332,9 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
         or ctx.pr_number is not None
     )
     inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
-    rc = _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
-                       original_pr=original_pr,
-                       original_branch=original_branch)
-    if rc != 0 or not ctx.pr_number:
-        return rc
-    pr_num = str(ctx.pr_number)
-    review = find_review_file(ctx.repo, pr_num)
-    if review:
-        data = build_review_summary(ctx.repo, pr_num, str(review))
-        _update_review_state(data, ctx)
-    return rc
+    return _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
+                         original_pr=original_pr,
+                         original_branch=original_branch)
 
 
 def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -395,8 +367,7 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> i
 
     review = find_review_file(ctx.repo, pr_num)
     if review:
-        data = build_review_summary(ctx.repo, pr_num, str(review))
-        _update_review_state(data, ctx)
+        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review)))
         return 0
 
     log.info("No review file found, trying rebuild...")

@@ -99,13 +99,15 @@ def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkey
     (["--self", "--push"], "--push requires --fix"),
     (["--self", "--recover", "--force"], "--recover and --force are mutually exclusive"),
     (["--no-post", "--post", "42"], "--no-post and --post are mutually exclusive"),
+    (["--self", "--no-post", "--post"], "the mutex holds on the self path too"),
 ])
 def test_main_refuses_contradictory_flags(cr, reviews_dir, monkeypatch, argv, reason):
     """Each rejection is a real parse through the real parser, not a unit call.
 
-    `--no-post --post` is the interesting row: its check sits after the --self
-    dispatch returns, so it only ever fires on the PR path. The merge must not
-    quietly move that validation somewhere it stops running.
+    The two --no-post --post rows are the ones worth reading. The check used to
+    sit below the --self dispatch, so it fired on the PR path and never on the
+    self one: `--self --no-post --post` ran a review that ignored --no-post and
+    still told the orchestrate process it might publish.
     """
     monkeypatch.setattr(sys, "argv", ["claude-review", *argv])
     monkeypatch.setattr(cr, "_run_self_review", MagicMock())

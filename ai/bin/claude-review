@@ -778,16 +778,20 @@ def main() -> None:
         log.error("--recover and --force are mutually exclusive")
         sys.exit(1)
 
+    # Above the --self dispatch rather than below it: the two flags contradict
+    # each other whichever flow reads them, and a check that ran only on the PR
+    # path let `--self --no-post --post` through to a self review that ignored
+    # --no-post and forwarded --post to the orchestrate publishing gate.
+    if parsed.no_post and parsed.post:
+        log.error("--no-post and --post are mutually exclusive")
+        sys.exit(1)
+
     if parsed.self_review:
         parsed._json_stdout = _json_stdout_fd
         _run_self_review(parsed)
         if _json_stdout_fd is not None:
             os.close(_json_stdout_fd)
         return
-
-    if parsed.no_post and parsed.post:
-        log.error("--no-post and --post are mutually exclusive")
-        sys.exit(1)
 
     command = parsed.positional[0] if parsed.positional else ""
     if not command:

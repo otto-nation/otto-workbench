@@ -9047,19 +9047,22 @@ class TestDeferredIssueProvider:
             "linear", "ENG", ANY, ANY, parent_id=None, repo="owner/repo", opts={"team": "ENG"},
         )
 
-    def test_linear_falls_back_to_the_branch_derived_team(self, publishing_on):
-        """With no configured team, the branch-derived id still supplies one."""
+    def test_a_branch_derived_id_no_longer_supplies_the_team(self, publishing_on):
+        """#1318: the team comes from config alone, never from the branch.
+
+        Splitting the key out of the parent issue id made filing depend on what
+        the run was invoked against rather than on how the repo is configured:
+        a branch carrying a parent id filed, the same repo on a branch without
+        one reported no team key. The id is still read — Linear takes it as
+        `--parent` — but it no longer answers for the team.
+        """
         from review import issue as review_issue
         info = review_issue.IssueProviderInfo(name="linear", options={})
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
-             patch.object(
-                 review_issue, "create_issue",
-                 return_value=_filed("ENG-9", "https://linear/ENG-9"),
-             ) as created:
-            self._create(ctx=make_ctx(branch="isaac/ENG-1/x"))
-        created.assert_called_once_with(
-            "linear", "ENG", ANY, ANY, parent_id="ENG-1", repo="owner/repo", opts={},
-        )
+             patch.object(review_issue, "create_issue") as created:
+            result = self._create(ctx=make_ctx(branch="isaac/ENG-1/x"))
+        created.assert_not_called()
+        assert result.owed is True
 
     def test_linear_still_skips_with_no_team_anywhere(self, publishing_on):
         """Skipped, but owed: nothing was filed and the deferrals have no home."""

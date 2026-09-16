@@ -12,6 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from core.proc import CmdResult
 from git import topology as git_topology
 from pr import context as pr_context
 from pr import target as pr_target
@@ -398,7 +399,13 @@ def test_resolve_at_none_works_outside_a_git_repository(monkeypatch, tmp_path):
 
 
 def _stub_run(monkeypatch, returncode, stdout="", stderr=""):
-    """Make the next ``gh repo view`` return a canned result."""
+    """Make the next ``gh repo view`` return a canned result.
+
+    Also silences the origin parse ``detect_repo`` tries first, so these cases
+    exercise the ``gh`` fallback rather than whichever repo the suite happens to
+    be running inside. The parse is covered on its own below.
+    """
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
     monkeypatch.setattr(
         pr_context.subprocess, "run",
         lambda cmd, **kwargs: subprocess.CompletedProcess(
@@ -517,3 +524,85 @@ def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, ca
     assert "HTTP 503" in err
     # The consequence still gets stated, under the cause rather than instead of it.
     assert "keys a run's state and lock" in err
+
+
+# ── detect_repo resolves from origin, not the API ───────────────────────────
+
+
+def test_detect_repo_reads_the_origin_remote(monkeypatch):
+    """The call every REMOTE command makes first must not need the network.
+
+    `gh repo view` is GraphQL under the hood, so an exhausted GraphQL budget
+    used to fail every `pr` subcommand at its first step — to learn a string
+    the git remote already spells.
+    """
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
+                        lambda cwd=None: pr_target.RepoIdentity(
+                            label="acme/widget", key="acme-widget-1234abcd"))
+
+    def fail(*a, **k):
+        raise AssertionError("detect_repo must not call gh when origin answers")
+
+    monkeypatch.setattr(pr_context.gh_client, "run", fail)
+
+    assert pr_context.detect_repo("/wt") == "acme/widget"
+
+
+def test_detect_repo_falls_back_to_gh_without_an_origin(monkeypatch):
+    """A remote the origin parse cannot name — GHES, a non-github forge — still
+    resolves, because the parse folds case and drops the host."""
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(pr_context.gh_client, "run",
+                        lambda *a, **k: CmdResult(returncode=0, stdout="acme/widget\n"))
+
+    assert pr_context.detect_repo("/wt") == "acme/widget"
+
+
+def test_detect_repo_exits_when_neither_can_name_the_repo(monkeypatch, capsys):
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(pr_context.gh_client, "run",
+                        lambda *a, **k: CmdResult(returncode=1, stderr="not a repository"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.detect_repo("/wt")
+
+    assert excinfo.value.code == 1
+    assert "Cannot determine repository" in capsys.readouterr().err
+
+
+# ── the LOCAL rung still names an open PR when it can ───────────────────────
+
+
+def test_pr_number_if_reachable_reports_an_open_pr(monkeypatch):
+    """A self-review on a branch whose PR is open uses the number to fetch
+    reply threads and skip findings already answered there."""
+    monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: 2973)
+    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x") == 2973
+
+
+def test_pr_number_if_reachable_degrades_when_github_is_unreachable(monkeypatch):
+    """Best-effort by construction: an exhausted budget is indistinguishable
+    here from a branch with no PR, and neither may end the run."""
+    monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: None)
+    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x") is None
+
+
+def test_resolve_local_still_makes_no_gh_call(monkeypatch, tmp_path):
+    """The lookup is opt-in, so the rung keeps its no-network promise.
+
+    `pr status` resolves at LOCAL and renders from state.json and the worktree;
+    folding a PR lookup into the rung would put `gh` on every dashboard render.
+    """
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    wt = _git_repo(tmp_path / "wt2")
+    calls = _recorded_runs(monkeypatch)
+
+    ctx = pr_context.resolve_local(repo_dir=str(wt))
+
+    assert ctx.pr_number is None
+    assert [c for c in calls if c[0] == "gh"] == []
+
+
+def test_pr_lookup_is_skipped_without_a_branch():
+    """Nothing to ask about, so nothing is asked."""
+    assert pr_context.pr_number_if_reachable("acme/widget", "") is None

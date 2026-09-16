@@ -1,6 +1,7 @@
 """Tests for review_worktree library."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -699,16 +700,40 @@ def test_find_repo_root_falls_through_to_gh_and_find(monkeypatch):
     assert find_repo_root("owner/widget") == "/home/me/git/org/widget"
 
 
-def test_find_repo_root_gh_empty_returns_empty(monkeypatch):
+def test_find_repo_root_without_a_repo_name_returns_empty(monkeypatch):
+    """A slug with no name half leaves nothing to search ``~/git`` for.
+
+    This used to be the case where ``gh repo view --json name`` came back
+    empty. The name is now taken from the slug the caller already passed, so
+    the only way to have none is to pass none.
+    """
     monkeypatch.setattr(
         "review.worktree.git_client.out",
         lambda *a, **kw: "/somewhere/else",
     )
-    monkeypatch.setattr("review.worktree.gh_client.out", lambda *a, **kw: "")
     find_run = MagicMock(side_effect=AssertionError("find should not run"))
     monkeypatch.setattr("review.worktree.subprocess.run", find_run)
-    assert find_repo_root("owner/widget") == ""
+    assert find_repo_root("") == ""
     find_run.assert_not_called()
+
+
+def test_find_repo_root_names_the_repo_without_gh(monkeypatch):
+    """The name half of the slug is the repo's name — asking GitHub for it was
+    a GraphQL call that returned its own argument."""
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/somewhere/else",
+    )
+
+    def fail(*a, **kw):
+        raise AssertionError("find_repo_root must not call gh")
+
+    monkeypatch.setattr("review.worktree.gh_client.out", fail)
+    monkeypatch.setattr(
+        "review.worktree.subprocess.run",
+        lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "/home/dev/git/widget\n", ""),
+    )
+    assert find_repo_root("owner/widget") == "/home/dev/git/widget"
 
 
 def test_find_repo_root_unusable_git_falls_through_to_gh(monkeypatch):

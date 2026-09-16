@@ -106,21 +106,49 @@ TRANSIENT_LADDER = _Ladder(attempts=3, first_wait=2.0, factor=2.0, max_wait=8.0)
 
 _MAX_ATTEMPTS = max(RATE_LIMIT_LADDER.attempts, TRANSIENT_LADDER.attempts)
 
-# How GitHub words the throttles that are worth waiting out. A primary rate
-# limit reports itself as a 403 with one of these in the body, which is why the
-# bare "forbidden" is here alongside the specific ones.
+# How GitHub words the throttles that clear on their own. Waiting these out is
+# the right move: the budget refills, or the burst window passes.
 _RATE_LIMIT_MARKERS = (
     "secondary rate limit",
-    '"message": "forbidden"',
     "abuse detection",
     "retry later",
 )
 
+# How GitHub words an exhausted *primary* budget — the hourly quota, which is
+# per user and counted separately for REST and GraphQL.
+#
+# Not retried, because the reset is up to an hour out and every ladder here
+# gives up in under nine minutes: retrying only spends the remaining attempts
+# against a budget that is already gone, then reports the same failure later.
+# Matched all the same, so the message can say which budget ran out and that
+# waiting is the remedy — the diagnosis this is otherwise expensive to reach.
+# `gh api rate_limit` is itself exempt from the limit, so it cheerfully answers
+# 5000/5000 while every other call is refused.
+_BUDGET_EXHAUSTED_MARKERS = (
+    "api rate limit exceeded",
+    "api rate limit already exceeded",
+)
+
 
 def _is_rate_limited(said: str) -> bool:
-    """Whether the response is a throttle rather than a refusal."""
+    """Whether the response is a throttle that waiting will clear.
+
+    A bare ``"message": "Forbidden"`` used to be in the marker list, on the
+    reading that a primary rate limit reports itself as a 403. It does, but it
+    says so in words — see ``_BUDGET_EXHAUSTED_MARKERS``. What the bare marker
+    actually matched was every *other* 403: a missing OAuth scope, a repo the
+    token cannot see, SAML enforcement. Those are permanent, and each one cost
+    four sleeps totalling eight minutes before surfacing the denial it should
+    have reported at once.
+    """
     lower = said.lower()
     return any(marker in lower for marker in _RATE_LIMIT_MARKERS)
+
+
+def is_budget_exhausted(said: str) -> bool:
+    """Whether the primary hourly quota is gone, for REST or for GraphQL."""
+    lower = said.lower()
+    return any(marker in lower for marker in _BUDGET_EXHAUSTED_MARKERS)
 
 
 def _is_line_resolution_error(said: str) -> bool:
@@ -146,6 +174,18 @@ def _ladder_for(r: CmdResult) -> _Ladder | None:
     return None
 
 
+# Said after an exhausted-budget failure, because the failure itself does not
+# say it. The quota is hourly and per user, so a second token belonging to the
+# same account is the same budget — which is the wrong turn this sentence
+# exists to prevent.
+BUDGET_EXHAUSTED_HINT = (
+    "the hourly GitHub API quota for this account is spent — it refills on its "
+    "own, and another token for the same user shares it. `gh api rate_limit` "
+    "is exempt from the limit, so it reports a full budget either way; "
+    "`gh api rate_limit --jq .resources` shows the reset times"
+)
+
+
 def _error_message(r: CmdResult) -> str:
     """The most specific account of a failed call the response supports.
 
@@ -153,6 +193,11 @@ def _error_message(r: CmdResult) -> str:
     the field that was rejected. Falling back to stderr rather than to a slice
     of an empty stdout is the difference between naming HTTP 503 and printing
     nothing after the colon.
+
+    An exhausted primary budget gets the hint appended, because that failure is
+    the one whose text does not imply its own remedy: "API rate limit already
+    exceeded for user ID 7399350" reads like something to fix or authenticate
+    around, and the answer is to wait.
     """
     try:
         parsed = json.loads(r.stdout)
@@ -161,9 +206,11 @@ def _error_message(r: CmdResult) -> str:
     except (json.JSONDecodeError, AttributeError):
         message, errors = "", []
     if not message:
-        return (r.detail or r.combined_output.strip())[:proc.DETAIL_LIMIT]
-    if errors:
+        message = (r.detail or r.combined_output.strip())[:proc.DETAIL_LIMIT]
+    elif errors:
         message += " — " + "; ".join(str(e) for e in errors)
+    if is_budget_exhausted(r.combined_output):
+        return f"{message} ({BUDGET_EXHAUSTED_HINT})"
     return message
 
 

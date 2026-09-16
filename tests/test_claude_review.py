@@ -1815,7 +1815,8 @@ def test_self_review_recover_reads_head_after_worktree_switch(
     )
     monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
     monkeypatch.setattr(cr.review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
-    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
     monkeypatch.setattr(
         cr.review_worktree, "switch_to_branch",
         lambda branch, wt: cr.review_worktree.WorktreeResult(
@@ -2177,7 +2178,8 @@ def _stub_self_review(cr, monkeypatch, target, reviews_dir):
         target_dir=target,
     )
     monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
-    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
     return ctx
@@ -2266,3 +2268,74 @@ def test_self_review_recovery_is_not_refused(cr, tmp_path, monkeypatch):
             ctx=make_ctx(branch="feat/x", pr_number=None), trail=MagicMock(),
         )
     assert exc.value.code == 99
+
+
+def test_self_review_resolves_locally(cr, tmp_path, reviews_dir, monkeypatch):
+    """A self-review names its repo from git, not from a GraphQL call.
+
+    `gh repo view` is GraphQL under the hood, so resolving at REMOTE made the
+    pre-PR gate fail whenever that budget was exhausted — on a branch the
+    remote has usually never seen.
+    """
+    seen = {}
+    target = tmp_path / "pr" / "target"
+    ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
+                          head_sha="abc1234", target_dir=target)
+
+    def record(depth, **kw):
+        seen["depth"] = depth
+        return ctx
+
+    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(cr.pr_context, "resolve_at", record)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
+
+    cr._run_self_review(_self_review_args())
+
+    assert seen["depth"] is cr.pr_context.ContextDepth.LOCAL
+
+
+def test_self_review_still_finds_an_open_pr(cr, tmp_path, reviews_dir, monkeypatch):
+    """Resolving locally must not cost the reply-thread dedup.
+
+    `--self --fix --push` is documented for a branch whose PR is already open.
+    That run uses the PR number to fetch reply threads and skip findings
+    already answered there, so the number is looked up separately rather than
+    dropped with the REMOTE rung.
+    """
+    target = tmp_path / "pr" / "target"
+    ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
+                          head_sha="abc1234", target_dir=target)
+    body = MagicMock()
+
+    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: 2973)
+    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_run_self_review_body", body)
+
+    cr._run_self_review(_self_review_args())
+
+    # pr_number is the second positional of _run_self_review_body.
+    assert body.call_args.args[1] == "2973"
+
+
+def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir, monkeypatch):
+    """The pre-PR case, and the unreachable-API case, are the same case here:
+    no number, and the run goes ahead regardless."""
+    target = tmp_path / "pr" / "target"
+    ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
+                          head_sha="abc1234", target_dir=target)
+    body = MagicMock()
+
+    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_run_self_review_body", body)
+
+    cr._run_self_review(_self_review_args())
+
+    assert body.call_args.args[1] == ""

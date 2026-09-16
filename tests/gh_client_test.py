@@ -114,13 +114,58 @@ def test_a_success_earns_no_ladder():
 
 @pytest.mark.parametrize("said", [
     "You have exceeded a secondary rate limit",
-    '{"message": "Forbidden"}',
     "triggered an abuse detection mechanism",
     "Please retry later",
 ])
 def test_a_throttle_earns_the_rate_limit_ladder(said):
     r = CmdResult(returncode=1, stdout=said)
     assert gh_client._ladder_for(r) is gh_client.RATE_LIMIT_LADDER
+
+
+@pytest.mark.parametrize("said", [
+    '{"message": "Forbidden"}',
+    '{"message": "Forbidden", "documentation_url": "https://docs.github.com/rest"}',
+    '{"message": "Resource protected by organization SAML enforcement"}',
+])
+def test_a_permission_denial_is_an_answer_not_a_throttle(said):
+    """A 403 that is not a rate limit will say the same thing in an hour.
+
+    A bare "forbidden" marker used to put these on the rate-limit ladder, so a
+    missing OAuth scope or an invisible repo cost four sleeps totalling eight
+    minutes before reporting the denial — a hard blocker the caller needs at
+    once.
+    """
+    r = CmdResult(returncode=1, stdout=said)
+    assert gh_client._ladder_for(r) is None
+
+
+@pytest.mark.parametrize("said", [
+    "GraphQL: API rate limit already exceeded for user ID 7399350.",
+    '{"message": "API rate limit exceeded for user ID 7399350."}',
+])
+def test_an_exhausted_budget_is_not_retried(said):
+    """The hourly quota resets up to an hour out; every ladder here gives up in
+    under nine minutes, so retrying only spends attempts on a budget that is
+    already gone."""
+    r = CmdResult(returncode=1, stderr=said)
+    assert gh_client._ladder_for(r) is None
+    assert gh_client.is_budget_exhausted(said)
+
+
+def test_an_exhausted_budget_explains_the_remedy():
+    """"API rate limit already exceeded" reads like something to authenticate
+    around; the remedy is to wait, and a second token for the same user is the
+    same budget."""
+    r = CmdResult(returncode=1,
+                  stderr="GraphQL: API rate limit already exceeded for user ID 1.")
+    message = gh_client._error_message(r)
+    assert "hourly GitHub API quota" in message
+    assert "another token for the same user shares it" in message
+
+
+def test_an_ordinary_failure_gets_no_hint():
+    r = CmdResult(returncode=1, stdout='{"message": "Not Found"}')
+    assert gh_client._error_message(r) == "Not Found"
 
 
 def test_a_server_error_earns_the_transient_ladder():
@@ -161,13 +206,13 @@ def test_the_transient_ladder_is_short_enough_not_to_look_wedged():
 
 
 def test_a_throttle_is_retried_until_it_clears(tmp_path, monkeypatch, no_sleep):
-    """The stub 403s twice, then answers."""
+    """The stub reports a secondary rate limit twice, then answers."""
     counter = tmp_path / "n"
     _stub_gh(tmp_path, monkeypatch, f"""
 n=$(cat {counter} 2>/dev/null || echo 0)
 echo $((n + 1)) > {counter}
 if [ "$n" -lt 2 ]; then
-  echo '{{"message": "Forbidden"}}'
+  echo 'You have exceeded a secondary rate limit. Please retry later.'
   exit 1
 fi
 echo '{{"login": "octocat"}}'

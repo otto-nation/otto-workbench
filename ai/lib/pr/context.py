@@ -310,7 +310,9 @@ def resolve_local(
 
     * ``pr_number`` is always None and ``repo`` is the canonical form behind the
       repo key (``acme/widget``), not ``gh``'s ``owner/repo`` — see
-      ``pr_target.RepoIdentity``.
+      ``pr_target.RepoIdentity``. A caller that wants the branch's PR without
+      giving up this rung's no-network guarantee asks for it separately, with
+      ``pr_number_if_reachable``.
     * A bare repo hands back an existing worktree but never creates one, so
       ``worktree_root`` can be None where ``resolve`` would have made a
       checkout. Commands needing one call ``require_worktree``.
@@ -340,6 +342,30 @@ def resolve_local(
         current_branch=git_topology.current_branch_quiet(cwd) if worktree_root else None,
         target_dir=pr_target.target_dir(identity.key, branch_name),
     )
+
+
+def pr_number_if_reachable(repo: str, branch: str) -> int | None:
+    """The branch's open PR when GitHub will say, None when it will not.
+
+    Deliberately *not* folded into ``resolve_local``: that rung promises no
+    network at all, and ``pr status`` is built on the promise — it renders a
+    dashboard from ``state.json`` and the worktree, and making every invocation
+    wait on ``gh`` to find a PR it does not display would be a plain regression.
+    So the lookup is opt-in, and the caller that wants it says so.
+
+    ``claude-review --self`` is that caller. A self-review on a branch whose PR
+    is already open uses the number to fetch reply threads and skip findings
+    already answered there, so losing it silently turns a re-review into one
+    that repeats itself.
+
+    Best-effort by construction — ``gh_client.out`` returns "" for a failed
+    call, so an unreachable or exhausted API is indistinguishable here from a
+    branch with no PR, and both give None. Callers must read None as "no PR
+    known", never as "no PR exists".
+    """
+    if not branch:
+        return None
+    return _pr_from_branch(repo, branch)
 
 
 def _target_identity(cwd: str | None) -> pr_target.RepoIdentity:
@@ -459,11 +485,28 @@ def _resolve_bare(
 
 
 def detect_repo(cwd: str | None = None) -> str:
-    """Detect ``owner/repo`` via ``gh``, or exit 1 quoting why gh could not.
+    """Detect ``owner/repo``, from ``origin`` where it can and ``gh`` otherwise.
 
     Single owner for repo detection: the review and comments scripts call
     through here rather than running their own ``gh repo view``.
+
+    ``origin`` is asked first because this is the one call every REMOTE command
+    makes before doing anything else, and it was a GraphQL call — ``gh repo
+    view`` is GraphQL under the hood. An exhausted GraphQL budget therefore
+    failed *every* ``pr`` subcommand at the first step, to learn a string the
+    git remote already spells. ``resolve_local`` has always read it from there.
+
+    ``gh`` remains the fallback rather than being dropped, because the origin
+    parse answers for github.com and not for every remote: ``RepoIdentity``
+    folds case and drops the host, so a GHES or otherwise non-github remote can
+    disagree with what the API would call the same repo. Exit 1 still belongs to
+    the case where neither can name it — callers downstream treat the repo as
+    known.
     """
+    identity = pr_target.repo_identity_from_origin(cwd)
+    if identity:
+        return identity.label
+
     r = gh_client.run("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=cwd)
     slug = r.stdout.strip()
     if not r.ok or not slug:

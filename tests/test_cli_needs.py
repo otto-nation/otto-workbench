@@ -17,7 +17,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from cli.needs import (  # noqa: E402
-    LOCAL, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED,
+    LOCAL, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED, REVIEW_SELF_NEED,
     Need, ReviewMode, review_modes, review_need,
 )
 
@@ -104,6 +104,48 @@ def test_the_first_mode_in_table_order_decides():
 
 def test_fix_with_post_needs_what_a_review_run_needs():
     assert review_need(["--fix", "--post"], MODES) == REVIEW_DEFAULT_NEED
+
+
+# ── --self resolves without the network ──────────────────────────────
+
+
+def test_self_resolves_locally():
+    """A self-review's subject is the working tree, which git alone can name.
+
+    The pre-PR gate ran at REMOTE and so failed whenever `gh` could not answer
+    — an exhausted GraphQL budget, an expired token — for a reason that had
+    nothing to do with the branch being reviewed.
+    """
+    assert review_need(["--self"], MODES) == REVIEW_SELF_NEED
+    assert REVIEW_SELF_NEED.depth is LOCAL
+
+
+def test_self_still_fetches_and_locks():
+    """Only the depth drops: the subject is still the branch's current state,
+    and a --fix pass still commits to the worktree."""
+    assert REVIEW_SELF_NEED.update is True
+    assert REVIEW_SELF_NEED.lock is True
+
+
+def test_self_with_fix_resolves_locally():
+    assert review_need(["--self", "--fix"], MODES) == REVIEW_SELF_NEED
+
+
+def test_self_with_fix_and_post_resolves_locally():
+    """`--post` beside `--fix` is a modifier, not a mode, so it does not
+    escalate the depth."""
+    assert review_need(["--self", "--fix", "--post"], MODES) == REVIEW_SELF_NEED
+
+
+def test_a_mode_flag_outranks_self():
+    """`--summary --self` acts on a review already on disk, and that review
+    names a PR — so the mode's need decides, not the target selector's."""
+    assert review_need(["--summary", "--self"], MODES) == REVIEW_MODE_NEED
+
+
+def test_a_bare_review_is_unaffected():
+    """Reviewing a PR still needs `gh` to name it."""
+    assert review_need([], MODES).depth is REMOTE
 
 
 # ── the table `pr` actually declares ─────────────────────────────────────

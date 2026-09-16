@@ -219,8 +219,8 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
     Order: ``explicit_dir`` if it is a directory; else the current git toplevel
     when its basename (or its parent's — the bare-container heuristic) matches
-    the slug's repo name; else ``gh repo view`` plus a depth-2 walk of
-    ``~/git``. Returns "" when nothing matches.
+    the slug's repo name; else a depth-2 walk of ``~/git`` for that name.
+    Returns "" when nothing matches.
     """
     repo_name = repo.split("/")[-1]
 
@@ -247,14 +247,16 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
         if os.path.basename(parent_dir) == repo_name:
             return parent_dir
 
-    name = gh_client.out("repo", "view", repo, "--json", "name", "--jq", ".name")
-    if not name:
+    # The repo's own name, which `repo_name` above already is: `gh repo view
+    # --json name` returned the same half of the slug it was handed, over
+    # GraphQL, once per call.
+    if not repo_name:
         return ""
 
     home_git = os.path.expanduser("~/git")
     try:
         r2 = subprocess.run(
-            ["find", home_git, "-maxdepth", "2", "-name", name, "-type", "d"],
+            ["find", home_git, "-maxdepth", "2", "-name", repo_name, "-type", "d"],
             capture_output=True, text=True, timeout=timeouts.LOCAL,
         )
         found = r2.stdout.strip().splitlines()

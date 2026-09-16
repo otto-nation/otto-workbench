@@ -65,6 +65,20 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+# ── 3b. The lib-dir pin works in the tarball layout ─────────────────────────
+
+@test "_libdir.py ships, and a bad pin is refused from the tarball too" {
+  # `_libdir.py` is mode 644, so the build's executables-only loop does not
+  # reach it and it is copied by name. Without it every script in here dies on
+  # an ImportError the moment a pin is set, instead of on the refusal.
+  [ -f "$TARBALL_ROOT/bin/_libdir.py" ]
+
+  WORKBENCH_AI_LIB_DIR=/nonexistent run "$TARBALL_ROOT/bin/claude-review" --help
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"WORKBENCH_AI_LIB_DIR"* ]]
+  [[ "$output" != *"Traceback"* ]]
+}
+
 # ── 4. claude-review uses Python shebang ─────────────────────────────────────
 
 @test "claude-review has Python shebang" {

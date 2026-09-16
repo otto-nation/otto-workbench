@@ -114,9 +114,18 @@ if (( bin_count < MIN_BIN_SCRIPTS )); then
   exit 1
 fi
 
+# `_libdir.py` is mode 644, so the loop above never reaches it — and it has to
+# ship: every script just copied reads WORKBENCH_AI_LIB_DIR through this module,
+# and a pinned run without it dies on an ImportError instead of on the refusal.
+# The opposite case to `_version.py`, which is excluded because its git fallback
+# has no repo out here; this one is path arithmetic on the stdlib and answers
+# the same in either layout.
+cp "$SCRIPT_DIR/_libdir.py" "$DEST/bin/"
+
 # No sys.path patching: bin/ and lib/ are siblings under one root in both
 # layouts — ai/bin/ beside ai/lib/ in the repo, bin/ beside lib/ in the tarball
-# — so a script's own `.parent.parent / "lib"` resolves correctly in each.
+# — so a script's own `.parent.parent / "lib"` resolves correctly in each, and
+# so does the `.parent / "bin"` it reaches `_libdir.py` through under a pin.
 
 # Library files — the layered packages, directories and all.
 for pkg in "$_AI_LIB_DIR"/*/; do
@@ -190,7 +199,7 @@ tar -czf "$TARBALL" -C "$STAGING" "otto-ai-tools-${VERSION}"
 contents=$(tar -tzf "$TARBALL")
 failed=false
 
-for entry in "bin/claude-review" "lib/ui.sh" "VERSION"; do
+for entry in "bin/claude-review" "bin/_libdir.py" "lib/ui.sh" "VERSION"; do
   if ! echo "$contents" | grep -q "$entry"; then
     echo "ERROR: tarball missing $entry" >&2
     failed=true

@@ -227,6 +227,21 @@ make_fake_task_dir() {
   printf '%s' "$fake_task_dir"
 }
 
+# make_fake_ai_pin REPO_ROOT — creates $BATS_TEST_TMPDIR/fake-ai-pin with `ai`,
+# `lib` and `bin` symlinks into REPO_ROOT, echoing the pin's path. Every witness
+# in ai/bin/_libdir.py resolves through the links, so the pin is valid while its
+# path stays textually distinct from REPO_ROOT — which is what lets a test prove
+# *which* tree answered an import rather than only that one did.
+make_fake_ai_pin() {
+  local repo_root="$1"
+  local pin="$BATS_TEST_TMPDIR/fake-ai-pin"
+  mkdir -p "$pin"
+  ln -s "$repo_root/ai" "$pin/ai"
+  ln -s "$repo_root/lib" "$pin/lib"
+  ln -s "$repo_root/bin" "$pin/bin"
+  printf '%s' "$pin"
+}
+
 # make_fake_gh EXIT_CODE OUTPUT — stub gh that records its arguments in
 # $TMPDIR/gh-args.txt (path exposed via GH_ARGS_FILE) and prints OUTPUT.
 # Failures print on stderr, matching how gh reports errors. Callers that only

@@ -9,6 +9,7 @@ registry.  Flags pass through to the backing script untouched; run
 import argparse
 import contextlib
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -16,7 +17,14 @@ from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name
-sys.path.insert(0, str(BIN_DIR.parent / "lib"))
+# ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
+_AI_LIB_DIR = BIN_DIR.parent / "lib"
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
 
 from cli import needs
 from cli.needs import LOCAL as _LOCAL, NONE as _NONE, REMOTE as _REMOTE

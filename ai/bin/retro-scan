@@ -18,7 +18,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _BIN_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_BIN_DIR.parent / "lib"))
+# ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
+_AI_LIB_DIR = _BIN_DIR.parent / "lib"
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
 sys.path.insert(0, str(_BIN_DIR))
 from gh import client as gh_client  # noqa: E402
 from git import client as git_client  # noqa: E402

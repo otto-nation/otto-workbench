@@ -1029,3 +1029,20 @@ def test_cli_exits_three_when_the_remote_cannot_be_asked(pushable, monkeypatch):
     _commit(wt, "work")
     monkeypatch.setattr(push, "remote_head", lambda *a, **k: None)
     assert push.main(["--cwd", str(wt), "--branch", "main"]) == 3
+
+
+def test_script_imports_with_pythonpath_overwritten(tmp_path):
+    """push.py runs as a script under an interpreter whose PYTHONPATH points elsewhere.
+
+    A mise shim assigns PYTHONPATH from the workspace's own [env] before exec'ing
+    python, replacing anything the caller exported. Passing ai/lib in from the
+    shell therefore cannot be relied on, so the script puts it on sys.path itself.
+    The hostile value here stands in for that overwrite.
+    """
+    result = proc.run(
+        [sys.executable, str(LIB_DIR / "git" / "push.py"), "--help"],
+        timeout=30,
+        env={"PYTHONPATH": str(tmp_path), "PATH": "/usr/bin:/bin"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage: push.py" in result.stdout

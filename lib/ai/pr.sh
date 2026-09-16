@@ -21,12 +21,10 @@
 # because a second "Push failed" would say it worse and say it twice.
 _push_verified() {
   local branch="$1"; shift
-  # push.py's own sibling imports (`from git import client`, `from core import
-  # log`) resolve against ai/lib, not against ai/lib/git where the file now
-  # lives — the package move deepened it by one directory, so the interpreter's
-  # automatic sys.path[0] (the script's own directory) is no longer enough.
-  PYTHONPATH="$WORKBENCH_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 "$WORKBENCH_ROOT/ai/lib/git/push.py" \
+  # No PYTHONPATH here: push.py puts ai/lib on sys.path itself, because an
+  # exported one does not reach every interpreter this runs under — a mise shim
+  # assigns the workspace's own value over it before exec'ing python.
+  python3 "$WORKBENCH_ROOT/ai/lib/git/push.py" \
     --cwd . --branch "$branch" --remote "$GIT_REMOTE" "$@"
 }
 

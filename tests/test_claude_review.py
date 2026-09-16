@@ -1503,25 +1503,11 @@ def test_stamp_reviewed_keeps_the_delta_a_re_review_recorded(cr, reviews_dir):
 
 
 # ── CLI argument parsing ──────────────────────────────────────────────────────
-
-
-def test_argparse_self_flag(cr):
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--self", action="store_true", dest="self_review")
-    parsed = parser.parse_args(["--self"])
-    assert parsed.self_review is True
-
-
-def test_argparse_json_summary_not_positional(cr):
-    """--json-summary should be parsed as a flag, not treated as a PR number."""
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--json-summary", action="store_true")
-    parser.add_argument("args", nargs="*")
-    parsed = parser.parse_args(["--json-summary", "42"])
-    assert parsed.json_summary is True
-    assert parsed.args == ["42"]
+#
+# Parsing is covered in review_flow_entry_test.py, against claude-review's own
+# parser. The two tests that stood here built a throwaway ArgumentParser and
+# asserted that argparse works, so every flag they named could have been
+# renamed or dropped with this suite green.
 
 
 # ── _dir_is_all_stale ────────────────────────────────────────────────────────

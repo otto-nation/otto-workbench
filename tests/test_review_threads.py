@@ -8734,7 +8734,7 @@ class TestFinishReconcilesCommentItems:
         saved = pr_state.load_state(worktree / "target")
         assert saved.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
-    def test_a_reconciled_row_re_arms_the_summary(self, rt, worktree):
+    def test_a_reconciled_row_re_arms_the_summary(self, worktree):
         """The corrected row has to reach the comment the reviewer reads.
 
         `render_deferred_summary` early-returns unless a summary is deferred, so
@@ -8743,13 +8743,13 @@ class TestFinishReconcilesCommentItems:
         whatever the round before it said.
         """
         ctx = self._save(worktree)
-        self._run(rt, ctx, [_our_reply("#issuecomment-77")])
+        self._run(ctx, [_our_reply("#issuecomment-77")])
         assert pr_state.load_state(worktree / "target").fix.summary_deferred
 
-    def test_a_round_that_reconciled_nothing_owes_no_summary(self, rt, worktree):
+    def test_a_round_that_reconciled_nothing_owes_no_summary(self, worktree):
         """Re-arming on a no-op would leave a closeout owed on every run."""
         ctx = self._save(worktree)
-        self._run(rt, ctx, [_our_reply("#issuecomment-99")])
+        self._run(ctx, [_our_reply("#issuecomment-99")])
         assert not pr_state.load_state(worktree / "target").fix.summary_deferred
 
 
@@ -8959,80 +8959,80 @@ class TestALineLessItemFoldsOnItsText:
             comments=[{"databaseId": 5, "body": body or self.POINT}],
         )}
 
-    def _body(self, rt, content, fixed, needs_human, threads_by_id=None):
+    def _body(self, content, fixed, needs_human, threads_by_id=None):
         cp = attribution.CommitPushResult("abc1234", "pushed", "")
         return summary_render.build_summary_body(
             content(fixed=fixed, needs_human=needs_human), cp, "owner/repo", 42,
             self._threads() if threads_by_id is None else threads_by_id,
         )
 
-    def test_the_line_less_item_folds_into_the_thread_it_restates(self, rt, content):
-        body = self._body(rt, content, [self._thread_entry()], [self._item()])
+    def test_the_line_less_item_folds_into_the_thread_it_restates(self, content):
+        body = self._body(content, [self._thread_entry()], [self._item()])
         assert len(summary_scope.table_rows(body)) == 1
         assert "#issuecomment-77" not in body
         assert "#discussion_r5" in body
 
-    def test_the_counts_line_does_not_promise_the_folded_row(self, rt, content):
-        body = self._body(rt, content, [self._thread_entry()], [self._item()])
+    def test_the_counts_line_does_not_promise_the_folded_row(self, content):
+        body = self._body(content, [self._thread_entry()], [self._item()])
         assert "need discussion" not in body
         assert "1 fixed" in body
 
-    def test_an_unrelated_item_is_not_folded(self, rt, content):
+    def test_an_unrelated_item_is_not_folded(self, content):
         """The negative case the asymmetry is about: a false fold hides a finding."""
         body = self._body(
-            rt, content, [self._thread_entry()],
+            content, [self._thread_entry()],
             [self._item(summary="this variable name is misleading to the reader")],
         )
         assert len(summary_scope.table_rows(body)) == 2
         assert "#issuecomment-77" in body
 
-    def test_another_reviewers_restatement_is_another_finding(self, rt, content):
+    def test_another_reviewers_restatement_is_another_finding(self, content):
         """Two people writing about one point are writing about two things."""
         body = self._body(
-            rt, content, [self._thread_entry()], [self._item(reviewer="amp")])
+            content, [self._thread_entry()], [self._item(reviewer="amp")])
         assert len(summary_scope.table_rows(body)) == 2
 
-    def test_a_restatement_of_another_file_is_another_finding(self, rt, content):
+    def test_a_restatement_of_another_file_is_another_finding(self, content):
         body = self._body(
-            rt, content, [self._thread_entry()], [self._item(file="b.go")])
+            content, [self._thread_entry()], [self._item(file="b.go")])
         assert len(summary_scope.table_rows(body)) == 2
 
-    def test_a_short_restatement_is_left_alone(self, rt, content):
+    def test_a_short_restatement_is_left_alone(self, content):
         """Below the length gate, containment is coincidence rather than evidence."""
         body = self._body(
-            rt, content, [self._thread_entry(summary="drop it")],
+            content, [self._thread_entry(summary="drop it")],
             [self._item(summary="drop it")],
         )
         assert len(summary_scope.table_rows(body)) == 2
 
-    def test_the_reviewers_own_comment_body_can_carry_the_match(self, rt, content):
+    def test_the_reviewers_own_comment_body_can_carry_the_match(self, content):
         """Triage summarises a thread; the item is likelier to quote the comment."""
         body = self._body(
-            rt, content, [self._thread_entry(summary="unbounded retry")],
+            content, [self._thread_entry(summary="unbounded retry")],
             [self._item()], self._threads(body=self.POINT),
         )
         assert len(summary_scope.table_rows(body)) == 1
 
     def test_an_item_that_does_have_a_line_still_folds_on_location(
-        self, rt, content,
+        self, content,
     ):
         """The precise signal is asked first, and unrelated text does not undo it."""
         body = self._body(
-            rt, content, [self._thread_entry()],
+            content, [self._thread_entry()],
             [self._item(line=7, summary="a completely different point entirely")],
         )
         assert len(summary_scope.table_rows(body)) == 1
 
     def test_an_item_with_a_line_elsewhere_does_not_fall_back_to_text(
-        self, rt, content,
+        self, content,
     ):
         """A line that answers "no" is an answer; only "" falls through."""
         body = self._body(
-            rt, content, [self._thread_entry()], [self._item(line=9)])
+            content, [self._thread_entry()], [self._item(line=9)])
         assert len(summary_scope.table_rows(body)) == 2
 
     def test_the_folded_text_is_reported_for_the_carry_forward_step(
-        self, rt, content,
+        self, content,
     ):
         round_content = content(
             fixed=[self._thread_entry()], needs_human=[self._item()])
@@ -9046,14 +9046,14 @@ class TestALineLessItemFoldsOnItsText:
         assert summary_model.folded_restatements(round_content, threads) == frozenset(
             {"the retry loop is unbounded"})
 
-    def test_an_item_folded_on_location_is_not_reported_as_text(self, rt, content):
+    def test_an_item_folded_on_location_is_not_reported_as_text(self, content):
         """`folded_locations` already names it; naming it twice widens the fold."""
         round_content = content(
             fixed=[self._thread_entry()], needs_human=[self._item(line=7)])
         assert summary_model.folded_restatements(
             round_content, self._threads()) == frozenset()
 
-    def test_the_published_row_of_a_text_fold_is_not_carried_back(self, rt):
+    def test_the_published_row_of_a_text_fold_is_not_carried_back(self):
         """Otherwise the duplicate returns verbatim every round, for good."""
         thread_row = (
             "| [the retry loop is unbounded and will spin forever]"
@@ -9068,7 +9068,7 @@ class TestALineLessItemFoldsOnItsText:
             folded_texts=frozenset({"the retry loop is unbounded"}),
         ) == []
 
-    def test_an_unfolded_item_row_with_no_line_is_still_carried(self, rt):
+    def test_an_unfolded_item_row_with_no_line_is_still_carried(self):
         thread_row = (
             "| [the retry loop is unbounded and will spin forever]"
             "(https://github.com/o/r/pull/1#discussion_r5) | @kgn | "

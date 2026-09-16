@@ -224,7 +224,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
         reviewer code changed when the point was waved off instead.
         """
         thread = _authored(
-            ("kgn", THE_REVIEWERS_POINT), ("me", "Dismissed: the premise fails."),
+            ("kgn", _FINDING), ("me", "Dismissed: the premise fails."),
         )
         assert settlement.settlement_for(thread) is FixOutcome.DISMISSED
 

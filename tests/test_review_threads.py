@@ -8956,7 +8956,7 @@ class TestDeferredIssueProvider:
             "linear", "ENG", ANY, ANY, parent_id=None, repo="owner/repo", opts={"team": "ENG"},
         )
 
-    def test_a_branch_derived_id_no_longer_supplies_the_team(self, rt, publishing_on):
+    def test_a_branch_derived_id_no_longer_supplies_the_team(self, publishing_on):
         """#1318: the team comes from config alone, never from the branch.
 
         Splitting the key out of the parent issue id made filing depend on what
@@ -8969,7 +8969,7 @@ class TestDeferredIssueProvider:
         info = review_issue.IssueProviderInfo(name="linear", options={})
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
              patch.object(review_issue, "create_issue") as created:
-            result = self._create(rt, ctx=make_ctx(branch="isaac/ENG-1/x"))
+            result = self._create(ctx=make_ctx(branch="isaac/ENG-1/x"))
         created.assert_not_called()
         assert result.owed is True
 

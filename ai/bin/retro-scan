@@ -332,12 +332,13 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
         repos.append({**proj, "github": github_slug})
     log.info(f"Resolved {len(repos)} GitHub repo(s)")
     skipped = len(projects) - len(repos)
-    if skipped:
-        trail.warn("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects ({skipped} skipped)")
-    else:
-        trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
+    if repos:
+        if skipped:
+            trail.warn("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects ({skipped} skipped)")
+        else:
+            trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
 
-    if projects and not repos:
+    if not repos:
         # A registry that resolves to nothing is a broken scan, not an empty
         # one. Finishing the run would produce a report built only from local
         # self-review output, then bank it: retro-complete.sh stamps

@@ -448,10 +448,14 @@ PY
 
 # ── Integration (with --home, offline) ────────────────────────────────────────
 
-@test "retro-scan: runs with empty home, produces report header" {
+@test "retro-scan: an empty registry refuses the run rather than banking it" {
+  # No machine.md at all resolves to zero projects, which resolves to zero
+  # repos — the same "resolves to nothing" case as a registry whose paths
+  # are all broken, and it must be refused the same way.
   run "$RETRO_SCAN" --home "$TMPDIR"
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *"Retro Scan Report"* ]]
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"refusing to bank a scan window"* ]]
+  [[ "$output" != *"Retro Scan Report"* ]]
 }
 
 @test "retro-scan: a registry that resolves to no GitHub repo fails the run" {

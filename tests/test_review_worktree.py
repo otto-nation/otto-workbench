@@ -760,3 +760,56 @@ def test_find_repo_root_find_exception_returns_empty(monkeypatch):
         MagicMock(side_effect=TimeoutError("find hung")),
     )
     assert find_repo_root("owner/widget") == ""
+
+
+def test_find_repo_root_matches_a_mixed_case_checkout(monkeypatch):
+    """The slug is case-folded; the directory on disk is not.
+
+    `detect_repo` returns `pr_target.RepoIdentity.label`, which folds A-Z, so a
+    repo cloned as `MyProject` arrives here as `myproject`. Comparing that
+    byte-for-byte against the directory name would miss the checkout the caller
+    is sitting in and send the review off to walk ~/git for a repo it already
+    found.
+    """
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/home/dev/git/MyProject",
+    )
+
+    def fail(*a, **kw):
+        raise AssertionError("a matched toplevel must not reach the ~/git walk")
+
+    monkeypatch.setattr("review.worktree.subprocess.run", fail)
+    assert find_repo_root("acme/myproject") == "/home/dev/git/MyProject"
+
+
+def test_find_repo_root_matches_a_mixed_case_bare_container(monkeypatch):
+    """Same fold, one level up: a bare-repo container holds the worktrees."""
+    monkeypatch.setattr(
+        "review.worktree.git_client.out",
+        lambda *a, **kw: "/home/dev/git/MyProject/main",
+    )
+
+    def fail(*a, **kw):
+        raise AssertionError("a matched container must not reach the ~/git walk")
+
+    monkeypatch.setattr("review.worktree.subprocess.run", fail)
+    assert find_repo_root("acme/myproject") == "/home/dev/git/MyProject"
+
+
+def test_find_repo_root_walk_is_case_insensitive(monkeypatch):
+    """The ~/git fallback folds too, or it reintroduces the miss one rung down."""
+    seen = {}
+
+    monkeypatch.setattr(
+        "review.worktree.git_client.out", lambda *a, **kw: "/somewhere/else")
+
+    def record(cmd, **kw):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, "/home/dev/git/MyProject\n", "")
+
+    monkeypatch.setattr("review.worktree.subprocess.run", record)
+    monkeypatch.setattr("review.worktree.os.path.expanduser", lambda p: "/home/dev/git")
+
+    assert find_repo_root("acme/myproject") == "/home/dev/git/MyProject"
+    assert "-iname" in seen["cmd"]

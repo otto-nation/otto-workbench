@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "ai" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
@@ -19,7 +18,7 @@ from core import workbench_paths
 from pr import context as pr_context
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.paths import (
-    FILENAME_POST_SESSION, ReviewEntryKind, find_review_file,
+    ReviewEntryKind, find_review_file,
     iter_review_entries, read_review_meta, review_file_path, stamp_reviewed,
 )
 from review.state import read_pipeline_status, read_pipeline_warnings
@@ -38,19 +37,21 @@ from review import run as review_run
 from review import worktree as review_worktree
 
 from conftest import (
-    load_script, make_ctx, run_checked, supersession_evidence,
-    supersession_verdict,
+    make_ctx, run_checked, supersession_evidence, supersession_verdict,
 )
 
+from cli import claude_review  # noqa: E402
 
-@pytest.fixture(scope="session")
+
+@pytest.fixture
 def cr():
-    # The script imports its siblings by bare name, so its own directory has to
-    # answer those imports before the body runs.
-    bin_dir = str(SCRIPT_PATH.parent)
-    if bin_dir not in sys.path:
-        sys.path.insert(0, bin_dir)
-    return load_script("claude_review", SCRIPT_PATH)
+    """The entry point under test.
+
+    An import, not a `SourceFileLoader` shim: the binary is a shim over this
+    module now, and importing it gives every caller the one module object the
+    interpreter already holds.
+    """
+    return claude_review
 
 
 @pytest.fixture
@@ -1684,10 +1685,21 @@ def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, ca
 # ── _generator_version ────────────────────────────────────────────────────────
 
 
-def test_generator_version_returns_string(cr):
-    ver = cr._generator_version()
-    assert isinstance(ver, str)
-    assert len(ver) > 0
+def test_the_generator_version_comes_from_the_injected_resolver(cr, reviews_dir, monkeypatch):
+    """`version_string` lives under ai/bin, so the entry point is handed one.
+
+    The default exists so `--version` answers rather than crashing when a
+    caller supplies none — an import that only wants the parser, or a test.
+    """
+    seen = {}
+    monkeypatch.setattr(cr, "_run_self_review",
+                        lambda args, gv: seen.setdefault("gv", gv))
+
+    cr.main(["--self"], version_string=lambda name: f"{name} 9.9.9\nworkbench 1.0 (abc)")
+
+    assert seen["gv"] == "workbench 1.0 (abc)", (
+        "the flows carry the last line, which names the workbench build"
+    )
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -1714,11 +1726,10 @@ def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None
 
 def test_self_review_accepts_recover(cr, reviews_dir, monkeypatch):
     """--recover is a top-level mode; --self must not reject it."""
-    monkeypatch.setattr(sys, "argv", ["claude-review", "--self", "--recover"])
     run_self = MagicMock()
     monkeypatch.setattr(cr, "_run_self_review", run_self)
 
-    cr.main()
+    cr.main(["--self", "--recover"])
 
     assert run_self.call_count == 1
     assert run_self.call_args[0][0].recover is True
@@ -1755,7 +1766,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=True, debug=False,
         post=False, push=False, no_post=False, submit=False,
-    ))
+    ), "test 1.0")
 
     assert body.call_args.kwargs["recover_head_sha"] == "fresh11"
 
@@ -2133,7 +2144,7 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
-    cr._run_self_review(_self_review_args())
+    cr._run_self_review(_self_review_args(), "test 1.0")
 
     record = json.loads((target / run_lock.LOCK_FILE).read_text())
     assert record["command"].startswith("claude-review")
@@ -2156,7 +2167,7 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
     with run_lock.acquire(target, command="pr review --self --fix", started="t"):
-        cr._run_self_review(_self_review_args())
+        cr._run_self_review(_self_review_args(), "test 1.0")
         # Passed through: the parent's ownership record is untouched.
         record = json.loads((target / run_lock.LOCK_FILE).read_text())
         assert record["command"] == "pr review --self --fix"

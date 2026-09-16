@@ -4022,6 +4022,27 @@ Usage:
   ci-check --repo-dir <path>    # specify worktree directory
   ci-check --fix                # diagnose then invoke AI to fix failures
 
+### cli/claude_review.py
+
+Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
+
+The entry point, and only the entry point: the parser, the flag contradictions,
+the signal handler, the run lock, and the choice of which flow to run. The
+review itself is `review.run`'s.
+
+Three things stay here rather than moving down a layer, each for its own reason.
+The signal handler is process-level state, which a library must not install.
+The run lock is claimed between resolving the self-review target and switching
+the checkout to it — a resolver that did both would take a process-lifetime lock
+from inside the library. And `version_string` lives in `ai/bin`, which nothing
+under `ai/lib` can import, so the caller passes it in.
+
+Usage:
+  claude-review <pr_url_or_number>
+  claude-review --no-post <pr_url_or_number>
+  claude-review --self [<pr_url_or_number>]
+  claude-review [--self] --recover [<pr_url_or_number>]
+
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.

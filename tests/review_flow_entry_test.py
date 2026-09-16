@@ -17,7 +17,6 @@ step happens here"; these say "this step happens at all, once, on this path".
 A merge that relocates a step satisfies one and not the other.
 """
 
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,12 +25,11 @@ from unittest.mock import MagicMock
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "ai" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from conftest import load_script, make_ctx  # noqa: E402
+from conftest import make_ctx  # noqa: E402
 
 from review import completion as review_completion  # noqa: E402
 from review import invoke as review_invoke  # noqa: E402
@@ -43,12 +41,18 @@ from review import run as review_run  # noqa: E402
 from review import worktree as review_worktree  # noqa: E402
 
 
-@pytest.fixture(scope="session")
+from cli import claude_review  # noqa: E402
+
+
+@pytest.fixture
 def cr():
-    bin_dir = str(SCRIPT_PATH.parent)
-    if bin_dir not in sys.path:
-        sys.path.insert(0, bin_dir)
-    return load_script("claude_review", SCRIPT_PATH)
+    """The entry point under test.
+
+    An import, not a `SourceFileLoader` shim: the binary is a shim over this
+    module now, and importing it gives every caller the one module object the
+    interpreter already holds.
+    """
+    return claude_review
 
 
 def _written_review(directory: Path) -> Path:
@@ -72,7 +76,6 @@ def _written_review(directory: Path) -> Path:
 ])
 def test_main_dispatches_on_the_self_flag(cr, reviews_dir, monkeypatch, argv, expect_self):
     """Which flow runs is decided by --self, through the real parser."""
-    monkeypatch.setattr(sys, "argv", ["claude-review", *argv])
     self_flow, pr_flow = MagicMock(), MagicMock()
     monkeypatch.setattr(cr, "_run_self_review", self_flow)
     monkeypatch.setattr(cr, "_run_review", pr_flow)
@@ -80,7 +83,7 @@ def test_main_dispatches_on_the_self_flag(cr, reviews_dir, monkeypatch, argv, ex
     monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: make_ctx())
     monkeypatch.setattr(cr.run_lock, "claim_for_process", lambda *a, **kw: None)
 
-    cr.main()
+    cr.main(argv)
 
     assert bool(self_flow.call_count) is expect_self
     assert bool(pr_flow.call_count) is (not expect_self)
@@ -88,9 +91,9 @@ def test_main_dispatches_on_the_self_flag(cr, reviews_dir, monkeypatch, argv, ex
 
 def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkeypatch):
     """`--json-summary 42` reviews PR 42; it does not review a PR named --json-summary."""
-    monkeypatch.setattr(sys, "argv", ["claude-review", "--json-summary", "42"])
     seen = {}
-    def _capture(args, ctx):
+
+    def _capture(args, ctx, generator_version):
         seen.update(args=args)
         return review_run.ReviewOutcome("owner/repo", "42", Path("/dev/null"))
 
@@ -101,7 +104,7 @@ def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkey
     monkeypatch.setattr(cr.run_lock, "claim_for_process", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "json_summary", lambda *a, **kw: "{}")
 
-    cr.main()
+    cr.main(["--json-summary", "42"])
 
     assert seen["target"] == "42"
     assert seen["args"].json_summary is True
@@ -122,17 +125,13 @@ def test_main_refuses_contradictory_flags(cr, reviews_dir, monkeypatch, argv, re
     self one: `--self --no-post --post` ran a review that ignored --no-post and
     still told the orchestrate process it might publish.
     """
-    monkeypatch.setattr(sys, "argv", ["claude-review", *argv])
     monkeypatch.setattr(cr, "_run_self_review", MagicMock())
     monkeypatch.setattr(cr, "_run_review", MagicMock())
     monkeypatch.setattr(cr.pr_context, "classify_target", lambda c: (c, None))
     monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: make_ctx())
     monkeypatch.setattr(cr.run_lock, "claim_for_process", lambda *a, **kw: None)
 
-    with pytest.raises(SystemExit) as excinfo:
-        cr.main()
-
-    assert excinfo.value.code == 1, reason
+    assert cr.main(argv) == 1, reason
 
 
 # ── the PR path, composed ────────────────────────────────────────────────────
@@ -211,7 +210,7 @@ def test_the_pr_path_runs_its_whole_spine_in_one_go(cr, tmp_path, monkeypatch):
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
 
-    cr._run_review(_pr_args(), make_ctx(target_dir=tmp_path / "t"))
+    cr._run_review(_pr_args(), make_ctx(target_dir=tmp_path / "t"), "test 1.0")
 
     assert tape == ["orchestrate", "print_summary", "domain_write"], (
         "the PR path orchestrates, reports, then records — composed, not per-frame"
@@ -235,7 +234,7 @@ def test_a_failed_orchestration_is_not_recorded_on_the_pr_path(
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
 
     with pytest.raises(SystemExit):
-        cr._run_review(_pr_args(), make_ctx(target_dir=tmp_path / "t"))
+        cr._run_review(_pr_args(), make_ctx(target_dir=tmp_path / "t"), "test 1.0")
 
     assert "domain_write" not in tape, "a failed review is not a review to record"
 
@@ -259,7 +258,7 @@ def test_the_pr_path_records_the_domain_even_when_the_operator_declines_to_post(
                         lambda *a, **kw: tape.append("posted"))
     monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
 
-    cr._run_review(_pr_args(no_post=False), make_ctx(target_dir=tmp_path / "t"))
+    cr._run_review(_pr_args(no_post=False), make_ctx(target_dir=tmp_path / "t"), "test 1.0")
 
     assert "posted" not in tape, "declining the prompt must not post"
     assert "domain_write" in tape, "but the review still happened and is recorded"

@@ -97,10 +97,16 @@ class TestWhatGithubShowsBecameOfAThread:
     def test_an_open_thread_with_no_reply_of_ours_shows_nothing(self):
         assert settlement.settlement_for(_thread(bodies=["please fix this"])) is None
 
-    @pytest.mark.parametrize("prefix", thread_replies.HANDLED_REPLY_PREFIXES)
-    def test_a_reply_naming_the_verdict_reads_as_fixed(self, prefix):
+    @pytest.mark.parametrize("prefix, outcome", [
+        (thread_replies.APPLIED_REPLY_PREFIX, FixOutcome.FIXED),
+        (thread_replies.ADDRESSED_REPLY_PREFIX, FixOutcome.ALREADY_ADDRESSED),
+        (thread_replies.DISMISSED_REPLY_PREFIX, FixOutcome.DISMISSED),
+    ])
+    def test_a_reply_naming_the_verdict_reads_as_the_verdict_it_names(
+        self, prefix, outcome,
+    ):
         thread = _thread(bodies=[f"{prefix} — see abc1234."])
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert settlement.settlement_for(thread) is outcome
 
     def test_a_deferred_reply_names_no_ending(self):
         """Deferring says work is still owed, which is the opposite of settled."""
@@ -204,11 +210,23 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
     @pytest.mark.parametrize(
         "body",
         ["Fixed — renamed it.", "Fixed: renamed it.", "Fixed in abc1234.",
-         "Done.", "Done — dropped the guard.", "Dismissed: the premise fails."],
+         "Done.", "Done — dropped the guard."],
     )
-    def test_the_ways_a_person_spells_a_verdict(self, body):
+    def test_the_ways_a_person_spells_fixed(self, body):
         thread = _authored(("kgn", _FINDING), ("me", body))
         assert settlement.settlement_for(thread) is FixOutcome.FIXED
+
+    def test_a_hand_typed_dismissal_reads_as_dismissed_not_fixed(self):
+        """The bug this grading exists to prevent: a wave-off is not a fix.
+
+        `verdict_kind` recognises "Dismissed" as a hand-typed opening the same
+        way it recognises "Fixed" — collapsing both into FIXED would tell the
+        reviewer code changed when the point was waved off instead.
+        """
+        thread = _authored(
+            ("kgn", _FINDING), ("me", "Dismissed: the premise fails."),
+        )
+        assert settlement.settlement_for(thread) is FixOutcome.DISMISSED
 
     def test_a_reviewer_using_our_wording_is_not_our_verdict(self):
         """The negative the widening is bought with.
@@ -475,37 +493,44 @@ class TestWhatSettledOneSnapshotRow:
         thread = _thread(tid="c1", is_resolved=True)
         entry = CommentItem(id="c1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {"c1": thread}, frozenset(), {},
+            entry, {"c1": thread}, {}, {},
         ) is FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_row_with_neither_thread_nor_source_shows_nothing(self):
         entry = CommentItem(id="c1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(entry, {}, frozenset(), {}) is None
+        assert settlement.entry_settlement(entry, {}, {}, {}) is None
 
     def test_an_answered_source_reads_as_fixed(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {}, frozenset({"77"}), {},
+            entry, {}, {"77": FixOutcome.FIXED}, {},
         ) is FixOutcome.FIXED
+
+    def test_an_answered_source_reads_as_the_verdict_it_names(self):
+        """A hand-typed dismissal is not promoted to FIXED regardless."""
+        entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
+        assert settlement.entry_settlement(
+            entry, {}, {"77": FixOutcome.DISMISSED}, {},
+        ) is FixOutcome.DISMISSED
 
     def test_an_unanswered_source_falls_through_to_the_location(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {}, frozenset(), {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
+            entry, {}, {}, {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
         ) is FixOutcome.SETTLED_ELSEWHERE
 
     def test_an_item_settled_through_a_thread_inherits_its_grade(self):
         """The evidence is the thread's, so the claim it supports is too."""
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         settled = settlement.entry_settlement(
-            entry, {}, frozenset(), {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
+            entry, {}, {}, {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
         )
         assert settled is not FixOutcome.FIXED
 
     def test_a_location_nothing_settled_shows_nothing(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {}, frozenset(), {"ana|b.py:3": FixOutcome.FIXED},
+            entry, {}, {}, {"ana|b.py:3": FixOutcome.FIXED},
         ) is None
 
 

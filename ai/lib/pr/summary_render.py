@@ -136,6 +136,11 @@ def build_summary_body(
         what turned the newest summary into the whole history again. It says
         which count reports the row when it is left out, because "settled" is
         the wrong word for a question still owed an answer.
+
+        The entry's provenance goes to the scope with the outcome, because the
+        floor on a decayed fix claim has to let an operator's settlement through
+        — see `summary_rounds._decayed`. This is the frame that holds the entry,
+        so it is the one that can answer.
         """
         cells = summary_row.row_cells_for(
             entry, status, threads_by_id, repo, pr_number, sha, wt_path)
@@ -143,7 +148,7 @@ def build_summary_body(
         key = summary_model.row_key_from_cells(cells)
         if not scope.covers(
             key, summary_rounds.entry_activity_at(entry, threads_by_id, sources_at),
-            summary_model.action_outcome(status),
+            summary_model.action_outcome(status), entry.settled_by,
         ):
             (open_earlier if open_thread else settled_earlier).append(key)
             return False
@@ -158,7 +163,11 @@ def build_summary_body(
     # Resolved once for the whole table: the count and the row it belongs to
     # are two renderings of one answer, and a count that disagreed with its own
     # rows would be the same contradiction in a smaller font.
-    history = history or attribution.AddressingHistory(wt_path)
+    #
+    # `sources_at` reaches the resolver as well as the round scope: a decomposed
+    # item has no thread, so the comment it was cut from is the only surface
+    # that can date the point it makes.
+    history = history or attribution.AddressingHistory(wt_path, sources_at)
     addressed_framings = [
         history.framing(e, threads_by_id.get(e.id)) for e in already_addressed
     ]

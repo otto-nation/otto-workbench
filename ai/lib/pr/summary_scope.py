@@ -90,9 +90,25 @@ def row_action_cell(row: str) -> str:
     return cells[len(TABLE_COLUMNS) - 1]
 
 
+def row_summary_key(row: str) -> str:
+    """The Thread cell of a rendered row, in the form the text fold compares.
+
+    The rendered counterpart of `summary_model.normalised_finding_text`, for the
+    half of the fold that has no location to key on. A published row keeps only
+    its summary cell of the entry behind it, so that cell is all there is to
+    recognise a folded item by — read through the same normaliser the entries
+    went through, or the two forms would never match.
+    """
+    cells = markdown.row_cells(row)
+    if len(cells) < len(TABLE_COLUMNS):
+        return ""
+    return summary_model.normalised_finding_text(markdown.plain_cell(cells[0]))
+
+
 def carried_over_rows(
     published: str, fresh: str, held_elsewhere: frozenset[str] = frozenset(),
     folded: frozenset[str] = frozenset(),
+    folded_texts: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Rows the published summary holds that a fresh render does not.
 
@@ -132,6 +148,11 @@ def carried_over_rows(
     duplicate came straight back. Nothing about the render is allowed to
     decide this, so it is computed where the types are.
 
+    ``folded_texts`` is the same question for the items the fold reached on
+    text rather than on location — see `summary_model.folded_restatements`. An
+    item with no line has no location key at all, so `folded` can never name it
+    and its published row would come back every round for the life of the PR.
+
     The published side still has to be parsed: those rows have no live entry,
     which is the whole reason carry-over exists. The ceiling on
     `finding_location` therefore still bounds it — an item row colliding with
@@ -141,11 +162,20 @@ def carried_over_rows(
         return []
     fresh_rows = table_rows(fresh)
     fresh_keys = {row_key(row) for row in fresh_rows}
+
+    def was_folded(row: str) -> bool:
+        if not summary_model.ITEM_ANCHOR_RE.search(row):
+            return False
+        location = row_location_key(row)
+        if location:
+            return location in folded
+        return row_summary_key(row) in folded_texts
+
     return [
         row for row in table_rows(published)
         if row_key(row) not in fresh_keys
         and row_key(row) not in held_elsewhere
-        and not (summary_model.ITEM_ANCHOR_RE.search(row) and row_location_key(row) in folded)
+        and not was_folded(row)
     ]
 
 

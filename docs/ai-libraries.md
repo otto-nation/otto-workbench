@@ -2881,7 +2881,13 @@ the call sites that has none; as a result code it degrades through
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
 
-Both of those are also *recorded*, in `MACHINE_KILLS`. Returning them as
+Output that will not decode as UTF-8 is the third answer of that shape. It
+arrives as a `UnicodeDecodeError` raised by the pipe rather than by anything
+the caller did, so `run` decodes with replacement and the bytes come back as
+text on the result. A non-UTF-8 file in a diff used to abort a review run at
+post-processing, after every agent had been paid for.
+
+Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
 invisible to anyone watching from outside: a starved `git commit` comes back as
 `COMMIT_FAILED`, the caller handles it as designed, and whatever goes wrong

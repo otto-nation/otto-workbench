@@ -214,6 +214,49 @@ class TestRun:
         assert proc.run(["true"], timeout=timeouts.UNBOUNDED).ok
 
 
+class TestRunUndecodableOutput:
+    """Bytes that are not UTF-8 are output, not an exception.
+
+    The pipe raises `UnicodeDecodeError` out of `communicate` when a command
+    writes them, which is not a failure any caller here has a handler for: a
+    review run reached post-processing, having paid for every agent, and was
+    killed there by `git show` reading a latin-1 shell script.
+
+    Both spawn paths are covered because they are separate code — the group
+    path hand-rolls `Popen` rather than sharing `subprocess.run`.
+    """
+
+    # 0xb2 is the byte the review run actually died on, written raw.
+    BAD_BYTES = r"printf 'a\262b'"
+
+    def test_stdout_that_will_not_decode_comes_back_as_a_result(self):
+        r = proc.run(["sh", "-c", self.BAD_BYTES], timeout=timeouts.QUICK)
+        assert r.ok
+        assert r.stdout == "a\ufffdb"
+
+    def test_stderr_that_will_not_decode_comes_back_as_a_result(self):
+        r = proc.run(["sh", "-c", f"{self.BAD_BYTES} >&2; exit 1"], timeout=timeouts.QUICK)
+        assert r.returncode == 1
+        assert r.stderr == "a\ufffdb"
+
+    def test_the_group_path_decodes_the_same_way(self):
+        r = proc.run(["sh", "-c", self.BAD_BYTES], timeout=timeouts.QUICK,
+                     kill_process_group=True)
+        assert r.ok
+        assert r.stdout == "a\ufffdb"
+
+    def test_the_group_path_decodes_stderr_the_same_way(self):
+        r = proc.run(["sh", "-c", f"{self.BAD_BYTES} >&2; exit 1"], timeout=timeouts.QUICK,
+                     kill_process_group=True)
+        assert r.returncode == 1
+        assert r.stderr == "a\ufffdb"
+
+    def test_decodable_output_is_untouched(self):
+        """Replacement applies to what will not decode, not to what will."""
+        r = proc.run(["printf", "caf\u00e9 ✓"], timeout=timeouts.QUICK)
+        assert r.stdout == "caf\u00e9 ✓"
+
+
 class TestRunTimeout:
     """An expired bound is an answer, not an exception.
 

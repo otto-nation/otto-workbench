@@ -232,6 +232,8 @@ class TestAccountedByTheReview:
 
 
 class TestInferredFromTheTree:
+    UNDECODABLE_BYTES = b"func handle() \xb2\xb2 leak\n"
+
     def test_a_deleted_file_fixes_its_findings(self, repo):
         (repo / "gone.go").write_text(_BEFORE)
         prior_sha = _commit(repo, "before")
@@ -262,6 +264,44 @@ class TestInferredFromTheTree:
         record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is None
         assert record.basis == "`imagined.go` is in neither tree"
+
+    def test_a_file_that_will_not_decode_is_still_read_and_judged(self, repo):
+        """Reading the prior blob must not kill the pass, and must still work.
+
+        `_before_text` shells out to `git show <sha>:<path>`, and the pipe
+        raised `UnicodeDecodeError` on a file git calls text but UTF-8 cannot
+        decode — a second way for one latin-1 file in the diff to destroy a
+        review in post-processing, independent of the evidence check.
+
+        The quoted span is ASCII and really is in the prior blob, so reaching
+        FIXED requires that blob to have been read *and* decoded. Asserting
+        only that the call returned would hold just as well if the read had
+        silently come back empty, which is the `out` default on failure and
+        would make every finding here undecidable.
+        """
+        (repo / "latin1.sh").write_bytes(self.UNDECODABLE_BYTES)
+        prior_sha = _commit(repo, "before")
+        (repo / "latin1.sh").write_bytes(b"rewritten \xb2\xb2 entirely\n")
+        _commit(repo, "after")
+
+        prior = _prior(
+            "- **[M1]** **`latin1.sh:1`** — `func handle()` leaks\n", sha=prior_sha)
+        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        assert record.disposition is PriorDisposition.FIXED
+        assert record.source is DispositionSource.TREE
+
+    def test_surviving_code_in_an_undecodable_file_is_not_called_fixed(self, repo):
+        """The other half: both reads decode, so the quote is found on both sides."""
+        (repo / "latin1.sh").write_bytes(self.UNDECODABLE_BYTES)
+        prior_sha = _commit(repo, "before")
+        (repo / "latin1.sh").write_bytes(b"func handle() \xb2\xb2 leak still\n")
+        _commit(repo, "after")
+
+        prior = _prior(
+            "- **[M1]** **`latin1.sh:1`** — `func handle()` leaks\n", sha=prior_sha)
+        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        assert record.disposition is None
+        assert record.basis == "the code it quotes is still in `latin1.sh`"
 
     def test_a_missing_file_settles_nothing_without_a_prior_commit(self, repo):
         (repo / "gone.go").write_text(_BEFORE)

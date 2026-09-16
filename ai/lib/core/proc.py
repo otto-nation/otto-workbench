@@ -52,7 +52,13 @@ the call sites that has none; as a result code it degrades through
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
 
-Both of those are also *recorded*, in `MACHINE_KILLS`. Returning them as
+Output that will not decode as UTF-8 is the third answer of that shape. It
+arrives as a `UnicodeDecodeError` raised by the pipe rather than by anything
+the caller did, so `run` decodes with replacement and the bytes come back as
+text on the result. A non-UTF-8 file in a diff used to abort a review run at
+post-processing, after every agent had been paid for.
+
+Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
 invisible to anyone watching from outside: a starved `git commit` comes back as
 `COMMIT_FAILED`, the caller handles it as designed, and whatever goes wrong
@@ -479,6 +485,25 @@ def run(
     a command that timed out mid-answer often explains itself in the part that
     arrived.
 
+    Output that is not valid UTF-8 is decoded with replacement rather than
+    raising, for the same reason: bytes the pipe cannot decode arrive as a
+    `UnicodeDecodeError` out of `communicate`, which is not a failure any
+    caller here has a handler for. A review run reached post-processing, having
+    paid for every agent, and was killed there by `git show` reading a latin-1
+    shell script; `git diff` on a worktree holding one does the same before an
+    agent starts. Undecodable bytes are text the command wrote, so they belong
+    in `stdout` alongside the exit code, not in an exception. `_text` already
+    decodes a killed process's streams this way, so the policy is now the same
+    on both paths out of here.
+
+    Replacement rather than `surrogateescape`, which round-trips to bytes but
+    re-raises on the way out — writing the review file, or encoding a prompt as
+    JSON — moving the abort somewhere with less context than here. The lossy
+    case that would matter is a path: `core.quotePath=false` has git emit raw
+    filename bytes, and U+FFFD does not re-encode to the name git gave. That
+    surfaces as a loud `git add` failure (`pathspec ... did not match`, exit
+    128) at call sites that all check it, not as a silent mis-stage.
+
     An expired bound and a death on an external signal are both appended to
     `MACHINE_KILLS` as they pass. That is the only trace either leaves: handing
     them back as ordinary results is what the callers need and is also what
@@ -519,6 +544,7 @@ def run(
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
+        "errors": "replace",
         "cwd": cwd,
         "env": env,
     }

@@ -342,7 +342,7 @@ def adopt_settled_threads(
 
 def reconcile_fix_snapshot(
     state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
-    answered_sources: dict[str, FixOutcome] = {},
+    answered_sources: dict[str, FixOutcome] | None = None,
 ) -> int:
     """Flip snapshot outcomes that GitHub contradicts. Returns the flip count.
 
@@ -368,6 +368,7 @@ def reconcile_fix_snapshot(
     button lands on SETTLED_ELSEWHERE, so it leaves the deferred bucket without
     being counted as work this cycle did or attributed to a commit.
     """
+    answered_sources = answered_sources or {}
     handled_locations = settled_locations(threads_by_id)
     flipped = 0
     for outcome in state.fix.fix.items:

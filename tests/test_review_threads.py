@@ -8591,7 +8591,6 @@ class TestAnsweredCommentSources:
         assert answered == {}
 
     def test_an_acknowledgement_of_ours_answers_nothing(self):
-
         """Being heard is not being handled."""
         with _fetches([_our_reply("#issuecomment-77", prefix="Good catch —")]):
             answered = settlement.answered_comment_sources(

@@ -1071,5 +1071,15 @@ State set by its functions: `AI_RESPONSE`.
 
 ### ai/session-count.sh
 
-Session-counting and project-directory helpers for the Stop-hook cooldown
-gates, and for the completion scripts that reset them.
+Session counting for the Stop-hook cooldown gates, and the project-directory
+helpers the completion scripts reset stamps with.
+
+The shell expression of ai/lib/core/sessions.py. Two languages spell this
+because the gates run on every session exit and cannot afford a Python
+start-up, while everything downstream of them is already Python. The pair is
+the same arrangement lib/roots.sh and ai/lib/core/workbench_paths.py have, and
+is held together the same way: tests/sessions_ssot.bats runs both against one
+fixture tree and fails when they disagree.
+
+Sourced directly rather than via lib/ui.sh: the Stop hooks that call this
+helper skip ui.sh to stay inside their startup budget.

@@ -599,6 +599,26 @@ The run ends when the review file is written — what happens to the findings
 afterwards belongs to review.fix, and removing what the run left behind belongs
 to review.gc, which the orchestrator runs once every phase is done.
 
+### review/preflight.py
+
+Checks that run before a review spends anything.
+
+Three gates, one module, so the unified run flow can call them without
+reaching back into the binary. A review is the largest model spend in the
+repo; each of these fires before the first agent call.
+
+- ``refuse_if_superseded`` stops a run whose branch may already be gone from
+  the default branch — findings about deleted code read as ordinary comments.
+- ``check_stale_review`` asks before re-reviewing the same HEAD, or auto-recovers
+  when the prior run failed.
+- ``check_pending_review`` finds an unsubmitted GitHub review and offers to
+  delete it so a new post does not collide.
+
+``--force`` skips the last two. The supersession refusal has its own override
+(``supersession_override``) because ``--post``/``--no-post`` also set the
+``force`` local that suppresses confirmation prompts, and an unattended run is
+the one the refusal most has to survive.
+
 ### review/prompt.py
 
 Prompt construction for claude-review: the byte budget and the render loop.
@@ -659,6 +679,22 @@ Not to be confused with `review.sections`, which is the posting pipeline's
 config-driven registry of sections already written to a review document —
 that module reads what an agent wrote, this one decides what an agent is
 shown before it writes anything.
+
+### review/recover.py
+
+Finish a failed review at the commit it started from, even when HEAD moved.
+
+`--recover` is not a fresh review of whatever the branch is now. The failed run
+recorded a SHA in pipeline state, and recovery has to complete that analysis
+or it is reviewing different code under the same findings file. These helpers
+decide that SHA, detect drift against the worktree HEAD, and pin a throwaway
+detached checkout at it.
+
+They compose `review.worktree` rather than duplicating it: pinning is
+`detached_worktree_at`, and cleanup of that pin stays with the caller that
+owns the `finally`. `pin_recover_worktree` lives here, not in `worktree.py`,
+because it is recover-specific — it exits when the recorded commit is gone,
+and nothing else in the worktree lifecycle has that contract.
 
 ### review/registry.py
 
@@ -755,7 +791,16 @@ a judgement — a review file parses the same way whatever this module decides.
 
 ### review/worktree.py
 
-Worktree lifecycle management for claude-review.
+Worktree lifecycle for a review run: obtain one, pin one, release one.
+
+The primitives (`setup_pr_worktree`, `detached_worktree_at`, `switch_to_branch`,
+`cleanup_worktree`) create and destroy checkouts. The resolvers below compose
+those primitives rather than duplicating them: they answer *which directory*
+a review should run in, given a slug, a branch name, or a `--repo-dir`.
+
+That is a different question from `git.topology`, which starts from a git cwd
+and asks which of *its* worktrees holds a branch. Topology has no GitHub-slug
+lookup, no `~/git` walk, and no `gh`. The slug-to-clone path is `find_repo_root`.
 
 ## Findings
 
@@ -1008,13 +1053,17 @@ different places.
 
 ### review/summary.py
 
-The machine-readable summary of a finished review.
+The machine-readable summary of a finished review, and its human rendering.
 
 `claude-review` prints a `REVIEW_SUMMARY:{json}` line that `pr` and the review
 listing parse back, so this is the one place the summary's shape is decided.
 It is the only reader that needs both halves of a review at once — the findings
 document (counts, verdict) and the pipeline state (status, failure detail) —
 which is why it sits above both rather than inside either.
+
+The emitted shape is `ReviewSummaryReport`. In-process readers take the
+dataclass; the dict exists only at the `json.dumps` call in `json_summary`.
+The human renderer prints the same type.
 
 ### review/types.py
 
@@ -2068,6 +2117,15 @@ The git-level questions both rest on — was this orphaned, and which commit
 replays it — belong to `git.replay` at layer 2, so the rebase subsystem that
 causes these rewrites can reach the same answers. What is here is the part that
 knows about a `PRState` and a `FixRecord`.
+
+### pr/review_sync.py
+
+The only writer of the review domain.
+
+`pr review` and `claude-review` both finish a review and both used to stamp
+`ReviewSummary` themselves — two mappings, two persist paths, and a PR review
+wrote the domain twice. This module is the one writer: it derives the domain
+fields from the typed report and persists them on the target the context names.
 
 ### pr/state.py
 

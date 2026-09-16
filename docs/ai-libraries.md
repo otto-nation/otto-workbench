@@ -3050,6 +3050,42 @@ for serialization and type-hint-driven reconstruction for deserialization.
 not the only thing that has to know what an annotation means — `schema_gen`
 describes the same hints to a model and dispatches on the same answer.
 
+### core/sessions.py
+
+Session transcripts, across every agent harness on this machine.
+
+The Python owner of what a session is and where one lives. Before this module,
+four skills — dream, promote, retro, wiki-capture — each answered that question
+themselves, and each answered it with Claude Code's directory layout. Interactive
+work moved to Pi and all four went quietly blind: on 2026-09-16 the trailing week
+held 124 Pi sessions carrying 802 human messages that no consumer could see, and
+``dream-scan`` reported 775 signals of which every one was an agent preamble.
+
+Two things make a harness's sessions findable, and the harnesses disagree on
+both, so both live in ``HARNESSES`` rather than at any call site:
+
+*Layout.* Claude keeps one directory per session cwd, with its transcripts
+directly inside. Pi does the same but also writes subagent transcripts flat at
+its sessions root, so walking project directories alone excludes them — 405 of
+them on this machine, dropped without reading a byte. Claude has no such
+separation; its headless runs land beside interactive ones and are told apart by
+content instead, which is what ``is_automation_prompt`` is for.
+
+*Record shape.* Claude writes ``{"type": "user", "message": {...}}``; Pi writes
+``{"type": "message", "message": {"role": "user", ...}}``. ``iter_user_messages``
+normalises both to ``UserMessage`` so consumers never branch on harness.
+
+The slug a directory is named for is deliberately never parsed back into a path.
+Claude's transform maps every non-alphanumeric to ``-``, so ``a-b`` and ``a_b``
+both become ``a-b`` and the original is unrecoverable; Pi keeps underscores and
+wraps in a doubled delimiter, so the two harnesses do not even agree on the
+encoding. Both write the cwd *into* the transcript, which is a fact rather than
+an inference, so ``project_path_of`` reads that. The slug is written, never read.
+
+``lib/ai/session-count.sh`` is the shell expression of the same model, for the
+Stop-hook gates that cannot afford a Python start-up. ``tests/sessions_ssot.bats``
+runs both against one fixture tree and fails when they disagree.
+
 ### core/text.py
 
 Text a human reads, formatted the same way wherever it is written.

@@ -245,6 +245,12 @@ class TestRunUndecodableOutput:
         assert r.ok
         assert r.stdout == "a\ufffdb"
 
+    def test_the_group_path_decodes_stderr_the_same_way(self):
+        r = proc.run(["sh", "-c", f"{self.BAD_BYTES} >&2; exit 1"], timeout=timeouts.QUICK,
+                     kill_process_group=True)
+        assert r.returncode == 1
+        assert r.stderr == "a\ufffdb"
+
     def test_decodable_output_is_untouched(self):
         """Replacement applies to what will not decode, not to what will."""
         r = proc.run(["printf", "caf\u00e9 ✓"], timeout=timeouts.QUICK)

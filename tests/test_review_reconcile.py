@@ -279,7 +279,8 @@ class TestInferredFromTheTree:
         prior = _prior(
             "- **[M1]** **`latin1.sh:1`** — `echo handle` is wrong\n", sha=prior_sha)
         record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
-        assert record is not None
+        assert record.disposition is None
+        assert record.basis == f"nothing it quotes was in `latin1.sh` at {prior_sha[:7]}"
 
     def test_a_missing_file_settles_nothing_without_a_prior_commit(self, repo):
         (repo / "gone.go").write_text(_BEFORE)

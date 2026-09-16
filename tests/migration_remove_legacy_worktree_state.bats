@@ -72,6 +72,14 @@ _seed_legacy() {
   [ ! -e "$WORKTREE/.workbench" ]
 }
 
+@test "removes trail.jsonl and run.lock, leaving no trace of state.json" {
+  _seed_legacy trail.jsonl run.lock
+
+  _run_migration "$WORKTREE"
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORKTREE/.workbench" ]
+}
+
 @test "keeps the directory when an unrelated file remains" {
   _seed_legacy state.json run.lock trail.jsonl
   printf 'keep\n' > "$WORKTREE/.workbench/someone-elses.txt"

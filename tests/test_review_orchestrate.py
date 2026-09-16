@@ -13,7 +13,10 @@ from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from core.phases import Phase
+from conftest import TEST_MODEL as _TEST_MODEL, model_budget_bytes
 from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
+
+_TEST_BUDGET = model_budget_bytes()
 
 
 
@@ -221,6 +224,26 @@ class TestPhaseModel:
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         assert ro.phase_model("scout", "claude-opus-5") == "claude-opus-5"
 
+    def test_collect_reads_the_worktree_config_when_given_one(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """Preflight must resolve the models the review will actually run.
+
+        `ReviewJob.config` is project- and container-scoped, so a repo setting
+        `agent.model` in its own `.workbench.yml` runs a model the global scope
+        never names. Checking without the worktree cleared a model the review
+        never uses and missed the one it does — the unknown-window failure then
+        landed inside `build_prompt`, after metadata and collection were paid
+        for, which is the cost the preflight check exists to avoid.
+        """
+        self._clean_env(ro, monkeypatch)
+        (tmp_path / ".workbench.yml").write_text(
+            "agent:\n  model: claude-haiku-4-5\n",
+        )
+        models = ro.collect_phase_models("", tmp_path)
+        assert set(models) == {"claude-haiku-4-5"}
+        assert "sonnet" not in models
+
     def test_collect_groups_phases_by_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
@@ -245,6 +268,72 @@ class TestPhaseModel:
         models = ro.collect_phase_models("")
         named = {p for group in models.values() for p in group}
         assert not named & {ro.Phase.COMMENTS_FIX, ro.Phase.CI_FIX}
+
+
+class TestPromptBudgetsArePreflighted:
+    """A model with no recorded window is caught before the review starts.
+
+    Every phase derives its byte ceiling from its model's context window, so a
+    model that has none cannot be budgeted for. Discovering that per phase
+    would mean paying for metadata and preflight collection first, then failing
+    every phase in turn for the same reason.
+    """
+
+    def test_an_unresolved_alias_runs_on_the_tier_floor_and_says_so(self, ro):
+        """The ordinary first-party-API setup: allowed, but not silently.
+
+        `phase_model` returns the literal "sonnet" when
+        ANTHROPIC_DEFAULT_SONNET_MODEL is unset — see `TestPhaseModel`, which
+        asserts exactly that default. Refusing would take out every phase on
+        every machine not using Vertex, so the run continues against the
+        tier's floor; the warning is what stops a smaller review from being
+        the only evidence that happened.
+        """
+        trail = MagicMock()
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, trail)
+        assert ok
+        assert "tier alias" in err.getvalue()
+        assert "ANTHROPIC_DEFAULT_SONNET_MODEL" in err.getvalue()
+        assert trail.decision.called
+
+    def test_the_warning_names_the_variable_that_would_fix_it(self, ro):
+        """The env key comes from `ModelAlias`, not from a second derivation.
+
+        Two copies of the naming convention drift the moment a tier's key stops
+        following the plain uppercase pattern, and the copy in a warning is the
+        one nobody notices is wrong.
+        """
+        from agent.phases import ModelAlias
+
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            ro._budgets_are_derivable({"haiku": [ro.Phase.SCOUT]}, MagicMock())
+        assert ModelAlias.HAIKU.env_key in err.getvalue()
+
+    def test_a_resolved_model_warns_about_nothing(self, ro):
+        trail = MagicMock()
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            ro._budgets_are_derivable({"claude-sonnet-5": [ro.Phase.SCOUT]}, trail)
+        assert err.getvalue() == ""
+        assert not trail.decision.called
+
+    def test_an_unknown_concrete_model_still_aborts(self, ro):
+        """A model nobody has measured is not a model to guess a window for."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            ok = ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT]}, MagicMock())
+        assert not ok
+
+    def test_a_known_model_passes(self, ro):
+        assert ro._budgets_are_derivable(
+            {"claude-sonnet-5": [ro.Phase.SCOUT]}, MagicMock(),
+        )
+
+    def test_the_failure_names_the_phases_it_blocks(self, ro):
+        trail = MagicMock()
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT, ro.Phase.GROUP]}, trail)
+        assert "scout" in err.getvalue() and "group" in err.getvalue()
+        assert trail.decision.called
 
 
 # ── 19c. enum_arg ───────────────────────────────────────────────────────────
@@ -1608,7 +1697,10 @@ class TestPromptStats:
             session_log=str(tmp_path / "s.jsonl"),
         )
 
-        ro._log_prompt_size("test", "hello world", {"sec": "data"}, job)
+        ro._log_prompt_size(
+            "test", "hello world", {"sec": "data"}, job,
+            budget_bytes=_TEST_BUDGET, model=_TEST_MODEL,
+        )
 
         stats_file = tmp_path / ro.FILENAME_PROMPT_STATS
         assert stats_file.exists()
@@ -1633,8 +1725,8 @@ class TestPromptStats:
             session_log=str(tmp_path / "s.jsonl"),
         )
 
-        ro._log_prompt_size("first", "aaa", {}, job)
-        ro._log_prompt_size("second", "bbb", {}, job)
+        ro._log_prompt_size("first", "aaa", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
+        ro._log_prompt_size("second", "bbb", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
 
         stats = json.loads((tmp_path / ro.FILENAME_PROMPT_STATS).read_text())
         assert len(stats) == 2
@@ -1658,7 +1750,7 @@ class TestPromptStats:
         stats_file = tmp_path / ro.FILENAME_PROMPT_STATS
         stats_file.write_text("")
 
-        ro._log_prompt_size("test", "hello", {}, job)
+        ro._log_prompt_size("test", "hello", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
 
         stats = json.loads(stats_file.read_text())
         assert isinstance(stats, list)

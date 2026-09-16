@@ -216,3 +216,50 @@ def test_the_hooks_are_registered_with_pytest(pytestconfig):
     hooks = pytestconfig.pluginmanager.hook
     for hook in (hooks.pytest_runtest_setup, hooks.pytest_runtest_makereport):
         assert any(impl.plugin is conftest for impl in hook.get_hookimpls())
+
+
+def test_no_vertex_endpoint_is_reachable():
+    """No test takes an exact token count, because that is a network call.
+
+    `review.prompt` measures every rendered prompt unless
+    WORKBENCH_AI_MEASURE_TOKENS is 0, and it is on by default. Unsetting the
+    endpoint is the floor for every caller of `count_tokens` rather than just
+    that one, and it leaves the measure flag unset as `TestAgentEnvGuard`
+    requires.
+    """
+    from agent.vertex_quota import vertex_env
+
+    assert vertex_env() is None
+
+
+def test_the_measured_path_takes_no_round_trip_when_it_is_patched():
+    """The escape hatch a test uses to exercise measurement stays local.
+
+    Patching `count_tokens` is how the token-telemetry tests reach the measured
+    branch; this pins that the branch is reachable that way rather than only by
+    turning the variable back on, which would reintroduce the network call.
+    """
+    from unittest.mock import patch
+
+    from core.phases import Phase
+    from review import prompt as review_prompt
+
+    with patch.object(review_prompt, "count_tokens", return_value=123) as counter:
+        with patch.dict(os.environ, {"WORKBENCH_AI_MEASURE_TOKENS": "1"}):
+            measured = review_prompt._measured_tokens(
+                "prompt", Phase.SCOUT, "claude-sonnet-5",
+            )
+    assert measured == (123, "claude-sonnet-5")
+    assert counter.called
+
+
+def test_model_aliases_are_unresolved():
+    """The tier aliases are unset, so every machine budgets the same way.
+
+    `ANTHROPIC_DEFAULT_*_MODEL` decides whether a phase resolves to a concrete
+    model or to the bare alias, and the two now buy different prompt budgets.
+    A shell that exports them would make an assertion pass locally and fail in
+    CI, which is the one failure mode a sandbox exists to prevent.
+    """
+    for tier in ("SONNET", "OPUS", "HAIKU"):
+        assert f"ANTHROPIC_DEFAULT_{tier}_MODEL" not in os.environ

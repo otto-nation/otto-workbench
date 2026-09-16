@@ -627,10 +627,8 @@ class TestCollectPreflightData:
         diff_size = len(git_client.out(
             "diff", "origin/main...HEAD", cwd=str(repo),
         ).encode())
-        monkeypatch.setattr(
-            rc, "MAX_PROMPT_BYTES",
-            diff_size + review_budget.TEMPLATE_OVERHEAD_BYTES + 1000,
-        )
+        ceiling = diff_size + review_budget.TEMPLATE_OVERHEAD_BYTES + 1000
+        monkeypatch.setattr(rc, "collection_budget_bytes", lambda *_: ceiling)
         with contextlib.redirect_stdout(io.StringIO()):
             data = rc.collect_preflight_data(job)
         assert "CLAUDE.md" in data.file_contents

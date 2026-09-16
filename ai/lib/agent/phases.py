@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 from enum import StrEnum
+from pathlib import Path
 
 from config import workbench_config
 from agent.registry import PHASES, REVIEW_PHASES
@@ -179,7 +180,9 @@ def phase_model(
     )
 
 
-def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
+def collect_phase_models(
+    explicit: str | None, project_root: Path | str | None = None,
+) -> dict[str, list[Phase]]:
     """Map each model the review pipeline would use to the phases requesting it.
 
     Callers use this to check every distinct model once up front and to name
@@ -188,9 +191,16 @@ def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
     Scoped to the review phases: preflight fails the run when a model is
     unreachable, and a review has no business refusing to start over the model
     a CI fix pass would have used.
+
+    ``project_root`` is the worktree whose config applies, and a caller
+    checking models a review will actually use must pass it. Without one only
+    the global scope is read, while the review itself resolves against
+    `ReviewJob.config` — project- and container-scoped — so a repo overriding
+    `agent.model` in its own `.workbench.yml` would be checked against a model
+    it never runs.
     """
     models: dict[str, list[Phase]] = {}
-    cfg = workbench_config.load_config_or_default()
+    cfg = workbench_config.load_config_or_default(project_root)
     for phase in REVIEW_PHASES:
         models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
     return models

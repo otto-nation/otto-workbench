@@ -29,7 +29,7 @@ AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from conftest import make_ctx  # noqa: E402
+from conftest import make_ctx, model_budget_bytes  # noqa: E402
 
 from agent import registry as agent_registry  # noqa: E402
 from agent import templates as agent_templates  # noqa: E402
@@ -55,8 +55,10 @@ from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import PRReport  # noqa: E402
 from pr.triage_round import TriagedRound  # noqa: E402
-from review.budget import MAX_PROMPT_BYTES  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
+
+# The model every phase resolves to here, and the ceiling it buys.
+MAX_PROMPT_BYTES = model_budget_bytes()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -689,6 +691,7 @@ _AGENT_RENDERERS = _FIX_RENDERERS | {
 def _make_common_sections() -> review_prompt.CommonSections:
     return review_prompt.CommonSections(
         **{name: "" for name in review_prompt.COMMON_SECTION_NAMES},
+        budget_bytes=MAX_PROMPT_BYTES,
     )
 
 

@@ -66,12 +66,13 @@ _AGENT_ERROR_PREFIX = "agent error:"
 # are the fragments of it that carry a verdict.
 #
 # "prompt is too long" is the API rejecting a prompt the local budget passed.
-# The two disagree because the budget counts bytes at an assumed four per token
-# while real review content — CSV fixtures, dense source — runs closer to two
-# and a half, so a prompt inside the byte ceiling can be well past the token
-# one. It is the same verdict as `PROMPT_TOO_LARGE` below and earns the same
-# answer: recovery re-renders the same phase from the same commit and produces
-# a prompt the API rejects identically.
+# The budget bounds a token ceiling with a byte count, which no byte count can
+# do without knowing the content's density; it prices bytes at a floor below
+# anything measured, so the gap is meant to be conservative rather than absent.
+# Content denser than that floor — base64, hashes — still closes it. It is the
+# same verdict as `PROMPT_TOO_LARGE` below and earns the same answer: recovery
+# re-renders the same phase from the same commit and produces a prompt the API
+# rejects identically.
 _NON_RECOVERABLE_ERROR_MARKERS = ("permission denied", "prompt is too long")
 
 _DIAGNOSIS_MESSAGES = {

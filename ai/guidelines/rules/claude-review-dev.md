@@ -143,7 +143,9 @@ its tail, and both age out on the same six-month horizon.
 - `prompt-stats.json` → `unaccounted_bytes` is what the render cost that no budget lever measured. A few KB is the template's own text and the block markup; tens of KB means a section reaches the prompt outside the budget — usually a variable registered after `fit`
 - `prompt-stats.json` → `allowance_bytes - accounted_bytes` is the room the ladder handed out and the render did not spend, mostly the diff's unused cap. Large is ordinary and says nothing about bloat
 - Large files with small diffs are automatically skipped by the density filter (`FILE_CONTENT_DENSITY_THRESHOLD`)
-- Budget constants: `MAX_PROMPT_BYTES` (480KB), `TEMPLATE_OVERHEAD_BYTES` (20KB), `FILE_CONTENT_MIN_SIZE` (5KB)
+- `prompt-stats.json` → `budget_model` and `budget_window_tokens` say which model the ceiling was derived from. A density is only comparable against the same tokenizer, so a figure without its model is not interpretable
+- The ceiling is per-model, not a constant: `prompt_budget_bytes(model)` is the model's window less `COMPLETION_RESERVE_TOKENS` and `OVERHEAD_RESERVE_TOKENS`, priced at `BYTES_PER_TOKEN_FLOOR`, capped by `MAX_SPEND_BYTES` and less `RENDER_MARKUP_RESERVE_BYTES`. An unresolved tier alias (`ANTHROPIC_DEFAULT_SONNET_MODEL` unset) budgets against `ALIAS_FLOOR_TOKENS` and warns; an unknown concrete model aborts the review at preflight rather than defaulting
+- Other budget constants: `TEMPLATE_OVERHEAD_BYTES` (20KB), `FILE_CONTENT_MIN_SIZE` (5KB)
 
 ## pr CLI Development
 

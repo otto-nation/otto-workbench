@@ -68,6 +68,7 @@ from core.tool_parser import enum_arg
 # `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
 # means two things. `abbrev` is pure formatting of a sha already in hand.
 from git.client import abbrev
+from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
@@ -75,7 +76,7 @@ from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
-from agent.phases import collect_phase_models, resolve_effort
+from agent.phases import ModelAlias, collect_phase_models, resolve_effort
 from review.pipeline import (
     DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
@@ -116,6 +117,44 @@ def _log_ai_backend(trail) -> None:
         else:
             data[key] = val or ""
     trail.info("ai_backend", "resolved AI backend configuration", data=data)
+
+
+def _budgets_are_derivable(phase_models, trail) -> bool:
+    """Whether every phase's model has a context window to budget against.
+
+    Checked here, beside the backend preflight, because the alternative is
+    discovering it once per phase after the review has already paid for
+    metadata and preflight collection.
+
+    An unresolved tier alias is not a failure — it is what
+    `ANTHROPIC_DEFAULT_SONNET_MODEL` being unset looks like, which is the
+    ordinary first-party-API setup — but it does mean the budget is the
+    tier's conservative floor rather than the model's real window, so it is
+    said out loud rather than left to be inferred from a smaller review.
+    """
+    for model, phases in sorted(phase_models.items()):
+        named = ", ".join(str(p) for p in phases)
+        try:
+            budget = prompt_budget_bytes(model)
+        except UnknownModelWindow as exc:
+            log.error(f"Cannot budget prompts for {named}: {exc}")
+            trail.decision(
+                "prompt_budget", "aborting review", reason=str(exc),
+            )
+            return False
+        alias = ModelAlias.parse(model)
+        if alias is not None:
+            log.warn(
+                f"{model!r} is an unresolved tier alias, so the tier floor "
+                f"({budget // 1024}KB) is the budget for {named} rather than "
+                f"the model's own window. Set {alias.env_key} to budget "
+                f"against the real one."
+            )
+            trail.decision(
+                "prompt_budget", "budgeting against the tier floor",
+                reason=f"{model} did not resolve to a concrete model id",
+            )
+    return True
 
 
 def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_path: str) -> dict | None:
@@ -276,7 +315,13 @@ def _run_phases(trail, args, job) -> Pipeline:
 
 def _run_orchestrate(trail, args, repo, session_log) -> int:
     _log_ai_backend(trail)
-    if not ai_backend.preflight(collect_phase_models(args.model), trail):
+    # Against the worktree's own config, not just the global scope: this is the
+    # same resolution `ReviewJob.config` makes, and checking a different one
+    # would clear a model the review never runs while missing the one it does.
+    phase_models = collect_phase_models(args.model, args.repo_dir)
+    if not ai_backend.preflight(phase_models, trail):
+        return 1
+    if not _budgets_are_derivable(phase_models, trail):
         return 1
     run_ctx = fetch_metadata(
         repo, args.pr, args.mode, args.repo_dir, args.recover_sha,

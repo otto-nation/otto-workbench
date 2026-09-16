@@ -259,6 +259,57 @@ def _no_live_backend(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _unresolved_model_aliases(monkeypatch):
+    """Run every test with the tier aliases unresolved, as CI does.
+
+    `ANTHROPIC_DEFAULT_SONNET_MODEL` and its siblings decide whether
+    `phase_model` returns a concrete id or the bare alias, and the alias now
+    picks a different prompt budget — the tier floor rather than the model's
+    own window. A developer's shell exports them and CI does not, so without
+    this the same assertion is made against two different ceilings and a test
+    can only fail in one of the two places. Both CI failures on this file's
+    branch were that.
+
+    Unset is the floor because it is what CI has and what a first-party-API
+    machine has. A test whose subject is a resolved model sets the variable
+    itself, which is also the only way to make that intent visible.
+
+    `_clear_agent_env` cannot cover these: they are Anthropic's names, not the
+    `WORKBENCH_AI_` prefix it owns.
+    """
+    for tier in ("SONNET", "OPUS", "HAIKU"):
+        monkeypatch.delenv(f"ANTHROPIC_DEFAULT_{tier}_MODEL", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_vertex_endpoint(monkeypatch):
+    """Run every test on a machine with no Vertex endpoint to reach.
+
+    `review.prompt` takes an exact token count of every rendered prompt unless
+    `WORKBENCH_AI_MEASURE_TOKENS` is 0, and it is on by default — right for a
+    real review, since a measurement nobody takes calibrates nothing. In the
+    suite it makes each `build_prompt` a live round trip with a 30s timeout.
+
+    `_clear_agent_env` does not prevent it: these vars carry no `WORKBENCH_AI_`
+    prefix, so a developer who exports them for their own runs has the suite
+    reaching the network under their credentials. It still passes, slowly,
+    which is the worst form of it — the cost reads as ordinary slowness rather
+    than as a dependency on one machine's environment.
+
+    Unsetting the endpoint rather than the measure flag is deliberate. It is
+    the same floor `_clear_agent_env` draws, one layer out: `count_tokens`
+    returns None when `vertex_env()` does, so this covers every caller of it
+    rather than the one that happens to be on by default, and it leaves
+    `WORKBENCH_AI_MEASURE_TOKENS` unset as `TestAgentEnvGuard` requires. A test
+    that wants the measured path patches `review.prompt.count_tokens`, which is
+    what the token-telemetry tests already do.
+    """
+    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+    monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+    monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_workbench_config(tmp_path, monkeypatch):
     """Run every test against an empty config root.
 
@@ -572,6 +623,28 @@ def worktree(tmp_path) -> Path:
 
 
 GIT_TIMEOUT = 10  # seconds; a hang here should fail the test, not stall the suite
+
+
+# The model the review phases resolve to on this machine, and the prompt
+# ceiling it buys. Shared because three review test modules derive the same
+# figure: the budget is per-model now, so a test asserting against it has to
+# name the model it assumed, and three copies of that would drift the first
+# time the reference model changed.
+TEST_MODEL = "claude-sonnet-5"
+
+
+def model_budget_bytes() -> int:
+    """What the ladder may plan to spend for `TEST_MODEL`.
+
+    The ladder's target rather than the refusal ceiling, because that is the
+    figure a test driving `_fit_budget` is asserting against. Imported lazily,
+    like the other reaches into ai/lib here.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from review.budget import ladder_target_bytes
+
+    return ladder_target_bytes(TEST_MODEL)
 
 
 class MachineContention(AssertionError):

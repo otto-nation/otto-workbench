@@ -14,8 +14,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review.budget import (
-    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
-    fit_files, fixed_preflight_bytes,
+    FileFit, MAX_DELTA_LIST_ENTRIES, MIN_DIFF_BYTES,
+    fit_files, fixed_preflight_bytes, prompt_budget_bytes,
 )
 from review.grouping import ReviewProfile, ReviewRule, format_profiles_section
 from review.collect import build_project_context, format_preflight_data
@@ -30,15 +30,34 @@ from dataclasses import asdict
 from unittest.mock import patch
 
 from review.grammar import parse_ledger_line
-from review.prompt import BudgetLever, Cut, _build_common_sections, _fit_budget
+from review.prompt import BudgetLever, Cut, _build_common_sections
+from review.prompt import _fit_budget as _fit_budget_impl
 from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
 from review.prompt_sections import (
     _build_ci_failure_items, _build_delta_section, _build_env_section,
     _build_omitted_guidance, _build_pr_header,
 )
 from review import registry as review_registry
+from conftest import TEST_MODEL, model_budget_bytes
 from pr.ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr.domains import CIDomain
+
+# The model every phase resolves to here, and the ceiling it buys. Tests state
+# the budget once rather than at each of two dozen call sites; a test that
+# cares about a different model passes `budget_bytes` itself.
+MAX_PROMPT_BYTES = model_budget_bytes()
+
+
+def _fit_budget(job, known_sections, **kw):
+    """`review.prompt._fit_budget` with this file's default budget applied.
+
+    Shadows the real name deliberately: the budget is a required argument now,
+    and two dozen call sites here care about the ladder rather than about which
+    ceiling it ran against. A test that cares passes `budget_bytes` itself.
+    """
+    kw.setdefault("budget_bytes", MAX_PROMPT_BYTES)
+    return _fit_budget_impl(job, known_sections, **kw)
+
 
 
 # ── _build_delta_section with file_filter ──────────────────────────────────
@@ -299,21 +318,29 @@ class TestFitBudget:
         no lever left and logged "diff capped to 20KB" — naming a section that
         was not the problem.
         """
-        pf = _make_preflight(file_contents={"gen.pb.go": "y" * 400_000})
+        contents = MAX_PROMPT_BYTES - 10_000
+        pf = _make_preflight(file_contents={"gen.pb.go": "y" * contents})
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"}, file_filter=["gen.pb.go"])
         assert not plan.files.any_included
         assert plan.cuts[0].lever is BudgetLever.FILE_CONTENTS
-        assert plan.cuts[0].freed_bytes == 400_000
-        assert plan.cuts[0].describe() == "390KB of pre-collected file contents (1 file)"
+        assert plan.cuts[0].freed_bytes == contents
+        assert plan.cuts[0].describe() == (
+            f"{contents // 1024}KB of pre-collected file contents (1 file)"
+        )
 
     def test_the_delta_is_cut_before_the_diff_is_floored(self):
+        # Enough delta hunks to exceed the budget on their own, so the lever
+        # has to fire. The count is derived rather than literal: a fixed one
+        # silently stops binding the next time the ceiling moves.
+        hunk = f"diff --git a/f0.py b/f0.py\n@@ -1 +1 @@\n+{'x' * 900}\n"
+        hunks = MAX_PROMPT_BYTES // len(hunk.encode()) + 100
         pf = _make_preflight(
             file_contents={},
             delta_files=[f"pkg/f{i:05d}.go" for i in range(4_974)],
             delta_diff="".join(
                 f"diff --git a/f{i}.py b/f{i}.py\n@@ -1 +1 @@\n+{'x' * 900}\n"
-                for i in range(400)
+                for i in range(hunks)
             ),
         )
         job = _make_job(pf)
@@ -494,7 +521,7 @@ class TestThePlanIsCheckedAgainstTheRender:
         # render against and nothing worth recording.
         from review.prompt import PromptBuilder
         job = _make_job(_make_preflight())
-        b = PromptBuilder(_build_common_sections(job, max_turns=10))
+        b = PromptBuilder(_build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES))
         assert b.accounting is None
 
 
@@ -510,7 +537,7 @@ class TestBudgetKeepsTheFilesItCanAfford:
     def test_a_partial_drop_keeps_what_still_fits(self):
         # One file that cannot fit beside the others, and two small ones that can.
         pf = _make_preflight(file_contents={
-            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 2_000),
             "small_a.py": "y" * 1_000,
             "small_b.py": "z" * 1_000,
         })
@@ -522,7 +549,7 @@ class TestBudgetKeepsTheFilesItCanAfford:
 
     def test_the_cut_counts_the_files_it_dropped(self):
         pf = _make_preflight(file_contents={
-            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 2_000),
             "small_a.py": "y" * 1_000,
         })
         plan = _fit_budget(_make_job(pf), {"header": "small"})
@@ -538,7 +565,7 @@ class TestBudgetKeepsTheFilesItCanAfford:
         are in the prompt and shown neither them nor their names.
         """
         pf = _make_preflight(file_contents={
-            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 2_000),
             "small_a.py": "y" * 1_000,
         })
         plan = _fit_budget(_make_job(pf), {"header": "small"})
@@ -662,7 +689,7 @@ class TestSharedPromptBodies:
 
     def _vars(self, phase, output, mode=Mode.PR, **extra):
         job = _make_job(_make_preflight(), mode=mode)
-        common = _build_common_sections(job, max_turns=10)
+        common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
         built = review_registry.for_phase(phase).build(job, common, extra, output)
         return built.builder.vars
 
@@ -709,8 +736,22 @@ class TestSharedPromptBodies:
 
 class TestBuildPromptRefusesAnOversizedPrompt:
     # CLAUDE.md is fixed overhead — no lever reaches it — so one over the whole
-    # budget puts the prompt past it whatever the ladder cuts.
-    UNBUDGETABLE = "x" * (MAX_PROMPT_BYTES + 1000)
+    # budget puts the prompt past it whatever the ladder cuts. Sized and
+    # asserted against the refusal ceiling rather than the ladder's target:
+    # those differ by the render-markup reserve, and a prompt between them is
+    # over the ladder's plan but not over the line `build_prompt` refuses at.
+    CEILING = prompt_budget_bytes(TEST_MODEL)
+    UNBUDGETABLE = "x" * (CEILING + 1000)
+
+    @pytest.fixture(autouse=True)
+    def _pin_the_alias(self, monkeypatch):
+        """CI leaves ANTHROPIC_DEFAULT_SONNET_MODEL unset and a shell exports it.
+
+        Unpinned, `CEILING` is this file's constant while the run resolves the
+        bare alias to the tier floor, so the fixture is sized against one model
+        and the assertion made against another.
+        """
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", TEST_MODEL)
 
     def _job(self, tmp_path, **preflight):
         job = _make_job(_make_preflight(**preflight))
@@ -724,7 +765,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge) as exc:
             build_prompt(Phase.SCOUT, job, max_turns=10)
-        assert exc.value.prompt_bytes > MAX_PROMPT_BYTES
+        assert exc.value.prompt_bytes > self.CEILING
 
     def test_the_oversized_prompt_is_on_disk_to_look_at(self, tmp_path):
         """The stats are written before the raise, so the run is diagnosable."""
@@ -735,7 +776,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         with pytest.raises(PromptTooLarge):
             build_prompt(Phase.SCOUT, job, max_turns=10)
         stats = json.loads((tmp_path / "prompt-stats.json").read_text())
-        assert stats[-1]["prompt_bytes"] > MAX_PROMPT_BYTES
+        assert stats[-1]["prompt_bytes"] > self.CEILING
         assert (tmp_path / "prompt-scout.md").exists()
 
     def test_an_ordinary_prompt_still_renders(self, tmp_path):
@@ -920,7 +961,7 @@ class TestUnaccountedPriorSection:
 
     def test_the_synthesis_prompt_carries_them(self):
         job = _make_job(_make_preflight())
-        common = _build_common_sections(job, max_turns=10)
+        common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
         extra = dict(
             group_count=1, merged_content="m", holistic_content="h",
             unaccounted_prior=[self.M1],
@@ -930,7 +971,7 @@ class TestUnaccountedPriorSection:
 
     def test_a_synthesis_prompt_with_nothing_left_over_says_nothing(self):
         job = _make_job(_make_preflight())
-        common = _build_common_sections(job, max_turns=10)
+        common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
         extra = dict(group_count=1, merged_content="m", holistic_content="h")
         built = review_registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
         assert built.builder.vars["prior_section"] == ""
@@ -1021,3 +1062,243 @@ class TestLedgerInstructionNamesEveryBreak:
             "the parser breaks a verdict on characters the instruction never "
             f"names: {sorted(accepted - set(DISPOSITION_TAIL_PROSE))}"
         )
+
+
+# ── The ceiling is the model's, not a constant ──────────────────────────────
+
+
+class TestTheBudgetComesFromTheModel:
+    """A byte ceiling that names no model bounds nothing it can be held to.
+
+    The budget declared a ceiling in tokens and enforced it in bytes at an
+    assumed four bytes per token. Real prompts measure 2.23–2.89 on
+    `claude-sonnet-5`, so the ceiling was ~1.8x more permissive than it read,
+    and `120_000` corresponded to no model's window at all.
+    """
+
+    def test_a_narrow_window_buys_a_smaller_budget(self):
+        """The case the fused constant got wrong.
+
+        Every phase resolving to a 1M-window model is a configuration, not a
+        property of the design — a 200k model has to budget below it, and a
+        single constant cannot say both.
+        """
+        wide = prompt_budget_bytes("claude-sonnet-5")
+        narrow = prompt_budget_bytes("claude-sonnet-4-6")
+        assert narrow < wide
+
+    def test_a_wide_window_is_capped_by_what_a_review_will_spend(self):
+        """Capability and willingness to pay are different bounds.
+
+        A 1M-token window permits a 1.8MB prompt, which is no cheaper for being
+        permitted. The budget holds spend where it was rather than quadrupling
+        it because the window allows it.
+        """
+        from review.budget import MAX_SPEND_BYTES
+
+        assert prompt_budget_bytes("claude-sonnet-5") <= MAX_SPEND_BYTES
+
+    def test_the_budget_leaves_room_for_the_reply_and_the_unseen_overhead(self):
+        """The window is not all the prompt's to spend.
+
+        The reply comes out of it, and so do the system prompt and tool schemas
+        that `claude -p` assembles where nothing here can measure them.
+        """
+        from review.budget import (
+            COMPLETION_RESERVE_TOKENS, MODEL_CONTEXT_TOKENS,
+            OVERHEAD_RESERVE_TOKENS, prompt_budget_tokens,
+        )
+
+        model = "claude-sonnet-4-6"
+        reserved = COMPLETION_RESERVE_TOKENS + OVERHEAD_RESERVE_TOKENS
+        assert prompt_budget_tokens(model) == MODEL_CONTEXT_TOKENS[model] - reserved
+
+    def test_an_unresolved_alias_takes_its_tier_floor(self):
+        """The ordinary first-party-API setup, and not an error.
+
+        `phase_model` returns the literal string "sonnet" when
+        ANTHROPIC_DEFAULT_SONNET_MODEL is unset, which is what a machine on the
+        first-party API looks like rather than a misconfiguration. Refusing
+        would take out every phase at once on those machines; budgeting
+        against the tier's narrowest window is safe whichever concrete model
+        it turns out to name.
+        """
+        from review.budget import ALIAS_FLOOR_TOKENS, model_window_tokens
+
+        assert model_window_tokens("sonnet") == ALIAS_FLOOR_TOKENS
+        assert prompt_budget_bytes("sonnet") == prompt_budget_bytes("claude-sonnet-4-6")
+
+    def test_the_ladder_plans_below_the_ceiling_it_is_refused_at(self):
+        """The reserve only holds bytes back if the ladder never sees them.
+
+        Subtracting it from the ceiling alone and then handing the ladder that
+        same figure spends it: the ladder fills its sections to whatever target
+        it is given, and the markup the render adds lands on top. A group
+        prompt planned to exactly its allowance rendered 2,759 bytes over and
+        was refused.
+        """
+        from review.budget import RENDER_MARKUP_RESERVE_BYTES, ladder_target_bytes
+
+        for model in ("claude-sonnet-5", "sonnet"):
+            gap = prompt_budget_bytes(model) - ladder_target_bytes(model)
+            assert gap == RENDER_MARKUP_RESERVE_BYTES, model
+
+    def test_a_window_its_reserves_exhaust_is_refused(self, monkeypatch):
+        """A negative budget would be absorbed rather than noticed.
+
+        `_fit_budget` guards every subtraction with `max(0, ...)`, so a window
+        smaller than the reserves would not crash — every phase would quietly
+        refuse every prompt, and the cause would be a table entry nobody would
+        think to look at.
+        """
+        from review import budget as review_budget
+        from review.budget import UnknownModelWindow
+
+        monkeypatch.setitem(review_budget.MODEL_CONTEXT_TOKENS, "tiny", 50_000)
+        with pytest.raises(UnknownModelWindow, match="exhaust"):
+            prompt_budget_bytes("tiny")
+
+    def test_the_alias_floor_is_never_more_generous_than_a_real_window(self):
+        """Guessing wide is the expensive direction.
+
+        The floor stands in for a model nobody has named, so it has to be no
+        larger than the narrowest window it could turn out to be.
+        """
+        from review.budget import ALIAS_FLOOR_TOKENS, MODEL_CONTEXT_TOKENS
+
+        assert ALIAS_FLOOR_TOKENS <= min(MODEL_CONTEXT_TOKENS.values())
+
+    def test_an_unknown_model_names_the_ones_on_record(self):
+        from review.budget import UnknownModelWindow
+
+        with pytest.raises(UnknownModelWindow, match="claude-sonnet-5"):
+            prompt_budget_bytes("gpt-5")
+
+    def test_the_record_says_which_model_the_budget_came_from(
+        self, tmp_path, monkeypatch,
+    ):
+        """A density without its tokenizer is not interpretable.
+
+        The tokenizer is generation-specific — sonnet-5 counts the same text
+        ~27% denser than sonnet-4-5 — so a budget recorded without its model
+        cannot be compared against another run's.
+
+        The alias is resolved explicitly rather than left to the environment:
+        a developer's shell exports `ANTHROPIC_DEFAULT_SONNET_MODEL` and CI
+        does not, so reading it would assert a different model in each place.
+        """
+        from review.registry import build_prompt
+
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", TEST_MODEL)
+        job = _make_job(_make_preflight())
+        job.review_file = str(tmp_path / "review.md")
+        build_prompt(Phase.SCOUT, job, max_turns=10)
+
+        record = json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
+        assert record["budget_model"] == TEST_MODEL
+        assert record["budget_window_tokens"] == 1_000_000
+        assert record["budget_bytes"] == prompt_budget_bytes(TEST_MODEL)
+
+    def test_an_alias_records_the_window_it_actually_budgeted_against(
+        self, tmp_path, monkeypatch,
+    ):
+        """The alias path is ordinary, so its record has to read as ordinary.
+
+        A window of 0 beside a nonzero budget reads as a bug in the budget
+        rather than as the documented tier-floor path, which is exactly the
+        diagnostic this field exists to serve.
+        """
+        from review.budget import ALIAS_FLOOR_TOKENS
+        from review.registry import build_prompt
+
+        monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
+        job = _make_job(_make_preflight())
+        job.review_file = str(tmp_path / "review.md")
+        build_prompt(Phase.SCOUT, job, max_turns=10)
+
+        record = json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
+        assert record["budget_model"] == "sonnet"
+        assert record["budget_window_tokens"] == ALIAS_FLOOR_TOKENS
+        assert record["budget_bytes"] == prompt_budget_bytes("sonnet")
+
+    def test_the_refusal_names_the_budget_it_was_measured_against(self):
+        """An over-budget phase is skipped, so its message is the whole report.
+
+        One recorded render in 1,897 exceeded the budget and the phase was
+        dropped from the review; a message naming neither the model nor the
+        ceiling leaves no way to tell a real overflow from a misconfigured
+        window.
+        """
+        from review.prompt import PromptTooLarge
+
+        exc = PromptTooLarge(
+            "scout.md", 500_000, budget_bytes=464_000, model="claude-sonnet-4-6",
+        )
+        assert "claude-sonnet-4-6" in str(exc)
+        assert exc.budget_bytes == 464_000
+        assert exc.model == "claude-sonnet-4-6"
+
+
+class TestCollectionBudgetsForEveryPhase:
+    """Collection runs once and every phase reads the result.
+
+    So it has no single model to budget against, and the choice between them
+    is not arbitrary: what fits the tightest-windowed phase fits all of them,
+    while the widest would hand a phase more than its own model can hold.
+    """
+
+    def test_it_takes_the_tightest_phase_budget(self, monkeypatch):
+        from review import budget as review_budget
+
+        # Patched on `review.budget`, which binds the name at import time —
+        # patching `agent.phases` would leave this reading the real resolution
+        # and asserting nothing.
+        monkeypatch.setattr(
+            review_budget, "collect_phase_models",
+            lambda *_: {"claude-sonnet-5": [], "claude-sonnet-4-6": []},
+        )
+        # The ladder's target, since collection is sizing what the ladder will
+        # later be handed rather than the ceiling it is refused at.
+        assert review_budget.collection_budget_bytes() == (
+            review_budget.ladder_target_bytes("claude-sonnet-4-6")
+        )
+
+    def test_it_resolves_against_the_worktree_it_is_given(self, monkeypatch):
+        """Collection budgets to the same models the phases will run.
+
+        A repo naming a model in its own `.workbench.yml` resolves it only when
+        the worktree is passed down, so dropping it here would size collection
+        against a ceiling no phase budgets to.
+        """
+        from review import budget as review_budget
+
+        seen = {}
+
+        def _record(explicit, project_root=None):
+            seen["explicit"], seen["root"] = explicit, project_root
+            return {"claude-sonnet-5": []}
+
+        monkeypatch.setattr(review_budget, "collect_phase_models", _record)
+        review_budget.collection_budget_bytes("m", "/wt")
+        assert seen == {"explicit": "m", "root": "/wt"}
+
+
+class TestTheLadderDoesNotReserveTwice:
+    """A reserve for sections the ladder already measures is budget nobody spends.
+
+    The flat 120KB reserve covered the template, the PR header, prior reviews
+    and reply threads — every one of which `known_bytes` measures exactly — so
+    on a typical prompt it held back ~116KB the review had room for and never
+    used.
+    """
+
+    def test_measured_sections_are_charged_once(self):
+        pf = _make_preflight(claude_md="", architecture_md="")
+        grew_by = 50_000
+        small = _fit_budget(_make_job(pf), {"header": ""})
+        large = _fit_budget(_make_job(pf), {"header": "h" * grew_by})
+
+        # The header comes out of the diff's share exactly once: charged twice
+        # the difference would be 100_000, and not at all it would be 0.
+        lost = small.diff_allowance_bytes - large.diff_allowance_bytes
+        assert lost == grew_by

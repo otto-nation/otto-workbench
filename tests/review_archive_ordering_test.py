@@ -192,13 +192,11 @@ def test_the_body_asks_whether_to_archive_rather_than_always_archiving(
     monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_update_pr_state", lambda *a, **kw: None)
 
-    def _orchestrate(argv, *a, **kw):
-        if not str(argv[0]).endswith("/review-orchestrate"):
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+    def _orchestrate(request):
         (review_dir / "review.md").write_text("## Must fix\n- **[M1]** a fresh finding\n")
-        return SimpleNamespace(returncode=0)
+        return 0
 
-    monkeypatch.setattr(cr.subprocess, "run", _orchestrate)
+    monkeypatch.setattr(cr.review_invoke, "run", _orchestrate)
 
     cr._run_self_review_body(
         "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
@@ -231,13 +229,11 @@ def test_a_fresh_review_rotates_the_one_it_replaces(cr, tmp_path, monkeypatch):
     monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_update_pr_state", lambda *a, **kw: None)
 
-    def _orchestrate(argv, *a, **kw):
-        if not str(argv[0]).endswith("/review-orchestrate"):
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+    def _orchestrate(request):
         (review_dir / "review.md").write_text("## Must fix\n- **[M1]** a fresh finding\n")
-        return SimpleNamespace(returncode=0)
+        return 0
 
-    monkeypatch.setattr(cr.subprocess, "run", _orchestrate)
+    monkeypatch.setattr(cr.review_invoke, "run", _orchestrate)
 
     cr._run_self_review_body(
         "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,

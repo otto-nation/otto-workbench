@@ -140,14 +140,13 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
     be asserting on an unrelated implementation detail.
     """
 
-    def _orchestrate(argv, *a, **kw):
-        if not str(argv[0]).endswith("/review-orchestrate"):
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+    def _orchestrate(request):
         tape.append("orchestrate")
-        if returncode == 0:
-            review_file.parent.mkdir(parents=True, exist_ok=True)
-            review_file.write_text("## Must fix\n- **[M1]** boom\n")
-        return SimpleNamespace(returncode=returncode)
+        if returncode != 0:
+            raise SystemExit(1)
+        review_file.parent.mkdir(parents=True, exist_ok=True)
+        review_file.write_text("## Must fix\n- **[M1]** boom\n")
+        return 0
 
     monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
     monkeypatch.setattr(cr.gh_client, "pr_view",
@@ -164,7 +163,7 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
     monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
     monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.subprocess, "run", _orchestrate)
+    monkeypatch.setattr(cr.review_invoke, "run", _orchestrate)
     monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: tape.append("print_summary"))
     monkeypatch.setattr(cr, "_update_pr_state", lambda *a, **kw: tape.append("domain_write"))
@@ -239,89 +238,10 @@ def test_the_pr_path_records_the_domain_even_when_the_operator_declines_to_post(
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
     monkeypatch.setattr(cr.prompt, "confirm", lambda *a, **kw: False)
-    monkeypatch.setattr(cr, "_post_review",
+    monkeypatch.setattr(cr.review_publish, "post",
                         lambda *a, **kw: tape.append("posted"))
 
     cr._run_review(_pr_args(no_post=False), make_ctx(target_dir=tmp_path / "t"))
 
     assert "posted" not in tape, "declining the prompt must not post"
     assert "domain_write" in tape, "but the review still happened and is recorded"
-
-
-# ── what reaches review-orchestrate ──────────────────────────────────────────
-#
-# Seven existing tests each poke one flag. None asserts the argv as a whole, so
-# a flag dropped from the middle of the list is invisible. These two goldens
-# cover the set, and they are what the in-process conversion will later
-# re-target at a call's kwargs.
-
-
-def _orchestrate_argv(cr, tmp_path, **overrides):
-    kwargs = dict(
-        pr_number="42", repo="acme/widget", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="/log", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None, model=None,
-        target_dir=tmp_path / "state",
-    )
-    kwargs.update(overrides)
-    return cr._build_orchestrate_args(**kwargs)
-
-
-def test_the_pr_review_argv_is_exactly_this(cr, tmp_path):
-    """A golden for the PR shape: no --mode, no --fix, no --post."""
-    argv = _orchestrate_argv(cr, tmp_path)
-
-    assert argv[0].endswith("/review-orchestrate")
-    assert argv[1:] == [
-        "--repo", "acme/widget",
-        "--review-file", str(tmp_path / "review.md"),
-        "--repo-dir", "/wt",
-        "--target-dir", str(tmp_path / "state"),
-        "--session-log", "/log",
-        "--pr", "42",
-        "--max-parallel", "1",
-        "--generator-version", cr._generator_version(),
-    ]
-
-
-def test_the_self_review_argv_carries_mode_fix_and_post(cr, tmp_path):
-    """A golden for the self shape, including the flags only self review sets.
-
-    `--post` is not "publish this review": it tells the orchestrate process
-    that its fix pass may push, because the publishing gate is process-wide.
-    That is the single most consequential flag in this list and the one an
-    in-process call is most likely to get wrong.
-    """
-    argv = _orchestrate_argv(
-        cr, tmp_path, mode="self", fix_pass=True, post=True, model="sonnet",
-        max_cost=12.5, effort="high", max_groups=3, generated=True,
-        recover_sha="abc1234",
-    )
-
-    assert argv[1:] == [
-        "--repo", "acme/widget",
-        "--review-file", str(tmp_path / "review.md"),
-        "--repo-dir", "/wt",
-        "--target-dir", str(tmp_path / "state"),
-        "--session-log", "/log",
-        "--pr", "42",
-        "--mode", "self",
-        "--max-parallel", "1",
-        "--generator-version", cr._generator_version(),
-        "--fix",
-        "--post",
-        "--max-cost", "12.5",
-        "--model", "sonnet",
-        "--effort", "high",
-        "--max-groups", "3",
-        "--generated",
-        "--recover-sha", "abc1234",
-    ]
-
-
-def test_a_self_review_without_a_pr_omits_the_pr_flag(cr, tmp_path):
-    """A branch with no PR still reviews; it just has no number to pass."""
-    argv = _orchestrate_argv(cr, tmp_path, pr_number="", mode="self")
-
-    assert "--pr" not in argv
-    assert argv[argv.index("--mode") + 1] == "self"

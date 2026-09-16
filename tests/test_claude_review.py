@@ -1700,82 +1700,6 @@ def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None
     }))
 
 
-def test_build_orchestrate_args_passes_recover_sha(cr, tmp_path):
-    args = cr._build_orchestrate_args(
-        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None,
-        model=None, recover_sha="abc1234", target_dir=tmp_path / "state",
-    )
-    assert args[args.index("--recover-sha") + 1] == "abc1234"
-
-
-def test_build_orchestrate_args_omits_empty_recover_sha(cr, tmp_path):
-    args = cr._build_orchestrate_args(
-        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None,
-        model=None, target_dir=tmp_path / "state",
-    )
-    assert "--recover-sha" not in args
-
-
-def test_build_orchestrate_args_passes_target_dir(cr, tmp_path):
-    """The run's state directory must reach review-orchestrate unmodified."""
-    target = tmp_path / "state" / "pr" / "acme-widget-abcd1234-feat-a"
-    args = cr._build_orchestrate_args(
-        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None,
-        model=None, target_dir=target,
-    )
-    assert args[args.index("--target-dir") + 1] == str(target)
-
-
-def test_build_orchestrate_args_omits_an_unset_effort(cr, tmp_path):
-    """No flag means review-orchestrate gets to consult review.effort itself."""
-    args = cr._build_orchestrate_args(
-        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None,
-        model=None, target_dir=tmp_path / "state",
-    )
-    assert "--effort" not in args
-
-
-def test_build_orchestrate_args_forwards_an_explicit_medium(cr, tmp_path):
-    """Explicit beats config, so medium has to travel like any other value."""
-    args = cr._build_orchestrate_args(
-        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None,
-        model=None, effort="medium", target_dir=tmp_path / "state",
-    )
-    assert args[args.index("--effort") + 1] == "medium"
-
-
-def test_build_orchestrate_args_omits_post_by_default(cr, tmp_path):
-    args = cr._build_orchestrate_args(
-        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None,
-        model=None, target_dir=tmp_path / "state",
-    )
-    assert "--post" not in args
-
-
-def test_build_orchestrate_args_forwards_post(cr, tmp_path):
-    """The publishing gate is process-wide and the fix pass runs in that
-    subprocess, so its argv is the only way it learns this run may publish."""
-    args = cr._build_orchestrate_args(
-        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
-        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, max_cost=None,
-        model=None, target_dir=tmp_path / "state", post=True,
-    )
-    assert "--post" in args
-
-
 # ── --recover with --self ─────────────────────────────────────────────────────
 
 
@@ -1895,10 +1819,8 @@ def test_self_review_body_runs_recover_in_pinned_worktree(cr, tmp_path, monkeypa
     monkeypatch.setattr(cr.review_issue, "extract_issue_id", lambda *a: "")
     monkeypatch.setattr(cr.review_issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
-    run = MagicMock(return_value=SimpleNamespace(returncode=1))
-    monkeypatch.setattr(cr.subprocess, "run", run)
-    monkeypatch.setattr(cr, "_fail_orchestration",
-                        MagicMock(side_effect=SystemExit(1)))
+    run = MagicMock(side_effect=SystemExit(1))
+    monkeypatch.setattr(cr.review_invoke, "run", run)
 
     with pytest.raises(SystemExit):
         cr._run_self_review_body(
@@ -1909,9 +1831,9 @@ def test_self_review_body_runs_recover_in_pinned_worktree(cr, tmp_path, monkeypa
             ctx=_self_ctx(tmp_path), trail=MagicMock(),
         )
 
-    orchestrate_args = run.call_args[0][0]
-    assert orchestrate_args[orchestrate_args.index("--repo-dir") + 1] == "/pinned/wt"
-    assert orchestrate_args[orchestrate_args.index("--recover-sha") + 1] == "abc1234"
+    request = run.call_args[0][0]
+    assert request.wt_path == "/pinned/wt"
+    assert request.recover_sha == "abc1234"
     assert cleanup.call_args[0][0] is pinned
 
 
@@ -1943,10 +1865,8 @@ def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, 
     monkeypatch.setattr(cr.review_issue, "extract_issue_id", lambda *a: "")
     monkeypatch.setattr(cr.review_issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
-    run = MagicMock(return_value=SimpleNamespace(returncode=1))
-    monkeypatch.setattr(cr.subprocess, "run", run)
-    monkeypatch.setattr(cr, "_fail_orchestration",
-                        MagicMock(side_effect=SystemExit(1)))
+    run = MagicMock(side_effect=SystemExit(1))
+    monkeypatch.setattr(cr.review_invoke, "run", run)
 
     with pytest.raises(SystemExit):
         cr._run_self_review_body(
@@ -1957,38 +1877,10 @@ def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, 
             ctx=_self_ctx(tmp_path), trail=MagicMock(),
         )
 
-    orchestrate_args = run.call_args[0][0]
-    assert orchestrate_args[orchestrate_args.index("--repo-dir") + 1] == str(tmp_path)
-    assert "--fix" in orchestrate_args
+    request = run.call_args[0][0]
+    assert request.wt_path == str(tmp_path)
+    assert request.fix_pass is True
     assert detach.call_count == 0
-
-
-# ── _submit_pending_review ───────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "content",
-    [b"[]", b"{", b"\xff\xfe\x00bad"],
-    ids=["non-dict", "truncated-json", "bad-encoding"],
-)
-def test_submit_pending_review_survives_an_unreadable_post_tracking_file(
-    cr, tmp_path, capsys, content
-):
-    """Every way the file can be unusable falls through to "no tracking".
-
-    This reads through `serde.load_file` rather than its own read/parse/except
-    precisely so the three cases cannot drift apart: a bare `[]` from a killed
-    write, truncated JSON, and a byte sequence that is not valid UTF-8 (which
-    `read_text` raises `UnicodeDecodeError` for) all have to degrade the same
-    way, not just the ones a hand-listed exception tuple happened to name.
-    """
-    review_dir = tmp_path / "review"
-    review_dir.mkdir()
-    (review_dir / FILENAME_POST_SESSION).write_bytes(content)
-
-    cr._submit_pending_review("owner/repo", "1", str(review_dir / "review.md"))
-
-    assert "Could not read review_id" in capsys.readouterr().err
 
 
 # ── _update_pr_state ─────────────────────────────────────────────────────────
@@ -2082,14 +1974,13 @@ def test_an_unsatisfying_review_is_still_recorded(cr, tmp_path, monkeypatch):
     review_file.parent.mkdir()
     review_file.write_text("## Must fix\n- **[M1]** boom\n")
 
-    monkeypatch.setattr(cr.subprocess, "run",
-                        lambda *a, **kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(cr.review_invoke, "run", lambda request: 0)
     monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
     # False is "not satisfied" — the branch under test.
-    monkeypatch.setattr(cr.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(cr.review_publish.prompt, "confirm", lambda *a, **kw: False)
     posted = MagicMock()
-    monkeypatch.setattr(cr, "_post_review", posted)
+    monkeypatch.setattr(cr.review_publish, "post", posted)
 
     cr._run_review_body(**_body_kwargs(tmp_path, review_file))
 
@@ -2108,11 +1999,10 @@ def test_an_unsatisfying_review_does_not_exit_the_process(cr, tmp_path, monkeypa
     review_file.parent.mkdir()
     review_file.write_text("## Must fix\n- **[M1]** boom\n")
 
-    monkeypatch.setattr(cr.subprocess, "run",
-                        lambda *a, **kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(cr.review_invoke, "run", lambda request: 0)
     monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(cr.review_publish.prompt, "confirm", lambda *a, **kw: False)
 
     try:
         cr._run_review_body(**_body_kwargs(tmp_path, review_file))

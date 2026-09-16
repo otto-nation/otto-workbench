@@ -65,11 +65,10 @@ def _trace_common(cr, monkeypatch, tape, review_file):
     Everything here is a step the merge must keep; the per-test assertions are
     about where the remaining, flow-specific steps land relative to these.
     """
-    monkeypatch.setattr(cr, "_build_orchestrate_args",
-                        lambda **kw: (tape.append("build_args"), ["true"])[1])
-    monkeypatch.setattr(cr.subprocess, "run",
-                        lambda *a, **kw: (tape.append("orchestrate"),
-                                          SimpleNamespace(returncode=0))[1])
+    monkeypatch.setattr(cr.review_invoke, "OrchestrateRequest",
+                        lambda **kw: (tape.append("build_args"), kw)[1])
+    monkeypatch.setattr(cr.review_invoke, "run",
+                        lambda request: (tape.append("orchestrate"), 0)[1])
     monkeypatch.setattr(cr, "_cleanup_prior_review", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_print_summary",
@@ -409,9 +408,11 @@ def test_a_failed_orchestration_stops_before_the_domain_is_written(
     review_dir.mkdir()
     _trace_common(cr, monkeypatch, tape, review_dir / "review.md")
 
-    monkeypatch.setattr(cr.subprocess, "run",
-                        lambda *a, **kw: (tape.append("orchestrate"),
-                                          SimpleNamespace(returncode=1))[1])
+    def _failed(request):
+        tape.append("orchestrate")
+        raise SystemExit(1)
+
+    monkeypatch.setattr(cr.review_invoke, "run", _failed)
     monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
     monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))

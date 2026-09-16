@@ -4,12 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import signal
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 # ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
@@ -29,7 +26,6 @@ from pr import state as pr_state
 from pr.review_sync import sync_review_domain
 from core import proc
 from core import run_lock
-from core import timeouts
 from core import workbench_paths
 from core.tool_parser import handle_value_flags
 from core.trail import Trail, add_trail_args
@@ -39,20 +35,19 @@ except ImportError:
     def version_string(name):
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
-from agent.registry import add_phase_skip_flags, phase_skip_argv, phase_skips
-from core.phases import Phase
+from agent.registry import add_phase_skip_flags, phase_skips
 from review.paths import (
-    FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION, FILENAME_PRIOR,
+    FILENAME_PIPELINE_STATE, FILENAME_PRIOR,
     FILENAME_SESSION, REVIEW_EXT, archive_review, review_file_path,
 )
 from review.summary import build_review_summary, json_summary, print_summary
 from core import prompt
+from review import invoke as review_invoke
 from review import issue as review_issue
 from review import preflight as review_preflight
+from review import publish as review_publish
 from review import recover as review_recover
 from review import worktree as review_worktree
-from pr.state import PostTracking
-from core.serde import load_file as serde_load_file, to_dict as serde_to_dict
 
 BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name
@@ -65,18 +60,6 @@ GITHUB_BASE_URL = "https://github.com"
 
 def _is_pr_ref(s: str) -> bool:
     return pr_context.is_pr_ref(s)
-
-
-def _post_review(repo: str, pr_number: str, review_file: str, submit: bool) -> None:
-    """Post a review to GitHub via review-post."""
-    post_args = [
-        str(BIN_DIR / "review-post"),
-        "--pr", pr_number,
-        "--review-file", review_file,
-    ]
-    if submit:
-        post_args.append("--submit")
-    subprocess.run(post_args, check=False, timeout=timeouts.UNBOUNDED)
 
 
 def _display_review(path: Path) -> None:
@@ -154,36 +137,6 @@ def _generator_version() -> str:
         return "unknown"
 
 
-def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
-    review_dir = Path(review_file).parent
-    post_file = review_dir / FILENAME_POST_SESSION
-    if not post_file.is_file():
-        log.error(f"No post tracking file found: {post_file}")
-        return
-
-    tracking = serde_load_file(PostTracking, post_file)
-
-    if not tracking or not tracking.review_id:
-        log.error(f"Could not read review_id from {post_file}")
-        return
-
-    log.info(f"Submitting review #{tracking.review_id}...")
-    r = gh_client.api(
-        f"repos/{repo}/pulls/{pr_number}/reviews/{tracking.review_id}/events",
-        method="POST", raw_fields={"event": "COMMENT"}, retry=False,
-    )
-    if r.ok:
-        log.info(f"Review #{tracking.review_id} submitted")
-    else:
-        log.warn(f"Failed to submit review #{tracking.review_id}")
-
-    try:
-        tracking.submitted = True
-        post_file.write_text(json.dumps(serde_to_dict(tracking)))
-    except Exception:
-        pass
-
-
 def _verify_pr_ownership(pr_number: str, repo: str) -> None:
     author = gh_client.pr_view(pr_number, "author", repo=repo).get("author") or {}
     pr_author = author.get("login", "")
@@ -197,71 +150,6 @@ def _verify_pr_ownership(pr_number: str, repo: str) -> None:
         sys.exit(0)
 
 
-def _fail_orchestration(msg: str, session_log: str) -> None:
-    log.error(msg)
-    if os.path.isfile(session_log):
-        log.dim(f"Session log: {session_log}")
-    sys.exit(1)
-
-
-def _build_orchestrate_args(
-    *,
-    pr_number: str, repo: str, review_file: Path, wt_path: str,
-    session_log: str, prior_review_path: str, issue_link: str,
-    issue_context: str, max_parallel: int,
-    max_cost: float | None, model: str | None, mode: str = "",
-    fix_pass: bool = False, post: bool = False, effort: str | None = None,
-    max_groups: int | None = None,
-    skip_phases: frozenset[Phase] = frozenset(), disprove: bool | None = None,
-    generated: bool = False, recover_sha: str = "",
-    target_dir: Path,
-) -> list[str]:
-    args = [
-        str(BIN_DIR / "review-orchestrate"),
-        "--repo", repo,
-        "--review-file", str(review_file),
-        "--repo-dir", wt_path,
-        "--target-dir", str(target_dir),
-        "--session-log", session_log,
-    ]
-    if pr_number:
-        args += ["--pr", pr_number]
-    if mode:
-        args += ["--mode", mode]
-    if prior_review_path and os.path.isfile(prior_review_path):
-        args += ["--prior-review", prior_review_path]
-    if issue_link:
-        args += ["--issue", issue_link]
-    if issue_context:
-        args += ["--issue-context", issue_context]
-    args += ["--max-parallel", str(max_parallel)]
-    args += ["--generator-version", _generator_version()]
-    if fix_pass:
-        args.append("--fix")
-    # The publishing gate is process-wide and the fix pass runs in there, so the
-    # only way it learns this run may publish is to be told on its own argv.
-    if post:
-        args.append("--post")
-    if max_cost:
-        args += ["--max-cost", str(max_cost)]
-    if model:
-        args += ["--model", model]
-    # Forwarded only when asked for: an absent flag lets review-orchestrate
-    # fall through to review.effort in config.yml.
-    if effort:
-        args += ["--effort", effort]
-    if max_groups is not None:
-        args += ["--max-groups", str(max_groups)]
-    args += phase_skip_argv(skip_phases)
-    if disprove is True:
-        args.append("--disprove")
-    if generated:
-        args.append("--generated")
-    if recover_sha:
-        args += ["--recover-sha", recover_sha]
-    return args
-
-
 def _run_review_body(
     pr_number, repo, review_file, review_dir, wt_path,
     session_log, prior_review_path, issue_link, issue_context,
@@ -270,61 +158,30 @@ def _run_review_body(
     skip_phases=frozenset(), disprove=None, generated=False, recover_sha="",
     *, target_dir,
 ) -> None:
-    orchestrate_args = _build_orchestrate_args(
-        pr_number=pr_number, repo=repo, review_file=review_file,
-        wt_path=wt_path, session_log=session_log,
+    wall_ms = review_invoke.run(review_invoke.OrchestrateRequest(
+        repo=repo, pr_number=pr_number, review_file=review_file,
+        wt_path=wt_path, target_dir=target_dir, session_log=session_log,
+        bin_dir=BIN_DIR, generator_version=_generator_version(),
         prior_review_path=prior_review_path, issue_link=issue_link,
         issue_context=issue_context, max_parallel=max_parallel,
-        max_cost=max_cost, model=model,
-        effort=effort, max_groups=max_groups,
+        max_cost=max_cost, model=model, effort=effort, max_groups=max_groups,
         skip_phases=skip_phases, disprove=disprove, generated=generated,
-        recover_sha=recover_sha, target_dir=target_dir,
-    )
-    wall_start = time.monotonic()
-    rc = subprocess.run(orchestrate_args, timeout=timeouts.UNBOUNDED).returncode
-    wall_ms = int((time.monotonic() - wall_start) * 1000)
-    if rc != 0:
-        _fail_orchestration("Review orchestration failed", session_log)
-    if not review_file.is_file():
-        _fail_orchestration("Review orchestration completed but produced no review file", session_log)
+        recover_sha=recover_sha,
+    ))
 
     _cleanup_prior_review(review_file, prior_review_path)
     _display_review(review_file)
 
-    if no_post:
-        _print_summary(repo, pr_number, str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
-        log.dim("Post to GitHub:  pr review --post")
-        return
+    posting = review_publish.resolve(
+        repo, pr_number, review_file,
+        no_post=no_post, auto_post=auto_post, auto_submit=auto_submit,
+        bin_dir=BIN_DIR,
+    )
 
-    if auto_post:
-        _post_review(repo, pr_number, str(review_file), auto_submit)
-        post_session_log = str(review_dir / FILENAME_POST_SESSION)
-        _print_summary(repo, pr_number, str(review_file), session_log, pr_url, post_session_log, wall_clock_ms=wall_ms)
-        return
-
-    # Returns rather than exits, like its three siblings: declining to post is
-    # not declining to record. The review ran, the file is on disk, and the two
-    # hints below tell the operator to edit and post it — so a domain left
-    # unwritten here would have `pr status` report "not checked: review" for a
-    # review that did run, and `pr fix` skip the review pass entirely.
-    if not prompt.confirm("Satisfied with the review?"):
-        _print_summary(repo, pr_number, str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
-        log.dim("Edit the review:  $EDITOR " + str(review_file))
-        log.dim("Post to GitHub:   pr review --post")
-        return
-
-    if not prompt.confirm("Post review to GitHub?"):
-        _print_summary(repo, pr_number, str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
-        log.dim("Post to GitHub:  pr review --post")
-        return
-
-    _post_review(repo, pr_number, str(review_file), False)
-    post_session_log = str(review_dir / FILENAME_POST_SESSION)
-
-    if prompt.confirm("Submit review now?"):
-        _submit_pending_review(repo, pr_number, str(review_file))
-
-    _print_summary(repo, pr_number, str(review_file), session_log, pr_url, post_session_log, wall_clock_ms=wall_ms)
+    _print_summary(repo, pr_number, str(review_file), session_log, pr_url,
+                   posting.post_session_log, wall_clock_ms=wall_ms)
+    for hint in posting.hints:
+        log.dim(hint)
 
 
 # ── Main flows ───────────────────────────────────────────────────────────────
@@ -549,28 +406,28 @@ def _run_self_review_body(
     review_wt_path, pinned_wt = review_recover.pin_recover_worktree(
         recover_sha, wt_path, wt_path, f"recover-{branch_name}",
     )
-    orchestrate_args = _build_orchestrate_args(
-        pr_number=pr_number, repo=repo, review_file=review_file,
-        wt_path=review_wt_path, session_log=session_log,
-        prior_review_path=prior_review_path, issue_link=issue_link,
-        issue_context=issue_context, max_parallel=max_parallel,
-        max_cost=max_cost, model=model,
-        mode="self", fix_pass=fix_pass, post=args.post or args.push,
-        effort=effort, max_groups=max_groups,
-        skip_phases=skip_phases, disprove=disprove, generated=generated,
-        recover_sha=recover_sha, target_dir=ctx.target_dir,
+    request = review_invoke.OrchestrateRequest(
+        repo=repo, pr_number=pr_number, review_file=review_file,
+        wt_path=review_wt_path, target_dir=ctx.target_dir,
+        session_log=session_log, bin_dir=BIN_DIR,
+        generator_version=_generator_version(),
+        mode="self", prior_review_path=prior_review_path,
+        issue_link=issue_link, issue_context=issue_context,
+        max_parallel=max_parallel, max_cost=max_cost, model=model,
+        effort=effort, max_groups=max_groups, skip_phases=skip_phases,
+        disprove=disprove, generated=generated, recover_sha=recover_sha,
+        fix_pass=fix_pass, may_publish=args.post or args.push,
     )
 
-    wall_start = time.monotonic()
+    # The pin is released as soon as the pipeline is done with it, and before
+    # the review is rendered — a throwaway checkout has no business outliving
+    # the process that reads it. The PR flow holds its pin longer because the
+    # same `finally` also owns a worktree that `pin_recover_worktree` can exit
+    # out of; here there is nothing else in scope to lose.
     try:
-        rc = subprocess.run(orchestrate_args, timeout=timeouts.UNBOUNDED).returncode
+        wall_ms = review_invoke.run(request)
     finally:
         review_worktree.cleanup_worktree(pinned_wt, wt_path)
-    wall_ms = int((time.monotonic() - wall_start) * 1000)
-    if rc != 0:
-        _fail_orchestration("Review orchestration failed", session_log)
-    if not review_file.is_file():
-        _fail_orchestration("Review orchestration completed but produced no review file", session_log)
 
     _cleanup_prior_review(review_file, prior_review_path)
     _display_review(review_file)

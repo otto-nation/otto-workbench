@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -43,7 +42,7 @@ from review.verdict import open_counts, resolve_review_verdict
 from review.paths import (
     FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION, FILENAME_PRIOR,
     FILENAME_SESSION, REVIEW_EXT, aggregate_session_usage, archive_review,
-    archives_dir, read_review_meta, review_file_path,
+    read_review_meta, review_file_path,
 )
 from review.types import (
     SEVERITIES, ReviewMeta, ReviewType, review_meta_from_dict,
@@ -62,80 +61,9 @@ from core.serde import load_file as serde_load_file, to_dict as serde_to_dict
 
 BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name
-LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))) / "reviews"
 
 DEFAULT_MAX_PARALLEL = 1
 GITHUB_BASE_URL = "https://github.com"
-
-
-# ── Startup migrations ──────────────────────────────────────────────────────
-
-def _migrate_legacy_reviews() -> None:
-    if not LEGACY_REVIEWS_DIR.is_dir():
-        return
-    reviews = workbench_paths.reviews_dir()
-    files = [f for p in ("*.md", "*.jsonl") for f in LEGACY_REVIEWS_DIR.glob(p)]
-    for f in files:
-        dest = reviews / f.name
-        if not dest.exists():
-            shutil.move(str(f), str(dest))
-
-
-def _migrate_one_flat_review(reviews: Path, flat_review: Path, dir_name: str) -> None:
-    review_dir = reviews / dir_name
-    review_dir.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(flat_review), str(review_dir / f"review{REVIEW_EXT}"))
-
-    suffix_map = {
-        ".session.jsonl": "session.jsonl",
-        ".meta.json": "meta.json",
-        ".post.jsonl": "post.jsonl",
-        ".pipeline.json": "pipeline.json",
-        ".prior.md": "prior.md",
-    }
-    for suffix, new_name in suffix_map.items():
-        flat_file = reviews / f"{dir_name}{suffix}"
-        if flat_file.is_file():
-            shutil.move(str(flat_file), str(review_dir / new_name))
-
-    # Literal, unlike review_gc's derived list: these name the historical flat
-    # layout, not the current convention. A phase added to the enum tomorrow
-    # never wrote a file here, so deriving these from Phase would claim
-    # otherwise.
-    intermediate_patterns = (
-        f"{dir_name}.group-*.md", f"{dir_name}.group-*.jsonl",
-        f"{dir_name}.holistic.md", f"{dir_name}.holistic.jsonl",
-        f"{dir_name}.synthesis.jsonl",
-    )
-    intermediates = [f for p in intermediate_patterns for f in reviews.glob(p)]
-    for intermediate in intermediates:
-        fname = intermediate.name.removeprefix(f"{dir_name}.")
-        shutil.move(str(intermediate), str(review_dir / fname))
-
-    archive_dir = archives_dir(review_dir)
-    archive_patterns = (f"{dir_name}.2*.md", f"{dir_name}.session.2*.jsonl", f"{dir_name}.post.2*.jsonl")
-    archives = [f for p in archive_patterns for f in reviews.glob(p)]
-    for archive in archives:
-        archive_dir.mkdir(exist_ok=True)
-        fname = archive.name.removeprefix(f"{dir_name}.")
-        shutil.move(str(archive), str(archive_dir / fname))
-
-
-def _migrate_flat_reviews() -> None:
-    reviews = workbench_paths.reviews_dir()
-    migrated = 0
-    for flat_review in reviews.glob(f"*{REVIEW_EXT}"):
-        if not flat_review.is_file():
-            continue
-        dir_name = flat_review.stem
-        review_dir = reviews / dir_name
-        if review_dir.is_dir():
-            continue
-        _migrate_one_flat_review(reviews, flat_review, dir_name)
-        migrated += 1
-
-    if migrated > 0:
-        log.info(f"Migrated {migrated} reviews to folder layout")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -574,15 +502,6 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
     except Exception:
         found = []
     return found[0] if found else ""
-
-
-def _resolve_bare_repo_worktree(branch: str = "") -> str:
-    wt = git_topology.resolve_bare_repo_worktree(None, branch or None)
-    if wt:
-        return str(wt)
-    display_branch = branch or git_topology.default_branch()
-    log.error(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
-    sys.exit(1)
 
 
 def _fail_orchestration(msg: str, session_log: str) -> None:
@@ -1055,7 +974,15 @@ def _resolve_wt_path(repo_dir: str, branch: str) -> str:
         return str(toplevel)
 
     if not repo_dir and git_topology.is_bare_repo(cwd):
-        return _resolve_bare_repo_worktree(branch)
+        # branch or None: an empty string is "no branch requested", which
+        # topology spells as None — passed through it would be a request for a
+        # branch named "".
+        wt = git_topology.resolve_bare_repo_worktree(None, branch or None)
+        if wt:
+            return str(wt)
+        display_branch = branch or git_topology.default_branch()
+        log.error(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
+        sys.exit(1)
 
     if repo_dir:
         log.error(f"Not a git repository: {repo_dir}")
@@ -1240,10 +1167,7 @@ def main() -> None:
     if parsed.pr and not parsed.positional:
         parsed.positional = [parsed.pr]
 
-    # Startup migrations
     workbench_paths.reviews_dir().mkdir(parents=True, exist_ok=True)
-    _migrate_legacy_reviews()
-    _migrate_flat_reviews()
 
     if parsed.fix and not parsed.self_review:
         log.error("--fix requires --self")

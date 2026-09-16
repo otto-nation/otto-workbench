@@ -22,11 +22,14 @@ from review.paths import (
     iter_review_entries, read_review_meta, review_file_path, stamp_reviewed,
 )
 from review.state import read_pipeline_status, read_pipeline_warnings
-from review.summary import json_summary
+from review.summary import (
+    build_review_summary, format_findings_line, format_usage, format_verdict,
+    json_summary,
+)
 from review import gc as review_gc
 
 from conftest import (
-    load_script, make_ctx, run_checked, supersession_context, supersession_evidence,
+    load_script, make_ctx, run_checked, supersession_evidence,
     supersession_verdict,
 )
 
@@ -117,7 +120,7 @@ def test_review_file_deep_nested_repo(cr, reviews_dir):
 def test_format_usage_single_log(cr, tmp_path):
     log = str(tmp_path / "session.jsonl")
     _make_session_log(log, cost=1.50, input_tokens=100, output_tokens=200, duration_ms=65000)
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "$1.50" in result
     assert "300" in result
     assert "1m 5s" in result
@@ -128,7 +131,7 @@ def test_format_usage_multiple_logs(cr, tmp_path):
     log2 = str(tmp_path / "session2.jsonl")
     _make_session_log(log1, cost=1.00, input_tokens=100, output_tokens=200, duration_ms=60000)
     _make_session_log(log2, cost=2.00, input_tokens=300, output_tokens=400, duration_ms=120000)
-    result = cr._format_usage(log1, log2)
+    result = format_usage(log1, log2)
     assert "$3.00" in result
     assert "1.0k" in result
     assert "3m 0s" in result
@@ -137,42 +140,42 @@ def test_format_usage_multiple_logs(cr, tmp_path):
 def test_format_usage_no_result_lines(cr, tmp_path):
     log = str(tmp_path / "no-result.jsonl")
     Path(log).write_text('{"type":"assistant","message":{}}\n')
-    assert cr._format_usage(log) == ""
+    assert format_usage(log) == ""
 
 
 def test_format_usage_empty_file(cr, tmp_path):
     log = str(tmp_path / "empty.jsonl")
     Path(log).write_text("")
-    assert cr._format_usage(log) == ""
+    assert format_usage(log) == ""
 
 
 def test_format_usage_nonexistent_file(cr, tmp_path):
-    assert cr._format_usage(str(tmp_path / "does-not-exist.jsonl")) == ""
+    assert format_usage(str(tmp_path / "does-not-exist.jsonl")) == ""
 
 
 def test_format_usage_mixed_existing_and_missing(cr, tmp_path):
     log = str(tmp_path / "real.jsonl")
     _make_session_log(log, cost=2.50, input_tokens=500, output_tokens=500, duration_ms=30000)
-    result = cr._format_usage(log, str(tmp_path / "missing.jsonl"))
+    result = format_usage(log, str(tmp_path / "missing.jsonl"))
     assert "$2.50" in result
     assert "1.0k" in result
 
 
 def test_format_usage_no_args(cr):
-    assert cr._format_usage() == ""
+    assert format_usage() == ""
 
 
 def test_format_usage_tokens_under_1k_raw(cr, tmp_path):
     log = str(tmp_path / "small.jsonl")
     _make_session_log(log, cost=0.10, input_tokens=200, output_tokens=300, duration_ms=5000)
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "500 tokens" in result
 
 
 def test_format_usage_tokens_over_1k_suffix(cr, tmp_path):
     log = str(tmp_path / "medium.jsonl")
     _make_session_log(log, cost=1.00, input_tokens=800, output_tokens=700, duration_ms=10000)
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "1.5k tokens" in result
 
 
@@ -182,7 +185,7 @@ def test_format_usage_tokens_over_1m_suffix(cr, tmp_path):
         log, cost=10.00, input_tokens=500000, output_tokens=600000,
         duration_ms=300000, cache_read=100000, cache_create=50000,
     )
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "1.2M tokens" in result
     assert "(100.0k cached)" in result
 
@@ -190,21 +193,21 @@ def test_format_usage_tokens_over_1m_suffix(cr, tmp_path):
 def test_format_usage_duration_seconds_only(cr, tmp_path):
     log = str(tmp_path / "short.jsonl")
     _make_session_log(log, cost=0.50, input_tokens=100, output_tokens=100, duration_ms=45000)
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "45s" in result
 
 
 def test_format_usage_duration_minutes_and_seconds(cr, tmp_path):
     log = str(tmp_path / "long.jsonl")
     _make_session_log(log, cost=5.00, input_tokens=1000, output_tokens=1000, duration_ms=125000)
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "2m 5s" in result
 
 
 def test_format_usage_cost_rounds_to_2_decimals(cr, tmp_path):
     log = str(tmp_path / "cost.jsonl")
     _make_session_log(log, cost=3.456, input_tokens=100, output_tokens=100, duration_ms=1000)
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "$3.46" in result
 
 
@@ -214,7 +217,7 @@ def test_format_usage_separates_cache_from_fresh(cr, tmp_path):
         log, cost=1.00, input_tokens=100, output_tokens=200,
         duration_ms=10000, cache_read=5000, cache_create=3000,
     )
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "8.3k tokens" in result
     assert "(5.0k cached)" in result
 
@@ -222,7 +225,7 @@ def test_format_usage_separates_cache_from_fresh(cr, tmp_path):
 def test_format_usage_no_cache_omits_parenthetical(cr, tmp_path):
     log = str(tmp_path / "no-cache.jsonl")
     _make_session_log(log, cost=1.00, input_tokens=100, output_tokens=200, duration_ms=10000)
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "300 tokens" in result
     assert "cached" not in result
 
@@ -230,7 +233,7 @@ def test_format_usage_no_cache_omits_parenthetical(cr, tmp_path):
 def test_format_usage_wall_clock_override(cr, tmp_path):
     log = str(tmp_path / "session.jsonl")
     _make_session_log(log, cost=1.00, input_tokens=100, output_tokens=200, duration_ms=600000)
-    result = cr._format_usage(log, wall_clock_ms=120000)
+    result = format_usage(log, wall_clock_ms=120000)
     assert "2m 0s" in result
     assert "10m" not in result
 
@@ -241,7 +244,7 @@ def test_format_usage_total_includes_cache_reads(cr, tmp_path):
         log, cost=1.0, input_tokens=100, output_tokens=200,
         duration_ms=10000, cache_read=10000,
     )
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "10.3k tokens" in result
     assert "(10.0k cached)" in result
 
@@ -261,7 +264,7 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
             },
         },
     )
-    result = cr._format_usage(log)
+    result = format_usage(log)
     assert "2.1k tokens" in result
     assert "(1.0k cached)" in result
 
@@ -699,30 +702,27 @@ def test_a_self_review_states_no_verdict(cr, tmp_path):
     puts self under `mode`. So the branch never fired and a self-review with a
     must-fix finding claimed `changes_requested` against a PR it has no say in.
     """
-    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
 
     result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
 
-    assert result["findings"]["must_fix"] == 1
-    assert result["verdict"] == ""
-    assert result["review_type"] == "full"
+    assert result.findings["must_fix"] == 1
+    assert result.verdict == ""
+    assert result.review_type == "full"
 
 
 def test_an_incremental_self_review_states_no_verdict(cr, tmp_path):
     """The two fields are orthogonal — being incremental does not restore a verdict."""
-    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "incremental")
 
     result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
 
-    assert result["verdict"] == ""
-    assert result["review_type"] == "incremental"
+    assert result.verdict == ""
+    assert result.review_type == "incremental"
 
 
 def test_a_pr_review_still_requests_changes(cr, tmp_path):
     """The same finding under `mode: pr` keeps the verdict it always had."""
-    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
     (review_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/test-repo", "head_sha": "abc",
@@ -731,7 +731,7 @@ def test_a_pr_review_still_requests_changes(cr, tmp_path):
 
     result = build_review_summary("owner/test-repo", "1", str(review_dir / "review.md"))
 
-    assert result["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
+    assert result.verdict == ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_an_unknown_meta_vocabulary_reads_as_absent(cr, tmp_path):
@@ -740,7 +740,6 @@ def test_an_unknown_meta_vocabulary_reads_as_absent(cr, tmp_path):
     A member this version does not know reads as unset rather than raising, so
     one unrecognised field does not cost the whole summary.
     """
-    from review.summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
     (review_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/test-repo", "head_sha": "abc",
@@ -749,8 +748,8 @@ def test_an_unknown_meta_vocabulary_reads_as_absent(cr, tmp_path):
 
     result = build_review_summary("owner/test-repo", "1", str(review_dir / "review.md"))
 
-    assert result["review_type"] is None
-    assert result["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
+    assert result.review_type is None
+    assert result.verdict == ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_json_summary_includes_failure_detail(cr, tmp_path):
@@ -764,10 +763,9 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
         "done": ["synthesis"], "failed": {},
         "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
     }))
-    from review.summary import build_review_summary
     result = build_review_summary("owner/test-repo", "1", str(review_file))
-    assert result["status"] == ReviewStatus.PARTIAL.value
-    assert "1/2 groups failed" in result["failure_detail"]
+    assert result.status == ReviewStatus.PARTIAL.value
+    assert "1/2 groups failed" in result.failure_detail
 
 
 # ── read_pipeline_warnings ────────────────────────────────────────────────────
@@ -846,13 +844,14 @@ def test_read_pipeline_warnings_corrupt_json(cr, tmp_path):
 # ── _format_findings_line / _format_verdict ───────────────────────────────────
 
 
-def test_format_findings_line_no_findings(cr, tmp_path):
+def test_format_findings_line_no_findings(tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove\n")
-    assert cr._format_findings_line(str(review)) == ""
+    report = build_review_summary("org/repo", "1", str(review))
+    assert format_findings_line(report) == ""
 
 
-def test_format_findings_line_nits_only(cr, tmp_path):
+def test_format_findings_line_nits_only(tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Nit\n"
@@ -860,10 +859,11 @@ def test_format_findings_line_nits_only(cr, tmp_path):
         "- **[N2]** `file.py:20` — naming\n"
         "\n## Verdict\nApprove\n"
     )
-    assert cr._format_findings_line(str(review)) == "2 nit"
+    report = build_review_summary("org/repo", "1", str(review))
+    assert format_findings_line(report) == "2 nit"
 
 
-def test_format_findings_line_mixed(cr, tmp_path):
+def test_format_findings_line_mixed(tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n"
@@ -875,35 +875,41 @@ def test_format_findings_line_mixed(cr, tmp_path):
         "- **[N2]** `file.py:40` — style\n"
         "\n## Verdict\nChanges requested\n"
     )
-    assert cr._format_findings_line(str(review)) == "1 must fix, 1 should fix, 2 nit"
+    report = build_review_summary("org/repo", "1", str(review))
+    assert format_findings_line(report) == "1 must fix, 1 should fix, 2 nit"
 
 
-def test_format_findings_line_nonexistent_file(cr):
-    assert cr._format_findings_line("/nonexistent/review.md") == ""
+def test_format_findings_line_nonexistent_file():
+    report = build_review_summary("org/repo", "1", "/nonexistent/review.md")
+    assert format_findings_line(report) == ""
 
 
-def test_format_verdict_approve(cr, tmp_path):
+def test_format_verdict_approve(tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Verdict\nApprove\n")
-    assert cr._format_verdict(str(review)) == "Approve"
+    report = build_review_summary("org/repo", "1", str(review))
+    assert format_verdict(report) == "Approve"
 
 
-def test_format_verdict_with_must_fix(cr, tmp_path):
+def test_format_verdict_with_must_fix(tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n- **[M1]** `file.py:10` — bug\n\n## Verdict\nApprove\n"
     )
-    assert cr._format_verdict(str(review)) == "Request changes"
+    report = build_review_summary("org/repo", "1", str(review))
+    assert format_verdict(report) == "Request changes"
 
 
-def test_format_verdict_explicit_disapprove(cr, tmp_path):
+def test_format_verdict_explicit_disapprove(tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Verdict\nDisapprove\n")
-    assert cr._format_verdict(str(review)) == "Disapprove"
+    report = build_review_summary("org/repo", "1", str(review))
+    assert format_verdict(report) == "Disapprove"
 
 
-def test_format_verdict_nonexistent_file(cr):
-    assert cr._format_verdict("/nonexistent/review.md") == ""
+def test_format_verdict_nonexistent_file():
+    report = build_review_summary("org/repo", "1", "/nonexistent/review.md")
+    assert format_verdict(report) == ""
 
 
 def test_json_summary_status_completed_no_pipeline(cr, tmp_path):
@@ -1693,13 +1699,11 @@ def test_generator_version_returns_string(cr):
 
 
 def test_constants_match_expected(cr):
+    from review.types import SEVERITIES
     assert cr.DEFAULT_MAX_PARALLEL == 1
     assert review_gc.GC_STALE_DAYS == 7
     assert review_gc.PRUNE_MAX_FILES == 10
-    assert len(cr.SEVERITIES) == 4
-
-
-# ── _resolve_recover_sha ──────────────────────────────────────────────────────
+    assert len(SEVERITIES) == 4
 
 
 def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None:
@@ -1708,102 +1712,6 @@ def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None
         "failed": {"synthesis": "crashed"},
         "groups_done": [1], "groups_failed": {},
     }))
-
-
-def test_resolve_recover_sha_returns_recorded_sha(cr, tmp_path):
-    _write_partial_pipeline(tmp_path)
-    assert cr._resolve_recover_sha(tmp_path, "abc1234") == "abc1234"
-
-
-def test_resolve_recover_sha_pins_when_head_moved(cr, tmp_path):
-    """New commits must not abort recovery — the run completes at its own commit."""
-    _write_partial_pipeline(tmp_path)
-    assert cr._resolve_recover_sha(tmp_path, "def5678") == "abc1234"
-
-
-def test_resolve_recover_sha_without_head(cr, tmp_path):
-    """Empty head_sha means HEAD couldn't be determined — still pin to the record."""
-    _write_partial_pipeline(tmp_path)
-    assert cr._resolve_recover_sha(tmp_path, "") == "abc1234"
-
-
-def test_resolve_recover_sha_untracked_state(cr, tmp_path):
-    """State written before SHA tracking has nothing to pin to."""
-    (tmp_path / "pipeline.json").write_text(json.dumps({
-        "group_names": ["g1"], "failed": {"synthesis": "crashed"},
-        "groups_done": [],
-    }))
-    assert cr._resolve_recover_sha(tmp_path, "abc1234") == ""
-
-
-def test_resolve_recover_sha_without_pipeline_state(cr, tmp_path):
-    with pytest.raises(SystemExit) as exc:
-        cr._resolve_recover_sha(tmp_path, "abc1234")
-    assert exc.value.code == 1
-
-
-def test_resolve_recover_sha_completed_review(cr, tmp_path):
-    (tmp_path / "pipeline.json").write_text(json.dumps({
-        "head_sha": "abc1234", "group_names": ["g1"],
-        "done": ["synthesis", "disprove"],
-        "failed": {}, "groups_done": [1], "groups_failed": {},
-    }))
-    with pytest.raises(SystemExit) as exc:
-        cr._resolve_recover_sha(tmp_path, "abc1234")
-    assert exc.value.code == 0
-
-
-def test_resolve_recover_sha_recovers_a_run_killed_in_the_gate(cr, tmp_path):
-    """The entry point `--recover` goes through, ahead of the pipeline itself.
-
-    `_resolve_recover_sha` exits before `_resolve_recovery` is ever reached, so
-    the two have to agree on what finished means or the resume is unreachable.
-    """
-    (tmp_path / "pipeline.json").write_text(json.dumps({
-        "head_sha": "abc1234", "group_names": ["g1"], "done": ["synthesis"],
-        "failed": {}, "groups_done": [1], "groups_failed": {},
-    }))
-
-    assert cr._resolve_recover_sha(tmp_path, "abc1234") == "abc1234"
-
-
-# ── _pin_recover_worktree ─────────────────────────────────────────────────────
-
-
-def test_pin_recover_worktree_noop_when_head_matches(cr, monkeypatch):
-    head_sha = MagicMock(return_value="abc1234")
-    monkeypatch.setattr(cr.pr_context, "head_sha", head_sha)
-    detach = MagicMock()
-    monkeypatch.setattr(cr.review_worktree, "detached_worktree_at", detach)
-
-    assert cr._pin_recover_worktree("abc1234", "/wt", "/repo", "l") == ("/wt", None)
-    assert detach.call_count == 0
-    assert head_sha.call_args.args == ("/wt",)
-
-
-def test_pin_recover_worktree_checks_out_pinned_commit(cr, monkeypatch):
-    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "def5678")
-    pinned = cr.review_worktree.WorktreeResult(
-        path="/repo/.worktrees/l", cleanup_ref="/repo/.worktrees/l", is_fallback=True)
-    monkeypatch.setattr(
-        cr.review_worktree, "detached_worktree_at",
-        lambda sha, repo_dir, label: pinned,
-    )
-
-    path, result = cr._pin_recover_worktree("abc1234", "/wt", "/repo", "l")
-
-    assert path == "/repo/.worktrees/l"
-    assert result is pinned
-
-
-def test_pin_recover_worktree_exits_when_commit_gone(cr, monkeypatch):
-    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "def5678")
-    monkeypatch.setattr(
-        cr.review_worktree, "detached_worktree_at", lambda *a, **kw: None)
-
-    with pytest.raises(SystemExit) as exc:
-        cr._pin_recover_worktree("abc1234", "/wt", "/repo", "l")
-    assert exc.value.code == 1
 
 
 def test_build_orchestrate_args_passes_recover_sha(cr, tmp_path):
@@ -1905,8 +1813,8 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
         target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
     )
-    monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
-    monkeypatch.setattr(cr, "_resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
+    monkeypatch.setattr(cr.review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
     monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
     monkeypatch.setattr(
         cr.review_worktree, "switch_to_branch",
@@ -1917,7 +1825,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         cr.pr_context, "head_sha",
         lambda cwd=None: "fresh11" if cwd == "/switched/wt" else "stale00",
     )
-    monkeypatch.setattr(cr, "_cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     body = MagicMock()
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
@@ -1940,7 +1848,7 @@ def test_pr_review_reads_the_tracker_from_the_repo_config(cr, tmp_path, monkeypa
     (tmp_path / ".workbench.yml").write_text(
         "issues:\n  provider: github\n",
     )
-    monkeypatch.setattr(cr, "_find_repo_root", lambda repo, repo_dir="": str(tmp_path))
+    monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda repo, repo_dir="": str(tmp_path))
     # Only the PR lookup is stubbed — the config reader still shells out to yq.
     monkeypatch.setattr(cr.gh_client, "pr_view", lambda *a, **kw: {})
     seen = []
@@ -2068,46 +1976,6 @@ def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, 
     assert detach.call_count == 0
 
 
-# ── _check_stale_review ───────────────────────────────────────────────────────
-
-
-def test_check_stale_review_auto_recovers_on_failures(cr, tmp_path, monkeypatch):
-    """Same HEAD + pipeline failures → no prompt, returns silently (auto-recover)."""
-    review_file = tmp_path / "review.md"
-    review_file.write_text("# Review\n<!-- head_sha: abc123 -->\n## Summary\n")
-    pipeline = tmp_path / "pipeline.json"
-    pipeline.write_text(json.dumps({
-        "head_sha": "abc123", "group_names": ["g1", "g2"],
-        "done": ["synthesis"], "failed": {},
-        "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
-    }))
-
-    # Mock gh to return matching HEAD
-    monkeypatch.setattr(cr.gh_client, "pr_view", lambda *a, **kw: {"headRefOid": "abc123"})
-    # Verify prompt.confirm is never called — auto-recovery must skip the prompt
-    monkeypatch.setattr(cr.prompt, "confirm", MagicMock(side_effect=AssertionError("confirm called unexpectedly")))
-
-    cr._check_stale_review("owner/repo", "1", review_file, force=False)
-
-
-def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch):
-    """Same HEAD + no failures → still prompts 'Re-review anyway?'."""
-    review_file = tmp_path / "review.md"
-    review_file.write_text("# Review\n<!-- head_sha: abc123 -->\n## Summary\n")
-    pipeline = tmp_path / "pipeline.json"
-    pipeline.write_text(json.dumps({
-        "head_sha": "abc123", "group_names": ["g1"],
-        "done": ["synthesis", "disprove"], "failed": {},
-        "groups_done": [1], "groups_failed": {},
-    }))
-
-    monkeypatch.setattr(cr.gh_client, "pr_view", lambda *a, **kw: {"headRefOid": "abc123"})
-    monkeypatch.setattr(cr.prompt, "confirm", lambda msg: False)
-
-    with pytest.raises(SystemExit):
-        cr._check_stale_review("owner/repo", "1", review_file, force=False)
-
-
 # ── _submit_pending_review ───────────────────────────────────────────────
 
 
@@ -2189,7 +2057,7 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     ctx = make_ctx(repo="acme/widget", branch="feat/x", pr_number=2973,
                    worktree_root=caller, head_sha="deadbee",
                    target_dir=prs_target)
-    cr._update_pr_state(ctx, str(review_file), cr.Mode.PR, trail=MagicMock())
+    cr._update_pr_state(ctx, str(review_file), trail=MagicMock())
 
     state = ps.load_state(prs_target)
     assert state is not None, "summary did not land with the PR under review"
@@ -2207,16 +2075,17 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
     review_file = tmp_path / "review.md"
     review_file.write_text("## Findings\n")
 
-    def _boom(**kwargs):
+    def _boom(*args, **kwargs):
         raise OSError("read-only file system")
 
-    monkeypatch.setattr(cr.pr_state, "apply_state_update", _boom)
+    monkeypatch.setattr(cr.pr_state, "save_state", _boom)
+    monkeypatch.setattr("pr.review_sync.pr_state.save_state", _boom)
     trail = MagicMock()
     ctx = make_ctx(repo="acme/widget", branch="feat/x", pr_number=1,
                    worktree_root=None, head_sha="deadbee",
                    target_dir=tmp_path / "target")
 
-    cr._update_pr_state(ctx, str(review_file), cr.Mode.PR, trail=trail)
+    cr._update_pr_state(ctx, str(review_file), trail=trail)
 
     assert "read-only file system" in trail.error.call_args[0][1]
     assert "read-only file system" in capsys.readouterr().err
@@ -2242,9 +2111,9 @@ def _stub_self_review(cr, monkeypatch, target, reviews_dir):
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
         target_dir=target,
     )
-    monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
     monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
-    monkeypatch.setattr(cr, "_cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
     return ctx
 
@@ -2289,87 +2158,7 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
         assert record["command"] == "pr review --self --fix"
 
 
-# ── the supersession refusal ─────────────────────────────────────────────────
-
-
-def _refuse(cr, monkeypatch, verdict, *, override=False, trail=None):
-    """Run the refusal against a canned verdict, detection already answered."""
-    monkeypatch.setattr(cr.supersession, "detect_cached",
-                        MagicMock(return_value=verdict))
-    cr._refuse_if_superseded(
-        "/wt", "acme/widget", Path("/target"), "feat/x",
-        override=override, trail=trail or MagicMock(),
-    )
-
-
-def test_a_clean_branch_is_reviewed(cr, monkeypatch, capsys):
-    _refuse(cr, monkeypatch, supersession_verdict())
-    assert capsys.readouterr().err == ""
-
-
-def test_context_alone_does_not_refuse(cr, monkeypatch, capsys):
-    """A rebase over a moved base is how the problem becomes visible, not the problem."""
-    _refuse(cr, monkeypatch, supersession_verdict(supersession_context()))
-    assert "[rebase_skew] replayed onto a moved base" in capsys.readouterr().err
-
-
-def test_evidence_refuses_before_the_first_agent_call(cr, monkeypatch, capsys):
-    """The whole point of refusing here: a review is the largest spend in the repo."""
-    from pr import supersession
-
-    with pytest.raises(SystemExit) as exc:
-        _refuse(cr, monkeypatch, supersession_verdict(supersession_evidence()))
-    assert exc.value.code == supersession.EXIT_SUPERSEDED
-
-    out = capsys.readouterr()
-    assert "Refusing to review feat/x" in out.err
-    assert supersession.OVERRIDE_FLAG in out.err
-    payload = json.loads(out.out)
-    assert payload["status"] == "superseded"
-    assert payload["branch"] == "feat/x"
-    assert payload["override"] == supersession.OVERRIDE_FLAG
-    assert payload["signals"] == [{
-        "kind": "readds_removed_symbol",
-        "detail": "`foo` is gone from origin/main",
-        "holds": True,
-    }]
-
-
-def test_the_refusal_reaches_the_trail(cr, monkeypatch):
-    trail = MagicMock()
-    with pytest.raises(SystemExit):
-        _refuse(cr, monkeypatch, supersession_verdict(supersession_evidence()),
-                trail=trail)
-    data = trail.decision.call_args.kwargs["data"]
-    assert data["signals"] == ["readds_removed_symbol"]
-
-
-def test_the_override_skips_the_check_entirely(cr, monkeypatch):
-    """The override has to cost nothing, or it is not an override."""
-    detect = MagicMock()
-    monkeypatch.setattr(cr.supersession, "detect_cached", detect)
-    cr._refuse_if_superseded(
-        "/wt", "acme/widget", Path("/target"), "feat/x",
-        override=True, trail=MagicMock(),
-    )
-    assert not detect.called
-
-
-def test_only_the_users_own_force_overrides_the_refusal(cr):
-    """An unattended run is the one this refusal most has to survive.
-
-    `--post` and `--no-post` set the `force` local that suppresses the
-    confirmation prompts, because nobody is there to answer one. Letting that
-    reach here would disarm the check on exactly the runs that post findings to
-    a PR with no operator reading them first.
-    """
-    assert cr._supersession_override(False, False) is False
-    assert cr._supersession_override(True, False) is True
-
-
-def test_recover_overrides_the_refusal_on_both_paths(cr):
-    """Recovery finishes a run whose spend was already made."""
-    assert cr._supersession_override(False, True) is True
+# ── the supersession refusal (ordering in the binary flow) ───────────────────
 
 
 def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatch):
@@ -2377,7 +2166,7 @@ def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatc
     from pr import supersession
 
     monkeypatch.setattr(
-        cr.supersession, "detect_cached",
+        cr.review_preflight.supersession, "detect_cached",
         MagicMock(return_value=supersession_verdict(supersession_evidence())),
     )
     monkeypatch.setattr(
@@ -2398,10 +2187,10 @@ def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatc
 def test_self_review_recovery_is_not_refused(cr, tmp_path, monkeypatch):
     """A recovery run must not be stranded by a signal that appeared after it started."""
     monkeypatch.setattr(
-        cr.supersession, "detect_cached",
+        cr.review_preflight.supersession, "detect_cached",
         MagicMock(side_effect=AssertionError("checked a recovery run")),
     )
-    monkeypatch.setattr(cr, "_resolve_recover_sha",
+    monkeypatch.setattr(cr.review_recover, "resolve_recover_sha",
                         MagicMock(side_effect=SystemExit(99)))
 
     with pytest.raises(SystemExit) as exc:

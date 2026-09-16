@@ -795,7 +795,21 @@ def test_cmd_comments_finish_passes_flag(mock_run):
 # ── cmd_review --repair ────────────────────────────────────────────────────
 
 
-@patch("pr_cli._update_review_state")
+@patch("pr_cli.sync_review_domain")
+@patch("pr_cli.subprocess.run")
+def test_cmd_review_does_not_rewrite_domain_after_delegate(
+        mock_run, mock_sync, reviews_dir):
+    """claude-review already wrote the domain; pr must not write it again."""
+    mock_run.return_value = MagicMock(returncode=0)
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
+    rc = pr_cli.cmd_review(["123"], make_ctx(pr_number=42))
+    assert rc == 0
+    mock_sync.assert_not_called()
+
+
+@patch("pr_cli.sync_review_domain")
 def test_cmd_review_repair_succeeds_with_review_file(mock_update, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
@@ -1536,11 +1550,11 @@ def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
         target_dir=target,
     )
 
-    pr_cli._update_review_state(
-        {"review_file": "r.md", "verdict": "approve", "head_sha": "pr-sha",
-         "findings": {"total": 0}},
-        ctx,
-    )
+    from pr.review_sync import sync_review_domain
+    from review.summary import ReviewSummaryReport
+    sync_review_domain(ctx, ReviewSummaryReport(
+        review_file="r.md", verdict="approve", head_sha="pr-sha",
+    ))
 
     assert (target / pr_state.STATE_FILE).is_file()
     # Nothing at all under the caller's checkout: state is keyed on the run's
@@ -1568,10 +1582,11 @@ def test_a_summary_with_no_recover_verdict_records_unknown(tmp_path, monkeypatch
         current_branch="main", target_dir=target,
     )
 
-    pr_cli._update_review_state(
-        {"review_file": "r.md", "head_sha": "pr-sha", "findings": {"total": 0}},
-        ctx,
-    )
+    from pr.review_sync import sync_review_domain
+    from review.summary import ReviewSummaryReport
+    sync_review_domain(ctx, ReviewSummaryReport(
+        review_file="r.md", head_sha="pr-sha",
+    ))
 
     assert pr_state.load_state(target).review.recoverable is None
 

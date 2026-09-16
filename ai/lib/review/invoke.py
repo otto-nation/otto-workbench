@@ -16,6 +16,8 @@ because `core.publishing`'s gate is process-wide and has no `disable()`. Today
 a subprocess is what scopes it to one run.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import subprocess

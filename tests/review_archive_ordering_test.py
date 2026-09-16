@@ -28,20 +28,26 @@ from unittest.mock import MagicMock
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "ai" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from conftest import load_script, make_ctx  # noqa: E402
+from conftest import make_ctx  # noqa: E402
+
+from review import completion as review_completion  # noqa: E402
+from review import invoke as review_invoke  # noqa: E402
+from review import issue as review_issue  # noqa: E402
+from review import preflight as review_preflight  # noqa: E402
+from review import recover as review_recover  # noqa: E402
+from review import run as review_run  # noqa: E402
+from review import worktree as review_worktree  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def cr():
-    bin_dir = str(SCRIPT_PATH.parent)
-    if bin_dir not in sys.path:
-        sys.path.insert(0, bin_dir)
-    return load_script("claude_review", SCRIPT_PATH)
+def _flags(**overrides):
+    base = dict(bin_dir=Path("/bin"), generator_version="test 1.0",
+                no_post=True, recover=True, fix=True)
+    base.update(overrides)
+    return review_run.ReviewFlags(**base)
 
 
 def _seeded_review_dir(tmp_path, *, pipeline_state=True):
@@ -66,18 +72,7 @@ def _seeded_review_dir(tmp_path, *, pipeline_state=True):
     return d
 
 
-def _args(**overrides):
-    base = dict(
-        no_post=True, post=False, submit=False, issue="", max_parallel=None,
-        force=False, disprove=None, max_cost=None, model="", repo_dir="",
-        effort=None, max_groups=None, generated=False, recover=True,
-        debug=False, push=False, fix=True, _json_stdout=None,
-    )
-    base.update(overrides)
-    return SimpleNamespace(**base)
-
-
-def test_a_resumed_run_reuses_the_prior_review_rather_than_rotating_it(cr, tmp_path):
+def test_a_resumed_run_reuses_the_prior_review_rather_than_rotating_it(tmp_path):
     """The load-bearing half: `resume` is what makes the call non-destructive.
 
     Asserted directly on the helper, because this is the property every test
@@ -86,7 +81,7 @@ def test_a_resumed_run_reuses_the_prior_review_rather_than_rotating_it(cr, tmp_p
     review_dir = _seeded_review_dir(tmp_path)
     (review_dir / "prior.md").write_text("## Must fix\n- **[M1]** from the failed run\n")
 
-    resolved = cr._resolve_prior_review(
+    resolved = review_run.resolve_prior_review(
         review_dir / "review.md", str(review_dir / "session.jsonl"), True,
     )
 
@@ -95,8 +90,7 @@ def test_a_resumed_run_reuses_the_prior_review_rather_than_rotating_it(cr, tmp_p
     assert not (review_dir / "archives").exists()
 
 
-def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(
-    cr, tmp_path, monkeypatch,
+def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(tmp_path, monkeypatch,
 ):
     """`--self --fix --recover` against a moved HEAD refuses without rotating.
 
@@ -107,19 +101,18 @@ def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(
     review_dir = _seeded_review_dir(tmp_path)
     original = (review_dir / "review.md").read_text()
 
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
     # HEAD has moved on from the commit the failed review ran against.
-    monkeypatch.setattr(cr.review_recover, "recover_drifted", lambda *a, **kw: True)
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: True)
+    monkeypatch.setattr(review_issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(cr.git_client, "abbrev", lambda sha: sha[:7])
+    monkeypatch.setattr(review_run.git_client, "abbrev", lambda sha: sha[:7])
 
     with pytest.raises(SystemExit) as excinfo:
-        cr._run_self_review_body(
-            "acme/widget", "", str(tmp_path), "issue-1", None, None, "", True,
-            _args(), review_dir, "feat/x",
-            ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+        review_run.run_self_review(
+            make_ctx(target_dir=tmp_path / "t"), _flags(issue_link="issue-1"),
+            review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),
         )
 
     assert excinfo.value.code == 1
@@ -129,8 +122,7 @@ def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(
     assert not (review_dir / "archives").exists()
 
 
-def test_a_pin_that_cannot_find_its_commit_leaves_the_review_in_place(
-    cr, tmp_path, monkeypatch,
+def test_a_pin_that_cannot_find_its_commit_leaves_the_review_in_place(tmp_path, monkeypatch,
 ):
     """The same guarantee for the other gate below the archive.
 
@@ -140,30 +132,28 @@ def test_a_pin_that_cannot_find_its_commit_leaves_the_review_in_place(
     """
     review_dir = _seeded_review_dir(tmp_path)
 
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
-    monkeypatch.setattr(cr.review_recover, "recover_drifted", lambda *a, **kw: False)
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
+    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: False)
+    monkeypatch.setattr(review_issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
 
     def _pin_fails(*a, **kw):
         raise SystemExit(1)
 
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree", _pin_fails)
+    monkeypatch.setattr(review_recover, "pin_recover_worktree", _pin_fails)
 
     with pytest.raises(SystemExit):
-        cr._run_self_review_body(
-            "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
-            _args(fix=False), review_dir, "feat/x",
-            ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+        review_run.run_self_review(
+            make_ctx(target_dir=tmp_path / "t"), _flags(fix=False, issue_link="issue-1"),
+            review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),
         )
 
     assert (review_dir / "review.md").is_file()
     assert not (review_dir / "archives").exists()
 
 
-def test_the_body_asks_whether_to_archive_rather_than_always_archiving(
-    cr, tmp_path, monkeypatch,
+def test_the_body_asks_whether_to_archive_rather_than_always_archiving(tmp_path, monkeypatch,
 ):
     """The body routes through `_resolve_prior_review`, not `archive_review`.
 
@@ -181,27 +171,27 @@ def test_the_body_asks_whether_to_archive_rather_than_always_archiving(
     review_dir = _seeded_review_dir(tmp_path)
     (review_dir / "prior.md").write_text("## Must fix\n- **[M1]** from the failed run\n")
 
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_recover, "recover_drifted", lambda *a, **kw: False)
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: False)
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+    monkeypatch.setattr(review_issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_update_pr_state", lambda *a, **kw: None)
+    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "summarise", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "record_domain", lambda *a, **kw: None)
 
     def _orchestrate(request):
         (review_dir / "review.md").write_text("## Must fix\n- **[M1]** a fresh finding\n")
         return 0
 
-    monkeypatch.setattr(cr.review_invoke, "run", _orchestrate)
+    monkeypatch.setattr(review_invoke, "run", _orchestrate)
 
-    cr._run_self_review_body(
-        "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
-        _args(recover=False, fix=False), review_dir, "feat/x",
-        ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+    review_run.run_self_review(
+        make_ctx(target_dir=tmp_path / "t"),
+        _flags(recover=False, fix=False, issue_link="issue-1"),
+        review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
 
     assert not (review_dir / "archives").exists(), (
@@ -209,7 +199,7 @@ def test_the_body_asks_whether_to_archive_rather_than_always_archiving(
     )
 
 
-def test_a_fresh_review_rotates_the_one_it_replaces(cr, tmp_path, monkeypatch):
+def test_a_fresh_review_rotates_the_one_it_replaces(tmp_path, monkeypatch):
     """The other half: with no pipeline state the archive is the whole point.
 
     A plain self review rotates the previous review into `archives/` so the
@@ -218,27 +208,27 @@ def test_a_fresh_review_rotates_the_one_it_replaces(cr, tmp_path, monkeypatch):
     """
     review_dir = _seeded_review_dir(tmp_path, pipeline_state=False)
 
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_recover, "recover_drifted", lambda *a, **kw: False)
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: False)
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+    monkeypatch.setattr(review_issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_update_pr_state", lambda *a, **kw: None)
+    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "summarise", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "record_domain", lambda *a, **kw: None)
 
     def _orchestrate(request):
         (review_dir / "review.md").write_text("## Must fix\n- **[M1]** a fresh finding\n")
         return 0
 
-    monkeypatch.setattr(cr.review_invoke, "run", _orchestrate)
+    monkeypatch.setattr(review_invoke, "run", _orchestrate)
 
-    cr._run_self_review_body(
-        "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
-        _args(recover=False, fix=False), review_dir, "feat/x",
-        ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+    review_run.run_self_review(
+        make_ctx(target_dir=tmp_path / "t"),
+        _flags(recover=False, fix=False, issue_link="issue-1"),
+        review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
 
     archived = sorted((review_dir / "archives").glob("*.md"))

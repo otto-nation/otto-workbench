@@ -33,6 +33,15 @@ if LIB_DIR not in sys.path:
 
 from conftest import load_script, make_ctx  # noqa: E402
 
+from review import completion as review_completion  # noqa: E402
+from review import invoke as review_invoke  # noqa: E402
+from review import issue as review_issue  # noqa: E402
+from review import preflight as review_preflight  # noqa: E402
+from review import publish as review_publish  # noqa: E402
+from review import recover as review_recover  # noqa: E402
+from review import run as review_run  # noqa: E402
+from review import worktree as review_worktree  # noqa: E402
+
 
 @pytest.fixture(scope="session")
 def cr():
@@ -81,7 +90,11 @@ def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkey
     """`--json-summary 42` reviews PR 42; it does not review a PR named --json-summary."""
     monkeypatch.setattr(sys, "argv", ["claude-review", "--json-summary", "42"])
     seen = {}
-    monkeypatch.setattr(cr, "_run_review", lambda args, ctx: seen.update(args=args))
+    def _capture(args, ctx):
+        seen.update(args=args)
+        return review_run.ReviewOutcome("owner/repo", "42", Path("/dev/null"))
+
+    monkeypatch.setattr(cr, "_run_review", _capture)
     monkeypatch.setattr(cr.pr_context, "classify_target",
                         lambda c: seen.setdefault("target", c) and (c, None) or (c, None))
     monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: make_ctx())
@@ -130,7 +143,7 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
 
     The orchestrate stub writes *review_file*, because that is what the real
     subprocess does and the flow checks for it afterwards. Leaving it out made
-    the flow fail for the right reason at the wrong time: `_resolve_prior_review`
+    the flow fail for the right reason at the wrong time: `resolve_prior_review`
     archives the existing review before the run, so a stub that produces nothing
     reaches the "produced no review file" guard rather than the assertion.
 
@@ -148,25 +161,28 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
         review_file.write_text("## Must fix\n- **[M1]** boom\n")
         return 0
 
-    monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
-    monkeypatch.setattr(cr.gh_client, "pr_view",
+    monkeypatch.setattr(review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
+    monkeypatch.setattr(review_run.gh_client, "pr_view",
                         lambda *a, **kw: {"headRefName": "feat/x", "body": ""})
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+    monkeypatch.setattr(review_issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(cr.review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
-    monkeypatch.setattr(cr.review_preflight, "check_stale_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_preflight, "check_pending_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_worktree, "setup_pr_worktree",
+    monkeypatch.setattr(review_preflight, "check_stale_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review_preflight, "check_pending_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
                         lambda *a, **kw: SimpleNamespace(path=str(tmp_path), is_fallback=False))
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_invoke, "run", _orchestrate)
-    monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: tape.append("print_summary"))
-    monkeypatch.setattr(cr, "_update_pr_state", lambda *a, **kw: tape.append("domain_write"))
+    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_invoke, "run", _orchestrate)
+    monkeypatch.setattr(review_run.review_invoke, "run", _orchestrate)
+    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "summarise",
+                        lambda *a, **kw: tape.append("print_summary"))
+    monkeypatch.setattr(review_completion, "record_domain",
+                        lambda *a, **kw: tape.append("domain_write"))
     monkeypatch.setattr(cr.Trail, "start", lambda **kw: MagicMock())
 
 
@@ -176,6 +192,7 @@ def _pr_args(**overrides):
         force=False, disprove=None, max_cost=None, model=None, repo_dir="",
         effort=None, max_groups=None, generated=False, recover=False,
         debug=False, push=False, fix=False, no_holistic=False, no_scout=False,
+        skip_user_verification=False,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -237,9 +254,10 @@ def test_the_pr_path_records_the_domain_even_when_the_operator_declines_to_post(
     review_file = _written_review(tmp_path / "reviews" / "widget-42")
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
-    monkeypatch.setattr(cr.prompt, "confirm", lambda *a, **kw: False)
-    monkeypatch.setattr(cr.review_publish, "post",
+    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(review_publish, "post",
                         lambda *a, **kw: tape.append("posted"))
+    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
 
     cr._run_review(_pr_args(no_post=False), make_ctx(target_dir=tmp_path / "t"))
 

@@ -11,6 +11,8 @@ aggregate cost from. Returning that instead of printing in each branch is what
 lets both flows share a single `print_summary` call.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import json

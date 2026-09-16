@@ -1,17 +1,15 @@
-"""Characterisation of the two review flows, ahead of merging them.
+"""Characterisation of the two review flows, now that they are two modules.
 
-`claude-review` runs a PR review and a self review through two nearly
-identical flows. They are about to become one, and the risk in that merge is
-not the code that obviously differs — it is the code that looks the same and
-is not. Several of the differences below are positional: the same call, in
-both flows, made from a different frame or in a different order. A test
-asserting only that a call happened cannot see those, so every ordering test
-here records into one shared list and asserts the sequence.
+`review.run` holds a PR flow and a self flow. They are nearly identical and
+deliberately not unified, because several of their differences are positional:
+the same call, in both flows, made in a different order. A test asserting only
+that a call happened cannot see those, so every ordering test here records into
+one shared list and asserts the sequence.
 
-These tests describe what the flows do today, including where today's answer
-is merely what the code grew into. They are a tripwire, not a specification:
-a merge that changes any of this should have to say so out loud by editing a
-test, rather than discovering it later as a regression.
+These tests describe what the flows do, including where today's answer is
+merely what the code grew into. They are a tripwire, not a specification: a
+change to any of this should have to say so out loud by editing a test, rather
+than being discovered later as a regression.
 """
 
 import sys
@@ -22,20 +20,26 @@ from unittest.mock import MagicMock
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "ai" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from conftest import load_script, make_ctx  # noqa: E402
+from conftest import make_ctx  # noqa: E402
+
+from review import completion as review_completion  # noqa: E402
+from review import invoke as review_invoke  # noqa: E402
+from review import issue as review_issue  # noqa: E402
+from review import preflight as review_preflight  # noqa: E402
+from review import publish as review_publish  # noqa: E402
+from review import recover as review_recover  # noqa: E402
+from review import run as review_run  # noqa: E402
+from review import worktree as review_worktree  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def cr():
-    bin_dir = str(SCRIPT_PATH.parent)
-    if bin_dir not in sys.path:
-        sys.path.insert(0, bin_dir)
-    return load_script("claude_review", SCRIPT_PATH)
+def _flags(**overrides):
+    base = dict(bin_dir=Path("/bin"), generator_version="test 1.0", no_post=True)
+    base.update(overrides)
+    return review_run.ReviewFlags(**base)
 
 
 def _review_file(tmp_path, name="review"):
@@ -47,97 +51,60 @@ def _review_file(tmp_path, name="review"):
     return f
 
 
-def _args(**overrides):
-    """Parsed-argv stand-in carrying only what the flows read off it."""
-    base = dict(
-        no_post=True, post=False, submit=False, issue="", max_parallel=None,
-        force=False, disprove=None, max_cost=None, model="", repo_dir="",
-        effort=None, max_groups=None, generated=False, recover=False,
-        debug=False, push=False, fix=False, _json_stdout=None,
-    )
-    base.update(overrides)
-    return SimpleNamespace(**base)
-
-
-def _trace_common(cr, monkeypatch, tape, review_file):
+def _trace_common(monkeypatch, tape, *, returncode=0):
     """Stub the machinery both flows share, recording each step onto *tape*.
 
-    Everything here is a step the merge must keep; the per-test assertions are
+    Everything here is a step both flows must keep; the per-test assertions are
     about where the remaining, flow-specific steps land relative to these.
     """
-    monkeypatch.setattr(cr.review_invoke, "OrchestrateRequest",
-                        lambda **kw: (tape.append("build_args"), kw)[1])
-    monkeypatch.setattr(cr.review_invoke, "run",
-                        lambda request: (tape.append("orchestrate"), 0)[1])
-    monkeypatch.setattr(cr, "_cleanup_prior_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_print_summary",
+    def _run(request):
+        tape.append("orchestrate")
+        if returncode != 0:
+            raise SystemExit(1)
+        return 0
+
+    monkeypatch.setattr(review_invoke, "run", _run)
+    monkeypatch.setattr(review_run.review_invoke, "run", _run)
+    monkeypatch.setattr(review_completion, "cleanup_prior_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review_completion, "summarise",
                         lambda *a, **kw: tape.append("print_summary"))
-    monkeypatch.setattr(cr, "_update_pr_state",
+    monkeypatch.setattr(review_completion, "record_domain",
                         lambda *a, **kw: tape.append("domain_write"))
-    monkeypatch.setattr(cr, "_resolve_prior_review", lambda *a, **kw: "")
-    monkeypatch.setattr(cr, "json_summary", lambda *a, **kw: '{"x":1}')
+    monkeypatch.setattr(review_run, "resolve_prior_review", lambda *a, **kw: "")
+    monkeypatch.setattr(review_issue, "load_issue_provider",
+                        lambda *a, **kw: SimpleNamespace(name="", options={}))
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
+                        lambda *a, **kw: SimpleNamespace(link="", context=""))
 
 
 # ── A. where the review-domain write happens ────────────────────────────────
 
 
-def test_the_pr_flow_writes_the_domain_after_the_body_returns(
-    cr, tmp_path, monkeypatch,
-):
-    """PR path: the write is the caller's, not the body's.
+def test_both_flows_write_the_domain_after_the_summary(tmp_path, monkeypatch):
+    """One frame owns this call, and it is the shared tail.
 
-    `_run_review` calls it after `_run_review_pr` returns, inside the trail's
-    scope so a failed write has somewhere to report. Pinned by frame, not by
-    call count: moving it into the body keeps the call and breaks the order.
+    The two flows used to disagree — the PR path wrote from its caller after the
+    body returned, the self path from inside its own body — which meant the
+    guarantee "a review that ran is recorded" had two independent
+    implementations. `finish_review` is now the only writer, so the ordering is
+    asserted once and holds for both.
     """
     tape = []
-    review_file = _review_file(tmp_path)
-    _trace_common(cr, monkeypatch, tape, review_file)
-
-    monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
-    monkeypatch.setattr(cr, "_run_review_pr",
-                        lambda *a, **kw: tape.append("body_returned"))
-    monkeypatch.setattr(cr.Trail, "start", lambda **kw: MagicMock())
-
-    cr._run_review(_args(), make_ctx(target_dir=tmp_path / "t"))
-
-    assert tape == ["body_returned", "domain_write"], (
-        "the PR flow's domain write belongs to _run_review, after the body"
-    )
-
-
-def test_the_self_flow_writes_the_domain_inside_the_body(
-    cr, tmp_path, monkeypatch,
-):
-    """Self path: the write is the body's own, before the JSON summary.
-
-    The mirror of the test above. The two flows genuinely disagree about which
-    frame owns this call, and the merge has to pick one deliberately.
-    """
-    tape = []
-    review_dir = tmp_path / "self"
     review_file = _review_file(tmp_path, "self")
-    _trace_common(cr, monkeypatch, tape, review_file)
-
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded",
-                        lambda *a, **kw: tape.append("preflight"))
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    _trace_common(monkeypatch, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree",
-                        lambda *a, **kw: tape.append("pin_cleanup"))
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
-                        lambda *a, **kw: SimpleNamespace(name="", options={}))
+    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
 
-    cr._run_self_review_body(
-        "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
-        _args(), review_dir, "feat/x",
-        ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+    review_run.run_self_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
+        str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
 
-    assert "domain_write" in tape, "the self body writes the domain itself"
     assert tape.index("print_summary") < tape.index("domain_write"), (
-        "the self body prints its summary before writing the domain"
+        "the summary is printed before the domain is written"
     )
 
 
@@ -145,49 +112,77 @@ def test_the_self_flow_writes_the_domain_inside_the_body(
 
 
 def test_the_self_flow_refuses_a_superseded_review_before_doing_any_work(
-    cr, tmp_path, monkeypatch,
+    tmp_path, monkeypatch,
 ):
-    """Self path: the preflight is the first statement of the body.
+    """Self path: the preflight is the first statement of the flow.
 
     It runs ahead of the issue fetch and the pin, which is the cheapest point
     at which a superseded run can still cost nothing. The PR path deliberately
-    runs it later — after the pin, so a refusal still cleans up the worktree it
-    read — and that asymmetry is the one the merge is most likely to flatten.
+    runs it later — after the worktree exists, so a refusal still cleans up
+    what it read — and that asymmetry is the one a merge would flatten.
     """
     tape = []
-    review_dir = tmp_path / "self"
     review_file = _review_file(tmp_path, "self")
-    _trace_common(cr, monkeypatch, tape, review_file)
+    _trace_common(monkeypatch, tape)
 
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded",
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
                         lambda *a, **kw: tape.append("preflight"))
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (tape.append("pin"), (str(tmp_path), None))[1])
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_issue, "load_issue_provider",
                         lambda *a, **kw: (tape.append("issue_provider"),
                                           SimpleNamespace(name="", options={}))[1])
 
-    cr._run_self_review_body(
-        "acme/widget", "", str(tmp_path), "", None, None, "", False,
-        _args(), review_dir, "feat/x",
-        ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+    review_run.run_self_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
+        str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
 
     assert tape[0] == "preflight", (
-        "the self body refuses a superseded review before anything costs money"
+        "the self flow refuses a superseded review before anything costs money"
     )
     assert tape.index("preflight") < tape.index("pin")
     assert tape.index("preflight") < tape.index("issue_provider")
+
+
+def test_the_pr_flow_refuses_inside_the_finally_that_owns_its_worktree(
+    tmp_path, monkeypatch,
+):
+    """PR path: the refusal comes after the worktree, and still cleans it up.
+
+    The converse of the test above, and the reason the two orderings cannot be
+    one parameter: the self flow wants the refusal as early as possible, the PR
+    flow wants it somewhere a `finally` will release what it read.
+    """
+    tape = []
+    review_file = _review_file(tmp_path, "pr")
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+                        lambda *a, **kw: (tape.append("preflight"),
+                                          (_ for _ in ()).throw(SystemExit(3)))[0])
+
+    with pytest.raises(SystemExit):
+        review_run.run_pr_review(
+            make_ctx(target_dir=tmp_path / "t"), _flags(), review_file,
+            trail=MagicMock(),
+        )
+
+    assert tape.index("setup_worktree") < tape.index("preflight"), (
+        "the PR flow has a worktree before it decides whether to keep it"
+    )
+    assert "cleanup" in tape, "and releases it on the way out of the refusal"
 
 
 # ── E. what the pin's finally covers ────────────────────────────────────────
 
 
 def test_the_self_flow_releases_its_pin_before_rendering_the_review(
-    cr, tmp_path, monkeypatch,
+    tmp_path, monkeypatch,
 ):
-    """Self path: the pin's `finally` wraps only the orchestrate subprocess.
+    """Self path: the pin's `finally` wraps only the pipeline call.
 
     The pinned worktree is gone by the time the review is displayed and the
     summary printed. The PR path holds its pin across the whole body instead.
@@ -196,74 +191,77 @@ def test_the_self_flow_releases_its_pin_before_rendering_the_review(
     anywhere would notice.
     """
     tape = []
-    review_dir = tmp_path / "self"
     review_file = _review_file(tmp_path, "self")
-    _trace_common(cr, monkeypatch, tape, review_file)
+    _trace_common(monkeypatch, tape)
 
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), object()))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree",
+    monkeypatch.setattr(review_worktree, "cleanup_worktree",
                         lambda *a, **kw: tape.append("pin_cleanup"))
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
-                        lambda *a, **kw: SimpleNamespace(name="", options={}))
 
-    cr._run_self_review_body(
-        "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
-        _args(), review_dir, "feat/x",
-        ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+    review_run.run_self_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
+        str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
 
     assert tape.index("orchestrate") < tape.index("pin_cleanup"), (
-        "the pin is released after the subprocess it exists for"
+        "the pin is released after the pipeline it exists for"
     )
     assert tape.index("pin_cleanup") < tape.index("print_summary"), (
-        "and before the summary — the self pin does not span the whole body"
+        "and before the summary — the self pin does not span the whole flow"
     )
 
 
-def test_the_pr_flow_holds_its_pin_across_the_whole_body(
-    cr, tmp_path, monkeypatch,
-):
-    """PR path: both worktrees are released only after the body returns.
+def _stub_pr_edges(monkeypatch, tmp_path, tape):
+    """The PR flow's own edges: clone lookup, gh, worktree, freshness."""
+    monkeypatch.setattr(review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
+    monkeypatch.setattr(review_run.gh_client, "pr_view",
+                        lambda *a, **kw: {"headRefName": "f", "body": ""})
+    monkeypatch.setattr(review_recover, "get_pr_head_sha", lambda *a, **kw: "sha")
+    monkeypatch.setattr(review_preflight, "check_stale_review",
+                        lambda *a, **kw: tape.append("check_stale"))
+    monkeypatch.setattr(review_preflight, "check_pending_review",
+                        lambda *a, **kw: tape.append("check_pending"))
+    monkeypatch.setattr(review_recover, "should_auto_recover",
+                        lambda *a, **kw: tape.append("should_auto_recover"))
+    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+                        lambda *a, **kw: (tape.append("setup_worktree"),
+                                          SimpleNamespace(path=str(tmp_path),
+                                                          is_fallback=False))[1])
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(tmp_path), None))
+    monkeypatch.setattr(review_worktree, "cleanup_worktree",
+                        lambda *a, **kw: tape.append("cleanup"))
+    monkeypatch.setattr(review_publish, "resolve",
+                        lambda *a, **kw: review_publish.PostResult(False, False, ""))
+
+
+def test_the_pr_flow_holds_its_pin_across_the_whole_body(tmp_path, monkeypatch):
+    """PR path: both worktrees are released only after the review is done.
 
     The converse of the test above, and the reason the PR path's `finally`
     covers more: `pin_recover_worktree` can exit, so a fallback PR worktree
     would otherwise be left on disk.
     """
     tape = []
-    review_dir = tmp_path / "pr"
     review_file = _review_file(tmp_path, "pr")
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
-    monkeypatch.setattr(cr.gh_client, "pr_view", lambda *a, **kw: {"headRefName": "f", "body": ""})
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
-                        lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(cr.review_recover, "get_pr_head_sha", lambda *a, **kw: "sha")
-    monkeypatch.setattr(cr.review_preflight, "check_stale_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_preflight, "check_pending_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_worktree, "setup_pr_worktree",
-                        lambda *a, **kw: SimpleNamespace(path=str(tmp_path), is_fallback=False))
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
-                        lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree",
-                        lambda *a, **kw: tape.append("cleanup"))
-    monkeypatch.setattr(cr, "_resolve_prior_review", lambda *a, **kw: "")
-    monkeypatch.setattr(cr, "_run_review_body", lambda *a, **kw: tape.append("body"))
-
-    cr._run_review_pr(
-        MagicMock(), make_ctx(target_dir=tmp_path / "t"), "42", "acme/widget",
-        review_dir, review_file, "issue-1", True, False, False,
-        False, "", None, None, "",
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), review_file, trail=MagicMock(),
     )
 
-    assert tape[0] == "body", "cleanup happens only once the body is done"
+    assert tape.index("domain_write") < tape.index("cleanup"), (
+        "cleanup happens only once the review is recorded"
+    )
     assert tape.count("cleanup") == 2, "the pin and the PR worktree are both released"
 
 
 def test_the_pr_flow_checks_freshness_before_it_pays_for_a_worktree(
-    cr, tmp_path, monkeypatch,
+    tmp_path, monkeypatch,
 ):
     """Building the worktree is the expensive step, and it comes last.
 
@@ -271,45 +269,16 @@ def test_the_pr_flow_checks_freshness_before_it_pays_for_a_worktree(
     prompting, and `should_auto_recover` can redirect it. All three are cheap
     and all three run first, so an aborted review costs a `gh` call rather
     than an unshallowed clone and a checkout.
-
-    This is the ordering a resolver is most likely to flatten: folding the
-    recover-SHA computation and the worktree setup into one "resolve the
-    source" step reads naturally and silently moves the checkout above the
-    three checks that exist to avoid it.
     """
     tape = []
-    review_dir = tmp_path / "pr"
-    review_dir.mkdir()
-    review_file = review_dir / "review.md"
-    review_file.write_text("## Must fix\n- **[M1]** boom\n")
-    (review_dir / "pipeline.json").write_text("{}")
+    review_file = _review_file(tmp_path, "pr")
+    (review_file.parent / "pipeline.json").write_text("{}")
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
-    monkeypatch.setattr(cr.gh_client, "pr_view",
-                        lambda *a, **kw: {"headRefName": "f", "body": ""})
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
-                        lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(cr.review_recover, "should_auto_recover",
-                        lambda *a, **kw: tape.append("should_auto_recover"))
-    monkeypatch.setattr(cr.review_preflight, "check_stale_review",
-                        lambda *a, **kw: tape.append("check_stale"))
-    monkeypatch.setattr(cr.review_preflight, "check_pending_review",
-                        lambda *a, **kw: tape.append("check_pending"))
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_worktree, "setup_pr_worktree",
-                        lambda *a, **kw: (tape.append("setup_worktree"),
-                                          SimpleNamespace(path=str(tmp_path),
-                                                          is_fallback=False))[1])
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
-                        lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_resolve_prior_review", lambda *a, **kw: "")
-    monkeypatch.setattr(cr, "_run_review_body", lambda *a, **kw: None)
-
-    cr._run_review_pr(
-        MagicMock(), make_ctx(target_dir=tmp_path / "t"), "42", "acme/widget",
-        review_dir, review_file, "issue-1", True, False, False,
-        False, "", None, None, "",
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), review_file, trail=MagicMock(),
     )
 
     assert "setup_worktree" in tape, "the PR flow builds a worktree"
@@ -319,112 +288,181 @@ def test_the_pr_flow_checks_freshness_before_it_pays_for_a_worktree(
     assert tape.index("should_auto_recover") < tape.index("setup_worktree")
 
 
-def test_the_pr_flow_builds_exactly_one_worktree(cr, tmp_path, monkeypatch):
-    """One review, one checkout.
+def test_the_pr_flow_builds_exactly_one_worktree(tmp_path, monkeypatch):
+    """One review, one checkout."""
+    tape = []
+    review_file = _review_file(tmp_path, "pr")
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    Cheap to assert and it pins the failure mode a half-applied refactor
-    produces: a resolver that sets the worktree up while the original call
-    site still stands leaves two, and only the second is ever released.
-    """
-    calls = []
-    review_dir = tmp_path / "pr"
-    review_dir.mkdir()
-    review_file = review_dir / "review.md"
-    review_file.write_text("## Must fix\n- **[M1]** boom\n")
-
-    monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
-    monkeypatch.setattr(cr.gh_client, "pr_view",
-                        lambda *a, **kw: {"headRefName": "f", "body": ""})
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
-                        lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(cr.review_preflight, "check_stale_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_preflight, "check_pending_review", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_worktree, "setup_pr_worktree",
-                        lambda *a, **kw: (calls.append(1),
-                                          SimpleNamespace(path=str(tmp_path),
-                                                          is_fallback=False))[1])
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
-                        lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr, "_resolve_prior_review", lambda *a, **kw: "")
-    monkeypatch.setattr(cr, "_run_review_body", lambda *a, **kw: None)
-
-    cr._run_review_pr(
-        MagicMock(), make_ctx(target_dir=tmp_path / "t"), "42", "acme/widget",
-        review_dir, review_file, "issue-1", True, False, False,
-        False, "", None, None, "",
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), review_file, trail=MagicMock(),
     )
 
-    assert len(calls) == 1, f"built {len(calls)} worktrees for one review"
+    assert tape.count("setup_worktree") == 1, "built more than one worktree for one review"
+
+
+def test_the_stale_check_and_the_auto_recover_check_are_exclusive(
+    tmp_path, monkeypatch,
+):
+    """Pipeline state decides which of the two freshness questions is asked.
+
+    A resumed run is not stale — it is unfinished — so asking both would prompt
+    twice about the same review. The two live on opposite sides of one `if`,
+    which nothing else states.
+    """
+    review_file = _review_file(tmp_path, "pr")
+    resumed, fresh = [], []
+
+    for tape, has_state in ((resumed, True), (fresh, False)):
+        rf = _review_file(tmp_path, "pr")
+        state = rf.parent / "pipeline.json"
+        state.write_text("{}") if has_state else state.unlink(missing_ok=True)
+        _trace_common(monkeypatch, tape)
+        _stub_pr_edges(monkeypatch, tmp_path, tape)
+        monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+
+        review_run.run_pr_review(
+            make_ctx(target_dir=tmp_path / "t"), _flags(), rf, trail=MagicMock(),
+        )
+
+    assert "should_auto_recover" in resumed and "check_stale" not in resumed
+    assert "check_stale" in fresh and "should_auto_recover" not in fresh
 
 
 # ── the shared spine ────────────────────────────────────────────────────────
 
 
-def test_both_flows_run_the_same_ordered_spine(cr, tmp_path, monkeypatch):
-    """Whatever else differs, these steps happen, in this order, on both paths.
-
-    Written as one test over the self body because that is the flow that holds
-    the whole spine in a single frame; the PR half of each step is pinned by
-    the frame-specific tests above. A merge that drops or reorders any of
-    these is a merge that changed behaviour.
-    """
-    tape = []
-    review_dir = tmp_path / "self"
+def test_both_flows_run_the_same_ordered_spine(tmp_path, monkeypatch):
+    """Whatever else differs, these steps happen, in this order, on both paths."""
     review_file = _review_file(tmp_path, "self")
-    _trace_common(cr, monkeypatch, tape, review_file)
+    self_tape, pr_tape = [], []
 
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded",
-                        lambda *a, **kw: tape.append("preflight"))
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    _trace_common(monkeypatch, self_tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+                        lambda *a, **kw: self_tape.append("preflight"))
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
-                        lambda *a, **kw: SimpleNamespace(name="", options={}))
-
-    cr._run_self_review_body(
-        "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
-        _args(), review_dir, "feat/x",
-        ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
+    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    review_run.run_self_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
+        str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
 
-    assert tape == [
-        "preflight", "build_args", "orchestrate", "print_summary", "domain_write",
-    ]
+    pr_file = _review_file(tmp_path, "pr")
+    _trace_common(monkeypatch, pr_tape)
+    _stub_pr_edges(monkeypatch, pr_tape and tmp_path or tmp_path, pr_tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+                        lambda *a, **kw: pr_tape.append("preflight"))
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(), pr_file, trail=MagicMock(),
+    )
+
+    spine = ["preflight", "orchestrate", "print_summary", "domain_write"]
+    assert [s for s in self_tape if s in spine] == spine
+    assert [s for s in pr_tape if s in spine] == spine
 
 
+@pytest.mark.parametrize("flow", ["self", "pr"])
 def test_a_failed_orchestration_stops_before_the_domain_is_written(
-    cr, tmp_path, monkeypatch,
+    tmp_path, monkeypatch, flow,
 ):
-    """A non-zero orchestrate exits, and nothing downstream of it runs.
+    """A failed pipeline exits, and nothing downstream of it runs.
 
-    The failure path matters as much as the success one: a merge that moved
-    the domain write above the return-code check would record a review that
-    never finished.
+    The failure path matters as much as the success one: a flow that recorded
+    the domain above the return-code check would report a review that never
+    finished. Asserted on both flows because they reach the same tail by
+    different routes.
     """
     tape = []
-    review_dir = tmp_path / "self"
-    review_dir.mkdir()
-    _trace_common(cr, monkeypatch, tape, review_dir / "review.md")
-
-    def _failed(request):
-        tape.append("orchestrate")
-        raise SystemExit(1)
-
-    monkeypatch.setattr(cr.review_invoke, "run", _failed)
-    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+    review_file = _review_file(tmp_path, flow)
+    _trace_common(monkeypatch, tape, returncode=1)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
-                        lambda *a, **kw: SimpleNamespace(name="", options={}))
+    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
 
     with pytest.raises(SystemExit):
-        cr._run_self_review_body(
-            "acme/widget", "", str(tmp_path), "issue-1", None, None, "", False,
-            _args(), review_dir, "feat/x",
-            ctx=make_ctx(target_dir=tmp_path / "t"), trail=MagicMock(),
-        )
+        if flow == "self":
+            review_run.run_self_review(
+                make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
+                str(tmp_path), recover_head_sha="", trail=MagicMock(),
+            )
+        else:
+            _stub_pr_edges(monkeypatch, tmp_path, tape)
+            monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+                                lambda *a, **kw: None)
+            review_run.run_pr_review(
+                make_ctx(target_dir=tmp_path / "t"), _flags(), review_file,
+                trail=MagicMock(),
+            )
 
     assert "domain_write" not in tape, "a failed review is not a review to record"
+
+
+# ── which `force` each gate reads ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize("unattended", [{"no_post": True}, {"auto_post": True}])
+def test_an_unattended_pr_review_is_still_refused_when_superseded(
+    tmp_path, monkeypatch, unattended,
+):
+    """`--post` and `--no-post` skip the prompts; they do not skip the refusal.
+
+    The PR flow keeps two different notions of "force". One absorbs the
+    unattended flags, because nobody is present to answer a confirmation. The
+    supersession refusal reads the raw `--force` instead, and the distinction
+    matters most here: an unattended run is the one with no operator to notice
+    that the findings describe deleted code before they are posted to the PR.
+
+    Both are booleans named force, three lines apart, and passing the wrong one
+    is invisible in review — so it is asserted rather than described.
+    """
+    tape = []
+    review_file = _review_file(tmp_path, "pr")
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+
+    seen = {}
+    monkeypatch.setattr(
+        review_preflight, "refuse_if_superseded",
+        lambda *a, **kw: seen.update(override=kw["override"]),
+    )
+
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(force=False, **unattended),
+        review_file, trail=MagicMock(),
+    )
+
+    assert seen["override"] is False, (
+        "an unattended run is not an overridden one — the refusal reads --force"
+    )
+
+
+def test_the_freshness_prompts_are_skipped_when_nobody_can_answer_them(
+    tmp_path, monkeypatch,
+):
+    """The converse, so the test above cannot be satisfied by ignoring both flags.
+
+    `check_pending_review` prompts, so an unattended run has to be told not to
+    ask. This is the reader that *should* see the absorbed value.
+    """
+    tape = []
+    review_file = _review_file(tmp_path, "pr")
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+
+    seen = {}
+    monkeypatch.setattr(
+        review_preflight, "check_pending_review",
+        lambda repo, pr, force: seen.update(force=force),
+    )
+
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(force=False, no_post=True),
+        review_file, trail=MagicMock(),
+    )
+
+    assert seen["force"] is True, "--no-post means nobody is here to confirm"

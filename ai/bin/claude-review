@@ -18,12 +18,9 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from gh import client as gh_client
-from git import client as git_client
 from core import log
 from pr import context as pr_context
 from pr import state as pr_state
-from pr.review_sync import sync_review_domain
 from core import proc
 from core import run_lock
 from core import workbench_paths
@@ -36,17 +33,10 @@ except ImportError:
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
 from agent.registry import add_phase_skip_flags, phase_skips
-from review.paths import (
-    FILENAME_PIPELINE_STATE, FILENAME_PRIOR,
-    FILENAME_SESSION, REVIEW_EXT, archive_review, review_file_path,
-)
-from review.summary import build_review_summary, json_summary, print_summary
-from core import prompt
-from review import invoke as review_invoke
-from review import issue as review_issue
-from review import preflight as review_preflight
-from review import publish as review_publish
-from review import recover as review_recover
+from review.paths import review_file_path
+from review.summary import json_summary
+from review import completion as review_completion
+from review import run as review_run
 from review import worktree as review_worktree
 
 BIN_DIR = Path(__file__).resolve().parent
@@ -58,78 +48,12 @@ GITHUB_BASE_URL = "https://github.com"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _is_pr_ref(s: str) -> bool:
-    return pr_context.is_pr_ref(s)
-
-
-def _display_review(path: Path) -> None:
-    log.blank()
-    log.info("─── Review ───")
-    print()
-    print(path.read_text())
-    print()
-
-
-def _print_summary(
-    repo: str,
-    pr_number: str,
-    review_file: str,
-    session_log: str,
-    pr_url: str = "",
-    post_session_log: str = "",
-    branch_name: str = "",
-    wall_clock_ms: int | None = None,
-) -> None:
-    print_summary(
-        build_review_summary(repo, pr_number, review_file),
-        session_log,
-        pr_url,
-        post_session_log,
-        branch_name,
-        wall_clock_ms,
-    )
-
-
-def _update_pr_state(
-    ctx: pr_context.ResolvedContext, review_file: str, *, trail: Trail,
-) -> None:
-    """Record the review's outcome in the state of the target *ctx* names.
-
-    ``ctx`` is the identity the entry point resolved for this run, threaded down
-    rather than derived a second time here. Re-deriving read the *caller's*
-    checkout, which on the ``--pr`` path is routinely a different branch than
-    the PR's — so the verdict, finding counts, and cost landed with whatever the
-    caller happened to be standing on. One identity per run, derived once.
-    """
-    if not review_file or not os.path.isfile(review_file):
-        return
-    report = build_review_summary(ctx.repo, str(ctx.pr_number or ""), review_file)
-    sync_review_domain(ctx, report, trail=trail)
-
-
-def _resolve_prior_review(review_file: Path, session_log: str, resume: bool) -> str:
-    review_dir = review_file.parent
-    if resume:
-        prior = review_dir / FILENAME_PRIOR
-        if prior.is_file():
-            return str(prior)
-        return ""
-    return archive_review(review_file, session_log)
-
-
-def _cleanup_prior_review(review_file: Path, prior_path: str) -> None:
-    if not prior_path:
-        return
-    review_dir = review_file.parent
-    pipeline_state = review_dir / FILENAME_PIPELINE_STATE
-    if not pipeline_state.is_file():
-        try:
-            os.unlink(prior_path)
-        except OSError:
-            pass
-
-
 def _generator_version() -> str:
+    """The build string review-orchestrate records on the review.
+
+    Resolved here rather than in `review/`: `_version` lives under `ai/bin`,
+    which a module under `ai/lib` cannot import.
+    """
     try:
         ver = version_string(SCRIPT)
         return ver.splitlines()[-1] if ver else "unknown"
@@ -137,169 +61,49 @@ def _generator_version() -> str:
         return "unknown"
 
 
-def _verify_pr_ownership(pr_number: str, repo: str) -> None:
-    author = gh_client.pr_view(pr_number, "author", repo=repo).get("author") or {}
-    pr_author = author.get("login", "")
-    gh_user = gh_client.login()
-
-    if not pr_author or not gh_user or pr_author == gh_user:
-        return
-
-    log.warn(f"PR #{pr_number} is owned by {pr_author}, not {gh_user}")
-    if not prompt.confirm("Continue with self-review?"):
-        sys.exit(0)
-
-
-def _run_review_body(
-    pr_number, repo, review_file, review_dir, wt_path,
-    session_log, prior_review_path, issue_link, issue_context,
-    max_parallel, max_cost, model, no_post, auto_post,
-    auto_submit, pr_url, effort=None, max_groups=None,
-    skip_phases=frozenset(), disprove=None, generated=False, recover_sha="",
-    *, target_dir,
-) -> None:
-    wall_ms = review_invoke.run(review_invoke.OrchestrateRequest(
-        repo=repo, pr_number=pr_number, review_file=review_file,
-        wt_path=wt_path, target_dir=target_dir, session_log=session_log,
-        bin_dir=BIN_DIR, generator_version=_generator_version(),
-        prior_review_path=prior_review_path, issue_link=issue_link,
-        issue_context=issue_context, max_parallel=max_parallel,
-        max_cost=max_cost, model=model, effort=effort, max_groups=max_groups,
-        skip_phases=skip_phases, disprove=disprove, generated=generated,
-        recover_sha=recover_sha,
-    ))
-
-    _cleanup_prior_review(review_file, prior_review_path)
-    _display_review(review_file)
-
-    posting = review_publish.resolve(
-        repo, pr_number, review_file,
-        no_post=no_post, auto_post=auto_post, auto_submit=auto_submit,
+def _flags(args) -> review_run.ReviewFlags:
+    """The parsed argv as the value the flows read."""
+    return review_run.ReviewFlags(
         bin_dir=BIN_DIR,
+        generator_version=_generator_version(),
+        issue_link=args.issue or "",
+        max_parallel=args.max_parallel,
+        max_cost=args.max_cost,
+        model=args.model,
+        effort=args.effort,
+        max_groups=args.max_groups,
+        skip_phases=phase_skips(args),
+        disprove=args.disprove,
+        generated=args.generated,
+        recover=getattr(args, "recover", False),
+        force=args.force,
+        fix=args.fix,
+        may_publish=args.post or args.push,
+        no_post=args.no_post,
+        auto_post=args.post,
+        auto_submit=args.submit,
+        skip_user_verification=args.skip_user_verification,
+        repo_dir=args.repo_dir or "",
     )
 
-    _print_summary(repo, pr_number, str(review_file), session_log, pr_url,
-                   posting.post_session_log, wall_clock_ms=wall_ms)
-    for hint in posting.hints:
-        log.dim(hint)
+
+def _emit_json_summary(fd: int | None, outcome: review_run.ReviewOutcome) -> None:
+    """Write the machine-readable summary to the descriptor stdout was saved to.
+
+    Takes the outcome rather than re-deriving the path: a self review's file
+    lives under a branch-derived directory that `review_file_path` does not
+    produce, so recomputing it here emitted an all-zero report for a review
+    that had just run.
+    """
+    if fd is None:
+        return
+    summary = json_summary(outcome.repo, outcome.pr_number, str(outcome.review_file))
+    os.write(fd, (summary + "\n").encode())
 
 
 # ── Main flows ───────────────────────────────────────────────────────────────
 
-def _run_review_pr(
-    trail, ctx, pr_number, repo, review_dir, review_file,
-    issue_link, no_post, auto_post, auto_submit,
-    force, repo_dir, max_parallel, max_cost, model,
-    effort=None, max_groups=None,
-    skip_phases=frozenset(), disprove=None, generated=False,
-    recover=False, supersession_override=False,
-) -> None:
-    trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
-               data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
-
-    # Resolved before the issue lookup below, not with the worktree setup it
-    # feeds further down: the repo's own .workbench.yml is what says which
-    # tracker to read, and looking it up without one resolves to nothing.
-    repo_root = review_worktree.find_repo_root(repo, repo_dir)
-    if not repo_root:
-        trail.error("setup_worktree", f"cannot find local clone of {repo}")
-        log.error(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
-        sys.exit(1)
-
-    # Issue detection
-    pr_meta = gh_client.pr_view(pr_number, "headRefName", "body", repo=repo)
-    pr_head = pr_meta.get("headRefName", "")
-    pr_body = pr_meta.get("body", "")
-
-    issue_context = ""
-    detected_link = ""
-    if not issue_link:
-        provider_info = review_issue.load_issue_provider(repo_root)
-        issue_id = review_issue.extract_issue_id(provider_info.name, pr_head, pr_body)
-        issue_result = review_issue.fetch_issue_context(
-            provider_info.name, issue_id, repo, provider_info.options,
-        )
-        detected_link = issue_result.link
-        issue_context = issue_result.context
-        if detected_link:
-            issue_link = detected_link
-
-        if not no_post and not auto_post and not issue_link and not issue_context:
-            issue_link = prompt.ask("Issue link (optional, Enter to skip): ")
-
-    if issue_link or issue_context:
-        trail.info("issue_context", "issue context available",
-                   data={"issue_link": issue_link, "has_context": bool(issue_context)})
-
-    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
-
-    if recover:
-        recover_sha = review_recover.resolve_recover_sha(
-            review_dir, review_recover.get_pr_head_sha(repo, pr_number))
-        has_pipeline_state = True
-        force = True
-    else:
-        recover_sha = ""
-        has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
-
-    if has_pipeline_state and review_file.exists():
-        review_recover.should_auto_recover(repo, pr_number, review_file)
-
-    if not has_pipeline_state:
-        review_preflight.check_stale_review(repo, pr_number, review_file, force)
-    trail.decision(
-        "review_freshness",
-        "resume" if has_pipeline_state else "fresh review",
-        reason="pipeline state found" if has_pipeline_state else "no pipeline state",
-        data={"has_pipeline_state": has_pipeline_state},
-    )
-
-    review_preflight.check_pending_review(repo, pr_number, force)
-
-    # Worktree setup
-    trail.info("setup_worktree", f"setting up PR worktree",
-               data={"repo_root": repo_root, "pr_head": pr_head})
-
-    wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
-
-    # pin_recover_worktree can exit, so it runs under the same finally as the
-    # review itself — otherwise a fallback PR worktree would be left on disk.
-    pinned_wt = None
-    try:
-        wt_path, pinned_wt = review_recover.pin_recover_worktree(
-            recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
-        )
-
-        # Inside the try, so a refusal still cleans up the worktree it read.
-        # Its own flag rather than the `force` above, which by here has
-        # absorbed --post/--no-post — see review_preflight.supersession_override.
-        review_preflight.refuse_if_superseded(
-            wt_path, repo, ctx.target_dir, ctx.branch,
-            override=supersession_override, trail=trail,
-        )
-
-        session_log = str(review_dir / FILENAME_SESSION)
-        prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
-
-        trail.info("delegate_orchestrate", "delegating to review-orchestrate",
-                   data={"wt_path": wt_path, "max_parallel": max_parallel,
-                         "skipped": sorted(str(p) for p in skip_phases),
-                         "max_cost": max_cost, "model": model})
-
-        _run_review_body(
-            pr_number, repo, review_file, review_dir, wt_path,
-            session_log, prior_review_path, issue_link, issue_context,
-            max_parallel, max_cost, model, no_post, auto_post,
-            auto_submit, pr_url, effort=effort, max_groups=max_groups,
-            skip_phases=skip_phases, disprove=disprove, generated=generated,
-            recover_sha=recover_sha, target_dir=ctx.target_dir,
-        )
-    finally:
-        review_worktree.cleanup_worktree(pinned_wt, repo_root)
-        review_worktree.cleanup_worktree(wt_result, repo_root)
-
-
-def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
+def _run_review(args, ctx: pr_context.ResolvedContext) -> review_run.ReviewOutcome:
     """Review the PR *ctx* names.
 
     ``ctx`` comes from ``main()``, which resolved it to take the run lock.
@@ -307,50 +111,18 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
     and left two independently derived copies of the one value this branch
     exists to derive once.
     """
-    no_post = args.no_post
-    auto_post = args.post
-    auto_submit = args.submit
-    issue_link = args.issue or ""
-    max_parallel = args.max_parallel
-    force = args.force
-    skip_phases = phase_skips(args)
-    disprove = args.disprove
-    max_cost = args.max_cost
-    model = args.model
-    repo_dir = args.repo_dir or ""
-    effort = args.effort
-    max_groups = args.max_groups
-    generated = args.generated
-    recover = getattr(args, "recover", False)
-
-    if no_post or auto_post:
-        force = True
-
     pr_number = str(ctx.pr_number)
-    repo = ctx.repo
-
-    review_file = review_file_path(repo, pr_number)
-    review_dir = review_file.parent
-    review_dir.mkdir(parents=True, exist_ok=True)
+    review_file = review_file_path(ctx.repo, pr_number)
+    review_file.parent.mkdir(parents=True, exist_ok=True)
 
     trail = Trail.start(
         script=SCRIPT,
-        context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "pr"},
+        context={"repo": ctx.repo, "pr": pr_number, "branch": ctx.branch, "mode": "pr"},
         debug=getattr(args, "debug", False),
     )
 
     try:
-        _run_review_pr(
-            trail, ctx, pr_number, repo, review_dir, review_file,
-            issue_link, no_post, auto_post, auto_submit,
-            force, repo_dir, max_parallel, max_cost, model,
-            effort=effort, max_groups=max_groups,
-            skip_phases=skip_phases, disprove=disprove, generated=generated,
-            recover=recover,
-            supersession_override=review_preflight.supersession_override(args.force, recover),
-        )
-        # Inside the trail's scope, so a failed write has somewhere to report.
-        _update_pr_state(ctx, str(review_file), trail=trail)
+        return review_run.run_pr_review(ctx, _flags(args), review_file, trail=trail)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise
@@ -358,112 +130,22 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
         trail.finish()
 
 
-def _run_self_review_body(
-    repo, pr_number, wt_path, issue_link, max_parallel,
-    max_cost, model, fix_pass, args,
-    self_review_dir, branch_name, effort=None, max_groups=None,
-    skip_phases=frozenset(), disprove=None, generated=False,
-    recover=False, head_sha="", *, ctx: pr_context.ResolvedContext, trail: Trail,
-) -> None:
-    review_file = self_review_dir / f"review{REVIEW_EXT}"
-    session_log = str(self_review_dir / FILENAME_SESSION)
+def _run_self_review(args) -> review_run.ReviewOutcome:
+    """Review a local checkout.
 
-    # First thing in the body, ahead of the issue-context fetch below: this is
-    # the cheapest point at which the run can still cost nothing.
-    review_preflight.refuse_if_superseded(
-        wt_path, repo, ctx.target_dir, branch_name,
-        override=review_preflight.supersession_override(args.force, recover), trail=trail,
-    )
-
-    if recover:
-        recover_sha = review_recover.resolve_recover_sha(self_review_dir, head_sha)
-        has_pipeline_state = True
-    else:
-        recover_sha = ""
-        has_pipeline_state = (self_review_dir / FILENAME_PIPELINE_STATE).is_file()
-    prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
-
-    issue_context = ""
-    if not issue_link:
-        provider_info = review_issue.load_issue_provider(wt_path)
-        issue_id = review_issue.extract_issue_id(provider_info.name, branch_name)
-        issue_result = review_issue.fetch_issue_context(
-            provider_info.name, issue_id, repo, provider_info.options,
-        )
-        detected_link = issue_result.link
-        issue_context = issue_result.context
-        if detected_link:
-            issue_link = detected_link
-
-    if fix_pass and review_recover.recover_drifted(recover_sha, wt_path):
-        log.error(
-            f"--fix cannot run on a review recovered at {git_client.abbrev(recover_sha)} — HEAD has "
-            f"moved, so the edits would land in a throwaway checkout. Recover without "
-            f"--fix, then run `pr review --self --fix`."
-        )
-        sys.exit(1)
-
-    review_wt_path, pinned_wt = review_recover.pin_recover_worktree(
-        recover_sha, wt_path, wt_path, f"recover-{branch_name}",
-    )
-    request = review_invoke.OrchestrateRequest(
-        repo=repo, pr_number=pr_number, review_file=review_file,
-        wt_path=review_wt_path, target_dir=ctx.target_dir,
-        session_log=session_log, bin_dir=BIN_DIR,
-        generator_version=_generator_version(),
-        mode="self", prior_review_path=prior_review_path,
-        issue_link=issue_link, issue_context=issue_context,
-        max_parallel=max_parallel, max_cost=max_cost, model=model,
-        effort=effort, max_groups=max_groups, skip_phases=skip_phases,
-        disprove=disprove, generated=generated, recover_sha=recover_sha,
-        fix_pass=fix_pass, may_publish=args.post or args.push,
-    )
-
-    # The pin is released as soon as the pipeline is done with it, and before
-    # the review is rendered — a throwaway checkout has no business outliving
-    # the process that reads it. The PR flow holds its pin longer because the
-    # same `finally` also owns a worktree that `pin_recover_worktree` can exit
-    # out of; here there is nothing else in scope to lose.
-    try:
-        wall_ms = review_invoke.run(request)
-    finally:
-        review_worktree.cleanup_worktree(pinned_wt, wt_path)
-
-    _cleanup_prior_review(review_file, prior_review_path)
-    _display_review(review_file)
-
-    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}" if pr_number else ""
-    _print_summary(repo, pr_number, str(review_file), session_log, pr_url, "", branch_name, wall_clock_ms=wall_ms)
-
-    _update_pr_state(ctx, str(review_file), trail=trail)
-
-    json_stdout = getattr(args, "_json_stdout", None)
-    if json_stdout is not None:
-        summary = json_summary(repo, pr_number, str(review_file))
-        os.write(json_stdout, (summary + "\n").encode())
-
-
-def _run_self_review(args) -> None:
+    Resolution lives here rather than in `review/run.py` because acquiring the
+    checkout is what the run lock protects: the lock is claimed between
+    resolving the target and switching to it, and a resolver that did both
+    would have to take a process-lifetime lock from inside the library.
+    """
     pr_input = args.positional[0] if args.positional else ""
-    issue_link = args.issue or ""
-    max_parallel = args.max_parallel
-    skip_user_verification = args.skip_user_verification
-    force = args.force
-    skip_phases = phase_skips(args)
-    disprove = args.disprove
-    max_cost = args.max_cost
-    model = args.model
     repo_dir = args.repo_dir or ""
-    fix_pass = args.fix
-    effort = args.effort
-    max_groups = args.max_groups
-    generated = args.generated
     recover = getattr(args, "recover", False)
 
     is_pr = False
     is_branch = False
     if pr_input:
-        if _is_pr_ref(pr_input):
+        if pr_context.is_pr_ref(pr_input):
             is_pr = True
         else:
             is_branch = True
@@ -505,15 +187,15 @@ def _run_self_review(args) -> None:
     # WORKBENCH_RUN_LOCK.
     run_lock.claim_for_process(
         ctx.target_dir,
-        command=" ".join(["claude-review"] + sys.argv[1:]),
+        command=" ".join([SCRIPT] + sys.argv[1:]),
         started=pr_state.now_iso(),
     )
 
     wt_cleanup: review_worktree.WorktreeResult | None = None
 
     if is_pr:
-        if not skip_user_verification:
-            _verify_pr_ownership(pr_number, repo)
+        if not args.skip_user_verification:
+            review_completion.verify_pr_ownership(pr_number, repo)
         wt_cleanup = review_worktree.switch_to_pr_branch(pr_number, repo, wt_path)
         if wt_cleanup:
             wt_path = wt_cleanup.path
@@ -528,8 +210,8 @@ def _run_self_review(args) -> None:
 
     repo_name = repo.split("/")[-1]
     branch_sanitized = (ctx.branch or "").replace("/", "-")
-    self_review_dir = workbench_paths.reviews_dir() / f"{repo_name}-self-{branch_sanitized}"
-    self_review_dir.mkdir(parents=True, exist_ok=True)
+    review_dir = workbench_paths.reviews_dir() / f"{repo_name}-self-{branch_sanitized}"
+    review_dir.mkdir(parents=True, exist_ok=True)
 
     trail = Trail.start(
         script=SCRIPT,
@@ -538,17 +220,9 @@ def _run_self_review(args) -> None:
     )
 
     try:
-        trail.info("resolve_context", f"self-review in {repo}",
-                   data={"pr": pr_number, "repo": repo, "branch": ctx.branch, "wt_path": wt_path})
-        _run_self_review_body(
-            repo, pr_number, wt_path, issue_link, max_parallel,
-            max_cost, model, fix_pass, args,
-            self_review_dir=self_review_dir,
-            branch_name=ctx.branch or "",
-            effort=effort, max_groups=max_groups,
-            skip_phases=skip_phases, disprove=disprove, generated=generated,
-            recover=recover, head_sha=recover_head_sha,
-            ctx=ctx, trail=trail,
+        return review_run.run_self_review(
+            ctx, _flags(args), review_dir, wt_path,
+            recover_head_sha=recover_head_sha, trail=trail,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -644,8 +318,8 @@ def main() -> None:
         sys.exit(1)
 
     if parsed.self_review:
-        parsed._json_stdout = _json_stdout_fd
-        _run_self_review(parsed)
+        outcome = _run_self_review(parsed)
+        _emit_json_summary(_json_stdout_fd, outcome)
         if _json_stdout_fd is not None:
             os.close(_json_stdout_fd)
         return
@@ -663,8 +337,6 @@ def main() -> None:
 
     pr_arg, branch_arg = pr_context.classify_target(command)
     ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
-    pr_num = str(ctx.pr_number)
-    review_file = review_file_path(ctx.repo, pr_num)
     # A no-op when pr launched us — we resolve the same target and find its key
     # already in WORKBENCH_RUN_LOCK.
     run_lock.claim_for_process(
@@ -672,10 +344,9 @@ def main() -> None:
         command=" ".join([SCRIPT] + sys.argv[1:]),
         started=pr_state.now_iso(),
     )
-    _run_review(parsed, ctx)
+    outcome = _run_review(parsed, ctx)
+    _emit_json_summary(_json_stdout_fd, outcome)
     if _json_stdout_fd is not None:
-        summary = json_summary(ctx.repo, pr_num, str(review_file))
-        os.write(_json_stdout_fd, (summary + "\n").encode())
         os.close(_json_stdout_fd)
 
 

@@ -363,7 +363,8 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
   The queue is intact, and regenerating it means `--post` publishes text they
   never saw — the same violation as posting before approval
 - Never apply fixes without user confirmation for `needs_human` items
-- Never hand-edit `ignore/pr-comments/state.json` to mark a thread settled.
+- Never hand-edit the thread ledger (`pr-comments/state.json`, under the run's
+  target directory in the workbench state root) to mark a thread settled.
   `--settle` is the supported path and resolves the commit the row will cite;
   editing the file by hand is how a summary comes to claim a fix nobody can open
 - Never leave a thread the user fixed by hand unrecorded. `--finish` renders

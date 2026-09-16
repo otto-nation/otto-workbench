@@ -1,9 +1,12 @@
 """The review-thread ledger, and the one state file that is not a snapshot.
 
-``ignore/pr-comments/state.json`` records where every review thread on a PR
-stood at the end of the last run. Most of what it holds — the lifecycle state,
-the reviewer, the last reply seen, the file and line — is re-fetched from the
-API on every run, so losing it costs nothing. Three fields are not:
+``<target_dir>/pr-comments/state.json`` records where every review thread on a
+PR stood at the end of the last run. ``pr.comments.threads_state_path`` owns
+that join; this module is handed the path rather than deriving it.
+
+Most of what the file holds — the lifecycle state, the reviewer, the last reply
+seen, the file and line — is re-fetched from the API on every run, so losing it
+costs nothing. Three fields are not:
 ``classification``, ``summary`` and ``decided_at`` are triage decisions made
 locally, and no API call reproduces them.
 
@@ -117,7 +120,7 @@ class ThreadRecord:
 
 @dataclass(frozen=True)
 class CommentsState:
-    """The whole of ``ignore/pr-comments/state.json``.
+    """The whole of ``<target_dir>/pr-comments/state.json``.
 
     ``threads`` is keyed by GraphQL node id, which is what every consumer joins
     the freshly-fetched threads against.

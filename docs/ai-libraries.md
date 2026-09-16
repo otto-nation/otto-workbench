@@ -483,13 +483,13 @@ They differ only in what makes a file collectable — the run being over, age, o
 the PR being gone — and all of them read what a review directory holds from
 `review.paths.phase_artifacts` rather than naming files themselves.
 
-`pr gc` collects loose files at the reviews root once they are a week old, prunes
-review directories and run-target directories for merged and closed PRs (skipping
-its own target), and sweeps the `state.json`, `run.lock`, and `trail.jsonl` the
-pre-target layout left behind in a worktree's `.workbench/`. The directory itself
-goes only when nothing else is in it. A flat `<name>.md` and its suffixed
-siblings are left alone: those are input to the startup migration that folds the
-old flat layout into directories.
+`pr gc` collects loose files at the reviews root once they are a week old and
+prunes review directories and run-target directories for merged and closed PRs
+(skipping its own target). The `state.json`, `run.lock`, and `trail.jsonl` the
+pre-target layout left in a worktree's `.workbench/` are drained by
+`bin/migrations/20260916-remove-legacy-worktree-state.sh` at sync, not here.
+A flat `<name>.md` and its suffixed siblings are left alone: those are input to
+the startup migration that folds the old flat layout into directories.
 
 The scheduled maintenance job (`otto-workbench maintenance start`) runs `pr gc`
 each cycle, alongside its sync and stale-worktree cleanup — so this sweep, and

@@ -56,6 +56,7 @@ def fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
         return []
     latest_sha = runs[0]["headSha"]
     seen_workflows: set[str] = set()
+    seen_cancelled_workflows: set[str] = set()
     ids: list[int] = []
     for r in runs:
         if r["headSha"] != latest_sha:
@@ -66,7 +67,13 @@ def fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
         # Selected without claiming `wf`. A cancelled run holding no failed job
         # contributes nothing but the one `gh run view` spent reading it, which
         # is the cheaper half of the trade: the other shape hides real failures.
+        # Only the newest cancelled run per workflow is kept — gh run list
+        # returns newest first, so an older cancelled attempt of the same
+        # workflow has nothing the newest one didn't already carry.
         if r.get("conclusion") == "cancelled":
+            if wf in seen_cancelled_workflows:
+                continue
+            seen_cancelled_workflows.add(wf)
             ids.append(r["databaseId"])
             continue
         if wf in seen_workflows:

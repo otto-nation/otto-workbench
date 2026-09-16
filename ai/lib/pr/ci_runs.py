@@ -142,10 +142,14 @@ def _primary_first(payloads: list[dict]) -> list[dict]:
     Order is otherwise preserved, and a run with jobs leads normally however it
     concluded: the jobs are the evidence, and a run that has them has a claim.
     """
-    leads = [p for p in payloads if p.get("conclusion") != "cancelled" or p.get("jobs")]
-    if not leads:
+    lead_index = next(
+        (i for i, p in enumerate(payloads) if p.get("conclusion") != "cancelled" or p.get("jobs")),
+        None,
+    )
+    if lead_index is None:
         return payloads
-    return leads[:1] + [p for p in payloads if p is not leads[0]]
+    rest = payloads[:lead_index] + payloads[lead_index + 1:]
+    return [payloads[lead_index], *rest]
 
 
 def fetch_merged(repo: str, run_ids: list[int]) -> MergedRun | None:

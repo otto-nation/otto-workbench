@@ -313,51 +313,16 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     wt = ctx.require_worktree()
     state = pr_state.load_state(ctx.target_dir)
 
-    pr_label = f"#{state.identity.pr_number}" if state and state.identity.pr_number else "(no PR)"
     branch = state.identity.branch if state else ctx.branch
     repo = state.identity.repo if state else ctx.repo
-
-    lines = [f"## PR Status — {repo} {pr_label} ({branch})", ""]
     push = pr_domains.PushDomain.observed(wt, branch, updated_at=pr_state.now_iso())
 
-    if not state:
-        lines.append("No status data yet. Run: pr ci, pr review, or pr comments")
-        lines.append("")
-        lines += push.render_status()
-        print("\n".join(lines), file=sys.stderr)
-        return 0
-
-    # Held in memory only: the dashboard is a read, and persisting a domain the
-    # command did not act on would date the file by looking at it.
-    state.push = push
-    for domain in pr_state.domains_of(state):
-        rendered = domain.render_status()
-        if rendered:
-            lines += rendered
-            lines.append("")
-    lines.append(_merge_readiness(state))
-
+    lines = pr_state.render_dashboard(state, push, repo=repo, branch=branch)
     print("\n".join(lines), file=sys.stderr)
-
-    json.dump(pr_state.state_to_dict(state), sys.stdout, indent=2)
-    print()
+    if state:
+        json.dump(pr_state.state_to_dict(state), sys.stdout, indent=2)
+        print()
     return 0
-
-
-def _merge_readiness(state: pr_state.PRState) -> str:
-    """The merge-readiness line, folded from what each domain says of itself.
-
-    Unchecked domains are named last and as one clause, because "we did not
-    look" is a different claim from "we looked and it is wrong" and reading a
-    list of blockers should not require telling them apart mid-sentence.
-    """
-    answer = pr_state.merge_readiness(state)
-    issues = list(answer.blockers)
-    if answer.unchecked:
-        issues.append(f"not checked: {', '.join(answer.unchecked)}")
-    if not issues:
-        return "**Merge readiness**: ready"
-    return f"**Merge readiness**: blocked — {'; '.join(issues)}"
 
 
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,

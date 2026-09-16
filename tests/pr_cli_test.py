@@ -29,16 +29,12 @@ _REAL_SUBPROCESS_RUN = subprocess.run
 pr_cli = load_script("pr_cli", BIN_DIR / "pr")
 
 from core import proc  # noqa: E402
-from pr import comments_fix as pr_comments_fix  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
-from pr import fix as pr_fix  # noqa: E402
 from pr import state as pr_state  # noqa: E402
 from core import run_lock  # noqa: E402
 from core import timeouts  # noqa: E402
 from core import tool_parser  # noqa: E402
 from core import workbench_paths  # noqa: E402
-
-from pr.comments_fix import CLOSEOUT_COMMAND  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
@@ -91,129 +87,6 @@ def test_is_pr_target_none():
 
 def test_is_pr_target_empty():
     assert pr_cli._is_pr_target("") is False
-
-
-# ── _merge_readiness ────────────────────────────────────────────────────────
-
-
-def test_merge_readiness_all_green():
-    from pr import state as pr_state
-    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
-    pr_state.apply(state, pr_domains.ReviewSummary(
-        finding_counts={"S": 1}, verdict=pr_domains.ReviewVerdict.APPROVE.value, updated_at="t",
-    ))
-    pr_state.apply(state, pr_domains.CommentsSummary(
-        blocking_reviewers=[], updated_at="t",
-    ))
-    result = pr_cli._merge_readiness(state)
-    assert "ready" in result.lower()
-
-
-def test_merge_readiness_ci_failing():
-    from pr import state as pr_state
-    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.apply(state, pr_domains.CIDomain(conclusion="failure", updated_at="t"))
-    pr_state.apply(state, pr_domains.ReviewSummary(updated_at="t"))
-    pr_state.apply(state, pr_domains.CommentsSummary(updated_at="t"))
-    result = pr_cli._merge_readiness(state)
-    assert "CI failing" in result
-
-
-def test_merge_readiness_must_fix():
-    from pr import state as pr_state
-    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
-    pr_state.apply(state, pr_domains.ReviewSummary(
-        finding_counts={"M": 2}, updated_at="t",
-    ))
-    pr_state.apply(state, pr_domains.CommentsSummary(updated_at="t"))
-    result = pr_cli._merge_readiness(state)
-    assert "must-fix" in result
-
-
-def test_merge_readiness_not_checked():
-    from pr import state as pr_state
-    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    result = pr_cli._merge_readiness(state)
-    assert "not checked" in result
-
-
-def test_merge_readiness_review_incomplete():
-    from pr import state as pr_state
-    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
-    pr_state.apply(state, pr_domains.ReviewSummary(
-        status="partial", finding_counts={}, updated_at="t",
-    ))
-    pr_state.apply(state, pr_domains.CommentsSummary(updated_at="t"))
-    result = pr_cli._merge_readiness(state)
-    assert "review incomplete" in result
-
-
-def test_merge_readiness_review_error():
-    from pr import state as pr_state
-    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
-    pr_state.apply(state, pr_domains.ReviewSummary(
-        status="error", updated_at="t",
-    ))
-    pr_state.apply(state, pr_domains.CommentsSummary(updated_at="t"))
-    result = pr_cli._merge_readiness(state)
-    assert "review incomplete" in result
-
-
-def _green_state():
-    """Everything checked and clean — anything blocked here is the closeout."""
-    from pr import state as pr_state
-    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
-    pr_state.apply(state, pr_domains.ReviewSummary(
-        finding_counts={"S": 1}, verdict=pr_domains.ReviewVerdict.APPROVE.value, updated_at="t",
-    ))
-    pr_state.apply(state, pr_domains.CommentsSummary(blocking_reviewers=[], updated_at="t"))
-    return state
-
-
-def test_merge_readiness_blocked_by_a_deferred_summary():
-    from pr import state as pr_state
-    state = _green_state()
-    pr_state.apply(state, pr_comments_fix.FixSummary(summary_deferred=True, updated_at="t"))
-    result = pr_cli._merge_readiness(state)
-    assert "blocked" in result
-    assert "closeout not delivered" in result
-    assert CLOSEOUT_COMMAND in result
-
-
-def test_merge_readiness_blocked_by_a_pending_reply_queue():
-    from pr import state as pr_state
-    state = _green_state()
-    pr_state.apply(state, pr_comments_fix.FixSummary(replies_pending=True, updated_at="t"))
-    assert "closeout not delivered" in pr_cli._merge_readiness(state)
-
-
-def test_merge_readiness_blocked_by_an_unfiled_tracking_issue():
-    """Deferred comments with nowhere to live are not a mergeable state."""
-    from pr import state as pr_state
-    state = _green_state()
-    pr_state.apply(state, pr_comments_fix.FixSummary(deferred_issue_pending=True, updated_at="t"))
-    result = pr_cli._merge_readiness(state)
-    assert "ready" not in result.lower()
-    assert "closeout not delivered" in result
-
-
-def test_merge_readiness_ignores_a_drained_closeout():
-    from pr import state as pr_state
-    state = _green_state()
-    pr_state.apply(state, pr_comments_fix.FixSummary(
-        fix=pr_fix.FixRecord(
-            items=[pr_fix.ItemOutcome(id="t1", outcome=pr_fix.FixOutcome.FIXED)],
-        ),
-        summary_url="https://example.test/c/1", replies_posted=1, updated_at="t",
-    ))
-    result = pr_cli._merge_readiness(state)
-    assert "closeout" not in result
-    assert "ready" in result.lower()
 
 
 # ── _COMMANDS registry ────────────────────────────────────────────────────

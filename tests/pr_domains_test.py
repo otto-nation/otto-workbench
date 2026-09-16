@@ -50,6 +50,36 @@ def test_an_unwritten_domain_blocks_nothing(name, cls):
     cls().render_status()
 
 
+# ── Readiness.render ──────────────────────────────────────────────────
+
+
+def test_readiness_render_ready():
+    assert pr_domains.Readiness().render() == "**Merge readiness**: ready"
+
+
+def test_readiness_render_blockers_are_the_wrong_we_looked_at():
+    line = pr_domains.Readiness(
+        blockers=("CI failing", "2 must-fix finding(s)"),
+    ).render()
+    assert line == "**Merge readiness**: blocked — CI failing; 2 must-fix finding(s)"
+
+
+def test_readiness_render_names_unchecked_last_as_one_clause():
+    """"we did not look" is a different claim from "we looked and it is wrong"."""
+    line = pr_domains.Readiness(
+        blockers=("CI failing",),
+        unchecked=("review", "comments"),
+    ).render()
+    assert line == (
+        "**Merge readiness**: blocked — CI failing; not checked: review, comments"
+    )
+
+
+def test_readiness_render_unchecked_only():
+    line = pr_domains.Readiness(unchecked=("CI", "review")).render()
+    assert line == "**Merge readiness**: blocked — not checked: CI, review"
+
+
 # ── CIDomain ──────────────────────────────────────────────────────────────
 
 

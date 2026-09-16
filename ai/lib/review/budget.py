@@ -30,6 +30,7 @@ budgets retries, not bytes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent.phases import ModelAlias, collect_phase_models
 from review.grouping import classify_tier, format_profiles_section
@@ -227,7 +228,8 @@ def prompt_budget_bytes(model: str) -> int:
 
 
 def collection_budget_bytes(
-    explicit_model: str | None = None, project_root: str | None = None,
+    explicit_model: str | None = None,
+    project_root: Path | str | None = None,
 ) -> int:
     """The ceiling collection may gather against, across every review phase.
 

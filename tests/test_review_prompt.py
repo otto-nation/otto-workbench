@@ -49,6 +49,12 @@ MAX_PROMPT_BYTES = model_budget_bytes()
 
 
 def _fit_budget(job, known_sections, **kw):
+    """`review.prompt._fit_budget` with this file's default budget applied.
+
+    Shadows the real name deliberately: the budget is a required argument now,
+    and two dozen call sites here care about the ladder rather than about which
+    ceiling it ran against. A test that cares passes `budget_bytes` itself.
+    """
     kw.setdefault("budget_bytes", MAX_PROMPT_BYTES)
     return _fit_budget_impl(job, known_sections, **kw)
 
@@ -1042,6 +1048,8 @@ class TestLedgerInstructionNamesEveryBreak:
             "the parser breaks a verdict on characters the instruction never "
             f"names: {sorted(accepted - set(DISPOSITION_TAIL_PROSE))}"
         )
+
+
 # ── The ceiling is the model's, not a constant ──────────────────────────────
 
 

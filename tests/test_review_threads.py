@@ -8734,6 +8734,24 @@ class TestFinishReconcilesCommentItems:
         saved = pr_state.load_state(worktree / "target")
         assert saved.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
+    def test_a_reconciled_row_re_arms_the_summary(self, rt, worktree):
+        """The corrected row has to reach the comment the reviewer reads.
+
+        `render_deferred_summary` early-returns unless a summary is deferred, so
+        a --finish that reconciled a row on a PR whose summary already went out
+        saved the correction locally and left the published comment saying
+        whatever the round before it said.
+        """
+        ctx = self._save(worktree)
+        self._run(rt, ctx, [_our_reply("#issuecomment-77")])
+        assert pr_state.load_state(worktree / "target").fix.summary_deferred
+
+    def test_a_round_that_reconciled_nothing_owes_no_summary(self, rt, worktree):
+        """Re-arming on a no-op would leave a closeout owed on every run."""
+        ctx = self._save(worktree)
+        self._run(rt, ctx, [_our_reply("#issuecomment-99")])
+        assert not pr_state.load_state(worktree / "target").fix.summary_deferred
+
 
 class TestFinishAdoptsThreadsNoRoundSaw:
     """The wiring: --finish is the stage an answered thread finally reaches.
@@ -8744,11 +8762,11 @@ class TestFinishAdoptsThreadsNoRoundSaw:
     three consecutive runs that way.
     """
 
-    def _save(self, worktree, items=()):
+    def _save(self, worktree):
         pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
-            fix=_fix(head_sha="aaaaaaa", items=list(items)),
+            fix=_fix(head_sha="aaaaaaa", items=[]),
         ))
         return make_ctx(branch="b", worktree_root=worktree, head_sha="aaaaaaa",
                         target_dir=worktree / "target")
@@ -8842,8 +8860,14 @@ class TestDuplicateFindingRendersOnce:
         body = self._body(content, [self._thread()], [self._item(line=9)])
         assert len(summary_scope.table_rows(body)) == 2
 
-    def test_an_item_naming_no_line_is_never_folded(self, content):
-        """Without a line there is nothing precise enough to call it the same point."""
+    def test_an_item_naming_no_line_falls_back_to_its_text(self, content):
+        """No line is "cannot answer", and the text signal answers instead.
+
+        These two summaries are shorter than a containment match is allowed to
+        be, so nothing folds — but the reason is the length gate rather than the
+        missing line. The class below covers the case where the text is long
+        enough to carry the match.
+        """
         body = self._body(content, [self._thread()], [self._item(line=0)])
         assert len(summary_scope.table_rows(body)) == 2
 
@@ -8898,6 +8922,165 @@ class TestDuplicateFindingRendersOnce:
         )
         assert len(summary_scope.table_rows(body)) == 1
         assert "#issuecomment-77" not in body
+
+
+class TestALineLessItemFoldsOnItsText:
+    """The fold's other end: an item with no line had no key to fold on at all.
+
+    Triage is asked for a line only "if referenced in the item", and a prose
+    paragraph references none — so `finding_location` returned "" on exactly the
+    copy the fold exists to remove, and `thread_covered_locations` stripped it
+    from the covered set. One reviewer's five inline threads plus a review-body
+    paragraph restating four of them published four duplicate rows from the
+    weaker surface and none for the fifth.
+
+    The second signal is exact containment of normalised text, not similarity:
+    a false fold hides a reviewer's finding entirely, a missed one only prints a
+    duplicate row.
+    """
+
+    POINT = "the retry loop is unbounded and will spin forever"
+
+    def _thread_entry(self, **kw):
+        defaults = {"id": "t1", "file": "a.go", "line": 7, "reviewer": "kgn",
+                    "summary": self.POINT}
+        defaults.update(kw)
+        return CommentItem(**defaults)
+
+    def _item(self, **kw):
+        defaults = {"id": "ic-77-0", "file": "a.go", "line": 0, "reviewer": "kgn",
+                    "summary": "the retry loop is unbounded", "reason": "contested"}
+        defaults.update(kw)
+        return CommentItem(**defaults)
+
+    def _threads(self, body=""):
+        return {"t1": ReportThread(
+            id="t1", file="a.go", line=7, reviewer="kgn",
+            comments=[{"databaseId": 5, "body": body or self.POINT}],
+        )}
+
+    def _body(self, rt, content, fixed, needs_human, threads_by_id=None):
+        cp = attribution.CommitPushResult("abc1234", "pushed", "")
+        return summary_render.build_summary_body(
+            content(fixed=fixed, needs_human=needs_human), cp, "owner/repo", 42,
+            self._threads() if threads_by_id is None else threads_by_id,
+        )
+
+    def test_the_line_less_item_folds_into_the_thread_it_restates(self, rt, content):
+        body = self._body(rt, content, [self._thread_entry()], [self._item()])
+        assert len(summary_scope.table_rows(body)) == 1
+        assert "#issuecomment-77" not in body
+        assert "#discussion_r5" in body
+
+    def test_the_counts_line_does_not_promise_the_folded_row(self, rt, content):
+        body = self._body(rt, content, [self._thread_entry()], [self._item()])
+        assert "need discussion" not in body
+        assert "1 fixed" in body
+
+    def test_an_unrelated_item_is_not_folded(self, rt, content):
+        """The negative case the asymmetry is about: a false fold hides a finding."""
+        body = self._body(
+            rt, content, [self._thread_entry()],
+            [self._item(summary="this variable name is misleading to the reader")],
+        )
+        assert len(summary_scope.table_rows(body)) == 2
+        assert "#issuecomment-77" in body
+
+    def test_another_reviewers_restatement_is_another_finding(self, rt, content):
+        """Two people writing about one point are writing about two things."""
+        body = self._body(
+            rt, content, [self._thread_entry()], [self._item(reviewer="amp")])
+        assert len(summary_scope.table_rows(body)) == 2
+
+    def test_a_restatement_of_another_file_is_another_finding(self, rt, content):
+        body = self._body(
+            rt, content, [self._thread_entry()], [self._item(file="b.go")])
+        assert len(summary_scope.table_rows(body)) == 2
+
+    def test_a_short_restatement_is_left_alone(self, rt, content):
+        """Below the length gate, containment is coincidence rather than evidence."""
+        body = self._body(
+            rt, content, [self._thread_entry(summary="drop it")],
+            [self._item(summary="drop it")],
+        )
+        assert len(summary_scope.table_rows(body)) == 2
+
+    def test_the_reviewers_own_comment_body_can_carry_the_match(self, rt, content):
+        """Triage summarises a thread; the item is likelier to quote the comment."""
+        body = self._body(
+            rt, content, [self._thread_entry(summary="unbounded retry")],
+            [self._item()], self._threads(body=self.POINT),
+        )
+        assert len(summary_scope.table_rows(body)) == 1
+
+    def test_an_item_that_does_have_a_line_still_folds_on_location(
+        self, rt, content,
+    ):
+        """The precise signal is asked first, and unrelated text does not undo it."""
+        body = self._body(
+            rt, content, [self._thread_entry()],
+            [self._item(line=7, summary="a completely different point entirely")],
+        )
+        assert len(summary_scope.table_rows(body)) == 1
+
+    def test_an_item_with_a_line_elsewhere_does_not_fall_back_to_text(
+        self, rt, content,
+    ):
+        """A line that answers "no" is an answer; only "" falls through."""
+        body = self._body(
+            rt, content, [self._thread_entry()], [self._item(line=9)])
+        assert len(summary_scope.table_rows(body)) == 2
+
+    def test_the_folded_text_is_reported_for_the_carry_forward_step(
+        self, rt, content,
+    ):
+        round_content = content(
+            fixed=[self._thread_entry()], needs_human=[self._item()])
+        threads = self._threads()
+        assert summary_model.folded_item_ids(round_content, threads) == {"ic-77-0"}
+        # The thread's location, which is the one the fold kept. The published
+        # item row carries no line, so `row_location_key` reads "" off it and
+        # this set can never recognise it — hence the second one.
+        assert summary_model.folded_locations(round_content, threads) == frozenset(
+            {"kgn|a.go:7"})
+        assert summary_model.folded_restatements(round_content, threads) == frozenset(
+            {"the retry loop is unbounded"})
+
+    def test_an_item_folded_on_location_is_not_reported_as_text(self, rt, content):
+        """`folded_locations` already names it; naming it twice widens the fold."""
+        round_content = content(
+            fixed=[self._thread_entry()], needs_human=[self._item(line=7)])
+        assert summary_model.folded_restatements(
+            round_content, self._threads()) == frozenset()
+
+    def test_the_published_row_of_a_text_fold_is_not_carried_back(self, rt):
+        """Otherwise the duplicate returns verbatim every round, for good."""
+        thread_row = (
+            "| [the retry loop is unbounded and will spin forever]"
+            "(https://github.com/o/r/pull/1#discussion_r5) | @kgn | "
+            "[`a.go:7`](https://github.com/o/r/blob/abc/a.go#L7) | Fixed |")
+        item_row = (
+            "| [the retry loop is unbounded](https://github.com/o/r/pull/1"
+            "#issuecomment-77) | @kgn | `a.go` | contested |")
+        published = f"{thread_row}\n{item_row}"
+        assert summary_scope.carried_over_rows(
+            published, thread_row,
+            folded_texts=frozenset({"the retry loop is unbounded"}),
+        ) == []
+
+    def test_an_unfolded_item_row_with_no_line_is_still_carried(self, rt):
+        thread_row = (
+            "| [the retry loop is unbounded and will spin forever]"
+            "(https://github.com/o/r/pull/1#discussion_r5) | @kgn | "
+            "[`a.go:7`](https://github.com/o/r/blob/abc/a.go#L7) | Fixed |")
+        other = (
+            "| [the logging here is far too chatty](https://github.com/o/r/pull/1"
+            "#issuecomment-77) | @kgn | `a.go` | contested |")
+        published = f"{thread_row}\n{other}"
+        assert summary_scope.carried_over_rows(
+            published, thread_row,
+            folded_texts=frozenset({"the retry loop is unbounded"}),
+        ) == [other]
 
 
 class TestFoldedRowsAreNotCarriedBack:

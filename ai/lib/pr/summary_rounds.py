@@ -27,7 +27,7 @@ from pr import comments as pc
 from pr import permalinks
 from pr import summary_model
 from pr import summary_scope
-from pr.fix import FixOutcome
+from pr.fix import FixOutcome, SettledBy
 from pr.thread_models import CommentItem, ReportThread
 
 @dataclass(frozen=True)
@@ -105,6 +105,7 @@ class RoundScope:
 
     def covers(
         self, key: str, activity_at: str, outcome: FixOutcome | None = None,
+        settled_by: SettledBy | None = None,
     ) -> bool:
         """Whether this round's summary writes the row keyed `key`.
 
@@ -112,6 +113,11 @@ class RoundScope:
         compared against the record's newest word rather than against the
         rendered cell, because one outcome has several wordings and a cell
         comparison would call every one of them a change.
+
+        `settled_by` is who reached that outcome, and it is here only for the
+        floor below — see `_decayed`. A caller that cannot say passes nothing,
+        which reads as the pass's own work and is what every row written before
+        the field existed was.
 
         An entry the run cannot date — `activity_at` empty — reads as quiet
         rather than as new. A thread an earlier round settled stops being
@@ -128,9 +134,39 @@ class RoundScope:
         if key not in self.published_keys or key in self.target_keys:
             return True
         published = self.published_outcomes.get(key)
-        if outcome is not None and published is not None and outcome != published:
+        changed = (
+            outcome is not None and published is not None and outcome != published
+        )
+        if changed and not _decayed(published, outcome, settled_by):
             return True
+        # A floored transition falls through rather than returning: what it
+        # withdraws is the outcome-changed escape, not the activity test under
+        # it. A reviewer who has spoken since the summary was written is owed an
+        # answer whatever this round would have called the row.
         return activity_at > self.since
+
+
+def _decayed(
+    published: FixOutcome, outcome: FixOutcome, settled_by: SettledBy | None,
+) -> bool:
+    """Whether a changed outcome is attribution decay rather than news.
+
+    One transition, in one direction: a row published as FIXED that this round
+    would report as ALREADY_ADDRESSED. A fix does not become un-fixed, and the
+    two cells say opposite things to the person who raised the point — the flat
+    wording tells them their comment needed no action. What makes the transition
+    reachable is that the fixed reading is re-derived from `git log -L` on every
+    round rather than read from the record, so an evidence line deleted or moved
+    beyond the range's reach resolves to nothing the next time it is asked.
+
+    An operator's settlement is the one legitimate form of it. `--settle --as
+    already_addressed` is a person saying the row needed no action and clearing
+    its commit, so burying that would leave the published fix claim standing
+    against the answer they just gave.
+    """
+    if published is not FixOutcome.FIXED or outcome is not FixOutcome.ALREADY_ADDRESSED:
+        return False
+    return settled_by is not SettledBy.OPERATOR
 
 
 def comment_timestamps(

@@ -23,7 +23,7 @@ import pytest  # noqa: E402
 from pr import summary_rounds  # noqa: E402
 from pr.comments import MarkerComment, MarkerHistory  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
-from pr.fix import FixOutcome  # noqa: E402
+from pr.fix import FixOutcome, SettledBy  # noqa: E402
 from pr.summary_model import TABLE_DIVIDER, TABLE_HEADER  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
@@ -124,6 +124,56 @@ class TestTheNewestWordOnARowWins:
             _history(_comment(_body(_row(T1, "Deferred")), cid=1),
                      _comment(_body(_row(T1, "Deferred")), cid=2)), False)
         assert not scope.covers(T1, activity_at="", outcome=FixOutcome.DEFERRED)
+
+    def _published_as_fixed(self):
+        """A row two comments already carry as a fix, citing a commit."""
+        return summary_rounds.round_scope(
+            _history(_comment(_body(_row(T1, "Fixed in `abc1234`")), cid=1),
+                     _comment(_body(_row(T1, "Fixed in `abc1234`")), cid=2)), False)
+
+    def test_a_published_fix_is_not_restated_as_already_addressed(self):
+        """A fix does not become un-fixed, and the two cells say opposite things.
+
+        The fixed reading is re-derived from `git log -L` every round, so an
+        evidence line that stops resolving flips the row to the flat wording —
+        which tells the reviewer their comment needed no action, on a point the
+        branch fixed for them and already published as fixed.
+        """
+        assert not self._published_as_fixed().covers(
+            T1, activity_at="", outcome=FixOutcome.ALREADY_ADDRESSED)
+
+    def test_an_operator_settling_it_that_way_is_written(self):
+        """`--settle --as already_addressed` is a person answering, not decay."""
+        assert self._published_as_fixed().covers(
+            T1, activity_at="", outcome=FixOutcome.ALREADY_ADDRESSED,
+            settled_by=SettledBy.OPERATOR)
+
+    def test_reconciliation_reaching_the_same_outcome_is_still_floored(self):
+        """Only the operator is exempt. Reconciliation reads GitHub, not a person."""
+        assert not self._published_as_fixed().covers(
+            T1, activity_at="", outcome=FixOutcome.ALREADY_ADDRESSED,
+            settled_by=SettledBy.RECONCILIATION)
+
+    def test_the_floor_is_one_transition_in_one_direction(self):
+        """Everything else the round has something new to say about is written."""
+        scope = self._published_as_fixed()
+        assert scope.covers(T1, activity_at="", outcome=FixOutcome.DEFERRED)
+        assert scope.covers(T1, activity_at="", outcome=FixOutcome.DISMISSED)
+        assert scope.covers(
+            T1, activity_at="", outcome=FixOutcome.SETTLED_ELSEWHERE)
+
+    def test_an_already_addressed_row_becoming_fixed_is_still_written(self):
+        """The other direction is news: the branch moved after the reviewer asked."""
+        scope = summary_rounds.round_scope(
+            _history(_comment(_body(_row(T1, "Already addressed")), cid=1)), False)
+        assert scope.covers(T1, activity_at="", outcome=FixOutcome.FIXED)
+
+    def test_a_reviewer_speaking_again_still_reopens_the_row(self):
+        """The floor suppresses a restatement, not a thread with new activity."""
+        scope = self._published_as_fixed()
+        assert scope.covers(
+            T1, activity_at="2030-01-01T00:00:00Z",
+            outcome=FixOutcome.ALREADY_ADDRESSED)
 
 
 class TestTheScopeDatesTheBodyNotTheComment:

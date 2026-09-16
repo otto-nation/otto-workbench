@@ -92,8 +92,8 @@ _SOURCE_ANCHOR_RE = re.compile(
     r"#(?:" + "|".join(re.escape(a) for a in CommentSourceKind.anchors()) + r")-(\d+)")
 
 
-def _our_verdict_stands(thread: ReportThread) -> bool:
-    """Whether the newest reply of ours on this thread opens by naming a verdict.
+def _our_verdict(thread: ReportThread) -> FixOutcome | None:
+    """Which outcome the newest reply of ours on this thread names, if any.
 
     Newest first, same principle `thread_replies.has_hand_written_reply` and
     `thread_replies.our_last_reply_id` apply to our standing reply: whatever we
@@ -103,10 +103,10 @@ def _our_verdict_stands(thread: ReportThread) -> bool:
     because a verdict appears somewhere in the history.
 
     Two tests, and the author half is the load-bearing one. What counts as a
-    verdict is `thread_replies.names_a_verdict`, which accepts a wording a
-    person typed as well as one of our templates — and a wording a person typed
-    is a wording a reviewer can type too. Reading theirs as ours would settle
-    the thread on the strength of the complaint.
+    verdict is `thread_replies.verdict_kind`, which accepts a wording a person
+    typed as well as one of our templates — and a wording a person typed is a
+    wording a reviewer can type too. Reading theirs as ours would settle the
+    thread on the strength of the complaint.
 
     Our login is the thread's own `my_login`, the same field the reply upsert
     decides edit-vs-post from. Without one there is no telling the two apart, so
@@ -126,14 +126,20 @@ def _our_verdict_stands(thread: ReportThread) -> bool:
     for index in range(len(comments) - 1, -1, -1):
         comment = comments[index]
         body = str(comment.get("body", ""))
-        if body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
-            return True
-        if index == 0 or not login:
+        # A template is ours by construction, so it needs no author; anything
+        # else has to carry our login before its wording is read as a verdict,
+        # and the root is excluded from that check since the root is never
+        # ours.
+        if index == 0 and not body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
             continue
         author = ((comment.get("author") or {}).get("login") or "").lower()
-        if author == login:
-            return thread_replies.names_a_verdict(body)
-    return False
+        ours = body.startswith(thread_replies.HANDLED_REPLY_PREFIXES) or (
+            bool(login) and author == login
+        )
+        if not ours:
+            continue
+        return thread_replies.verdict_kind(body)
+    return None
 
 
 def settlement_for(thread: ReportThread | None) -> FixOutcome | None:
@@ -142,20 +148,22 @@ def settlement_for(thread: ReportThread | None) -> FixOutcome | None:
     Two grades of evidence, and which one it is decides what may be claimed. A
     standing reply of ours — applied, already addressed, dismissed, or the same
     verdict a person typed in their own words — names the ending outright, so
-    the thread reads as FIXED however its resolve button stands. What makes a
-    wording ours is the login behind it: see `_our_verdict_stands`.
+    the thread reads as whichever of those it named however its resolve button
+    stands. What makes a wording ours is the login behind it, and which
+    outcome it names is `_our_verdict`.
 
     Resolution on its own names nothing of the sort. The button covers a
     reviewer who was answered, who deferred the point, or who withdrew it, as
     readily as one whose fix landed, so it settles the thread without saying
     anybody fixed anything: SETTLED_ELSEWHERE. Both grades disqualify the thread
-    from being reported as deferred, which is what this is asked for; only the
-    first is a fix.
+    from being reported as deferred, which is what this is asked for; only a
+    reply naming FIXED is a fix.
     """
     if not thread:
         return None
-    if _our_verdict_stands(thread):
-        return FixOutcome.FIXED
+    verdict = _our_verdict(thread)
+    if verdict is not None:
+        return verdict
     if thread.is_resolved or thread.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED):
         return FixOutcome.SETTLED_ELSEWHERE
     return None

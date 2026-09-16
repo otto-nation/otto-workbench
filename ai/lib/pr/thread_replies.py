@@ -40,6 +40,7 @@ from pr import attribution
 from pr import comments as pc
 from pr import context as pr_context
 from pr import permalinks
+from pr.fix import FixOutcome
 from pr.thread_models import THREAD_ANCHOR, CommentItem, ReportThread
 
 
@@ -98,6 +99,46 @@ HANDWRITTEN_VERDICT_WORDS = ("Fixed", "Done", "Dismissed")
 HANDWRITTEN_VERDICT_RE = re.compile(
     r"(?:" + "|".join(HANDWRITTEN_VERDICT_WORDS) + r")(?=$|[\s:;,.!—–-])")
 
+# What each generated opening reports having reached. The reply text and the
+# outcome it names are two separate vocabularies with no shared root, so this
+# is listed rather than derived — a fifth generated opening needs an entry
+# here or `verdict_kind` misses what it names.
+_PREFIX_VERDICT_OUTCOME: dict[str, FixOutcome] = {
+    APPLIED_REPLY_PREFIX: FixOutcome.FIXED,
+    ADDRESSED_REPLY_PREFIX: FixOutcome.ALREADY_ADDRESSED,
+    DISMISSED_REPLY_PREFIX: FixOutcome.DISMISSED,
+}
+# Same for the words a person types instead of a template. Kept in step with
+# HANDWRITTEN_VERDICT_WORDS by hand, for the same reason as the mapping above.
+_HANDWRITTEN_VERDICT_OUTCOME: dict[str, FixOutcome] = {
+    "Fixed": FixOutcome.FIXED,
+    "Done": FixOutcome.FIXED,
+    "Dismissed": FixOutcome.DISMISSED,
+}
+
+
+def verdict_kind(body: str) -> FixOutcome | None:
+    """Which outcome this reply reports reaching, or None when it names none.
+
+    The finer answer beneath `names_a_verdict`, for a caller that has to grade
+    the evidence rather than merely gate on it — `settlement_for` is not
+    entitled to call every verdict FIXED just because a verdict was named: a
+    hand-typed "Dismissed: ..." reports the same ending its generated template
+    does, and reading it as FIXED tells the reviewer code changed when the
+    point was waved off instead.
+
+    **Only meaningful once the caller has established the body is ours.** See
+    `names_a_verdict`.
+    """
+    stripped = body.lstrip()
+    for prefix, outcome in _PREFIX_VERDICT_OUTCOME.items():
+        if stripped.startswith(prefix):
+            return outcome
+    match = HANDWRITTEN_VERDICT_RE.match(stripped)
+    if match:
+        return _HANDWRITTEN_VERDICT_OUTCOME[match.group(0)]
+    return None
+
 
 def names_a_verdict(body: str) -> bool:
     """Whether this reply body opens by saying the thread was handled.
@@ -111,11 +152,14 @@ def names_a_verdict(body: str) -> bool:
     reviewer writing "Fixed in my branch, please rebase" would otherwise settle
     their own thread on the strength of their own complaint, which is the one
     failure worth more than every recognition this adds.
+
+    Answers only *whether* a verdict was named — `verdict_kind` answers
+    *which* one, and is what a caller that must not conflate FIXED with
+    DISMISSED needs instead.
     """
-    stripped = body.lstrip()
-    if stripped.startswith(HANDLED_REPLY_PREFIXES):
-        return True
-    return bool(HANDWRITTEN_VERDICT_RE.match(stripped))
+    return verdict_kind(body) is not None
+
+
 # Every trailing paragraph a generated reply can have: one sentence naming a
 # commit, a file, or an issue. Kept in step with the four body_fn builders
 # below — a new trailing line there needs its opening added here, or the reply
@@ -359,6 +403,10 @@ def post_already_addressed_replies(
     `reply_to_fixed`, which is here for the linkless body and not because the
     reviewer's point was moot.
     """
+    # No comment timestamps: `AddressingHistory` reads those to date an entry
+    # with no review thread, and `_post_thread_replies` skips exactly those — a
+    # decomposed item has no thread to reply on, so it is reported in the
+    # summary table instead. Every entry that reaches a body here dates itself.
     history = attribution.AddressingHistory(wt_path)
     head_sha = git_client.head_sha(short=True, cwd=wt_path)
 

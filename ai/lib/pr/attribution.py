@@ -30,6 +30,7 @@ from pathlib import Path
 from git import client as git_client
 from git import topology as git_topology
 from git.land import CommitStatus, LandResult
+from pr import permalinks
 from pr.fix import SettledBy
 from pr.thread_models import CommentItem, ReportThread
 
@@ -289,6 +290,20 @@ def commit_timestamp(wt_path: Path, sha: str) -> float:
         return 0.0
 
 
+def posix_seconds(stamp: str) -> float:
+    """An ISO-8601 timestamp in POSIX seconds, or 0.0 when it cannot be read.
+
+    Two surfaces date a review point — a thread's first comment and a top-level
+    comment's `created_at` / `submitted_at` — and both arrive as the string
+    GitHub wrote. Parsed in one place so a comparison against a commit date
+    cannot mean one thing for a thread and another for a comment item.
+    """
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def thread_opened_at(thread: ReportThread | None) -> float:
     """When the reviewer opened `thread`, in POSIX seconds, or 0.0 when unknown.
 
@@ -299,11 +314,7 @@ def thread_opened_at(thread: ReportThread | None) -> float:
     """
     if not thread or not thread.comments:
         return 0.0
-    stamp = str(thread.comments[0].get("createdAt", "") or "")
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0.0
+    return posix_seconds(str(thread.comments[0].get("createdAt", "") or ""))
 
 
 def handled_outside(entry: CommentItem) -> bool:
@@ -363,10 +374,21 @@ class AddressingHistory:
     The reply and the summary row both ask this object the same question so the
     two cannot disagree, and it caches both git lookups because `git log -L` is
     a process per location and every surface asks about the same threads.
+
+    `sources_at` is when each top-level comment a row can be cut from was
+    written, keyed the way `summary_rounds.comment_timestamps` keys it. A
+    decomposed item has no review thread — looking its synthetic id up among
+    threads can only ever miss — so without this the run could not date one side
+    of the comparison and every such row read as predating the review, whatever
+    commit made its point true. Omitting it is the honest reading for a caller
+    that has no comment listing, and leaves those rows worded as they were.
     """
 
-    def __init__(self, wt_path: Path | None) -> None:
+    def __init__(
+        self, wt_path: Path | None, sources_at: dict[str, str] | None = None,
+    ) -> None:
         self._wt_path = wt_path
+        self._sources_at = sources_at or {}
         # Keyed by location rather than by file: two threads on one file are the
         # case this reply got wrong, so a per-file cache would re-impose the
         # answer `find_addressing_commit` was narrowed to stop giving.
@@ -398,7 +420,7 @@ class AddressingHistory:
         the thread. How the row reads is untouched; only the commit link goes.
         """
         sha = self._commit_for(entry)
-        landed_after = bool(sha) and self._postdates(sha, thread)
+        landed_after = bool(sha) and self._postdates(sha, entry, thread)
         if acted and not landed_after:
             return AddressedFraming(True)
         if handled_outside(entry):
@@ -425,8 +447,10 @@ class AddressingHistory:
             self._commits[where] = find_addressing_commit(self._wt_path, *where) or ""
         return self._commits[where]
 
-    def _postdates(self, sha: str, thread: ReportThread | None) -> bool:
-        """Whether `sha` landed after the reviewer opened `thread`.
+    def _postdates(
+        self, sha: str, entry: CommentItem, thread: ReportThread | None,
+    ) -> bool:
+        """Whether `sha` landed after the reviewer raised this entry's point.
 
         Either timestamp missing reads as "no", which keeps the pre-existing
         prefix: claiming credit for a fix is the assertion that needs evidence,
@@ -435,5 +459,21 @@ class AddressingHistory:
         if sha not in self._committed_at:
             self._committed_at[sha] = commit_timestamp(self._wt_path, sha)
         landed_at = self._committed_at[sha]
-        asked_at = thread_opened_at(thread)
+        asked_at = self._asked_at(entry, thread)
         return bool(landed_at and asked_at) and landed_at > asked_at
+
+    def _asked_at(self, entry: CommentItem, thread: ReportThread | None) -> float:
+        """When the reviewer raised this entry's point, or 0.0 when unknown.
+
+        A review thread dates itself. A decomposed item has no thread, and the
+        comment it was cut from is the only surface that can say when the point
+        was made — so the row and the reply both read it here rather than at one
+        of the three call sites, which is what keeps them from disagreeing about
+        whether one fix landed in response.
+        """
+        if thread:
+            return thread_opened_at(thread)
+        source = permalinks.comment_item_source(entry)
+        if not source.ok:
+            return 0.0
+        return posix_seconds(self._sources_at.get(source.id, ""))

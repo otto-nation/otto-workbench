@@ -97,10 +97,16 @@ class TestWhatGithubShowsBecameOfAThread:
     def test_an_open_thread_with_no_reply_of_ours_shows_nothing(self):
         assert settlement.settlement_for(_thread(bodies=["please fix this"])) is None
 
-    @pytest.mark.parametrize("prefix", thread_replies.HANDLED_REPLY_PREFIXES)
-    def test_a_reply_naming_the_verdict_reads_as_fixed(self, prefix):
+    @pytest.mark.parametrize("prefix, outcome", [
+        (thread_replies.APPLIED_REPLY_PREFIX, FixOutcome.FIXED),
+        (thread_replies.ADDRESSED_REPLY_PREFIX, FixOutcome.ALREADY_ADDRESSED),
+        (thread_replies.DISMISSED_REPLY_PREFIX, FixOutcome.DISMISSED),
+    ])
+    def test_a_reply_naming_the_verdict_reads_as_the_verdict_it_names(
+        self, prefix, outcome,
+    ):
         thread = _thread(bodies=[f"{prefix} — see abc1234."])
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert settlement.settlement_for(thread) is outcome
 
     def test_a_deferred_reply_names_no_ending(self):
         """Deferring says work is still owed, which is the opposite of settled."""
@@ -204,11 +210,23 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
     @pytest.mark.parametrize(
         "body",
         ["Fixed — renamed it.", "Fixed: renamed it.", "Fixed in abc1234.",
-         "Done.", "Done — dropped the guard.", "Dismissed: the premise fails."],
+         "Done.", "Done — dropped the guard."],
     )
-    def test_the_ways_a_person_spells_a_verdict(self, body):
+    def test_the_ways_a_person_spells_fixed(self, body):
         thread = _authored(("kgn", _FINDING), ("me", body))
         assert settlement.settlement_for(thread) is FixOutcome.FIXED
+
+    def test_a_hand_typed_dismissal_reads_as_dismissed_not_fixed(self):
+        """The bug this grading exists to prevent: a wave-off is not a fix.
+
+        `verdict_kind` recognises "Dismissed" as a hand-typed opening the same
+        way it recognises "Fixed" — collapsing both into FIXED would tell the
+        reviewer code changed when the point was waved off instead.
+        """
+        thread = _authored(
+            ("kgn", THE_REVIEWERS_POINT), ("me", "Dismissed: the premise fails."),
+        )
+        assert settlement.settlement_for(thread) is FixOutcome.DISMISSED
 
     def test_a_reviewer_using_our_wording_is_not_our_verdict(self):
         """The negative the widening is bought with.

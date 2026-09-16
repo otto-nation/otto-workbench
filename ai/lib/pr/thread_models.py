@@ -302,6 +302,12 @@ class CommentItem:
         `FixSummary.reviewers` and does not travel here. `from_outcome` is what
         puts the two back together, and the two are inverses: what goes out
         through one comes back through the other, provenance included.
+
+        The evidence location travels for the same reason the anchor does, and
+        is not the same location: a record that kept only the anchor made the
+        round that replayed it ask `git log -L` at a different line from the
+        round that published it, which is how a row published as a fix came back
+        one round later reworded as one that needed no action.
         """
         return ItemOutcome(
             id=self.id,
@@ -313,6 +319,8 @@ class CommentItem:
             reason=reason or self.reason or self.reasoning,
             commit_sha=self.commit_sha,
             read_sha=self.read_sha,
+            evidence_file=self.evidence_file,
+            evidence_line=self.evidence_line,
             verified=self.verified,
             verify_detail=self.verify_detail,
         )
@@ -347,6 +355,8 @@ class CommentItem:
             summary=outcome.summary,
             commit_sha=outcome.commit_sha,
             read_sha=outcome.read_sha,
+            evidence_file=outcome.evidence_file,
+            evidence_line=outcome.evidence_line,
             outcome=outcome.outcome,
             settled_by=outcome.settled_by,
             verified=outcome.verified,
@@ -626,6 +636,12 @@ def finding_location(entry: CommentItem | ReportThread) -> str:
     from rendered markdown with `summary_scope.row_location_key`, which is why
     that function strips the `@` the Reviewer cell is written with — the two
     forms are compared and must spell the login alike.
+
+    "" is not "no match", it is "cannot answer", and the fold treats it that
+    way: an entry with no line falls to `summary_model.ThreadRestatement`
+    instead of silently escaping. Triage is asked for a line only "if
+    referenced in the item", so an empty key is the ordinary shape of a
+    decomposed item rather than an edge case.
     """
     # ceiling: reviewer plus file:line is the whole test for "the same point",
     # so two distinct findings by one reviewer on one line fold into one row —

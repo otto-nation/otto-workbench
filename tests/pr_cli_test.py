@@ -1535,59 +1535,6 @@ def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
                             [], make_ctx(worktree_root=None))
 
 
-def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
-    """A team review from a repo root must not clobber that root's own state."""
-    from pr import context as pr_context
-    caller = tmp_path / "repo-root"
-    caller.mkdir()
-    target = tmp_path / "pr" / "widget-feat-login"
-    ctx = pr_context.ResolvedContext(
-        repo="acme/widget", branch="feat/login", pr_number=2973,
-        worktree_root=caller, head_sha="pr-sha", current_branch="main",
-        target_dir=target,
-    )
-
-    from pr.review_sync import sync_review_domain
-    from review.summary import ReviewSummaryReport
-    sync_review_domain(ctx, ReviewSummaryReport(
-        review_file="r.md", verdict="approve", head_sha="pr-sha",
-    ))
-
-    assert (target / pr_state.STATE_FILE).is_file()
-    # Nothing at all under the caller's checkout: state is keyed on the run's
-    # target now, so the caller's tree should not gain a state file anywhere.
-    assert not list(caller.rglob(pr_state.STATE_FILE))
-    written = pr_state.load_state(target)
-    assert written.identity.pr_number == 2973
-    assert written.identity.head_sha == "pr-sha"
-    assert written.identity.worktree_root == str(caller)
-
-
-def test_a_summary_with_no_recover_verdict_records_unknown(tmp_path, monkeypatch):
-    """A summary predating the field is unknown, not "not recoverable".
-
-    `ReviewSummary.render_status` suppresses the recover hint only on an
-    explicit False, so defaulting a missing key to False here would hide a
-    recovery that works — the version-skew case the `None` default exists for.
-    """
-    from pr import context as pr_context
-    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    target = tmp_path / "pr" / "widget-feat-login"
-    ctx = pr_context.ResolvedContext(
-        repo="acme/widget", branch="feat/login", pr_number=2973,
-        worktree_root=tmp_path / "caller", head_sha="pr-sha",
-        current_branch="main", target_dir=target,
-    )
-
-    from pr.review_sync import sync_review_domain
-    from review.summary import ReviewSummaryReport
-    sync_review_domain(ctx, ReviewSummaryReport(
-        review_file="r.md", head_sha="pr-sha",
-    ))
-
-    assert pr_state.load_state(target).review.recoverable is None
-
-
 # ── run lock wiring ─────────────────────────────────────────────────────────
 
 

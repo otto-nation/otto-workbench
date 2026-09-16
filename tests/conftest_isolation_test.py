@@ -251,3 +251,15 @@ def test_the_measured_path_takes_no_round_trip_when_it_is_patched():
             )
     assert measured == (123, "claude-sonnet-5")
     assert counter.called
+
+
+def test_model_aliases_are_unresolved():
+    """The tier aliases are unset, so every machine budgets the same way.
+
+    `ANTHROPIC_DEFAULT_*_MODEL` decides whether a phase resolves to a concrete
+    model or to the bare alias, and the two now buy different prompt budgets.
+    A shell that exports them would make an assertion pass locally and fail in
+    CI, which is the one failure mode a sandbox exists to prevent.
+    """
+    for tier in ("SONNET", "OPUS", "HAIKU"):
+        assert f"ANTHROPIC_DEFAULT_{tier}_MODEL" not in os.environ

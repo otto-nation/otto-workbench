@@ -258,6 +258,29 @@ def _no_live_backend(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _unresolved_model_aliases(monkeypatch):
+    """Run every test with the tier aliases unresolved, as CI does.
+
+    `ANTHROPIC_DEFAULT_SONNET_MODEL` and its siblings decide whether
+    `phase_model` returns a concrete id or the bare alias, and the alias now
+    picks a different prompt budget — the tier floor rather than the model's
+    own window. A developer's shell exports them and CI does not, so without
+    this the same assertion is made against two different ceilings and a test
+    can only fail in one of the two places. Both CI failures on this file's
+    branch were that.
+
+    Unset is the floor because it is what CI has and what a first-party-API
+    machine has. A test whose subject is a resolved model sets the variable
+    itself, which is also the only way to make that intent visible.
+
+    `_clear_agent_env` cannot cover these: they are Anthropic's names, not the
+    `WORKBENCH_AI_` prefix it owns.
+    """
+    for tier in ("SONNET", "OPUS", "HAIKU"):
+        monkeypatch.delenv(f"ANTHROPIC_DEFAULT_{tier}_MODEL", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_vertex_endpoint(monkeypatch):
     """Run every test on a machine with no Vertex endpoint to reach.
 

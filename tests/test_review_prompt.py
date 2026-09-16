@@ -736,8 +736,22 @@ class TestSharedPromptBodies:
 
 class TestBuildPromptRefusesAnOversizedPrompt:
     # CLAUDE.md is fixed overhead — no lever reaches it — so one over the whole
-    # budget puts the prompt past it whatever the ladder cuts.
-    UNBUDGETABLE = "x" * (MAX_PROMPT_BYTES + 1000)
+    # budget puts the prompt past it whatever the ladder cuts. Sized and
+    # asserted against the refusal ceiling rather than the ladder's target:
+    # those differ by the render-markup reserve, and a prompt between them is
+    # over the ladder's plan but not over the line `build_prompt` refuses at.
+    CEILING = prompt_budget_bytes(TEST_MODEL)
+    UNBUDGETABLE = "x" * (CEILING + 1000)
+
+    @pytest.fixture(autouse=True)
+    def _pin_the_alias(self, monkeypatch):
+        """CI leaves ANTHROPIC_DEFAULT_SONNET_MODEL unset and a shell exports it.
+
+        Unpinned, `CEILING` is this file's constant while the run resolves the
+        bare alias to the tier floor, so the fixture is sized against one model
+        and the assertion made against another.
+        """
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", TEST_MODEL)
 
     def _job(self, tmp_path, **preflight):
         job = _make_job(_make_preflight(**preflight))
@@ -751,7 +765,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge) as exc:
             build_prompt(Phase.SCOUT, job, max_turns=10)
-        assert exc.value.prompt_bytes > MAX_PROMPT_BYTES
+        assert exc.value.prompt_bytes > self.CEILING
 
     def test_the_oversized_prompt_is_on_disk_to_look_at(self, tmp_path):
         """The stats are written before the raise, so the run is diagnosable."""
@@ -762,7 +776,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         with pytest.raises(PromptTooLarge):
             build_prompt(Phase.SCOUT, job, max_turns=10)
         stats = json.loads((tmp_path / "prompt-stats.json").read_text())
-        assert stats[-1]["prompt_bytes"] > MAX_PROMPT_BYTES
+        assert stats[-1]["prompt_bytes"] > self.CEILING
         assert (tmp_path / "prompt-scout.md").exists()
 
     def test_an_ordinary_prompt_still_renders(self, tmp_path):

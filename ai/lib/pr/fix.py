@@ -180,6 +180,16 @@ class ItemOutcome:
     # anchor still points at the code the item meant. Empty reads as "cannot
     # anchor" rather than as "anchor is current".
     read_sha: str = ""
+    # Where in the tree triage checked the verdict, which is not where GitHub
+    # anchored the thread: the anchor is the line the reviewer wrote against,
+    # and the evidence is the line whose history answers "when did this become
+    # true?". `attribution.AddressingHistory` prefers the second, so a record
+    # that dropped it asked `git log -L` at one line in the round that published
+    # and at another in the round that replayed — different line, different
+    # commit, and a row published as a fix came back reworded as one that needed
+    # no action. Empty is "triage cited nothing", which falls back to the anchor.
+    evidence_file: str = ""
+    evidence_line: int = 0
     # Whether something was run against the changed path and passed. Three
     # states, because two would conflate the case the gate exists to surface
     # with the case that predates it:

@@ -68,7 +68,7 @@ class TestWhatCountsAsNamingAVerdict:
     match publishes a claim about someone else's code and resolves their thread,
     while a miss leaves the thread open for a person to settle. This predicate
     answers only "does this body name a verdict" — whose body it is belongs to
-    the caller, and `settlement._our_verdict_stands` is where that is enforced.
+    the caller, and `settlement._our_verdict` is where that is enforced.
     """
 
     @pytest.mark.parametrize("prefix", thread_replies.HANDLED_REPLY_PREFIXES)

@@ -149,6 +149,104 @@ def thread_covered_locations(
     ) - {""}
 
 
+def normalised_finding_text(text: str) -> str:
+    """One finding's prose, in the form two surfaces are compared in.
+
+    Every run of non-alphanumerics collapses to a single space, so a trailing
+    full stop, a backtick around an identifier and a line wrap cannot make one
+    sentence two different strings. What is left is compared exactly — nothing
+    here is a similarity score, and two texts either contain one another or do
+    not.
+
+    Shared with `summary_scope.carried_over_rows`, which has to recognise the
+    published row of an item this render folded on text and has only the
+    rendered summary cell to recognise it by.
+    """
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+# How much text a containment match has to have under it. The fold's two
+# directions are not equally costly: a false fold removes a reviewer's finding
+# from the table entirely, while a missed one only prints a duplicate row, so
+# the shorter of the two strings has to be long enough that its appearing inside
+# the other is evidence rather than coincidence. Four words of normalised prose.
+#
+# ceiling: one length threshold for every finding, so a genuinely short
+# restatement ("drop the retry") never folds and prints a duplicate row.
+# Upgrade trigger: if a duplicate row is seen surviving the fold because its
+# summary was under this length, key the text signal on the source comment's
+# own sentence rather than on triage's summary of it, which is longer and is
+# the reviewer's own words.
+_MIN_RESTATEMENT_CHARS = 24
+
+
+def _restates(one: str, other: str) -> bool:
+    """Whether two normalised texts are the same point, by exact containment.
+
+    Symmetric because neither surface is reliably the fuller one: triage's
+    summary of a review-body paragraph may expand on the inline comment it
+    restates or be expanded on by it. The length gate applies to both, so the
+    string found inside the other is always the one that had to be long enough.
+    """
+    if len(one) < _MIN_RESTATEMENT_CHARS or len(other) < _MIN_RESTATEMENT_CHARS:
+        return False
+    return one in other or other in one
+
+
+@dataclass(frozen=True)
+class ThreadRestatement:
+    """One review thread's text, as a line-less comment item is matched to it.
+
+    The second join signal, for the side of the fold `finding_location` cannot
+    key: triage is asked for a line "if referenced in the item" and a prose
+    paragraph often references none, so the location key is empty on exactly
+    the copy the fold exists to remove.
+
+    The reviewer still has to match, for the reason the location key requires it
+    — two people writing about one point are writing about two different things
+    — and a file named on both sides has to match too. Only the text is new.
+    """
+
+    reviewer: str
+    file: str
+    summary: str
+    body: str
+
+    def covers(self, entry: CommentItem) -> bool:
+        """Whether `entry` is this thread's point, restated."""
+        if (entry.reviewer or "") != self.reviewer:
+            return False
+        if entry.file and self.file and entry.file != self.file:
+            return False
+        said = normalised_finding_text(entry.summary)
+        return any(_restates(said, mine) for mine in (self.summary, self.body))
+
+
+def thread_restatements(
+    entries: Iterable[CommentItem], threads_by_id: dict[str, ReportThread],
+) -> tuple[ThreadRestatement, ...]:
+    """The text each review thread in this round can be restated as.
+
+    Two texts per thread, because the round holds two renderings of it: triage's
+    one-line summary, which is what the table prints, and the reviewer's own
+    comment body, which is what a top-level comment restating the point is most
+    likely to have copied.
+    """
+    found = []
+    for entry in entries:
+        thread = threads_by_id.get(entry.id)
+        if not thread:
+            continue
+        root = thread.comments[0] if thread.comments else {}
+        found.append(ThreadRestatement(
+            reviewer=entry.reviewer or thread.reviewer,
+            file=entry.file or thread.file,
+            summary=normalised_finding_text(entry.summary),
+            body=normalised_finding_text(str(root.get("body", "") or "")),
+        ))
+    return tuple(found)
+
+
 def duplicate_item_ids(
     entries: list[CommentItem], threads_by_id: dict[str, ReportThread],
 ) -> set[str]:
@@ -162,15 +260,23 @@ def duplicate_item_ids(
     thread is the copy that stays: it is where the reply lands and where
     resolution is recorded.
 
-    What counts as "the same point" is `finding_location`, whose ceiling
-    comment names what that coarsening costs.
+    Two join signals, asked in that order. `finding_location` is the precise
+    one and its ceiling comment names what its coarsening costs. An item it
+    cannot key at all — no line, which is the ordinary shape of a decomposed
+    item — falls to `ThreadRestatement`, where the same reviewer's text has to
+    contain the item's or be contained by it.
     """
     covered = thread_covered_locations(entries, threads_by_id)
+    restated = thread_restatements(entries, threads_by_id)
     return {
         e.id for e in entries
         if e.id not in threads_by_id
         and permalinks.comment_item_source(e).ok
-        and finding_location(e) in covered
+        and (
+            finding_location(e) in covered
+            if finding_location(e)
+            else any(r.covers(e) for r in restated)
+        )
     }
 
 
@@ -216,6 +322,30 @@ def folded_locations(
     share an outcome.
     """
     return thread_covered_locations(_every_entry(content), threads_by_id)
+
+
+def folded_restatements(
+    content: RoundContent, threads_by_id: dict[str, ReportThread],
+) -> frozenset[str]:
+    """The text of each item this round folded that had no location to fold at.
+
+    The other half of what `summary_scope.carried_over_rows` needs, and needed
+    for the same reason `folded_locations` is: a row this render folded was
+    published under its own anchor before the fold could reach it, and carrying
+    it forward verbatim would put back the duplicate the fold just removed. An
+    item folded on text has no location, so `folded_locations` cannot name it
+    and the published row would be carried every round for the life of the PR.
+
+    Normalised here rather than at the comparison, because the published side
+    has only the rendered summary cell to be recognised by and the two forms are
+    only interchangeable if one function spells them.
+    """
+    entries = _every_entry(content)
+    folded = duplicate_item_ids(entries, threads_by_id)
+    return frozenset(
+        normalised_finding_text(e.summary) for e in entries
+        if e.id in folded and not finding_location(e)
+    )
 
 
 def _every_entry(content: RoundContent) -> list[CommentItem]:

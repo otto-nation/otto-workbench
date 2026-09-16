@@ -124,8 +124,17 @@ def _warned_history(
     the location a row cites, and `git log -L` is a process per location, so
     handing the same instance to the warning and to the table costs one lookup
     instead of two.
+
+    The comment timestamps are read off the same round the table is built from,
+    so a decomposed item's row can be dated against the comment it was cut out
+    of. Without them every such row reads as predating the review, because the
+    only other thing that dates a row is a review thread and an item has none.
     """
-    history = attribution.AddressingHistory(wt_path)
+    history = attribution.AddressingHistory(
+        wt_path,
+        summary_rounds.comment_timestamps(
+            content.issue_comments, content.review_body_comments),
+    )
     _warn_unattributed_fixes(
         content.of(FixOutcome.FIXED), cp,
         summary_model.folded_item_ids(content, threads_by_id),
@@ -197,6 +206,7 @@ def _earlier_rounds(
 def publish_summary(
     repo: str, pr_number: int, build_body: Callable[..., str],
     activity_at: str = "", folded: frozenset[str] = frozenset(),
+    folded_texts: frozenset[str] = frozenset(),
 ) -> str | None:
     """Publish the round without shrinking the record the PR already holds.
 
@@ -213,7 +223,8 @@ def publish_summary(
     ``folded`` is passed through to `summary_scope.carried_over_rows` rather
     than read off the body this renders. Only the caller has the typed entries
     the fold was decided from, and reading the File cell markdown instead is
-    one the renderer is free to drop the line from.
+    one the renderer is free to drop the line from. ``folded_texts`` is the
+    same for the items the fold reached on text, which have no location at all.
 
     The comment is edited in place while nothing has been said below it, and
     posted fresh once something has — see `_answered_since`. Which one
@@ -253,7 +264,8 @@ def publish_summary(
     # comment is still published there, and lifting it into this one would
     # restate the round the chain already carries.
     carried = summary_scope.carried_over_rows(
-        "" if answered else existing.body, body, scope.elsewhere_keys, folded)
+        "" if answered else existing.body, body, scope.elsewhere_keys, folded,
+        folded_texts)
     if carried:
         log.warn(
             f"Published summary has {len(carried)} row(s) this run cannot account "
@@ -294,7 +306,9 @@ def post_fix_summary(
         head_sha=head_sha,
         wt_path=wt_path,
         history=history,
-    ), activity_at=activity_at, folded=summary_model.folded_locations(content, threads_by_id))
+    ), activity_at=activity_at,
+        folded=summary_model.folded_locations(content, threads_by_id),
+        folded_texts=summary_model.folded_restatements(content, threads_by_id))
     if url:
         log.info(f"Posted fix summary: {url}")
     elif publishing.enabled():
@@ -509,7 +523,8 @@ def render_deferred_summary(
         wt_path=wt_path,
         history=history,
     ), activity_at=newest_reviewer_activity(report),
-        folded=summary_model.folded_locations(content, threads_by_id))
+        folded=summary_model.folded_locations(content, threads_by_id),
+        folded_texts=summary_model.folded_restatements(content, threads_by_id))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
         fix.summary_url = url

@@ -367,3 +367,45 @@ class TestTheResultKnowsItsOwnBuckets:
         assert copied.fixable == [entry]
         assert "t1" in repr(original)
         assert repr(original) != "ClassificationResult()"
+
+
+class TestTheRecordRoundTripIsLossless:
+    """`to_outcome` and `from_outcome` are inverses, field for field.
+
+    The two are documented as inverses and a field missing from one of them is
+    invisible until a surface reads it back a round later. The evidence location
+    was such a field: `AddressingHistory` prefers it over the reviewer's anchor,
+    so the round that published a row asked `git log -L` at one line and the
+    round that replayed it asked at another.
+    """
+
+    def _entry(self):
+        return CommentItem(
+            id="t1", file="a.py", line=8, reviewer="kgn", summary="unbounded retry",
+            reason="because", commit_sha="abc1234", read_sha="def5678",
+            evidence_file="a.py", evidence_line=3,
+            outcome=FixOutcome.ALREADY_ADDRESSED, verified=True,
+            verify_detail="pytest a_test.py",
+        )
+
+    def test_the_evidence_location_survives(self):
+        back = CommentItem.from_outcome(self._entry().to_outcome())
+        assert (back.evidence_file, back.evidence_line) == ("a.py", 3)
+        assert back.has_evidence()
+
+    def test_the_anchor_is_kept_apart_from_the_evidence(self):
+        """Two locations, not one: the reviewer's and the one triage read."""
+        outcome = self._entry().to_outcome()
+        assert (outcome.file, outcome.line) == ("a.py", 8)
+        assert (outcome.evidence_file, outcome.evidence_line) == ("a.py", 3)
+
+    def test_an_entry_citing_nothing_records_nothing(self):
+        outcome = CommentItem(id="t1", file="a.py", line=8).to_outcome()
+        assert (outcome.evidence_file, outcome.evidence_line) == ("", 0)
+
+    def test_a_record_written_before_the_field_existed_reads_back_empty(self):
+        """Old state degrades to the anchor, which is what it always used."""
+        back = CommentItem.from_outcome(
+            ItemOutcome(id="t1", file="a.py", line=8, outcome=FixOutcome.FIXED))
+        assert not back.has_evidence()
+        assert (back.file, back.line) == ("a.py", 8)

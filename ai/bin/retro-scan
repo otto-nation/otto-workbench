@@ -27,7 +27,7 @@ from _version import version_string as _version_string  # noqa: E402
 from core.trail import Trail, add_trail_args  # noqa: E402
 from review.dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
 from retro.github import GQL_MERGED_PRS_LIMIT, fetch_repo_review_data  # noqa: E402
-from retro.report import DATE_FMT, best_matching_passage, format_report  # noqa: E402
+from retro.report import DATE_FMT, format_matched_snippet, format_report  # noqa: E402
 from retro.reviews import CONSUMED_REVIEWS_NAME, scan_local_reviews  # noqa: E402
 from retro.rules import (  # noqa: E402
     RULES_REL,
@@ -203,7 +203,7 @@ def _annotate_comment(
     if nearest:
         comment["nearest_rule"] = {
             "filename": nearest["filename"],
-            "match_snippet": best_matching_passage(
+            "match_snippet": format_matched_snippet(
                 comment["body"], nearest, weights,
             ),
         }

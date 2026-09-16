@@ -19,7 +19,7 @@ from core import log
 from review.document import ReviewDocument
 from review.paths import ReviewEntry, ReviewEntryKind, iter_review_entries
 from review.types import Finding
-from retro.report import best_matching_passage
+from retro.report import format_matched_snippet
 from retro.rules import TermWeights, find_nearest_rule, term_weights
 
 
@@ -95,7 +95,7 @@ def _finding_to_comment(
     if nearest:
         comment["nearest_rule"] = {
             "filename": nearest["filename"],
-            "match_snippet": best_matching_passage(
+            "match_snippet": format_matched_snippet(
                 comment["body"], nearest, weights,
             ),
         }

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 from retro.report import (  # noqa: E402
     MATCH_SNIPPET_MAX,
     _format_comment,
-    best_matching_passage,
+    format_matched_snippet,
 )
 from retro.rules import (  # noqa: E402
     build_rule,
@@ -77,7 +77,7 @@ class TestProseRuleFiles:
         weights = term_weights(rules)
         for body, expected in PROSE_COMMENTS:
             rule = next(r for r in rules if r["filename"] == expected)
-            snippet = best_matching_passage(body, rule, weights)
+            snippet = format_matched_snippet(body, rule, weights)
             assert snippet, expected
             assert snippet != expected
             assert not snippet.endswith(".md")
@@ -89,7 +89,7 @@ class TestProseRuleFiles:
         weights = term_weights(rules)
         for body, expected in PROSE_COMMENTS:
             rule = next(r for r in rules if r["filename"] == expected)
-            snippet = best_matching_passage(body, rule, weights).rstrip("…")
+            snippet = format_matched_snippet(body, rule, weights).rstrip("…")
             words = snippet.split()
             # A passage joins the lines a wrapped item runs onto, so the whole
             # string is not in the file verbatim; its opening words are.
@@ -115,7 +115,7 @@ class TestSnippetIsWhatMatched:
         )
         nearest = find_nearest_rule(comment, rules, weights)
         assert nearest is not None
-        snippet = best_matching_passage(comment, nearest, weights)
+        snippet = format_matched_snippet(comment, nearest, weights)
         assert "environment" in snippet.lower()
 
     def test_a_snippet_is_capped_and_marked_where_it_is_cut(self):
@@ -124,7 +124,7 @@ class TestSnippetIsWhatMatched:
             "long.md",
             "- " + " ".join(["rebase the worktree branch onto origin"] * 60) + "\n",
         )
-        snippet = best_matching_passage(
+        snippet = format_matched_snippet(
             "Rebase the worktree branch onto origin before opening the PR",
             long_rule,
             term_weights([long_rule]),
@@ -134,18 +134,18 @@ class TestSnippetIsWhatMatched:
 
     def test_a_passage_within_the_cap_is_quoted_whole(self):
         rule = build_rule("short.md", SHORT_RULE)
-        snippet = best_matching_passage(
+        snippet = format_matched_snippet(
             "Quote the variable expansion in this shell script wrapper",
             rule,
             term_weights([rule]),
         )
-        assert snippet == SHORT_RULE.strip()
+        assert snippet == SHORT_RULE.strip().removeprefix("- ")
         assert len(snippet) < MATCH_SNIPPET_MAX
 
     def test_no_snippet_when_no_passage_shares_the_comments_subject(self):
         """An empty string, not a filename — the caller decides what to show."""
         rule = build_rule("short.md", SHORT_RULE)
-        snippet = best_matching_passage(
+        snippet = format_matched_snippet(
             "The arctic tern migrates eleven thousand miles each season",
             rule,
             term_weights([rule]),
@@ -162,7 +162,7 @@ class TestSnippetIsWhatMatched:
         for rule in rules:
             assert rule["passages"], rule["filename"]
             longest = max(rule["passages"], key=lambda p: len(p.keywords))
-            snippet = best_matching_passage(
+            snippet = format_matched_snippet(
                 longest.text, rule, term_weights(rules),
             )
             assert snippet, rule["filename"]

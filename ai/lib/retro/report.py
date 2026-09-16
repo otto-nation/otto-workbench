@@ -154,7 +154,7 @@ def format_report(scan_data: dict, version: str) -> str:
     return "\n".join(lines)
 
 
-def best_matching_passage(
+def format_matched_snippet(
     comment_body: str, rule: dict, weights: TermWeights,
 ) -> str:
     """The passage of `rule` that `comment_body` matched on, quotable.

@@ -65,6 +65,11 @@ KEYWORD_PATTERN = re.compile(r"[a-z][a-z_-]{2,}")
 PASSAGE_START = re.compile(r"^\s*(?:[-*]\s+|\d{1,2}[.)]\s+|\|)")
 HEADING = re.compile(r"^#{1,6}\s")
 
+# The marker `PASSAGE_START` opened the passage on, dropped from the text a
+# passage carries for quoting — a reader is shown the rule's wording, not the
+# markdown syntax that set it apart from the paragraph around it.
+PASSAGE_MARKER = re.compile(r"^(?:[-*]\s+|\d{1,2}[.)]\s+|\|\s*)")
+
 # A rule file's frontmatter says which files the rule applies to, not what it
 # requires. Its path globs are read as a bullet list otherwise, and a comment
 # naming a file type matches the glob rather than any rule about that type.
@@ -155,8 +160,15 @@ class Passage:
 
     @classmethod
     def of(cls, text: str) -> Passage:
-        """`text` as a passage, with its vocabulary derived the one way."""
-        return cls(text=text, keywords=frozenset(extract_keywords(text)))
+        """`text` as a passage, with its vocabulary derived the one way.
+
+        A table row's own cell separators are markdown syntax too, the same as
+        the leading `|` `PASSAGE_MARKER` already drops — left in, a matched row
+        would quote a run of literal `|` characters as if it were prose.
+        """
+        quoted = PASSAGE_MARKER.sub("", text).replace("|", " ")
+        quoted = " ".join(quoted.split())
+        return cls(text=quoted, keywords=frozenset(extract_keywords(quoted)))
 
 
 def build_rule(filename: str, content: str) -> dict:

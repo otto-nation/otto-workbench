@@ -606,7 +606,14 @@ class TestPassages:
                 assert passage.keywords == extract_keywords(passage.text), (
                     f"{rule['filename']}: {passage.text[:70]}"
                 )
-                assert passage.text in rule["content"] or " " in passage.text
+                # A wrapped item's lines are joined by a single space, and its
+                # opening marker is dropped, so the whole string is not a
+                # substring of the file verbatim — but every one of its words
+                # is, which a fabricated or misattributed text would not be.
+                for word in passage.text.split():
+                    assert word in rule["content"], (
+                        f"{rule['filename']}: {passage.text[:70]}"
+                    )
 
     def test_every_passage_of_every_rule_clears_the_keyword_floor(self):
         """`MIN_PASSAGE_KEYWORDS` filters the pair, not one half of it."""
@@ -650,7 +657,7 @@ class TestBestPassage:
 
     def test_a_passage_derives_its_own_keywords(self):
         passage = Passage.of("- Quote the variable expansion in every script")
-        assert passage.text == "- Quote the variable expansion in every script"
+        assert passage.text == "Quote the variable expansion in every script"
         assert passage.keywords == extract_keywords(passage.text)
         assert "variable" in passage.keywords
 

@@ -493,37 +493,44 @@ class TestWhatSettledOneSnapshotRow:
         thread = _thread(tid="c1", is_resolved=True)
         entry = CommentItem(id="c1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {"c1": thread}, frozenset(), {},
+            entry, {"c1": thread}, {}, {},
         ) is FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_row_with_neither_thread_nor_source_shows_nothing(self):
         entry = CommentItem(id="c1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(entry, {}, frozenset(), {}) is None
+        assert settlement.entry_settlement(entry, {}, {}, {}) is None
 
     def test_an_answered_source_reads_as_fixed(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {}, frozenset({"77"}), {},
+            entry, {}, {"77": FixOutcome.FIXED}, {},
         ) is FixOutcome.FIXED
+
+    def test_an_answered_source_reads_as_the_verdict_it_names(self):
+        """A hand-typed dismissal is not promoted to FIXED regardless."""
+        entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
+        assert settlement.entry_settlement(
+            entry, {}, {"77": FixOutcome.DISMISSED}, {},
+        ) is FixOutcome.DISMISSED
 
     def test_an_unanswered_source_falls_through_to_the_location(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {}, frozenset(), {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
+            entry, {}, {}, {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
         ) is FixOutcome.SETTLED_ELSEWHERE
 
     def test_an_item_settled_through_a_thread_inherits_its_grade(self):
         """The evidence is the thread's, so the claim it supports is too."""
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         settled = settlement.entry_settlement(
-            entry, {}, frozenset(), {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
+            entry, {}, {}, {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
         )
         assert settled is not FixOutcome.FIXED
 
     def test_a_location_nothing_settled_shows_nothing(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
         assert settlement.entry_settlement(
-            entry, {}, frozenset(), {"ana|b.py:3": FixOutcome.FIXED},
+            entry, {}, {}, {"ana|b.py:3": FixOutcome.FIXED},
         ) is None
 
 

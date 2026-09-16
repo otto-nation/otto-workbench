@@ -172,8 +172,8 @@ def settlement_for(thread: ReportThread | None) -> FixOutcome | None:
 def answered_comment_sources(
     outcomes: list[ItemOutcome],
     repo: str, pr_number: int, my_login: str,
-) -> frozenset[str]:
-    """Source comment ids our standing reply on the PR reports as handled.
+) -> dict[str, FixOutcome]:
+    """Which outcome our standing reply on the PR reports for each source comment.
 
     A decomposed comment item has no review thread, so `settlement_for`
     has nothing to read for one: the item is a fragment of a top-level comment,
@@ -185,15 +185,15 @@ def answered_comment_sources(
     such a reply could settle.
 
     Keyed per anchor rather than unioned, so a later comment of ours can
-    retract what an earlier one claimed about the same source: the listing is
-    chronological, so the last comment to touch a given anchor is the one that
-    decides it, same as `_our_verdict_stands` reading a thread newest-first.
+    retract or revise what an earlier one claimed about the same source: the
+    listing is chronological, so the last comment to touch a given anchor is
+    the one that decides it, same as `_our_verdict` reading a thread newest-first.
     """
     if not any(
         o.outcome in UNSETTLED_OUTCOMES and permalinks.comment_item_source(o).ok
         for o in outcomes
     ):
-        return frozenset()
+        return {}
     if not my_login:
         # Without a login there is no telling our reply from the reviewer
         # restating their own point, and reading theirs as an answer would
@@ -201,11 +201,11 @@ def answered_comment_sources(
         log.warn(
             "Cannot identify our own comments — leaving comment items unreconciled"
         )
-        return frozenset()
+        return {}
     mine = my_login.lower()
     # include_self, because the reply being looked for is ours and the listing
     # drops our own comments by default.
-    answered: dict[str, bool] = {}
+    answered: dict[str, FixOutcome | None] = {}
     for comment in pc.fetch_issue_comments(
         repo, pr_number, my_login, include_self=True,
     ):
@@ -218,17 +218,18 @@ def answered_comment_sources(
         # Safe to accept a hand-typed verdict here without a second author
         # test: the login check above already dropped every comment but ours,
         # and the early return above refuses to run at all without a login.
-
-        verdict = thread_replies.names_a_verdict(body)
+        # `verdict_kind`, not `names_a_verdict`: the caller has to tell FIXED
+        # apart from DISMISSED and ALREADY_ADDRESSED, not merely know one was named.
+        verdict = thread_replies.verdict_kind(body)
         for anchor in anchors:
             answered[anchor] = verdict
-    return frozenset(anchor for anchor, verdict in answered.items() if verdict)
+    return {anchor: verdict for anchor, verdict in answered.items() if verdict is not None}
 
 
 def entry_settlement(
     entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
-    answered_sources: frozenset[str],
+    answered_sources: dict[str, FixOutcome],
     handled_locations: dict[str, FixOutcome],
 ) -> FixOutcome | None:
     """What GitHub shows became of this snapshot row, or None when nothing did.
@@ -242,8 +243,9 @@ def entry_settlement(
 
     An item settled through a thread inherits that thread's grade rather than
     being promoted: the evidence is the thread's, so the claim it supports is
-    too. An answered source is our own reply naming the verdict, which is the
-    same evidence a thread reply is.
+    too. An answered source inherits the verdict `answered_sources` names for
+    it — FIXED, DISMISSED, or ALREADY_ADDRESSED — rather than being promoted to
+    FIXED regardless of which one it was, the same evidence a thread reply is.
     """
     thread = threads_by_id.get(entry.id)
     if thread:
@@ -251,8 +253,9 @@ def entry_settlement(
     source = permalinks.comment_item_source(entry)
     if not source.ok:
         return None
-    if source.id in answered_sources:
-        return FixOutcome.FIXED
+    verdict = answered_sources.get(source.id)
+    if verdict is not None:
+        return verdict
     return handled_locations.get(finding_location(entry))
 
 
@@ -339,7 +342,7 @@ def adopt_settled_threads(
 
 def reconcile_fix_snapshot(
     state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
-    answered_sources: frozenset[str] = frozenset(),
+    answered_sources: dict[str, FixOutcome] = {},
 ) -> int:
     """Flip snapshot outcomes that GitHub contradicts. Returns the flip count.
 

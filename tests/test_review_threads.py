@@ -3945,7 +3945,7 @@ class TestReconcileFixSnapshot:
         and TestCommentItemsSettleThroughTheirSource covers what does settle it.
         """
         state = self._state()
-        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 0
+        assert settlement.reconcile_fix_snapshot(state, {}, {"77": FixOutcome.FIXED}) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.DEFERRED
 
     def test_a_needs_human_thread_settled_by_hand_is_reclaimed(self):
@@ -8501,7 +8501,7 @@ class TestAnsweredCommentSources:
         with _fetches([_our_reply("#issuecomment-77")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset({"77"})
+        assert answered == {"77": FixOutcome.FIXED}
 
     def test_the_listing_is_asked_to_keep_our_own_comments(self):
         """The reply being looked for is ours, so the self filter has to be off."""
@@ -8513,32 +8513,32 @@ class TestAnsweredCommentSources:
         with _fetches([_our_reply("#pullrequestreview-88")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(iid="rb-88-1"), "owner/repo", 42, "me")
-        assert answered == frozenset({"88"})
+        assert answered == {"88": FixOutcome.FIXED}
 
     def test_the_login_match_ignores_case(self):
         with _fetches([_our_reply("#issuecomment-77", user="Me")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset({"77"})
+        assert answered == {"77": FixOutcome.FIXED}
 
     def test_the_reviewer_restating_their_point_is_not_an_answer(self):
         with _fetches([_our_reply("#issuecomment-77", user="kgn")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset()
+        assert answered == {}
 
     def test_a_deferred_reply_says_the_opposite(self):
         """Same carve-out the thread evidence makes — it is not a settlement."""
         with _fetches([_our_reply("#issuecomment-77", prefix="Deferred:")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset()
+        assert answered == {}
 
     def test_a_reply_that_cites_nothing_settles_nothing(self):
         with _fetches([{"user": "me", "body": "Applied: drop the retry"}]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset()
+        assert answered == {}
 
     def test_a_non_comment_item_is_not_worth_a_listing(self):
         """`t1` is open, but a thread-shaped id has no source comment to read."""
@@ -8546,7 +8546,7 @@ class TestAnsweredCommentSources:
             answered = settlement.answered_comment_sources(
                 [ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED)],
                 "owner/repo", 42, "me")
-        assert answered == frozenset()
+        assert answered == {}
         fetch.assert_not_called()
 
     def test_a_settled_item_is_not_worth_a_listing_either(self):
@@ -8559,7 +8559,7 @@ class TestAnsweredCommentSources:
         with _fetches([_our_reply("#issuecomment-77")]) as fetch:
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "")
-        assert answered == frozenset()
+        assert answered == {}
         fetch.assert_not_called()
 
     def test_a_hand_written_verdict_answers_its_source_too(self):
@@ -8570,7 +8570,16 @@ class TestAnsweredCommentSources:
         with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset({"77"})
+        assert answered == {"77": FixOutcome.FIXED}
+
+    def test_a_hand_written_dismissal_answers_as_dismissed_not_fixed(self):
+        """The same grading the thread evidence got: naming a verdict is not
+        the same as naming FIXED specifically.
+        """
+        with _fetches([_our_reply("#issuecomment-77", prefix="Dismissed —")]):
+            answered = settlement.answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == {"77": FixOutcome.DISMISSED}
 
     def test_the_reviewer_typing_the_same_verdict_answers_nothing(self):
         """The negative the widening is bought with — the login test is what
@@ -8579,7 +8588,7 @@ class TestAnsweredCommentSources:
         with _fetches([_our_reply("#issuecomment-77", prefix="Fixed —", user="kgn")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset()
+        assert answered == {}
 
     def test_an_acknowledgement_of_ours_answers_nothing(self):
 
@@ -8587,7 +8596,7 @@ class TestAnsweredCommentSources:
         with _fetches([_our_reply("#issuecomment-77", prefix="Good catch —")]):
             answered = settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
-        assert answered == frozenset()
+        assert answered == {}
 
 
 class TestCommentItemsSettleThroughTheirSource:
@@ -8602,28 +8611,28 @@ class TestCommentItemsSettleThroughTheirSource:
 
     def test_an_answered_item_reconciles_to_fixed(self):
         state = self._state()
-        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
+        assert settlement.reconcile_fix_snapshot(state, {}, {"77": FixOutcome.FIXED}) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
         assert "reconciled" in state.fix.fix.items[0].reason
 
     def test_a_deferred_item_reconciles_the_same_way(self):
         state = self._state(outcome=FixOutcome.DEFERRED)
-        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
+        assert settlement.reconcile_fix_snapshot(state, {}, {"77": FixOutcome.FIXED}) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
     def test_a_review_body_item_reconciles_through_its_review(self):
         state = self._state(iid="rb-88-1")
-        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"88"})) == 1
+        assert settlement.reconcile_fix_snapshot(state, {}, {"88": FixOutcome.FIXED}) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
     def test_an_answer_to_another_comment_is_not_this_items_answer(self):
         state = self._state()
-        assert settlement.reconcile_fix_snapshot(state, {}, frozenset({"99"})) == 0
+        assert settlement.reconcile_fix_snapshot(state, {}, {"99": FixOutcome.FIXED}) == 0
         assert state.fix.fix.items[0].outcome == FixOutcome.NEEDS_HUMAN
 
     def test_an_unanswered_item_still_holds_the_summary_back(self, content):
         state = self._state()
-        assert settlement.reconcile_fix_snapshot(state, {}, frozenset()) == 0
+        assert settlement.reconcile_fix_snapshot(state, {}, {}) == 0
         needs_human = [t for t in state.fix.fix.items
                        if t.outcome == FixOutcome.NEEDS_HUMAN]
         assert needs_human

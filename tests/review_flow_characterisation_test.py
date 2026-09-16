@@ -263,6 +263,103 @@ def test_the_pr_flow_holds_its_pin_across_the_whole_body(
     assert tape.count("cleanup") == 2, "the pin and the PR worktree are both released"
 
 
+def test_the_pr_flow_checks_freshness_before_it_pays_for_a_worktree(
+    cr, tmp_path, monkeypatch,
+):
+    """Building the worktree is the expensive step, and it comes last.
+
+    `check_stale_review` and `check_pending_review` can both abort the run by
+    prompting, and `should_auto_recover` can redirect it. All three are cheap
+    and all three run first, so an aborted review costs a `gh` call rather
+    than an unshallowed clone and a checkout.
+
+    This is the ordering a resolver is most likely to flatten: folding the
+    recover-SHA computation and the worktree setup into one "resolve the
+    source" step reads naturally and silently moves the checkout above the
+    three checks that exist to avoid it.
+    """
+    tape = []
+    review_dir = tmp_path / "pr"
+    review_dir.mkdir()
+    review_file = review_dir / "review.md"
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+    (review_dir / "pipeline.json").write_text("{}")
+
+    monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
+    monkeypatch.setattr(cr.gh_client, "pr_view",
+                        lambda *a, **kw: {"headRefName": "f", "body": ""})
+    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+                        lambda *a, **kw: SimpleNamespace(name="", options={}))
+    monkeypatch.setattr(cr.review_recover, "should_auto_recover",
+                        lambda *a, **kw: tape.append("should_auto_recover"))
+    monkeypatch.setattr(cr.review_preflight, "check_stale_review",
+                        lambda *a, **kw: tape.append("check_stale"))
+    monkeypatch.setattr(cr.review_preflight, "check_pending_review",
+                        lambda *a, **kw: tape.append("check_pending"))
+    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(cr.review_worktree, "setup_pr_worktree",
+                        lambda *a, **kw: (tape.append("setup_worktree"),
+                                          SimpleNamespace(path=str(tmp_path),
+                                                          is_fallback=False))[1])
+    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(tmp_path), None))
+    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_resolve_prior_review", lambda *a, **kw: "")
+    monkeypatch.setattr(cr, "_run_review_body", lambda *a, **kw: None)
+
+    cr._run_review_pr(
+        MagicMock(), make_ctx(target_dir=tmp_path / "t"), "42", "acme/widget",
+        review_dir, review_file, "issue-1", True, False, False,
+        False, "", None, None, "",
+    )
+
+    assert "setup_worktree" in tape, "the PR flow builds a worktree"
+    assert tape.index("check_pending") < tape.index("setup_worktree"), (
+        "freshness is decided before a worktree is paid for"
+    )
+    assert tape.index("should_auto_recover") < tape.index("setup_worktree")
+
+
+def test_the_pr_flow_builds_exactly_one_worktree(cr, tmp_path, monkeypatch):
+    """One review, one checkout.
+
+    Cheap to assert and it pins the failure mode a half-applied refactor
+    produces: a resolver that sets the worktree up while the original call
+    site still stands leaves two, and only the second is ever released.
+    """
+    calls = []
+    review_dir = tmp_path / "pr"
+    review_dir.mkdir()
+    review_file = review_dir / "review.md"
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+
+    monkeypatch.setattr(cr.review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
+    monkeypatch.setattr(cr.gh_client, "pr_view",
+                        lambda *a, **kw: {"headRefName": "f", "body": ""})
+    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+                        lambda *a, **kw: SimpleNamespace(name="", options={}))
+    monkeypatch.setattr(cr.review_preflight, "check_stale_review", lambda *a, **kw: None)
+    monkeypatch.setattr(cr.review_preflight, "check_pending_review", lambda *a, **kw: None)
+    monkeypatch.setattr(cr.review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(cr.review_worktree, "setup_pr_worktree",
+                        lambda *a, **kw: (calls.append(1),
+                                          SimpleNamespace(path=str(tmp_path),
+                                                          is_fallback=False))[1])
+    monkeypatch.setattr(cr.review_recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(tmp_path), None))
+    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_resolve_prior_review", lambda *a, **kw: "")
+    monkeypatch.setattr(cr, "_run_review_body", lambda *a, **kw: None)
+
+    cr._run_review_pr(
+        MagicMock(), make_ctx(target_dir=tmp_path / "t"), "42", "acme/widget",
+        review_dir, review_file, "issue-1", True, False, False,
+        False, "", None, None, "",
+    )
+
+    assert len(calls) == 1, f"built {len(calls)} worktrees for one review"
+
+
 # ── the shared spine ────────────────────────────────────────────────────────
 
 

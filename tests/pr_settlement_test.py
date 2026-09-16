@@ -287,6 +287,19 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
         )
         assert settlement.settlement_for(thread) is FixOutcome.FIXED
 
+    def test_a_lone_self_authored_root_naming_a_verdict_is_not_our_reply(self):
+        """On self-review the root comment is the finding, not an answer to one.
+
+        `my_login` is the same account that authored the finding, so a single
+        comment thread reads as `has_my_reply` and `last_comment_is_mine` both
+        true. If that root's own wording happens to open with a verdict word,
+        it must not be read as our reply confirming a fix that never happened.
+        """
+        thread = _authored(
+            ("me", "Fixed casing is used inconsistently here."),
+        )
+        assert settlement.settlement_for(thread) is None
+
 
 # ── adopt_settled_threads: the thread no round ever saw ───────────────────
 

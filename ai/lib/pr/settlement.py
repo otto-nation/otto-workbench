@@ -112,13 +112,23 @@ def _our_verdict_stands(thread: ReportThread) -> bool:
     decides edit-vs-post from. Without one there is no telling the two apart, so
     only the templates count: those are ours by construction, since nothing but
     this tool writes them.
+
+    The root is excluded from the author check but not from the template
+    check: on self-review the root is our own review point rather than an
+    answer to one, so a hand-typed opening there ("Fixed casing is
+    inconsistent") must not read as our verdict just because `my_login`
+    matches its author. A template opening never has that ambiguity — nothing
+    but this tool writes one, and the root is always the reviewer's original
+    comment, never ours.
     """
     login = (thread.my_login or "").lower()
-    for comment in reversed(thread.comments):
+    comments = thread.comments
+    for index in range(len(comments) - 1, -1, -1):
+        comment = comments[index]
         body = str(comment.get("body", ""))
         if body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
             return True
-        if not login:
+        if index == 0 or not login:
             continue
         author = ((comment.get("author") or {}).get("login") or "").lower()
         if author == login:

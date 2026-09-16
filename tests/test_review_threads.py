@@ -8562,7 +8562,7 @@ class TestAnsweredCommentSources:
         assert answered == frozenset()
         fetch.assert_not_called()
 
-    def test_a_hand_written_verdict_answers_its_source_too(self, rt):
+    def test_a_hand_written_verdict_answers_its_source_too(self):
         """The same widening the thread evidence got, on the only surface a
         decomposed item has. A reply naming the verdict in a person's own words
         is the same evidence as one that came out of a template.
@@ -8572,7 +8572,7 @@ class TestAnsweredCommentSources:
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset({"77"})
 
-    def test_the_reviewer_typing_the_same_verdict_answers_nothing(self, rt):
+    def test_the_reviewer_typing_the_same_verdict_answers_nothing(self):
         """The negative the widening is bought with — the login test is what
         stops their words settling the item they themselves raised.
         """
@@ -8581,7 +8581,7 @@ class TestAnsweredCommentSources:
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset()
 
-    def test_an_acknowledgement_of_ours_answers_nothing(self, rt):
+    def test_an_acknowledgement_of_ours_answers_nothing(self):
         """Being heard is not being handled."""
         with _fetches([_our_reply("#issuecomment-77", prefix="Good catch —")]):
             answered = settlement.answered_comment_sources(
@@ -8759,34 +8759,34 @@ class TestFinishAdoptsThreadsNoRoundSaw:
             comments=[{"body": b} for b in bodies],
         )])
 
-    def _run(self, rt, ctx, report):
+    def _run(self, ctx, report):
         with patch.object(git_client, "head_sha", return_value="aaaaaaa"), \
                 _fetches([]), \
                 patch.object(summary_publish, "render_deferred_summary"):
-            rt._finish_deferred_work(ctx, report)
+            closeout.finish_deferred_work(ctx, report)
 
-    def test_the_answered_thread_is_persisted_rather_than_dropped(self, rt, worktree):
+    def test_the_answered_thread_is_persisted_rather_than_dropped(self, worktree):
         ctx = self._save(worktree)
-        self._run(rt, ctx, self._report())
+        self._run(ctx, self._report())
         saved = pr_state.load_state(worktree / "target")
         assert [o.id for o in saved.fix.fix.items] == ["t1"]
         assert saved.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
-    def test_the_summary_is_re_armed_so_the_row_reaches_a_reader(self, rt, worktree):
+    def test_the_summary_is_re_armed_so_the_row_reaches_a_reader(self, worktree):
         """A row nobody has published is a summary the PR is still owed."""
         ctx = self._save(worktree)
-        self._run(rt, ctx, self._report())
+        self._run(ctx, self._report())
         assert pr_state.load_state(worktree / "target").fix.summary_deferred
 
-    def test_a_second_finish_adds_no_second_row(self, rt, worktree):
+    def test_a_second_finish_adds_no_second_row(self, worktree):
         ctx = self._save(worktree)
-        self._run(rt, ctx, self._report())
-        self._run(rt, ctx, self._report())
+        self._run(ctx, self._report())
+        self._run(ctx, self._report())
         saved = pr_state.load_state(worktree / "target")
         assert len(saved.fix.fix.items) == 1
 
     def test_a_thread_still_awaiting_a_reviewer_is_reported_not_recorded(
-        self, rt, worktree,
+        self, worktree,
     ):
         """NEW is a thread nobody has answered — there is no ending to record."""
         ctx = self._save(worktree)
@@ -8794,7 +8794,7 @@ class TestFinishAdoptsThreadsNoRoundSaw:
             id="t1", state=ThreadState.NEW, reviewer="kgn", my_login="me",
             file="a.go", line=7, comments=[{"body": "rename this"}],
         )])
-        self._run(rt, ctx, report)
+        self._run(ctx, report)
         saved = pr_state.load_state(worktree / "target")
         assert saved.fix.fix.items == []
 

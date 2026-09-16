@@ -102,6 +102,13 @@ def finish_deferred_work(
     settlement.reconcile_fix_snapshot(state, threads_by_id, settlement.answered_comment_sources(
         state.fix.fix.items, ctx.repo, ctx.pr_number, report.my_login,
     ))
+    # After reconciliation, not before: a row this writes is already settled, so
+    # reconciling over it would re-examine a thread nothing owes and make the
+    # flip count report work it did not do. Before the summary, because these
+    # rows are exactly what that render is being re-armed for.
+    if settlement.adopt_settled_threads(state, threads_by_id):
+        state.fix.summary_deferred = True
+        state.fix.updated_at = pr_state.now_iso()
     # Order is load-bearing twice over: `validate_track` inside the first call
     # exits on a typo'd --track before the second prints a list the operator
     # would read as the whole story, and the summary below renders the issue

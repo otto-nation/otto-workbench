@@ -203,9 +203,6 @@ def answered_comment_sources(
     ):
         if str(comment.get("user", "")).lower() != mine:
             continue
-        # Safe to accept a hand-typed verdict here without a second author
-        # test: the login check above already dropped every comment but ours,
-        # and the early return above refuses to run at all without a login.
         body = str(comment.get("body", ""))
         anchors = [m.group(1) for m in _SOURCE_ANCHOR_RE.finditer(body)]
         if not anchors:
@@ -213,6 +210,7 @@ def answered_comment_sources(
         # Safe to accept a hand-typed verdict here without a second author
         # test: the login check above already dropped every comment but ours,
         # and the early return above refuses to run at all without a login.
+
         verdict = thread_replies.names_a_verdict(body)
         for anchor in anchors:
             answered[anchor] = verdict

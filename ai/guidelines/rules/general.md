@@ -33,10 +33,16 @@ Reuse ladder — stop at the first rung that solves the problem:
 5. **New utility function?** Write the minimum
 6. **New dependency?** Justify it
 
+- Match on boundaries, not substrings — a path suffix check needs a separator (`/` or `Path.parts`); a pattern against structured text (YAML keys, log prefixes, headers) needs an anchor (`^`, `\A`, `startswith`). Bare `endswith`/`contains` treats `myhandler.go` as `handler.go`
 - Never introduce changes that violate SSOT or DRY — if data or logic already has a single owner, reference it instead of duplicating. Before adding a constant, config value, or pattern, check if it already exists elsewhere
 - When renaming a service, endpoint, or wire format, audit all references — not just call sites. Check: doc comments, inline examples, container network aliases, Helm/Pkl defaults, env var values, test fixtures, and generated config
 - When changing a wire format (message subjects, event schemas, API contracts), document deployment ordering in the PR description — which services deploy first, whether simultaneous deploy is required, and what breaks during the rollout window
 - Never swallow errors silently — propagate them or return an explicit error. Key/map lookups on external data (DB, API, user input) must use safe-access patterns (comma-ok in Go, `.get()` in Python, `in` checks in JS) and handle the missing-key case
+- Functions that format, serialize, or report on a value must not mutate the argument they were handed — return a new structure instead. A reporting helper that inserts a key is a side effect nobody reads the signature for
+- Never index into or take the first element of an unsorted filesystem listing (`glob`, `Path.glob`, `os.listdir`, `Path.iterdir`) — directory order is filesystem-dependent, so the "first" file is a different file on another machine. Sort first
+- Never use a process-randomized hash (Python's built-in `hash()`) for an ID, cache key, or cross-run match — the value changes between processes, so the same input misses its own cache. Use `hashlib.sha256`, a normalized slug, or a composite key
+- Update state, settings, and manifest files by writing a sibling temp file and replacing atomically (`os.replace`, `mv` on the same filesystem) — an in-place truncating `open(..., "w")` leaves a half-written file behind when the process dies mid-write
+- A scanner, validator, or linter that inspects a tree must discover recursively (`os.walk`, `Path.rglob`, `find`) — a flat `listdir` silently exempts every subdirectory, and the check reports green on files it never opened
 - Fix review findings in the current PR. Defer one to a tracking issue or a follow-up PR only when I have explicitly agreed to that deferral — ask, don't assume
 - When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic
 - When a linter (nesting depth, ShellCheck, errexit, bare-refs) flags a file the current change set touched, fix every violation in that file — not only the one that failed the check. Pre-existing violations in a file we already modified are in scope; violations in files we did not touch are not
@@ -86,13 +92,3 @@ On failure, diagnose in this order — do NOT retry with variations:
 - When adding docs, extend existing files rather than creating new ones
 - Never edit a `docs/*.md` that carries a "Generated from … by bin/local/compose-docs" banner — edit its `docs/*.src.md`, or the source data behind the include directive
 - When adding CLI commands or changing command signatures, update `docs/ai-automation.src.md` and/or `README.md`
-
-## Testing
-
-- Write tests the same way as existing tests in the project
-- Tests are not complete until they run and all pass
-- Never disable a test as a fix for a failing test
-- Do not add tests that simply assert constant values
-- When a foundational method's contract changes, audit every test that asserts the old behavior and update it
-- Prefer real dependencies over mocks when feasible — mocks hide integration bugs
-- Every bug fix and behavioral change must include a regression test

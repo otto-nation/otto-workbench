@@ -42,6 +42,7 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 - Never run tests, builds, or git-mutating commands in a worktree other than the current session's — test harnesses create temporary git repos that can corrupt the target worktree's branch and commit state
 - When applying changes to another worktree, only use `git apply` and file copies — then tell the user to run tests there themselves
 - In a subagent this is the default outcome rather than a mistake you have to make: cwd resets between shell calls, so an unqualified command runs against the parent session's worktree however many times the subagent has `cd`-ed into its own. Nothing warns — the command succeeds, against the wrong tree. A suite run that way reports the parent's worktree green and the change under test was never exercised; `git rev-parse --abbrev-ref HEAD` answers the parent's branch, so a subagent can commit against the wrong worktree believing it is on its own. Every path a subagent uses must therefore be absolute or `-C`-qualified — `git -C /abs/path status`, `bats /abs/path/tests/foo.bats` — with no dependence on a prior `cd`, and a suite that must resolve from the repo root goes in a wrapper script whose own first line is the `cd`. When dispatching a subagent that will run tests or git commands, give it the absolute worktree path and say its cwd will not persist. Under Claude Code, `bash-tool.md` § Subagents Reset the Working Directory has the fuller treatment, including the wrapper-script form and the permission rules around it; the statement here stands on its own without it
+- Unset `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` before running git against a target repo from inside a hook — a hook exports them, and `GIT_DIR` does not lose to `-C`: with it set, `git -C /other/repo log` reads the hook's repo, not the one named on the command line. Discovery is skipped rather than redirected, so `rev-parse --show-toplevel` answers the cwd even where there is no repo there, and the wrong answer arrives as a success
 - A subagent cannot discover any of this by observing that its commands succeed — they do succeed, somewhere else. So confirm the run landed where it was meant to before believing its result: have the wrapper echo `pwd` and the branch, or compare a suite's test count against a known-good run. A count taken against the wrong tree is usually close enough to the right one to pass unnoticed
 - Where a repo's own convention says to invoke its scripts by a path relative to the repo root, a subagent is the exception to it: relative paths resolve against whatever cwd the call actually starts in. Use the absolute path, and accept whatever that costs under the harness's permission model
 
@@ -93,8 +94,12 @@ When a git command fails (push, fetch, pull, clone), diagnose in this order:
 1. **Hooks** — `git config core.hooksPath`, run the hook directly
 2. **Config** — signing, credential helpers, push settings
 3. **Connectivity** — `ssh -T git@github.com` or HTTPS auth; verify remote URL
-4. **Ref state** — `git status`, upstream tracking, `git ls-remote origin <branch>`
+4. **Ref state** — `git status`, upstream tracking, `git ls-remote origin refs/heads/<branch>`
 5. **Surface** — report findings and the fix; if unresolved, ask the user to run the command with `!`
+
+Step 4 takes the full ref on purpose. `git ls-remote` matches a bare branch name against any
+ref whose tail equals it, so `feat/auth` also returns `refs/heads/user/feat/auth` — two rows,
+and a caller reading the first gets a sibling branch's SHA. Always query `refs/heads/<branch>`.
 
 ## Branch Analysis
 

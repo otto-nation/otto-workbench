@@ -81,6 +81,33 @@ PY
   [[ "$result" == *"/Users/test/git/infra"* ]]
 }
 
+@test "parse_project_registry: expands a home-abbreviated path" {
+  # The machine profile writes every path as ~/... — a literal tilde reaches a
+  # subprocess cwd as a directory that does not exist, so the whole registry
+  # resolves to nothing and the scan silently sees no GitHub repos.
+  _make_machine_md "$TMPDIR" \
+    "| myapp | ~/git/myapp | Go | yes |"
+
+  result=$(_py_here <<PY
+repos = mod.parse_project_registry("$TMPDIR/.claude/machine/machine.md")
+print(repos[0]["path"])
+PY
+)
+  [[ "$result" == "$HOME/git/myapp" ]]
+}
+
+@test "parse_project_registry: leaves an absolute path alone" {
+  _make_machine_md "$TMPDIR" \
+    "| myapp | /Users/test/git/myapp | Go | yes |"
+
+  result=$(_py_here <<PY
+repos = mod.parse_project_registry("$TMPDIR/.claude/machine/machine.md")
+print(repos[0]["path"])
+PY
+)
+  [[ "$result" == "/Users/test/git/myapp" ]]
+}
+
 @test "parse_project_registry: returns empty list for missing file" {
   result=$(_py 'print(len(mod.parse_project_registry("/nonexistent/machine.md")))')
   [[ "$result" == "0" ]]
@@ -96,6 +123,36 @@ print(len(repos))
 PY
 )
   [[ "$result" == "1" ]]
+}
+
+# ── get_repo_remote ──────────────────────────────────────────────────────────
+
+@test "get_repo_remote: a path that is not there reports itself" {
+  # Distinct from a repo that simply has no origin: both used to arrive as the
+  # same FileNotFoundError and be reported as "no git remote".
+  run _py "print(mod.get_repo_remote('$TMPDIR/absent'))"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"does not exist"* ]]
+  [[ "$output" == *"None"* ]]
+}
+
+@test "get_repo_remote: a repo with no origin is None without a path warning" {
+  mkdir -p "$TMPDIR/bare"
+  git -C "$TMPDIR/bare" init -q
+
+  run _py "print(mod.get_repo_remote('$TMPDIR/bare'))"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"does not exist"* ]]
+  [[ "$output" == *"None"* ]]
+}
+
+@test "get_repo_remote: reads the origin of a real checkout" {
+  mkdir -p "$TMPDIR/withremote"
+  git -C "$TMPDIR/withremote" init -q
+  git -C "$TMPDIR/withremote" remote add origin git@github.com:otto-nation/myapp.git
+
+  result=$(_py "print(mod.get_repo_remote('$TMPDIR/withremote'))")
+  [[ "$result" == "git@github.com:otto-nation/myapp.git" ]]
 }
 
 @test "resolve_github_remote: ssh remote" {
@@ -391,8 +448,47 @@ PY
 
 # ── Integration (with --home, offline) ────────────────────────────────────────
 
-@test "retro-scan: runs with empty home, produces report header" {
+@test "retro-scan: an empty registry refuses the run rather than banking it" {
+  # No machine.md at all resolves to zero projects, which resolves to zero
+  # repos — the same "resolves to nothing" case as a registry whose paths
+  # are all broken, and it must be refused the same way.
   run "$RETRO_SCAN" --home "$TMPDIR"
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"Refusing to bank a scan window"* ]]
+  [[ "$output" != *"Retro Scan Report"* ]]
+}
+
+@test "retro-scan: an empty registry is named as such, not as 0 projects resolving" {
+  # The two no-repo faults need different remedies, so they must not share a
+  # message: "none of the 0 registered projects resolved" names neither.
+  run "$RETRO_SCAN" --home "$TMPDIR"
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"lists no projects"* ]]
+  [[ "$output" != *"none of the 0"* ]]
+}
+
+@test "retro-scan: a registry that resolves to no GitHub repo fails the run" {
+  # Banking the scan window here would stamp .last-retro and delete the
+  # consumed local reviews, closing the window over PR feedback never read.
+  _make_machine_md "$TMPDIR" \
+    "| myapp | $TMPDIR/absent | Go | yes |"
+
+  run "$RETRO_SCAN" --home "$TMPDIR"
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"none of the 1 registered projects"* ]]
+  [[ "$output" == *"Project Registry paths"* ]]
+  [[ "$output" != *"Retro Scan Report"* ]]
+}
+
+@test "retro-scan: one resolving repo is enough to proceed" {
+  mkdir -p "$TMPDIR/good"
+  git -C "$TMPDIR/good" init -q
+  git -C "$TMPDIR/good" remote add origin git@github.com:otto-nation/myapp.git
+  _make_machine_md "$TMPDIR" \
+    "| myapp | $TMPDIR/good | Go | yes |" \
+    "| absent | $TMPDIR/absent | Go | no |"
+
+  run "$RETRO_SCAN" --home "$TMPDIR" --since 1m
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"Retro Scan Report"* ]]
 }

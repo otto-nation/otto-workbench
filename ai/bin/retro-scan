@@ -70,6 +70,14 @@ from core import log
 # ── Project registry ────────────────────────────────────────────────────────
 
 def parse_project_registry(machine_md_path: str) -> list[dict]:
+    """Every project row in the registry, with each path made usable.
+
+    The profile writes paths home-abbreviated (`~/git/maximum`), so expanding
+    them belongs here rather than at each call site — a literal `~` reaches a
+    subprocess `cwd` as a directory that does not exist, and the resulting
+    failure is indistinguishable from the repo genuinely lacking what was
+    asked of it.
+    """
     path = Path(machine_md_path)
     if not path.exists():
         log.warn(f"Machine profile not found: {path}")
@@ -85,7 +93,10 @@ def parse_project_registry(machine_md_path: str) -> list[dict]:
             continue
         m = REGISTRY_TABLE_PATTERN.match(line)
         if m and m.group(1) != "Project":
-            results.append({"name": m.group(1), "path": m.group(2)})
+            results.append({
+                "name": m.group(1),
+                "path": os.path.expanduser(m.group(2)),
+            })
     if has_table_header and not results:
         log.warn(f"Registry table header found but no project rows in {path}")
     elif not has_table_header:
@@ -104,9 +115,18 @@ def resolve_github_remote(remote_url: str) -> str | None:
 def get_repo_remote(repo_path: str) -> str | None:
     """The repo's origin URL, or None if it has none.
 
+    A directory that is not there is reported as itself rather than folded
+    into the no-remote answer. Both reach this function as the same
+    `FileNotFoundError` — one for the `cwd`, one for git — and reading a
+    missing checkout as a repo without a remote is what let a registry of
+    unexpanded paths look like six remoteless repos.
+
     A timeout arrives as a failed result rather than an exception, so only the
     missing-binary case still needs catching.
     """
+    if not Path(repo_path).is_dir():
+        log.warn(f"Registry path does not exist: {repo_path}")
+        return None
     try:
         result = git_client.run("remote", "get-url", "origin", cwd=repo_path)
     except FileNotFoundError:
@@ -312,10 +332,37 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
         repos.append({**proj, "github": github_slug})
     log.info(f"Resolved {len(repos)} GitHub repo(s)")
     skipped = len(projects) - len(repos)
-    if skipped:
-        trail.warn("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects ({skipped} skipped)")
-    else:
-        trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
+    if repos:
+        if skipped:
+            trail.warn("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects ({skipped} skipped)")
+        else:
+            trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
+
+    if not repos:
+        # A registry that resolves to nothing is a broken scan, not an empty
+        # one. Finishing the run would produce a report built only from local
+        # self-review output, then bank it: retro-complete.sh stamps
+        # .last-retro and deletes the review directories this run consumed, so
+        # the window closes over PR feedback that was never read.
+        # ceiling: no override for a machine whose repos are all non-GitHub --
+        # such a machine cannot run retro at all. Add an opt-out flag if one
+        # registers a repo on another forge.
+        # Both arrive here as "no repos", but they are different faults with
+        # different remedies, and the count alone reads as nonsense for the
+        # first ("none of the 0 registered projects resolved").
+        if projects:
+            detail = (
+                f"none of the {len(projects)} registered projects resolved to a GitHub repo "
+                "— check the Project Registry paths in the machine profile"
+            )
+        else:
+            detail = (
+                f"the Project Registry in {machine_md} lists no projects "
+                "— run `otto-workbench projects` to register one, or refresh the machine profile"
+            )
+        log.error(f"Refusing to bank a scan window over local reviews alone: {detail}.")
+        trail.error("resolve_remotes", f"0 GitHub repos from {len(projects)} projects")
+        sys.exit(1)
 
     rules = load_rules(workbench)
     if rules:

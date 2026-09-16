@@ -93,10 +93,24 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+
+# `from git import client` and `from core import log` resolve against ai/lib,
+# one directory up from this file. The interpreter's automatic sys.path[0] is
+# this file's own directory, so the entry has to be added here rather than by
+# the caller: a PYTHONPATH exported by the shell does not survive every
+# interpreter this script is launched under. A mise shim assigns PYTHONPATH
+# from the workspace's own [env] before exec'ing python, replacing whatever the
+# caller set, so in a repo whose .mise.toml sets it these imports fail outright.
+# Prepended, not appended: `git` is also the top-level module name GitPython
+# installs, and a sibling must win over a same-named package on the path.
+_AI_LIB = Path(__file__).resolve().parent.parent
+if _AI_LIB.is_dir() and str(_AI_LIB) not in sys.path:
+    sys.path.insert(0, str(_AI_LIB))
 
 from git import client as git_client
 from core import log

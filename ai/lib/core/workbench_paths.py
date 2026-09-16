@@ -128,6 +128,6 @@ def projects_registry() -> Path:
 
 
 # Where per-worktree state lived before the roots were split. Nothing writes
-# it any more; `pr._sweep_legacy_state` still reclaims what earlier versions
-# left behind.
+# it any more; bin/migrations/20260916-remove-legacy-worktree-state.sh reclaims
+# what earlier versions left behind.
 LEGACY_WORKTREE_STATE_DIRNAME = ".workbench"

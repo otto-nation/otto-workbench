@@ -408,6 +408,64 @@ def merge_readiness(state: PRState) -> Readiness:
     return Readiness(blockers=tuple(blockers), unchecked=tuple(unchecked))
 
 
+def render_merge_readiness(state: PRState) -> str:
+    """The merge-readiness line, folded from what each domain says of itself.
+
+    :func:`merge_readiness` gathers the answers; :meth:`Readiness.render` is the
+    string form. Refresh ``push`` before calling this — see
+    :func:`merge_readiness`.
+    """
+    return merge_readiness(state).render()
+
+
+def render_dashboard(
+    state: PRState | None,
+    push: PushDomain,
+    *,
+    repo: str,
+    branch: str,
+) -> list[str]:
+    """The ``pr status`` dashboard, as lines.
+
+    The identity header is this envelope's, not a domain's, and so is the
+    in-memory push refresh: ``cmd_status`` dumps ``state_to_dict(state)`` after
+    this returns, and that dump is the stdout contract. Writing ``push`` onto
+    the caller's object is what keeps the JSON in step with the dashboard;
+    rendering from a copy would leave the caller's push stale and silently
+    change stdout.
+
+    Held in memory only — the dashboard is a read, and persisting a domain the
+    command did not act on would date the file by looking at it. Refresh
+    ``push`` before folding merge readiness: nothing in the fold can tell an
+    unobserved push domain from a branch that is up to date.
+
+    A missing state is still a dashboard: the header, a "no status data yet"
+    notice, and whatever the live push observation says.
+    """
+    def header(pr_label: str) -> list[str]:
+        return [f"## PR Status — {repo} {pr_label} ({branch})", ""]
+
+    if not state:
+        return [
+            *header("(no PR)"),
+            "No status data yet. Run: pr ci, pr review, or pr comments",
+            "",
+            *push.render_status(),
+        ]
+
+    lines = header(f"#{state.identity.pr_number}" if state.identity.pr_number else "(no PR)")
+
+    # The assignment is the stdout contract, not a local — see the docstring.
+    state.push = push
+    for domain in domains_of(state):
+        rendered = domain.render_status()
+        if rendered:
+            lines += rendered
+            lines.append("")
+    lines.append(render_merge_readiness(state))
+    return lines
+
+
 def apply(state: PRState, domain: Domain) -> None:
     """Write a domain update into the field that owns it, honoring its merge policy."""
     name = _domain_names().get(type(domain))

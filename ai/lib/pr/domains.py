@@ -108,6 +108,20 @@ class Readiness:
     # What this domain cannot answer because it never ran.
     unchecked: tuple[str, ...] = ()
 
+    def render(self) -> str:
+        """The merge-readiness line, in the words the dashboard prints.
+
+        Unchecked domains are named last and as one clause, because "we did not
+        look" is a different claim from "we looked and it is wrong" and reading a
+        list of blockers should not require telling them apart mid-sentence.
+        """
+        issues = list(self.blockers)
+        if self.unchecked:
+            issues.append(f"not checked: {', '.join(self.unchecked)}")
+        if not issues:
+            return "**Merge readiness**: ready"
+        return f"**Merge readiness**: blocked — {'; '.join(issues)}"
+
 
 @dataclass
 class Domain:

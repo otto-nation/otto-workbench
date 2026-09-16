@@ -27,6 +27,7 @@ from pr.state import (
     PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
     apply, _domains, domains_of, merge_readiness,
+    render_dashboard, render_merge_readiness,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
     STATE_VERSION,
@@ -710,6 +711,89 @@ def test_merge_readiness_is_empty_when_every_domain_is_clean():
 
     assert merge_readiness(state).blockers == ()
     assert merge_readiness(state).unchecked == ()
+
+
+def test_render_merge_readiness_delegates_to_readiness_render():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", updated_at="t"))
+
+    assert render_merge_readiness(state) == merge_readiness(state).render()
+    assert "CI failing" in render_merge_readiness(state)
+
+
+def _green_state():
+    """Everything checked and clean — anything blocked here is the closeout."""
+    state = new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", updated_at="t"))
+    apply(state, ReviewSummary(
+        finding_counts={"S": 1}, verdict=ReviewVerdict.APPROVE.value, updated_at="t",
+    ))
+    apply(state, CommentsSummary(blocking_reviewers=[], updated_at="t"))
+    return state
+
+
+def test_render_merge_readiness_blocked_by_a_deferred_summary():
+    state = _green_state()
+    apply(state, FixSummary(summary_deferred=True, updated_at="t"))
+    result = render_merge_readiness(state)
+    assert "blocked" in result
+    assert "closeout not delivered" in result
+    assert CLOSEOUT_COMMAND in result
+
+
+def test_render_merge_readiness_blocked_by_a_pending_reply_queue():
+    state = _green_state()
+    apply(state, FixSummary(replies_pending=True, updated_at="t"))
+    assert "closeout not delivered" in render_merge_readiness(state)
+
+
+def test_render_merge_readiness_blocked_by_an_unfiled_tracking_issue():
+    """Deferred comments with nowhere to live are not a mergeable state."""
+    state = _green_state()
+    apply(state, FixSummary(deferred_issue_pending=True, updated_at="t"))
+    result = render_merge_readiness(state)
+    assert "ready" not in result.lower()
+    assert "closeout not delivered" in result
+
+
+def test_render_merge_readiness_ignores_a_drained_closeout():
+    state = _green_state()
+    apply(state, FixSummary(
+        fix=FixRecord(
+            items=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED)],
+        ),
+        summary_url="https://example.test/c/1", replies_posted=1, updated_at="t",
+    ))
+    result = render_merge_readiness(state)
+    assert "closeout" not in result
+    assert "ready" in result.lower()
+
+
+def test_render_dashboard_without_state_is_the_header_and_live_push():
+    push = PushDomain(ahead=0, updated_at="t")
+    lines = render_dashboard(None, push, repo="acme/widget", branch="feat/x")
+    assert lines[0] == "## PR Status — acme/widget (no PR) (feat/x)"
+    assert "No status data yet. Run: pr ci, pr review, or pr comments" in lines
+    assert "**Push**: up to date" in lines
+
+
+def test_render_dashboard_push_refresh_is_visible_in_state_to_dict():
+    """The stdout dump reads the same object this mutates.
+
+    Rendering from a copy would leave the caller's push stale, and
+    ``json.dump(state_to_dict(state))`` would silently change.
+    """
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", updated_at="t"))
+    push = PushDomain(ahead=2, updated_at="now")
+
+    render_dashboard(state, push, repo="acme/widget", branch="feat/x")
+
+    dumped = state_to_dict(state)
+    assert dumped["push"]["ahead"] == 2
+    assert dumped["push"]["updated_at"] == "now"
+    assert state.push is push
 
 
 def test_apply_rejects_a_type_no_field_holds():

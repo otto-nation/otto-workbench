@@ -56,7 +56,7 @@ def fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
         return []
     latest_sha = runs[0]["headSha"]
     seen_workflows: set[str] = set()
-    seen_cancelled_workflows: set[str] = set()
+    seen_cancelled: set[str] = set()
     ids: list[int] = []
     for r in runs:
         if r["headSha"] != latest_sha:
@@ -64,21 +64,15 @@ def fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
         if r.get("conclusion") in SKIP_CONCLUSIONS:
             continue
         wf = r.get("workflowName", "")
-        # Selected without claiming `wf`. A cancelled run holding no failed job
-        # contributes nothing but the one `gh run view` spent reading it, which
-        # is the cheaper half of the trade: the other shape hides real failures.
-        # Only the newest cancelled run per workflow is kept — gh run list
-        # returns newest first, so an older cancelled attempt of the same
-        # workflow has nothing the newest one didn't already carry.
-        if r.get("conclusion") == "cancelled":
-            if wf in seen_cancelled_workflows:
-                continue
-            seen_cancelled_workflows.add(wf)
-            ids.append(r["databaseId"])
+        # Which set a run dedupes against is the whole of the claim rule. A
+        # cancelled run answers to its own, so it never occupies the name a real
+        # run of that workflow would claim and can never shadow one — while
+        # still collapsing its own repeats, since gh run list returns newest
+        # first and an older cancelled attempt carries nothing the newest lacks.
+        claimed = seen_cancelled if r.get("conclusion") == "cancelled" else seen_workflows
+        if wf in claimed:
             continue
-        if wf in seen_workflows:
-            continue
-        seen_workflows.add(wf)
+        claimed.add(wf)
         ids.append(r["databaseId"])
     return ids
 

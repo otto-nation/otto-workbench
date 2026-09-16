@@ -128,6 +128,18 @@ class TestWhatCountsAsNamingAVerdict:
     def test_an_empty_body_names_nothing(self):
         assert not thread_replies.names_a_verdict("")
 
+    @pytest.mark.parametrize("word", thread_replies.HANDWRITTEN_VERDICT_WORDS)
+    def test_the_handwritten_match_is_case_sensitive(self, word):
+        """Unlike the login match, a verdict word must be capitalised.
+
+        These are sentence openers a person capitalises when writing one — see
+        `thread_replies.HANDWRITTEN_VERDICT_WORDS`'s own comment. A lowercase
+        opening reads as ordinary prose, not a verdict.
+        """
+        assert not thread_replies.names_a_verdict(
+            f"{word.lower()} — dropped the guard.",
+        )
+
     def test_deferring_is_still_no_part_of_the_typed_vocabulary(self):
         """Counting it would settle every thread on the second --finish."""
         assert "Deferred" not in thread_replies.HANDWRITTEN_VERDICT_WORDS

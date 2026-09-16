@@ -32,6 +32,11 @@ from pr.comments_state import ThreadState  # noqa: E402
 from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
+# The reviewer's finding, shared across every test below that needs a body for
+# the root comment — the wording itself is never the point of a test that uses
+# it, only that a root comment exists for a reply to answer.
+_FINDING = "please rename this"
+
 
 def _thread(
     *, tid="t1", state=ThreadState.NEW, is_resolved=False, bodies=(),
@@ -191,7 +196,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
 
     def test_our_hand_written_verdict_reads_as_fixed(self):
         thread = _authored(
-            ("kgn", "please rename this"),
+            ("kgn", _FINDING),
             ("me", "Fixed — renamed the guard, see abc1234."),
         )
         assert settlement.settlement_for(thread) is FixOutcome.FIXED
@@ -202,7 +207,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
          "Done.", "Done — dropped the guard.", "Dismissed: the premise fails."],
     )
     def test_the_ways_a_person_spells_a_verdict(self, body):
-        thread = _authored(("kgn", "please rename this"), ("me", body))
+        thread = _authored(("kgn", _FINDING), ("me", body))
         assert settlement.settlement_for(thread) is FixOutcome.FIXED
 
     def test_a_reviewer_using_our_wording_is_not_our_verdict(self):
@@ -213,7 +218,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
         publishes a claim about code nobody here changed.
         """
         thread = _authored(
-            ("kgn", "please rename this"),
+            ("kgn", _FINDING),
             ("kgn", "Fixed in my branch — please rebase onto it."),
         )
         assert settlement.settlement_for(thread) is None
@@ -221,7 +226,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
     def test_a_reviewer_verdict_does_not_even_settle_the_thread(self):
         """Not merely 'not FIXED' — nothing about their comment ends the thread."""
         thread = _authored(
-            ("kgn", "please rename this"), ("kgn", "Done, on my side."),
+            ("kgn", _FINDING), ("kgn", "Done, on my side."),
         )
         assert settlement.settlement_for(thread) is None
 
@@ -240,13 +245,13 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
         leaves the thread open. The vocabulary is sized for that asymmetry, and
         the anchor at the start of the body is half of what enforces it.
         """
-        thread = _authored(("kgn", "please rename this"), ("me", body))
+        thread = _authored(("kgn", _FINDING), ("me", body))
         assert settlement.settlement_for(thread) is None
 
     def test_a_hand_written_deferral_still_says_the_opposite(self):
         """Counting it would settle every thread on the second --finish."""
         thread = _authored(
-            ("kgn", "please rename this"),
+            ("kgn", _FINDING),
             ("me", f"{thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1."),
         )
         assert settlement.settlement_for(thread) is None
@@ -254,7 +259,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
     def test_a_template_is_ours_even_with_no_login_to_check(self):
         """Nothing but this tool writes one, so authorship needs no second source."""
         thread = _authored(
-            ("kgn", "please rename this"),
+            ("kgn", _FINDING),
             ("me", f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed it."),
             my_login="",
         )
@@ -263,21 +268,21 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
     def test_without_a_login_a_typed_verdict_belongs_to_nobody(self):
         """Ours and the reviewer's are indistinguishable, so neither counts."""
         thread = _authored(
-            ("kgn", "please rename this"), ("me", "Fixed — renamed it."),
+            ("kgn", _FINDING), ("me", "Fixed — renamed it."),
             my_login="",
         )
         assert settlement.settlement_for(thread) is None
 
     def test_the_login_match_ignores_case(self):
         thread = _authored(
-            ("kgn", "please rename this"), ("Me", "Fixed — renamed it."),
+            ("kgn", _FINDING), ("Me", "Fixed — renamed it."),
             my_login="me",
         )
         assert settlement.settlement_for(thread) is FixOutcome.FIXED
 
     def test_a_typed_verdict_outranks_an_unresolved_button(self):
         thread = _authored(
-            ("kgn", "please rename this"), ("me", "Fixed — renamed it."),
+            ("kgn", _FINDING), ("me", "Fixed — renamed it."),
             is_resolved=False,
         )
         assert settlement.settlement_for(thread) is FixOutcome.FIXED
@@ -298,7 +303,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
     """
 
     def _addressed(self, **kw):
-        kw.setdefault("bodies", ["please rename this", "done by hand"])
+        kw.setdefault("bodies", [_FINDING, "done by hand"])
         return _thread(state=ThreadState.ADDRESSED, **kw)
 
     def test_an_answered_thread_becomes_a_row_nothing_had_before(self):
@@ -318,7 +323,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         """The grade is `settlement_for`'s, not a constant this stage picks."""
         state = _state()
         thread = self._addressed(bodies=[
-            "please rename this",
+            _FINDING,
             f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard.",
         ])
         settlement.adopt_settled_threads(state, {"t1": thread})
@@ -343,7 +348,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         """No round ran, so there is no model-written summary to read."""
         state = _state()
         settlement.adopt_settled_threads(state, {"t1": self._addressed()})
-        assert state.fix.fix.items[0].summary == "please rename this"
+        assert state.fix.fix.items[0].summary == _FINDING
 
     def test_a_thread_with_no_line_is_still_recorded(self):
         """`ReportThread.line` is optional; `ItemOutcome.line` is not."""
@@ -374,14 +379,14 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         """
         state = _state()
         resolved = _thread(state=ThreadState.RESOLVED, is_resolved=True,
-                           bodies=["please rename this"])
+                           bodies=[_FINDING])
         assert settlement.adopt_settled_threads(state, {"t1": resolved}) == 0
         assert state.fix.fix.items == []
 
     def test_a_thread_awaiting_a_reviewer_is_not_adopted(self):
         """Nobody has answered it, so there is nothing for this stage to record."""
         state = _state()
-        open_thread = _thread(bodies=["please rename this"])
+        open_thread = _thread(bodies=[_FINDING])
         assert settlement.adopt_settled_threads(state, {"t1": open_thread}) == 0
 
     def test_a_thread_the_round_already_recorded_is_left_alone(self):
@@ -422,7 +427,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         because a typed verdict matches none of the generated openings.
         """
         thread = _authored(
-            ("kgn", "please rename this"), ("me", "Fixed — renamed the guard."),
+            ("kgn", _FINDING), ("me", "Fixed — renamed the guard."),
             state=ThreadState.ADDRESSED,
         )
         state = _state()
@@ -433,7 +438,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
     def test_our_own_template_is_still_ours_to_rewrite(self):
         """The converse: a generated reply may be replaced, so the guard is off."""
         thread = _authored(
-            ("kgn", "please rename this"),
+            ("kgn", _FINDING),
             ("me", f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard."),
             state=ThreadState.ADDRESSED,
         )

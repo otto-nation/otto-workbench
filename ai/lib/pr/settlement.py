@@ -93,7 +93,14 @@ _SOURCE_ANCHOR_RE = re.compile(
 
 
 def _our_verdict_stands(thread: ReportThread) -> bool:
-    """Whether a reply of ours on this thread opens by naming a verdict.
+    """Whether the newest reply of ours on this thread opens by naming a verdict.
+
+    Newest first, same principle `thread_replies.has_hand_written_reply` and
+    `thread_replies.our_last_reply_id` apply to our standing reply: whatever we
+    said most recently is what stands, whatever an earlier comment of ours
+    claimed. A person who typed "Fixed: ..." early and later walked it back
+    with "Actually, still broken" does not have the thread read as fixed just
+    because a verdict appears somewhere in the history.
 
     Two tests, and the author half is the load-bearing one. What counts as a
     verdict is `thread_replies.names_a_verdict`, which accepts a wording a
@@ -107,15 +114,15 @@ def _our_verdict_stands(thread: ReportThread) -> bool:
     this tool writes them.
     """
     login = (thread.my_login or "").lower()
-    for comment in thread.comments:
+    for comment in reversed(thread.comments):
         body = str(comment.get("body", ""))
         if body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
             return True
         if not login:
             continue
         author = ((comment.get("author") or {}).get("login") or "").lower()
-        if author == login and thread_replies.names_a_verdict(body):
-            return True
+        if author == login:
+            return thread_replies.names_a_verdict(body)
     return False
 
 
@@ -158,6 +165,11 @@ def answered_comment_sources(
 
     Costs one listing, and only when the snapshot holds an unsettled item that
     such a reply could settle.
+
+    Keyed per anchor rather than unioned, so a later comment of ours can
+    retract what an earlier one claimed about the same source: the listing is
+    chronological, so the last comment to touch a given anchor is the one that
+    decides it, same as `_our_verdict_stands` reading a thread newest-first.
     """
     if not any(
         o.outcome in UNSETTLED_OUTCOMES and permalinks.comment_item_source(o).ok
@@ -175,20 +187,23 @@ def answered_comment_sources(
     mine = my_login.lower()
     # include_self, because the reply being looked for is ours and the listing
     # drops our own comments by default.
-    answered: set[str] = set()
+    answered: dict[str, bool] = {}
     for comment in pc.fetch_issue_comments(
         repo, pr_number, my_login, include_self=True,
     ):
         if str(comment.get("user", "")).lower() != mine:
             continue
+        body = str(comment.get("body", ""))
+        anchors = [m.group(1) for m in _SOURCE_ANCHOR_RE.finditer(body)]
+        if not anchors:
+            continue
         # Safe to accept a hand-typed verdict here without a second author
         # test: the login check above already dropped every comment but ours,
         # and the early return above refuses to run at all without a login.
-        body = str(comment.get("body", ""))
-        if not thread_replies.names_a_verdict(body):
-            continue
-        answered.update(m.group(1) for m in _SOURCE_ANCHOR_RE.finditer(body))
-    return frozenset(answered)
+        verdict = thread_replies.names_a_verdict(body)
+        for anchor in anchors:
+            answered[anchor] = verdict
+    return frozenset(anchor for anchor, verdict in answered.items() if verdict)
 
 
 def entry_settlement(

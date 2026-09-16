@@ -51,7 +51,7 @@ _run_migration() {
 # the migration asks, because a literal here would be the second implementation
 # of the key the migration exists not to have.
 _expected_ledger() {
-  WORKBENCH_STATE_DIR="$STATE" python3 - "$REPO_ROOT" "${1:-$REPO}" <<'PY'
+  WORKBENCH_STATE_DIR="$STATE" python3 - "$REPO_ROOT" "$REPO" <<'PY'
 import sys
 from pathlib import Path
 

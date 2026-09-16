@@ -295,11 +295,16 @@ def _run_review_body(
         _print_summary(repo, pr_number, str(review_file), session_log, pr_url, post_session_log, wall_clock_ms=wall_ms)
         return
 
+    # Returns rather than exits, like its three siblings: declining to post is
+    # not declining to record. The review ran, the file is on disk, and the two
+    # hints below tell the operator to edit and post it — so a domain left
+    # unwritten here would have `pr status` report "not checked: review" for a
+    # review that did run, and `pr fix` skip the review pass entirely.
     if not prompt.confirm("Satisfied with the review?"):
         _print_summary(repo, pr_number, str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
         log.dim("Edit the review:  $EDITOR " + str(review_file))
         log.dim("Post to GitHub:   pr review --post")
-        sys.exit(0)
+        return
 
     if not prompt.confirm("Post review to GitHub?"):
         _print_summary(repo, pr_number, str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)

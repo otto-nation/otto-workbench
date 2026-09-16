@@ -2068,6 +2068,72 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     assert not (callers_target / ps.STATE_FILE).exists()
 
 
+def _body_kwargs(tmp_path, review_file, pr_url=""):
+    """The arguments `_run_review_body` needs to reach its post-review prompts."""
+    return dict(
+        pr_number="42", repo="acme/widget", review_file=review_file,
+        review_dir=review_file.parent, wt_path=str(tmp_path),
+        session_log=str(tmp_path / "session.jsonl"), prior_review_path="",
+        issue_link="", issue_context="", max_parallel=None, max_cost=None,
+        model="", no_post=False, auto_post=False, auto_submit=False,
+        pr_url=pr_url, target_dir=tmp_path / "target",
+    )
+
+
+def test_an_unsatisfying_review_is_still_recorded(cr, tmp_path, monkeypatch):
+    """Declining to post is not declining to record.
+
+    This branch used to end in `sys.exit(0)`, which skipped the caller's
+    `_update_pr_state` while its three siblings returned into it. The exit was
+    written when `cmd_review` was the last thing `main` did and exiting was the
+    same as returning; the state write arrived two months later and was never
+    reconciled with it. The result was a review that had run, cost money and
+    found must-fixes being reported by `pr status` as "not checked: review" —
+    the one distinction `Readiness` exists to preserve.
+    """
+    review_file = tmp_path / "review" / "review.md"
+    review_file.parent.mkdir()
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+
+    monkeypatch.setattr(cr.subprocess, "run",
+                        lambda *a, **kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
+    # False is "not satisfied" — the branch under test.
+    monkeypatch.setattr(cr.prompt, "confirm", lambda *a, **kw: False)
+    posted = MagicMock()
+    monkeypatch.setattr(cr, "_post_review", posted)
+
+    cr._run_review_body(**_body_kwargs(tmp_path, review_file))
+
+    posted.assert_not_called()
+
+
+def test_an_unsatisfying_review_does_not_exit_the_process(cr, tmp_path, monkeypatch):
+    """The caller must get control back, which is what makes the write reachable.
+
+    Asserting the absence of `SystemExit` is the whole point: a `sys.exit(0)`
+    here reports success to the shell while skipping everything the caller does
+    after the body, and both the domain write and the `--json-summary`
+    emission live there.
+    """
+    review_file = tmp_path / "review" / "review.md"
+    review_file.parent.mkdir()
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+
+    monkeypatch.setattr(cr.subprocess, "run",
+                        lambda *a, **kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(cr, "_display_review", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_print_summary", lambda *a, **kw: None)
+    monkeypatch.setattr(cr.prompt, "confirm", lambda *a, **kw: False)
+
+    try:
+        cr._run_review_body(**_body_kwargs(tmp_path, review_file))
+    except SystemExit as exc:  # pragma: no cover - the regression itself
+        pytest.fail(f"body exited instead of returning (code {exc.code}); "
+                    "the caller's state write is unreachable")
+
+
 def test_update_pr_state_reports_a_failed_write_on_both_channels(
     cr, tmp_path, monkeypatch, capsys,
 ):

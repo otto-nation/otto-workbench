@@ -44,6 +44,18 @@ def _rules():
     return load_rules(REPO_ROOT)
 
 
+def _every_passage():
+    """Each rule's passages, flattened to `(filename, content, passage)` triples.
+
+    A corpus-wide assertion about passages is a rule loop around a passage loop,
+    which is one level past what `validate-nesting` allows once the assertion
+    itself is a block. Flattening here keeps each such test a single loop.
+    """
+    for rule in _rules():
+        for passage in rule["passages"]:
+            yield rule["filename"], rule["content"], passage
+
+
 def _rule_texts() -> dict[str, str]:
     """Every rule file's raw text off disk, keyed by filename."""
     return {
@@ -600,28 +612,22 @@ class TestPassages:
         other passage's words beside the score. Stated as a round trip: each
         passage's own text must re-derive its own keywords.
         """
-        for rule in _rules():
-            for passage in rule["passages"]:
-                assert passage.text
-                assert passage.keywords == extract_keywords(passage.text), (
-                    f"{rule['filename']}: {passage.text[:70]}"
-                )
-                # A wrapped item's lines are joined by a single space, and its
-                # opening marker is dropped, so the whole string is not a
-                # substring of the file verbatim — but every one of its words
-                # is, which a fabricated or misattributed text would not be.
-                for word in passage.text.split():
-                    assert word in rule["content"], (
-                        f"{rule['filename']}: {passage.text[:70]}"
-                    )
+        for filename, content, passage in _every_passage():
+            where = f"{filename}: {passage.text[:70]}"
+            assert passage.text
+            assert passage.keywords == extract_keywords(passage.text), where
+            # A wrapped item's lines are joined by a single space, and its
+            # opening marker is dropped, so the whole string is not a substring
+            # of the file verbatim — but every one of its words is, which a
+            # fabricated or misattributed text would not be.
+            assert all(word in content for word in passage.text.split()), where
 
     def test_every_passage_of_every_rule_clears_the_keyword_floor(self):
         """`MIN_PASSAGE_KEYWORDS` filters the pair, not one half of it."""
-        for rule in _rules():
-            for passage in rule["passages"]:
-                assert len(passage.keywords) >= MIN_PASSAGE_KEYWORDS, (
-                    f"{rule['filename']}: {passage.text[:70]}"
-                )
+        for filename, _content, passage in _every_passage():
+            assert len(passage.keywords) >= MIN_PASSAGE_KEYWORDS, (
+                f"{filename}: {passage.text[:70]}"
+            )
 
 
 class TestBestPassage:

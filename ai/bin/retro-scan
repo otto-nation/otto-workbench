@@ -26,6 +26,9 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     del sys.path[0]
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
+# Deliberately unpinned: gh/git/_version are this entry point's own siblings, not
+# the checked-out ai/lib's, so they always come from this file's own ai/bin
+# regardless of the pin.
 sys.path.insert(0, str(_BIN_DIR))
 from gh import client as gh_client  # noqa: E402
 from git import client as git_client  # noqa: E402

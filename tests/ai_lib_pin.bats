@@ -254,7 +254,8 @@ PY
   [ "$count" -ge 21 ]
 
   shapes=$(while IFS= read -r f; do
-      grep -A4 '^if os.environ.get("WORKBENCH_AI_LIB_DIR"):$' "$f" | md5
+      grep -A4 '^if os.environ.get("WORKBENCH_AI_LIB_DIR"):$' "$f" \
+        | { md5 -q 2>/dev/null || md5sum 2>/dev/null | awk '{print $1}'; }
     done <<< "$carriers" | sort -u | grep -c .)
   [ "$shapes" -eq 1 ]
 }

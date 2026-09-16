@@ -25,6 +25,8 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     del sys.path[0]
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
+# Deliberately unpinned: _version is this entry point's own, not the checked-out
+# ai/lib's, so it always comes from this file's own ai/bin regardless of the pin.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _version import version_string as _version_string  # noqa: E402
 from core.trail import Trail, add_trail_args  # noqa: E402

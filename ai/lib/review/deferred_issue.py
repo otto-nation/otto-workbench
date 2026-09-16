@@ -267,8 +267,7 @@ def _no_team_key(
     what checks that name against the workbench doing the reading.
     """
     remedy = (
-        f"run otto-workbench config set {workbench_config.ISSUE_TEAM_KEY} TEAM"
-        " --project"
+        f"run otto-workbench config set {workbench_config.ISSUE_TEAM_KEY} TEAM --project"
     )
     if not publishing_open:
         log.dim(

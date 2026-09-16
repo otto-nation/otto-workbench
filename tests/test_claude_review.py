@@ -1888,8 +1888,6 @@ def test_build_orchestrate_args_forwards_post(cr, tmp_path):
 def test_self_review_accepts_recover(cr, reviews_dir, monkeypatch):
     """--recover is a top-level mode; --self must not reject it."""
     monkeypatch.setattr(sys, "argv", ["claude-review", "--self", "--recover"])
-    monkeypatch.setattr(cr, "_migrate_legacy_reviews", lambda: None)
-    monkeypatch.setattr(cr, "_migrate_flat_reviews", lambda: None)
     run_self = MagicMock()
     monkeypatch.setattr(cr, "_run_self_review", run_self)
 

@@ -801,22 +801,19 @@ def test_cmd_review_does_not_rewrite_domain_after_delegate(
         mock_run, mock_sync, reviews_dir):
     """claude-review already wrote the domain; pr must not write it again."""
     mock_run.return_value = MagicMock(returncode=0)
-    review_dir = reviews_dir / "repo-42"
-    review_dir.mkdir()
-    (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
     rc = pr_cli.cmd_review(["123"], make_ctx(pr_number=42))
     assert rc == 0
     mock_sync.assert_not_called()
 
 
 @patch("pr_cli.sync_review_domain")
-def test_cmd_review_repair_succeeds_with_review_file(mock_update, reviews_dir):
+def test_cmd_review_repair_succeeds_with_review_file(mock_sync, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
     rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42))
     assert rc == 0
-    mock_update.assert_called_once()
+    mock_sync.assert_called_once()
 
 
 @patch("pr_cli.subprocess.run")

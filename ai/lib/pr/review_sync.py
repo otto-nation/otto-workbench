@@ -74,6 +74,9 @@ def sync_review_domain(
             if key != "total" and isinstance(count, int) and count > 0
         }
         domain.review_file = report.review_file
+        # "full" duplicates review.types.ReviewType.FULL.value — this module is
+        # layer 4 and review is layer 6, so it cannot import the enum to read
+        # the value off it instead.
         domain.review_type = report.review_type or domain.review_type or "full"
         domain.head_sha = report.head_sha or ""
         domain.finding_counts = finding_counts

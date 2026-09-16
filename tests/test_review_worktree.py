@@ -572,8 +572,8 @@ def test_cleanup_self_review_worktree_swallows_unusable_git(monkeypatch):
 
 def test_resolve_wt_path_returns_git_toplevel(monkeypatch):
     monkeypatch.setattr(
-        "review.worktree.pr_context._git_toplevel",
-        lambda cwd=None: Path("/repos/widget"),
+        "review.worktree.git_client.out",
+        lambda *a, **k: "/repos/widget",
     )
     assert resolve_wt_path("", "feat/x") == "/repos/widget"
     assert resolve_wt_path("/ignored", "feat/x") == "/repos/widget"
@@ -581,7 +581,7 @@ def test_resolve_wt_path_returns_git_toplevel(monkeypatch):
 
 def test_resolve_wt_path_bare_repo_uses_topology(monkeypatch):
     monkeypatch.setattr(
-        "review.worktree.pr_context._git_toplevel", lambda cwd=None: None)
+        "review.worktree.git_client.out", lambda *a, **k: "")
     monkeypatch.setattr(
         "review.worktree.git_topology.is_bare_repo", lambda cwd=None: True)
     monkeypatch.setattr(
@@ -593,7 +593,7 @@ def test_resolve_wt_path_bare_repo_uses_topology(monkeypatch):
 
 def test_resolve_wt_path_bare_repo_missing_worktree_exits(monkeypatch):
     monkeypatch.setattr(
-        "review.worktree.pr_context._git_toplevel", lambda cwd=None: None)
+        "review.worktree.git_client.out", lambda *a, **k: "")
     monkeypatch.setattr(
         "review.worktree.git_topology.is_bare_repo", lambda cwd=None: True)
     monkeypatch.setattr(
@@ -609,7 +609,7 @@ def test_resolve_wt_path_bare_repo_missing_worktree_exits(monkeypatch):
 
 def test_resolve_wt_path_not_a_repo_exits(monkeypatch):
     monkeypatch.setattr(
-        "review.worktree.pr_context._git_toplevel", lambda cwd=None: None)
+        "review.worktree.git_client.out", lambda *a, **k: "")
     monkeypatch.setattr(
         "review.worktree.git_topology.is_bare_repo", lambda cwd=None: False)
     with pytest.raises(SystemExit) as exc:

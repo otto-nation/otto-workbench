@@ -222,7 +222,7 @@ def print_summary(
     review_dir = Path(report.review_file).parent if report.review_file else None
     warnings = read_pipeline_warnings(review_dir)
     if warnings:
-        log.warn(f"Incomplete:    {', '.join(warnings)}")
+        log.warn(f"Incomplete:      {', '.join(warnings)}")
 
     log.dim(f"Review:          {report.review_file}")
     log.dim(f"Session log:     {session_log}")

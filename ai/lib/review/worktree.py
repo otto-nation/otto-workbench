@@ -24,7 +24,6 @@ from git import client as git_client
 from git import topology as git_topology
 from core import log
 from core import timeouts
-from pr import context as pr_context
 from pr import sync as pr_sync
 from core import proc
 
@@ -166,9 +165,12 @@ def cleanup_self_review_worktree(wt_cleanup: WorktreeResult | None, repo_dir: st
 
 def resolve_wt_path(repo_dir: str, branch: str) -> str:
     cwd = repo_dir or None
-    toplevel = pr_context._git_toplevel(cwd)
-    if toplevel is not None:
-        return str(toplevel)
+    try:
+        toplevel = git_client.out("rev-parse", "--show-toplevel", cwd=cwd)
+    except OSError:
+        toplevel = ""
+    if toplevel:
+        return toplevel
 
     if not repo_dir and git_topology.is_bare_repo(cwd):
         # branch or None: an empty string is "no branch requested", which
@@ -197,7 +199,10 @@ def resolve_branch_input(pr_input: str, repo_dir: str) -> str:
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
-    except Exception:
+    except (subprocess.TimeoutExpired, OSError):
+        # resolve-branch is a convenience lookup, not a requirement — a
+        # missing binary, a timeout, or any other failure to run it falls
+        # back to treating pr_input as the branch name it already might be.
         pass
     return pr_input
 
@@ -253,6 +258,8 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
             capture_output=True, text=True, timeout=timeouts.LOCAL,
         )
         found = r2.stdout.strip().splitlines()
-    except Exception:
+    except (subprocess.TimeoutExpired, OSError):
+        # A missing `find` binary, a timeout, or any other failure to run it
+        # means no match — the caller's "" return already covers that case.
         found = []
     return found[0] if found else ""

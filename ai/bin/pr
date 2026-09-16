@@ -240,7 +240,8 @@ def _update_review_state_from_output(output: str,
     """Parse REVIEW_SUMMARY from output and update pr_state.
 
     review-rebuild does not emit the marker today, so this is a no-op on that
-    path. The marker protocol itself is T7's to delete.
+    path. The marker protocol itself should be deleted once the JSON-marker
+    protocol it implements is retired.
     """
     summary_data = _parse_review_summary(output)
     if not summary_data:

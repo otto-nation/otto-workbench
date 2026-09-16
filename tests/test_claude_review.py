@@ -2145,7 +2145,6 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
         raise OSError("read-only file system")
 
     monkeypatch.setattr(cr.pr_state, "save_state", _boom)
-    monkeypatch.setattr("pr.review_sync.pr_state.save_state", _boom)
     trail = MagicMock()
     ctx = make_ctx(repo="acme/widget", branch="feat/x", pr_number=1,
                    worktree_root=None, head_sha="deadbee",

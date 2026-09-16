@@ -30,6 +30,7 @@ from git import client as git_client
 from core import log
 from core import prompt
 from core.trail import Trail
+from pr import domains as pr_domains
 from pr import supersession
 from review import recover as review_recover
 from review.state import read_pipeline_status
@@ -85,7 +86,7 @@ def check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool
     if review_sha == pr_head_sha:
         review_dir = review_file.parent
         pipeline_status = read_pipeline_status(review_dir)
-        if pipeline_status in ("partial", "error"):
+        if pipeline_status in (pr_domains.ReviewStatus.PARTIAL.value, pr_domains.ReviewStatus.ERROR.value):
             log.info(
                 "Recovering failed review agents "
                 f"(HEAD unchanged at {git_client.abbrev(pr_head_sha)})")

@@ -34,7 +34,6 @@ from pr import state as pr_state  # noqa: E402
 from core import run_lock  # noqa: E402
 from core import timeouts  # noqa: E402
 from core import tool_parser  # noqa: E402
-from core import workbench_paths  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
@@ -1534,21 +1533,6 @@ def test_gc_skips_own_target_when_pruning(
     assert mock_prune_targets.call_args.kwargs["skip"] == target
 
 
-@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
-@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
-@patch("pr_cli.review_gc.gc_reviews", return_value=0)
-@patch("pr_cli.pr_context.resolve")
-def test_gc_skips_legacy_sweep_from_a_bare_repo(
-        mock_resolve, _gc, _prune, _prune_targets, tmp_path):
-    """A bare repo has a target but no worktree_root — there is no worktree
-    to sweep legacy artifacts out of."""
-    target = tmp_path / "target"
-    mock_resolve.return_value = make_ctx(worktree_root=None, target_dir=target)
-    with patch("pr_cli._sweep_legacy_state") as mock_sweep:
-        _run_main("--repo-dir", "/nonexistent", "gc")
-    mock_sweep.assert_not_called()
-
-
 @patch("pr_cli.pr_context.resolve")
 def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     target = worktree / "target"
@@ -1651,39 +1635,6 @@ def test_an_explicit_pr_escalates_the_depth_and_nothing_else(tmp_path):
     assert not stage.local.called
     assert not stage.update.called
     assert not _lock_file(target).exists()
-
-
-def test_gc_sweeps_every_legacy_worktree_artifact(tmp_path):
-    """Nothing writes into a working tree any more, so a leftover here is litter."""
-    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
-    legacy.mkdir()
-    (legacy / pr_state.STATE_FILE).write_text("{}")
-    (legacy / run_lock.LOCK_FILE).write_text("{}")
-    (legacy / "trail.jsonl").write_text('{"event":"x"}\n')
-
-    assert pr_cli._sweep_legacy_state(tmp_path) == 1
-
-    assert not legacy.exists()
-
-
-def test_gc_legacy_sweep_keeps_a_directory_holding_anything_else(tmp_path):
-    """Only files this layout is known to have written are ours to remove."""
-    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
-    legacy.mkdir()
-    (legacy / "trail.jsonl").write_text('{"event":"x"}\n')
-    (legacy / "someone-elses.txt").write_text("keep")
-
-    assert pr_cli._sweep_legacy_state(tmp_path) == 1
-
-    assert not (legacy / "trail.jsonl").exists()
-    assert legacy.is_dir()
-    assert (legacy / "someone-elses.txt").is_file()
-
-
-def test_gc_legacy_sweep_is_idempotent(tmp_path):
-    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
-    legacy.mkdir()
-    assert pr_cli._sweep_legacy_state(tmp_path) == 0
 
 
 # ── review --list ───────────────────────────────────────────────────────────

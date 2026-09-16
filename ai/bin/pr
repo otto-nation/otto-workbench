@@ -32,7 +32,6 @@ from core import proc
 from review import listing as review_listing
 from pr import supersession
 from core import timeouts
-from core import workbench_paths
 from config import workbench_projects
 from core import run_lock
 from review.paths import find_review_file, review_file_path
@@ -47,12 +46,6 @@ from core.trail import Trail, add_trail_args
 # Single source of truth for subcommands.  Delegating commands have a "script"
 # key; internal commands omit it.  "prefix" adds sub-command tokens before the
 # user's argv (e.g. claude-review gc …).
-
-# What the pre-cutover layout called its worktree-local trail. Spelled here
-# rather than imported: trail.py no longer names this file, because no trail is
-# written to a worktree any more. It exists only as something to sweep.
-_LEGACY_TRAIL_FILENAME = "trail.jsonl"
-
 
 # `_REVIEW_MODES` is defined further down, beside the handlers it names, so
 # both resolvers are given the table rather than reaching for one.
@@ -582,41 +575,6 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
-# ceiling: this sweep runs on every `pr gc` forever, with no removal
-# trigger of its own. Deliberate — the pre-target layout it cleans up after
-# has no expiry, so neither does the code that reclaims it. Upgrade trigger:
-# once the target-scoped layout has shipped long enough that no worktree
-# still carries the legacy files, delete this function and its call site.
-def _sweep_legacy_state(worktree_root: Path) -> int:
-    """Remove what the pre-target layout left in a worktree.
-
-    Returns 1 if anything was removed. No migration carries these: they are
-    gitignored, worktree-local, and rebuilt by the next command that writes
-    them. The trail goes with them now that every trail is written to the user's
-    own state root — a `trail.jsonl` sitting in a working tree is litter.
-
-    The directory itself is removed only when nothing else is in it: an entry
-    this layout never wrote is not ours to delete.
-    """
-    legacy = worktree_root / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
-    removed = 0
-    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE, _LEGACY_TRAIL_FILENAME):
-        path = legacy / name
-        if path.is_file():
-            path.unlink(missing_ok=True)
-            removed = 1
-    if not removed:
-        return 0
-    try:
-        legacy.rmdir()
-    except OSError:
-        # Something else is in there, or it is gone already. Either way the
-        # files this layout owns are the only thing this sweep promised.
-        pass
-    log.info(f"GC: removed legacy worktree state in {legacy}")
-    return 1
-
-
 def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Delegate PR creation to task pr:create."""
     cmd = ["task", "--global"]
@@ -630,15 +588,13 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
-    # Everything but the legacy sweep is user-scoped and works from a bare repo.
-    # Our own target is skipped: we are holding its lock right now.
+    # All user-scoped, so this works from a bare repo. Our own target is
+    # skipped: we are holding its lock right now.
     total = (
         review_gc.gc_reviews()
         + review_gc.prune_merged_reviews()
         + review_gc.prune_merged_targets(skip=ctx.target_dir, trail=trail)
     )
-    if ctx.worktree_root:
-        total += _sweep_legacy_state(ctx.worktree_root)
 
     if total > 0:
         log.info(f"GC: cleaned {total} item(s) total")

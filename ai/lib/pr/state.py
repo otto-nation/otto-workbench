@@ -442,18 +442,18 @@ def render_dashboard(
     A missing state is still a dashboard: the header, a "no status data yet"
     notice, and whatever the live push observation says.
     """
-    pr_label = (
-        f"#{state.identity.pr_number}"
-        if state and state.identity.pr_number
-        else "(no PR)"
-    )
-    lines = [f"## PR Status — {repo} {pr_label} ({branch})", ""]
+    def header(pr_label: str) -> list[str]:
+        return [f"## PR Status — {repo} {pr_label} ({branch})", ""]
 
     if not state:
-        lines.append("No status data yet. Run: pr ci, pr review, or pr comments")
-        lines.append("")
-        lines += push.render_status()
-        return lines
+        return [
+            *header("(no PR)"),
+            "No status data yet. Run: pr ci, pr review, or pr comments",
+            "",
+            *push.render_status(),
+        ]
+
+    lines = header(f"#{state.identity.pr_number}" if state.identity.pr_number else "(no PR)")
 
     # The assignment is the stdout contract, not a local — see the docstring.
     state.push = push

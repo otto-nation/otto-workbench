@@ -62,6 +62,16 @@ _seed_legacy() {
   [ ! -e "$WORKTREE/.workbench" ]
 }
 
+@test "removes two of the three and the directory, leaving no trace of the third" {
+  # The singleton case above and the all-three case cannot tell a per-file loop
+  # from one that stops after its first hit. This one can.
+  _seed_legacy state.json run.lock
+
+  _run_migration "$WORKTREE"
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORKTREE/.workbench" ]
+}
+
 @test "keeps the directory when an unrelated file remains" {
   _seed_legacy state.json run.lock trail.jsonl
   printf 'keep\n' > "$WORKTREE/.workbench/someone-elses.txt"

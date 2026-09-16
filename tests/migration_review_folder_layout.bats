@@ -62,6 +62,21 @@ _run_migration() {
   [ "$(cat "$REVIEWS/repo-42/session.jsonl")" = "session" ]
 }
 
+# The home drain only globs *.md and *.jsonl, same as the Python it replaces,
+# so a stray file of another type is left behind and the rmdir that follows
+# fails silently — the legacy directory persists rather than vanishing.
+@test "a stray non-review file strands the legacy home directory" {
+  mkdir -p "$CLAUDE_REVIEWS" "$REVIEWS"
+  echo "body" > "$CLAUDE_REVIEWS/repo-42.md"
+  echo "stray" > "$CLAUDE_REVIEWS/notes.txt"
+
+  _run_migration
+  [ "$status" -eq 0 ]
+  [ -d "$CLAUDE_REVIEWS" ]
+  [ "$(cat "$CLAUDE_REVIEWS/notes.txt")" = "stray" ]
+  [ "$(cat "$REVIEWS/repo-42/review.md")" = "body" ]
+}
+
 @test "a flat destination already in place wins over Claude's home" {
   mkdir -p "$CLAUDE_REVIEWS" "$REVIEWS"
   echo "stale" > "$CLAUDE_REVIEWS/repo-42.md"

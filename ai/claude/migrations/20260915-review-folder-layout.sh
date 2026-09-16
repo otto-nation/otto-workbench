@@ -134,7 +134,7 @@ _reshape_one_flat_review() {
   # layout, not the current convention. A phase added to the enum tomorrow
   # never wrote a file here, so deriving these from Phase would claim
   # otherwise.
-  local intermediate
+  local intermediate name
   for intermediate in \
     "$reviews/$dir_name".group-*.md \
     "$reviews/$dir_name".group-*.jsonl \
@@ -142,7 +142,8 @@ _reshape_one_flat_review() {
     "$reviews/$dir_name".holistic.jsonl \
     "$reviews/$dir_name".synthesis.jsonl; do
     [[ -f "$intermediate" ]] || continue
-    mv "$intermediate" "$review_dir/${intermediate##*/"$dir_name".}"
+    name="${intermediate##*/}"
+    mv "$intermediate" "$review_dir/${name#"$dir_name".}"
   done
 
   # Archives are the one group that cannot be matched by a fixed suffix: the

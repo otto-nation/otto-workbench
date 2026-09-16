@@ -232,6 +232,8 @@ class TestAccountedByTheReview:
 
 
 class TestInferredFromTheTree:
+    UNDECODABLE_BYTES = b"func handle() \xb2\xb2 leak\n"
+
     def test_a_deleted_file_fixes_its_findings(self, repo):
         (repo / "gone.go").write_text(_BEFORE)
         prior_sha = _commit(repo, "before")
@@ -277,7 +279,7 @@ class TestInferredFromTheTree:
         silently come back empty, which is the `out` default on failure and
         would make every finding here undecidable.
         """
-        (repo / "latin1.sh").write_bytes(b"func handle() \xb2\xb2 leak\n")
+        (repo / "latin1.sh").write_bytes(self.UNDECODABLE_BYTES)
         prior_sha = _commit(repo, "before")
         (repo / "latin1.sh").write_bytes(b"rewritten \xb2\xb2 entirely\n")
         _commit(repo, "after")
@@ -290,7 +292,7 @@ class TestInferredFromTheTree:
 
     def test_surviving_code_in_an_undecodable_file_is_not_called_fixed(self, repo):
         """The other half: both reads decode, so the quote is found on both sides."""
-        (repo / "latin1.sh").write_bytes(b"func handle() \xb2\xb2 leak\n")
+        (repo / "latin1.sh").write_bytes(self.UNDECODABLE_BYTES)
         prior_sha = _commit(repo, "before")
         (repo / "latin1.sh").write_bytes(b"func handle() \xb2\xb2 leak still\n")
         _commit(repo, "after")

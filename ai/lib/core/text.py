@@ -38,6 +38,32 @@ def join_or(items: list[str]) -> str:
     return f"{', '.join(items[:-1])}, or {items[-1]}"
 
 
+def summarize_comment_body(body: str, max_len: int = 120) -> str:
+    """Extract first meaningful line from a comment body, truncated.
+
+    Here rather than beside either reader because two of them now exist: the
+    summary table's raw-comment sections name a top-level comment this way, and
+    `pr.settlement` names a thread no triage round ever wrote a summary for. A
+    second copy would let the two tables call one comment different things.
+    """
+    in_html_comment = False
+    for raw_line in body.splitlines():
+        stripped = raw_line.strip()
+        if in_html_comment:
+            in_html_comment = "-->" not in stripped
+            continue
+        if stripped.startswith("<!--"):
+            in_html_comment = "-->" not in stripped
+            continue
+        line = stripped.lstrip("#").strip()
+        if not line:
+            continue
+        if len(line) > max_len:
+            return line[:max_len - 1] + "…"
+        return line
+    return "(empty)"
+
+
 def slugify(text: str, sep: str = "-") -> str:
     """Lowercase `text` with every run of non-alphanumerics collapsed to `sep`.
 

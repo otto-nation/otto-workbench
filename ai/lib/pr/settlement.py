@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core import log
+from core import text
 from git import client as git_client
 from git import push
 from pr import attribution
@@ -91,13 +92,58 @@ _SOURCE_ANCHOR_RE = re.compile(
     r"#(?:" + "|".join(re.escape(a) for a in CommentSourceKind.anchors()) + r")-(\d+)")
 
 
+def _our_verdict_stands(thread: ReportThread) -> bool:
+    """Whether the newest reply of ours on this thread opens by naming a verdict.
+
+    Newest first, same principle `thread_replies.has_hand_written_reply` and
+    `thread_replies.our_last_reply_id` apply to our standing reply: whatever we
+    said most recently is what stands, whatever an earlier comment of ours
+    claimed. A person who typed "Fixed: ..." early and later walked it back
+    with "Actually, still broken" does not have the thread read as fixed just
+    because a verdict appears somewhere in the history.
+
+    Two tests, and the author half is the load-bearing one. What counts as a
+    verdict is `thread_replies.names_a_verdict`, which accepts a wording a
+    person typed as well as one of our templates — and a wording a person typed
+    is a wording a reviewer can type too. Reading theirs as ours would settle
+    the thread on the strength of the complaint.
+
+    Our login is the thread's own `my_login`, the same field the reply upsert
+    decides edit-vs-post from. Without one there is no telling the two apart, so
+    only the templates count: those are ours by construction, since nothing but
+    this tool writes them.
+
+    The root is excluded from the author check but not from the template
+    check: on self-review the root is our own review point rather than an
+    answer to one, so a hand-typed opening there ("Fixed casing is
+    inconsistent") must not read as our verdict just because `my_login`
+    matches its author. A template opening never has that ambiguity — nothing
+    but this tool writes one, and the root is always the reviewer's original
+    comment, never ours.
+    """
+    login = (thread.my_login or "").lower()
+    comments = thread.comments
+    for index in range(len(comments) - 1, -1, -1):
+        comment = comments[index]
+        body = str(comment.get("body", ""))
+        if body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
+            return True
+        if index == 0 or not login:
+            continue
+        author = ((comment.get("author") or {}).get("login") or "").lower()
+        if author == login:
+            return thread_replies.names_a_verdict(body)
+    return False
+
+
 def settlement_for(thread: ReportThread | None) -> FixOutcome | None:
     """What GitHub shows became of this thread, or None when it shows nothing.
 
     Two grades of evidence, and which one it is decides what may be claimed. A
-    standing reply of ours — applied, already addressed, dismissed — names the
-    verdict outright, so the thread reads as FIXED however its resolve button
-    stands.
+    standing reply of ours — applied, already addressed, dismissed, or the same
+    verdict a person typed in their own words — names the ending outright, so
+    the thread reads as FIXED however its resolve button stands. What makes a
+    wording ours is the login behind it: see `_our_verdict_stands`.
 
     Resolution on its own names nothing of the sort. The button covers a
     reviewer who was answered, who deferred the point, or who withdrew it, as
@@ -108,10 +154,7 @@ def settlement_for(thread: ReportThread | None) -> FixOutcome | None:
     """
     if not thread:
         return None
-    if any(
-        str(c.get("body", "")).startswith(thread_replies.HANDLED_REPLY_PREFIXES)
-        for c in thread.comments
-    ):
+    if _our_verdict_stands(thread):
         return FixOutcome.FIXED
     if thread.is_resolved or thread.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED):
         return FixOutcome.SETTLED_ELSEWHERE
@@ -132,6 +175,11 @@ def answered_comment_sources(
 
     Costs one listing, and only when the snapshot holds an unsettled item that
     such a reply could settle.
+
+    Keyed per anchor rather than unioned, so a later comment of ours can
+    retract what an earlier one claimed about the same source: the listing is
+    chronological, so the last comment to touch a given anchor is the one that
+    decides it, same as `_our_verdict_stands` reading a thread newest-first.
     """
     if not any(
         o.outcome in UNSETTLED_OUTCOMES and permalinks.comment_item_source(o).ok
@@ -149,17 +197,23 @@ def answered_comment_sources(
     mine = my_login.lower()
     # include_self, because the reply being looked for is ours and the listing
     # drops our own comments by default.
-    answered: set[str] = set()
+    answered: dict[str, bool] = {}
     for comment in pc.fetch_issue_comments(
         repo, pr_number, my_login, include_self=True,
     ):
         if str(comment.get("user", "")).lower() != mine:
             continue
         body = str(comment.get("body", ""))
-        if not body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
+        anchors = [m.group(1) for m in _SOURCE_ANCHOR_RE.finditer(body)]
+        if not anchors:
             continue
-        answered.update(m.group(1) for m in _SOURCE_ANCHOR_RE.finditer(body))
-    return frozenset(answered)
+        # Safe to accept a hand-typed verdict here without a second author
+        # test: the login check above already dropped every comment but ours,
+        # and the early return above refuses to run at all without a login.
+        verdict = thread_replies.names_a_verdict(body)
+        for anchor in anchors:
+            answered[anchor] = verdict
+    return frozenset(anchor for anchor, verdict in answered.items() if verdict)
 
 
 def entry_settlement(
@@ -212,6 +266,66 @@ def settled_locations(
         if settlement.counts_as_fixed or key not in located:
             located[key] = settlement
     return located
+
+
+def adopt_settled_threads(
+    state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
+) -> int:
+    """Record the answered threads no round ever gave a disposition to. Returns the count.
+
+    A thread whose last comment is ours is `ThreadState.ADDRESSED`, and
+    `triage.run_triage` excludes those from the round — rightly, since
+    re-triaging one regenerates a reply over the answer already standing. But
+    nothing then picked it up: it reached no bucket, so it never became a row in
+    the snapshot, so `reconcile_fix_snapshot` had nothing to rewrite and
+    `resolve_fixed_threads` was never handed it. The thread stayed open for the
+    life of the PR and no stage reported it.
+
+    Graded through `settlement_for` rather than re-triaged, which is the
+    read-only path that already answers this exact question. The grade decides
+    what the row may claim: our reply naming a verdict supports FIXED, and the
+    bare fact that we spoke last supports only SETTLED_ELSEWHERE.
+
+    Idempotent by id: a thread already in the snapshot is skipped, so a second
+    `--finish` adds nothing. `FixRecord.merge_into` cannot be relied on here —
+    `_finish_deferred_work` mutates the record in place and saves it directly
+    rather than folding it through `pr_state.apply`.
+
+    Resolved threads are deliberately out of scope. `settlement_for` grades one
+    SETTLED_ELSEWHERE too, but a resolved thread is collapsed on GitHub and the
+    person who pressed the button has already said how it ended — adopting every
+    one would add a permanent summary row per historical thread. The defect is
+    the answered thread that is still open and reads exactly like an unanswered
+    one.
+    """
+    recorded = {o.id for o in state.fix.fix.items if o.id}
+    adopted = 0
+    for thread in threads_by_id.values():
+        if not thread.id or thread.id in recorded:
+            continue
+        if thread.is_resolved or thread.state is not ThreadState.ADDRESSED:
+            continue
+        settlement = settlement_for(thread)
+        if settlement is None:
+            continue
+        root = thread.comments[0] if thread.comments else {}
+        state.fix.fix.items.append(ItemOutcome(
+            id=thread.id,
+            outcome=settlement,
+            settled_by=SettledBy.RECONCILIATION,
+            reason=RECONCILED_REASON,
+            summary=text.summarize_comment_body(str(root.get("body", ""))),
+            file=thread.file,
+            line=thread.line or 0,
+        ))
+        # Only when GitHub named one — see `fix_state.reviewers_for`. An absent
+        # key misses on lookup rather than asserting an anonymous reviewer.
+        if thread.reviewer:
+            state.fix.reviewers[thread.id] = thread.reviewer
+        adopted += 1
+    if adopted:
+        log.info(f"Recorded {adopted} thread(s) answered outside the fix pass")
+    return adopted
 
 
 def reconcile_fix_snapshot(

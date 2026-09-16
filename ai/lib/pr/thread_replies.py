@@ -64,6 +64,58 @@ HANDLED_REPLY_PREFIXES = tuple(
     prefix for prefix in GENERATED_REPLY_PREFIXES
     if prefix != DEFERRED_REPLY_PREFIX
 )
+# The words a person opens a reply with when they are reporting the thread
+# handled, for the reply nothing generated — written during a skill pass, or by
+# the author answering a reviewer directly. Beside the template openings above
+# because the two are read together: reconciliation accepts either as our
+# verdict, and a reader deciding whether a wording counts has to see both sets.
+#
+# Deliberately shorter than the list of words that could mean this. A false
+# match publishes a claim about someone else's code and resolves their thread,
+# while a miss only leaves that thread open for a person to settle — so an
+# opening that is ambiguous about *scope* is left out however often it appears.
+# "Addressed your first point but not the second" and "Resolved the conflict,
+# but the API question stands" both open on a verdict and settle nothing.
+# Acknowledgements ("Good catch", "Agreed") are not verdicts at all: they say
+# the reviewer was heard, not that anything changed.
+#
+# "Deferred" is absent for the reason it is filtered out of
+# HANDLED_REPLY_PREFIXES above — it says work is still owed, and counting it
+# would make every thread settle itself on the second --finish.
+#
+# ceiling: three openings, matched only at the very start of a reply. A verdict
+# phrased any other way — "This is fixed", "Should be sorted now" — is not
+# recognised, and the thread stays open until a person settles it.
+# Upgrade trigger: if a hand-written verdict is seen going unrecognised often
+# enough that operators stop trusting --finish, add an HTML marker to the
+# replies a skill pass writes and key off that, rather than widening this
+# vocabulary — breadth here is what turns a miss into a false claim.
+HANDWRITTEN_VERDICT_WORDS = ("Fixed", "Done", "Dismissed")
+# Anchored at the start and case-sensitive: these are sentence openers, and a
+# person writing a verdict capitalises one. The lookahead is what separates a
+# verdict from a word that merely begins with it — "Fixed — dropped the guard"
+# and "Done." are verdicts; "Fixing this now" and "Doneness" are not.
+HANDWRITTEN_VERDICT_RE = re.compile(
+    r"(?:" + "|".join(HANDWRITTEN_VERDICT_WORDS) + r")(?=$|[\s:;,.!—–-])")
+
+
+def names_a_verdict(body: str) -> bool:
+    """Whether this reply body opens by saying the thread was handled.
+
+    The evidence `settlement_for` grades, widened past the templates it used to
+    be the whole of. A reply written by hand names the same verdict in different
+    words, and a contract that only recognised our own generated openings read
+    "came out of a template" where it promised "names a verdict".
+
+    **Only meaningful once the caller has established the body is ours.** A
+    reviewer writing "Fixed in my branch, please rebase" would otherwise settle
+    their own thread on the strength of their own complaint, which is the one
+    failure worth more than every recognition this adds.
+    """
+    stripped = body.lstrip()
+    if stripped.startswith(HANDLED_REPLY_PREFIXES):
+        return True
+    return bool(HANDWRITTEN_VERDICT_RE.match(stripped))
 # Every trailing paragraph a generated reply can have: one sentence naming a
 # commit, a file, or an issue. Kept in step with the four body_fn builders
 # below — a new trailing line there needs its opening added here, or the reply

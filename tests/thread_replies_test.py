@@ -60,6 +60,92 @@ class TestHandledPrefixesTrackTheGeneratedSet:
         )
 
 
+class TestWhatCountsAsNamingAVerdict:
+    """Two ways a reply says the thread was handled, and one asymmetry.
+
+    A template opening is ours by construction. A hand-typed verdict is ordinary
+    English, so the vocabulary is sized against the cost of being wrong: a false
+    match publishes a claim about someone else's code and resolves their thread,
+    while a miss leaves the thread open for a person to settle. This predicate
+    answers only "does this body name a verdict" — whose body it is belongs to
+    the caller, and `settlement._our_verdict_stands` is where that is enforced.
+    """
+
+    @pytest.mark.parametrize("prefix", thread_replies.HANDLED_REPLY_PREFIXES)
+    def test_every_handled_template_still_names_a_verdict(self, prefix):
+        assert thread_replies.names_a_verdict(f"{prefix}: dropped the guard.")
+
+    def test_the_deferred_template_still_names_none(self):
+        assert not thread_replies.names_a_verdict(
+            f"{thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1.",
+        )
+
+    @pytest.mark.parametrize("word", thread_replies.HANDWRITTEN_VERDICT_WORDS)
+    @pytest.mark.parametrize("tail", ["", ".", ":", " — and here is why", " in abc1234."])
+    def test_each_word_stands_alone_and_before_a_delimiter(self, word, tail):
+        assert thread_replies.names_a_verdict(f"{word}{tail}")
+
+    def test_leading_whitespace_does_not_hide_a_verdict(self):
+        assert thread_replies.names_a_verdict("\n  Fixed — dropped the guard.")
+
+    @pytest.mark.parametrize(
+        "body",
+        ["Fixing this now.", "Doneness is not a word.", "Fixedly staring.",
+         "Dismissive of the point."],
+    )
+    def test_a_word_that_merely_starts_the_same_is_not_a_verdict(self, body):
+        """The delimiter lookahead is what separates the verdict from the prefix."""
+        assert not thread_replies.names_a_verdict(body)
+
+    @pytest.mark.parametrize(
+        "body",
+        ["Addressed your first point but not the second.",
+         "Resolved the conflict, the API question stands.",
+         "Updated the guard — not sure that is right."],
+    )
+    def test_a_scope_ambiguous_opening_is_left_out(self, body):
+        """These open on a verdict and settle nothing. Only `Already addressed`
+        — a template, and unambiguous — qualifies.
+        """
+        assert not thread_replies.names_a_verdict(body)
+
+    @pytest.mark.parametrize(
+        "body", ["Good catch — will sort it.", "Agreed, that needs doing.",
+                 "Thanks, makes sense.", "Will do."],
+    )
+    def test_an_acknowledgement_is_not_a_verdict(self, body):
+        """It says the reviewer was heard, not that anything changed."""
+        assert not thread_replies.names_a_verdict(body)
+
+    @pytest.mark.parametrize(
+        "body", ["This is fixed now.", "Should be fixed — have a look.",
+                 "I think that is done."],
+    )
+    def test_a_verdict_buried_mid_sentence_is_not_chased(self, body):
+        """Anchoring at the start is the whole safety mechanism."""
+        assert not thread_replies.names_a_verdict(body)
+
+    def test_an_empty_body_names_nothing(self):
+        assert not thread_replies.names_a_verdict("")
+
+    @pytest.mark.parametrize("word", thread_replies.HANDWRITTEN_VERDICT_WORDS)
+    def test_the_handwritten_match_is_case_sensitive(self, word):
+        """Unlike the login match, a verdict word must be capitalised.
+
+        These are sentence openers a person capitalises when writing one — see
+        `thread_replies.HANDWRITTEN_VERDICT_WORDS`'s own comment. A lowercase
+        opening reads as ordinary prose, not a verdict.
+        """
+        assert not thread_replies.names_a_verdict(
+            f"{word.lower()} — dropped the guard.",
+        )
+
+    def test_deferring_is_still_no_part_of_the_typed_vocabulary(self):
+        """Counting it would settle every thread on the second --finish."""
+        assert "Deferred" not in thread_replies.HANDWRITTEN_VERDICT_WORDS
+        assert not thread_replies.names_a_verdict("Deferred — tracked in ENG-1.")
+
+
 class TestTheFollowupPatternKnowsEveryLead:
     """The pattern must recognise every body a builder actually writes.
 

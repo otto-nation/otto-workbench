@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr import state as pr_state
 from review import gc as review_gc
+from core import proc
 from core import run_lock
 from core import workbench_paths
 from core.trail import Trail
@@ -187,7 +189,7 @@ def test_prune_merged_targets_removes_a_merged_prs_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(review_gc, "_pr_closure",
                         lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 1
+    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 1
     assert not target.exists()
 
 
@@ -195,7 +197,7 @@ def test_prune_merged_targets_keeps_an_open_pr(tmp_path, monkeypatch):
     target = _seed_target(tmp_path)
     monkeypatch.setattr(review_gc, "_pr_closure", lambda repo, n: None)
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
+    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 0
     assert (target / pr_state.STATE_FILE).is_file()
 
 
@@ -207,7 +209,7 @@ def test_prune_merged_targets_leaves_a_live_targets_dir_alone(tmp_path, monkeypa
 
     with run_lock.acquire(target, command="pr review", started="t"):
         os.environ.pop(run_lock.LOCK_ENV, None)
-        assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
+        assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 0
 
     assert (target / pr_state.STATE_FILE).is_file()
 
@@ -218,7 +220,7 @@ def test_prune_merged_targets_skips_our_own_target(tmp_path, monkeypatch):
     monkeypatch.setattr(review_gc, "_pr_closure",
                         lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
-    assert review_gc.prune_merged_targets(tmp_path, skip=target, trail=_RecordingTrail()) == 0
+    assert review_gc.prune_merged_targets(tmp_path, skip=target, trail=_RecordingTrail()).pruned == 0
     assert (target / pr_state.STATE_FILE).is_file()
 
 
@@ -229,7 +231,7 @@ def test_prune_merged_targets_removes_a_target_with_corrupt_state(tmp_path):
     target.mkdir(parents=True)
     (target / pr_state.STATE_FILE).write_bytes(b"{ not json")
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 1
+    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 1
     assert not target.exists()
 
 
@@ -244,7 +246,7 @@ def test_prune_merged_targets_keeps_a_target_with_no_pr_number(tmp_path, monkeyp
 
     monkeypatch.setattr(review_gc, "_pr_closure", _fail)
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
+    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 0
     assert (target / pr_state.STATE_FILE).is_file()
 
 
@@ -269,7 +271,7 @@ def test_prune_merged_targets_counts_a_partial_prune_failure_as_not_pruned(tmp_p
 
     monkeypatch.setattr(Path, "unlink", refusing_unlink)
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
+    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 0
     assert target.exists()
     # The next sweep's glob only finds targets that still have a state.json,
     # so surviving the failure means surviving with that file.
@@ -292,7 +294,7 @@ def test_prune_merged_targets_yields_to_a_run_that_arrives_mid_removal(tmp_path,
 
     monkeypatch.setattr(Path, "rmdir", arriving_run)
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
+    assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 0
     assert (target / run_lock.LOCK_FILE).is_file()
 
 
@@ -377,7 +379,7 @@ def test_prune_merged_targets_respects_the_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(review_gc, "_pr_closure",
                         lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
-    assert review_gc.prune_merged_targets(tmp_path, max_files=2, trail=_RecordingTrail()) == 2
+    assert review_gc.prune_merged_targets(tmp_path, max_files=2, trail=_RecordingTrail()).pruned == 2
 
 
 def test_merged_target_emits_one_terminal_summary(tmp_path, monkeypatch):
@@ -387,7 +389,7 @@ def test_merged_target_emits_one_terminal_summary(tmp_path, monkeypatch):
         lambda repo, n: _closed(pr_state.PRCloseState.MERGED, "2026-08-13T09:00:00Z"))
     trail = _RecordingTrail()
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 1
+    assert review_gc.prune_merged_targets(tmp_path, trail=trail).pruned == 1
 
     assert len(trail.summaries) == 1
     event = trail.summaries[0]
@@ -416,7 +418,7 @@ def test_open_target_emits_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(review_gc, "_pr_closure", lambda repo, n: None)
     trail = _RecordingTrail()
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 0
+    assert review_gc.prune_merged_targets(tmp_path, trail=trail).pruned == 0
     assert trail.summaries == []
 
 
@@ -427,7 +429,7 @@ def test_a_target_that_fails_to_prune_emits_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(review_gc, "_prune_one_target", lambda target: False)
     trail = _RecordingTrail()
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 0
+    assert review_gc.prune_merged_targets(tmp_path, trail=trail).pruned == 0
     assert trail.summaries == []
 
 
@@ -442,7 +444,7 @@ def test_terminal_summary_survives_a_real_trail(tmp_path, monkeypatch):
         lambda repo, n: _closed(pr_state.PRCloseState.MERGED, "2026-08-13T09:00:00Z"))
     trail = Trail.start(script="pr", context={"repo": "acme/other", "pr": 99, "branch": "main"})
 
-    assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 1
+    assert review_gc.prune_merged_targets(tmp_path, trail=trail).pruned == 1
     trail.finish()
 
     events = []
@@ -452,3 +454,100 @@ def test_terminal_summary_survives_a_real_trail(tmp_path, monkeypatch):
     assert outcome["data"]["outcome"] == "MERGED"
     assert outcome["data"]["ended_at"] == "2026-08-13T09:00:00Z"
     assert outcome["context"] == {"repo": "acme/widget", "pr": 1, "branch": "feat/a"}
+
+
+# ── A sweep the budget cut short ────────────────────────────────────────────
+#
+# The reported symptom: a scheduled sweep warned once per PR against a budget
+# the first call had already proven was gone, then reported "nothing to clean"
+# and exited 0. Every test here is that incident in one of its three layers —
+# the wasted calls, the wording, and the exit code the maintenance script reads.
+
+
+def _latch_graphql(monkeypatch, seconds: float = 600.0):
+    """Arm the breaker directly, as a prior call's refusal would have."""
+    from gh import budget as gh_budget
+
+    at = time.time() + seconds
+    monkeypatch.setitem(
+        gh_budget._latched, gh_budget.Resource.GRAPHQL,
+        gh_budget.Latch(gh_budget.Resource.GRAPHQL, "7399350", at, at))
+
+
+def test_a_latched_budget_stops_the_target_sweep_rather_than_spending_its_budget(
+        tmp_path, monkeypatch):
+    """The bug in one line: ten prunable targets, one dead budget, ten calls.
+
+    `max_files` bounds PRs asked about, and `checked` increments before the
+    ask, so without the break a latched sweep burns its whole allowance on
+    targets it never asked about. The walk is ordered, so the next sweep
+    re-walks the same ten and the tail is never reached.
+    """
+    for i in range(10):
+        _seed_target(tmp_path, name=f"widget-feat-{i}",
+                     branch=f"feat/{i}", pr_number=i + 1)
+    asked = []
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: asked.append(n))
+    _latch_graphql(monkeypatch)
+
+    outcome = review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail())
+
+    assert asked == []
+    assert outcome.cut_short
+    assert outcome.pruned == 0
+
+
+def test_a_latched_budget_leaves_every_target_in_place(tmp_path, monkeypatch):
+    """Cutting the sweep short must not become a reason to delete anything.
+
+    `_pr_closure` collapses "still open" and "could not ask" into the same
+    absence precisely so gc never deletes on a failure to ask.
+    """
+    target = _seed_target(tmp_path)
+    _latch_graphql(monkeypatch)
+
+    review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail())
+
+    assert target.exists()
+
+
+def test_a_latched_closure_check_does_not_warn_per_pr(tmp_path, monkeypatch, capsys):
+    """Six identical warnings in three seconds was the visible symptom.
+
+    A latched call made no request, and the breaker has already explained the
+    budget once, so there is nothing per-PR left to say.
+    """
+    from gh import budget as gh_budget
+
+    monkeypatch.setattr(review_gc.gh_client, "run", lambda *a, **kw: proc.CmdResult(
+        returncode=gh_budget.BUDGET_LATCHED_RETURNCODE,
+        stderr="no call made — the graphql budget for user 7399350 is spent"))
+
+    assert review_gc._pr_closure("acme/widget", 1) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_a_failure_that_is_not_the_budget_still_warns(tmp_path, monkeypatch, capsys):
+    """The silence above is scoped to the latch, not to failure in general.
+
+    An expired token must still say so, or an unattended sweep that never
+    prunes reports nothing at all — which is what the warning was added for.
+    """
+    monkeypatch.setattr(review_gc.gh_client, "run", lambda *a, **kw: proc.CmdResult(
+        returncode=1, stderr="gh: authentication required"))
+
+    assert review_gc._pr_closure("acme/widget", 1) is None
+    assert "could not report acme/widget#1" in capsys.readouterr().err
+
+
+def test_prune_outcome_folds_cut_short_across_both_sweeps():
+    """`cmd_gc` adds the two sweeps together, so the flag has to survive the sum.
+
+    A reviews sweep that finished and a targets sweep that did not is still a
+    run that did not finish.
+    """
+    total = (review_gc.PruneOutcome(2, cut_short=False)
+             + review_gc.PruneOutcome(1, cut_short=True))
+    assert total.pruned == 3
+    assert total.cut_short

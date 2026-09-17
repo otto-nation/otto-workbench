@@ -463,7 +463,12 @@ def test_switch_to_pr_branch_already_on_branch(mock_run, mock_switch):
 @patch("core.proc.subprocess.run")
 def test_switch_to_pr_branch_returns_none_when_pr_head_unknown(mock_run, mock_switch):
     def side_effect(cmd, **kwargs):
+        # stderr is set alongside stdout because `subprocess.run(text=True)`
+        # always returns a str for both. Left as an auto-MagicMock it stands in
+        # for a stream that cannot occur, and anything that classifies a
+        # failure by what it said reads the mock rather than a message.
         m = MagicMock()
+        m.stderr = ""
         if cmd[0] == "gh":
             m.returncode = 1
             m.stdout = ""

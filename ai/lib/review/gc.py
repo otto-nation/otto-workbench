@@ -22,6 +22,14 @@ each cycle, alongside its sync and stale-worktree cleanup — so this sweep, and
 the terminal `pr_outcome` event it fires, no longer depends on someone typing
 `pr gc` by hand. The step is skipped on an install without the ai component,
 which is what puts `pr` on the path.
+
+Both prunes ask GitHub how a PR ended, so both stop when the account's hourly
+quota is spent rather than walking the rest of their allowance against a
+question nothing can answer. That is reported as `PruneOutcome.cut_short`
+rather than folded into the count: a sweep that pruned nothing because every PR
+is still open and one that pruned nothing because it could not ask are the same
+number and different facts, and an unattended sweep is only ever read through
+them.
 """
 
 # doc-group: pipeline
@@ -31,10 +39,12 @@ from __future__ import annotations
 import json
 import shutil
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from fix import engine as fix_engine
+from gh import budget as gh_budget
 from gh import client as gh_client
 from core import log
 from pr import state as pr_state
@@ -58,6 +68,30 @@ from core.trail import Trail
 GC_STALE_DAYS = 7
 GC_FAILED_STALE_DAYS = 30
 PRUNE_MAX_FILES = 10
+
+
+@dataclass(frozen=True)
+class PruneOutcome:
+    """What a prune sweep did, and whether it got to finish.
+
+    A sweep that pruned nothing because every PR is still open and a sweep that
+    pruned nothing because it could not ask both used to return 0, and an
+    unattended sweep is only ever read through that number — which is how a
+    maintenance cycle came to report "nothing to clean" for a run in which it
+    never managed to ask a single question.
+
+    A type rather than a second return value: a pair cannot gain a field
+    without every call site changing, and this one is read by the CLI, the
+    trail record and the maintenance script.
+    """
+
+    pruned: int = 0
+    cut_short: bool = False
+
+    def __add__(self, other: "PruneOutcome") -> "PruneOutcome":
+        return PruneOutcome(
+            self.pruned + other.pruned, self.cut_short or other.cut_short,
+        )
 
 
 def _age_days(f: Path, now: float) -> float:
@@ -235,11 +269,20 @@ def _has_pipeline_failure(review_dir: Path) -> bool:
     return read_pipeline_status(review_dir) == ReviewStatus.ERROR.value
 
 
-def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE_MAX_FILES) -> int:
-    """Remove review directories for merged/closed PRs. Returns count pruned."""
+def prune_merged_reviews(
+    reviews_dir: Path | None = None, max_files: int = PRUNE_MAX_FILES,
+) -> PruneOutcome:
+    """Remove review directories for merged/closed PRs.
+
+    Stops early when the GitHub budget is spent rather than walking the rest of
+    its allowance against a question nothing can answer. The bound is on PRs
+    asked about, so without the break a latched sweep would spend all ten slots
+    on entries it never asked about — and since the walk is ordered, the next
+    sweep would re-walk the same ten and never reach the tail.
+    """
     reviews_dir = reviews_dir or workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
-        return 0
+        return PruneOutcome()
 
     pruned = 0
     checked = 0
@@ -247,6 +290,8 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
     for entry in iter_review_entries(reviews_dir):
         if checked >= max_files:
             break
+        if gh_budget.latched(gh_budget.Resource.GRAPHQL):
+            return PruneOutcome(pruned, cut_short=True)
 
         # A stray file carries no meta, so this is also what keeps the loose
         # files at the root out of a sweep that only prunes whole directories.
@@ -267,7 +312,7 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
             log.info(f"Pruned {meta.repo}#{meta.pr_number} ({closure.state.value})")
             pruned += 1
 
-    return pruned
+    return PruneOutcome(pruned, cut_short=bool(gh_budget.latched(gh_budget.Resource.GRAPHQL)))
 
 
 def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
@@ -295,6 +340,12 @@ def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
         # runs unattended on a schedule. Unlogged, an expired token would read
         # as "nothing was ever ready to prune" for as long as it took anyone to
         # look.
+        #
+        # A latched call is not warned about here. It made no request, the
+        # breaker has already said why once, and repeating it per PR is the
+        # warning storm this sweep was the visible symptom of.
+        if r.returncode == gh_budget.BUDGET_LATCHED_RETURNCODE:
+            return None
         detail = r.detail or f"exit {r.returncode}"
         log.warn(f"GC: gh could not report {repo}#{pr_number} ({detail}) — leaving it in place")
         return None
@@ -438,8 +489,11 @@ def prune_merged_targets(targets_dir: Path | None = None,
                          max_files: int = PRUNE_MAX_FILES,
                          skip: Path | None = None,
                          *,
-                         trail: Trail) -> int:
-    """Remove target directories for merged/closed PRs. Returns count pruned.
+                         trail: Trail) -> PruneOutcome:
+    """Remove target directories for merged/closed PRs.
+
+    Like the reviews sweep, stops rather than spending the rest of its
+    allowance once the GitHub budget is gone, and says so in the outcome.
 
     Replaces the free cleanup a worktree-local state file used to get from
     `wt remove` — target state outlives any single checkout by design, so
@@ -460,13 +514,18 @@ def prune_merged_targets(targets_dir: Path | None = None,
     """
     targets_dir = targets_dir or pr_target.targets_root()
     if not targets_dir.is_dir():
-        return 0
+        return PruneOutcome()
 
     pruned = 0
     checked = 0
     for state_file in sorted(targets_dir.glob(f"*/{pr_state.STATE_FILE}")):
         if checked >= max_files:
             break
+        # Checked per iteration rather than once up front: the reviews sweep
+        # runs first and may have armed the latch, and a budget can also run
+        # out partway through this loop.
+        if gh_budget.latched(gh_budget.Resource.GRAPHQL):
+            return PruneOutcome(pruned, cut_short=True)
         target = state_file.parent
         if skip is not None and target == skip:
             continue
@@ -497,4 +556,4 @@ def prune_merged_targets(targets_dir: Path | None = None,
         if removed:
             _emit_terminal_summary(trail, state, closure)
 
-    return pruned
+    return PruneOutcome(pruned, cut_short=bool(gh_budget.latched(gh_budget.Resource.GRAPHQL)))

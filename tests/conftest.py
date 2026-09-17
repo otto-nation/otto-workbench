@@ -413,6 +413,25 @@ def _clear_lock_env():
         os.environ[run_lock.LOCK_ENV] = saved
 
 
+@pytest.fixture(autouse=True)
+def _clear_gh_budget_latch():
+    """Never let one test's rate-limit latch silence the next test's gh calls.
+
+    The latch is module state that makes `gh` calls return a refusal without
+    running anything, which is exactly what a stubbed gh looks like from the
+    outside. A test that arms it and does not clear it would turn every later
+    `_stub_gh` into a no-op, and only for the tests collected after it — the
+    same order-dependent failure `_clear_lock_env` exists to prevent.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from gh import budget
+
+    budget.reset_for_tests()
+    yield
+    budget.reset_for_tests()
+
+
 def _repo_config_path():
     """The shared git config of the repo under test, or None if unresolvable.
 

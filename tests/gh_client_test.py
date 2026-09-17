@@ -23,6 +23,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from gh import budget  # noqa: E402
 from gh import client as gh_client  # noqa: E402
 from core import proc  # noqa: E402
 from core import timeouts  # noqa: E402
@@ -149,18 +150,15 @@ def test_an_exhausted_budget_is_not_retried(said):
     already gone."""
     r = CmdResult(returncode=1, stderr=said)
     assert gh_client._ladder_for(r) is None
-    assert gh_client.is_budget_exhausted(said)
+    assert budget.is_budget_exhausted(said)
 
 
-def test_an_exhausted_budget_explains_the_remedy():
-    """"API rate limit already exceeded" reads like something to authenticate
-    around; the remedy is to wait, and a second token for the same user is the
-    same budget."""
-    r = CmdResult(returncode=1,
-                  stderr="GraphQL: API rate limit already exceeded for user ID 1.")
-    message = gh_client._error_message(r)
-    assert "hourly GitHub API quota" in message
-    assert "another token for the same user shares it" in message
+# The remedy used to be asserted here, against `_error_message`. That test
+# could not fail when its subject broke: `_error_message` is only reached from
+# the retry-waiting log, and an exhausted budget is never retried, so the
+# branch it covered was unreachable in production. Saying the remedy is now
+# `gh.budget`'s job, and `tests/gh_budget_test.py` asserts it against the path
+# that actually runs.
 
 
 def test_an_ordinary_failure_gets_no_hint():

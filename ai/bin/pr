@@ -35,6 +35,7 @@ from pr import state as pr_state
 from pr import sync as pr_sync
 from pr import push_intent
 from review import gc as review_gc
+from gh import budget as gh_budget
 from core import log
 from core import proc
 from review import listing as review_listing
@@ -566,14 +567,38 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **_kw) -> int:
-    """Clean up stale PR artifacts across all domains."""
+    """Clean up stale PR artifacts across all domains.
+
+    A sweep the GitHub budget cut short is reported as such, and exits
+    non-zero. It is not "nothing to clean": nothing was *asked*, the artifacts
+    it would have collected are still there, and the next scheduled cycle is
+    the only thing that will look again. Reporting that as success is what let
+    a maintenance run log "complete" for a cycle in which every question was
+    refused.
+    """
     # All user-scoped, so this works from a bare repo. Our own target is
     # skipped: we are holding its lock right now.
-    total = (
-        review_gc.gc_reviews()
-        + review_gc.prune_merged_reviews()
+    local = review_gc.gc_reviews()
+    outcome = (
+        review_gc.prune_merged_reviews()
         + review_gc.prune_merged_targets(skip=ctx.target_dir, trail=trail)
     )
+    total = local + outcome.pruned
+
+    if outcome.cut_short:
+        latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
+        remedy = latch.remedy() if latch else gh_budget.BUDGET_EXHAUSTED_HINT
+        log.warn(
+            f"GC: stopped early — the GitHub API budget is spent, so the PRs "
+            f"behind this sweep were never asked about ({remedy})")
+        if total:
+            log.info(f"GC: cleaned {total} item(s) before it ran out")
+        trail.summary(
+            "gc_cut_short",
+            f"budget exhausted after cleaning {total} item(s)",
+            data={"cleaned": total, "reset": (latch.reset if latch else None)},
+        )
+        return EXIT_BUDGET_EXHAUSTED
 
     if total > 0:
         log.info(f"GC: cleaned {total} item(s) total")
@@ -687,6 +712,17 @@ def _tool_schema() -> dict:
 # terms this build cannot answer in. Distinct from 1, so a consumer can tell
 # "we cannot answer that" from "the command ran and failed".
 EXIT_USAGE = 2
+
+# A command that stopped because the account's hourly GitHub quota is spent.
+# Its own code because the remedy is nothing the caller did wrong and nothing
+# a retry now would fix: the scheduled maintenance script reads this to log a
+# skip rather than a failure, which is the distinction that sent someone
+# looking for a broken token the first time.
+#
+# 75 is sysexits.h's EX_TEMPFAIL — "temporary failure, the user is invited to
+# retry" — which is this situation exactly, and a code a reader can look up
+# rather than one chosen for being free.
+EXIT_BUDGET_EXHAUSTED = 75
 
 
 def _checked_schema_version(value: str, command: str, argv: list[str]) -> int:
@@ -831,6 +867,11 @@ def main():
         push_intent.reconcile()
     except Exception as exc:
         log.warn(f"could not reconcile recorded pushes: {exc}")
+
+    # Before anything resolves a context, since that is itself a GitHub read:
+    # a parent that already paid to discover a spent budget passes the fact
+    # down, and this is where we take it up rather than re-learning it.
+    gh_budget.adopt_inherited()
 
     entry = _COMMANDS[args.command]
     if {"-h", "--help"} & set(extra) and "script" in entry:

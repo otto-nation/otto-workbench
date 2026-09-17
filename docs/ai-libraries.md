@@ -3928,6 +3928,27 @@ Enums, dataclasses, and report payloads for the rebase subsystem.
 All wire-format types live here so that every ``rebase/`` module reaches them
 through the same import and the binary can re-export them with one alias block.
 
+### retro/consumed.py
+
+The record of which local reviews a retro run consumed, and may delete.
+
+`retro-scan` reads the reviews root and reports what it found; the retro
+skill's final phase deletes what was reported. Those are two processes with a
+whole analysis between them, so the permission to delete has to survive as a
+file — and a file on disk is a permission anything can pick up.
+
+That is the hazard this module exists to bound. A plain list of directory
+names grants deletion to whoever reads it next: a debug scan overwrites it, an
+abandoned retro leaves it armed, and the completion cannot tell either from the
+run it is actually finishing. So the record carries the identity of the scan
+that wrote it and a fingerprint of each review as it was read, and the
+completion presents the scan ID it believes it is completing. A record that
+does not answer to that ID is refused rather than honoured, and an entry whose
+review has changed since the scan is left alone rather than deleted.
+
+Writing it is `retro-scan`'s under `--consume`; reading and enforcing it is
+`retro-consume`'s, which the skill calls in place of an inline `rm`.
+
 ### retro/github.py
 
 Fetching a repo's recent review activity from GitHub.

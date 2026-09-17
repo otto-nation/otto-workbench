@@ -59,6 +59,11 @@ tools:
     visibility: brief
     description: "Scan PR review comments and cross-reference against coding rules"
 
+  - name: retro-consume
+    permission: true
+    visibility: brief
+    description: "Delete the local reviews a retro consumed, for the scan ID that recorded them"
+
   - name: wiki
     permission: true
     visibility: brief

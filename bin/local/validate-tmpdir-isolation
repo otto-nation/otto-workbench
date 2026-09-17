@@ -115,13 +115,14 @@ def _makes_own_dir(value: str) -> bool:
 # of a one-line function body, so the terminator is a lookahead over all of
 # them rather than an end-of-line anchor — `teardown() { rm -rf "$TMPDIR"; }`
 # and `rm -rf "$TMPDIR"  # cleanup` are both the shape this check exists for,
-# and an anchored pattern misses them. A trailing redirect
-# (`rm -rf "$TMPDIR" 2>/dev/null`, idiomatic elsewhere in this suite) is
-# consumed ahead of the terminator so it does not shield the wipe either.
+# and an anchored pattern misses them. One or more trailing redirects
+# (`rm -rf "$TMPDIR" 2>/dev/null`, `rm -rf "$TMPDIR" >/dev/null 2>&1`, both
+# idiomatic elsewhere in this suite) are consumed ahead of the terminator so
+# stacking them does not shield the wipe either.
 WIPE = re.compile(r'\brm\s+(?:-[A-Za-z]+\s+)*-?[A-Za-z]*[rR][A-Za-z]*\s+'
                   r'(?:--\s+)?'
                   r'"?\$\{?TMPDIR\}?"?'
-                  r'(?:\s+\d*>{1,2}\s*\S+)?'
+                  r'(?:\s+\d*>{1,2}\s*\S+)*'
                   r'\s*(?=$|[;&|)}#])')
 
 SCOPE_START = re.compile(r'^\s*(?:@test\b|[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{)')

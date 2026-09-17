@@ -257,6 +257,13 @@ def test_a_trailing_redirect_does_not_hide_the_wipe(tmp_path):
     assert [line for line, _ in _wipes(tmp_path, source)] == [5]
 
 
+def test_stacked_trailing_redirects_do_not_hide_the_wipe(tmp_path):
+    """`>/dev/null 2>&1` is the house style for a cleanup line elsewhere in this
+    suite, and stacking a second redirect must not shield the wipe either."""
+    source = BATS_PIN + 'teardown() {\n  rm -rf "$TMPDIR" >/dev/null 2>&1\n}\n'
+    assert [line for line, _ in _wipes(tmp_path, source)] == [5]
+
+
 def test_a_trailing_comment_does_not_hide_the_wipe(tmp_path):
     """strip_comments only blanks whole-line comments, so the terminator must
     accept a trailing `#` itself."""

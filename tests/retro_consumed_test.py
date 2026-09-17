@@ -15,6 +15,8 @@ directory name that escapes the reviews root — and pins the refusal.
 import sys
 from pathlib import Path
 
+from conftest import load_script
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from retro.consumed import (  # noqa: E402
@@ -23,6 +25,10 @@ from retro.consumed import (  # noqa: E402
     deletable,
     read_record,
     write_record,
+)
+
+retro_consume = load_script(
+    "retro_consume", Path(__file__).resolve().parent.parent / "ai" / "bin" / "retro-consume"
 )
 
 
@@ -175,3 +181,57 @@ def test_a_review_with_no_recorded_timestamp_is_still_deletable(tmp_path):
 
     assert [t.name for t in targets] == ["old-review"]
     assert skipped == []
+
+
+# ── The binary's deletion loop ──────────────────────────────────────────────
+#
+# `deletable()` above decides what may go; the loop in `ai/bin/retro-consume`
+# is what goes and does it. The gap between the two is a real window — the
+# check is a `is_dir()` and the delete is a separate syscall — so the loop is
+# exercised here through the binary rather than reasoned about.
+
+
+def _run_consume(monkeypatch, tmp_path, scan_id: str):
+    """Run retro-consume's main() against a state root under tmp_path."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(sys, "argv", ["retro-consume", "--scan-id", scan_id])
+    retro_consume.main()
+
+
+def test_a_review_deleted_mid_loop_does_not_abort_the_run(monkeypatch, tmp_path, capsys):
+    """The concurrency window `deletable()` cannot close.
+
+    A concurrent sweep (`pr gc`) can take a directory between the is_dir()
+    check and the rmtree. Without the handler the loop dies on a raw
+    FileNotFoundError, leaving the record in place *and* the reviews after the
+    vanished one undeleted — a retro that reports failure having half-finished.
+    """
+    reviews = tmp_path / "state" / "reviews"
+    for name in ("first-review", "vanishes", "last-review"):
+        _review_dir(reviews, name)
+    write_record(
+        ConsumeRecord(
+            scan_id="s",
+            reviews=[ConsumedReview(n) for n in ("first-review", "vanishes", "last-review")],
+        )
+    )
+
+    real_rmtree = retro_consume.shutil.rmtree
+
+    def _rmtree_racing(target, *args, **kwargs):
+        # The sweep lands between the check and this call for one entry only.
+        if Path(target).name == "vanishes":
+            real_rmtree(target)
+            raise FileNotFoundError(2, "No such file or directory", str(target))
+        return real_rmtree(target, *args, **kwargs)
+
+    monkeypatch.setattr(retro_consume.shutil, "rmtree", _rmtree_racing)
+
+    _run_consume(monkeypatch, tmp_path, "s")
+
+    # The run finished: the entry after the vanished one is gone too.
+    assert not (reviews / "first-review").exists()
+    assert not (reviews / "vanishes").exists()
+    assert not (reviews / "last-review").exists()
+    assert read_record() is None
+    assert "gone before deletion" in capsys.readouterr().err

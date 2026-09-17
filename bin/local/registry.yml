@@ -92,7 +92,7 @@ tools:
   - name: validate-tmpdir-isolation
     permission: false
     visibility: brief
-    description: "Validates that a bats suite writing under $TMPDIR pins it to per-test scratch, so parallel cases do not share one directory"
+    description: "Validates that a bats suite pins $TMPDIR to bats-owned scratch and never removes it by hand, so parallel cases do not share one directory and a failed setup cannot wipe the real temp directory"
 
   - name: validate-script-loading
     permission: false

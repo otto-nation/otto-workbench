@@ -11,16 +11,40 @@ one file.  The failure is not a clash the runner reports: one case truncates a
 stub the next is executing, and what fails is an assertion about the stub's
 output, in a case that passes on its own and passes on a re-run.
 
-The fix is one line in setup(): TMPDIR="$(mktemp -d)" for a directory the case
-owns and removes, or TMPDIR="$BATS_TEST_TMPDIR" to let bats own it.  Either
-makes the path unique per case; BATS_FILE_TMPDIR is unique per file, which is
-enough because bats does not parallelise within a file by default.
+common_setup() in tests/test_helper.bash pins TMPDIR="$BATS_TEST_TMPDIR" for
+every suite that calls it, which is all of them, so the rule is stated once
+rather than in 145 setup() bodies.  A file needing a different form sets TMPDIR
+after that call and wins — the `pwd -P` spelling, for one, which resolves the
+/var vs /private/var difference a test comparing canonicalised paths trips on.
+A suite that does not call the helper pins for itself: TMPDIR="$BATS_TEST_TMPDIR"
+is unique per case, and BATS_FILE_TMPDIR is unique per file, which is enough
+because bats does not parallelise within a file by default.
+
+The helper's pin is read rather than assumed.  If that line is ever deleted,
+every caller relying on it is unpinned again, and this check reports them all
+instead of passing a repo that no longer pins anything.
+
+Two further rules make the directory bats's to own, and exist because the
+alternative destroyed a developer's real temp directory:
+
+  A pin must name a bats scratch root.  `TMPDIR="$(mktemp -d)"` isolates the
+  case correctly but leaves a directory behind, and the teardown people write
+  to collect it is the hazard below.
+
+  `rm -rf "$TMPDIR"` is banned outright.  bats runs teardown() even when setup()
+  failed partway, so a setup that dies before its pin line — a failed `load`, a
+  helper that is not defined yet, a sourced lib mid-edit with a syntax error —
+  reaches teardown with TMPDIR still holding the machine's real temp directory,
+  and removes all of it.  Nothing in the test is visibly wrong; the pin is right
+  there in setup(), just never reached.  bats already removes BATS_TEST_TMPDIR
+  after every case, passing or failing, so the line was never needed.
 
 The unit of analysis is a scope: setup(), setup_file(), teardown(), a helper
-function, or a @test body.  A reference is accepted when setup() or setup_file()
-pins TMPDIR — that covers the whole file — or when the reference's own scope
-pins it at or above the reference's line.  A file that pins nothing anywhere is
-reported once, against its first reference.
+function, or a @test body.  A reference is accepted when the file calls
+common_setup(), when setup() or setup_file() pins TMPDIR — either covers the
+whole file — or when the reference's own scope pins it at or above the
+reference's line.  A file that pins nothing anywhere is reported once, against
+its first reference.
 
 Helpers in tests/test_helper.bash that write under $TMPDIR are discovered rather
 than listed, so a new one is covered the day it lands: a file that calls one and
@@ -64,6 +88,34 @@ OTHER_ASSIGN = re.compile(r'^\s*(?:export\s+|local\s+)?([A-Za-z_][A-Za-z0-9_]*)=
 # this check exists to catch.
 SAFE_ROOTS = ('BATS_TEST_TMPDIR', 'BATS_FILE_TMPDIR')
 
+
+def _names_bats_scratch(value: str) -> bool:
+    """Whether VALUE names a bats-owned scratch root.
+
+    The single definition of "bats will collect this", so the isolation check
+    and the ownership check below cannot drift into disagreeing about one
+    spelling — which is how a file came to be told to use `mktemp -d` by the
+    same script that failed it for doing so.
+    """
+    return any(root in value for root in SAFE_ROOTS)
+
+
+def _makes_own_dir(value: str) -> bool:
+    """Whether VALUE creates a directory bats does not know about."""
+    return 'mktemp' in value
+
+# `rm -rf "$TMPDIR"` and its unquoted and ${}-braced spellings, removing the
+# directory itself rather than something beneath it. A path with a suffix
+# ($TMPDIR/repo) is not matched: it cannot escape the pin, and a case that
+# builds a fixture twice has a reason to clear one.
+#
+# The statement may end at a newline, a `;`, a `&&`, or the `}` of a one-line
+# function body, so the terminator is a lookahead over all of them rather than
+# an end-of-line anchor — `teardown() { rm -rf "$TMPDIR"; }` is the shape this
+# check exists for, and an anchored pattern misses exactly it.
+WIPE = re.compile(r'\brm\s+(?:-[A-Za-z]+\s+)*-?[A-Za-z]*[rR][A-Za-z]*\s+'
+                  r'"?\$\{?TMPDIR\}?"?\s*(?=$|[;&|)}])')
+
 SCOPE_START = re.compile(r'^\s*(?:@test\b|[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{)')
 
 COMMENT = re.compile(r'^(\s*)#')
@@ -104,9 +156,7 @@ def _strip_inline_comment(value: str) -> str:
 def _is_safe_value(value: str, safe_vars: set[str]) -> bool:
     """Whether an assigned value resolves to per-test or per-file scratch."""
     value = _strip_inline_comment(value)
-    if 'mktemp' in value:
-        return True
-    if any(root in value for root in SAFE_ROOTS):
+    if _makes_own_dir(value) or _names_bats_scratch(value):
         return True
     return any(re.search(r'\$\{?' + re.escape(var) + r'\b', value) for var in safe_vars)
 
@@ -161,6 +211,39 @@ def _file_level_pin(pins: dict[int, bool], starts: list[int], lines: list[str]) 
             continue
         scope = _scope_of(pin_line, starts)
         if scope and re.match(r'^\s*setup(_file)?\(\)', lines[scope - 1]):
+            return True
+    return False
+
+
+def _helper_pins_tmpdir(repo_root: str) -> bool:
+    """Whether common_setup() in test_helper.bash pins TMPDIR to bats scratch.
+
+    The pin is stated once there rather than in all 145 setup() bodies, so a
+    file calling common_setup() is covered without spelling it. Read from the
+    helper rather than assumed: if the line is ever removed, every suite goes
+    back to needing its own, and this check says so instead of passing a repo
+    that no longer pins anything.
+    """
+    path = os.path.join(repo_root, HELPER_FILE)
+    if not os.path.exists(path):
+        return False
+    with open(path, errors='replace') as f:
+        lines = f.readlines()
+
+    in_common_setup = False
+    for raw in lines:
+        line = strip_comments(raw)
+        if re.match(r'^common_setup\(\)\s*\{', line):
+            in_common_setup = True
+            continue
+        if not in_common_setup:
+            continue
+        # The closing brace at column 0 ends the function, and a pin after it
+        # belongs to some other helper.
+        if re.match(r'^}', line):
+            return False
+        assign = ASSIGN.match(line)
+        if assign and _names_bats_scratch(_strip_inline_comment(assign.group(1))):
             return True
     return False
 
@@ -220,13 +303,88 @@ def _unpinned_references(lines: list[str], helpers: list[str]) -> list[tuple[int
     return unpinned
 
 
-def check_file(filepath: str, helpers: list[str] | None = None) -> list[tuple[int, str]]:
+def _wipes(lines: list[str]) -> list[tuple[int, str]]:
+    """Every line removing $TMPDIR itself.
+
+    Not restricted to teardown(): the same line in a @test body is reached
+    through the same unpinned TMPDIR whenever an earlier line in that body
+    fails, and bats collects the directory either way.
+    """
+    return [(n, raw.strip()) for n, raw in enumerate(lines, 1)
+            if WIPE.search(strip_comments(raw))]
+
+
+def _record_unsafe_pin(assign, raw: str, lineno: int, mktemp_vars: set[str],
+                       offenders: list[tuple[int, str]]) -> None:
+    """Append LINENO to OFFENDERS when this TMPDIR pin is not bats's to collect."""
+    value = _strip_inline_comment(assign.group(1))
+    if _names_bats_scratch(value):
+        return
+    indirect = any(re.search(r'\$\{?' + re.escape(var) + r'\b', value)
+                   for var in mktemp_vars)
+    if _makes_own_dir(value) or indirect:
+        offenders.append((lineno, raw.strip()))
+
+
+def _unsafe_pins(lines: list[str]) -> list[tuple[int, str]]:
+    """Every TMPDIR pin that isolates the case but is not bats's to clean up.
+
+    `mktemp -d` is what this catches. It satisfies isolation, so the pin check
+    above passes it, and it is exactly the pin whose leftover directory invites
+    the banned teardown.
+
+    Indirect pins are followed the same way _pin_lines follows them, because
+    `SANDBOX="$(mktemp -d)"` on one line and `export TMPDIR="$SANDBOX"` on the
+    next leaves TMPDIR on a directory bats will not collect just as surely as
+    spelling mktemp on the pin line. A variable later reassigned away from
+    mktemp stops being reported, mirroring the discard there.
+    """
+    offenders = []
+    mktemp_vars: set[str] = set()
+    for n, raw in enumerate(lines, 1):
+        line = strip_comments(raw)
+        assign = ASSIGN.match(line)
+        if assign:
+            _record_unsafe_pin(assign, raw, n, mktemp_vars, offenders)
+            continue
+        other = OTHER_ASSIGN.match(line)
+        if not other:
+            continue
+        name, value = other.group(1), _strip_inline_comment(other.group(2))
+        if _makes_own_dir(value) and not _names_bats_scratch(value):
+            mktemp_vars.add(name)
+        else:
+            mktemp_vars.discard(name)
+    return offenders
+
+
+def check_file(filepath: str, helpers: list[str] | None = None,
+               helper_pins: bool | None = None) -> list[tuple[int, str]]:
     """Return the unpinned $TMPDIR references in FILEPATH, empty when it passes."""
     if helpers is None:
         helpers = _helper_names(_WORKBENCH_DIR)
+    if helper_pins is None:
+        helper_pins = _helper_pins_tmpdir(_WORKBENCH_DIR)
     with open(filepath, errors='replace') as f:
         lines = f.readlines()
+    # A file calling common_setup() inherits its pin, so every reference below
+    # that call is already on per-test scratch.
+    if helper_pins and any(re.search(r'(?:^|[;&|({]|\s)common_setup\b', strip_comments(raw))
+                           for raw in lines):
+        return []
     return _unpinned_references(lines, helpers)
+
+
+def check_file_wipes(filepath: str) -> list[tuple[int, str]]:
+    """Return the $TMPDIR-removing lines in FILEPATH, empty when it passes."""
+    with open(filepath, errors='replace') as f:
+        return _wipes(f.readlines())
+
+
+def check_file_pins(filepath: str) -> list[tuple[int, str]]:
+    """Return the non-bats TMPDIR pins in FILEPATH, empty when it passes."""
+    with open(filepath, errors='replace') as f:
+        return _unsafe_pins(f.readlines())
 
 
 def discover_suites(repo_root: str) -> list[str]:
@@ -244,8 +402,30 @@ def _report_violation(relpath: str, offenders: list[tuple[int, str]]) -> None:
         print(f'      line {lineno}: {line}', file=sys.stderr)
     if len(offenders) > 5:
         print(f'      … and {len(offenders) - 5} more', file=sys.stderr)
-    print(f'    {DIM}add TMPDIR="$(mktemp -d)" to setup() (and rm -rf it in teardown), '
-          f'or TMPDIR="$BATS_TEST_TMPDIR"{NC}', file=sys.stderr)
+    print(f'    {DIM}add TMPDIR="$BATS_TEST_TMPDIR" to setup() '
+          f'(or $BATS_FILE_TMPDIR in setup_file){NC}', file=sys.stderr)
+
+
+def _report_wipe(relpath: str, offenders: list[tuple[int, str]]) -> None:
+    print(f'{RED}✗{NC} {relpath}: removes $TMPDIR itself', file=sys.stderr)
+    for lineno, line in offenders[:5]:
+        print(f'      line {lineno}: {line}', file=sys.stderr)
+    if len(offenders) > 5:
+        print(f'      … and {len(offenders) - 5} more', file=sys.stderr)
+    print(f'    {DIM}delete the line — bats removes $BATS_TEST_TMPDIR after every case, '
+          f'and teardown() still runs when setup() failed before its pin, which is how '
+          f'this removes the real temp directory{NC}', file=sys.stderr)
+
+
+def _report_unsafe_pin(relpath: str, offenders: list[tuple[int, str]]) -> None:
+    print(f'{RED}✗{NC} {relpath}: pins $TMPDIR to a directory bats will not clean up',
+          file=sys.stderr)
+    for lineno, line in offenders[:5]:
+        print(f'      line {lineno}: {line}', file=sys.stderr)
+    if len(offenders) > 5:
+        print(f'      … and {len(offenders) - 5} more', file=sys.stderr)
+    print(f'    {DIM}use TMPDIR="$BATS_TEST_TMPDIR" (or $BATS_FILE_TMPDIR in setup_file){NC}',
+          file=sys.stderr)
 
 
 def _report_pass(relpath: str, quiet: bool) -> None:
@@ -256,9 +436,10 @@ def _report_pass(relpath: str, quiet: bool) -> None:
 def _print_summary(files_checked: int, errors: int) -> None:
     print()
     if errors == 0:
-        print(f'{GREEN}✓{NC} {files_checked} bats suites checked, $TMPDIR is pinned wherever it is written')
+        print(f'{GREEN}✓{NC} {files_checked} bats suites checked, $TMPDIR is pinned to bats '
+              f'scratch wherever it is written and never removed by hand')
     else:
-        print(f'{RED}✗{NC} {errors} of {files_checked} bats suites share the machine $TMPDIR',
+        print(f'{RED}✗{NC} {errors} of {files_checked} bats suites mishandle $TMPDIR',
               file=sys.stderr)
 
 
@@ -271,11 +452,28 @@ def main():
 
     files = args.files if args.files else discover_suites(_WORKBENCH_DIR)
     helpers = _helper_names(_WORKBENCH_DIR)
+    helper_pins = _helper_pins_tmpdir(_WORKBENCH_DIR)
 
     errors = 0
     for filepath in files:
         relpath = os.path.relpath(filepath, _WORKBENCH_DIR)
-        offenders = check_file(filepath, helpers)
+        offenders = check_file(filepath, helpers, helper_pins)
+        wipes = check_file_wipes(filepath)
+        unsafe = check_file_pins(filepath)
+
+        # Reported ahead of the pin check, and one finding per file: a wipe or a
+        # mktemp pin is a specific diagnosis, and letting the generic "not
+        # pinned" message win would send the reader to the wrong fix. An
+        # unquoted `rm -rf $TMPDIR` trips both checks at once.
+        if wipes:
+            errors += 1
+            _report_wipe(relpath, wipes)
+            continue
+
+        if unsafe:
+            errors += 1
+            _report_unsafe_pin(relpath, unsafe)
+            continue
 
         if not offenders:
             _report_pass(relpath, args.quiet)

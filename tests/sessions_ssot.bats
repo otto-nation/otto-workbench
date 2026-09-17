@@ -124,6 +124,15 @@ make_memory() {
   [ "$(slug_shell "$p")" = "$(slug_python "$p")" ]
 }
 
+@test "both languages agree on the slug for a non-ASCII path" {
+  # str.isalnum() is Unicode-aware and would keep an accented letter that
+  # `tr -c 'A-Za-z0-9_'` replaces. The shell half is also per byte unless its
+  # locale is pinned, which is a second way the two can disagree — and the one
+  # that shows up only in CI, where no locale is set.
+  local p="/Users/dev/git/café/naïve"
+  [ "$(slug_shell "$p")" = "$(slug_python "$p")" ]
+}
+
 @test "both languages preserve underscores in a slug" {
   local p="/Users/dev/git/repo/feat-add_auth"
   [ "$(slug_shell "$p")" = "$(slug_python "$p")" ]

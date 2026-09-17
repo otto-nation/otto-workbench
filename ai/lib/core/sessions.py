@@ -435,9 +435,17 @@ def _parse_iso(stamp: str) -> datetime | None:
 # two tools disagreeing about which directory a repo's memory lives in, so
 # tests/sessions_ssot.bats fails when they drift.
 def canonical_slug(path: Path | str) -> str:
-    """The directory name standing for a project path."""
+    """The directory name standing for a project path.
+
+    ASCII alnum, not ``str.isalnum()``, for the reason ``claude_slug`` below
+    spells it that way: the shell half runs ``tr -c 'A-Za-z0-9_'``, which only
+    ever spares ASCII, while ``str.isalnum()`` is Unicode-aware and would keep
+    an accented letter the shell replaced.
+    """
     text = str(path).strip("/")
-    encoded = "".join(c if c.isalnum() or c == "_" else "-" for c in text)
+    encoded = "".join(
+        c if (c.isascii() and c.isalnum()) or c == "_" else "-" for c in text
+    )
     return f"--{encoded}--"
 
 

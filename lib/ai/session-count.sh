@@ -68,11 +68,15 @@ _has_enough_sessions() {
 # `feat/add_auth` and `feat/add-auth` stay distinct where Claude's would collide
 # them into one name. canonical_slug() in ai/lib/core/sessions.py is the same
 # transform, and tests/sessions_ssot.bats fails when the two drift.
+#
+# Locale pinned for the reason _claude_project_dir below pins it: `tr` is per
+# byte in a C locale and per character in UTF-8, so an unpinned slug changes
+# shape between a terminal and CI for the same path.
 _canonical_slug() {
   local trimmed encoded
   trimmed="${1#/}"
   trimmed="${trimmed%/}"
-  encoded="$(printf '%s' "$trimmed" | tr -c 'A-Za-z0-9_' '-')"
+  encoded="$(printf '%s' "$trimmed" | LC_ALL=C.UTF-8 tr -c 'A-Za-z0-9_' '-')"
   printf -- '--%s--' "$encoded"
 }
 
@@ -85,12 +89,21 @@ _canonical_slug() {
 # Claude's own store; that one names the harness-neutral directory a project's
 # memory lives in.
 #
+# The locale is pinned because Claude Code's own transform is a JavaScript
+# regex, which is per character: `é` becomes one hyphen. `tr` is per character
+# only in a UTF-8 locale and per byte in C, where the same path yields two —
+# so an unpinned gate agrees with Claude in a terminal and disagrees under
+# launchd or CI, which set no locale. C.UTF-8 rather than en_US.UTF-8: it is
+# built into glibc and needs no generated locale, and macOS carries it too.
+# claude_slug in ai/lib/core/sessions.py is the Python half, held to this by
+# tests/sessions_ssot.bats.
+#
 # ceiling: the transform is what Claude Code does today and is not a documented
 # contract. Upgrade to reading the directory off the hook payload if a session
 # ever resolves to a directory that is not there.
 _claude_project_dir() {
   local slug
-  slug="$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-')"
+  slug="$(printf '%s' "$1" | LC_ALL=C.UTF-8 tr -c 'A-Za-z0-9' '-')"
   printf '%s/projects/%s' "$CLAUDE_DIR" "$slug"
 }
 
@@ -144,7 +157,9 @@ _repo_dirs_under_root() {
 _dir_belongs_to_repo() {
   local session_dir="$1" repo_dir="$2" name claude_slug pi_slug
   name="$(basename "$session_dir")"
-  claude_slug="$(printf '%s' "$repo_dir" | tr -c 'A-Za-z0-9' '-')"
+  # Through _claude_project_dir rather than a second spelling of its `tr`: the
+  # transform and its locale pin belong to one owner.
+  claude_slug="$(basename "$(_claude_project_dir "$repo_dir")")"
   pi_slug="$(_canonical_slug "$repo_dir")"
   pi_slug="${pi_slug%--}"
 

@@ -87,9 +87,11 @@ def main() -> None:
         log.info(f"{len(targets)} review(s) would be deleted, {len(skipped)} kept")
         return
 
+    deleted = 0
     for target in targets:
         try:
             shutil.rmtree(target)
+            deleted += 1
         except FileNotFoundError:
             # Gone since deletable()'s is_dir() check — a concurrent sweep
             # (e.g. `pr gc`) beat this run to it. The record stays until
@@ -102,7 +104,7 @@ def main() -> None:
     # ID deletes the remainder rather than losing track of it — the entries
     # already gone are skipped as missing.
     clear_record()
-    log.ok(f"Deleted {len(targets)} consumed review(s), kept {len(skipped)}")
+    log.ok(f"Deleted {deleted} consumed review(s), kept {len(skipped)}")
 
 
 if __name__ == "__main__":

@@ -165,7 +165,7 @@ def _run_review(args, ctx: pr_context.ResolvedContext,
         trail.finish()
 
 
-def _run_self_review(args, generator_version: str) -> review_run.ReviewOutcome:
+def _run_self_review(args, generator_version: str = "") -> review_run.ReviewOutcome:
     """Review a local checkout.
 
     Resolution lives here rather than in `review.run` because acquiring the
@@ -192,13 +192,29 @@ def _run_self_review(args, generator_version: str) -> review_run.ReviewOutcome:
     # the resolver create a worktree on a branch named after the PR number.
     wt_path = review_worktree.resolve_wt_path(repo_dir, pr_input if is_branch else "")
 
-    ctx = pr_context.resolve(
+    # Reached only when --self was passed, so there is no PR to name and the
+    # context resolves from git alone. Invoked through `pr`, the same depth is
+    # declared by REVIEW_SELF_NEED; this is the direct-invocation path, and the
+    # two have to agree or `claude-review --self` would still spend the `gh`
+    # call `pr review --self` no longer does. resolve_at escalates to REMOTE on
+    # its own when a PR reference is passed alongside.
+    ctx = pr_context.resolve_at(
+        pr_context.ContextDepth.LOCAL,
         pr=pr_input if is_pr else None,
         branch=pr_input if is_branch else None,
         repo_dir=wt_path,
     )
     repo = ctx.repo
-    pr_number = str(ctx.pr_number) if ctx.pr_number else ""
+
+    # The LOCAL rung leaves pr_number None by contract, so a self-review asks
+    # for it here rather than getting it from the context. It is wanted but not
+    # needed: when the branch already has an open PR, the number is what fetches
+    # the reply threads that keep a re-review from repeating findings already
+    # answered there — the `--self --fix --push` flow in self-review.md. When
+    # GitHub cannot be reached the lookup yields None and the run proceeds as a
+    # pre-PR self-review, which is the whole point of resolving locally first.
+    resolved_pr = ctx.pr_number or pr_context.pr_number_if_reachable(repo, ctx.branch)
+    pr_number = str(resolved_pr) if resolved_pr else ""
 
     # Before the checkout is switched or a --fix pass edits it: two `--self`
     # runs on one branch are two processes committing to it. A no-op when `pr`
@@ -210,6 +226,18 @@ def _run_self_review(args, generator_version: str) -> review_run.ReviewOutcome:
         started=pr_state.now_iso(),
     )
 
+    return _run_self_review_body(
+        ctx, pr_number, args, generator_version, repo, is_pr, is_branch,
+        pr_input, wt_path, recover, repo_dir,
+    )
+
+
+def _run_self_review_body(
+    ctx: pr_context.ResolvedContext, pr_number: str, args, generator_version: str,
+    repo: str, is_pr: bool, is_branch: bool, pr_input: str, wt_path: str, recover: bool,
+    repo_dir: str,
+) -> review_run.ReviewOutcome:
+    """The rest of a self-review, once its identity is resolved and locked."""
     wt_cleanup: review_worktree.WorktreeResult | None = None
 
     if is_pr:

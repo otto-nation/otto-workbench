@@ -179,6 +179,7 @@ def run(
     *args: str,
     cwd: str | Path | None = None,
     config: dict[str, str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> CmdResult:
     """Run git with *args* in *cwd*, capturing both streams.
 
@@ -190,8 +191,16 @@ def run(
     There is no `timeout` parameter. The bound follows from the subcommand, the
     same way `core.quotePath` does, so that the knowledge lives with the client
     that owns it rather than at every call site.
+
+    `env` replaces the child's environment outright, as `proc.run` documents.
+    It exists for the settings `-c` cannot reach: `GIT_EDITOR` outranks
+    `core.editor`, so a caller that must not be handed an editor has to unset
+    the variable rather than configure around it. Pass `os.environ | {...}` to
+    add rather than replace.
     """
-    return proc.run(_argv(args, config), cwd=cwd, timeout=_timeout_for(args))
+    return proc.run(
+        _argv(args, config), cwd=cwd, timeout=_timeout_for(args), env=env,
+    )
 
 
 def out(

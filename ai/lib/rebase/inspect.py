@@ -27,6 +27,16 @@ _PICK_COMMANDS = frozenset({
     "squash", "s", "fixup", "f", "drop", "d",
 })
 
+# What git prints, on stderr, for a conflict it resolved from its rerere cache.
+# "Staged" is the `rerere.autoUpdate` wording and the one this run provokes;
+# "Resolved" is what the same replay prints without it, kept so the parser still
+# reads a worktree whose own config enabled rerere but not the auto-staging.
+_RERERE_REPLAY_PREFIXES = (
+    "Staged '",
+    "Resolved '",
+)
+_RERERE_REPLAY_SUFFIX = "' using previous resolution."
+
 
 # ── Git-dir resolution ─────────────────────────────────────────────────────
 
@@ -55,6 +65,44 @@ def rebase_in_progress(cwd: str) -> bool:
 def detect_conflicts(cwd: str) -> list[str]:
     """Return list of conflicted file paths."""
     return git_client.lines("diff", "--name-only", "--diff-filter=U", cwd=cwd)
+
+
+def _replayed_path(line: str) -> str | None:
+    """The path in one ``... using previous resolution.`` line, or None.
+
+    Split out from the loop below so each holds one idea: this decides whether
+    a single line is a replay line, and the caller decides what to do with the
+    ones that are.
+    """
+    line = line.strip()
+    if not line.endswith(_RERERE_REPLAY_SUFFIX):
+        return None
+    prefix = next(
+        (p for p in _RERERE_REPLAY_PREFIXES if line.startswith(p)), None,
+    )
+    if prefix is None:
+        return None
+    # Falsy for `Staged '' using previous resolution.`, which the caller drops:
+    # an empty path is a line that did not parse, not a file.
+    return line[len(prefix):-len(_RERERE_REPLAY_SUFFIX)] or None
+
+
+def rerere_replayed(output: str) -> list[str]:
+    """Paths git says it resolved from its rerere cache, in the order printed.
+
+    Parsed from git's own output because there is no plumbing that answers it:
+    ``git rerere status`` reports what is *still* conflicted, and by the time
+    this is asked the replayed file has been staged out of that set. The
+    alternative is diffing the index before and after every step, which is more
+    work to learn something git already said.
+
+    Presentation output, so it is matched conservatively — a line that does not
+    parse yields no path rather than a guess. Nothing is driven by the result:
+    it feeds the trail and the run's counts, so a miss under-reports a saving
+    and never changes what the rebase does.
+    """
+    parsed = (_replayed_path(line) for line in output.splitlines())
+    return [path for path in parsed if path is not None]
 
 
 def is_empty_patch(cwd: str) -> bool:

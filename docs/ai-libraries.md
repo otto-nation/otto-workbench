@@ -421,6 +421,19 @@ against. How the collected files are ranked and divided is `review.grouping`'s,
 what a phase does with the block is `review.prompt`'s, and the records this
 fills in are `review.types`' and `gh.types`'.
 
+### review/completion.py
+
+What happens to a review once the pipeline has produced it.
+
+The sequence both flows share: drop the prior copy, show the review, summarise
+it, record it. Order is the contract, and it is the same order whichever flow
+got here, which is what makes this a module rather than a parameter.
+
+Kept apart from `review.run` because the two answer different questions. That
+module decides how a review is *reached* — which worktree, which checks, which
+prompts — and the flows differ throughout. This one decides what a finished
+review *means*, and nothing here differs at all.
+
 ### review/document.py
 
 `review.md` — the artifact the review subsystem exists to produce.
@@ -524,6 +537,25 @@ a group by the paths it holds.
 The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
 it can afford to carry.
+
+### review/invoke.py
+
+Running review-orchestrate and reporting what it did.
+
+The argv both review flows build, the spawn, and the two guards that decide a
+run failed. One module because the flows differ in how they *reach* this point
+— which worktree, which checks, which prompts — and not at all in what happens
+once they are here.
+
+It is also the whole of the process boundary. #909's tranche 4 replaces the
+spawn with an in-process call, and when it does, this file is what it rewrites:
+nothing above it names `review-orchestrate`, constructs argv, or knows that a
+review is produced by a subprocess at all.
+
+The boundary is not incidental. `--post` on that argv does not mean "publish
+this review" — it tells the orchestrate process that its fix pass may push,
+because `core.publishing`'s gate is process-wide and has no `disable()`. Today
+a subprocess is what scopes it to one run.
 
 ### review/outcome.py
 
@@ -737,6 +769,30 @@ executors and the orchestration layer alike.
 The hints, the retryability test and the retry driver are shared with the other
 `pr` scripts — see agent_retry. Aliased here so the review modules keep reading
 the way they always have.
+
+### review/run.py
+
+The two review flows, and the tail they share.
+
+A PR review and a self review are not one flow with a mode switch. They differ
+in *order*, not only in values: the self flow refuses a superseded review as its
+first statement, before it has paid for anything, while the PR flow refuses only
+once it holds a worktree, so that a refusal still cleans up what it read. The
+self flow releases its recover pin the moment the pipeline is done with it; the
+PR flow holds both worktrees to the end because the pin's own failure path can
+exit. Four more differences of that kind are listed against
+`tests/review_flow_characterisation_test.py`, which exists to keep them honest.
+
+A parameter cannot express where a statement runs. Trying to make one do it
+produces a single flow whose reader must hold a dozen booleans to know what
+happens next, and whose ordering tests all pass because every ordering is
+reachable. So: two flows, stated plainly, over one shared tail —
+`finish_review` — which is the part that genuinely does not differ.
+
+Both return a `ReviewOutcome`. The caller needs the review file back: a self
+review's lives under a branch-derived directory that `review_file_path` cannot
+produce, so a CLI that recomputed it would emit an all-zero summary for a review
+that ran.
 
 ### review/scout.py
 
@@ -1794,6 +1850,20 @@ High-level posting orchestration for review-post.
 Handles chunked review submission, SHA-drift re-verification,
 reclassification after LineResolutionError, dry-run display,
 and post-tracking metadata.
+
+### review/publish.py
+
+Deciding whether a finished review reaches GitHub, and putting it there.
+
+A PR review ends in one of four ways: told not to post, told to post, or asked
+and answered either way. A self review ends in none of them — it has no GitHub
+review to file — which is why this is a module the PR flow calls rather than a
+branch inside a shared one.
+
+Posting returns a `PostResult` rather than printing. The four endings differ in
+exactly one thing the summary needs: whether a post session log exists to
+aggregate cost from. Returning that instead of printing in each branch is what
+lets both flows share a single `print_summary` call.
 
 ## PR state
 
@@ -3951,6 +4021,27 @@ Usage:
   ci-check --pr <number_or_url> # discover branch from PR
   ci-check --repo-dir <path>    # specify worktree directory
   ci-check --fix                # diagnose then invoke AI to fix failures
+
+### cli/claude_review.py
+
+Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
+
+The entry point, and only the entry point: the parser, the flag contradictions,
+the signal handler, the run lock, and the choice of which flow to run. The
+review itself is `review.run`'s.
+
+Three things stay here rather than moving down a layer, each for its own reason.
+The signal handler is process-level state, which a library must not install.
+The run lock is claimed between resolving the self-review target and switching
+the checkout to it — a resolver that did both would take a process-lifetime lock
+from inside the library. And `version_string` lives in `ai/bin`, which nothing
+under `ai/lib` can import, so the caller passes it in.
+
+Usage:
+  claude-review <pr_url_or_number>
+  claude-review --no-post <pr_url_or_number>
+  claude-review --self [<pr_url_or_number>]
+  claude-review [--self] --recover [<pr_url_or_number>]
 
 ### cli/needs.py
 

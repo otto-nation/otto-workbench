@@ -41,7 +41,7 @@ _make_project() {
   gate_sessions "$(gate_claude_dir "$repo")" "$num_sessions" "$session_mtime"
 }
 
-# ── Per-repo cooldown logic ───────────────────────────────────────────────
+# ── Per-repo cooldown logic ──────────────────────────────────────────────────
 
 @test "should-promote: project A recent, project B overdue with enough sessions → fires" {
   local now

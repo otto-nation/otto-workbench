@@ -4,7 +4,7 @@
 # since last retro. Repos without memory/ are skipped — they have no session
 # activity to measure.
 # Returns 1 (false) otherwise.
-# Uses a global timestamp (~/.claude/.last-retro) since retro scans across all repos.
+# Uses a global timestamp ($RETRO_STAMP_FILE) since retro scans across all repos.
 #
 # Sessions are counted per repo across every harness and every worktree — see
 # the note in should-dream.sh. The stamp stays global because a retro is one
@@ -24,7 +24,7 @@ MIN_SESSIONS=5
 now=$(date +%s)
 threshold_secs=$((RETRO_INTERVAL_HOURS * 3600))
 
-last_retro="$(_read_stamp "$CLAUDE_DIR/.last-retro")"
+last_retro="$(_read_stamp "$RETRO_STAMP_FILE")"
 
 elapsed=$((now - last_retro))
 [[ "$elapsed" -lt "$threshold_secs" ]] && exit 1

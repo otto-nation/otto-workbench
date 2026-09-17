@@ -35,13 +35,26 @@ _make_project() {
   gate_sessions "$(gate_claude_dir "$repo")" "$num_sessions" "$session_mtime"
 }
 
+# _stamp_file — where the gate records the global retro cooldown. Spelled out
+# rather than sourced, so the test would catch the location changing out from
+# under the gate. Unslugged, unlike the per-repo stamps beside it: a retro is
+# one sweep over every repo rather than a per-repo pass.
+_stamp_file() {
+  printf '%s/gates/last-retro' "$WORKBENCH_STATE_DIR"
+}
+
+# _write_stamp TS — the global retro stamp at TS.
+_write_stamp() {
+  mkdir -p "$WORKBENCH_STATE_DIR/gates"
+  echo "$1" > "$(_stamp_file)"
+}
+
 @test "should-retro: overdue (4 days) with enough sessions → fires" {
   local now
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
   _make_project "test-proj" 6
 
   run "$SHOULD_RETRO"
@@ -53,8 +66,7 @@ _make_project() {
   now=$(date +%s)
   local one_day_ago=$((now - 86400))
 
-  mkdir -p "$HOME/.claude"
-  echo "$one_day_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$one_day_ago"
   _make_project "test-proj" 10
 
   run "$SHOULD_RETRO"
@@ -66,15 +78,14 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
   _make_project "test-proj" 2
 
   run "$SHOULD_RETRO"
   [[ "$status" -eq 1 ]]
 }
 
-@test "should-retro: no .last-retro (first run) with enough sessions → fires" {
+@test "should-retro: no stamp (first run) with enough sessions → fires" {
   _make_project "test-proj" 6
 
   run "$SHOULD_RETRO"
@@ -93,8 +104,7 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
   _make_project "test-proj" 5
 
   run "$SHOULD_RETRO"
@@ -106,8 +116,7 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
   _make_project "test-proj" 4
 
   run "$SHOULD_RETRO"
@@ -119,8 +128,7 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
   _make_project "test-proj" 6 "202001010000"
 
   run "$SHOULD_RETRO"
@@ -132,8 +140,7 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
 
   _make_project "proj-a" 2
   _make_project "proj-b" 3
@@ -147,8 +154,7 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
 
   local repo
   repo="$(gate_repo "no-memory-proj")"
@@ -165,8 +171,7 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
 
   local repo
   repo="$(gate_repo "pi-only")"
@@ -182,8 +187,7 @@ _make_project() {
   now=$(date +%s)
   local four_days_ago=$((now - 345600))
 
-  mkdir -p "$HOME/.claude"
-  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+  _write_stamp "$four_days_ago"
 
   local repo
   repo="$(gate_repo "spread")"
@@ -196,4 +200,31 @@ _make_project() {
 
   run "$SHOULD_RETRO"
   [[ "$status" -eq 0 ]]
+}
+
+# ── The completion script and the gate agree on the stamp ────────────────────
+
+@test "retro-complete settles the gate it is paired with" {
+  local now
+  now=$(date +%s)
+  _write_stamp "$((now - 345600))"
+  _make_project "test-proj" 6
+
+  run "$SHOULD_RETRO"
+  [ "$status" -eq 0 ]
+
+  run "$REPO_ROOT/ai/skills/retro/retro-complete.sh"
+  [ "$status" -eq 0 ]
+
+  run "$SHOULD_RETRO"
+  [ "$status" -eq 1 ]
+}
+
+@test "retro-complete writes the stamp where the gate reads it" {
+  # The stamp is written in bash and read again in Python by retro-scan, so a
+  # location the two disagree on reads as a first run: every merged PR refetched
+  # and every local review deleted.
+  run "$REPO_ROOT/ai/skills/retro/retro-complete.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$(_stamp_file)" ]
 }

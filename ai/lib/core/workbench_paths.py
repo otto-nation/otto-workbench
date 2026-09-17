@@ -35,6 +35,7 @@ DEFAULT_CACHE_DIR = "~/.cache/workbench"
 # Subtrees of the state root that more than one tool has to agree on.
 TRAIL_DIRNAME = "trail"
 REVIEWS_DIRNAME = "reviews"
+GATES_DIRNAME = "gates"
 
 # The registry of repos on this machine that use the workbench. ``lib/
 # constants.sh`` spells the same filename as PROJECTS_REGISTRY_NAME;
@@ -113,6 +114,18 @@ def reviews_dir() -> Path:
     ``tests/workbench_roots.bats`` holds to this value.
     """
     return state_dir() / REVIEWS_DIRNAME
+
+
+def gates_dir() -> Path:
+    """Cooldown stamps for the Stop-hook gates, one file per gate and repo.
+
+    Under the state root rather than in a harness's tree because the gates ask
+    a question about a repo, not about a harness: a repo worked in only from Pi
+    has no directory in Claude's store to hold a stamp. Bash reaches the same
+    directory through ``GATE_STAMPS_DIR`` in ``lib/constants.sh``, which
+    ``tests/workbench_roots.bats`` holds to this value.
+    """
+    return state_dir() / GATES_DIRNAME
 
 
 def projects_registry() -> Path:

@@ -56,7 +56,12 @@ DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
 WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
 
 MACHINE_MD_REL = Path(".claude") / "machine" / "machine.md"
-LAST_RETRO_REL = Path(".claude") / ".last-retro"
+
+# The retro cooldown stamp, under the gates directory rather than in a harness's
+# tree: the question it answers is about this machine, not about Claude Code.
+# RETRO_STAMP_FILE in lib/constants.sh is the bash half, which retro-complete.sh
+# writes and should-retro.sh reads.
+LAST_RETRO_NAME = "last-retro"
 
 REGISTRY_TABLE_PATTERN = re.compile(r"^\|\s*(\S+)\s*\|\s*(\S+)\s*\|")
 REGISTRY_SEPARATOR = re.compile(r"^\|\s*[-]+")
@@ -137,8 +142,8 @@ def get_repo_remote(repo_path: str) -> str | None:
 
 # ── Last retro state ─────────────────────────────────────────────────────────
 
-def _read_last_retro(home: Path) -> int:
-    stamp = home / LAST_RETRO_REL
+def _read_last_retro() -> int:
+    stamp = workbench_paths.gates_dir() / LAST_RETRO_NAME
     if not stamp.exists():
         return 0
     try:
@@ -309,10 +314,6 @@ def _run_retro(
     log.info(f"Home: {home}")
     log.info(f"Workbench: {workbench}")
 
-    if not (home / ".claude").is_dir():
-        log.warn(f"Home path has no .claude/ directory: {home}")
-        trail.warn("validate_home", f"no .claude/ in {home}")
-
     machine_md = home / MACHINE_MD_REL
     projects = parse_project_registry(str(machine_md))
     if projects:
@@ -344,9 +345,9 @@ def _run_retro(
     if not repos:
         # A registry that resolves to nothing is a broken scan, not an empty
         # one. Finishing the run would produce a report built only from local
-        # self-review output, then bank it: retro-complete.sh stamps
-        # .last-retro and deletes the review directories this run consumed, so
-        # the window closes over PR feedback that was never read.
+        # self-review output, then bank it: retro-complete.sh writes the
+        # cooldown stamp and deletes the review directories this run consumed,
+        # so the window closes over PR feedback that was never read.
         # ceiling: no override for a machine whose repos are all non-GitHub --
         # such a machine cannot run retro at all. Add an opt-out flag if one
         # registers a repo on another forge.
@@ -379,7 +380,7 @@ def _run_retro(
         last_retro_ts = _parse_since(since_override)
         log.info(f"Scan window override: --since {since_override}")
     else:
-        last_retro_ts = _read_last_retro(home)
+        last_retro_ts = _read_last_retro()
     if last_retro_ts > 0:
         log.info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
     else:

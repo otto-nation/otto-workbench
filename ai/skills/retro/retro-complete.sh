@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# retro-complete.sh — records retro timestamp, cleans up consumed reviews,
-# and removes the pending flag.
+# retro-complete.sh — records the retro timestamp and cleans up consumed reviews.
 #
-# Writes .last-retro to ~/.claude/ (global, not per-project), deletes the
-# review directories the scan recorded under SCAN_ID, and removes
-# ~/.claude/.retro-pending.
+# Writes the global retro stamp (one per machine, not per project) and deletes
+# the review directories the scan recorded under SCAN_ID.
 # Called by the retro skill after Phase 4 completes.
 #
 # The scan ID is required because the deletion is not this script's decision to
@@ -43,8 +41,5 @@ fi
 
 # ── Record timestamp ────────────────────────────────────────────────────────
 
-date +%s > "$CLAUDE_DIR/.last-retro"
-
-# ── Remove pending flag ──────────────────────────────────────────────────────
-
-rm -f "$CLAUDE_DIR/.retro-pending"
+mkdir -p "$GATE_STAMPS_DIR"
+date +%s > "$RETRO_STAMP_FILE"

@@ -466,7 +466,7 @@ PY
 }
 
 @test "retro-scan: a registry that resolves to no GitHub repo fails the run" {
-  # Banking the scan window here would stamp .last-retro and delete the
+  # Banking the scan window here would stamp the retro cooldown and delete the
   # consumed local reviews, closing the window over PR feedback never read.
   _make_machine_md "$TMPDIR" \
     "| myapp | $TMPDIR/absent | Go | yes |"

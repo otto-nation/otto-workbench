@@ -107,14 +107,22 @@ def _makes_own_dir(value: str) -> bool:
 # `rm -rf "$TMPDIR"` and its unquoted and ${}-braced spellings, removing the
 # directory itself rather than something beneath it. A path with a suffix
 # ($TMPDIR/repo) is not matched: it cannot escape the pin, and a case that
-# builds a fixture twice has a reason to clear one.
+# builds a fixture twice has a reason to clear one. An optional `--`
+# end-of-options marker between the flags and the path is matched too —
+# `rm -rf -- "$TMPDIR"` is exactly the shape this check exists for.
 #
-# The statement may end at a newline, a `;`, a `&&`, or the `}` of a one-line
-# function body, so the terminator is a lookahead over all of them rather than
-# an end-of-line anchor — `teardown() { rm -rf "$TMPDIR"; }` is the shape this
-# check exists for, and an anchored pattern misses exactly it.
+# The statement may end at a newline, a `;`, a `&&`, a `#` comment, or the `}`
+# of a one-line function body, so the terminator is a lookahead over all of
+# them rather than an end-of-line anchor — `teardown() { rm -rf "$TMPDIR"; }`
+# and `rm -rf "$TMPDIR"  # cleanup` are both the shape this check exists for,
+# and an anchored pattern misses them. A trailing redirect
+# (`rm -rf "$TMPDIR" 2>/dev/null`, idiomatic elsewhere in this suite) is
+# consumed ahead of the terminator so it does not shield the wipe either.
 WIPE = re.compile(r'\brm\s+(?:-[A-Za-z]+\s+)*-?[A-Za-z]*[rR][A-Za-z]*\s+'
-                  r'"?\$\{?TMPDIR\}?"?\s*(?=$|[;&|)}])')
+                  r'(?:--\s+)?'
+                  r'"?\$\{?TMPDIR\}?"?'
+                  r'(?:\s+\d*>{1,2}\s*\S+)?'
+                  r'\s*(?=$|[;&|)}#])')
 
 SCOPE_START = re.compile(r'^\s*(?:@test\b|[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{)')
 

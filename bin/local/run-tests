@@ -220,8 +220,9 @@ run_bats() {
   # Keyed by worktree path and pid so concurrent runs cannot collide, and
   # removed on the way out because bats only cleans a root it created itself.
   # The trap is EXIT rather than RETURN so an interrupted run collects too;
-  # bats refuses to start on a BATS_RUN_TMPDIR that already exists, so a
-  # leftover would fail the next run in this tree outright.
+  # a leftover from a killed run is orphaned garbage rather than a blocker for
+  # the next one — the pid suffix makes the path unique per invocation, and a
+  # fresh run only collides with it on pid reuse.
   if [[ -z "${BATS_RUN_TMPDIR:-}" ]]; then
     local tree_id
     tree_id="$(printf '%s' "$WORKBENCH_DIR" | shasum | cut -c1-8)"

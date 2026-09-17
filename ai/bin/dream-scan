@@ -13,13 +13,17 @@ that has stopped being discovered reads as a zero rather than as a corpus that
 quietly halved.
 
 Usage:
-  dream-scan [--days N] [--home DIR]
+  dream-scan [--days N] [--home DIR] [--list-transcripts] [--memory-dir REPO]
+
+The two exit-early flags answer "where does the corpus live" for callers that
+need the paths rather than the report: ``--list-transcripts`` prints every
+transcript in the window, one per line, and ``--memory-dir`` prints the memory
+directory for one repo. Skills use them instead of globbing a harness's tree.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -52,12 +56,6 @@ FRONTMATTER_DELIMITER = "---"
 MEMORY_INDEX = "MEMORY.md"
 LAST_DREAM_FILE = ".last-dream"
 TOPIC_GLOB = "*.md"
-
-# Memory still lives in Claude Code's tree, one directory per project slug.
-# That is not a statement about which harness a session ran in — sessions come
-# from core.sessions, across all of them — and moving these artifacts out is
-# tracked separately.
-PROJECTS_PATH = Path(".claude") / "projects"
 
 DATE_FMT = "%Y-%m-%d"
 DATETIME_FMT = "%Y-%m-%d %H:%M"
@@ -164,15 +162,9 @@ def _scan_topic_file(f: Path, now: datetime) -> dict:
 
 
 def scan_memory_state(home: Path) -> list[dict]:
-    projects_dir = home / PROJECTS_PATH
-    if not projects_dir.exists():
-        return []
-
     now = datetime.now()
     states = []
-    for memory_dir in sorted(projects_dir.glob("*/memory")):
-        if not memory_dir.is_dir():
-            continue
+    for memory_dir in sessions.memory_dirs(home):
         memory_md = memory_dir / MEMORY_INDEX
         if not memory_md.exists():
             continue
@@ -300,7 +292,7 @@ def _format_counts(counts: dict[str, int]) -> list[str]:
     """
     total = sum(counts.values())
     per = ", ".join(f"{name} {n}" for name, n in sorted(counts.items()))
-    return [f"## Sessions Scanned\n", f"{total} transcripts — {per}\n"]
+    return ["## Sessions Scanned\n", f"{total} transcripts — {per}\n"]
 
 
 def _format_memory_section(states: list[dict]) -> list[str]:
@@ -330,7 +322,7 @@ def _format_signals_section(signals: list[dict]) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Scan session transcripts and memory state for dream consolidation.",
-        usage=f"{SCRIPT} [--days N] [--home DIR] [--list-transcripts]",
+        usage=f"{SCRIPT} [--days N] [--home DIR] [--list-transcripts] [--memory-dir]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"scan sessions from last N days (default: {DEFAULT_DAYS})")
@@ -339,6 +331,11 @@ def main() -> None:
         "--list-transcripts",
         action="store_true",
         help="print transcript paths for the window, one per line, and exit",
+    )
+    parser.add_argument(
+        "--memory-dir",
+        metavar="REPO",
+        help="print the memory directory for the repo at REPO, and exit",
     )
     add_trail_args(parser)
     args = parser.parse_args()
@@ -358,6 +355,15 @@ def main() -> None:
         cutoff = datetime.now() - timedelta(days=args.days)
         for session in sessions.discover_sessions(home, since=cutoff):
             print(session.path)
+        raise SystemExit(0)
+
+    # The architecture skill reads a repo's memory before proposing changes, and
+    # was building the directory name with a transform of its own that did not
+    # match Claude's — so it resolved to nothing for any repo whose path holds a
+    # `_` or a `.`. Same reasoning as the branch above: the script that owns the
+    # location answers, rather than each skill deriving it again.
+    if args.memory_dir:
+        print(sessions.claude_memory_dir(home, args.memory_dir))
         raise SystemExit(0)
 
     trail = Trail.start(

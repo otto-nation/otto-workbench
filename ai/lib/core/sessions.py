@@ -28,6 +28,13 @@ wraps in a doubled delimiter, so the two harnesses do not even agree on the
 encoding. Both write the cwd *into* the transcript, which is a fact rather than
 an inference, so ``project_path_of`` reads that. The slug is written, never read.
 
+Memory is the one thing here that is genuinely Claude-shaped: it still lives in
+that harness's tree, one ``memory/`` directory per project slug. That is not a
+statement about which harness a session ran in — sessions come from every
+harness in the table — and moving those artifacts out is tracked separately.
+``memory_dirs`` is here so the location is stated once rather than at each
+consumer, which is how the transform came to be spelled four different ways.
+
 ``lib/ai/session-count.sh`` is the shell expression of the same model, for the
 Stop-hook gates that cannot afford a Python start-up. ``tests/sessions_ssot.bats``
 runs both against one fixture tree and fails when they disagree.
@@ -38,9 +45,8 @@ runs both against one fixture tree and fails when they disagree.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -433,3 +439,69 @@ def canonical_slug(path: Path | str) -> str:
     text = str(path).strip("/")
     encoded = "".join(c if c.isalnum() or c == "_" else "-" for c in text)
     return f"--{encoded}--"
+
+
+# ── Memory ───────────────────────────────────────────────────────────────────
+
+# What the per-project memory directory is called inside a project's directory.
+MEMORY_DIRNAME = "memory"
+
+
+def _harness_named(name: str) -> Harness:
+    """One harness out of the table, by name.
+
+    Raising rather than returning None: every caller names a harness spelled in
+    HARNESSES above, so a miss is a typo at the call site and not a machine
+    without that harness installed — which is an empty root, not a missing row.
+    """
+    for harness in HARNESSES:
+        if harness.name == name:
+            return harness
+    raise KeyError(f"no harness named {name!r} in HARNESSES")
+
+
+def claude_projects_root(home: Path) -> Path:
+    """Claude Code's session store, which is also where memory lives.
+
+    Read off HARNESSES rather than spelled again, so the root has one owner
+    whichever of its two jobs a caller came for.
+    """
+    return _harness_root(home, _harness_named("claude"))
+
+
+def claude_slug(path: Path | str) -> str:
+    """The directory name Claude Code gives a session whose cwd is ``path``.
+
+    Claude's transform, not ``canonical_slug`` above: every character outside
+    ``[A-Za-z0-9]`` becomes a hyphen, underscores included. The two disagree on
+    purpose and both are needed — this one addresses Claude's own store, which
+    is where memory lives, and that one names the harness-neutral slug.
+
+    Lossy, so it is never inverted: ``a-b`` and ``a_b`` both arrive as ``a-b``.
+    A caller wanting every memory directory sweeps with ``memory_dirs``.
+
+    ``_claude_project_dir`` in ``lib/ai/session-count.sh`` is the shell half.
+    """
+    return "".join(c if c.isalnum() else "-" for c in str(path))
+
+
+def claude_memory_dir(home: Path, repo_path: Path | str) -> Path:
+    """Where the memory for the repo at ``repo_path`` lives."""
+    return claude_projects_root(home) / claude_slug(repo_path) / MEMORY_DIRNAME
+
+
+def memory_dirs(home: Path) -> Iterator[Path]:
+    """Every project memory directory on this machine, in name order.
+
+    The project slug each one hangs off is ``dir.parent.name``. It is not
+    decoded back into a repo path anywhere — Claude's transform is lossy, as the
+    module docstring explains — so a caller wanting the repo starts from the
+    project registry and encodes forward instead.
+    """
+    root = claude_projects_root(home)
+    if not root.is_dir():
+        return
+    for entry in sorted(root.iterdir()):
+        candidate = entry / MEMORY_DIRNAME
+        if candidate.is_dir():
+            yield candidate

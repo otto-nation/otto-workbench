@@ -70,6 +70,53 @@ make_session() {
   printf '{"type":"session","cwd":"/repo"}\n' > "$HOME/$1/$2/$3.jsonl"
 }
 
+# memdir_shell PATH — the memory directory lib/ai/session-count.sh gives PATH.
+#
+# constants.sh as well as the lib, which the resolvers above do not need:
+# CLAUDE_DIR is named there, and session-count.sh deliberately does not source
+# it — the gates that call it have already. Sourced under the test's own HOME so
+# the path lands in the sandbox.
+memdir_shell() {
+  bash -c '. "$1/lib/constants.sh"; . "$1/lib/ai/session-count.sh" 2>/dev/null; _claude_memory_dir "$2"' \
+    _ "$REPO_ROOT" "$1"
+}
+
+# memdir_python PATH — the memory directory ai/lib/core/sessions.py resolves
+# PATH to. The forward transform, which the shell side spells too.
+memdir_python() {
+  python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+from pathlib import Path
+from core import sessions
+print(sessions.claude_memory_dir(Path('$HOME'), '$1'), end='')
+"
+}
+
+# memdirs_python — every memory directory ai/lib/core/sessions.py finds under
+# \$HOME, one per line. The Python half sweeps rather than resolving forward:
+# Claude's slug is lossy, so a directory name cannot say which repo it belongs
+# to and only the shell side, which starts from the registry, can go that way.
+memdirs_python() {
+  python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+from pathlib import Path
+from core import sessions
+for d in sessions.memory_dirs(Path('$HOME')):
+    print(d)
+"
+}
+
+# make_memory PATH — a memory directory for the repo at PATH, as the shell side
+# names it. Returns the directory.
+make_memory() {
+  local dir
+  dir="$(memdir_shell "$1")"
+  mkdir -p "$dir"
+  printf '%s' "$dir"
+}
+
 # ─── Slug transform ─────────────────────────────────────────────────────────
 
 @test "both languages agree on the slug for a plain path" {
@@ -171,4 +218,50 @@ make_session() {
     _repo_has_enough_sessions "$2" 0 2
   ' _ "$REPO_ROOT" /Users/dev/git/repo
   [ "$status" -eq 1 ]
+}
+
+# ─── Memory directory: the two languages must agree ─────────────────────────
+
+@test "the directory the shell resolves is one Python sweeps up" {
+  # The shell resolves a repo path forward to its memory directory; Python
+  # globs every memory directory there is. A transform that drifts makes the
+  # gate write a stamp into a directory no scanner reads.
+  local dir
+  dir="$(make_memory /Users/dev/git/repo)"
+  [ "$(memdirs_python)" = "$dir" ]
+}
+
+@test "both languages agree on a repo path holding a dot and an underscore" {
+  # Every character outside [A-Za-z0-9] becomes a hyphen, which a second
+  # transform spelling only `/` gets wrong — that is what made the machine
+  # profile report no memory for a repo whose files were on disk.
+  local dir
+  dir="$(make_memory /Users/dev/git/otto.io/feat_one)"
+  [[ "$dir" == *-Users-dev-git-otto-io-feat-one/memory ]]
+  [ "$(memdirs_python)" = "$dir" ]
+}
+
+@test "a project directory without memory is not swept up" {
+  mkdir -p "$HOME/.claude/projects/-Users-dev-git-repo"
+  [ -z "$(memdirs_python)" ]
+}
+
+@test "no projects root at all is not an error" {
+  [ ! -d "$HOME/.claude/projects" ]
+  [ -z "$(memdirs_python)" ]
+}
+
+@test "both languages resolve a repo path to the same memory directory" {
+  # The forward direction, which the gates use to find a repo's memory and the
+  # architecture skill uses to read it. A drift here sends the two to different
+  # directories for one repo.
+  local p="/Users/dev/git/otto.io/feat_one"
+  [ "$(memdir_shell "$p")" = "$(memdir_python "$p")" ]
+}
+
+@test "the forward resolver and the sweep meet at the same path" {
+  local dir
+  dir="$(make_memory /Users/dev/git/repo)"
+  [ "$(memdir_python /Users/dev/git/repo)" = "$dir" ]
+  [ "$(memdirs_python)" = "$dir" ]
 }

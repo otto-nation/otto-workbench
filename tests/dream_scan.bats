@@ -225,6 +225,39 @@ PY
   [[ "$status" -eq 0 ]]
 }
 
+# The two exit-early flags are a public surface: ai/skills/architecture/SKILL.md
+# and ai/skills/dream/SKILL.md shell out to them instead of globbing a harness
+# directory. A skill's glob failing is silent, so these assert the contract the
+# skills read rather than only the resolvers behind it (tests/sessions_ssot.bats).
+
+@test "dream-scan --memory-dir prints the repo's memory directory and nothing else" {
+  # Dots and underscores are the case the skill's own transform got wrong.
+  run "$DREAM_SCAN" --home "$TMPDIR" --memory-dir /Users/dev/git/otto.io/feat_one
+  [[ "$status" -eq 0 ]]
+  [[ "${#lines[@]}" -eq 1 ]]
+  [[ "$output" == "$TMPDIR/.claude/projects/-Users-dev-git-otto-io-feat-one/memory" ]]
+}
+
+@test "dream-scan --memory-dir exits before the report" {
+  _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/s.jsonl" "I prefer tabs"
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --memory-dir /Users/dev/git/repo
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"Session Signals"* ]]
+}
+
+@test "dream-scan --list-transcripts prints one path per line across harnesses" {
+  _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/c.jsonl" "I prefer tabs"
+  _make_session_jsonl "$TMPDIR/.pi/agent/sessions/--repo--/p.jsonl" "I prefer spaces"
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 30 --list-transcripts
+  [[ "$status" -eq 0 ]]
+  [[ "${#lines[@]}" -eq 2 ]]
+  [[ "$output" == *"/.claude/projects/test-proj/c.jsonl"* ]]
+  [[ "$output" == *"/.pi/agent/sessions/--repo--/p.jsonl"* ]]
+  [[ "$output" != *"Session Signals"* ]]
+}
+
 # ── Session scanning (integration) ──────────────────────────────────────────
 
 @test "scan: finds correction in session file" {

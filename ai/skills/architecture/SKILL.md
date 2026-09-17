@@ -42,11 +42,10 @@ and is seen by no CI check — the only way it is ever found is by hand.
 # Find the current project's architecture.md
 cat .claude/architecture.md
 
-# Find the project's memory files (if any). The directory is named for the
-# repo's absolute path with every non-alphanumeric replaced by a hyphen, not
-# for its basename.
+# Find the project's memory files (if any). dream-scan owns where memory lives;
+# deriving the directory name here is what made this step resolve to nothing.
 repo=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-ls ~/.claude/projects/"$(printf '%s' "$repo" | tr -c 'A-Za-z0-9' '-')"/memory/ 2>/dev/null
+ls "$(dream-scan --memory-dir "$repo")" 2>/dev/null
 
 # Find the 5 most recent session files, across every harness
 dream-scan --list-transcripts --days 30 | head -5

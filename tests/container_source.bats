@@ -25,13 +25,12 @@ setup() {
 
   # Physical path: on macOS mktemp hands back /var/..., git reports the
   # /private/var/... it resolves to, and every path comparison below would fail.
-  TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"
+  TMPDIR="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
   SEED="$TMPDIR/seed"
   CONTAINER="$TMPDIR/container"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

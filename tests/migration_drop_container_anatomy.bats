@@ -8,7 +8,6 @@ setup() {
   load 'test_helper'
   common_setup
   MIGRATION="$REPO_ROOT/ai/claude/migrations/20260824-drop-container-anatomy.sh"
-  TMPDIR="$(mktemp -d)"
   SEED="$TMPDIR/seed"
   mkdir -p "$SEED"
   printf '# a thing\ncode\n' > "$SEED/a.sh"
@@ -16,7 +15,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

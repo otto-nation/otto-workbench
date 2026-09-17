@@ -4,12 +4,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   VALIDATE_ALL="$REPO_ROOT/bin/local/validate-all"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

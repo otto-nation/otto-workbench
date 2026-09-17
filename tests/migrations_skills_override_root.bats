@@ -4,13 +4,11 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
   MIGRATION="$REPO_ROOT/ai/claude/migrations/20260901-skills-override-root.sh"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

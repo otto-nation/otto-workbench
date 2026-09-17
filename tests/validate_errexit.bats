@@ -6,12 +6,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   VALIDATE_ERREXIT="$REPO_ROOT/bin/local/validate-errexit"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -14,13 +14,11 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/registries.sh"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

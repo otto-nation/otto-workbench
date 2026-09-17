@@ -13,7 +13,7 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"
+  TMPDIR="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
   CONFIG="$WORKBENCH_CONFIG_DIR/config.yml"
 
@@ -21,7 +21,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

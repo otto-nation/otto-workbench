@@ -17,7 +17,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR/home"
   mkdir -p "$HOME"
   unset WORKBENCH_CONFIG_DIR WORKBENCH_STATE_DIR WORKBENCH_CACHE_DIR
@@ -25,7 +24,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -4,14 +4,12 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   FAKE_WORKBENCH="$TMPDIR/workbench"
   mkdir -p "$FAKE_WORKBENCH/ai/guidelines/rules"
   VALIDATE="$REPO_ROOT/bin/local/validate-rules"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -31,14 +31,12 @@ setup() {
   common_setup
   # shellcheck source=../lib/portable.sh
   source "$REPO_ROOT/lib/portable.sh"
-  TMPDIR="$(mktemp -d)"
   GEN_ANATOMY="$REPO_ROOT/ai/skills/anatomy/generate-anatomy.sh"
   REPO="$TMPDIR/repo"
   mkdir -p "$REPO/.claude"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

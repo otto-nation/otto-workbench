@@ -4,12 +4,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   FIXTURE="$TMPDIR/rule.md"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

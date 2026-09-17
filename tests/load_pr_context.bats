@@ -13,7 +13,6 @@ setup() {
   ORIG_HOME="$HOME"
   ORIG_PATH="$PATH"
   ORIG_DIR="$PWD"
-  TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR"
   # Prevent git from discovering the parent workbench repo during parallel test runs
   export GIT_CEILING_DIRECTORIES="$TMPDIR"
@@ -27,7 +26,6 @@ teardown() {
   export HOME="$ORIG_HOME"
   PATH="$ORIG_PATH"
   cd "$ORIG_DIR" || return 1
-  rm -rf "$TMPDIR"
   unset GH_TOKEN
   common_teardown
 }

@@ -206,6 +206,32 @@ run_bats() {
   # CI, the Taskfile — goes through.
   export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
 
+  # Give this worktree's run a scratch root of its own. bats derives one from
+  # $TMPDIR when this is unset, so two worktrees running the suite at once take
+  # sibling directories under one machine-wide parent — and the tree lock does
+  # not separate them, because it is per-tree while $TMPDIR is per-machine.
+  #
+  # A test pinning TMPDIR to its own bats scratch then writes inside that
+  # parent, so anything sweeping it takes the other run's live directory with
+  # it. What that looks like is not a failed assertion: the sibling run loses
+  # the files bats itself is writing, and reports `teardown_file failed` for
+  # tests that never ran, with a total short of the suite's real count.
+  #
+  # Keyed by worktree path and pid so concurrent runs cannot collide, and
+  # removed on the way out because bats only cleans a root it created itself.
+  # The trap is EXIT rather than RETURN so an interrupted run collects too;
+  # a leftover from a killed run is orphaned garbage rather than a blocker for
+  # the next one — the pid suffix makes the path unique per invocation, and a
+  # fresh run only collides with it on pid reuse.
+  if [[ -z "${BATS_RUN_TMPDIR:-}" ]]; then
+    local tree_id
+    tree_id="$(printf '%s' "$WORKBENCH_DIR" | shasum | cut -c1-8)"
+    BATS_RUN_TMPDIR="${TMPDIR:-/tmp}/workbench-bats-$tree_id.$$"
+    export BATS_RUN_TMPDIR
+    # shellcheck disable=SC2064  # expand now: the path must survive the trap
+    trap "rm -rf '$BATS_RUN_TMPDIR'" EXIT
+  fi
+
   local jobs_flag=()
   # bats farms tests out through GNU parallel and silently runs them serially
   # without it, so the flag is only worth passing when parallel is installed.

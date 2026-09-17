@@ -12,7 +12,6 @@ setup() {
   load 'test_helper'
   common_setup
   MIGRATION="$REPO_ROOT/ai/claude/migrations/20260831-claude-native-install.sh"
-  TMPDIR="$(mktemp -d)"
   STUBS="$TMPDIR/stubs"
   mkdir -p "$STUBS"
 
@@ -29,7 +28,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

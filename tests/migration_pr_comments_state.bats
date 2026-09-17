@@ -8,7 +8,6 @@ setup() {
   load 'test_helper'
   common_setup
   MIGRATION="$REPO_ROOT/ai/claude/migrations/20260915-pr-comments-state-root.sh"
-  TMPDIR="$(mktemp -d)"
   STATE="$TMPDIR/state"
   REPO="$TMPDIR/repo"
   mkdir -p "$STATE"
@@ -16,7 +15,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

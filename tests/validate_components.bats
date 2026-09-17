@@ -6,11 +6,9 @@ setup() {
   load 'test_helper'
   common_setup
   SCRIPT="$REPO_ROOT/bin/local/validate-components"
-  TMPDIR="$(mktemp -d)"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

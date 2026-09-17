@@ -16,11 +16,10 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  SANDBOX="$(mktemp -d)"
-  # Exported on purpose, and the sandboxing is the point: git, python3 and jq
-  # all take their scratch space from TMPDIR, so every subprocess a test starts
-  # is confined to this directory alongside everything the test writes itself.
-  export TMPDIR="$SANDBOX"
+  # common_setup exports TMPDIR, and the export is what this file relies on:
+  # git, python3 and jq all take their scratch space from it, so every
+  # subprocess a test starts is confined to the same directory as everything
+  # the test writes itself.
   sandbox_state_dir
   INTENTS="$WORKBENCH_STATE_DIR/push-intents.json"
 
@@ -48,7 +47,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$SANDBOX"
   common_teardown
 }
 

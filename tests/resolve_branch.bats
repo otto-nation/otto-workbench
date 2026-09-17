@@ -34,7 +34,6 @@ setup() {
 
   SCRIPT="$REPO_ROOT/bin/resolve-branch"
 
-  TMPDIR="$(mktemp -d)"
   LOCAL_DIR="$TMPDIR/local"
   REMOTE_DIR="$TMPDIR/remote"
 
@@ -45,7 +44,6 @@ setup() {
 
 teardown() {
   cd /
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

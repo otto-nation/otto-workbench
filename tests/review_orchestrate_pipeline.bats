@@ -11,7 +11,6 @@ setup() {
   load 'test_helper'
   load 'review_orchestrate_helper'
   common_setup
-  TMPDIR="$BATS_TEST_TMPDIR"
 }
 
 teardown() {

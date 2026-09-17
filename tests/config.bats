@@ -6,7 +6,6 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   FAKE_CONFIG="$TMPDIR/config"
   mkdir -p "$FAKE_CONFIG"
 
@@ -29,7 +28,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

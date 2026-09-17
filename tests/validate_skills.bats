@@ -4,7 +4,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   VALIDATE_SKILLS="$REPO_ROOT/bin/local/validate-skills"
 
   FAKE_WORKBENCH="$TMPDIR/workbench"
@@ -12,7 +11,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -19,14 +19,12 @@ setup() {
   # shellcheck source=../lib/git_remote.sh
   . "$REPO_ROOT/lib/git_remote.sh"
   ORIG_DIR="$PWD"
-  TMPDIR="$(mktemp -d)"
   # Prevent git from discovering the parent workbench repo during parallel test runs
   export GIT_CEILING_DIRECTORIES="$TMPDIR"
 }
 
 teardown() {
   cd "$ORIG_DIR" || return 1
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -9,14 +9,12 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   VALIDATOR="$REPO_ROOT/bin/local/validate-doc-reference"
   FIXTURE="$TMPDIR/docs"
   mkdir -p "$FIXTURE"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

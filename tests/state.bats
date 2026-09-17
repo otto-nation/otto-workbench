@@ -5,7 +5,6 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   FAKE_STATE="$TMPDIR/state"
   mkdir -p "$FAKE_STATE"
 
@@ -24,7 +23,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

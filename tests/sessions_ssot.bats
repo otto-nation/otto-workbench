@@ -12,13 +12,11 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR/home"
   mkdir -p "$HOME"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

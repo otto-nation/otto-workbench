@@ -19,7 +19,6 @@ setup() {
   common_setup
   source_lib
 
-  TMPDIR="$(mktemp -d)"
   LOCAL_DIR="$TMPDIR/local"
   REMOTE_DIR="$TMPDIR/remote"
 
@@ -33,7 +32,6 @@ setup() {
 
 teardown() {
   cd /
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -4,7 +4,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
 
   # Build a minimal fake docker setup structure
   FAKE_DOCKER="$TMPDIR/docker"
@@ -28,7 +27,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

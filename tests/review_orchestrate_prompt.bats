@@ -11,7 +11,6 @@ setup() {
   load 'test_helper'
   load 'review_orchestrate_helper'
   common_setup
-  TMPDIR="$BATS_TEST_TMPDIR"
   # Model resolution reads these; the developer's own shell usually has them set.
   unset ANTHROPIC_DEFAULT_SONNET_MODEL
   unset ANTHROPIC_DEFAULT_OPUS_MODEL

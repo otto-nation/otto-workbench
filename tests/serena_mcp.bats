@@ -7,7 +7,6 @@ setup() {
   load 'test_helper'
   common_setup
   SERENA_MCP="$REPO_ROOT/ai/serena/bin/serena-mcp"
-  TMPDIR="$(mktemp -d)"
   SEED="$TMPDIR/seed"
   mkdir -p "$SEED"
   printf 'x\n' > "$SEED/a.sh"
@@ -15,7 +14,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

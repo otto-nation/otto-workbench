@@ -6,7 +6,6 @@ setup() {
   source_lib
   ORIG_HOME="$HOME"
   ORIG_DIR="$PWD"
-  TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR"
   # Re-derive TASKFILE_ENV for the test HOME (constants.sh resolves at source time)
   # shellcheck disable=SC2034  # read by load_ai_command in lib/summary.sh
@@ -18,7 +17,6 @@ setup() {
 teardown() {
   export HOME="$ORIG_HOME"
   cd "$ORIG_DIR" || return 1
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

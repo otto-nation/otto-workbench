@@ -4,12 +4,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   SCRIPT="$REPO_ROOT/bin/local/template"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

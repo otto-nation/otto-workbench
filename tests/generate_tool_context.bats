@@ -9,7 +9,6 @@ setup() {
   common_setup
   source "$REPO_ROOT/bin/local/generate-tool-context"
   ORIG_DIR="$PWD"
-  TMPDIR="$(mktemp -d)"
 
   # Point all generator inputs/outputs at temp paths so tests never touch
   # real workbench files (registry data, tools.generated.md).
@@ -30,7 +29,6 @@ setup() {
 
 teardown() {
   cd "$ORIG_DIR" || return 1
-  rm -rf "$TMPDIR"
   common_teardown
   unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR TASKFILE_PATH
 }

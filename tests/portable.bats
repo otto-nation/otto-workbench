@@ -7,13 +7,11 @@ setup() {
   common_setup
   # shellcheck source=../lib/portable.sh
   source "$REPO_ROOT/lib/portable.sh"
-  TMPDIR="$(mktemp -d)"
   FILE="$TMPDIR/sample"
   touch "$FILE"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

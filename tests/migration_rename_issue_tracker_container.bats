@@ -14,7 +14,6 @@ setup() {
   load 'test_helper'
   common_setup
   MIGRATION="$REPO_ROOT/bin/migrations/20260909-rename-issue-tracker-container.sh"
-  TMPDIR="$(mktemp -d)"
   SEED="$TMPDIR/seed"
   mkdir -p "$SEED"
   printf 'x\n' > "$SEED/a.txt"
@@ -22,7 +21,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

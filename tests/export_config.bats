@@ -36,7 +36,6 @@ setup_file() {
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   HOME="$FAKE_HOME"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/ui.sh"
@@ -45,7 +44,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

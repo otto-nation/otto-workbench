@@ -6,14 +6,12 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR"
   export NO_COLOR=1
   DREAM_VERIFY="$REPO_ROOT/ai/bin/dream-verify"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

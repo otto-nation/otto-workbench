@@ -6,13 +6,11 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   PROMOTE_SCAN="$REPO_ROOT/ai/bin/promote-scan"
   sandbox_state_dir
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

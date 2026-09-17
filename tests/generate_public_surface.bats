@@ -3,12 +3,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   GENERATOR="$REPO_ROOT/bin/local/generate-public-surface"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

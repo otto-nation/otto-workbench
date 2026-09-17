@@ -67,7 +67,6 @@ teardown() {
 
 @test "step_env_local creates ~/.env.local from template when absent" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
@@ -76,12 +75,10 @@ teardown() {
     >/dev/null 2>&1
 
   [ -f "$FAKE_HOME/.env.local" ]
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local regenerates marker section without touching user values" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   FAKE_SCAN="$TMPDIR/scan"
   mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
@@ -119,12 +116,10 @@ EOF
   grep -q 'MY_SECRET=keep-this' "$FAKE_HOME/.env.local"
   # Header preserved
   grep -q '# header' "$FAKE_HOME/.env.local"
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local hoists a value set inside the markers and names it" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   FAKE_SCAN="$TMPDIR/scan"
   mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
@@ -172,13 +167,10 @@ EOF
   # A generated default stays inside the markers — it is not a user value
   inside=$(awk '/# --- ENV-START ---/{s=1;next} /# --- ENV-END ---/{s=0} s' "$FAKE_HOME/.env.local")
   grep -q 'export WITH_DEFAULT=on' <<< "$inside"
-
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local warns naming each relocated variable" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   FAKE_SCAN="$TMPDIR/scan"
   mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
@@ -207,12 +199,10 @@ EOF
   [[ "$output" != *"sk-ant-secret"* ]]
 
   grep -q 'PLAIN_ASSIGN=no-export' "$FAKE_HOME/.env.local"
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local hoisted value wins over a stale copy below ENV-END" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   FAKE_SCAN="$TMPDIR/scan"
   mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
@@ -253,13 +243,10 @@ EOF
   # Sourcing the file therefore yields the rescued value, not the stale one
   run env -i bash -c ". '$FAKE_HOME/.env.local'; printf '%s' \"\$ANTHROPIC_API_KEY\""
   [ "$output" = "new-secret" ]
-
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local hoists a generated default the user annotated" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   FAKE_SCAN="$TMPDIR/scan"
   mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
@@ -295,13 +282,10 @@ EOF
   grep -q 'export WITH_DEFAULT=on # keep this on' <<< "$below"
   inside=$(awk '/# --- ENV-START ---/{s=1;next} /# --- ENV-END ---/{s=0} s' "$FAKE_HOME/.env.local")
   grep -q '^export WITH_DEFAULT=on$' <<< "$inside"
-
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local accumulates repeated hoists under one header" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   FAKE_SCAN="$TMPDIR/scan"
   mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
@@ -343,13 +327,10 @@ EOF
   a_line=$(grep -n '^export VAR_A=aaa$' "$FAKE_HOME/.env.local" | cut -d: -f1)
   b_line=$(grep -n '^export VAR_B=bbb$' "$FAKE_HOME/.env.local" | cut -d: -f1)
   [ "$b_line" -gt "$a_line" ]
-
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local hoist is idempotent across repeated syncs" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   FAKE_SCAN="$TMPDIR/scan"
   mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
@@ -387,12 +368,10 @@ EOF
 
   run grep -c 'sk-ant-secret' "$FAKE_HOME/.env.local"
   [ "$output" = "1" ]
-  rm -rf "$TMPDIR"
 }
 
 @test "step_env_local leaves file alone when no markers present" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
@@ -407,12 +386,10 @@ EOF
   local after
   after=$(cat "$FAKE_HOME/.env.local")
   [ "$before" = "$after" ]
-  rm -rf "$TMPDIR"
 }
 
 @test "migration moves uncommented exports below ENV-END markers" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
@@ -443,13 +420,10 @@ EOF
 
   # Existing content below markers is preserved
   grep -q '# existing below' "$FAKE_HOME/.env.local"
-
-  rm -rf "$TMPDIR"
 }
 
 @test "migration is a no-op when no uncommented exports inside markers" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
@@ -471,13 +445,10 @@ EOF
   local after
   after=$(cat "$FAKE_HOME/.env.local")
   [ "$before" = "$after" ]
-
-  rm -rf "$TMPDIR"
 }
 
 @test "migration skips when ~/.env.local has no markers" {
   load test_helper
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
@@ -494,6 +465,4 @@ EOF
   local after
   after=$(cat "$FAKE_HOME/.env.local")
   [ "$before" = "$after" ]
-
-  rm -rf "$TMPDIR"
 }

@@ -907,6 +907,12 @@ def reviews_dir(tmp_path, monkeypatch) -> Path:
     return d
 
 
+FAKE_REPO = "acme/widget"
+"""The repo slug `review_invoke_test.py` and `review_publish_test.py` build
+requests against — shared so the two never drift apart on what "the fake repo"
+is spelled as."""
+
+
 def seed_review(reviews_dir: Path, name: str = "widget-42",
                 body: str | None = None, **meta) -> Path:
     """A review directory the reviews walk will classify as a review.
@@ -925,6 +931,22 @@ def seed_review(reviews_dir: Path, name: str = "widget-42",
     if meta:
         (d / "meta.json").write_text(json.dumps(meta))
     return d
+
+
+def written_review(directory: Path) -> Path:
+    """A `review.md` on disk holding one Must-fix finding.
+
+    Shared because three review-flow suites each defined a near-identical
+    helper for the same on-disk shape — a review file with one finding, which
+    is all a caller checking "did the flow leave a review behind" needs.
+    Unlike `seed_review`, this takes the review's own directory directly and
+    creates any missing parents, since callers here build ad hoc paths rather
+    than seeding into an existing `reviews_dir`.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    f = directory / "review.md"
+    f.write_text("## Must fix\n- **[M1]** boom\n")
+    return f
 
 
 def supersession_verdict(*signals):

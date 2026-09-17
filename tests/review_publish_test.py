@@ -23,6 +23,7 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+from conftest import FAKE_REPO  # noqa: E402
 from review import publish as review_publish  # noqa: E402
 from review.paths import FILENAME_POST_SESSION  # noqa: E402
 
@@ -67,7 +68,7 @@ def _resolve(review_file, **overrides):
     kwargs = dict(no_post=False, auto_post=False, auto_submit=False,
                   bin_dir=Path("/bin"))
     kwargs.update(overrides)
-    return review_publish.resolve("acme/widget", "42", review_file, **kwargs)
+    return review_publish.resolve(FAKE_REPO, "42", review_file, **kwargs)
 
 
 def test_no_post_skips_github_and_says_how_to_post_later(review_file, posts):

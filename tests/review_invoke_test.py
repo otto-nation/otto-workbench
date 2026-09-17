@@ -20,12 +20,13 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+from conftest import FAKE_REPO  # noqa: E402
 from review import invoke as review_invoke  # noqa: E402
 
 
 def _request(tmp_path, **overrides):
     base = dict(
-        repo="acme/widget", pr_number="42",
+        repo=FAKE_REPO, pr_number="42",
         review_file=tmp_path / "review.md", wt_path="/wt",
         target_dir=tmp_path / "state", session_log="/log",
         bin_dir=Path("/bin"), generator_version="claude-review 1.2.3",

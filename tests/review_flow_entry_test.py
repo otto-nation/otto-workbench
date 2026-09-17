@@ -29,7 +29,7 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from conftest import make_ctx  # noqa: E402
+from conftest import make_ctx, written_review  # noqa: E402
 
 from review import completion as review_completion  # noqa: E402
 from review import invoke as review_invoke  # noqa: E402
@@ -53,13 +53,6 @@ def cr():
     interpreter already holds.
     """
     return claude_review
-
-
-def _written_review(directory: Path) -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
-    f = directory / "review.md"
-    f.write_text("## Must fix\n- **[M1]** boom\n")
-    return f
 
 
 # ── the real parser ──────────────────────────────────────────────────────────
@@ -209,7 +202,7 @@ def test_the_pr_path_runs_its_whole_spine_in_one_go(cr, tmp_path, monkeypatch):
     that does not.
     """
     tape = []
-    review_file = _written_review(tmp_path / "reviews" / "widget-42")
+    review_file = written_review(tmp_path / "reviews" / "widget-42")
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
 
@@ -232,7 +225,7 @@ def test_a_failed_orchestration_is_not_recorded_on_the_pr_path(
     picks one frame for this write; this test is what makes the choice safe.
     """
     tape = []
-    review_file = _written_review(tmp_path / "reviews" / "widget-42")
+    review_file = written_review(tmp_path / "reviews" / "widget-42")
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, returncode=1)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
 
@@ -253,7 +246,7 @@ def test_the_pr_path_records_the_domain_even_when_the_operator_declines_to_post(
     return lands where the write can see it.
     """
     tape = []
-    review_file = _written_review(tmp_path / "reviews" / "widget-42")
+    review_file = written_review(tmp_path / "reviews" / "widget-42")
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
     monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)

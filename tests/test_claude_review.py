@@ -1743,22 +1743,22 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
         target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
     )
-    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
-    monkeypatch.setattr(cr.review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
-    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
+    monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
     monkeypatch.setattr(
-        cr.review_worktree, "switch_to_branch",
-        lambda branch, wt: cr.review_worktree.WorktreeResult(
+        review_worktree, "switch_to_branch",
+        lambda branch, wt: review_worktree.WorktreeResult(
             path="/switched/wt", cleanup_ref=branch, is_fallback=False),
     )
     monkeypatch.setattr(
-        cr.pr_context, "head_sha",
+        pr_context, "head_sha",
         lambda cwd=None: "fresh11" if cwd == "/switched/wt" else "stale00",
     )
-    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     body = MagicMock()
-    monkeypatch.setattr(cr.review_run, "run_self_review", body)
+    monkeypatch.setattr(review_run, "run_self_review", body)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -2122,11 +2122,11 @@ def _stub_self_review(cr, monkeypatch, target, reviews_dir):
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
         target_dir=target,
     )
-    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
-    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
-    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(cr.review_run, "run_self_review", MagicMock())
+    monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_run, "run_self_review", MagicMock())
     return ctx
 
 

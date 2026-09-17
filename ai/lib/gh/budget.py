@@ -168,7 +168,15 @@ _latched: dict[Resource, Latch] = {}
 # `gh pr view` is the one that surprises people — it spends the GraphQL budget
 # while reading like neither `api` nor `graphql`, and it is the call the GC
 # sweep was making twenty-one times.
-_GRAPHQL_COMMANDS = frozenset({"pr", "repo", "issue", "label", "search"})
+#
+# `search` is deliberately absent: `gh search ...` spends a third, much
+# stricter budget (`X-Ratelimit-Resource: search`, 30 req/min) that this
+# module does not model, and its exhaustion message is worded identically to
+# the primary-quota one `is_budget_exhausted` matches. Classifying it as
+# GraphQL would let a self-clearing 30/min search throttle latch the entire
+# GraphQL budget for up to an hour. Falling through to `None` — "make the
+# call" — is the documented safe default for anything unmodeled.
+_GRAPHQL_COMMANDS = frozenset({"pr", "repo", "issue", "label"})
 
 
 def is_budget_exhausted(said: str) -> bool:

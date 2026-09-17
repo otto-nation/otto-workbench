@@ -379,7 +379,8 @@ def test_prune_merged_targets_respects_the_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(review_gc, "_pr_closure",
                         lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
-    assert review_gc.prune_merged_targets(tmp_path, max_files=2, trail=_RecordingTrail()).pruned == 2
+    result = review_gc.prune_merged_targets(tmp_path, max_files=2, trail=_RecordingTrail())
+    assert result.pruned == 2
 
 
 def test_merged_target_emits_one_terminal_summary(tmp_path, monkeypatch):

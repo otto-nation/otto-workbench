@@ -11,7 +11,6 @@ times was gh invoked" is the assertion that distinguishes the fix from its
 absence.
 """
 
-import stat
 import sys
 import time
 from pathlib import Path
@@ -29,23 +28,7 @@ from gh import client as gh_client  # noqa: E402
 EXHAUSTED = "GraphQL: API rate limit already exceeded for user ID 7399350."
 
 
-def _stub_gh(tmp_path: Path, monkeypatch, body: str) -> Path:
-    """Put a `gh` on PATH whose body is *body*, recording every invocation."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    calls = tmp_path / "calls.txt"
-    script = bin_dir / "gh"
-    script.write_text(
-        "#!/bin/sh\n"
-        f'printf "%s\\n" "$*" >> {calls}\n'
-        f"{body}\n"
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
-    return calls
-
-
-def _refusing_gh(tmp_path: Path, monkeypatch, reset: int | None = None) -> Path:
+def _refusing_gh(stub_gh, reset: int | None = None) -> Path:
     """A gh that refuses everything for quota, answering the probe with headers."""
     header = ""
     if reset is not None:
@@ -53,8 +36,7 @@ def _refusing_gh(tmp_path: Path, monkeypatch, reset: int | None = None) -> Path:
             f'  printf "X-Ratelimit-Resource: graphql\\n" >&2\n'
             f'  printf "X-Ratelimit-Reset: {reset}\\n" >&2\n'
         )
-    return _stub_gh(
-        tmp_path, monkeypatch,
+    return stub_gh(
         'case "$*" in\n'
         "  *-i*)\n"
         f"{header}"
@@ -72,12 +54,12 @@ def _non_probe_calls(calls: Path) -> list[str]:
     return [line for line in calls.read_text().splitlines() if "-i" not in line.split()]
 
 
-def test_a_second_call_after_an_exhausted_budget_is_not_made(tmp_path, monkeypatch):
+def test_a_second_call_after_an_exhausted_budget_is_not_made(stub_gh):
     """The bug: each caller spent a subprocess rediscovering a dead budget.
 
     Two `pr view`s, one real refusal — the second must not reach gh at all.
     """
-    calls = _refusing_gh(tmp_path, monkeypatch)
+    calls = _refusing_gh(stub_gh)
 
     gh_client.run("pr", "view", "1", "--repo", "o/r")
     gh_client.run("pr", "view", "2", "--repo", "o/r")
@@ -85,13 +67,13 @@ def test_a_second_call_after_an_exhausted_budget_is_not_made(tmp_path, monkeypat
     assert len(_non_probe_calls(calls)) == 1
 
 
-def test_the_short_circuited_result_says_no_call_was_made(tmp_path, monkeypatch):
+def test_the_short_circuited_result_says_no_call_was_made(stub_gh):
     """A refusal we invented must not read like one GitHub sent.
 
     Catches a future refactor that returns a bare CmdResult(returncode=1):
     the whole defence of a synthetic result is that it says what it is.
     """
-    _refusing_gh(tmp_path, monkeypatch)
+    _refusing_gh(stub_gh)
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
     r = gh_client.run("pr", "view", "2", "--repo", "o/r")
@@ -100,13 +82,13 @@ def test_the_short_circuited_result_says_no_call_was_made(tmp_path, monkeypatch)
     assert "7399350" in r.detail
 
 
-def test_the_remedy_is_explained_once_not_per_call(tmp_path, monkeypatch, capsys):
+def test_the_remedy_is_explained_once_not_per_call(stub_gh, capsys):
     """Ten refused calls, one explanation.
 
     The symptom was six identical warnings in three seconds. A design that
     appends the hint per failure passes every other test here and fails this.
     """
-    _refusing_gh(tmp_path, monkeypatch)
+    _refusing_gh(stub_gh)
     for i in range(10):
         gh_client.run("pr", "view", str(i), "--repo", "o/r")
 
@@ -127,10 +109,10 @@ def test_the_hint_does_not_recommend_the_endpoint_that_lies():
         budget.Resource.GRAPHQL, "1", None).remedy()
 
 
-def test_the_reset_time_comes_from_the_response_header(tmp_path, monkeypatch):
+def test_the_reset_time_comes_from_the_response_header(stub_gh):
     """The probe reads X-Ratelimit-Reset, which is the only truthful source."""
     at = int(time.time()) + 600
-    _refusing_gh(tmp_path, monkeypatch, reset=at)
+    _refusing_gh(stub_gh, reset=at)
 
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
@@ -140,12 +122,12 @@ def test_the_reset_time_comes_from_the_response_header(tmp_path, monkeypatch):
     assert time.strftime("%H:%M:%S", time.localtime(at)) in latch.remedy()
 
 
-def test_no_reset_header_means_no_reset_time_is_claimed(tmp_path, monkeypatch):
+def test_no_reset_header_means_no_reset_time_is_claimed(stub_gh):
     """A guessed reset printed beside a real one is indistinguishable from it.
 
     So a probe that reads no header latches without claiming a time.
     """
-    _refusing_gh(tmp_path, monkeypatch, reset=None)
+    _refusing_gh(stub_gh, reset=None)
 
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
@@ -155,7 +137,7 @@ def test_no_reset_header_means_no_reset_time_is_claimed(tmp_path, monkeypatch):
     assert "refills at" not in latch.remedy()
 
 
-def test_a_reset_beyond_one_window_is_clamped(tmp_path, monkeypatch):
+def test_a_reset_beyond_one_window_is_clamped(stub_gh):
     """A reset a day out is a clock disagreeing with the server's.
 
     Honouring it would refuse a budget that had already refilled, and the only
@@ -164,7 +146,7 @@ def test_a_reset_beyond_one_window_is_clamped(tmp_path, monkeypatch):
     should not become a second guess of our own.
     """
     said = int(time.time()) + 86400
-    _refusing_gh(tmp_path, monkeypatch, reset=said)
+    _refusing_gh(stub_gh, reset=said)
 
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
@@ -174,10 +156,10 @@ def test_a_reset_beyond_one_window_is_clamped(tmp_path, monkeypatch):
     assert latch.reset == float(said)
 
 
-def test_an_unclassifiable_argv_is_called_rather_than_refused(tmp_path, monkeypatch):
+def test_an_unclassifiable_argv_is_called_rather_than_refused(stub_gh):
     """Fail open. A call wrongly made costs one already-spent point; a call
     wrongly refused is indistinguishable from GitHub having nothing to say."""
-    calls = _refusing_gh(tmp_path, monkeypatch)
+    calls = _refusing_gh(stub_gh)
     gh_client.run("pr", "view", "1", "--repo", "o/r")
     before = len(_non_probe_calls(calls))
 
@@ -186,9 +168,9 @@ def test_an_unclassifiable_argv_is_called_rather_than_refused(tmp_path, monkeypa
     assert len(_non_probe_calls(calls)) == before + 1
 
 
-def test_a_latched_graphql_budget_does_not_refuse_rest(tmp_path, monkeypatch):
+def test_a_latched_graphql_budget_does_not_refuse_rest(stub_gh):
     """REST and GraphQL are separate 5000-point budgets that refill apart."""
-    calls = _refusing_gh(tmp_path, monkeypatch)
+    calls = _refusing_gh(stub_gh)
     gh_client.run("pr", "view", "1", "--repo", "o/r")
     before = len(_non_probe_calls(calls))
 
@@ -197,9 +179,9 @@ def test_a_latched_graphql_budget_does_not_refuse_rest(tmp_path, monkeypatch):
     assert len(_non_probe_calls(calls)) == before + 1
 
 
-def test_the_latch_clears_once_the_reset_passes(tmp_path, monkeypatch):
+def test_the_latch_clears_once_the_reset_passes(stub_gh, monkeypatch):
     """The budget refills on its own, so the latch has to let go on its own."""
-    calls = _refusing_gh(tmp_path, monkeypatch, reset=int(time.time()) + 600)
+    calls = _refusing_gh(stub_gh, reset=int(time.time()) + 600)
     gh_client.run("pr", "view", "1", "--repo", "o/r")
     before = len(_non_probe_calls(calls))
 
@@ -212,13 +194,13 @@ def test_the_latch_clears_once_the_reset_passes(tmp_path, monkeypatch):
     assert len(_non_probe_calls(calls)) == before + 1
 
 
-def test_a_child_process_inherits_the_latch(tmp_path, monkeypatch):
+def test_a_child_process_inherits_the_latch(stub_gh):
     """`pr` spawns claude-review, which spawns review-orchestrate.
 
     Each is a fresh interpreter with an empty table, so without this the
     grandchild pays again for what its parent already learned.
     """
-    _refusing_gh(tmp_path, monkeypatch, reset=int(time.time()) + 600)
+    _refusing_gh(stub_gh, reset=int(time.time()) + 600)
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
     import os
@@ -226,9 +208,9 @@ def test_a_child_process_inherits_the_latch(tmp_path, monkeypatch):
     assert "graphql" in os.environ[budget.LATCH_ENV]
 
 
-def test_an_inherited_latch_is_adopted(tmp_path, monkeypatch):
+def test_an_inherited_latch_is_adopted(stub_gh, monkeypatch):
     """The other half: a child reads what its parent exported and honours it."""
-    calls = _stub_gh(tmp_path, monkeypatch, 'printf "{}\\n"; exit 0')
+    calls = stub_gh('printf "{}\\n"; exit 0')
     at = int(time.time()) + 600
     monkeypatch.setenv(budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
 
@@ -239,9 +221,9 @@ def test_an_inherited_latch_is_adopted(tmp_path, monkeypatch):
     assert _non_probe_calls(calls) == []
 
 
-def test_an_expired_inherited_latch_is_ignored(tmp_path, monkeypatch):
+def test_an_expired_inherited_latch_is_ignored(stub_gh, monkeypatch):
     """A latch whose window has passed is history, not a refusal."""
-    calls = _stub_gh(tmp_path, monkeypatch, 'printf "{}\\n"; exit 0')
+    calls = stub_gh('printf "{}\\n"; exit 0')
     at = int(time.time()) - 10
     monkeypatch.setenv(budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
 
@@ -253,14 +235,14 @@ def test_an_expired_inherited_latch_is_ignored(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(
     "raw", ["garbage", "graphql", "graphql:notanumber:0:1", "graphql:1:2", ""])
-def test_a_malformed_inherited_latch_is_ignored(tmp_path, monkeypatch, raw):
+def test_a_malformed_inherited_latch_is_ignored(stub_gh, monkeypatch, raw):
     """The variable is ordinary process state anything could have set.
 
     Ignoring a malformed one costs a wasted call, which is the direction this
     whole module errs in; raising would take down every `pr` invocation in a
     shell that happened to have it set.
     """
-    calls = _stub_gh(tmp_path, monkeypatch, 'printf "{}\\n"; exit 0')
+    calls = stub_gh('printf "{}\\n"; exit 0')
     monkeypatch.setenv(budget.LATCH_ENV, raw)
 
     budget.adopt_inherited()
@@ -269,10 +251,9 @@ def test_a_malformed_inherited_latch_is_ignored(tmp_path, monkeypatch, raw):
     assert len(_non_probe_calls(calls)) == 1
 
 
-def test_an_ordinary_failure_does_not_arm_the_latch(tmp_path, monkeypatch):
+def test_an_ordinary_failure_does_not_arm_the_latch(stub_gh):
     """A 404 is an answer. Only a quota refusal closes the gate."""
-    calls = _stub_gh(
-        tmp_path, monkeypatch, 'printf "gh: Not Found\\n" >&2\nexit 1\n')
+    calls = stub_gh('printf "gh: Not Found\\n" >&2\nexit 1\n')
 
     gh_client.run("pr", "view", "1", "--repo", "o/r")
     gh_client.run("pr", "view", "2", "--repo", "o/r")
@@ -292,7 +273,7 @@ def test_resource_for_maps_the_calls_that_actually_bleed():
 
 
 def test_a_budget_that_dies_mid_ladder_stops_the_remaining_attempts(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, stub_gh):
     """A secondary limit earns five attempts; an exhausted budget earns none.
 
     When the first turns into the second partway up the ladder, the remaining
@@ -300,8 +281,7 @@ def test_a_budget_that_dies_mid_ladder_stops_the_remaining_attempts(
     to report the failure already in hand. The breaker ends the ladder because
     the short-circuited attempt is not retryable.
     """
-    calls = _stub_gh(
-        tmp_path, monkeypatch,
+    calls = stub_gh(
         f'n=$(wc -l < {tmp_path / "calls.txt"})\n'
         'if [ "$n" -le 1 ]; then\n'
         '  printf "You have exceeded a secondary rate limit\\n" >&2; exit 1\n'
@@ -318,7 +298,7 @@ def test_a_budget_that_dies_mid_ladder_stops_the_remaining_attempts(
     assert len(_non_probe_calls(calls)) == 2
 
 
-def test_threads_meeting_the_same_refusal_probe_once(tmp_path, monkeypatch, capsys):
+def test_threads_meeting_the_same_refusal_probe_once(stub_gh, capsys):
     """`fetch_pr_context` and the review pipeline both fan out over a pool.
 
     Without the placeholder entry the arming path writes before it probes,
@@ -327,7 +307,7 @@ def test_threads_meeting_the_same_refusal_probe_once(tmp_path, monkeypatch, caps
     """
     import threading
 
-    calls = _refusing_gh(tmp_path, monkeypatch)
+    calls = _refusing_gh(stub_gh)
     workers = [
         threading.Thread(target=gh_client.run, args=("pr", "view", str(i)))
         for i in range(8)

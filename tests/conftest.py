@@ -6,6 +6,7 @@ import itertools
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -413,6 +414,34 @@ def _clear_lock_env():
         os.environ[run_lock.LOCK_ENV] = saved
 
 
+@pytest.fixture
+def stub_gh(tmp_path, monkeypatch):
+    """Put a `gh` on PATH whose body is *body*, and record every invocation.
+
+    The stub appends its argv to `calls.txt` before running *body*, so a test
+    can assert what the client actually asked for as well as what it did with
+    the answer. Shared by `gh_client_test` and `gh_budget_test`, both of which
+    need a fake `gh` binary rather than a patched `subprocess` — a mock
+    returning the string the test author expected would pass whether or not
+    the real call was ever refused.
+    """
+    def _stub(body: str) -> Path:
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        calls = tmp_path / "calls.txt"
+        script = bin_dir / "gh"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$*" >> {calls}\n'
+            f"{body}\n"
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+        return calls
+
+    return _stub
+
+
 @pytest.fixture(autouse=True)
 def _clear_gh_budget_latch():
     """Never let one test's rate-limit latch silence the next test's gh calls.
@@ -420,7 +449,7 @@ def _clear_gh_budget_latch():
     The latch is module state that makes `gh` calls return a refusal without
     running anything, which is exactly what a stubbed gh looks like from the
     outside. A test that arms it and does not clear it would turn every later
-    `_stub_gh` into a no-op, and only for the tests collected after it — the
+    `stub_gh` into a no-op, and only for the tests collected after it — the
     same order-dependent failure `_clear_lock_env` exists to prevent.
     """
     if LIB_DIR not in sys.path:

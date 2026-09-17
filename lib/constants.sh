@@ -147,6 +147,17 @@ REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
 # tests/workbench_roots.bats holds the two spellings together.
 RETRO_CONSUMED_REVIEWS_FILE="$WORKBENCH_STATE_DIR/retro-consumed-reviews.json"
 
+# Cooldown stamps for the per-repo Stop-hook gates, one file per repo named by
+# _canonical_slug. Under the state root rather than in a harness's tree because
+# the gates ask a question about a repo, not about a harness: a repo worked in
+# only from Pi has no directory in Claude's store, and a stamp written there
+# would gate on a directory that never appears.
+#
+# The gates whose stamps sit inside a memory directory keep them there — those
+# are already keyed per repo, and moving every per-project agent artifact out
+# of Claude's tree is its own change.
+GATE_STAMPS_DIR="$WORKBENCH_STATE_DIR/gates"
+
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"
 CLAUDE_CONFIG_FILE="$HOME/.claude.json"

@@ -201,6 +201,34 @@ _memory_repos() {
   return 0
 }
 
+# _gate_stamp_file REPO_DIR NAME — where the per-repo gate cooldown NAME is
+# recorded for REPO_DIR.
+#
+# Named by _canonical_slug under $GATE_STAMPS_DIR, so every worktree of a repo
+# reads and writes one file and no harness owns it. The stamp used to live in
+# the repo's Claude directory, which made the cooldown per worktree and left a
+# Pi-only repo with nowhere to record one.
+_gate_stamp_file() {
+  printf '%s/%s.%s' "$GATE_STAMPS_DIR" "$(_canonical_slug "$1")" "$2"
+}
+
+# _gate_repo_dir DIR — the repo DIR belongs to, as the gates key their stamps
+# and count their sessions by. A worktree resolves to the repository behind it,
+# so every worktree of a repo shares one answer; a directory git cannot answer
+# for is printed back unchanged.
+#
+# One `git rev-parse` per call, which is why the per-repo gate runs its stamp
+# check before this rather than after.
+_gate_repo_dir() {
+  local dir="$1" shared
+  shared="$(git_shared_dir "$dir")" || shared=""
+  if [[ -z "$shared" ]]; then
+    printf '%s' "$dir"
+    return 0
+  fi
+  project_repo_label "$shared"
+}
+
 # _read_stamp FILE — the epoch seconds in FILE, or 0 when it is absent or
 # unreadable. The three gates each read a cooldown stamp the same way.
 _read_stamp() {

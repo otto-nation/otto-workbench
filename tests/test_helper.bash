@@ -439,7 +439,9 @@ gate_sessions() {
   mkdir -p "$dir"
   for i in $(seq 1 "$count"); do
     printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
-    [ -n "$mtime" ] && touch -t "$mtime" "$dir/session-$i.jsonl"
+    if [ -n "$mtime" ]; then
+      touch -t "$mtime" "$dir/session-$i.jsonl"
+    fi
   done
   return 0
 }

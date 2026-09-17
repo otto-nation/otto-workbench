@@ -234,4 +234,9 @@ def test_a_review_deleted_mid_loop_does_not_abort_the_run(monkeypatch, tmp_path,
     assert not (reviews / "vanishes").exists()
     assert not (reviews / "last-review").exists()
     assert read_record() is None
-    assert "gone before deletion" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "gone before deletion" in captured.err
+    # Two of the three were deleted by this run; the third was already gone.
+    # Counting len(targets) here would report three and make the warning above
+    # contradict the summary line under it.
+    assert "Deleted 2 consumed review(s)" in captured.out + captured.err

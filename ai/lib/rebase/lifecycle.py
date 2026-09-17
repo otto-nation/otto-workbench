@@ -458,10 +458,14 @@ def rebase_success(
         # same thing once at the end, through the label and the resume line.
         if mode.reaches_remote:
             log.info(f"{label} — force-pushing...")
+        # Replayed files go in alongside resolved ones: this is the candidate
+        # set the pre-push repair matches a failing hook's output against, and
+        # a file missing from it is dropped rather than fixed. A replay whose
+        # recorded resolution has gone stale against the current base is as
+        # able to fail a check as anything the resolver wrote.
+        repairable = list(dict.fromkeys(tally.files + tally.replayed))
         landed = rebase_land.land_rebased(
-            cwd,
-            resolved_files=list(dict.fromkeys(tally.files + tally.replayed)) or None,
-            trail=trail,
+            cwd, resolved_files=repairable or None, trail=trail,
         )
         if landed.ok:
             tinfo(trail, "force_push", "force-pushed to remote", data={"sha": landed.sha})

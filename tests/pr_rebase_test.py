@@ -1802,6 +1802,77 @@ def test_rebase_success_emits_replays_when_nothing_was_resolved():
     assert report["files_replayed"] == ["a.py", "b.py"]
 
 
+def test_replayed_files_are_candidates_for_the_prepush_repair():
+    """A replayed file can be what trips the pre-push hook.
+
+    `resolved_files` is the candidate set `fix_push_failures` matches a failing
+    hook's output against, and a file absent from it is dropped from `targets`
+    entirely — the no-match fallback re-adds the candidates, not the omission.
+    A rerere replay whose recorded resolution has gone stale against the current
+    base is exactly that case, so it has to be a candidate like any other.
+    """
+    ctx = mock.MagicMock()
+    tally = rebase_types.ResolutionTally(
+        files=["a.py"], commits=1, replayed=["pnpm-lock.yaml"],
+    )
+
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"), \
+         mock.patch.object(
+             rebase_land, "land_rebased", return_value=_pushed(),
+         ) as mock_land:
+        lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.FIX, tally, target_ref=_TARGET,
+        )
+
+    assert mock_land.call_args.kwargs["resolved_files"] == [
+        "a.py", "pnpm-lock.yaml",
+    ]
+
+
+def test_a_file_both_resolved_and_replayed_is_one_repair_candidate():
+    """Deduplicated across the two lists, as `fix_push_failures` expects.
+
+    The lists are disjoint for one file in one step, but a file resolved in an
+    early commit and replayed in a later one lands in both over a whole rebase.
+    """
+    ctx = mock.MagicMock()
+    tally = rebase_types.ResolutionTally(
+        files=["go.sum"], commits=1, replayed=["go.sum"],
+    )
+
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"), \
+         mock.patch.object(
+             rebase_land, "land_rebased", return_value=_pushed(),
+         ) as mock_land:
+        lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.FIX, tally, target_ref=_TARGET,
+        )
+
+    assert mock_land.call_args.kwargs["resolved_files"] == ["go.sum"]
+
+
+def test_a_run_with_nothing_to_repair_passes_no_candidates():
+    """None, not an empty list — what `land_rebased` reads as 'skip the fix'."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"), \
+         mock.patch.object(
+             rebase_land, "land_rebased", return_value=_pushed(),
+         ) as mock_land:
+        lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.FIX,
+            rebase_types.ResolutionTally(), target_ref=_TARGET,
+        )
+
+    assert mock_land.call_args.kwargs["resolved_files"] is None
+
+
 def test_rebase_success_counts_commits_before_push():
     """commits_replayed excludes commits the push recovery creates.
 

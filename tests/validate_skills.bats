@@ -862,3 +862,48 @@ _make_hook() {
   [[ "$output" == *"not a recognized duration"* ]]
   [[ "$output" == *"gadget"* ]]
 }
+
+# ── Skill script paths ───────────────────────────────────────────────────────
+
+@test "a skill invoking its script through Claude's root fails" {
+  # Both roots symlink to the same source, so a Claude-rooted path works on a
+  # machine with Claude installed and is simply absent under Pi. Nothing else
+  # reports it: the agent runs a path that is not there.
+  _make_skill widget
+  echo 'bash ~/.claude/skills/widget/widget-complete.sh' \
+    >> "$FAKE_WORKBENCH/ai/skills/widget/SKILL.md"
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"harness-specific root"* ]]
+}
+
+@test "a skill invoking its script through the shared root passes" {
+  _make_skill widget
+  echo 'bash ~/.agents/skills/widget/widget-complete.sh' \
+    >> "$FAKE_WORKBENCH/ai/skills/widget/SKILL.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a \$HOME-spelled Claude root is caught too" {
+  _make_skill widget
+  echo 'bash $HOME/.claude/skills/widget/widget-complete.sh' \
+    >> "$FAKE_WORKBENCH/ai/skills/widget/SKILL.md"
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"harness-specific root"* ]]
+}
+
+@test "prose naming both skills roots is not a script path" {
+  # writing-skills names both in a sentence about where skills install. The
+  # filename at the end of the pattern is what keeps the check off it.
+  _make_skill widget
+  echo 'Skills install into `~/.claude/skills/` and `~/.agents/skills/`.' \
+    >> "$FAKE_WORKBENCH/ai/skills/widget/SKILL.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}

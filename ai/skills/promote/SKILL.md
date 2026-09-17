@@ -218,7 +218,7 @@ Before writing the report:
 **Goal:** Record the promote timestamp and clean up.
 
 ```bash
-bash ~/.claude/skills/promote/promote-complete.sh
+bash ~/.agents/skills/promote/promote-complete.sh
 ```
 
 ### Summary

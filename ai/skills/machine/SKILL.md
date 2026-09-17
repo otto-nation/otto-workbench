@@ -24,7 +24,7 @@ or when `<!-- last-updated -->` in machine.md is more than 7 days old.
 
 1. **Regenerate with diff**
 ```bash
-bash ~/.claude/skills/machine/generate-machine-profile.sh --force --diff
+bash ~/.agents/skills/machine/generate-machine-profile.sh --force --diff
 ```
 
 2. **Print result**

@@ -82,7 +82,7 @@ Append only. Never edit an existing entry, never edit an article, never run
 ## 5. Record completion
 
 ```bash
-bash ~/.claude/skills/wiki-capture/wiki-capture-complete.sh
+bash ~/.agents/skills/wiki-capture/wiki-capture-complete.sh
 ```
 
 Run this whether or not anything was logged. The cooldown resets on the review

@@ -505,6 +505,42 @@ _check_shim_pin() {
   return 0
 }
 
+# Matches a skill script addressed through one harness's own skills root. The
+# filename at the end is what keeps this off prose mentioning a root —
+# writing-skills names both of them in a sentence about where skills install.
+HARNESS_SCRIPT_PATH='(~|\$HOME|\$\{HOME\})/\.(claude|agents)/skills/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+\.(sh|py)'
+
+# _check_harness_script_path FILE DISPLAY — holds one skill to invoking its own
+# scripts by a path both harnesses resolve.
+#
+# Skills install into ~/.claude/skills and ~/.agents/skills as symlinks to the
+# same source, so either root reaches the file on a machine that has both. Only
+# the shared one is guaranteed: step_skills creates it whether or not Pi is
+# installed, and a Claude-rooted path is simply wrong under Pi. Nothing else
+# notices — the agent runs a path that is not there and the skill half-completes.
+_check_harness_script_path() {
+  local file="$1" display="$2" offenders
+  offenders="$(grep -nE "$HARNESS_SCRIPT_PATH" "$file" | grep -v '\.agents/skills/' || true)"
+  if [[ -n "$offenders" ]]; then
+    _fail "$display: invokes a skill script through a harness-specific root — use \`~/.agents/skills/<name>/<script>\`, which both harnesses install: ${offenders//$'\n'/; }"
+    return 0
+  fi
+  _pass "$display: skill scripts are addressed by the shared skills root"
+  return 0
+}
+
+# _check_every_harness_script_path — every skill in the tree.
+_check_every_harness_script_path() {
+  local skill_file
+  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+    [[ -f "$skill_file" ]] || continue
+    _check_harness_script_path "$skill_file" "skills/$(basename "$(dirname "$skill_file")")"
+  done
+  return 0
+}
+
+_check_every_harness_script_path
+
 # _check_every_shim_pin PIN — holds every shim in the tree against the pin.
 _check_every_shim_pin() {
   local pin="$1" skill_file

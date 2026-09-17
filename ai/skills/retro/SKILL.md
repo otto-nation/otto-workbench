@@ -250,7 +250,7 @@ directories that this retro's own Phase 1 scan read. Pass the scan ID that
 `retro-scan --consume` printed:
 
 ```bash
-~/.claude/skills/retro/retro-complete.sh a1b2c3d4e5f6
+bash ~/.agents/skills/retro/retro-complete.sh a1b2c3d4e5f6
 ```
 
 The ID is checked against the record at

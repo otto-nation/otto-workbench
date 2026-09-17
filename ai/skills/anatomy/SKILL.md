@@ -33,7 +33,7 @@ The index auto-regenerates via the Stop hook when the git HEAD changes. To force
 a manual refresh:
 
 ```bash
-bash ~/.claude/skills/anatomy/generate-anatomy.sh
+bash ~/.agents/skills/anatomy/generate-anatomy.sh
 ```
 
 The generator is idempotent — repeated runs with the same git HEAD are instant no-ops.

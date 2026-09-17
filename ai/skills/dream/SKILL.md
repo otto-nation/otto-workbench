@@ -112,7 +112,7 @@ Remove or archive entries that are:
 
 After completing all 4 phases:
 ```bash
-bash ~/.claude/skills/dream/dream-complete.sh
+bash ~/.agents/skills/dream/dream-complete.sh
 ```
 
 ---
@@ -122,7 +122,7 @@ bash ~/.claude/skills/dream/dream-complete.sh
 - **Never delete memory without replacement.** Removed entries must be either contradicted (replaced) or moved (to topic file or archive).
 - **Back up before first run.** On the very first run against a project:
 ```bash
-bash ~/.claude/skills/dream/dream-complete.sh --backup <project-slug>
+bash ~/.agents/skills/dream/dream-complete.sh --backup <project-slug>
 ```
 - **Dry run option.** On first use, read through all 4 phases but only print what you WOULD change, without writing. Confirm with the user before applying.
 

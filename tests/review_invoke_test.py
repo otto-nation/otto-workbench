@@ -117,6 +117,13 @@ def test_a_prior_review_is_forwarded_only_when_it_exists(tmp_path):
         _request(tmp_path, prior_review_path=str(prior)))
 
 
+def test_a_zero_max_cost_is_forwarded_rather_than_dropped(tmp_path):
+    """0 is a real cap ("stop now"), not the same as "unset"."""
+    argv = review_invoke.build_argv(_request(tmp_path, max_cost=0))
+
+    assert argv[argv.index("--max-cost") + 1] == "0"
+
+
 def test_disprove_is_forwarded_only_when_explicitly_true(tmp_path):
     """None means "let effort decide", which is not the same as False."""
     assert "--disprove" not in review_invoke.build_argv(_request(tmp_path))
@@ -127,9 +134,8 @@ def test_disprove_is_forwarded_only_when_explicitly_true(tmp_path):
 # ── the guards around the spawn ──────────────────────────────────────────────
 
 
-def _spawn(monkeypatch, returncode, on_run=lambda: None):
+def _spawn(monkeypatch, returncode):
     def _run(argv, *a, **kw):
-        on_run()
         return SimpleNamespace(returncode=returncode)
 
     monkeypatch.setattr(review_invoke.subprocess, "run", _run)

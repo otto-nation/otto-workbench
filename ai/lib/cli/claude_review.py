@@ -118,7 +118,6 @@ def _flags(args, generator_version: str) -> review_run.ReviewFlags:
         no_post=args.no_post,
         auto_post=args.post,
         auto_submit=args.submit,
-        skip_user_verification=args.skip_user_verification,
         repo_dir=args.repo_dir or "",
     )
 
@@ -289,6 +288,8 @@ def main(argv: list[str] | None = None, *,
     parsed.positional = list(parsed.args)
     if parsed.pr and not parsed.positional:
         parsed.positional = [parsed.pr]
+    elif parsed.branch and not parsed.positional:
+        parsed.positional = [parsed.branch]
 
     workbench_paths.reviews_dir().mkdir(parents=True, exist_ok=True)
 

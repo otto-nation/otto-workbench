@@ -1849,7 +1849,6 @@ def test_self_review_body_runs_recover_in_pinned_worktree(tmp_path, monkeypatch)
                         lambda *a: SimpleNamespace(link="", context=""))
     run = MagicMock(side_effect=SystemExit(1))
     monkeypatch.setattr(review_invoke, "run", run)
-    monkeypatch.setattr(review_run.review_invoke, "run", run)
 
     with pytest.raises(SystemExit):
         review_run.run_self_review(
@@ -1899,7 +1898,6 @@ def test_self_review_body_allows_fix_when_recover_has_not_drifted(tmp_path, monk
                         lambda *a: SimpleNamespace(link="", context=""))
     run = MagicMock(side_effect=SystemExit(1))
     monkeypatch.setattr(review_invoke, "run", run)
-    monkeypatch.setattr(review_run.review_invoke, "run", run)
 
     with pytest.raises(SystemExit):
         review_run.run_self_review(
@@ -2015,7 +2013,6 @@ def _stub_pr_flow(monkeypatch, tmp_path):
                         lambda *a, **kw: (str(tmp_path), None))
     monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(review_invoke, "run", lambda request: 0)
-    monkeypatch.setattr(review_run.review_invoke, "run", lambda request: 0)
     monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
     monkeypatch.setattr(review_completion, "summarise", lambda *a, **kw: None)
     monkeypatch.setattr(review_completion, "record_domain", lambda *a, **kw: None)

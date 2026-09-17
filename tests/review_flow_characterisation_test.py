@@ -352,7 +352,7 @@ def test_both_flows_run_the_same_ordered_spine(tmp_path, monkeypatch):
 
     pr_file = _review_file(tmp_path, "pr")
     _trace_common(monkeypatch, pr_tape)
-    _stub_pr_edges(monkeypatch, pr_tape and tmp_path or tmp_path, pr_tape)
+    _stub_pr_edges(monkeypatch, tmp_path, pr_tape)
     monkeypatch.setattr(review_preflight, "refuse_if_superseded",
                         lambda *a, **kw: pr_tape.append("preflight"))
     review_run.run_pr_review(
@@ -497,8 +497,7 @@ def test_the_issue_prompt_comes_after_every_gate_that_can_abort(
     _stub_pr_edges(monkeypatch, tmp_path, tape)
     monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    target = review_preflight if gate != "refuse_if_superseded" else review_preflight
-    monkeypatch.setattr(target, gate, stub)
+    monkeypatch.setattr(review_preflight, gate, stub)
     monkeypatch.setattr(review_issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
     monkeypatch.setattr(

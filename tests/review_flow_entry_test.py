@@ -97,9 +97,12 @@ def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkey
         seen.update(args=args)
         return review_run.ReviewOutcome("owner/repo", "42", Path("/dev/null"))
 
+    def _classify(c):
+        seen.setdefault("target", c)
+        return (c, None)
+
     monkeypatch.setattr(cr, "_run_review", _capture)
-    monkeypatch.setattr(cr.pr_context, "classify_target",
-                        lambda c: seen.setdefault("target", c) and (c, None) or (c, None))
+    monkeypatch.setattr(cr.pr_context, "classify_target", _classify)
     monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: make_ctx())
     monkeypatch.setattr(cr.run_lock, "claim_for_process", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "json_summary", lambda *a, **kw: "{}")

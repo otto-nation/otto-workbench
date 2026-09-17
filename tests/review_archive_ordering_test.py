@@ -90,7 +90,8 @@ def test_a_resumed_run_reuses_the_prior_review_rather_than_rotating_it(tmp_path)
     assert not (review_dir / "archives").exists()
 
 
-def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(tmp_path, monkeypatch,
+def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(
+    tmp_path, monkeypatch,
 ):
     """`--self --fix --recover` against a moved HEAD refuses without rotating.
 
@@ -107,7 +108,6 @@ def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(tmp_path,
     monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: True)
     monkeypatch.setattr(review_issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(review_run.git_client, "abbrev", lambda sha: sha[:7])
 
     with pytest.raises(SystemExit) as excinfo:
         review_run.run_self_review(
@@ -122,7 +122,8 @@ def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(tmp_path,
     assert not (review_dir / "archives").exists()
 
 
-def test_a_pin_that_cannot_find_its_commit_leaves_the_review_in_place(tmp_path, monkeypatch,
+def test_a_pin_that_cannot_find_its_commit_leaves_the_review_in_place(
+    tmp_path, monkeypatch,
 ):
     """The same guarantee for the other gate below the archive.
 
@@ -153,7 +154,8 @@ def test_a_pin_that_cannot_find_its_commit_leaves_the_review_in_place(tmp_path, 
     assert not (review_dir / "archives").exists()
 
 
-def test_the_body_asks_whether_to_archive_rather_than_always_archiving(tmp_path, monkeypatch,
+def test_the_body_asks_whether_to_archive_rather_than_always_archiving(
+    tmp_path, monkeypatch,
 ):
     """The body routes through `_resolve_prior_review`, not `archive_review`.
 

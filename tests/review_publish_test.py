@@ -12,6 +12,7 @@ reported one without posting would inflate the figure, and one that posted
 without reporting would drop it.
 """
 
+import inspect
 import sys
 from pathlib import Path
 
@@ -24,6 +25,10 @@ if LIB_DIR not in sys.path:
 
 from review import publish as review_publish  # noqa: E402
 from review.paths import FILENAME_POST_SESSION  # noqa: E402
+
+# Captured before the `posts` fixture replaces `review_publish.post` with a
+# recording stub, so the parameter names below still name the real function.
+_POST_SIGNATURE = inspect.signature(review_publish.post)
 
 
 @pytest.fixture
@@ -39,10 +44,14 @@ def review_file(tmp_path):
 def posts(monkeypatch):
     """Record every post and submit instead of spawning review-post."""
     calls = []
+
+    def _submit_pending(*a, **kw):
+        calls.append(("submit", a, kw))
+        return True
+
     monkeypatch.setattr(review_publish, "post",
                         lambda *a, **kw: calls.append(("post", a, kw)))
-    monkeypatch.setattr(review_publish, "submit_pending",
-                        lambda *a, **kw: calls.append(("submit", a, kw)))
+    monkeypatch.setattr(review_publish, "submit_pending", _submit_pending)
     return calls
 
 
@@ -85,7 +94,8 @@ def test_auto_submit_rides_along_with_auto_post(review_file, posts):
     """--submit is passed to review-post rather than submitted separately."""
     result = _resolve(review_file, auto_post=True, auto_submit=True)
 
-    assert posts[0][1][3] is True, "the submit flag reaches review-post"
+    bound = _POST_SIGNATURE.bind(*posts[0][1], **posts[0][2])
+    assert bound.arguments["submit"] is True, "the submit flag reaches review-post"
     assert result.submitted is True
 
 

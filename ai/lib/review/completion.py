@@ -72,6 +72,7 @@ def cleanup_prior_review(review_file: Path, prior_path: str) -> None:
         return
     pipeline_state = review_file.parent / FILENAME_PIPELINE_STATE
     if not pipeline_state.is_file():
+        # Best-effort: a leftover prior.md is harmless, just a stale file.
         try:
             os.unlink(prior_path)
         except OSError:

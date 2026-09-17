@@ -75,7 +75,6 @@ class ReviewFlags:
     no_post: bool = False
     auto_post: bool = False
     auto_submit: bool = False
-    skip_user_verification: bool = False
     repo_dir: str = ""
 
 

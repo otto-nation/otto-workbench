@@ -101,7 +101,7 @@ def build_argv(request: OrchestrateRequest) -> list[str]:
     # only way it learns this run may publish is to be told on its own argv.
     if request.may_publish:
         args.append("--post")
-    if request.max_cost:
+    if request.max_cost is not None:
         args += ["--max-cost", str(request.max_cost)]
     if request.model:
         args += ["--model", request.model]

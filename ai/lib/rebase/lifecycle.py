@@ -10,6 +10,8 @@ a refusal, or an abort that leaves the branch where it started.
 
 from __future__ import annotations
 
+import os
+
 from agent import backend as ai_backend
 from core import log
 from core.proc import CmdResult
@@ -34,40 +36,127 @@ ResolutionTally = rebase_types.ResolutionTally
 RunMode = rebase_types.RunMode
 
 
-def rebase_continue(cwd: str) -> CmdResult:
-    """Continue the rebase without stopping for a commit message.
+# Reuse of a conflict resolution already recorded in this repo, scoped to the
+# run rather than written into anyone's git config.
+#
+# `autoUpdate` is not a nicety on top of `enabled` — it is the whole feature
+# here. With `enabled` alone git rewrites the worktree and leaves the index
+# unmerged, so `detect_conflicts` still reports the file, and the resolver then
+# pays a full AI call on content that holds no conflict markers to resolve.
+# With `autoUpdate` the file is staged, `detect_conflicts` no longer sees it,
+# and the step advances for free.
+#
+# Deliberately passed per-call instead of set in `git/gitconfig.shared`: this
+# stages a resolution nobody looked at, which is right for an unattended rebase
+# the operator reviews as a diff afterwards, and wrong as a silent default under
+# every interactive `git merge` on the machine.
+RERERE_CONFIG = {
+    "rerere.enabled": "true",
+    "rerere.autoUpdate": "true",
+}
 
-    `core.editor=true` is what keeps an unattended run unattended: git opens the
-    editor for a commit whose message it wants confirmed, and `true` exits zero
-    without touching the file, so the message is taken as it stands.
+# `core.editor=true` is what keeps an unattended run unattended: git opens the
+# editor for a commit whose message it wants confirmed, and `true` exits zero
+# without touching the file, so the message is taken as it stands.
+#
+# It belongs on the fresh `git rebase` too, not just `--continue`: under
+# `--autosquash` a `squash!` commit asks for the combined message *during* the
+# initial replay, and without this the run halts there with "there was a problem
+# with the editor". A `fixup!` never asks, which is why the gap stayed hidden.
+UNATTENDED_CONFIG = {"core.editor": "true"}
+
+REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
+
+# Variables that outrank `core.editor`, cleared for the child.
+#
+# `-c core.editor=true` is not sufficient on its own: git resolves its editor
+# as GIT_EDITOR > core.editor > VISUAL > EDITOR > vi, so an operator with
+# `export GIT_EDITOR=vim` in their profile hands an unattended rebase a full
+# screen editor on a pipe with no terminal. It does not fail — it blocks, and
+# `rebase` is an unbounded subcommand, so nothing arrives to end it: the run
+# hangs until the job's own timeout kills it and leaves a partial rebase for
+# the next run to inherit.
+#
+# VISUAL and EDITOR rank below `core.editor` and are cleared anyway, so that
+# what the child does is a property of this dict rather than of the precedence
+# table staying as it is.
+_EDITOR_VARS = ("GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "VISUAL", "EDITOR")
+
+
+def unattended_env() -> dict[str, str]:
+    """The parent environment with every editor override removed.
+
+    Paired with ``UNATTENDED_CONFIG``: the config says which editor to use and
+    this makes sure nothing outranks it. Built per call rather than once at
+    import, so a test or a caller that sets one of these sees it honoured.
     """
+    return {k: v for k, v in os.environ.items() if k not in _EDITOR_VARS}
+
+
+def rebase_continue(cwd: str) -> CmdResult:
+    """Continue the rebase without stopping for a commit message."""
     return git_client.run(
-        "rebase", "--continue", cwd=cwd, config={"core.editor": "true"},
+        "rebase", "--continue", cwd=cwd, config=REBASE_CONFIG,
+        env=unattended_env(),
+    )
+
+
+def note_replays(
+    result: CmdResult, tally: ResolutionTally, *, trail: Trail | None = None,
+) -> None:
+    """Record any rerere replays *result* reported into *tally* and the trail.
+
+    Called for every git invocation that can apply a commit, since any of them
+    can hit a recorded resolution. Reads both streams: the replay line is on
+    stderr, and pinning that is not worth a second reader.
+    """
+    replayed = rebase_inspect.rerere_replayed(result.combined_output)
+    if not replayed:
+        return
+    fresh_paths = [p for p in replayed if p not in tally.replayed]
+    tally.record_replays(replayed)
+    if not fresh_paths:
+        return
+    log.info(
+        f"Reused a recorded resolution for {len(fresh_paths)} file(s) "
+        f"— no resolver needed: {', '.join(fresh_paths)}"
+    )
+    tinfo(
+        trail, "rerere_replay",
+        f"reused a recorded resolution for {len(fresh_paths)} file(s)",
+        data={"files": fresh_paths},
     )
 
 
 def drive_to_completion(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
+    tally: ResolutionTally | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
 
     Loops until the rebase finishes, handling conflicts (via AI when --fix),
     empty commits (via --skip), and stuck states (abort on unexpected failure).
+
+    ``tally`` carries in what the caller's own git call already observed — the
+    fresh rebase resolves from the rerere cache before this loop starts, and a
+    tally created here would not have seen it.
     """
     with tspan(trail, "drive_to_completion"):
         return _drive_loop(
-            cwd, ctx, mode, target_ref=target_ref, force=force, trail=trail,
+            cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
+            trail=trail,
         )
 
 
 def _drive_loop(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
+    tally: ResolutionTally | None = None,
     trail: Trail | None = None,
 ) -> int:
-    tally = ResolutionTally()
+    tally = tally if tally is not None else ResolutionTally()
 
     for _ in range(MAX_REBASE_STEPS):
         if not rebase_inspect.rebase_in_progress(cwd):
@@ -96,7 +185,7 @@ def _drive_one_step(
 ) -> tuple[int | None, bool]:
     conflicts = rebase_inspect.detect_conflicts(cwd)
     if not conflicts:
-        return step_advance(cwd, trail=trail), False
+        return step_advance(cwd, tally, trail=trail), False
 
     rc = step_conflicts(
         cwd, ctx, mode, conflicts, tally, target_ref=target_ref, force=force,
@@ -164,6 +253,7 @@ def step_conflicts(
         git_client.run("add", "-u", cwd=cwd)
 
     r = rebase_continue(cwd)
+    note_replays(r, tally, trail=trail)
     if r.ok:
         return None
 
@@ -182,8 +272,12 @@ def step_conflicts(
     return 1
 
 
-def step_advance(cwd: str, *, trail: Trail | None = None) -> int | None:
+def step_advance(
+    cwd: str, tally: ResolutionTally | None = None, *,
+    trail: Trail | None = None,
+) -> int | None:
     """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
+    tally = tally if tally is not None else ResolutionTally()
     if rebase_inspect.is_empty_patch(cwd):
         sha, subject = rebase_inspect.rebase_head_info(cwd)
         log.info(f"Skipping empty commit {sha} — {subject}")
@@ -192,13 +286,19 @@ def step_advance(cwd: str, *, trail: Trail | None = None) -> int | None:
             reason="patch already applied upstream",
             data={"commit": sha, "subject": subject},
         )
-        r = git_client.run("rebase", "--skip", cwd=cwd)
+        # Carries the same config as the other two: --skip drops the current
+        # commit and goes straight on to apply the next, so the merges it runs
+        # are as able to replay a recorded resolution as any other step's.
+        r = git_client.run("rebase", "--skip", cwd=cwd, config=REBASE_CONFIG,
+                           env=unattended_env())
+        note_replays(r, tally, trail=trail)
         if not r.ok:
             log.error(f"git rebase --skip failed (exit {r.returncode})")
             return 1
         return None
 
     r = rebase_continue(cwd)
+    note_replays(r, tally, trail=trail)
     if r.ok:
         return None
 
@@ -283,11 +383,28 @@ def fresh(
         return refusals.refuse(ctx, landed, target_ref=target_ref, trail=trail)
 
     log.info(f"Rebasing onto {target_ref}...")
-    r = git_client.run("rebase", target_ref, cwd=cwd)
+    # --autosquash unconditionally: it acts only on commits whose subject starts
+    # with `fixup!` or `squash!`, which is a marker the author wrote to say
+    # "fold this into that one". Honouring it replays fewer commits and drops a
+    # conflict-prone one entirely; ignoring it, as this did, force-pushed the
+    # marker commits back and left the branch to be cleaned up by hand. The
+    # `fixup` alias in git/gitconfig.shared produces exactly these.
+    #
+    # Non-interactive since git 2.22 — no todo editor opens, so nothing here
+    # waits on one.
+    r = git_client.run(
+        "rebase", "--autosquash", target_ref, cwd=cwd, config=REBASE_CONFIG,
+        env=unattended_env(),
+    )
+    # Threaded into the loop below rather than tallied locally: this call can
+    # replay a recorded resolution for the very first commit, and a tally made
+    # inside the loop would start after that had already happened.
+    tally = ResolutionTally()
+    note_replays(r, tally, trail=trail)
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
-            cwd, ctx, mode, target_ref=target_ref, trail=trail,
+            cwd, ctx, mode, tally, target_ref=target_ref, trail=trail,
         )
 
     if not rebase_inspect.rebase_in_progress(cwd):
@@ -298,7 +415,8 @@ def fresh(
         return 1
 
     return drive_to_completion(
-        cwd, ctx, mode, target_ref=target_ref, force=force, trail=trail,
+        cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
+        trail=trail,
     )
 
 
@@ -324,6 +442,13 @@ def rebase_success(
         f"Rebase complete — resolved {len(tally.files)} file(s) "
         f"across {tally.commits} commit(s)"
     )
+    # A rebase whose conflicts were all replayed from the cache resolves nothing
+    # and conflicts on no commit, so the bare label above would report it as
+    # clean and say nothing about the conflicts that were met and handled.
+    if tally.replayed:
+        label += (f", reused {len(tally.replayed)} recorded resolution(s)"
+                  if tally.commits else
+                  f" — reused {len(tally.replayed)} recorded resolution(s)")
 
     landed = None
     if lands_here:
@@ -345,6 +470,7 @@ def rebase_success(
         conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
+        files_replayed=tally.replayed,
         # None rather than False for a run that never tried: a held landing did
         # exactly what --no-push asked for, and recording it as a failed push
         # would be the summary's own invention.

@@ -137,6 +137,7 @@ already has.
   "conflicts_resolved": 2,
   "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
   "files_stale": ["orc-lending/go.sum"],
+  "files_replayed": ["orc-lending/go.sum"],
   "force_pushed": true
 }
 ```
@@ -144,6 +145,16 @@ already has.
 `commits_replayed` counts only commits replayed from the branch — commits the
 push recovery adds (regeneration, check fixes) are excluded. `conflicts_resolved`
 counts conflicted-file resolutions, matching `files_resolved`.
+
+`files_replayed` is disjoint from `files_resolved` and is not counted in
+`conflicts_resolved`: those files conflicted, and git resolved them itself by
+replaying a resolution recorded in an earlier run, so no AI call was spent on
+them. Report them as such — "3 conflicts, 2 reused from a previous run" — rather
+than folding them into the resolved count or omitting them. A run can be
+`"conflicts_resolved": 0` with a non-empty `files_replayed`, which is a rebase
+that met conflicts and cost nothing, not a clean one; saying "no conflicts"
+there is wrong. The resolutions come from git's rerere cache, which is local to
+the worktree and unshared, so the same branch on another machine pays full price.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
 non-empty, those files were staged from the incoming side and never rebuilt —

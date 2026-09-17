@@ -1751,6 +1751,57 @@ def test_rebase_success_emits_stale_files():
     assert mock_emit.call_args[0][0]["files_stale"] == ["pnpm-lock.yaml"]
 
 
+def test_rebase_success_emits_replayed_files_apart_from_resolved():
+    """The skill parses both keys and reports them differently.
+
+    `files_replayed` is what tells a consumer a conflict cost no AI call, so it
+    has to survive into the JSON rather than only into the log line, and it must
+    not be folded into `conflicts_resolved`.
+    """
+    ctx = mock.MagicMock()
+    tally = rebase_types.ResolutionTally(
+        files=["a.py"], commits=1, replayed=["b.py"],
+    )
+    saved = []
+
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         mock.patch.object(
+             rebase_types.RebaseOutcome, "save",
+             lambda self, c: saved.append(self),
+         ), \
+         mock.patch.object(core_report, "emit_json") as mock_emit:
+        lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.PUSH, tally, target_ref=_TARGET,
+        )
+
+    report = mock_emit.call_args[0][0]
+    assert report["files_replayed"] == ["b.py"]
+    assert report["files_resolved"] == ["a.py"]
+    assert report["conflicts_resolved"] == 1
+    assert saved[0].files_replayed == ["b.py"]
+
+
+def test_rebase_success_emits_replays_when_nothing_was_resolved():
+    """A rebase that met conflicts and resolved none of them itself.
+
+    Every conflict came back from the cache, so `conflicts_resolved` is 0 while
+    `files_replayed` is not — the shape the skill is told not to call clean.
+    """
+    ctx = mock.MagicMock()
+    tally = rebase_types.ResolutionTally(replayed=["a.py", "b.py"])
+
+    with mock.patch.object(git_client, "commits_ahead", return_value=4), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json") as mock_emit:
+        lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.PUSH, tally, target_ref=_TARGET,
+        )
+
+    report = mock_emit.call_args[0][0]
+    assert report["conflicts_resolved"] == 0
+    assert report["files_replayed"] == ["a.py", "b.py"]
+
+
 def test_rebase_success_counts_commits_before_push():
     """commits_replayed excludes commits the push recovery creates.
 
@@ -2016,7 +2067,7 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
     assert result == 0
     mock_drive.assert_called_once_with(
         "/fake", ctx, rebase_types.RunMode.FIX, target_ref=_TARGET, force=False,
-        trail=None,
+        tally=rebase_types.ResolutionTally(), trail=None,
     )
 
 
@@ -2800,7 +2851,9 @@ def test_fresh_rebases_a_landed_branch_under_force():
     rc, commands, _ = _run_fresh(tracker=_landed_report(), force=True)
 
     assert rc == 0
-    assert ["git", "rebase", _TARGET] in commands
+    assert ["git", "rebase", "--autosquash", _TARGET] in [
+        _unconfigured(cmd) for cmd in commands
+    ]
 
 
 def test_fresh_rebases_onto_the_resolved_ref():
@@ -2810,11 +2863,12 @@ def test_fresh_rebases_onto_the_resolved_ref():
     master, a release branch, or a stack parent replays onto its own base.
     """
     rc, commands, _ = _run_fresh(target_ref="origin/master")
+    bare = [_unconfigured(cmd) for cmd in commands]
 
     assert rc == 0
-    assert ["git", "rebase", "origin/master"] in commands
-    assert not any(cmd[:2] == ["git", "rebase"] and cmd[2] == _TARGET
-                   for cmd in commands)
+    assert ["git", "rebase", "--autosquash", "origin/master"] in bare
+    assert not any(cmd[:2] == ["git", "rebase"] and _TARGET in cmd
+                   for cmd in bare)
 
 
 def test_fresh_prunes_on_fetch():

@@ -151,11 +151,26 @@ class ResolutionTally:
     files: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     commits: int = 0
+    # Files git resolved from its rerere cache, kept apart from `files` because
+    # the two are not the same claim: `files` is what this run resolved and is
+    # what `conflicts_resolved` counts, while these were resolved by replaying
+    # a resolution recorded earlier and cost no AI call. Folding them together
+    # would report a run that resolved nothing as having resolved everything.
+    replayed: list[str] = field(default_factory=list)
 
     def absorb(self, resolution: Resolution) -> None:
         """Fold one step's resolution into the running totals."""
         self.files.extend(resolution.files)
         self.stale.extend(resolution.stale)
+
+    def record_replays(self, paths: list[str]) -> None:
+        """Note files git resolved from its rerere cache during one step.
+
+        Deduplicated: the same path can be replayed across several commits of
+        one rebase, and the question this answers is which files never needed a
+        resolver, not how many times each was replayed.
+        """
+        self.replayed.extend(p for p in paths if p not in self.replayed)
 
 
 @dataclass(frozen=True)
@@ -233,6 +248,10 @@ class RebaseOutcome:
     conflicts_resolved: int = 0
     files_resolved: list[str] = field(default_factory=list)
     files_stale: list[str] = field(default_factory=list)
+    # Files git resolved from its rerere cache. Reported apart from
+    # `files_resolved` so the summary can say a conflict cost nothing rather
+    # than crediting this run with a resolution it did not perform.
+    files_replayed: list[str] = field(default_factory=list)
     force_pushed: bool | None = None
     # Keyword-only and required: the recorded base is what a caller reading
     # state.json uses to tell which branch a run actually replayed onto, so a
@@ -248,6 +267,7 @@ class RebaseOutcome:
             conflicts_resolved=self.conflicts_resolved,
             files_resolved=self.files_resolved,
             files_stale=self.files_stale,
+            files_replayed=self.files_replayed,
             force_pushed=self.force_pushed is True,
             updated_at=pr_state.now_iso(),
         ))
@@ -260,6 +280,7 @@ class RebaseOutcome:
             "conflicts_resolved": self.conflicts_resolved,
             "files_resolved": self.files_resolved,
             "files_stale": self.files_stale,
+            "files_replayed": self.files_replayed,
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed

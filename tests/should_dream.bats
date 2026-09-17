@@ -233,3 +233,49 @@ _make_project() {
   run "$SHOULD_DREAM"
   [[ "$status" -eq 1 ]]
 }
+
+# ── The completion script and the gate agree on the set ──────────────────────
+
+@test "dream-complete settles the gate it is paired with" {
+  local now
+  now=$(date +%s)
+  _make_project "project-a" "$((now - 172800))" 6
+
+  run "$SHOULD_DREAM"
+  [ "$status" -eq 0 ]
+
+  run "$REPO_ROOT/ai/skills/dream/dream-complete.sh"
+  [ "$status" -eq 0 ]
+
+  run "$SHOULD_DREAM"
+  [ "$status" -eq 1 ]
+}
+
+@test "dream-complete stamps every registered repo with memory" {
+  local now
+  now=$(date +%s)
+  _make_project "project-a" "$((now - 172800))" 6
+  _make_project "project-b" "$((now - 172800))" 6
+
+  run "$REPO_ROOT/ai/skills/dream/dream-complete.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$(gate_memory "$TEST_HOME/project-a")/.last-dream" ]
+  [ -f "$(gate_memory "$TEST_HOME/project-b")/.last-dream" ]
+}
+
+@test "dream-complete writes no stamp an unregistered repo would keep" {
+  # The gate skips a repo that has left the registry, so a completion script
+  # globbing memory directories would leave a stamp nothing ever reads back —
+  # and the repo would look freshly dreamed to a later reader of that file.
+  local orphan="$TEST_HOME/unregistered"
+  mkdir -p "$(gate_claude_dir "$orphan")/memory"
+
+  run "$REPO_ROOT/ai/skills/dream/dream-complete.sh"
+  [ "$status" -eq 0 ]
+  [ ! -f "$(gate_claude_dir "$orphan")/memory/.last-dream" ]
+}
+
+@test "dream-complete is quiet with nothing registered" {
+  run "$REPO_ROOT/ai/skills/dream/dream-complete.sh"
+  [ "$status" -eq 0 ]
+}

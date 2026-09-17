@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# dream-complete.sh — records dream timestamps and removes the pending flag.
+# dream-complete.sh — records dream timestamps.
 #
-# Writes .last-dream to every project with a memory directory and removes
-# ~/.claude/.dream-pending. Called by the dream skill after Phase 4 completes.
+# Writes .last-dream to every registered repo with a memory directory. Called by
+# the dream skill after Phase 4 completes.
+#
+# The repos come from _memory_repos, which is the same sweep should-dream.sh
+# reads to decide a dream is due. Globbing the memory directories here would be
+# a second definition of that set: the gate skips a repo that has left the
+# registry, so a glob would write stamps no gate ever reads back.
 #
 # Usage: dream-complete.sh [--backup <project-slug>]
 #        --backup  Back up a project's memory directory before first dream run.
@@ -14,7 +19,10 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+_WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+. "$_WB/lib/constants.sh"
+. "$_WB/lib/ai/session-count.sh"
+unset _WB
 
 OPT_BACKUP=""
 for arg in "$@"; do
@@ -41,11 +49,7 @@ _run_backup() {
 
 now=$(date +%s)
 
-for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
-  [[ -d "$mem_dir" ]] || continue
-  echo "$now" > "${mem_dir}.last-dream"
-done
-
-# ── Remove pending flag ──────────────────────────────────────────────────────
-
-rm -f "$CLAUDE_DIR/.dream-pending"
+while IFS=$'\t' read -r mem_dir _repo_dir; do
+  [[ -n "$mem_dir" ]] || continue
+  echo "$now" > "$mem_dir/.last-dream"
+done < <(_memory_repos)

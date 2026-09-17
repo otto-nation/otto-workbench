@@ -229,3 +229,49 @@ _make_project() {
   run "$SHOULD_PROMOTE"
   [[ "$status" -eq 0 ]]
 }
+
+# ── The completion script and the gate agree on the set ──────────────────────
+
+@test "promote-complete settles the gate it is paired with" {
+  local now
+  now=$(date +%s)
+  _make_project "project-a" "$((now - 691200))" 12
+
+  run "$SHOULD_PROMOTE"
+  [ "$status" -eq 0 ]
+
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
+
+  run "$SHOULD_PROMOTE"
+  [ "$status" -eq 1 ]
+}
+
+@test "promote-complete stamps every registered repo with memory" {
+  local now
+  now=$(date +%s)
+  _make_project "project-a" "$((now - 691200))" 12
+  _make_project "project-b" "$((now - 691200))" 12
+
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$(gate_memory "$TEST_HOME/project-a")/.last-promote" ]
+  [ -f "$(gate_memory "$TEST_HOME/project-b")/.last-promote" ]
+}
+
+@test "promote-complete writes no stamp an unregistered repo would keep" {
+  # As in should_dream.bats: the gate reads forward from the registry, so a
+  # completion script globbing memory directories would disagree with it about
+  # which repos exist.
+  local orphan="$TEST_HOME/unregistered"
+  mkdir -p "$(gate_claude_dir "$orphan")/memory"
+
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
+  [ ! -f "$(gate_claude_dir "$orphan")/memory/.last-promote" ]
+}
+
+@test "promote-complete is quiet with nothing registered" {
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
+}

@@ -251,6 +251,15 @@ make_memory() {
   [ -z "$(memdirs_python)" ]
 }
 
+@test "both languages agree on the memory directory for a non-ASCII repo path" {
+  # tr -c 'A-Za-z0-9' '-' runs byte-wise, so a multi-byte UTF-8 character
+  # becomes one hyphen per byte. str.isalnum() is Unicode-aware and would
+  # leave an accented letter untouched, landing on a different directory
+  # than the shell half for the same path.
+  local p="/Users/dev/git/café/naïve"
+  [ "$(memdir_shell "$p")" = "$(memdir_python "$p")" ]
+}
+
 @test "both languages resolve a repo path to the same memory directory" {
   # The forward direction, which the gates use to find a repo's memory and the
   # architecture skill uses to read it. A drift here sends the two to different

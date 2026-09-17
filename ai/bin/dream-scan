@@ -219,10 +219,9 @@ def _project_id_of(message: sessions.UserMessage) -> str:
     return sessions.canonical_slug(message.project_path)
 
 
-def scan_sessions(home: Path, days: int) -> list[dict]:
-    cutoff = datetime.now() - timedelta(days=days)
+def scan_sessions(discovered: list[sessions.Session]) -> list[dict]:
     signals = []
-    for session in sessions.discover_sessions(home, since=cutoff):
+    for session in discovered:
         signals.extend(_signals_in(session))
     return signals
 
@@ -362,7 +361,7 @@ def main() -> None:
     # match Claude's — so it resolved to nothing for any repo whose path holds a
     # `_` or a `.`. Same reasoning as the branch above: the script that owns the
     # location answers, rather than each skill deriving it again.
-    if args.memory_dir:
+    if args.memory_dir is not None:
         print(sessions.claude_memory_dir(home, args.memory_dir))
         raise SystemExit(0)
 
@@ -381,10 +380,13 @@ def main() -> None:
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
         cutoff = datetime.now() - timedelta(days=args.days)
-        counts = sessions.session_counts(home, since=cutoff)
+        discovered = sessions.discover_sessions(home, since=cutoff)
+        counts = {h.name: 0 for h in sessions.HARNESSES}
+        for session in discovered:
+            counts[session.harness] = counts.get(session.harness, 0) + 1
         log.info(f"Sessions: {counts}")
 
-        signals = scan_sessions(home, args.days)
+        signals = scan_sessions(discovered)
         log.info(f"Found {len(signals)} signal(s)")
         trail.info(
             "scan_sessions",

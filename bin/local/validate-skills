@@ -19,6 +19,8 @@
 #   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/CLAUDE.md's
 #   - flagged `task ... pr:create` invocations match git-operations.md's
 #   - every superpowers shim records the version ai/pi/settings.json pins
+#   - skill scripts are invoked through the shared skills root, not a
+#     harness-specific one
 #
 # Exit code: 0 if all checks pass (or no skills found), 1 if any fail.
 
@@ -520,7 +522,7 @@ HARNESS_SCRIPT_PATH='(~|\$HOME|\$\{HOME\})/\.(claude|agents)/skills/[A-Za-z0-9_-
 # notices — the agent runs a path that is not there and the skill half-completes.
 _check_harness_script_path() {
   local file="$1" display="$2" offenders
-  offenders="$(grep -nE "$HARNESS_SCRIPT_PATH" "$file" | grep -v '\.agents/skills/' || true)"
+  offenders="$(grep -noE "$HARNESS_SCRIPT_PATH" "$file" | grep -v '\.agents/skills/' || true)"
   if [[ -n "$offenders" ]]; then
     _fail "$display: invokes a skill script through a harness-specific root — use \`~/.agents/skills/<name>/<script>\`, which both harnesses install: ${offenders//$'\n'/; }"
     return 0
@@ -539,8 +541,6 @@ _check_every_harness_script_path() {
   return 0
 }
 
-_check_every_harness_script_path
-
 # _check_every_shim_pin PIN — holds every shim in the tree against the pin.
 _check_every_shim_pin() {
   local pin="$1" skill_file
@@ -553,6 +553,8 @@ _check_every_shim_pin() {
 }
 
 PI_SETTINGS="$WORKBENCH_DIR/ai/pi/settings.json"
+_check_every_harness_script_path
+
 if [[ -f "$PI_SETTINGS" ]]; then
   superpowers_pin="$(_superpowers_pin "$PI_SETTINGS")"
   # Guarded rather than `[[ ... ]] && _check`: an undeclared package makes the

@@ -480,9 +480,14 @@ def claude_slug(path: Path | str) -> str:
     Lossy, so it is never inverted: ``a-b`` and ``a_b`` both arrive as ``a-b``.
     A caller wanting every memory directory sweeps with ``memory_dirs``.
 
-    ``_claude_project_dir`` in ``lib/ai/session-count.sh`` is the shell half.
+    ASCII alnum, not ``str.isalnum()``: ``_claude_project_dir`` in
+    ``lib/ai/session-count.sh`` runs ``tr -c 'A-Za-z0-9' '-'``, which only
+    ever spares the 62 ASCII letters and digits. ``str.isalnum()`` is
+    Unicode-aware and returns ``True`` for an accented or non-Latin letter,
+    leaving it untouched and landing on a different directory than the shell
+    half for the same path.
     """
-    return "".join(c if c.isalnum() else "-" for c in str(path))
+    return "".join(c if c.isascii() and c.isalnum() else "-" for c in str(path))
 
 
 def claude_memory_dir(home: Path, repo_path: Path | str) -> Path:

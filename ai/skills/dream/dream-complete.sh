@@ -33,6 +33,11 @@ done
 
 # ── Safety backup ────────────────────────────────────────────────────────────
 
+# Addressed by raw Claude slug, not by repo path through _memory_repos: this is
+# a manual one-off a person runs before a first dream pass on a project they
+# name directly, not a gate sweep over the registry — so there is no repo path
+# on hand to resolve through, only the slug the operator already has in front
+# of them (e.g. from `ls ~/.claude/projects`).
 _run_backup() {
   local slug="$1"
   local mem_dir="$CLAUDE_DIR/projects/$slug/memory"

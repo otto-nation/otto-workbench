@@ -32,4 +32,5 @@ migration_20260917_retro_stamp_state_root() {
   mkdir -p "$GATE_STAMPS_DIR"
   mv "$old_stamp" "$RETRO_STAMP_FILE"
   success "Carried the retro stamp to $RETRO_STAMP_FILE"
+  return 0
 }

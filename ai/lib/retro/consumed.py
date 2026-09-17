@@ -115,6 +115,7 @@ def deletable(record: ConsumeRecord, reviews_dir: Path) -> tuple[list[Path], lis
             continue
         target = reviews_dir / name
         if not target.is_dir():
+            skipped.append(f"{name}: directory is already gone")
             continue
         current = _reviewed_at(target)
         if entry.reviewed_at and current and current != entry.reviewed_at:

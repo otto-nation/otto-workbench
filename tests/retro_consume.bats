@@ -22,6 +22,11 @@ setup() {
   REVIEWS="$TMPDIR/state/reviews"
   RECORD="$TMPDIR/state/retro-consumed-reviews.json"
   mkdir -p "$REVIEWS"
+  # Named so the "which scan owns which record" relationships below read at
+  # a glance instead of matching twelve-character literals by eye.
+  SCAN_A="aaaaaaaaaaaa"
+  SCAN_B="bbbbbbbbbbbb"
+  SCAN_C="cccccccccccc"
 }
 
 teardown() {
@@ -85,7 +90,7 @@ PY
   _make_scannable_home
   _make_review "repo-self-branch"
 
-  run "$RETRO_SCAN" --home "$TMPDIR/home" --workbench "$TMPDIR/wb"
+  run --separate-stderr "$RETRO_SCAN" --home "$TMPDIR/home" --workbench "$TMPDIR/wb"
   [[ "$status" -eq 0 ]]
   # The scan reached the local reviews — otherwise "no record" would only mean
   # it stopped before the write, which proves nothing about the gate.
@@ -125,7 +130,7 @@ PY
   # The abandoned-retro path: a scan that reads nothing still has to overwrite
   # the previous claim, or the abandoned run's list outlives it.
   _make_scannable_home
-  _write_record "aaaaaaaaaaaa" "abandoned-run-review"
+  _write_record "$SCAN_A" "abandoned-run-review"
 
   run "$RETRO_SCAN" --home "$TMPDIR/home" --workbench "$TMPDIR/wb" --consume
   [[ "$status" -eq 0 ]]
@@ -146,43 +151,43 @@ PY
 
 @test "a record from another scan is refused and deletes nothing" {
   _make_review "other-branch-review"
-  _write_record "aaaaaaaaaaaa" "other-branch-review"
+  _write_record "$SCAN_A" "other-branch-review"
 
-  run "$RETRO_CONSUME" --scan-id "bbbbbbbbbbbb"
+  run "$RETRO_CONSUME" --scan-id "$SCAN_B"
   [[ "$status" -eq 1 ]]
-  [[ "$output" == *"belongs to scan aaaaaaaaaaaa"* ]]
+  [[ "$output" == *"belongs to scan $SCAN_A"* ]]
   [[ -d "$REVIEWS/other-branch-review" ]]
 }
 
 @test "the refusal names otto-log so the stray record can be traced" {
   _make_review "other-branch-review"
-  _write_record "aaaaaaaaaaaa" "other-branch-review"
+  _write_record "$SCAN_A" "other-branch-review"
 
-  run "$RETRO_CONSUME" --scan-id "bbbbbbbbbbbb"
-  [[ "$output" == *"otto-log show aaaaaaaaaaaa"* ]]
+  run "$RETRO_CONSUME" --scan-id "$SCAN_B"
+  [[ "$output" == *"otto-log show $SCAN_A"* ]]
 }
 
 @test "a matching scan id deletes what that scan read" {
   _make_review "mine-self-branch"
-  _write_record "cccccccccccc" "mine-self-branch"
+  _write_record "$SCAN_C" "mine-self-branch"
 
-  run "$RETRO_CONSUME" --scan-id "cccccccccccc"
+  run "$RETRO_CONSUME" --scan-id "$SCAN_C"
   [[ "$status" -eq 0 ]]
   [[ ! -d "$REVIEWS/mine-self-branch" ]]
   [[ ! -f "$RECORD" ]]
 }
 
 @test "no record at all is not a failure" {
-  run "$RETRO_CONSUME" --scan-id "cccccccccccc"
+  run "$RETRO_CONSUME" --scan-id "$SCAN_C"
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"nothing to clean up"* ]]
 }
 
 @test "--dry-run reports what it would delete and deletes nothing" {
   _make_review "mine-self-branch"
-  _write_record "cccccccccccc" "mine-self-branch"
+  _write_record "$SCAN_C" "mine-self-branch"
 
-  run "$RETRO_CONSUME" --scan-id "cccccccccccc" --dry-run
+  run "$RETRO_CONSUME" --scan-id "$SCAN_C" --dry-run
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"Would delete mine-self-branch"* ]]
   [[ -d "$REVIEWS/mine-self-branch" ]]
@@ -191,7 +196,7 @@ PY
 
 @test "a missing scan id is refused rather than defaulting to delete" {
   _make_review "mine-self-branch"
-  _write_record "cccccccccccc" "mine-self-branch"
+  _write_record "$SCAN_C" "mine-self-branch"
 
   run "$RETRO_CONSUME"
   [[ "$status" -eq 2 ]]
@@ -201,9 +206,9 @@ PY
 @test "only the reviews the record names are deleted" {
   _make_review "claimed-review"
   _make_review "unrelated-review"
-  _write_record "cccccccccccc" "claimed-review"
+  _write_record "$SCAN_C" "claimed-review"
 
-  run "$RETRO_CONSUME" --scan-id "cccccccccccc"
+  run "$RETRO_CONSUME" --scan-id "$SCAN_C"
   [[ "$status" -eq 0 ]]
   [[ ! -d "$REVIEWS/claimed-review" ]]
   [[ -d "$REVIEWS/unrelated-review" ]]
@@ -224,9 +229,9 @@ PY
 @test "retro-complete does not bank the window when the record is refused" {
   mkdir -p "$TMPDIR/home/.claude"
   _make_review "other-branch-review"
-  _write_record "aaaaaaaaaaaa" "other-branch-review"
+  _write_record "$SCAN_A" "other-branch-review"
 
-  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "bbbbbbbbbbbb"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_B"
   [[ "$status" -ne 0 ]]
   [[ -d "$REVIEWS/other-branch-review" ]]
   [[ ! -f "$TMPDIR/home/.claude/.last-retro" ]]
@@ -235,9 +240,9 @@ PY
 @test "retro-complete banks the window once its own reviews are cleaned up" {
   mkdir -p "$TMPDIR/home/.claude"
   _make_review "mine-self-branch"
-  _write_record "cccccccccccc" "mine-self-branch"
+  _write_record "$SCAN_C" "mine-self-branch"
 
-  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "cccccccccccc"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_C"
   [[ "$status" -eq 0 ]]
   [[ ! -d "$REVIEWS/mine-self-branch" ]]
   [[ -f "$TMPDIR/home/.claude/.last-retro" ]]

@@ -129,7 +129,7 @@ def test_a_review_already_gone_is_not_an_error(tmp_path):
     targets, skipped = deletable(record, reviews)
 
     assert targets == []
-    assert skipped == []
+    assert any("already gone" in s for s in skipped)
 
 
 def test_a_name_that_escapes_the_reviews_root_is_refused(tmp_path):

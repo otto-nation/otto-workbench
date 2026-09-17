@@ -88,6 +88,7 @@ def main() -> None:
         return
 
     deleted = 0
+    raced = 0
     for target in targets:
         try:
             shutil.rmtree(target)
@@ -97,6 +98,7 @@ def main() -> None:
             # (e.g. `pr gc`) beat this run to it. The record stays until
             # clear_record() below, so a re-run with the same scan ID skips
             # it as already gone rather than losing track of it.
+            raced += 1
             log.warn(f"{target.name}: gone before deletion — already removed")
 
     # Cleared only after the deletions it authorised have happened. A crash
@@ -104,7 +106,10 @@ def main() -> None:
     # ID deletes the remainder rather than losing track of it — the entries
     # already gone are skipped as missing.
     clear_record()
-    log.ok(f"Deleted {deleted} consumed review(s), kept {len(skipped)}")
+    log.ok(
+        f"Deleted {deleted} consumed review(s), kept {len(skipped)}, "
+        f"{raced} raced (removed concurrently)"
+    )
 
 
 if __name__ == "__main__":

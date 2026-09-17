@@ -84,39 +84,68 @@ $body
 EOF
 }
 
-# ── extract_user_text ─────────────────────────────────────────────────────────
+# ── Reading turns ────────────────────────────────────────────────────────────
+# Record shapes, automation filtering and per-record dating belong to
+# core/sessions.py and are covered by tests/sessions_test.py. What is asserted
+# here is that dream-scan reads through it — that both harnesses reach the
+# report, and that a pipeline's own preamble does not.
 
-@test "extract_user_text: string content" {
-  result=$(_py 'print(mod.extract_user_text({"type":"user","message":{"content":"hello world"}}))')
-  [[ "$result" == "hello world" ]]
+@test "scan: reads Pi sessions as well as Claude's" {
+  mkdir -p "$TMPDIR/.pi/agent/sessions/--repo--"
+  cat > "$TMPDIR/.pi/agent/sessions/--repo--/s.jsonl" <<'PI'
+{"type":"message","timestamp":"2026-09-16T14:30:00.000Z","message":{"role":"user","content":[{"type":"text","text":"actually that approach is wrong"}],"timestamp":1789575000000}}
+PI
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 3650
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"actually"* ]]
 }
 
-@test "extract_user_text: content blocks" {
-  result=$(_py_here <<'PY'
-r = {"type":"user","message":{"content":[{"type":"text","text":"hello blocks"}]}}
-print(mod.extract_user_text(r))
-PY
-)
-  [[ "$result" == "hello blocks" ]]
+@test "scan: an agent preamble is not a signal" {
+  # The bug the automation filter exists for: "You are an adversarial
+  # reviewer" matches the correction pattern, and a week of review runs
+  # buried every real signal under hundreds of these.
+  _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/agent.jsonl" \
+    "You are an adversarial reviewer. Your job is to FALSIFY each finding"
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 30
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"adversarial"* ]]
 }
 
-@test "extract_user_text: skips system reminders" {
-  result=$(_py 'print(mod.extract_user_text({"type":"user","message":{"content":"<system-reminder>stuff</system-reminder>"}}))')
-  [[ "$result" == "None" ]]
+# Per-record dating is covered in tests/sessions_test.py, which computes local
+# midnight rather than writing a UTC literal — the same assertion spelled here
+# would pass or fail on the machine's timezone offset.
+
+@test "scan: files a repo's signals under one id across harnesses" {
+  # The same repo worked in from both harnesses is one project, not two: the
+  # harnesses' own directory names encode differently, so the cwd each records
+  # is what they are grouped by.
+  mkdir -p "$TMPDIR/.claude/projects/dash-slug" "$TMPDIR/.pi/agent/sessions/--other--"
+  cat > "$TMPDIR/.claude/projects/dash-slug/c.jsonl" <<'CLAUDE'
+{"type":"user","cwd":"/repo","timestamp":"2026-09-16T10:00:00.000Z","message":{"role":"user","content":"I prefer the first approach"}}
+CLAUDE
+  cat > "$TMPDIR/.pi/agent/sessions/--other--/p.jsonl" <<'PI'
+{"type":"message","cwd":"/repo","timestamp":"2026-09-16T11:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"I prefer the second approach"}],"timestamp":1789575000000}}
+PI
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 3650
+  [[ "$status" -eq 0 ]]
+  # One id for both, named for the cwd rather than either directory name.
+  [[ "$output" == *"--repo--"* ]]
+  [[ "$output" != *"dash-slug"* ]]
 }
 
-@test "extract_user_text: skips image-only content" {
-  result=$(_py_here <<'PY'
-r = {"type":"user","message":{"content":[{"type":"image","source":{"data":"abc"}}]}}
-print(mod.extract_user_text(r))
-PY
-)
-  [[ "$result" == "None" ]]
-}
+@test "scan: reports a per-harness transcript count" {
+  # A harness that stops being discovered reads as a zero here rather than as
+  # a corpus that quietly halved.
+  _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/s.jsonl" "I prefer tabs"
 
-@test "extract_user_text: non-user type returns None" {
-  result=$(_py 'print(mod.extract_user_text({"type":"assistant","message":{"content":"hello"}}))')
-  [[ "$result" == "None" ]]
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 30
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"Sessions Scanned"* ]]
+  [[ "$output" == *"claude 1"* ]]
+  [[ "$output" == *"pi 0"* ]]
 }
 
 # ── classify_signal ──────────────────────────────────────────────────────────

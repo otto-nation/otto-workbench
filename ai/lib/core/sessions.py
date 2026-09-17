@@ -137,6 +137,16 @@ class UserMessage:
 #
 # Pi needs this as much as Claude does despite keeping subagents in separate
 # files, because `pr review` and friends invoke Pi in-place for fix passes.
+#
+# Every prompt template in ai/lib/review-templates must be covered by an entry
+# here. The list is spelled out rather than read from those files because this
+# module is layer 1 and the templates are rendered from layer 3 — core cannot
+# import upward, and a scan that opened thirteen files on every session read
+# would cost more than it saves. tests/sessions_test.py walks the template
+# directory and fails when one of them starts with something no prefix matches,
+# which is what keeps a hand-written list honest: six templates were already
+# uncovered when this check was added, and their preambles were reaching dream
+# as "corrections".
 AUTOMATION_PREFIXES: tuple[str, ...] = (
     # ai/lib/review — preflight context block, prepended to every review agent
     "### Project context",
@@ -146,11 +156,19 @@ AUTOMATION_PREFIXES: tuple[str, ...] = (
     "You are resolving merge conflicts",
     "You are resolving a merge conflict",
     "You are completing the final self-review",
+    "You are completing the final review",
+    "You are doing a holistic scan",
+    "You are a lead scout",
+    "You are verifying fixes",
     # ai/lib/rebase — per-commit conflict resolution
     "You are resolving",
-    # pr review --self, pr comments --fix
+    # pr review --self, pr comments --fix, pr ci --fix
     "Self-review of changes on branch",
     "Fix review findings for branch",
+    "Fix PR review comment suggestions for branch",
+    "Fix CI failures for branch",
+    "Fix pre-push check failures on branch",
+    "Review PR #",
     # ai/lib/agent — retry preambles after a turn-limit or no-op pass
     "IMPORTANT: A previous attempt",
     "This is a RETRY of a prior fix pass",
@@ -175,7 +193,30 @@ def is_automation_prompt(text: str) -> bool:
     tree — the same split ai/pi/extensions/sleep-guard uses, for the same reason.
     """
     stripped = text.lstrip()
-    return any(stripped.startswith(prefix) for prefix in AUTOMATION_PREFIXES)
+    if any(stripped.startswith(prefix) for prefix in AUTOMATION_PREFIXES):
+        return True
+    return _opens_with_heading(stripped)
+
+
+def _opens_with_heading(stripped: str) -> bool:
+    """True when a turn opens with a markdown H1, which a person does not type.
+
+    Slash commands are the case this catches. Claude Code wraps an expanded
+    command in ``<command-name>``, which the prefix list already matches, but Pi
+    expands one into an ordinary user turn carrying the command file's body and
+    marks it in no way at all. Those bodies live in each repo's own
+    ``.claude/commands`` and ``.pi/prompts``, so there is no list of openings to
+    enumerate the way there is for this workbench's templates.
+
+    A structural rule rather than a prose one for that reason: what the bodies
+    share is being a document, and a document opens with its title. Measured
+    over this machine's trailing month, every turn opening with an H1 was a
+    command body — 9 of them, three distinct commands — and no human turn was.
+
+    Only the first line is considered, so a turn that discusses a heading, or
+    quotes one further down, is untouched.
+    """
+    return stripped.startswith("# ")
 
 
 # ── Discovery ────────────────────────────────────────────────────────────────

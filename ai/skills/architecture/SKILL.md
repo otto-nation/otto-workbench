@@ -42,12 +42,14 @@ and is seen by no CI check — the only way it is ever found is by hand.
 # Find the current project's architecture.md
 cat .claude/architecture.md
 
-# Find the project's memory files (if any)
-ls ~/.claude/projects/$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo "unknown"))/memory/ 2>/dev/null
+# Find the project's memory files (if any). The directory is named for the
+# repo's absolute path with every non-alphanumeric replaced by a hyphen, not
+# for its basename.
+repo=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+ls ~/.claude/projects/"$(printf '%s' "$repo" | tr -c 'A-Za-z0-9' '-')"/memory/ 2>/dev/null
 
-# Find the 5 most recent session files for this project
-project_slug=$(pwd | sed 's|/|-|g' | sed 's|^-||')
-ls -t ~/.claude/projects/${project_slug}/*.jsonl 2>/dev/null | head -5
+# Find the 5 most recent session files, across every harness
+dream-scan --list-transcripts --days 30 | head -5
 ```
 
 Note:
@@ -66,13 +68,20 @@ These may belong in architecture.md rather than (or in addition to) memory.
 
 ### 4. Read recent sessions
 
-Read the 5 most recent session `.jsonl` files. For each file, scan for:
+Read the 5 most recent session `.jsonl` files listed above. They may come from
+either harness, and the two write different record shapes — Claude Code writes
+`{"type": "user", ...}` and Pi writes `{"type": "message", "message":
+{"role": "user"}}`. Scanning the raw text for the phrases below reads both
+without having to tell them apart; `ai/lib/core/sessions.py` is what parses
+them properly when structure is needed.
+
+For each file, scan for:
 - Wrong-software discoveries: "not Synapse", "actually Conduit", "wrong API", "turned out"
 - Tool-availability findings: "no curl", "no wget", "doesn't have bash", "minimal image"
 - Architectural confirmations: "the convention is", "always goes in", "never edit directly"
 - New services or roles mentioned that aren't in architecture.md's Service Stack
 
-Read ONLY the context around matches — lines where `type` is `"human"` or `"assistant"`.
+Read ONLY the context around matches.
 
 ### 5. Build a proposed diff
 

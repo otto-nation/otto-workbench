@@ -106,7 +106,7 @@ Remove or archive entries that are:
 - Already covered by a rule file in `ai/guidelines/rules/` — the rule is the SSOT, delete the memory
 - More than 90 days old with no references in recent sessions
 - Contradicted by newer entries
-- About projects that no longer exist in `~/.claude/projects/`
+- About projects that no longer exist on this machine
 
 ### Record the dream timestamp
 
@@ -150,21 +150,28 @@ Only if `.claude/architecture.md` exists in the project directory. Skip silently
 
 ### What to scan for
 
-Re-use the session files already scanned in Phase 2. Look specifically for architectural signals:
+Re-use the session files already scanned in Phase 2 — `dream-scan
+--list-transcripts` prints them, across every harness, for the same window:
+
+```bash
+dream-scan --list-transcripts --days 7 > /tmp/dream-transcripts
+```
+
+Look specifically for architectural signals:
 
 **Software/API identity discoveries:**
 ```bash
-grep -il "not synapse\|not synapse\|actually uses\|it's actually\|turned out\|the real\|wrong api\|wrong image\|wrong software" ~/.claude/projects/*/*.jsonl 2>/dev/null
+xargs grep -il "not synapse\|not synapse\|actually uses\|it's actually\|turned out\|the real\|wrong api\|wrong image\|wrong software" < /tmp/dream-transcripts 2>/dev/null
 ```
 
 **Container constraint discoveries:**
 ```bash
-grep -il "not installed\|not available\|doesn't have\|missing tool\|no curl\|no wget\|no bash\|no shell\|minimal image\|distroless" ~/.claude/projects/*/*.jsonl 2>/dev/null
+xargs grep -il "not installed\|not available\|doesn't have\|missing tool\|no curl\|no wget\|no bash\|no shell\|minimal image\|distroless" < /tmp/dream-transcripts 2>/dev/null
 ```
 
 **Architectural convention confirmations:**
 ```bash
-grep -il "the convention is\|the pattern is\|always goes in\|never edit directly\|single source\|canonical location" ~/.claude/projects/*/*.jsonl 2>/dev/null
+xargs grep -il "the convention is\|the pattern is\|always goes in\|never edit directly\|single source\|canonical location" < /tmp/dream-transcripts 2>/dev/null
 ```
 
 ### Confidence threshold
@@ -204,16 +211,16 @@ Only if `~/.claude/machine/machine.md` exists. Skip silently otherwise.
 
 ### What to scan for
 
-Re-use the session files already scanned in Phase 2. Look for machine-level signals:
+Re-use the transcript list from Phase 5. Look for machine-level signals:
 
 **Runtime/tool changes:**
 ```bash
-grep -il "upgraded\|installed\|updated\|removed\|uninstalled\|now running\|switched to\|brew install" ~/.claude/projects/*/*.jsonl 2>/dev/null
+xargs grep -il "upgraded\|installed\|updated\|removed\|uninstalled\|now running\|switched to\|brew install" < /tmp/dream-transcripts 2>/dev/null
 ```
 
 **Docker/runtime state changes:**
 ```bash
-grep -il "colima\|docker.*not\|docker.*stopped\|socket.*not found\|docker desktop" ~/.claude/projects/*/*.jsonl 2>/dev/null
+xargs grep -il "colima\|docker.*not\|docker.*stopped\|socket.*not found\|docker desktop" < /tmp/dream-transcripts 2>/dev/null
 ```
 
 ### What to write

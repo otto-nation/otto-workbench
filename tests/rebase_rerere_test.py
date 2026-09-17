@@ -10,6 +10,7 @@ the half that has broken here before.
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from unittest import mock
 
@@ -262,15 +263,17 @@ class TestUnattendedEditor:
         # sleep blocks on nothing at all, so it reproduces the shape of the bug
         # (git waiting on an editor that never returns) the same way everywhere.
         # Longer than the bound below, so the bound is what ends it.
-        driver = (
-            "import sys;"
-            f"sys.path.insert(0, {str(LIB_DIR)!r});"
-            "from rebase import lifecycle;"
-            "from git import client as git_client;"
-            "git_client.run('rebase', '--autosquash', 'main',"
-            f"    cwd={str(repo)!r}, config=lifecycle.REBASE_CONFIG,"
-            "    env=lifecycle.unattended_env())"
-        )
+        driver = textwrap.dedent(f"""\
+            import sys
+            sys.path.insert(0, {str(LIB_DIR)!r})
+            from rebase import lifecycle
+            from git import client as git_client
+            git_client.run(
+                "rebase", "--autosquash", "main",
+                cwd={str(repo)!r}, config=lifecycle.REBASE_CONFIG,
+                env=lifecycle.unattended_env(),
+            )
+        """)
         try:
             done = subprocess.run(
                 [sys.executable, "-c", driver],

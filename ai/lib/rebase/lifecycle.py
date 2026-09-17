@@ -289,8 +289,10 @@ def step_advance(
         # Carries the same config as the other two: --skip drops the current
         # commit and goes straight on to apply the next, so the merges it runs
         # are as able to replay a recorded resolution as any other step's.
-        r = git_client.run("rebase", "--skip", cwd=cwd, config=REBASE_CONFIG,
-                           env=unattended_env())
+        r = git_client.run(
+            "rebase", "--skip", cwd=cwd, config=REBASE_CONFIG,
+            env=unattended_env(),
+        )
         note_replays(r, tally, trail=trail)
         if not r.ok:
             log.error(f"git rebase --skip failed (exit {r.returncode})")
@@ -457,7 +459,9 @@ def rebase_success(
         if mode.reaches_remote:
             log.info(f"{label} — force-pushing...")
         landed = rebase_land.land_rebased(
-            cwd, resolved_files=tally.files or None, trail=trail,
+            cwd,
+            resolved_files=list(dict.fromkeys(tally.files + tally.replayed)) or None,
+            trail=trail,
         )
         if landed.ok:
             tinfo(trail, "force_push", "force-pushed to remote", data={"sha": landed.sha})

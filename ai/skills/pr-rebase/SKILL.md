@@ -137,7 +137,7 @@ already has.
   "conflicts_resolved": 2,
   "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
   "files_stale": ["orc-lending/go.sum"],
-  "files_replayed": ["orc-lending/go.sum"],
+  "files_replayed": ["orc-lending/package-lock.json"],
   "force_pushed": true
 }
 ```

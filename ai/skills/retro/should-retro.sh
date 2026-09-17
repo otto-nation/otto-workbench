@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # should-retro.sh — checks whether a retro analysis is due.
-# Returns 0 (true) if 72+ hours AND 5+ sessions (in any project with memory/)
-# since last retro. Projects without memory/ are skipped — they have no session
+# Returns 0 (true) if 72+ hours AND 5+ sessions (in any repo with memory/)
+# since last retro. Repos without memory/ are skipped — they have no session
 # activity to measure.
 # Returns 1 (false) otherwise.
 # Uses a global timestamp (~/.claude/.last-retro) since retro scans across all repos.
+#
+# Sessions are counted per repo across every harness and every worktree — see
+# the note in should-dream.sh. The stamp stays global because a retro is one
+# sweep over every repo's reviews rather than a per-repo pass.
 
 set -e
 
@@ -20,20 +24,17 @@ MIN_SESSIONS=5
 now=$(date +%s)
 threshold_secs=$((RETRO_INTERVAL_HOURS * 3600))
 
-stamp_file="$CLAUDE_DIR/.last-retro"
-last_retro=0
-[[ -f "$stamp_file" ]] && last_retro=$(cat "$stamp_file" 2>/dev/null || echo 0)
+last_retro="$(_read_stamp "$CLAUDE_DIR/.last-retro")"
 
 elapsed=$((now - last_retro))
 [[ "$elapsed" -lt "$threshold_secs" ]] && exit 1
 
-for project_dir in "$CLAUDE_DIR/projects"/*/; do
-  [[ -d "$project_dir" ]] || continue
-  [[ -d "${project_dir}memory" ]] || continue
+while IFS=$'\t' read -r memory_dir repo_dir; do
+  [[ -n "$memory_dir" ]] || continue
 
-  if _has_enough_sessions "$project_dir" "$last_retro" "$MIN_SESSIONS"; then
+  if _repo_has_enough_sessions "$repo_dir" "$last_retro" "$MIN_SESSIONS"; then
     exit 0
   fi
-done
+done < <(_memory_repos)
 
 exit 1

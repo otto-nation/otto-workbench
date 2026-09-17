@@ -11,8 +11,16 @@
 #
 # Sourced directly rather than via lib/ui.sh: the Stop hooks that call this
 # helper skip ui.sh to stay inside their startup budget.
+_session_count_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../portable.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/portable.sh"
+. "$_session_count_lib_dir/portable.sh"
+# Which repos exist, for _memory_repos below. Also direct rather than via ui.sh,
+# and after portable.sh because projects.sh pulls in git_layout.sh: the pair
+# costs a few milliseconds of parsing and no forks, which is what keeps the
+# gates inside the budget the comment above sets.
+# shellcheck source=../projects.sh
+. "$_session_count_lib_dir/projects.sh"
+unset _session_count_lib_dir
 
 # Session stores, one per harness, as paths under $HOME. Keep in step with
 # HARNESSES in ai/lib/core/sessions.py.
@@ -155,4 +163,51 @@ _count_sessions_since() {
     count=$((count + 1))
   done
   printf '%s' "$count"
+}
+
+# _memory_repos — every repo on this machine with a memory directory, one
+# `<memory dir><TAB><repo dir>` line each.
+#
+# The sweep the three global gates share. It reads forward from the project
+# registry — repo path, then encode to the directory its memory lives in —
+# rather than globbing `$CLAUDE_DIR/projects/*/memory` and working back.
+# Globbing yields slugs, and neither harness's slug is reversible: Claude maps
+# `-` and `_` alike to a hyphen, so a directory name cannot say which repo it
+# belongs to. A gate that starts from a slug therefore cannot ask the
+# repo-scoped question at all, and is stuck counting the one directory it
+# globbed — which is the bug being fixed here, not a step toward fixing it.
+#
+# A repo with no memory directory is skipped: there is nothing to consolidate
+# and nowhere to record that a pass happened. A memory directory whose repo has
+# left the registry is skipped too, and stops being swept — registration is an
+# observation, so the recovery is to run any workbench command in that repo.
+#
+# Forks nothing once `record_project_repo_ids` has run, which the sync does:
+# each line then already carries the repo identity, and only a registry line
+# still missing one pays a `git rev-parse`.
+_memory_repos() {
+  # `worktree` is written by the nameref split and deliberately not read: the
+  # leader is one checkout of the repo, and what a gate needs is the repo the
+  # memory hangs off, which is what the identity resolves to.
+  # shellcheck disable=SC2034
+  local line id worktree repo_dir memory_dir
+  while IFS= read -r line; do
+    _split_repo_worktree_line "$line" id worktree
+    repo_dir="$(project_repo_label "$id")"
+    memory_dir="$(_claude_project_dir "$repo_dir")/memory"
+    [[ -d "$memory_dir" ]] || continue
+    printf '%s\t%s\n' "$memory_dir" "$repo_dir"
+  done < <(project_repo_leaders)
+  return 0
+}
+
+# _read_stamp FILE — the epoch seconds in FILE, or 0 when it is absent or
+# unreadable. The three gates each read a cooldown stamp the same way.
+_read_stamp() {
+  local stamp_file="$1"
+  [[ -f "$stamp_file" ]] || { printf '0'; return 0; }
+  local value
+  value="$(cat "$stamp_file" 2>/dev/null)" || value=""
+  [[ "$value" =~ ^[0-9]+$ ]] || value=0
+  printf '%s' "$value"
 }

@@ -374,3 +374,72 @@ clone_from_shared_remote() {
   git config user.name "Test"
   git checkout "$branch" --quiet 2>/dev/null
 }
+
+# ─── Session gate fixtures ───────────────────────────────────────────────────
+# Shared by should_dream.bats, should_promote.bats, should_retro.bats and
+# should_wiki_capture.bats. The three global gates sweep the project registry
+# and count sessions per repo across both harnesses, so a fixture is a real
+# registered repo with transcripts in a harness directory — not a bare
+# directory under `.claude/projects` named for nothing.
+
+# gate_sandbox — a HOME and state root of their own, and an empty registry.
+# Call after TEST_HOME is set and exported. Every gate fixture below writes
+# into these, so nothing touches the machine's real registry or session store.
+gate_sandbox() {
+  export WORKBENCH_STATE_DIR="$TEST_HOME/state"
+  export WORKBENCH_CACHE_DIR="$TEST_HOME/cache"
+  export WORKBENCH_CONFIG_DIR="$TEST_HOME/config"
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  : > "$WORKBENCH_STATE_DIR/projects.registry"
+}
+
+# gate_repo NAME — a registered git repo at $TEST_HOME/NAME, printed.
+#
+# Registered by appending to the registry file rather than through
+# project_register, which refuses a temp path: these live under a mktemp HOME
+# by design, and the sandboxed state root is what keeps them out of the real
+# file. The identity field is left off so the gate resolves it the way it does
+# for a line the sync has not reached yet.
+gate_repo() {
+  local dir="$TEST_HOME/$1"
+  mkdir -p "$dir"
+  GIT_CEILING_DIRECTORIES="$TEST_HOME" git -C "$dir" init --quiet
+  printf '%s\n' "$dir" >> "$WORKBENCH_STATE_DIR/projects.registry"
+  printf '%s' "$dir"
+}
+
+# gate_memory REPO_DIR — give REPO_DIR a memory directory, printed. Without one
+# a repo is skipped by every global gate.
+gate_memory() {
+  local mem
+  mem="$(gate_claude_dir "$1")/memory"
+  mkdir -p "$mem"
+  printf '%s' "$mem"
+}
+
+# gate_claude_dir DIR — the ~/.claude/projects directory Claude Code names for
+# a session whose cwd is DIR. Spelled out rather than sourced so these suites
+# would catch the transform changing under the gates.
+gate_claude_dir() {
+  printf '%s/.claude/projects/%s' "$HOME" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-')"
+}
+
+# gate_pi_dir DIR — the same for Pi, which keeps underscores and wraps the
+# encoded path in a doubled delimiter.
+gate_pi_dir() {
+  local encoded
+  encoded="$(printf '%s' "${1#/}" | tr -c 'A-Za-z0-9_' '-')"
+  printf '%s/.pi/agent/sessions/--%s--' "$HOME" "$encoded"
+}
+
+# gate_sessions SESSION_DIR COUNT [MTIME] — COUNT transcripts in SESSION_DIR,
+# optionally back-dated with `touch -t`.
+gate_sessions() {
+  local dir="$1" count="$2" mtime="${3:-}" i
+  mkdir -p "$dir"
+  for i in $(seq 1 "$count"); do
+    printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
+    [ -n "$mtime" ] && touch -t "$mtime" "$dir/session-$i.jsonl"
+  done
+  return 0
+}

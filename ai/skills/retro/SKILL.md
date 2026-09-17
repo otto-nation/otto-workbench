@@ -38,15 +38,30 @@ ORIENT --> CLASSIFY --> PROPOSE --> REPORT
 
 **Goal:** Collect PR review comments and cross-reference against current rules.
 
-Run `retro-scan` to produce a structured report:
+Run `retro-scan --consume` to produce a structured report:
 ```bash
-retro-scan
+retro-scan --consume
 ```
+
+`--consume` records which local reviews the scan read, so Phase 4 may delete
+them, and prints the scan ID that authorises it:
+
+```
+<!-- scan-id: a1b2c3d4e5f6 | consumed: 5 -->
+```
+
+**Keep that ID — Phase 4 requires it.** Without `--consume` nothing is
+recorded and Phase 4 deletes nothing, which is the right behaviour for a scan
+that is not part of a retro.
 
 To override the scan window (e.g. for debugging or historical analysis):
 ```bash
 retro-scan --since 7d
 ```
+
+`--since` cannot be combined with `--consume` and is refused: a scan over an
+arbitrary window is not the scan a retro completes, and its reviews are not the
+retro's to delete.
 
 The report contains:
 - **PR Comments by Repo** — substantive review comments from merged PRs since
@@ -231,12 +246,22 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 ### Record timestamp and clean up
 
 `retro-complete.sh` records the timestamp and cleans up only the review
-directories that were scanned by `retro-scan` (listed in
-`~/.local/state/workbench/retro-consumed-reviews.txt`).
+directories that this retro's own Phase 1 scan read. Pass the scan ID that
+`retro-scan --consume` printed:
 
 ```bash
-~/.claude/skills/retro/retro-complete.sh
+~/.claude/skills/retro/retro-complete.sh a1b2c3d4e5f6
 ```
+
+The ID is checked against the record at
+`~/.local/state/workbench/retro-consumed-reviews.json`. A record written by any
+other scan — a debug run, or a retro that was started and abandoned — is
+refused rather than honoured, and the completion fails without banking the scan
+window. Trace an unexpected record with `otto-log show <its scan-id>`.
+
+A review that was re-run between the scan and this point is kept rather than
+deleted: the retro analysed the older one, so the new review is not its to
+discard.
 
 ### Summary
 

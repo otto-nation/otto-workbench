@@ -3,36 +3,47 @@
 # and removes the pending flag.
 #
 # Writes .last-retro to ~/.claude/ (global, not per-project), deletes the
-# review directories under $REVIEWS_DIR that have been consumed by this retro
-# run, and removes ~/.claude/.retro-pending.
+# review directories the scan recorded under SCAN_ID, and removes
+# ~/.claude/.retro-pending.
 # Called by the retro skill after Phase 4 completes.
 #
-# Usage: retro-complete.sh
+# The scan ID is required because the deletion is not this script's decision to
+# make: retro-scan --consume records what it read and stamps the record with
+# the ID it printed, and retro-consume honours that record only for the scan
+# that wrote it. Passing the ID through is how a completion says which retro it
+# is completing — without it, an abandoned run's record or a debug scan's would
+# be honoured just the same.
+#
+# Usage: retro-complete.sh SCAN_ID
 #
 # Exit codes:
 #   0 — completed successfully
-#   1 — unexpected error
+#   1 — the consume record belongs to a different scan
+#   2 — no scan ID given
 
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+_REPO_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+. "$_REPO_ROOT/lib/constants.sh"
+
+SCAN_ID="${1:-}"
+if [[ -z "$SCAN_ID" ]]; then
+  echo "Error: retro-complete.sh requires the scan ID retro-scan --consume reported" >&2
+  echo "Usage: retro-complete.sh SCAN_ID" >&2
+  exit 2
+fi
+
+# ── Clean up consumed reviews ───────────────────────────────────────────────
+# Before the timestamp, so a refused record fails the completion rather than
+# banking the window on the strength of a cleanup that did not happen.
+
+"$_REPO_ROOT/ai/bin/retro-consume" --scan-id "$SCAN_ID"
 
 # ── Record timestamp ────────────────────────────────────────────────────────
 
 date +%s > "$CLAUDE_DIR/.last-retro"
-
-# ── Clean up consumed reviews ───────────────────────────────────────────────
-# Only delete review dirs listed in the consumed file written by retro-scan.
-
-if [[ -f "$RETRO_CONSUMED_REVIEWS_FILE" ]] && [[ -d "$REVIEWS_DIR" ]]; then
-  while IFS= read -r dir_name; do
-    [[ -z "$dir_name" ]] && continue
-    target="$REVIEWS_DIR/$dir_name"
-    [[ -d "$target" ]] && rm -rf "$target"
-  done < "$RETRO_CONSUMED_REVIEWS_FILE"
-  rm -f "$RETRO_CONSUMED_REVIEWS_FILE"
-fi
 
 # ── Remove pending flag ──────────────────────────────────────────────────────
 

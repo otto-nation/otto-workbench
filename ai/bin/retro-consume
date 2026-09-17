@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Delete the local reviews a retro consumed, if the record answers to it.
+
+Phase 4 of the retro skill. `retro-scan --consume` recorded which reviews it
+read and stamped the record with its own scan ID; this presents that ID back
+and deletes only what that scan claimed, and only where the review on disk is
+still the one it read.
+
+A record that names a different scan is refused rather than honoured: it
+belongs to a retro that was never completed, or to a debug run, and the
+reviews it lists are not this retro's to delete.
+
+Usage:
+  retro-consume --scan-id ID [--dry-run]
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+from pathlib import Path
+
+_BIN_DIR = Path(__file__).resolve().parent
+# ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
+_AI_LIB_DIR = _BIN_DIR.parent / "lib"
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
+# Deliberately unpinned: _version is this entry point's own sibling, not the
+# checked-out ai/lib's, so it comes from this file's own ai/bin regardless.
+sys.path.insert(0, str(_BIN_DIR))
+from core import log, workbench_paths  # noqa: E402
+from _version import version_string as _version_string  # noqa: E402
+from retro.consumed import clear_record, deletable, read_record  # noqa: E402
+
+
+SCRIPT = Path(__file__).name
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Delete the local reviews a retro consumed.",
+        usage="retro-consume --scan-id ID [--dry-run]",
+    )
+    parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
+    parser.add_argument("--scan-id", type=str, default=None, help="the scan ID retro-scan --consume reported")
+    parser.add_argument("--dry-run", action="store_true", help="report what would be deleted, delete nothing")
+    args = parser.parse_args()
+
+    if args.version:
+        print(_version_string(SCRIPT))
+        raise SystemExit(0)
+
+    if not args.scan_id:
+        log.error("--scan-id is required: quote back the ID retro-scan --consume reported")
+        sys.exit(2)
+
+    record = read_record()
+    if record is None:
+        # Not an error. A retro whose scan consumed nothing, or one run before
+        # this record existed, has nothing to clean up and should not fail the
+        # completion over it.
+        log.info("No consume record — nothing to clean up")
+        return
+
+    if record.scan_id != args.scan_id:
+        log.error(
+            f"Consume record belongs to scan {record.scan_id}, not {args.scan_id} "
+            f"— refusing to delete {len(record.reviews)} review(s) this retro did not scan. "
+            f"Trace it with `otto-log show {record.scan_id}`."
+        )
+        sys.exit(1)
+
+    reviews_dir = workbench_paths.reviews_dir()
+    targets, skipped = deletable(record, reviews_dir)
+    for reason in skipped:
+        log.warn(f"Keeping {reason}")
+
+    if args.dry_run:
+        for target in targets:
+            log.info(f"Would delete {target.name}")
+        log.info(f"{len(targets)} review(s) would be deleted, {len(skipped)} kept")
+        return
+
+    for target in targets:
+        shutil.rmtree(target)
+
+    # Cleared only after the deletions it authorised have happened. A crash
+    # part-way leaves the record in place, so the next run with the same scan
+    # ID deletes the remainder rather than losing track of it — the entries
+    # already gone are skipped as missing.
+    clear_record()
+    log.ok(f"Deleted {len(targets)} consumed review(s), kept {len(skipped)}")
+
+
+if __name__ == "__main__":
+    main()

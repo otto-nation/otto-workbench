@@ -107,6 +107,9 @@ def run_pr_review(
     pr_head = pr_meta.get("headRefName", "")
     pr_body = pr_meta.get("body", "")
 
+    # Detected here because the lookup needs `repo_root` above and `pr_head`
+    # from the metadata just fetched. Asking the operator for one is a separate
+    # step, deferred until after the gates below — see the prompt further down.
     issue_link = flags.issue_link
     issue_context = ""
     if not issue_link:
@@ -118,13 +121,6 @@ def run_pr_review(
         issue_context = issue_result.context
         if issue_result.link:
             issue_link = issue_result.link
-
-        if not flags.no_post and not flags.auto_post and not issue_link and not issue_context:
-            issue_link = prompt.ask("Issue link (optional, Enter to skip): ")
-
-    if issue_link or issue_context:
-        trail.info("issue_context", "issue context available",
-                   data={"issue_link": issue_link, "has_context": bool(issue_context)})
 
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
 
@@ -178,6 +174,16 @@ def run_pr_review(
             override=review_preflight.supersession_override(flags.force, flags.recover),
             trail=trail,
         )
+
+        # Below every gate that can end the run, and below the refusal above:
+        # three of them exit, two by prompting, so an issue link asked for any
+        # earlier is one the operator types and then watches be discarded.
+        if not issue_link and not issue_context and not flags.no_post and not flags.auto_post:
+            issue_link = prompt.ask("Issue link (optional, Enter to skip): ")
+
+        if issue_link or issue_context:
+            trail.info("issue_context", "issue context available",
+                       data={"issue_link": issue_link, "has_context": bool(issue_context)})
 
         session_log = str(review_dir / FILENAME_SESSION)
         prior_review_path = resolve_prior_review(review_file, session_log, has_pipeline_state)

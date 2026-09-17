@@ -466,3 +466,121 @@ def test_the_freshness_prompts_are_skipped_when_nobody_can_answer_them(
     )
 
     assert seen["force"] is True, "--no-post means nobody is here to confirm"
+
+
+# ── what the operator is asked, and when ────────────────────────────────────
+
+
+@pytest.mark.parametrize("gate,stub", [
+    ("check_stale_review", lambda *a, **kw: (_ for _ in ()).throw(SystemExit(0))),
+    ("check_pending_review", lambda *a, **kw: (_ for _ in ()).throw(SystemExit(0))),
+    ("refuse_if_superseded", lambda *a, **kw: (_ for _ in ()).throw(SystemExit(3))),
+])
+def test_the_issue_prompt_comes_after_every_gate_that_can_abort(
+    tmp_path, monkeypatch, gate, stub,
+):
+    """Nothing is asked of the operator until the run is certain to happen.
+
+    Three gates below the issue lookup can end the run: a stale review, a
+    pending one, and a superseded branch. Two of them do it by prompting and
+    exiting on the answer. Asking for an issue link above them means a user can
+    type one, hit Enter, and be told the review is not going to run — and the
+    link they typed is gone.
+
+    Parametrised over all three because the prompt only has to be above one of
+    them to waste the answer, and a fix aimed at the supersession case alone
+    would leave the other two.
+    """
+    review_file = _review_file(tmp_path, "pr")
+    tape = []
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+
+    target = review_preflight if gate != "refuse_if_superseded" else review_preflight
+    monkeypatch.setattr(target, gate, stub)
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
+                        lambda *a, **kw: SimpleNamespace(link="", context=""))
+    monkeypatch.setattr(
+        review_run.prompt, "ask",
+        MagicMock(side_effect=AssertionError(f"asked for an issue link above {gate}")),
+    )
+
+    with pytest.raises(SystemExit):
+        review_run.run_pr_review(
+            make_ctx(target_dir=tmp_path / "t"),
+            _flags(no_post=False, auto_post=False), review_file, trail=MagicMock(),
+        )
+
+
+def test_an_attended_pr_review_still_asks_for_an_issue_link(tmp_path, monkeypatch):
+    """The prompt moved; it did not go away.
+
+    Without this, the test above is satisfied by never asking at all.
+    """
+    review_file = _review_file(tmp_path, "pr")
+    tape = []
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
+                        lambda *a, **kw: SimpleNamespace(link="", context=""))
+    asked = MagicMock(return_value="ENG-1")
+    monkeypatch.setattr(review_run.prompt, "ask", asked)
+
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"),
+        _flags(no_post=False, auto_post=False), review_file, trail=MagicMock(),
+    )
+
+    assert asked.call_count == 1, "an attended review with no issue still asks"
+
+
+def test_a_review_that_found_its_issue_context_does_not_ask_for_a_link(
+    tmp_path, monkeypatch,
+):
+    """Detected context answers the question the prompt would ask.
+
+    The tracker resolved the issue from the branch or the PR body, so the
+    reviewer already has what the link would have supplied. Asking anyway is
+    asking for something that is not needed and will not be used.
+    """
+    review_file = _review_file(tmp_path, "pr")
+    tape = []
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        review_issue, "fetch_issue_context",
+        lambda *a, **kw: SimpleNamespace(link="", context="ENG-1: do the thing"),
+    )
+    monkeypatch.setattr(
+        review_run.prompt, "ask",
+        MagicMock(side_effect=AssertionError("asked for a link it already had context for")),
+    )
+
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"),
+        _flags(no_post=False, auto_post=False), review_file, trail=MagicMock(),
+    )
+
+
+@pytest.mark.parametrize("unattended", [{"no_post": True}, {"auto_post": True}])
+def test_an_unattended_pr_review_is_never_prompted(tmp_path, monkeypatch, unattended):
+    """--post and --no-post mean nobody is at the keyboard to answer."""
+    review_file = _review_file(tmp_path, "pr")
+    tape = []
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
+                        lambda *a, **kw: SimpleNamespace(link="", context=""))
+    monkeypatch.setattr(
+        review_run.prompt, "ask",
+        MagicMock(side_effect=AssertionError("prompted an unattended run")),
+    )
+
+    review_run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(**unattended),
+        review_file, trail=MagicMock(),
+    )

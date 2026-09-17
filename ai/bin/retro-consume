@@ -106,10 +106,14 @@ def main() -> None:
     # ID deletes the remainder rather than losing track of it — the entries
     # already gone are skipped as missing.
     clear_record()
-    log.ok(
-        f"Deleted {deleted} consumed review(s), kept {len(skipped)}, "
-        f"{raced} raced (removed concurrently)"
-    )
+    # The raced clause only appears when it has something to report. A run that
+    # hit no race is the overwhelmingly common one, and "0 raced" on every line
+    # of a tool's normal output is noise that trains the reader past the clause
+    # for the run where it is not zero.
+    summary = f"Deleted {deleted} consumed review(s), kept {len(skipped)}"
+    if raced:
+        summary += f", {raced} raced (removed concurrently)"
+    log.ok(summary)
 
 
 if __name__ == "__main__":

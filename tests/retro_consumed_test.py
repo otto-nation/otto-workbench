@@ -238,5 +238,32 @@ def test_a_review_deleted_mid_loop_does_not_abort_the_run(monkeypatch, tmp_path,
     assert "gone before deletion" in captured.err
     # Two of the three were deleted by this run; the third was already gone.
     # Counting len(targets) here would report three and make the warning above
-    # contradict the summary line under it.
-    assert "Deleted 2 consumed review(s)" in captured.out + captured.err
+    # contradict the summary line under it, and the entry belongs to neither
+    # the deleted nor the kept count, so the raced clause is what accounts for it.
+    summary = captured.out + captured.err
+    assert "Deleted 2 consumed review(s), kept 0, 1 raced" in summary
+
+
+def test_a_clean_run_does_not_report_a_race_that_did_not_happen(monkeypatch, tmp_path, capsys):
+    """The raced clause is conditional.
+
+    A run that hits no race is the common one. "0 raced" printed on every line
+    of normal output is noise that trains the reader past the clause for the
+    run where it is not zero — and the race already announces itself with a
+    warning line of its own.
+    """
+    reviews = tmp_path / "state" / "reviews"
+    for name in ("first-review", "last-review"):
+        _review_dir(reviews, name)
+    write_record(
+        ConsumeRecord(
+            scan_id="s",
+            reviews=[ConsumedReview(n) for n in ("first-review", "last-review")],
+        )
+    )
+
+    _run_consume(monkeypatch, tmp_path, "s")
+
+    summary = "".join(capsys.readouterr())
+    assert "Deleted 2 consumed review(s), kept 0" in summary
+    assert "raced" not in summary

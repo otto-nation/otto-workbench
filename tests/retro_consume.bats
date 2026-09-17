@@ -15,7 +15,6 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   RETRO_SCAN="$REPO_ROOT/ai/bin/retro-scan"
   RETRO_CONSUME="$REPO_ROOT/ai/bin/retro-consume"
   RETRO_COMPLETE="$REPO_ROOT/ai/skills/retro/retro-complete.sh"

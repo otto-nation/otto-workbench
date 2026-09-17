@@ -11,7 +11,6 @@ setup() {
   load 'test_helper'
   common_setup
   source_lib  # $REPO_ROOT/lib/ai/pr.sh
-  TMPDIR="$(mktemp -d)"
   cd "$TMPDIR" || return 1
   mkdir -p .github
   printf '## What\n\n## Why\n' > .github/PULL_REQUEST_TEMPLATE.md
@@ -19,7 +18,6 @@ setup() {
 
 teardown() {
   cd / || true
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

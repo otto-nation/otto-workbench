@@ -8,7 +8,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
 
   export HOME="$TMPDIR/home"
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
@@ -23,7 +22,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

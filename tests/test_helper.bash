@@ -38,6 +38,28 @@ common_setup() {
   # causes git commands in tests to target the real repo instead of temp repos)
   unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
 
+  # Scratch that belongs to this case alone. run-tests passes --jobs, so cases
+  # from different files run at once and an inherited TMPDIR is one directory
+  # they all write: two cases using the same relative path are using one file,
+  # and what fails is an assertion about a stub another case truncated.
+  #
+  # Pinned here rather than in each setup() so the rule has one statement to
+  # keep true. A file needing a different form still sets TMPDIR after calling
+  # this and wins — worktree.bats and projects.bats take the `pwd -P` form,
+  # because on macOS $BATS_TEST_TMPDIR is under /var while a tool that
+  # canonicalises reports /private/var, and a test comparing the two paths as
+  # strings fails on the difference.
+  #
+  # Never removed by hand: bats collects it after every case, and teardown()
+  # runs even when setup() died before this line, where TMPDIR is still the
+  # developer's real temp directory. Enforced by validate-tmpdir-isolation.
+  #
+  # Falls back to the per-file root the same way GIT_CONFIG_GLOBAL below does,
+  # because setup_file() runs before bats creates the per-test one and two
+  # files call this from there — without the fallback those export an empty
+  # TMPDIR, which every tool reads as the current directory.
+  export TMPDIR="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}"
+
   # Give git a config of its own, so a temp repo inherits nothing the developer
   # set. A workbench machine turns on core.fsmonitor, core.untrackedCache, and a
   # global core.hooksPath, none of which a test asks for and two of which it pays

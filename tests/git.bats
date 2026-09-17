@@ -5,7 +5,6 @@ setup() {
   load 'test_helper'
   common_setup
   ORIG_DIR="$PWD"
-  TMPDIR="$(mktemp -d)"
 
   # Source steps.sh for access to helper functions
   . "$REPO_ROOT/lib/ui.sh"
@@ -14,7 +13,6 @@ setup() {
 
 teardown() {
   cd "$ORIG_DIR" || return 1
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

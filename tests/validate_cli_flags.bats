@@ -4,12 +4,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   VALIDATE="$REPO_ROOT/bin/local/validate-cli-flags"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -5,7 +5,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   WORKBENCH_RULES="$REPO_ROOT/ai/bin/workbench-rules"
 
   # Source for function-level tests
@@ -24,7 +23,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

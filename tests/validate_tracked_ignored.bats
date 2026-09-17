@@ -9,12 +9,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   VALIDATOR="$REPO_ROOT/bin/local/validate-tracked-ignored"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

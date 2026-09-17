@@ -9,7 +9,6 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   STUBS="$TMPDIR/stubs"
   mkdir -p "$STUBS"
   mkdir -p "$TMPDIR/home"
@@ -31,7 +30,6 @@ EOF
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

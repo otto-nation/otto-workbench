@@ -9,7 +9,7 @@ setup() {
   common_setup
   # Fully resolved: on macOS mktemp hands back a /var/folders path that git
   # reports as /private/var/folders, and half these assertions compare the two.
-  TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"
+  TMPDIR="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
   export WORKBENCH_CACHE_DIR="$TMPDIR/cache"
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
@@ -24,7 +24,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

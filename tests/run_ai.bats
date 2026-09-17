@@ -7,14 +7,12 @@ setup() {
   source_lib
   ORIG_DIR="$PWD"
   ORIG_PATH="$PATH"
-  TMPDIR="$(mktemp -d)"
   cd "$TMPDIR" || exit
 }
 
 teardown() {
   cd "$ORIG_DIR" || exit
   PATH="$ORIG_PATH"
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -7,12 +7,10 @@ setup() {
   common_setup
   source_lib
   ORIG_PATH="$PATH"
-  TMPDIR="$(mktemp -d)"
 }
 
 teardown() {
   PATH="$ORIG_PATH"
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

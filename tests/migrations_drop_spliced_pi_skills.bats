@@ -4,13 +4,11 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR/home"
   MIGRATION="$REPO_ROOT/ai/pi/migrations/20260901-drop-spliced-pi-skills.sh"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

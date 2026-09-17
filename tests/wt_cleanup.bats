@@ -54,7 +54,6 @@ FAKEGH
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
 
   WT_JSON="$TMPDIR/wt-list.json"
   WT_REMOVE_LOG="$TMPDIR/wt-removes.log"
@@ -76,7 +75,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

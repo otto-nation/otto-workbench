@@ -5,7 +5,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   OUT="$TMPDIR/git.generated.md"
   GENERATOR="$REPO_ROOT/git/bin/local/generate-git-rules"
   # The synonym a fixture conventions file declares. Deliberately not the
@@ -20,7 +19,6 @@ setup() {
 
 teardown() {
   cd / || return 1
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

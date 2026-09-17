@@ -7,13 +7,11 @@ setup() {
   load 'test_helper'
   common_setup
   MIGRATION="$REPO_ROOT/bin/migrations/20260916-remove-legacy-worktree-state.sh"
-  TMPDIR="$(mktemp -d)"
   WORKTREE="$TMPDIR/worktree"
   mkdir -p "$WORKTREE"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -4,7 +4,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
   mkdir -p "$WORKBENCH_STATE_DIR"
   STATE_FILE="$WORKBENCH_STATE_DIR/install.yml"
@@ -12,7 +11,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

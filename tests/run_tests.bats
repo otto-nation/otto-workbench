@@ -9,7 +9,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   # Both are read by the code under test and both are set on a real run — CI
   # sets CI, and a caller or a parent suite may have exported TEST_JOBS. Left
   # in place they would decide the answer instead of the test.
@@ -24,7 +23,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

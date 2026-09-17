@@ -14,7 +14,7 @@ setup() {
 
   # -P: git answers with the physical path, and on macOS $TMPDIR is reached
   # through /var -> /private/var, so an unresolved fixture path never matches.
-  TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"
+  TMPDIR="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
   SEED="$TMPDIR/seed"
   mkdir -p "$SEED"
   printf 'x\n' > "$SEED/a.sh"
@@ -22,7 +22,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

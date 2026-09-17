@@ -12,7 +12,7 @@ setup() {
   SNIPPET="$REPO_ROOT/zsh/config.d/tools/claude.zsh"
   # Physical path: on macOS mktemp hands back /var/..., git reports the
   # /private/var/... it resolves to, and every path comparison below would fail.
-  TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"
+  TMPDIR="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
   SEED="$TMPDIR/seed"
   CONTAINER="$TMPDIR/container"
   FAKE_BIN="$TMPDIR/bin"
@@ -20,7 +20,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

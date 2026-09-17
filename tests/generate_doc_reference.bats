@@ -8,7 +8,6 @@ setup() {
   load 'test_helper'
   common_setup
   source "$REPO_ROOT/bin/local/generate-doc-reference"
-  TMPDIR="$(mktemp -d)"
 
   # SOURCE_ROOT is the env hook every source set resolves its globs against, so
   # the fixtures below stand in for the real trees and no test reads the modules
@@ -21,7 +20,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
   unset SOURCE_ROOT
 }

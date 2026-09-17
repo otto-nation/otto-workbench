@@ -6,7 +6,6 @@ setup() {
   load 'test_helper'
   common_setup
   VALIDATOR="$REPO_ROOT/bin/local/validate-migrations"
-  TMPDIR="$(mktemp -d)"
 
   # Build a minimal fake workbench with ui.sh stubs and constants
   FAKE_ROOT="$TMPDIR/workbench"
@@ -58,7 +57,6 @@ CONST
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

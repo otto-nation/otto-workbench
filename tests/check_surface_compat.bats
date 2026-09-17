@@ -5,7 +5,6 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   REMOTE="$TMPDIR/remote.git"
   LOCAL="$TMPDIR/local"
   make_git_remote "$REMOTE" "$LOCAL" "feat/surface"
@@ -14,7 +13,6 @@ setup() {
 
 teardown() {
   cd / || return 1
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

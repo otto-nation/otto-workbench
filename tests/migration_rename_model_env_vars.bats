@@ -7,12 +7,10 @@ setup() {
   load 'test_helper'
   common_setup
   MIGRATION="$REPO_ROOT/zsh/migrations/20260908-rename-model-env-vars.sh"
-  TMPDIR="$(mktemp -d)"
   ENV_FILE="$TMPDIR/.env.local"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

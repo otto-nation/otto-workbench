@@ -7,13 +7,11 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   # Source install_symlink
   source "$REPO_ROOT/lib/files.sh"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   unset WORKBENCH_DIR WORKBENCH_STABLE_DIR
   common_teardown
 }

@@ -5,12 +5,10 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   VALIDATE_NESTING="$REPO_ROOT/bin/validate-nesting"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

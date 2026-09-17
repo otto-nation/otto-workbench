@@ -20,7 +20,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   AGENT_SKILLS="$TMPDIR/agent/skills"
   PKG_SKILLS="$TMPDIR/pkg/skills"
   mkdir -p "$AGENT_SKILLS" "$PKG_SKILLS" "$TMPDIR/cwd"
@@ -38,7 +37,6 @@ _require_resolver() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

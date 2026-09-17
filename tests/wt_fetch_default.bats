@@ -9,7 +9,6 @@ setup() {
   load 'test_helper'
   common_setup
   ORIG_DIR="$PWD"
-  TMPDIR="$(mktemp -d)"
   SCRIPT="$REPO_ROOT/git/bin/wt-fetch-default"
 
   export GIT_CEILING_DIRECTORIES="$TMPDIR"
@@ -19,7 +18,6 @@ setup() {
 
 teardown() {
   cd "$ORIG_DIR" || return 1
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

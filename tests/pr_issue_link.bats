@@ -8,7 +8,6 @@ setup() {
   # $TMPDIR/bin/python3, and the machine's real TMPDIR is shared by every test
   # running in parallel: two cases writing that one path truncate it out from
   # under a third that is executing it, so the stub reports the wrong provider.
-  TMPDIR="$BATS_TEST_TMPDIR"
   parse_pr_flags ""
 }
 

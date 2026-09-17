@@ -4,14 +4,12 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   REPO="$TMPDIR/repo"
   mkdir -p "$REPO/.claude"
   MIGRATION="$REPO_ROOT/ai/claude/migrations/20260902-project-context-to-root.sh"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -6,7 +6,6 @@ setup() {
   load 'test_helper'
   common_setup
   OTTO="$REPO_ROOT/bin/otto-workbench"
-  TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR/home"
   mkdir -p "$HOME"
   sandbox_state_dir
@@ -25,7 +24,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

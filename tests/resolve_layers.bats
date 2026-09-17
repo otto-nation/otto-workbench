@@ -8,14 +8,12 @@ setup() {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/ui.sh"
 
-  TMPDIR="$(mktemp -d)"
   BASE_DIR="$TMPDIR/base"
   USER_DIR="$TMPDIR/user"
   mkdir -p "$BASE_DIR" "$USER_DIR"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

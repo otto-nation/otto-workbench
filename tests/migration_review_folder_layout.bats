@@ -4,7 +4,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
   REVIEWS="$TMPDIR/state/reviews"
   # CLAUDE_DIR is derived from $HOME by constants.sh rather than read from the
@@ -18,7 +17,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

@@ -8,13 +8,11 @@ FAKE_HOME=""
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

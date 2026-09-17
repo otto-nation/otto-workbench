@@ -8,7 +8,6 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
   ROOT="$TMPDIR/root"
   mkdir -p "$ROOT/bin/local" "$ROOT/git/bin" "$ROOT/docs" "$ROOT/outside"
   ln -s "$REPO_ROOT/lib" "$ROOT/lib"
@@ -16,7 +15,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

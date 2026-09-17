@@ -29,7 +29,6 @@ FAKEGH
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
 
   export PATH="$MOCK_BIN:$PATH"
   export GH_PR_JSON="$TMPDIR/prs.json"
@@ -42,7 +41,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

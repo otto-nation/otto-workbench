@@ -7,7 +7,6 @@ setup() {
   load 'test_helper'
   common_setup
   MIGRATION="$REPO_ROOT/ai/pi/migrations/20260831-pi-settings-agent-path.sh"
-  TMPDIR="$(mktemp -d)"
   LEGACY="$TMPDIR/pi/settings.json"
   TEMPLATE="$TMPDIR/template.json"
   mkdir -p "$TMPDIR/pi"
@@ -15,7 +14,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

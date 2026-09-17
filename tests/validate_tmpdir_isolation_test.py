@@ -245,6 +245,37 @@ def test_a_commented_out_removal_is_not_reported(tmp_path):
     assert _wipes(tmp_path, source) == []
 
 
+def test_an_end_of_options_marker_does_not_hide_the_wipe(tmp_path):
+    """`rm -rf -- "$TMPDIR"` is an ordinary spelling, not an evasion."""
+    source = BATS_PIN + 'teardown() {\n  rm -rf -- "$TMPDIR"\n}\n'
+    assert [line for line, _ in _wipes(tmp_path, source)] == [5]
+
+
+def test_a_trailing_redirect_does_not_hide_the_wipe(tmp_path):
+    """`2>/dev/null` on the end is idiomatic here and must not shield the line."""
+    source = BATS_PIN + 'teardown() {\n  rm -rf "$TMPDIR" 2>/dev/null\n}\n'
+    assert [line for line, _ in _wipes(tmp_path, source)] == [5]
+
+
+def test_a_trailing_comment_does_not_hide_the_wipe(tmp_path):
+    """strip_comments only blanks whole-line comments, so the terminator must
+    accept a trailing `#` itself."""
+    source = BATS_PIN + 'teardown() {\n  rm -rf "$TMPDIR"  # cleanup\n}\n'
+    assert [line for line, _ in _wipes(tmp_path, source)] == [5]
+
+
+def test_a_wipe_chained_with_and_is_reported(tmp_path):
+    source = BATS_PIN + 'teardown() {\n  rm -rf "$TMPDIR" && echo done\n}\n'
+    assert [line for line, _ in _wipes(tmp_path, source)] == [5]
+
+
+def test_a_subpath_with_a_trailing_redirect_is_still_allowed(tmp_path):
+    """The redirect clause must not turn a legitimate subpath removal into a
+    finding — the suffix is what makes it safe, wherever the line ends."""
+    source = BATS_PIN + 'teardown() {\n  rm -rf "$TMPDIR/repo" 2>/dev/null\n}\n'
+    assert _wipes(tmp_path, source) == []
+
+
 # ── pins bats will not clean up ──────────────────────────────────────────
 
 

@@ -71,6 +71,15 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+# Not in the facade, but sourced on its own by the Stop-hook gates and by the
+# bats helper, and it pulls in projects.sh — which dies in its own guard unless
+# constants.sh was loaded first. `set -e` because that is how the gates run it,
+# and the failure this covers was a `return 1` out of the source, not a message.
+@test "ai/session-count.sh can be sourced independently" {
+  run bash -c "set -e; . '$REPO_ROOT/lib/ai/session-count.sh'; type _memory_repos"
+  [ "$status" -eq 0 ]
+}
+
 @test "git_env_clear drops every inherited git override" {
   # Exported, because that is how a hook hands them down — an unexported
   # assignment would pass even if the function unset nothing.

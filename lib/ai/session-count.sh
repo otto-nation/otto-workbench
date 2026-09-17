@@ -14,6 +14,16 @@
 _session_count_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../portable.sh
 . "$_session_count_lib_dir/portable.sh"
+# projects.sh guards on PROJECTS_REGISTRY_FILE, which only constants.sh
+# defines, so load it when the caller has not. The eight gate scripts all
+# source constants.sh before this file and pay nothing here; a caller that
+# sources this module on its own — the test helper does — would otherwise die
+# inside the guard. Same arrangement lib/registries.sh has with roots.sh, for
+# the same reason.
+if [[ -z "${PROJECTS_REGISTRY_FILE:-}" ]]; then
+  # shellcheck source=../constants.sh
+  . "$_session_count_lib_dir/constants.sh"
+fi
 # Which repos exist, for _memory_repos below. Also direct rather than via ui.sh,
 # and after portable.sh because projects.sh pulls in git_layout.sh: the pair
 # costs a few milliseconds of parsing and no forks, which is what keeps the
@@ -82,6 +92,15 @@ _claude_project_dir() {
   local slug
   slug="$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-')"
   printf '%s/projects/%s' "$CLAUDE_DIR" "$slug"
+}
+
+# _claude_memory_dir DIR — where the memory for the repo at DIR lives.
+#
+# Memory is still kept in Claude's tree whichever harness a session ran in, and
+# moving it out is its own change. Spelled here so the join has one owner:
+# memory_dirs() in ai/lib/core/sessions.py is the Python half.
+_claude_memory_dir() {
+  printf '%s/memory' "$(_claude_project_dir "$1")"
 }
 
 # _session_dirs_for_repo REPO_DIR — every harness directory holding sessions for
@@ -194,7 +213,7 @@ _memory_repos() {
   while IFS= read -r line; do
     _split_repo_worktree_line "$line" id worktree
     repo_dir="$(project_repo_label "$id")"
-    memory_dir="$(_claude_project_dir "$repo_dir")/memory"
+    memory_dir="$(_claude_memory_dir "$repo_dir")"
     [[ -d "$memory_dir" ]] || continue
     printf '%s\t%s\n' "$memory_dir" "$repo_dir"
   done < <(project_repo_leaders)

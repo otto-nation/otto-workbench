@@ -897,6 +897,18 @@ _make_hook() {
   [[ "$output" == *"harness-specific root"* ]]
 }
 
+@test "a Claude root on a line that also names the shared one is still caught" {
+  # The compliant reference must not launder the bad one beside it: the filter
+  # drops non-compliant matches, not whole lines that happen to hold a good one.
+  _make_skill widget
+  echo 'was ~/.claude/skills/widget/widget.sh, now ~/.agents/skills/widget/widget.sh' \
+    >> "$FAKE_WORKBENCH/ai/skills/widget/SKILL.md"
+
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"harness-specific root"* ]]
+}
+
 @test "prose naming both skills roots is not a script path" {
   # writing-skills names both in a sentence about where skills install. The
   # filename at the end of the pattern is what keeps the check off it.

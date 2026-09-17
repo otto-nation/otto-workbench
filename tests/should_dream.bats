@@ -10,17 +10,17 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  # Fully resolved: on macOS mktemp hands back a /var/folders path that git
-  # reports as /private/var/folders, and the gate encodes the path git gives it
-  # into the directory it looks for the memory in.
-  TEST_HOME="$(cd "$(mktemp -d)" && pwd -P)"
+  # Fully resolved: on macOS $TMPDIR is a /var/folders path that git reports
+  # as /private/var/folders, and the gate encodes the path git gives it into
+  # the directory it looks for the memory in.
+  TEST_HOME="$(cd "$TMPDIR" && pwd -P)/home"
+  mkdir -p "$TEST_HOME"
   export HOME="$TEST_HOME"
   gate_sandbox
   SHOULD_DREAM="$REPO_ROOT/ai/skills/dream/should-dream.sh"
 }
 
 teardown() {
-  rm -rf "$TEST_HOME"
   common_teardown
 }
 

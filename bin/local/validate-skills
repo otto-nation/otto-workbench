@@ -552,9 +552,9 @@ _check_every_shim_pin() {
   return 0
 }
 
-PI_SETTINGS="$WORKBENCH_DIR/ai/pi/settings.json"
 _check_every_harness_script_path
 
+PI_SETTINGS="$WORKBENCH_DIR/ai/pi/settings.json"
 if [[ -f "$PI_SETTINGS" ]]; then
   superpowers_pin="$(_superpowers_pin "$PI_SETTINGS")"
   # Guarded rather than `[[ ... ]] && _check`: an undeclared package makes the

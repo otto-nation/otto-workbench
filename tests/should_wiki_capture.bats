@@ -12,10 +12,11 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  # Fully resolved: on macOS mktemp hands back a /var/folders path that git
-  # reports as /private/var/folders, and the gate keys its stamp on the path
-  # git gives it.
-  TEST_HOME="$(cd "$(mktemp -d)" && pwd -P)"
+  # Fully resolved: on macOS $TMPDIR is a /var/folders path that git reports
+  # as /private/var/folders, and the gate keys its stamp on the path git gives
+  # it.
+  TEST_HOME="$(cd "$TMPDIR" && pwd -P)/home"
+  mkdir -p "$TEST_HOME"
   export HOME="$TEST_HOME"
   gate_sandbox
   SHOULD_CAPTURE="$REPO_ROOT/ai/skills/wiki-capture/should-wiki-capture.sh"
@@ -31,7 +32,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TEST_HOME"
   common_teardown
 }
 

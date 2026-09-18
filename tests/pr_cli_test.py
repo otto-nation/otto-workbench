@@ -780,6 +780,61 @@ def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_names_the_target_its_parent_locked(mock_load, mock_run):
+    """The review pass is told which target to resolve, not left to guess.
+
+    It ran with `--repo-dir` alone, so the child re-resolved from that
+    checkout's current branch. When that is not the branch the parent locked —
+    a PR run keys on the GitHub head ref while the worktree sits on something
+    else — the two computed different lock keys and both ran against one
+    checkout, which is the contention the run lock is supposed to prevent.
+    """
+    from pr import state as pr_state
+    state = pr_state.new_state(
+        "repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt",
+    )
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={"M": 1},
+        verdict=pr_domains.ReviewVerdict.CHANGES_REQUESTED.value,
+        updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+
+    pr_cli.cmd_fix([], make_ctx(pr_number=4242), original_pr=None,
+                   original_branch=None)
+
+    cmd = _first_call_containing(mock_run, "claude-review")
+    assert ["--pr", "4242"] == cmd[cmd.index("--pr"):cmd.index("--pr") + 2]
+    # Exactly one target flag: pr_context.resolve() rejects both at once.
+    assert "--branch" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_prefers_the_target_the_operator_named(mock_load, mock_run):
+    """An explicit --pr outranks the resolved context, as every delegate does."""
+    from pr import state as pr_state
+    state = pr_state.new_state(
+        "repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt",
+    )
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={"M": 1},
+        verdict=pr_domains.ReviewVerdict.CHANGES_REQUESTED.value,
+        updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+
+    pr_cli.cmd_fix([], make_ctx(pr_number=4242), original_pr="99",
+                   original_branch=None)
+
+    cmd = _first_call_containing(mock_run, "claude-review")
+    assert ["--pr", "99"] == cmd[cmd.index("--pr"):cmd.index("--pr") + 2]
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
     from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")

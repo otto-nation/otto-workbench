@@ -143,16 +143,32 @@ def _run_delegate(entry: dict, argv: list[str],
     cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
     if ctx.worktree_root:
         cmd += ["--repo-dir", str(ctx.worktree_root)]
-    if original_pr is not None:
-        cmd += ["--pr", str(original_pr)]
-    elif ctx.pr_number is not None:
-        cmd += ["--pr", str(ctx.pr_number)]
-    elif original_branch is not None:
-        cmd += ["--branch", original_branch]
-    elif ctx.branch:
-        cmd += ["--branch", ctx.branch]
+    cmd += _target_flags(ctx, original_pr=original_pr,
+                         original_branch=original_branch)
     cmd += list(argv)
     return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
+
+
+def _target_flags(ctx: pr_context.ResolvedContext, *,
+                  original_pr: str | None = None,
+                  original_branch: str | None = None) -> list[str]:
+    """The one target flag a child is told to resolve, in priority order.
+
+    Shared by every spawn rather than written out at each: a child that
+    resolves a different target than its parent computes a different lock key
+    and takes a second lock on the same checkout, which is the contention the
+    run lock exists to prevent. Naming the target is what keeps the two
+    agreeing, so there is one owner of what that name is.
+    """
+    if original_pr is not None:
+        return ["--pr", str(original_pr)]
+    if ctx.pr_number is not None:
+        return ["--pr", str(ctx.pr_number)]
+    if original_branch is not None:
+        return ["--branch", original_branch]
+    if ctx.branch:
+        return ["--branch", ctx.branch]
+    return []
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -497,6 +513,14 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         log.info("Fixing review findings...")
         review_args = [str(BIN_DIR / "claude-review"), "--self", "--fix"]
         review_args += ["--repo-dir", str(wt)]
+        # Named, not left to the child to re-derive: without a target it
+        # resolves the worktree's current branch, which is not always the one
+        # this run locked, and the two then hold separate locks on one checkout.
+        review_args += _target_flags(
+            ctx,
+            original_pr=_kw.get("original_pr"),
+            original_branch=_kw.get("original_branch"),
+        )
         review_args += list(argv)
         r = subprocess.run(review_args, timeout=timeouts.UNBOUNDED)
         if r.returncode == supersession.EXIT_SUPERSEDED:

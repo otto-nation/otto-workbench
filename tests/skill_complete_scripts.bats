@@ -26,8 +26,15 @@ teardown() {
 # The scripts run otto-log, which runs python3 — a mise shim that reads the real
 # HOME. Overriding HOME for the sandbox would break it, so the config it wants
 # is trusted explicitly rather than left to fail silently under `|| true`.
+#
+# The trusted path is captured before HOME is reassigned, not read out of the
+# same assignment list: bash expands the right-hand sides against the current
+# environment, so `MISE_TRUSTED_CONFIG_PATHS="$HOME"` beside `HOME="$FAKE_HOME"`
+# happens to mean the real HOME today and would silently mean the sandbox the
+# day someone splits the line.
 _run_complete() {
-  HOME="$FAKE_HOME" MISE_TRUSTED_CONFIG_PATHS="$HOME" run "$@"
+  local real_home="$HOME"
+  HOME="$FAKE_HOME" MISE_TRUSTED_CONFIG_PATHS="$real_home" run "$@"
 }
 
 # One scan run to hang the rest of a command off, as the real scans open it.
@@ -95,6 +102,22 @@ _events_under() {
   mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
 
   _run_complete bash "$DREAM_COMPLETE"
+
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"no dream phase records"* ]]
+}
+
+@test "dream close: a query that fails is not reported as an empty run" {
+  # An otto-log that errors on every subcommand. The note is about a run whose
+  # phases went unrecorded; a query that could not answer knows nothing about
+  # that either way, and saying so anyway sends the reader after a run that is
+  # on the trail.
+  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
+  rm -f "$FAKE_HOME/.local/bin/otto-log"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$FAKE_HOME/.local/bin/otto-log"
+  chmod +x "$FAKE_HOME/.local/bin/otto-log"
+
+  _run_complete bash "$DREAM_COMPLETE" --root aaaaaaaaaaaa
 
   [[ "$status" -eq 0 ]]
   [[ "$output" != *"no dream phase records"* ]]

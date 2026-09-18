@@ -61,9 +61,14 @@ date +%s > "$RETRO_STAMP_FILE"
 # now, and failing here would not bring the missing records back.
 _warn_if_no_phases_recorded() {
   local otto_log="$1"
-  local phases
-  phases=$("$otto_log" query --root "$SCAN_ID" --script retro --json 2>/dev/null | wc -l | tr -d ' ')
-  [[ "$phases" -gt 0 ]] && return 0
+  # Captured before counting: piping straight into `wc -l` reports the pipeline's
+  # last command, so a query that died would count zero lines and be announced
+  # as a run that recorded nothing.
+  local found
+  if ! found=$("$otto_log" query --root "$SCAN_ID" --script retro --json 2>/dev/null); then
+    return 0
+  fi
+  [[ -z "$found" ]] || return 0
   echo "Note: no retro phase records under $SCAN_ID — the trail will show" >&2
   echo "      this run's scan and close with nothing in between." >&2
 }

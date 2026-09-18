@@ -121,6 +121,17 @@ class TestCanaryVerdict:
         result = CanaryResult(_run(10000), _run(9000))
         assert not result.ok
 
+    def test_an_inverted_delta_is_not_a_pass(self):
+        """The run *without* the flag billing more is not the coupling working.
+
+        The delta is directional on purpose. Compared as a magnitude, this case
+        clears any floor — so a check that lost the sign would report the rules
+        arriving on a run that demonstrates the opposite.
+        """
+        result = CanaryResult(_run(2376), _run(42435))
+        assert result.delta == -REFERENCE_DELTA
+        assert not result.ok
+
     def test_exactly_the_floor_passes(self):
         result = CanaryResult(_run(10000 + RULES_PREFIX_FLOOR), _run(10000))
         assert result.delta == RULES_PREFIX_FLOOR

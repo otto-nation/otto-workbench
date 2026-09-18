@@ -101,14 +101,70 @@ _encode_slug() {
   printf '%s' "$out"
 }
 
-# _canonical_slug PATH — the directory name standing for a project path.
+# _pi_session_slug PATH — the name Pi gives the session directory for a cwd of
+# PATH, which is what its store has to be addressed by.
 #
-# Pi's transform rather than Claude Code's: it keeps underscores, so
-# `feat/add_auth` and `feat/add-auth` stay distinct where Claude's would collide
-# them into one name. This names the gate stamps under $GATE_STAMPS_DIR — a
-# repo's memory hangs off _claude_project_dir below, not off this.
-# canonical_slug() in ai/lib/core/sessions.py is the same transform, and
-# tests/sessions_ssot.bats fails when the two drift.
+# Pi's own transform, from getDefaultSessionDir() in
+# @earendil-works/pi-coding-agent/dist/core/session-manager.js:
+#
+#   const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+#
+# Only `/`, `\` and `:` are replaced. A dot, a space, an accent and an emoji all
+# survive verbatim, which is the whole difference from _canonical_slug below —
+# that one replaces everything outside [A-Za-z0-9_], so it looked for
+# `--Users-dev-git-otto-io--` where Pi had written `--Users-dev-git-otto.io--`.
+# Every repo whose path holds a dot or a non-ASCII character was invisible to
+# the gates for that reason.
+#
+# Parameter expansion rather than _encode_slug's per-code-point loop, and this
+# is the one place that is safe: ${s//x/y} with a single-ASCII-character pattern
+# neither decodes nor validates its subject, so an undecodable byte and an
+# astral character both pass through untouched — which is what Pi's own regex
+# does to them. The loop cannot be used here at all, since its `case` arm is an
+# ASCII class and would hyphenate the very characters Pi keeps.
+#
+# No UTF-16 ceiling, unlike _claude_project_dir below. Pi's regex walks code
+# units, but surrogates occupy D800–DFFF and `/`, `\`, `:` are 2F, 5C, 3A — no
+# code unit of an astral character can be one of the three. A code-point walk
+# and Pi's code-unit walk are the same function on every input here.
+#
+# LC_ALL=C rather than C.UTF-8, and rather than nothing. Under ja_JP.SJIS the
+# byte 0x5C is the trail byte of ソ (0x83 0x5C), and an unpinned ${s//\\/-}
+# leaves it alone — so the same path slugs two ways on two machines. C makes
+# the match byte-wise, which for three ASCII characters is what Pi does.
+#
+# ceiling: reproduces Pi's character replacement exactly, and only the cheap
+# half of the path.resolve() Pi feeds it — a doubled separator and a trailing
+# one are normalised here, a `.` or `..` segment is not. Doing those properly
+# means realpath, a fork this runs on every session exit, and the callers
+# cannot produce one: _gate_repo_dir resolves through git_shared_dir, whose
+# last statement is `pwd -P`. Upgrade to resolving the path first if a caller
+# ever passes one that has not been through pwd -P — which shows up as a gate
+# counting zero sessions for a repo whose transcripts are on disk.
+_pi_session_slug() {
+  local s="$1"
+  local LC_ALL=C
+  while [[ "$s" == *//* ]]; do s="${s//\/\//\/}"; done
+  while [[ "$s" == */ && "$s" != "/" ]]; do s="${s%/}"; done
+  s="${s#[/\\]}"
+  s="${s//\\/-}"
+  s="${s//\//-}"
+  s="${s//:/-}"
+  printf -- '--%s--' "$s"
+}
+
+# _canonical_slug PATH — the harness-neutral canonical name for a project path.
+#
+# Not any harness's directory name: it replaces everything outside
+# [A-Za-z0-9_], keeping underscores so `feat/add_auth` and `feat/add-auth` stay
+# distinct where Claude's transform would collide them. That makes it a stable,
+# filesystem-safe id for things this repo names itself — the gate stamps under
+# $GATE_STAMPS_DIR, and dream-scan's per-project grouping key.
+#
+# Addressing a harness's own store needs that harness's transform instead:
+# _pi_session_slug above for Pi, _claude_project_dir below for Claude, which is
+# also where a repo's memory hangs. canonical_slug() in ai/lib/core/sessions.py
+# is the Python half, and tests/sessions_ssot.bats fails when the two drift.
 _canonical_slug() {
   local trimmed
   trimmed="${1#/}"
@@ -166,36 +222,54 @@ _session_dirs_for_repo() {
 # _repo_dirs_under_root ROOT REPO_DIR — the session directories under one
 # harness root belonging to REPO_DIR. Split out of _session_dirs_for_repo to
 # keep both inside the two-level nesting limit.
+#
+# Both slugs are computed once here rather than per directory. This loop runs
+# over every session directory both harnesses have ever made — over a thousand
+# on a machine a couple of years in — and the per-directory form cost three
+# forks each, which is a Stop hook spending seconds to answer one question.
 _repo_dirs_under_root() {
-  local abs_root="$1" repo_dir="$2" entry
+  local abs_root="$1" repo_dir="$2" entry name
   [[ -d "$abs_root" ]] || return 0
+  local claude_slug pi_slug
+  # _encode_slug directly rather than through _claude_project_dir: that one
+  # prepends $CLAUDE_DIR/projects/ only for basename to strip it again. The
+  # transform and its locale pin still have one owner.
+  claude_slug="$(_encode_slug "$repo_dir" 'A-Za-z0-9')"
+  pi_slug="$(_pi_session_slug "$repo_dir")"
   for entry in "$abs_root"/*/; do
-    if [[ -d "$entry" ]] && _dir_belongs_to_repo "$entry" "$repo_dir"; then
-      printf '%s\n' "$entry"
-    fi
+    [[ -d "$entry" ]] || continue
+    name="${entry%/}"
+    name="${name##*/}"
+    _dir_belongs_to_repo "$name" "$claude_slug" "$pi_slug" && printf '%s\n' "$entry"
   done
   return 0
 }
 
-# _dir_belongs_to_repo SESSION_DIR REPO_DIR — whether a session directory holds
-# sessions run from REPO_DIR or a path beneath it.
+# _dir_belongs_to_repo NAME CLAUDE_SLUG PI_SLUG — whether a session directory
+# named NAME holds sessions run from the repo those two slugs stand for, or
+# from a path beneath it.
+#
+# Takes the slugs rather than the repo path because it is called once per
+# directory across both harness roots; _repo_dirs_under_root above hoists them.
 #
 # Compares encoded forms rather than decoding the directory name, because
 # neither harness's encoding is reversible: Claude maps every non-alphanumeric to
 # the same hyphen, so `a-b` and `a_b` both decode ambiguously. Encoding the repo
 # path under both transforms and testing for a prefix is well defined in the
 # direction that works.
+#
+# The pattern side of each `==` is deliberately unquoted, and a Pi slug can now
+# carry a glob metacharacter — `/a/[xy]/b` slugs to `--a-[xy]-b--`, where the
+# old transform hyphenated the brackets away. That is safe because pattern and
+# subject derive from the same string: a bracket expression matches the literal
+# it came from, and the paths it would otherwise match encode to slugs the
+# prefix test rejects anyway.
 _dir_belongs_to_repo() {
-  local session_dir="$1" repo_dir="$2" name claude_slug pi_slug
-  name="$(basename "$session_dir")"
-  # Through _claude_project_dir rather than a second spelling of its `tr`: the
-  # transform and its locale pin belong to one owner.
-  claude_slug="$(basename "$(_claude_project_dir "$repo_dir")")"
-  pi_slug="$(_canonical_slug "$repo_dir")"
-  pi_slug="${pi_slug%--}"
+  local name="$1" claude_slug="$2" pi_slug="$3"
+  local pi_core="${pi_slug%--}"
 
   [[ "$name" == "$claude_slug" || "$name" == "$claude_slug"-* ]] && return 0
-  [[ "$name" == "$pi_slug--" || "$name" == "$pi_slug"-* ]] && return 0
+  [[ "$name" == "$pi_slug" || "$name" == "$pi_core"-* ]] && return 0
   return 1
 }
 

@@ -211,7 +211,7 @@ _write_stamp() {
   run "$SHOULD_RETRO"
   [ "$status" -eq 0 ]
 
-  run "$REPO_ROOT/ai/skills/retro/retro-complete.sh"
+  run "$REPO_ROOT/ai/skills/retro/retro-complete.sh" "test-scan-id"
   [ "$status" -eq 0 ]
 
   run "$SHOULD_RETRO"
@@ -222,7 +222,7 @@ _write_stamp() {
   # The stamp is written in bash and read again in Python by retro-scan, so a
   # location the two disagree on reads as a first run: every merged PR refetched
   # and every local review deleted.
-  run "$REPO_ROOT/ai/skills/retro/retro-complete.sh"
+  run "$REPO_ROOT/ai/skills/retro/retro-complete.sh" "test-scan-id"
   [ "$status" -eq 0 ]
   [ -f "$(_stamp_file)" ]
 }

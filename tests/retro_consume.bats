@@ -224,7 +224,7 @@ PY
   [[ "$status" -eq 2 ]]
   [[ "$output" == *"requires the scan ID"* ]]
   # The window is not banked by a completion that did not happen.
-  [[ ! -f "$TMPDIR/home/.claude/.last-retro" ]]
+  [[ ! -f "$WORKBENCH_STATE_DIR/gates/last-retro" ]]
 }
 
 @test "retro-complete does not bank the window when the record is refused" {
@@ -235,7 +235,7 @@ PY
   HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_B"
   [[ "$status" -ne 0 ]]
   [[ -d "$REVIEWS/other-branch-review" ]]
-  [[ ! -f "$TMPDIR/home/.claude/.last-retro" ]]
+  [[ ! -f "$WORKBENCH_STATE_DIR/gates/last-retro" ]]
 }
 
 @test "retro-complete banks the window once its own reviews are cleaned up" {
@@ -246,5 +246,5 @@ PY
   HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_C"
   [[ "$status" -eq 0 ]]
   [[ ! -d "$REVIEWS/mine-self-branch" ]]
-  [[ -f "$TMPDIR/home/.claude/.last-retro" ]]
+  [[ -f "$WORKBENCH_STATE_DIR/gates/last-retro" ]]
 }

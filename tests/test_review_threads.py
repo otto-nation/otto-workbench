@@ -35,7 +35,7 @@ from core import proc
 from core.proc import CmdResult
 from gh.pr_reads import ThreadSet
 from pr import comments_state as pcs
-from pr.comments_state import ThreadState
+from pr.comments_state import ThreadRecord, ThreadState
 from core import log
 from core import markdown
 from git import client as git_client
@@ -4706,6 +4706,39 @@ class TestSettleIsNotAPublishingPhase:
         assert settle.call_args[0][1] == ["t1"]
 
 
+class TestReplyIsNotAPhase:
+    """--reply writes one thread and returns, so a phase beside it never runs.
+
+    Without the refusal the run exits 0 having posted the reply and dropped the
+    phase, which is indistinguishable from a run that did both.
+    """
+
+    @pytest.mark.parametrize("flag", ["--triage", "--fix", "--finish"])
+    def test_it_refuses_to_run_alongside_a_phase(self, capsys, flag):
+        with patch.object(pr_context, "resolve") as resolve, \
+             patch.object(thread_replies, "run_reply") as run_reply:
+            assert cli_review_threads.main(["--reply", "t1", flag]) == 1
+        resolve.assert_not_called()
+        run_reply.assert_not_called()
+        assert flag in capsys.readouterr().err
+
+    def test_the_conflict_named_is_the_one_that_was_typed(self, capsys):
+        """--fix widens itself into --triage; the operator did not type --triage."""
+        with patch.object(pr_context, "resolve"), \
+             patch.object(thread_replies, "run_reply"):
+            assert cli_review_threads.main(["--reply", "t1", "--fix"]) == 1
+        err = capsys.readouterr().err
+        assert "--fix" in err
+        assert "--triage" not in err
+
+    def test_post_is_the_gate_the_reply_needs_not_a_conflict(self):
+        """A reply that publishes is the ordinary use, and must still run."""
+        with patch.object(pr_context, "resolve", return_value=make_ctx()), \
+             patch.object(thread_replies, "run_reply", return_value=0) as run_reply:
+            assert cli_review_threads.main(["--reply", "t1", "--post"]) == 0
+        assert run_reply.call_args[0][1] == "t1"
+
+
 class TestSettledRowsAreNotCreditedToThePass:
     """The fix pass did not land this work, so its commit must not be named for it."""
 
@@ -5064,6 +5097,95 @@ class TestReplyEvidence:
         assert permalinks.code_link(
             CommentItem(id="t1", file="a.py", line=1), "owner/repo", "", tmp_path,
         ) == ""
+
+
+# ── _resolve_verified_threads ─────────────────────────────────────────────
+
+
+class TestResolveVerifiedThreads:
+    """Which threads the pre-snapshot resolve sends to GitHub, and what it counts.
+
+    The twin of `settlement.resolve_fixed_threads`, and deliberately not the
+    same function: this one reads raw GraphQL nodes against a frozen
+    `ThreadRecord` map and skips on the recorded state, where the other reads
+    entries against mutable `ReportThread`s and skips on `is_resolved`.
+
+    `pc.resolve_thread` is patched throughout: it is a live GraphQL mutation
+    against a real PR, so an unpatched call would either resolve a thread on
+    GitHub or fail on the network.
+    """
+
+    def _node(self, tid):
+        return {"id": tid, "isResolved": False, "path": "a.py", "line": 1}
+
+    def test_resolves_only_the_verified_threads(self):
+        raw = [self._node("t1"), self._node("t2"), self._node("t3")]
+        threads = {
+            "t1": ThreadRecord(state=ThreadState.VERIFIED),
+            "t2": ThreadRecord(state=ThreadState.NEW),
+            "t3": ThreadRecord(state=ThreadState.VERIFIED),
+        }
+        with patch.object(pc, "resolve_thread", return_value=True) as resolve:
+            count = cli_review_threads._resolve_verified_threads(raw, threads)
+        assert count == 2
+        assert [c.args[0] for c in resolve.call_args_list] == ["t1", "t3"]
+
+    def test_a_resolved_thread_is_recorded_as_resolved(self):
+        raw = [self._node("t1")]
+        threads = {"t1": ThreadRecord(state=ThreadState.VERIFIED, reviewer="alice")}
+        with patch.object(pc, "resolve_thread", return_value=True):
+            cli_review_threads._resolve_verified_threads(raw, threads)
+        assert threads["t1"].state is ThreadState.RESOLVED
+        # The record is replaced, not rebuilt: everything triage decided about
+        # the thread survives the state change.
+        assert threads["t1"].reviewer == "alice"
+
+    def test_a_thread_already_resolved_is_left_alone(self):
+        """RESOLVED is not VERIFIED, so the mutation is never spent on it."""
+        raw = [self._node("t1")]
+        threads = {"t1": ThreadRecord(state=ThreadState.RESOLVED)}
+        with patch.object(pc, "resolve_thread") as resolve:
+            assert cli_review_threads._resolve_verified_threads(raw, threads) == 0
+        resolve.assert_not_called()
+
+    def test_a_node_with_no_record_is_skipped(self):
+        """A thread the sync never recorded has no verdict to act on."""
+        raw = [self._node("t1")]
+        with patch.object(pc, "resolve_thread") as resolve:
+            assert cli_review_threads._resolve_verified_threads(raw, {}) == 0
+        resolve.assert_not_called()
+
+    def test_a_record_with_no_node_is_never_reached(self):
+        """The raw fetch drives the loop, so a short fetch resolves only what it saw."""
+        threads = {"t1": ThreadRecord(state=ThreadState.VERIFIED)}
+        with patch.object(pc, "resolve_thread") as resolve:
+            assert cli_review_threads._resolve_verified_threads([], threads) == 0
+        resolve.assert_not_called()
+
+    def test_only_a_mutation_that_landed_is_counted(self):
+        """A drafted run refuses every resolve, and must move no counts."""
+        raw = [self._node("t1"), self._node("t2")]
+        threads = {
+            "t1": ThreadRecord(state=ThreadState.VERIFIED),
+            "t2": ThreadRecord(state=ThreadState.VERIFIED),
+        }
+        with patch.object(pc, "resolve_thread", side_effect=[True, False]):
+            assert cli_review_threads._resolve_verified_threads(raw, threads) == 1
+        assert threads["t1"].state is ThreadState.RESOLVED
+        # Still owed: the next run with --post has to find it verified.
+        assert threads["t2"].state is ThreadState.VERIFIED
+
+    def test_a_second_pass_over_the_same_threads_resolves_nothing(self):
+        raw = [self._node("t1"), self._node("t2")]
+        threads = {
+            "t1": ThreadRecord(state=ThreadState.VERIFIED),
+            "t2": ThreadRecord(state=ThreadState.VERIFIED),
+        }
+        with patch.object(pc, "resolve_thread", return_value=True) as resolve:
+            first = cli_review_threads._resolve_verified_threads(raw, threads)
+            second = cli_review_threads._resolve_verified_threads(raw, threads)
+        assert (first, second) == (2, 0)
+        assert resolve.call_count == 2
 
 
 # ── settlement.resolve_fixed_threads ──────────────────────────────────────

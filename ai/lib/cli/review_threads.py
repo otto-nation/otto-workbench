@@ -146,17 +146,11 @@ def _run_threads(trail, args, ctx) -> int:
     for thread_data in threads_raw:
         tid = thread_data["id"]
         t = threads.get(tid) or ThreadRecord()
-        comments = thread_data.get("comments", {}).get("nodes", [])
-        report_threads.append(ReportThread(
-            id=tid,
+        report_threads.append(ReportThread.from_node(
+            thread_data, my_login,
             state=t.state,
             classification=t.classification,
             reviewer=t.reviewer,
-            comments=comments,
-            is_resolved=thread_data.get("isResolved", False),
-            file=thread_data.get("path", ""),
-            line=thread_data.get("line"),
-            my_login=my_login,
         ))
     report = PRReport(
         repo=repo,
@@ -369,6 +363,25 @@ def main(argv: list[str] | None = None) -> int:
                 f"--settle records local state and publishes nothing, so it cannot "
                 f"run with {', '.join(conflicting)}. Record the settlement, read "
                 f"it back, then run `{pr_comments_fix.CLOSEOUT_COMMAND}`"
+            )
+            return 1
+
+    # The reciprocal of the guard above, and for the same reason: --reply is
+    # dispatched on its own and returns before any phase runs, so a phase named
+    # beside it would be dropped. --post is not in the list — it is the gate
+    # that lets the reply leave the machine, not a second phase.
+    if args.reply:
+        conflicting = [
+            name for name, on in (
+                ("--triage", args.triage), ("--fix", args.fix),
+                ("--finish", args.finish),
+            ) if on
+        ]
+        if conflicting:
+            log.error(
+                f"--reply writes one thread and nothing else, so it cannot run "
+                f"with {', '.join(conflicting)}. Post the reply, then run the "
+                f"phase as its own command"
             )
             return 1
 

@@ -28,8 +28,8 @@ from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import (  # noqa: E402
     Classification, ClassificationResult, CommentItem, CommentSourceKind,
     Complexity, Disposition,
-    ReplyOutcome, TrackingResult, Verification, Vocabulary, _coerce_vocab,
-    triage_result_from_dict,
+    ReplyOutcome, ReportThread, TrackingResult, Verification, Vocabulary,
+    _coerce_vocab, triage_result_from_dict,
 )
 
 
@@ -125,6 +125,54 @@ class TestFromOutcomesFillsTheUnstatedReason:
         source = _entry("t1")
         TrackingResult.from_outcomes([_recorded("t1", FixOutcome.DEFERRED)], [source])
         assert source.reason == ""
+
+
+class TestReportThreadFromNode:
+    """The GraphQL node shape is read here and by nobody else.
+
+    Two call sites build a report thread from a raw node — the report path in
+    `cli.review_threads` and the reply path in `pr.thread_replies` — and they
+    disagree about state, classification and reviewer, which is why those stay
+    keyword arguments rather than being derived here.
+    """
+
+    def _node(self):
+        return {
+            "id": "PRRT_1",
+            "isResolved": True,
+            "path": "src/app.py",
+            "line": 12,
+            "comments": {"nodes": [{"databaseId": 111, "body": "fix it"}]},
+        }
+
+    def test_it_reads_every_field_github_owns(self):
+        thread = ReportThread.from_node(self._node(), "bot")
+        assert thread.id == "PRRT_1"
+        assert thread.is_resolved is True
+        assert thread.file == "src/app.py"
+        assert thread.line == 12
+        assert thread.comments == [{"databaseId": 111, "body": "fix it"}]
+        assert thread.my_login == "bot"
+
+    def test_the_per_caller_fields_are_the_callers_to_supply(self):
+        thread = ReportThread.from_node(
+            self._node(), "bot", state=ThreadState.VERIFIED,
+            classification="suggestion", reviewer="alice",
+        )
+        assert thread.state is ThreadState.VERIFIED
+        assert thread.classification == "suggestion"
+        assert thread.reviewer == "alice"
+
+    def test_a_node_missing_everything_optional_still_builds(self):
+        """A thread anchored to nothing is ordinary, not an error."""
+        thread = ReportThread.from_node({})
+        assert thread.id == ""
+        assert thread.comments == []
+        assert thread.is_resolved is False
+        assert thread.file == ""
+        assert thread.line is None
+        assert thread.my_login == ""
+        assert thread.state is ThreadState.NEW
 
 
 class TestReplyOutcomeAccumulates:

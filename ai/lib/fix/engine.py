@@ -220,8 +220,8 @@ class FixAdapter(ABC):
         """The substitutions this domain's template needs beyond the shared ones.
 
         The engine supplies `branch_name`, `repo`, `tracking_content`,
-        `tracking_file`, `answer_format`, `worktree_block`, `generated_block`
-        and `max_turns`.
+        `tracking_file`, `answer_format`, `worktree_block`, `generated_block`,
+        `role_block` and `max_turns`.
         """
 
     @abstractmethod

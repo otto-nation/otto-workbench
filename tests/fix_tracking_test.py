@@ -184,8 +184,10 @@ class TestParse:
         ))
         fix_tracking.parse(path)
         warning = capsys.readouterr().err
-        assert "A" in warning
-        assert "no test evidence" in warning
+        # The whole line, not the bare id: "A" is one capital letter, and it
+        # discriminates here only because the rest of the message happens to
+        # carry none. A reword introducing one would make this vacuous.
+        assert "A: ticked fixed with no test evidence" in warning
 
     def test_a_fix_that_landed_outranks_a_position_argued_beside_it(self, tmp_path):
         path = tmp_path / "t.md"
@@ -437,6 +439,21 @@ class TestEveryFixTemplateAsksForTheTest:
             assert "`fixed` box asks for" in text, (
                 f"{phase} never tells its agent what the fixed box asks for"
             )
+
+    def test_every_fix_phase_is_claimed_by_one_of_the_domain_tests(self):
+        """No phase gets the shared half enforced and the domain half skipped.
+
+        The two tests below name their phases, which is what lets them assert
+        different things. That is also how a new fix phase slips through: it
+        satisfies the generic test above and neither of them. This partition is
+        what fails when one arrives, naming the phase nobody decided about.
+        """
+        behaviour = {"fix", "comments_fix"}
+        check_driven = {"ci_fix", "prepush_fix"}
+        assert set(self._fix_templates()) == behaviour | check_driven, (
+            "a fix phase belongs to neither domain group — decide whether it "
+            "owes a regression test or a re-run, and add it to that test"
+        )
 
     def test_the_two_behaviour_domains_ask_for_a_regression_test(self):
         """Findings and comments both change behaviour, so both owe a test."""

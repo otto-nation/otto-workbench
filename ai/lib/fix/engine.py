@@ -180,6 +180,13 @@ class FixAdapter(ABC):
     # empty. Neither is true of a tracking file that arrives populated, so a fix
     # pass is told to fix things rather than to write the file it already has.
     fix_hint: str = agent_retry.FIX_RETRY_HINT
+    # Which phase sizes and prompts the verify gate, for a domain that runs one.
+    # Separate from `phase` because the gate is a different agent asking a
+    # different question: sizing it as the fix pass gives it the fix pass's
+    # budget, and prompting it as the fix pass hands it a template that tells it
+    # to edit source — which the gate's own rules forbid. A domain that passes
+    # no `verify=` never reaches the gate and leaves this alone.
+    verify_phase: Phase | None = None
 
     @property
     def tracking_path(self) -> Path:
@@ -447,18 +454,53 @@ class Verdict:
 VerifyFn = Callable[..., dict[str, Verdict]]
 
 
+# What the fix pass said holds its change, as the gate is shown it. Composed
+# here rather than carried on `FixItem`: that type is the question a pass asks,
+# the reason is the answer it got back, and this adapter is the one place that
+# legitimately holds both.
+#
+# Worded for any domain's evidence, not just a test name — a CI fix names the
+# check it re-ran. "held by" reads correctly for both; "the test for this fix"
+# would not.
+_CLAIM_HEADING = "**The fix pass claims this change is held by:**"
+
+_NO_CLAIM = (
+    "**The fix pass named nothing that holds this change.** That is a claim "
+    "nobody made rather than a claim that failed, so it is not on its own a "
+    "reason to call the fix broken — judge it on what you can run."
+)
+
+
+def _claim_block(reason: str) -> str:
+    """What the fix pass said holds this change, framed as a claim to check.
+
+    The empty case says so in words rather than rendering nothing: a gate shown
+    no claim block cannot tell "the pass was never asked" from "the pass was
+    asked and declined to answer", and only the second is worth reporting.
+    """
+    return f"{_CLAIM_HEADING} {reason}" if reason else _NO_CLAIM
+
+
 def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
     """One claimed fix as the gate is asked about it.
 
-    The body is the domain's own rendering of what the reviewer said, carried
-    over verbatim: the gate's job is to judge the fix against what was asked
-    for, and the ask is not recoverable from the outcome. Falling back to the
-    outcome alone keeps a gate that is merely under-informed rather than one
-    that crashes, for an id the pass answered but never handed out.
+    The body is two things joined: the domain's own rendering of what the
+    reviewer said, carried over verbatim, and the fix pass's claim about what
+    now holds the change. The gate judges the fix against the ask, and the ask
+    is not recoverable from the outcome; it also checks the claim, and the claim
+    is not recoverable from the source item.
+
+    The claim goes last so the ask is read first, and so it sits immediately
+    above the verdict boxes answering it. Falling back to the outcome alone
+    keeps a gate that is merely under-informed rather than one that crashes, for
+    an id the pass answered but never handed out — the claim still reaches it,
+    since that half comes from the outcome.
     """
+    claim = _claim_block(outcome.reason)
     if source is None:
         return FixItem(id=outcome.id, file=outcome.file, line=outcome.line,
-                       label=outcome.summary)
+                       label=outcome.summary, body=claim)
+    body = source.body.rstrip()
     return FixItem(
         id=outcome.id,
         # The outcome's anchor, not the source's: the agent may have moved the
@@ -466,7 +508,7 @@ def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
         file=outcome.file or source.file,
         line=outcome.line or source.line,
         label=source.label or outcome.summary,
-        body=source.body,
+        body=f"{body}\n\n{claim}" if body else claim,
     )
 
 
@@ -505,7 +547,13 @@ def _verify(
         return
 
     items = [_verify_item(o, by_id.get(o.id)) for o in claimed]
-    verdicts = verify(adapter.phase, "", items=items, adapter=adapter) or {}
+    # The gate's own phase where the domain declared one. Falling back to the
+    # fix pass's phase keeps a domain that has not declared one working, but it
+    # prompts the gate with the fix pass's template — so a domain running a gate
+    # is expected to set `verify_phase`.
+    verdicts = verify(
+        adapter.verify_phase or adapter.phase, "", items=items, adapter=adapter,
+    ) or {}
 
     falsified = 0
     for outcome in claimed:

@@ -30,7 +30,7 @@ from agent.registry import PHASES  # noqa: E402
 from core.phases import Phase  # noqa: E402
 from fix.types import FixItem  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
-from pr.fix import FixOutcome  # noqa: E402
+from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 
 
 # ── the stub domain ─────────────────────────────────────────────────────────
@@ -77,12 +77,17 @@ class StubAdapter(fix_engine.FixAdapter):
         self.recorded = run
 
 
-def _answer(adapter, *, tick="fixed", ids=None):
+def _answer(adapter, *, tick="fixed", ids=None, reason=None):
     """A `run_fix` stub that answers the checklist it finds on disk.
 
     The engine rewrites the file immediately before each invocation, so an
     answer written any earlier is thrown away before an agent would see it.
     `ids` limits the answer to those items; the rest are left as work owed.
+
+    `reason` writes the agent's words after the tick, replacing the `<why>` the
+    render leaves there. Left unset, the placeholder stands and the parse reads
+    an empty reason — the evidence-less path, which is what an agent that ticks
+    the box and says nothing produces.
     """
     def run_fix(_phase, _prompt, **_kwargs):
         text = adapter.tracking_path.read_text()
@@ -92,7 +97,8 @@ def _answer(adapter, *, tick="fixed", ids=None):
             if line.startswith("## <!-- fix:"):
                 keep = ids is None or line.split("fix:")[1].split(" ")[0] in ids
             if keep and line.startswith(f"- [ ] {tick}"):
-                line = line.replace("- [ ]", "- [x]", 1)
+                line = (f"- [x] {tick} — {reason}\n" if reason is not None
+                        else line.replace("- [ ]", "- [x]", 1))
             out.append(line)
         adapter.tracking_path.write_text("".join(out))
         return agent_invoke.FixResult(0, None)
@@ -756,7 +762,9 @@ def test_the_gate_is_told_what_the_reviewer_asked_for(tmp_path, landed, head):
 
     _run(adapter, verify=run_verify)
 
-    assert seen["items"][0].body == "body 0", "the reviewer's words never reached the gate"
+    assert seen["items"][0].body.startswith("body 0"), (
+        "the reviewer's words never reached the gate"
+    )
     assert seen["items"][0].label == "item 0"
 
 
@@ -773,3 +781,126 @@ def test_the_gate_looks_where_the_fix_landed(tmp_path, landed, head):
 
     assert seen["items"][0].file == "a.py"
     assert seen["items"][0].line == 1
+
+
+# ── The claim the fix pass made reaches the gate ────────────────────────────
+#
+# The fix box asks what test holds the change. Parsing that into
+# `ItemOutcome.reason` and never showing it to the gate would leave the claim
+# unchecked by anything — which is the whole reason the box asks.
+
+
+def test_the_gate_is_told_what_the_fix_pass_claimed(tmp_path, landed, head):
+    """The named test reaches the gate, or nothing ever checks the claim."""
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["items"] = list(items or [])
+        return {}
+
+    _run(adapter, verify=run_verify,
+         run_fix=_answer(adapter, reason="test_foo_rejects_an_empty_name"))
+
+    body = seen["items"][0].body
+    assert "test_foo_rejects_an_empty_name" in body
+    assert fix_engine._CLAIM_HEADING in body
+
+
+def test_the_reviewers_words_survive_beside_the_claim(tmp_path, landed, head):
+    """The claim is appended, not substituted.
+
+    The gate judges the fix against what was asked for and checks the claim
+    besides. A claim that replaced the ask would trade one blind spot for the
+    other.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["items"] = list(items or [])
+        return {}
+
+    _run(adapter, verify=run_verify, run_fix=_answer(adapter, reason="test_bar"))
+
+    body = seen["items"][0].body
+    assert "body 0" in body
+    assert "test_bar" in body
+    # The ask first, the claim under it: the claim sits immediately above the
+    # verdict boxes that answer it.
+    assert body.index("body 0") < body.index("test_bar")
+
+
+def test_a_fix_with_no_claim_says_so_to_the_gate(tmp_path, landed, head):
+    """Silence is reported as silence, not rendered as nothing.
+
+    A gate shown no claim block cannot tell "the pass was never asked" from
+    "the pass was asked and answered nothing", and only the second is worth
+    reporting to an operator.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, *, items=None, **_kwargs):
+        seen["items"] = list(items or [])
+        return {}
+
+    # No reason= : the agent ticked the box and left `<why>` standing.
+    _run(adapter, verify=run_verify, run_fix=_answer(adapter))
+
+    body = seen["items"][0].body
+    assert fix_engine._CLAIM_HEADING not in body
+    assert "named nothing that holds this change" in body
+    # And it is not on its own grounds to call the fix broken.
+    assert "not on its own a reason to call the fix broken" in body
+
+
+def test_an_id_the_pass_never_handed_out_still_carries_its_claim():
+    """The source-less branch is the one that is easy to forget.
+
+    `_verify_item` falls back to the outcome alone for an id the pass answered
+    but never handed out. The claim comes from the outcome, so it is exactly
+    the half that should still arrive.
+    """
+    outcome = ItemOutcome(id="x", file="a.py", line=2,
+                          outcome=FixOutcome.FIXED, reason="test_orphan")
+
+    item = fix_engine._verify_item(outcome, None)
+
+    assert "test_orphan" in item.body
+    assert fix_engine._CLAIM_HEADING in item.body
+
+
+def test_the_gate_is_asked_under_its_own_phase(tmp_path, landed, head):
+    """The gate renders its own template, not the fix pass's.
+
+    Sizing and prompting both key off the phase handed to the verify function.
+    Passing the fix pass's phase gave the gate `fix-comments.md` — a prompt
+    telling it to edit source, which its own rules forbid.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    adapter.verify_phase = Phase.COMMENTS_VERIFY
+    seen = {}
+
+    def run_verify(phase, _prompt, **_kwargs):
+        seen["phase"] = phase
+        return {}
+
+    _run(adapter, verify=run_verify)
+
+    assert seen["phase"] is Phase.COMMENTS_VERIFY
+    assert PHASES[seen["phase"]].template_for() == "verify-fixes.md"
+
+
+def test_a_domain_that_declares_no_gate_phase_still_runs(tmp_path, landed, head):
+    """The fallback keeps a domain without a declared gate phase working."""
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(phase, _prompt, **_kwargs):
+        seen["phase"] = phase
+        return {}
+
+    _run(adapter, verify=run_verify)
+
+    assert seen["phase"] is adapter.phase

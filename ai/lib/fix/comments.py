@@ -78,6 +78,10 @@ class CommentFixAdapter(fix_engine.FixAdapter):
     """
 
     phase = Phase.COMMENTS_FIX
+    # The only domain that runs the verify gate, so the only one that declares
+    # the gate's phase. Without it the gate is sized and prompted as the fix
+    # pass, which hands a checking agent a template telling it to edit source.
+    verify_phase = Phase.COMMENTS_VERIFY
     action = "applying review comment suggestions"
     item_noun = "thread"
 

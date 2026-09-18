@@ -3379,6 +3379,37 @@ def test_the_commit_body_carries_each_file_s_verdict(tmp_path):
     assert "- server.go — the resolution dropped a branch" in message
 
 
+def test_the_commit_body_carries_a_fixed_row_s_evidence(tmp_path):
+    """A fixed row's evidence lands on main too, not only an unresolved one's.
+
+    The fix box asks what holds the change, and this commit body is the most
+    durable place that answer is written down: squash-merged verbatim onto the
+    default branch, where it outlives the tracking file and the run's stderr.
+    """
+    (tmp_path / "server.go").write_text("package main\n")
+
+    with _fix_pass(tick="fixed", reason="golangci-lint run: clean") as (owner, _):
+        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+
+    message = owner.call_args.kwargs["message"]
+    assert "1 fixed, 0 unresolved" in message
+    assert "- server.go — golangci-lint run: clean" in message
+
+
+def test_a_fixed_row_with_no_evidence_still_names_its_file(tmp_path):
+    """The evidence is absent, not the row. An agent that ticks the box and
+    says nothing still produced a fix, and the commit body still has to say
+    which file it touched.
+    """
+    (tmp_path / "server.go").write_text("package main\n")
+
+    with _fix_pass(tick="fixed", reason="") as (owner, _):
+        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+
+    message = owner.call_args.kwargs["message"]
+    assert "- server.go\n" in message or message.rstrip().endswith("- server.go")
+
+
 def test_the_check_output_reaches_the_agent(tmp_path):
     """The output is the oracle — a pass that withholds it asks for a guess."""
     (tmp_path / "server.go").write_text("package main\n")

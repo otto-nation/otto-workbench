@@ -818,7 +818,14 @@ def _lenient_list(raw):
 
 
 def triage_result_from_dict(d: dict) -> TriageResult:
-    """Parse AI triage JSON output into typed structures."""
+    """Parse AI triage JSON output into typed structures.
+
+    The prompt no longer asks the model for a `stats` key, and `run_triage`
+    overwrites this field with `TriageStats.counted(...)` right after calling
+    this function — so on the production path, the value parsed here is never
+    read. It stays so a stray or legacy `stats` key degrades leniently rather
+    than raising, the same guarantee this function gives every other key.
+    """
     threads = [_lenient_from_dict(CommentItem, t) for t in _lenient_list(d.get("threads"))]
     items = [_lenient_from_dict(CommentItem, it) for it in _lenient_list(d.get("comment_items"))]
     stats = _lenient_from_dict(TriageStats, d.get("stats", {}))

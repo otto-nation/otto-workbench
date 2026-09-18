@@ -375,6 +375,12 @@ def reconcile_fix_snapshot(
     # outcomes — see `FixRecord.reconcile`.
     settlements: dict[str, FixOutcome] = {}
     for outcome in state.fix.fix.items:
+        # `not outcome.id` never actually filters anything here — an id-less
+        # entry already misses `threads_by_id` and fails to build a source in
+        # `entry_settlement`, so `settlement` comes back None either way. Kept
+        # to state the invariant explicitly, matching `FixRecord.reconcile`'s
+        # own id-keyed contract, which is the one place it would otherwise go
+        # unstated.
         if outcome.outcome not in UNSETTLED_OUTCOMES or not outcome.id:
             continue
         entry = CommentItem.from_outcome(

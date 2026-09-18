@@ -474,6 +474,6 @@ _run_summary() {
   for name in debugger incident migrate; do
     [ -f "$HOME/.agents/skills/$name/SKILL.md" ]
     [ ! -e "$HOME/.claude/skills/$name" ]
-    ! grep -q "AGENT_PROTOCOL_PLACEHOLDER" "$HOME/.agents/skills/$name/SKILL.md"
+    run ! grep -q "AGENT_PROTOCOL_PLACEHOLDER" "$HOME/.agents/skills/$name/SKILL.md"
   done
 }

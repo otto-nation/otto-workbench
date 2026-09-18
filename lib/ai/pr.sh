@@ -14,6 +14,12 @@
 # `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
 # `PR_TITLE`, `PR_DESCRIPTION`.
 
+# WORKBENCH_ROOT comes from ai/core.sh, which this file requires be sourced
+# first (see the header above). _pr_load_template asks git for the repo root,
+# which an inherited GIT_DIR would otherwise answer for the caller's repository.
+# shellcheck source=../gitenv.sh
+. "$WORKBENCH_ROOT/lib/gitenv.sh"
+
 # _push_verified BRANCH [--set-upstream]
 # Pushes BRANCH through the owner in ai/lib/git/push.py, which confirms the remote
 # ref actually moved. Returns non-zero on a refused, lost, or unverified push,
@@ -271,17 +277,35 @@ _pr_resolve_issue() {
 # Finds a PR template in the GitHub-recognised locations (priority order).
 # Falls back to a minimal Summary/Changes/Testing template when none is found.
 # Sets PR_TEMPLATE and PR_HAS_TEMPLATE.
+#
+# Resolved from the repo root, not the working directory. All four locations
+# GitHub recognises are repo-root-relative, so a bare relative path only finds
+# them when the caller happens to be standing at the top of the tree — run from
+# any subdirectory, every candidate misses, PR_HAS_TEMPLATE stays false, and
+# _pr_check_body_against_template returns 0 without comparing anything. The
+# check would be silently absent exactly where nothing else says so.
+#
+# Falls back to the working directory when git cannot answer, which is the
+# behaviour every existing caller already had.
+#
+# The lookup clears the inherited git environment inside a subshell, the idiom
+# git_shared_dir uses. GIT_DIR is read ahead of directory discovery, so a run
+# under a git hook — pre-push exports one — would have `--show-toplevel` answer
+# the cwd rather than the repo root, silently restoring the very bug this
+# resolution exists to fix.
 _pr_load_template() {
   PR_HAS_TEMPLATE=false
   PR_TEMPLATE=""
+  local root
+  root=$(git_env_clear; git rev-parse --show-toplevel 2> /dev/null) || root="."
   local candidate
   for candidate in \
     ".github/pull_request_template.md" \
     ".github/PULL_REQUEST_TEMPLATE.md" \
     "pull_request_template.md" \
     "PULL_REQUEST_TEMPLATE.md"; do
-    if [ -f "$candidate" ]; then
-      PR_TEMPLATE=$(cat "$candidate")
+    if [[ -f "$root/$candidate" ]]; then
+      PR_TEMPLATE=$(cat "$root/$candidate")
       PR_HAS_TEMPLATE=true
       return
     fi

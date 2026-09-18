@@ -85,6 +85,53 @@ half of it"
   [[ "$output" == *"## Why"* ]]
 }
 
+@test "the template is found from a subdirectory of the repo" {
+  # The check is only as good as the template load under it, and all four
+  # locations GitHub recognises are repo-root-relative. Resolved against the
+  # working directory, every candidate misses from a subdirectory,
+  # PR_HAS_TEMPLATE stays false, and the check returns 0 having compared
+  # nothing — the silent-no-op this whole file exists to prevent, reachable by
+  # running `task pr:create` one directory down.
+  git init -q .
+  mkdir -p lib/deep
+  cd lib/deep || return 1
+
+  _pr_load_template
+  [ "$PR_HAS_TEMPLATE" = "true" ]
+
+  run _pr_check_body_against_template "## Summary
+
+off template"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not use this repo's template"* ]]
+}
+
+@test "the template is found from a subdirectory under an inherited GIT_DIR" {
+  # GIT_DIR is read ahead of directory discovery, so `git rev-parse
+  # --show-toplevel` answers the caller's cwd rather than the repo root when one
+  # is exported — which the pre-push hook does. Without the cleared environment
+  # the root resolves to the subdirectory, every candidate misses again, and the
+  # check goes back to silently passing anything. The bug the fix closes is
+  # reachable through the export alone, so the export is what this pins.
+  git init -q .
+  mkdir -p lib/deep
+  cd lib/deep || return 1
+
+  GIT_DIR="$TMPDIR/.git" _pr_load_template
+  [ "$PR_HAS_TEMPLATE" = "true" ]
+}
+
+@test "a template outside any repo is still found in the working directory" {
+  # Not every caller is inside a git worktree, and the pre-#1301 behaviour for
+  # those was to read the template beside them. `git rev-parse` answering
+  # nothing must fall back to that rather than losing the template.
+  run git rev-parse --show-toplevel
+  [ "$status" -ne 0 ]
+
+  _pr_load_template
+  [ "$PR_HAS_TEMPLATE" = "true" ]
+}
+
 @test "a repo with no template accepts any body" {
   rm -rf .github
   _pr_load_template

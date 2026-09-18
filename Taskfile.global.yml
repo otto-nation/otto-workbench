@@ -63,17 +63,26 @@ tasks:
     # anything runs this body under errexit.
     #
     # The loop is a witness set, not the closure of what a task reaches.
-    # Three of the four stand for a directory the pin must supply at all:
+    # Three of the five stand for a directory the pin must supply at all:
     # lib/ai/core.sh for lib/ai, lib/conventions.sh for the rest of lib, and
     # ai/lib/git/push.py for the ai/ tree the installed symlink farm has no
     # link to. The fourth stands for a silence: lib/config_cli.py is read at
-    # lib/ai/pr.sh:363, which discards stderr and returns 0, so a checkout
+    # lib/ai/pr.sh:385, which discards stderr and returns 0, so a checkout
     # missing it loses issue-provider resolution and reports nothing at all.
-    # push.py is reached the same way (pr.sh:28-29) and fails inside python3
+    # push.py is reached the same way (pr.sh:33) and fails inside python3
     # after the nesting sweep and the push — that run is N1, and late or
     # silent is what earns a path a place in this list.
     #
-    # The modules a task names itself are deliberately absent, as are
+    # The fifth, lib/gitenv.sh, is sourced directly at pr.sh:21 rather than
+    # reached mid-run, so on its own it would belong with the excluded
+    # modules below. It stays in because it resolves through
+    # $WORKBENCH_ROOT/lib/gitenv.sh rather than a path relative to
+    # BASH_SOURCE the way git_remote.sh and compact_diff.sh do, and a pin
+    # missing it fails while sourcing pr.sh — one of the body's first three
+    # `.` lines, just as the excluded modules do, but through the same
+    # WORKBENCH_ROOT indirection the other four are listed for.
+    #
+    # The modules a task names itself are otherwise absent, as are
     # lib/git_remote.sh and lib/ai/compact_diff.sh behind them. Each fails
     # while the body's first three `.` lines run, before git, the AI or any
     # push, and the shell prints the absolute path it could not open — under
@@ -89,7 +98,7 @@ tasks:
           /*) ;;
           *) echo "WORKBENCH_LIB_DIR must be an absolute path: $WORKBENCH_LIB_DIR" >&2; exit 1 ;;
         esac
-        for _f in lib/ai/core.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py; do
+        for _f in lib/ai/core.sh lib/gitenv.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py; do
           if [ ! -f "$WORKBENCH_LIB_DIR/$_f" ]; then
             echo "WORKBENCH_LIB_DIR does not contain $_f: $WORKBENCH_LIB_DIR" >&2
             exit 1

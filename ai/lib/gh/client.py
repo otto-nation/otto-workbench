@@ -300,9 +300,17 @@ def lines(*args: str, cwd: str | Path | None = None) -> list[str]:
 def json_out(*args: str, cwd: str | Path | None = None, default: Any = None) -> Any:
     """Stdout parsed as JSON, or *default* when gh failed or said nothing usable.
 
-    Unparseable output and a failed call are the same answer deliberately: gh
-    writes an HTML error page or an empty string in both cases, and no caller
-    here distinguishes them.
+    Unparseable output and a failed call collapse to the same answer: gh writes
+    an HTML error page or an empty string in both cases, and neither is worth
+    telling apart from the other.
+
+    What *is* worth telling apart is either of them from a call that succeeded
+    and found nothing, and that is the caller's to decide with *default*. A
+    caller about to act on emptiness — posting because it read no prior
+    comment, skipping dedup because it read no prior finding — passes
+    ``default=None`` and treats None as "could not ask", keeping `[]` to mean
+    what GitHub actually said. A caller for whom the two are the same answer
+    passes the empty value and says so.
     """
     r = run(*args, cwd=cwd)
     if not r.ok:

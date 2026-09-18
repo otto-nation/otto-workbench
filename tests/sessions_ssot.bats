@@ -125,12 +125,18 @@ make_memory() {
 }
 
 @test "both languages agree on the slug for a non-ASCII path" {
-  # str.isalnum() is Unicode-aware and would keep an accented letter that
-  # `tr -c 'A-Za-z0-9_'` replaces. The shell half is also per byte unless its
-  # locale is pinned, which is a second way the two can disagree — and the one
-  # that shows up only in CI, where no locale is set.
+  # One hyphen per character, not per UTF-8 byte. Two ways these drift:
+  # str.isalnum() is Unicode-aware and would keep an accented letter the shell
+  # replaces, and GNU tr is byte-oriented whatever the locale, so the shell
+  # half yielded `caf--` under CI while Python yielded `caf-`.
+  #
+  # The expected value is spelled out rather than only comparing the two,
+  # because two byte-wise halves agree with each other and with nothing else —
+  # including the directory Claude Code actually created.
   local p="/Users/dev/git/café/naïve"
-  [ "$(slug_shell "$p")" = "$(slug_python "$p")" ]
+  local want="--Users-dev-git-caf--na-ve--"
+  [ "$(slug_shell "$p")" = "$want" ]
+  [ "$(slug_python "$p")" = "$want" ]
 }
 
 @test "both languages preserve underscores in a slug" {
@@ -261,12 +267,13 @@ make_memory() {
 }
 
 @test "both languages agree on the memory directory for a non-ASCII repo path" {
-  # tr -c 'A-Za-z0-9' '-' runs byte-wise, so a multi-byte UTF-8 character
-  # becomes one hyphen per byte. str.isalnum() is Unicode-aware and would
-  # leave an accented letter untouched, landing on a different directory
-  # than the shell half for the same path.
-  local p="/Users/dev/git/café/naïve"
-  [ "$(memdir_shell "$p")" = "$(memdir_python "$p")" ]
+  # As the slug case above, on the transform that has to find a directory
+  # Claude Code created: one hyphen per character, so the suffix is pinned and
+  # not merely compared across the two halves.
+  local p="/Users/dev/git/café/naïve" got
+  got="$(memdir_shell "$p")"
+  [ "$got" = "$(memdir_python "$p")" ]
+  [[ "$got" == *"/-Users-dev-git-caf--na-ve/memory" ]]
 }
 
 @test "both languages resolve a repo path to the same memory directory" {

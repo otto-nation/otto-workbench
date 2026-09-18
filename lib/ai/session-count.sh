@@ -62,22 +62,58 @@ _has_enough_sessions() {
   return 1
 }
 
+# _encode_slug STRING CLASS — every character of STRING outside CLASS replaced
+# by a hyphen. CLASS is the body of a glob bracket expression, so it must be
+# passed unquoted at the `case` below: 'A-Za-z0-9' or 'A-Za-z0-9_'.
+#
+# A bash loop rather than `tr` or `sed`, because both halves of this transform
+# have to land on the same name from two languages and three platforms:
+#
+#   - GNU `tr` is byte-oriented whatever the locale — the manual says outright
+#     that it does not support multibyte characters — so `tr -c 'A-Za-z0-9'`
+#     gives one hyphen per character on macOS and one per *byte* under Linux.
+#     A 2-byte letter then slugs differently in CI than in a terminal, and no
+#     locale pin fixes it.
+#   - `sed` is per character in a UTF-8 locale on both, but BSD sed exits
+#     non-zero on a byte that is not valid UTF-8 (`RE error: illegal byte
+#     sequence`), which would abort a Stop-hook gate rather than slug the path.
+#
+# The loop is per character on bash 4.3+, the floor this repo requires, and
+# turns an undecodable byte into one hyphen without failing. Python's halves in
+# ai/lib/core/sessions.py iterate code points to match; tests/sessions_ssot.bats
+# fails when the two drift.
+#
+# LC_ALL is local to this function: unpinned, ${#s} and ${s:i:1} count bytes
+# and reproduce the GNU `tr` behaviour this exists to avoid. C.UTF-8 rather
+# than en_US.UTF-8 because glibc has it built in and macOS carries it too.
+# The class stays an ASCII range for the same reason it is not [[:alnum:]],
+# which under this locale is Unicode-aware and would keep an accented letter.
+_encode_slug() {
+  local s="$1" class="$2" out="" i c
+  local LC_ALL=C.UTF-8
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      [$class]) out+="$c" ;;
+      *) out+="-" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 # _canonical_slug PATH — the directory name standing for a project path.
 #
 # Pi's transform rather than Claude Code's: it keeps underscores, so
 # `feat/add_auth` and `feat/add-auth` stay distinct where Claude's would collide
-# them into one name. canonical_slug() in ai/lib/core/sessions.py is the same
-# transform, and tests/sessions_ssot.bats fails when the two drift.
-#
-# Locale pinned for the reason _claude_project_dir below pins it: `tr` is per
-# byte in a C locale and per character in UTF-8, so an unpinned slug changes
-# shape between a terminal and CI for the same path.
+# them into one name. This names the gate stamps under $GATE_STAMPS_DIR — a
+# repo's memory hangs off _claude_project_dir below, not off this.
+# canonical_slug() in ai/lib/core/sessions.py is the same transform, and
+# tests/sessions_ssot.bats fails when the two drift.
 _canonical_slug() {
-  local trimmed encoded
+  local trimmed
   trimmed="${1#/}"
   trimmed="${trimmed%/}"
-  encoded="$(printf '%s' "$trimmed" | LC_ALL=C.UTF-8 tr -c 'A-Za-z0-9_' '-')"
-  printf -- '--%s--' "$encoded"
+  printf -- '--%s--' "$(_encode_slug "$trimmed" 'A-Za-z0-9_')"
 }
 
 # _claude_project_dir DIR — the ~/.claude/projects directory holding Claude
@@ -86,25 +122,20 @@ _canonical_slug() {
 # Claude names that directory for the absolute path of the session's cwd, with
 # every character outside [A-Za-z0-9] replaced by a hyphen — a different
 # transform from _canonical_slug, which is why both exist. This one addresses
-# Claude's own store; that one names the harness-neutral directory a project's
-# memory lives in.
+# Claude's own store, which is also where a repo's memory lives; that one names
+# the gate stamps. claude_slug in ai/lib/core/sessions.py is the Python half,
+# held to this by tests/sessions_ssot.bats.
 #
-# The locale is pinned because Claude Code's own transform is a JavaScript
-# regex, which is per character: `é` becomes one hyphen. `tr` is per character
-# only in a UTF-8 locale and per byte in C, where the same path yields two —
-# so an unpinned gate agrees with Claude in a terminal and disagrees under
-# launchd or CI, which set no locale. C.UTF-8 rather than en_US.UTF-8: it is
-# built into glibc and needs no generated locale, and macOS carries it too.
-# claude_slug in ai/lib/core/sessions.py is the Python half, held to this by
-# tests/sessions_ssot.bats.
-#
-# ceiling: the transform is what Claude Code does today and is not a documented
-# contract. Upgrade to reading the directory off the hook payload if a session
-# ever resolves to a directory that is not there.
+# ceiling: _encode_slug walks code points, while Claude's transform is a
+# JavaScript regex and so walks UTF-16 code units. They agree across the BMP —
+# `é` is one hyphen to both — and part ways on an astral-plane character, which
+# is one hyphen here and two in the directory Claude actually created. Walking
+# UTF-16 in bash would cost a fork this runs on every session exit to buy a cwd
+# with an emoji in it. The transform is also what Claude Code does today rather
+# than a documented contract. Upgrade to reading the directory off the hook
+# payload if a session ever resolves to a directory that is not there.
 _claude_project_dir() {
-  local slug
-  slug="$(printf '%s' "$1" | LC_ALL=C.UTF-8 tr -c 'A-Za-z0-9' '-')"
-  printf '%s/projects/%s' "$CLAUDE_DIR" "$slug"
+  printf '%s/projects/%s' "$CLAUDE_DIR" "$(_encode_slug "$1" 'A-Za-z0-9')"
 }
 
 # _claude_memory_dir DIR — where the memory for the repo at DIR lives.

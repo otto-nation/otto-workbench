@@ -438,9 +438,10 @@ def canonical_slug(path: Path | str) -> str:
     """The directory name standing for a project path.
 
     ASCII alnum, not ``str.isalnum()``, for the reason ``claude_slug`` below
-    spells it that way: the shell half runs ``tr -c 'A-Za-z0-9_'``, which only
-    ever spares ASCII, while ``str.isalnum()`` is Unicode-aware and would keep
-    an accented letter the shell replaced.
+    spells it that way: the shell half is ``_encode_slug`` in
+    ``lib/ai/session-count.sh`` with the class ``A-Za-z0-9_``, which only ever
+    spares ASCII, while ``str.isalnum()`` is Unicode-aware and would keep an
+    accented letter the shell replaced.
     """
     text = str(path).strip("/")
     encoded = "".join(
@@ -489,11 +490,15 @@ def claude_slug(path: Path | str) -> str:
     A caller wanting every memory directory sweeps with ``memory_dirs``.
 
     ASCII alnum, not ``str.isalnum()``: ``_claude_project_dir`` in
-    ``lib/ai/session-count.sh`` runs ``tr -c 'A-Za-z0-9' '-'``, which only
-    ever spares the 62 ASCII letters and digits. ``str.isalnum()`` is
+    ``lib/ai/session-count.sh`` encodes with the class ``A-Za-z0-9``, which
+    only ever spares the 62 ASCII letters and digits. ``str.isalnum()`` is
     Unicode-aware and returns ``True`` for an accented or non-Latin letter,
     leaving it untouched and landing on a different directory than the shell
     half for the same path.
+
+    Per code point, as the shell half is. That matches Claude's own JavaScript
+    regex across the BMP and not beyond it; the ceiling on
+    ``_claude_project_dir`` carries the reasoning.
     """
     return "".join(c if c.isascii() and c.isalnum() else "-" for c in str(path))
 

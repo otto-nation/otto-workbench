@@ -271,8 +271,21 @@ def format_report(
     memory_states: list[dict],
     signals: list[dict],
     counts: dict[str, int] | None = None,
+    scan_id: str | None = None,
 ) -> str:
+    """The scan's markdown report, headed by the run that produced it.
+
+    The scan ID is in the report rather than only on stderr because the agent
+    reading this is what carries it forward: the phases it then runs record
+    against this run's trail, and it can only name a root it was told. It is
+    the trail *root* rather than this process's own invocation, so a scan
+    spawned under a larger command reports the ID that command is filed under —
+    the same spelling `retro-scan --consume` prints. See the dream skill's
+    Phase 3.
+    """
     lines: list[str] = []
+    if scan_id:
+        lines.append(f"<!-- scan-id: {scan_id} -->\n")
     if counts is not None:
         lines.extend(_format_counts(counts))
     lines.append("## Memory State\n")
@@ -394,7 +407,7 @@ def main() -> None:
             f"{args.days} days, found {len(signals)} signals",
         )
 
-        report = format_report(memory_states, signals, counts)
+        report = format_report(memory_states, signals, counts, scan_id=trail.root)
         trail.info("generate_report", f"report generated, {len(report)} chars")
         print(report)
     except Exception as exc:

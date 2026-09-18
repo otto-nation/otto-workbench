@@ -9,8 +9,10 @@
 # a second definition of that set: the gate skips a repo that has left the
 # registry, so a glob would write stamps no gate ever reads back.
 #
-# Usage: dream-complete.sh [--backup <project-slug>]
+# Usage: dream-complete.sh [--backup <project-slug>] [--root <invocation>]
 #        --backup  Back up a project's memory directory before first dream run.
+#        --root    Trail invocation of the dream-scan this closes, so the close
+#                  is filed under that run rather than as a command of its own.
 #
 # Exit codes:
 #   0 — completed successfully
@@ -25,9 +27,16 @@ _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 unset _WB
 
 OPT_BACKUP=""
-for arg in "$@"; do
-  case "$arg" in
-    --backup) shift; OPT_BACKUP="${1:-}"; shift || true ;;
+OPT_ROOT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --backup)
+      [[ -n "${2:-}" ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+      OPT_BACKUP="$2"; shift 2 ;;
+    --root)
+      [[ -n "${2:-}" ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+      OPT_ROOT="$2"; shift 2 ;;
+    *) shift ;;
   esac
 done
 
@@ -53,8 +62,26 @@ _run_backup() {
 # ── Record timestamps ────────────────────────────────────────────────────────
 
 now=$(date +%s)
+projects=0
 
 while IFS=$'\t' read -r mem_dir _repo_dir; do
   [[ -n "$mem_dir" ]] || continue
   echo "$now" > "$mem_dir/.last-dream"
+  projects=$((projects + 1))
 done < <(_memory_repos)
+
+# ── Record the close on the trail ────────────────────────────────────────────
+# Best-effort by design: this runs from a Stop hook, and a trail write is a
+# record of the dream rather than part of it. A workbench whose otto-log
+# predates `record` — the state every machine is in until this ships — fails
+# the subcommand, and that must not fail the dream it is reporting on.
+
+_record_close() {
+  local otto_log="$LOCAL_BIN_DIR/otto-log"
+  [[ -x "$otto_log" ]] || return 0
+  WORKBENCH_TRAIL_ROOT="$OPT_ROOT" "$otto_log" record \
+    --script dream --action close --detail "dream complete across $projects project(s)" \
+    --data "projects=$projects" >/dev/null 2>&1 || true
+}
+
+_record_close

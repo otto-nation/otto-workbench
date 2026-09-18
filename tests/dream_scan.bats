@@ -379,6 +379,29 @@ PY
   [[ "$output" == *"## Session Signals"* ]]
 }
 
+@test "scan: report names the trail run the agent records against" {
+  _make_memory_dir "test-proj" "- [Topic](topic.md) — entry"
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 30
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"<!-- scan-id: "* ]]
+}
+
+@test "scan: the reported invocation is the run's own trail root" {
+  _make_memory_dir "test-proj" "- [Topic](topic.md) — entry"
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 30
+  [[ "$status" -eq 0 ]]
+  local reported
+  reported=$(printf '%s\n' "$output" | sed -n 's/.*<!-- scan-id: \([0-9a-f]*\) -->.*/\1/p')
+  [[ -n "$reported" ]]
+  # The ID the report hands the agent has to be the one the trail filed the
+  # scan under, or every record the agent writes lands on a root nothing shares.
+  run "$REPO_ROOT/ai/bin/otto-log" show "$reported"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"dream-scan"* ]]
+}
+
 @test "scan: corrections appear before preferences in output" {
   _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/s.jsonl" \
     "I prefer tabs" "actually that is wrong"

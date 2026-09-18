@@ -71,6 +71,11 @@ The report contains:
 - **Repeated Themes** — rules that matched 2+ comments across different PRs,
   with example comments (use these to prioritize classification)
 
+That scan ID is also this run's trail root. Keep it for the rest of the retro:
+the scan is one process, the phases below are yours, and the close is another
+process later — passing the ID to each is what files them as one retro rather
+than three unrelated commands.
+
 Comment directions:
 - `received` — feedback on the user's PR from a reviewer
 - `gave` — feedback the user left on someone else's PR
@@ -241,6 +246,19 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 
 ## Skipped (one-off / noise)
 - PR #N: "<comment>" — <reason>
+```
+
+### Record what the retro proposed
+
+The trail holds what the scan found. What was proposed from it is worth the same
+record — counts, so a later run can be compared against this one rather than
+read as prose. The scan ID from Phase 1 is also this run's trail root, so
+passing it is what files these under the same retro:
+
+```bash
+WORKBENCH_TRAIL_ROOT=<scan-id> otto-log record --script retro \
+  --action propose --detail "<one line>" \
+  --data rule_gaps=<n> --data refinements=<n> --data project_rules=<n>
 ```
 
 ### Record timestamp and clean up

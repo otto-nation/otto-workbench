@@ -43,7 +43,7 @@ The trigger must name a condition — a clause turning on `if`, `once`, `when`, 
 The ledger auto-regenerates via the Stop hook. To force a refresh:
 
 ```bash
-bash ~/.claude/skills/ceiling-debt/generate-ceiling-debt.sh
+bash ~/.agents/skills/ceiling-debt/generate-ceiling-debt.sh
 ```
 
 The hook resolves the repo first, so a session rooted at a bare-repo container scans the worktree the container stands in for. When nothing resolves it says so and exits non-zero rather than skipping in silence.

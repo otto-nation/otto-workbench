@@ -119,6 +119,10 @@ def test_missing_file_yields_nothing(tmp_path):
     "<system-reminder>something</system-reminder>",
     "Caveat: The messages below were generated",
     "Job finished: re-run self-review at new HEAD",
+    # A slash-command body. Pi expands one into a plain user turn with no
+    # marker of any kind, and the bodies live in each repo rather than here.
+    "# Address PR Review Comments\n\nAddress review comments on the current branch",
+    "# Update Config Skill\n\nWalk the config surface and update the skill",
 ])
 def test_rejects_automation_prompts(text):
     assert sessions.is_automation_prompt(text)
@@ -130,9 +134,80 @@ def test_rejects_automation_prompts(text):
     "can we do everything now? no follow-ups",
     "why did the reviewer say 'You are an adversarial reviewer' in that thread?",
     "the ### Project context block is too long, trim it",
+    # Only the opening line is structural: a turn discussing or quoting a
+    # heading is a real turn.
+    "rename the heading to # Address PR Review Comments and re-run",
+    "the doc needs a title:\n\n# Session Handling\n\nwhat do you think?",
 ])
 def test_keeps_human_prompts(text):
     assert not sessions.is_automation_prompt(text)
+
+
+# ── Coverage of the prompt templates ─────────────────────────────────────────
+
+
+def _rendered_openings() -> list[tuple[str, str]]:
+    """The first non-empty line of every prompt template, name and text.
+
+    Placeholders are filled with something innocuous so a template opening with
+    a substituted value is judged on the prose around it rather than on a bare
+    `${branch_name}` no session would ever contain.
+    """
+    from string import Template
+
+    template_dir = REPO_ROOT / "ai" / "lib" / "review-templates"
+    filled = {
+        "branch_name": "isaac/feat/x",
+        "repo": "otto-nation/otto-workbench",
+        "pr_number": "1234",
+        # group.md opens with two substituted blocks rather than prose. The
+        # holistic one is empty whenever there was no scout pass, so the first
+        # line an agent actually receives is the project context header that
+        # review.collect builds — which is itself a covered prefix.
+        "holistic_block": "",
+        "project_context": "### Project context",
+    }
+    return [
+        (path.name, _first_line(Template(path.read_text()).safe_substitute(**filled)))
+        for path in sorted(template_dir.glob("*.md"))
+    ]
+
+
+def _first_line(body: str) -> str:
+    """The first line with anything on it, which is what an agent reads first."""
+    for line in body.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def test_every_prompt_template_is_recognised_as_automation():
+    """A template whose opening no prefix matches reaches dream as a signal.
+
+    The list in AUTOMATION_PREFIXES is hand-written because core cannot import
+    the layer that renders these. This is what keeps it honest: six templates
+    were uncovered when the check was added, and `pr comments --fix` preambles
+    were being classified as corrections because "Fix ... comment suggestions"
+    contains no pattern but the surrounding text did.
+    """
+    uncovered = [
+        name for name, opening in _rendered_openings()
+        if not sessions.is_automation_prompt(opening)
+    ]
+    assert not uncovered, (
+        f"prompt templates not covered by AUTOMATION_PREFIXES: {uncovered}. "
+        "Add a prefix for each in ai/lib/core/sessions.py."
+    )
+
+
+def test_template_openings_are_not_matched_by_accident():
+    """Every prefix must earn its place by matching a template or a known form.
+
+    Guards the other direction: a prefix broad enough to match anything would
+    pass the coverage test above while dropping human turns.
+    """
+    assert not sessions.is_automation_prompt("Fix the flaky test in push_test.py")
+    assert not sessions.is_automation_prompt("Review PR feedback with me before I reply")
 
 
 def test_quoting_a_preamble_mid_sentence_survives(tmp_path):

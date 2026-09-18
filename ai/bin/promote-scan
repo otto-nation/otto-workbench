@@ -40,8 +40,6 @@ MEMORY_INDEX = "MEMORY.md"
 LAST_PROMOTE_FILE = ".last-promote"
 TOPIC_GLOB = "*.md"
 
-PROJECTS_PATH = Path(".claude") / "projects"
-
 DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
 WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
 
@@ -59,7 +57,7 @@ STALE_DAYS = 90
 BODY_PREVIEW_LENGTH = 500
 
 
-from core import log
+from core import log, sessions
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
@@ -149,15 +147,9 @@ def _scan_topic_file(f: Path, now: datetime) -> dict | None:
 
 
 def scan_memory_state(home: Path) -> list[dict]:
-    projects_dir = home / PROJECTS_PATH
-    if not projects_dir.exists():
-        return []
-
     now = datetime.now()
     states = []
-    for memory_dir in sorted(projects_dir.glob("*/memory")):
-        if not memory_dir.is_dir():
-            continue
+    for memory_dir in sessions.memory_dirs(home):
         memory_md = memory_dir / MEMORY_INDEX
         if not memory_md.exists():
             continue

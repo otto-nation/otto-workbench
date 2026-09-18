@@ -3160,6 +3160,13 @@ wraps in a doubled delimiter, so the two harnesses do not even agree on the
 encoding. Both write the cwd *into* the transcript, which is a fact rather than
 an inference, so ``project_path_of`` reads that. The slug is written, never read.
 
+Memory is the one thing here that is genuinely Claude-shaped: it still lives in
+that harness's tree, one ``memory/`` directory per project slug. That is not a
+statement about which harness a session ran in — sessions come from every
+harness in the table — and moving those artifacts out is tracked separately.
+``memory_dirs`` is here so the location is stated once rather than at each
+consumer, which is how the transform came to be spelled four different ways.
+
 ``lib/ai/session-count.sh`` is the shell expression of the same model, for the
 Stop-hook gates that cannot afford a Python start-up. ``tests/sessions_ssot.bats``
 runs both against one fixture tree and fails when they disagree.

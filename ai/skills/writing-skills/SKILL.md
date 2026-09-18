@@ -106,7 +106,20 @@ Standalone `.sh` scripts run directly and are unaffected.
 Skills are shared between harnesses, so this binds a Pi-authored SKILL.md too:
 the permission prompt it causes lands on Claude Code users.
 
-## Step 5: Lifecycle Fields, If Auto-Triggered
+## Step 5: Invoke Sibling Scripts Through the Shared Root
+
+A script that sits beside the SKILL.md is reached at
+`~/.agents/skills/<name>/<script>.sh`, never `~/.claude/skills/...`.
+
+Both roots are symlinks to this one source tree, so a Claude-rooted path works
+on a machine with Claude Code installed and points at nothing under Pi. The
+agent then runs a path that is not there and the skill half-completes, which
+no check outside `validate-skills` would report.
+
+Write `bash ~/.agents/skills/<name>/<script>.sh` — with the `bash` prefix, so
+the command matches a permission rule that does not depend on tilde expansion.
+
+## Step 6: Lifecycle Fields, If Auto-Triggered
 
 When adding or changing auto-triggered behavior — hooks, cooldowns, pending
 flags — update **both** the `should-*.sh` script constants and the skill's
@@ -114,7 +127,7 @@ flags — update **both** the `should-*.sh` script constants and the skill's
 whose stated cadence disagrees with its hook is a skill that fires on a schedule
 nobody wrote down.
 
-## Step 6: Re-run the Generators
+## Step 7: Re-run the Generators
 
 After adding or changing a skill, an agent, or a task:
 
@@ -131,7 +144,7 @@ Never edit a `docs/*.md` carrying a "Generated from … by bin/local/compose-doc
 banner — edit its `docs/*.src.md`, or the source data behind the include
 directive.
 
-## Step 7: Validate
+## Step 8: Validate
 
 ```bash
 bin/local/validate-skills
@@ -149,6 +162,7 @@ fields, and the agent-stub pairing. A skill is not done until it passes.
 | Sometimes-on, Claude only | A rule with `harness: [claude]` |
 | Body is an agent protocol | `agent:` + placeholder, no `invocation:` |
 | Need a string transform in a code block | Pipe to `tr`/`sed`, never `${var//}` |
+| Invoking a script beside the SKILL.md | `bash ~/.agents/skills/<name>/<script>.sh`, never `~/.claude/skills/` |
 | Auto-triggered | `lifecycle_*` **and** the `should-*.sh` constants |
 | Finished editing | `generate-tool-context`, `compose-docs`, `validate-skills` |
 | Generated doc looks wrong | Edit the `.src.md`, never the output |
@@ -160,5 +174,6 @@ fields, and the agent-stub pairing. A skill is not done until it passes.
 | "I'll scope the rule with `paths:` instead" | Path-scoped rules never reach Pi. If Pi needs it, it is a skill. |
 | "The generators run in CI" | `validate-docs-composed` fails the push. Run them yourself. |
 | "`${var//}` is cleaner" | It costs a permission prompt on every invocation, for every Claude Code user. |
+| "`~/.claude/skills/` works on my machine" | It works because Claude Code is installed. Under Pi that path does not exist, and nothing says so. |
 | "I'll add `invocation:` to the agent stub too" | There is no command to type; the protocol arrives by dispatch. |
 | "The description is close enough" | The description is the trigger. A skill that never fires is not installed, it is just present. |

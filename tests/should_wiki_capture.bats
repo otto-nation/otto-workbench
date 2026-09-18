@@ -3,22 +3,28 @@
 #
 # Unlike should-dream.sh this gate answers for the repo the session ran in
 # rather than sweeping every project, so the cases here turn on cwd as much as
-# on the stamp.
+# on the stamp. "The repo" is the repository behind the cwd, not the checkout:
+# the stamp is keyed by repo under the state root, and sessions are counted
+# across every worktree and both harnesses.
 
 bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
   common_setup
-  TEST_HOME="$(mktemp -d)"
+  # Fully resolved: on macOS $TMPDIR is a /var/folders path that git reports
+  # as /private/var/folders, and the gate keys its stamp on the path git gives
+  # it.
+  TEST_HOME="$(cd "$TMPDIR" && pwd -P)/home"
+  mkdir -p "$TEST_HOME"
   export HOME="$TEST_HOME"
+  gate_sandbox
   SHOULD_CAPTURE="$REPO_ROOT/ai/skills/wiki-capture/should-wiki-capture.sh"
 
   # A repo to run the gate from, and a fake `wiki` ahead of the real one so the
   # knowledge-base question is controlled rather than inherited from the
   # machine. The default answers "there is one".
-  REPO="$TEST_HOME/repo"
-  mkdir -p "$REPO"
+  REPO="$(gate_repo "repo")"
   STUB_BIN="$TEST_HOME/stub-bin"
   mkdir -p "$STUB_BIN"
   _stub_wiki 0
@@ -26,7 +32,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TEST_HOME"
   common_teardown
 }
 
@@ -37,29 +42,29 @@ _stub_wiki() {
   chmod +x "$STUB_BIN/wiki"
 }
 
-# _project_dir DIR — the ~/.claude/projects directory Claude Code would name
-# for a session rooted at DIR. Spelled out here rather than sourced, so the
-# test would catch the helper changing the transform out from under the gate.
-_project_dir() {
-  printf '%s/.claude/projects/%s' "$HOME" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-')"
+# _stamp_file DIR — where the gate records DIR's repo cooldown. Spelled out
+# rather than sourced, so the test would catch the location or the slug
+# transform changing out from under the gate. The encoding matches
+# gate_pi_dir's on purpose, for the same reason: spelled out here rather than
+# delegated, so a change to either drifts into a failing test instead of
+# silently staying in sync.
+_stamp_file() {
+  local encoded
+  encoded="$(printf '%s' "${1#/}" | tr -c 'A-Za-z0-9_' '-')"
+  printf '%s/gates/--%s--.last-wiki-capture' "$WORKBENCH_STATE_DIR" "$encoded"
 }
 
-# _make_sessions COUNT [LAST_CAPTURE_TS] [SESSION_MTIME] — gives the repo a
-# project directory with COUNT transcripts, and optionally a capture stamp.
+# _make_sessions COUNT [LAST_CAPTURE_TS] [SESSION_MTIME] — gives the repo
+# COUNT Claude transcripts, and optionally a capture stamp.
 _make_sessions() {
   local count="$1" last_capture="${2:-}" mtime="${3:-}"
-  local dir
-  dir="$(_project_dir "$REPO")"
-  mkdir -p "$dir"
 
-  [ -n "$last_capture" ] && echo "$last_capture" > "$dir/.last-wiki-capture"
+  if [ -n "$last_capture" ]; then
+    mkdir -p "$WORKBENCH_STATE_DIR/gates"
+    echo "$last_capture" > "$(_stamp_file "$REPO")"
+  fi
 
-  local i
-  for i in $(seq 1 "$count"); do
-    printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
-    [ -n "$mtime" ] && touch -t "$mtime" "$dir/session-$i.jsonl"
-  done
-  return 0
+  gate_sessions "$(gate_claude_dir "$REPO")" "$count" "$mtime"
 }
 
 _run_gate() {
@@ -115,7 +120,7 @@ _fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
   [ "$status" -eq 1 ]
 }
 
-@test "a repo Claude Code has never opened is not due" {
+@test "a repo no harness has a session for is not due" {
   _run_gate
   [ "$status" -eq 1 ]
 }
@@ -150,10 +155,8 @@ _fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
   # cwd, so a gate firing for someone else's repo captures into this one's
   # knowledge base.
   local other
-  other="$(_project_dir "$TEST_HOME/other-repo")"
-  mkdir -p "$other"
-  local i
-  for i in 1 2 3 4 5; do printf '{}\n' > "$other/session-$i.jsonl"; done
+  other="$(gate_repo "other-repo")"
+  gate_sessions "$(gate_claude_dir "$other")" 5
 
   _make_sessions 10 "$(_fresh_ts)"
   _run_gate
@@ -164,9 +167,9 @@ _fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
   _make_sessions 10 "$(_stale_ts)"
   # A fresh stamp on a different repo must not suppress this one.
   local other
-  other="$(_project_dir "$TEST_HOME/other-repo")"
-  mkdir -p "$other"
-  date +%s > "$other/.last-wiki-capture"
+  other="$(gate_repo "other-repo")"
+  mkdir -p "$WORKBENCH_STATE_DIR/gates"
+  date +%s > "$(_stamp_file "$other")"
   _run_gate
   [ "$status" -eq 0 ]
 }
@@ -185,16 +188,54 @@ _fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
   [ "$status" -eq 1 ]
 }
 
-@test "the completion script is silent when the repo has no project directory" {
+@test "the completion script records a repo with no sessions yet" {
+  # There is no harness directory to hang a stamp off, which is exactly why the
+  # stamp lives under the state root: the old per-harness location made this
+  # a silent no-op, so the capture re-ran on every session exit.
   run bash -c "cd '$REPO' && '$REPO_ROOT/ai/skills/wiki-capture/wiki-capture-complete.sh'"
   [ "$status" -eq 0 ]
+  [ -f "$(_stamp_file "$REPO")" ]
 }
 
 @test "the completion script stamps the directory it was given" {
   _make_sessions 1
   run bash -c "'$REPO_ROOT/ai/skills/wiki-capture/wiki-capture-complete.sh' '$REPO'"
   [ "$status" -eq 0 ]
-  [ -f "$(_project_dir "$REPO")/.last-wiki-capture" ]
+  [ -f "$(_stamp_file "$REPO")" ]
+}
+
+# ── Harness and worktree coverage ────────────────────────────────────────────
+
+@test "Pi sessions count toward the minimum" {
+  gate_sessions "$(gate_pi_dir "$REPO")" 3
+  _run_gate
+  [ "$status" -eq 0 ]
+}
+
+@test "sessions spread across worktrees count toward one repo" {
+  # One session in each of three worktrees: under the minimum alone, over it
+  # together. The stamp and the count are both keyed on the repo behind them.
+  gate_sessions "$(gate_claude_dir "$REPO/main")" 1
+  gate_sessions "$(gate_claude_dir "$REPO/feature-a")" 1
+  gate_sessions "$(gate_pi_dir "$REPO/feature-b")" 1
+  _run_gate
+  [ "$status" -eq 0 ]
+}
+
+@test "a capture from one worktree settles the cooldown for the others" {
+  gate_sessions "$(gate_claude_dir "$REPO")" 5
+  _run_gate
+  [ "$status" -eq 0 ]
+
+  # Completion runs in a worktree, and the gate then runs from the repo root.
+  # A stamp keyed per checkout would leave this due and capture twice.
+  local worktree="$REPO/feature-a"
+  mkdir -p "$worktree"
+  run bash -c "'$REPO_ROOT/ai/skills/wiki-capture/wiki-capture-complete.sh' '$worktree'"
+  [ "$status" -eq 0 ]
+
+  _run_gate
+  [ "$status" -eq 1 ]
 }
 
 # ── Wiring ───────────────────────────────────────────────────────────────────

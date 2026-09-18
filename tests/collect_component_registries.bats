@@ -89,3 +89,35 @@ _write_registry() {
   run comm -23 "$BATS_TEST_TMPDIR/components.list" "$BATS_TEST_TMPDIR/all.list"
   [ -z "$output" ]
 }
+
+@test "an env file in gitignored scratch is not collected" {
+  # `ignore/` holds scratch, and a copy of the repo left there presents a second
+  # copy of every *.env.yml. Discovery that walked into it reported each var as
+  # declared by two registries and failed the push over a file that is not part
+  # of the repo.
+  _write_registry "$TMPDIR/comp"
+  printf 'env: []\n' > "$TMPDIR/real.env.yml"
+  mkdir -p "$TMPDIR/ignore/probe/zsh"
+  printf 'env: []\n' > "$TMPDIR/ignore/probe/zsh/scratch.env.yml"
+
+  local -a all=()
+  collect_registries all "$TMPDIR"
+
+  printf '%s\n' "${all[@]}" > "$BATS_TEST_TMPDIR/all.list"
+  grep -q 'real.env.yml' "$BATS_TEST_TMPDIR/all.list"
+  ! grep -q 'scratch.env.yml' "$BATS_TEST_TMPDIR/all.list"
+}
+
+@test "a scratch checkout's nested registry.yml is out of the walk" {
+  # The component globs are depth-bounded and so cannot reach into `ignore/`
+  # on their own. Asserted anyway: a future widening of that depth would
+  # otherwise reopen the duplicate-registry failure silently.
+  _write_registry "$TMPDIR/comp"
+  _write_registry "$TMPDIR/ignore/probe/ai"
+
+  local -a all=()
+  collect_registries all "$TMPDIR"
+
+  printf '%s\n' "${all[@]}" > "$BATS_TEST_TMPDIR/all.list"
+  ! grep -q '/ignore/' "$BATS_TEST_TMPDIR/all.list"
+}

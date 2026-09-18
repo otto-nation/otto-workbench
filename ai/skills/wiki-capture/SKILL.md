@@ -39,9 +39,17 @@ Exit 2 means there is none. Say nothing and stop — do not create one.
 
 ## 2. Read what happened
 
-Read the most recent transcript for this repo under
-`~/.claude/projects/<slug>/*.jsonl`, and read the knowledge base's `_index.md`
-so an observation can name the article it bears on.
+Read the session that just ended — you are in it, so its turns are already in
+context, and nothing needs to be read off disk to review them. Read the
+knowledge base's `_index.md` too, so an observation can name the article it
+bears on.
+
+To reach transcripts on disk anyway — reviewing a run that is not this one —
+use `ai/lib/core/sessions.py`, which finds them across every harness:
+`discover_sessions(Path.home())` newest-first, `iter_user_messages(session)`
+for the human turns with automation preambles dropped. Globbing
+`~/.claude/projects` finds only Claude Code's, and most sessions on this
+machine are Pi's.
 
 ## 3. Decide — conservatively
 
@@ -74,7 +82,7 @@ Append only. Never edit an existing entry, never edit an article, never run
 ## 5. Record completion
 
 ```bash
-bash ~/.claude/skills/wiki-capture/wiki-capture-complete.sh
+bash ~/.agents/skills/wiki-capture/wiki-capture-complete.sh
 ```
 
 Run this whether or not anything was logged. The cooldown resets on the review

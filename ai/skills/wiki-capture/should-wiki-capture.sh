@@ -12,9 +12,14 @@
 # because some *other* project was overdue would capture this session's findings
 # into the wrong wiki, which is the bug the ported plugin hook had.
 #
-# The three checks are ordered by cost, cheapest first. `wiki path` is a Python
-# process and the only expensive one, so it runs last: a session in a repo with
-# no wiki at all pays two file reads, on every exit, forever.
+# "This repo" means the repository, not the checkout: sessions for one repo are
+# spread across a directory per worktree per harness, and the cooldown belongs
+# to the knowledge base, which is one per repo. Resolving that costs a
+# `git rev-parse`, and it has to come first because the stamp is filed under the
+# answer. The three checks after it stay ordered cheapest-first — two file reads
+# before the session sweep, and `wiki path` is a Python process so it runs last:
+# a session in a repo with no wiki pays the fork and two reads, on every exit,
+# forever.
 
 set -e
 
@@ -27,18 +32,16 @@ unset _WB
 CAPTURE_INTERVAL_HOURS=24
 MIN_SESSIONS=3
 
-project_dir="$(_claude_project_dir "$PWD")/"
-[[ -d "$project_dir" ]] || exit 1
+repo_dir="$(_gate_repo_dir "$PWD")"
 
-stamp_file="${project_dir}.last-wiki-capture"
-last_capture=0
-[[ -f "$stamp_file" ]] && last_capture=$(cat "$stamp_file" 2>/dev/null || echo 0)
+stamp_file="$(_gate_stamp_file "$repo_dir" "last-wiki-capture")"
+last_capture="$(_read_stamp "$stamp_file")"
 
 now=$(date +%s)
 threshold_secs=$((CAPTURE_INTERVAL_HOURS * 3600))
 [[ $((now - last_capture)) -lt "$threshold_secs" ]] && exit 1
 
-_has_enough_sessions "$project_dir" "$last_capture" "$MIN_SESSIONS" || exit 1
+_repo_has_enough_sessions "$repo_dir" "$last_capture" "$MIN_SESSIONS" || exit 1
 
 # Last, and only for a repo that has otherwise qualified: `wiki path` exits 2
 # when there is no knowledge base, which is the ordinary answer rather than a

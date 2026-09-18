@@ -431,10 +431,22 @@ collect_registries() {
   local -a raw=()
   collect_component_registries raw "$scan_dir"
 
-  # Consumer-owned env files (colocated with the code that reads the vars)
+  # Consumer-owned env files (colocated with the code that reads the vars).
+  #
+  # Pruned rather than filtered by path, so the walk never descends into a
+  # directory holding a copy of the repo. `ignore/` is the one that bites: it is
+  # gitignored scratch, and a checkout left there presents a second `models.env.yml`
+  # and a second `aws.env.yml`, which the duplicate-var check reads as two
+  # registries declaring the same var and fails the push for a file that is not
+  # part of the repo. The set matches `list_shell_scripts` in lib/files.sh, which
+  # walks the same tree for the same reason.
   while IFS= read -r -d '' f; do
     raw+=("$f")
-  done < <(find "$scan_dir" -name '*.env.yml' -not -path '*/.git/*' -print0 | sort -z)
+  done < <(
+    find "$scan_dir" \
+      \( -type d \( -name '.git' -o -name 'ignore' -o -name '__pycache__' -o -name 'node_modules' \) -prune \) \
+      -o \( -type f -name '*.env.yml' -print0 \) | sort -z
+  )
 
   # Brew stack registries
   if [[ -d "$brew_dir" ]]; then

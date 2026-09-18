@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # should-dream.sh — checks whether a dream consolidation is due.
-# Returns 0 (true) if ANY project with a memory/ directory is 24+ hours AND
-# 5+ sessions since last dream. Projects without memory/ are skipped — they
+# Returns 0 (true) if ANY repo with a memory/ directory is 24+ hours AND
+# 5+ sessions since last dream. Repos without memory/ are skipped — they
 # have nothing to consolidate and no timestamp file to record completion.
 # Returns 1 (false) otherwise.
 # Used by the Stop hook: runs on every session exit (~10ms overhead).
+#
+# Sessions are counted per repo across every harness and every worktree, by
+# _repo_has_enough_sessions. Counting one Claude directory asked whether a
+# single worktree had been busy under a single harness, so a week spent in Pi
+# across six worktrees tripped nothing — which is why the last recorded dream
+# on this machine predated the move to Pi by two and a half months.
 
 set -e
 
@@ -20,20 +26,17 @@ MIN_SESSIONS=5
 now=$(date +%s)
 threshold_secs=$((DREAM_INTERVAL_HOURS * 3600))
 
-for project_dir in "$CLAUDE_DIR/projects"/*/; do
-  [[ -d "$project_dir" ]] || continue
-  [[ -d "${project_dir}memory" ]] || continue
+while IFS=$'\t' read -r memory_dir repo_dir; do
+  [[ -n "$memory_dir" ]] || continue
 
-  stamp_file="${project_dir}memory/.last-dream"
-  last_dream=0
-  [[ -f "$stamp_file" ]] && last_dream=$(cat "$stamp_file" 2>/dev/null || echo 0)
+  last_dream="$(_read_stamp "$memory_dir/.last-dream")"
 
   elapsed=$((now - last_dream))
   [[ "$elapsed" -lt "$threshold_secs" ]] && continue
 
-  if _has_enough_sessions "$project_dir" "$last_dream" "$MIN_SESSIONS"; then
+  if _repo_has_enough_sessions "$repo_dir" "$last_dream" "$MIN_SESSIONS"; then
     exit 0
   fi
-done
+done < <(_memory_repos)
 
 exit 1

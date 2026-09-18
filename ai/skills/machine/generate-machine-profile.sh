@@ -16,9 +16,16 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 # ui.sh rather than constants.sh alone: a location that does not resolve is
 # reported with warn, and the facade is what puts the output helpers in scope.
-. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
+. "$_WB/lib/ui.sh"
+# For _claude_project_dir, which memory_cell below names the memory directory
+# with. Sourced rather than respelled: this file had its own transform and the
+# two disagreed, so every repo whose path holds a `_` or a `.` reported no
+# memory while its files sat on disk.
+. "$_WB/lib/ai/session-count.sh"
+unset _WB
 
 MACHINE_DIR="$CLAUDE_DIR/machine"
 PROFILE_FILE="$MACHINE_DIR/machine.md"
@@ -235,7 +242,8 @@ fi
 # the container — so a table that only asked the checkouts reported "no" for
 # every one of them while the memories sat one level up.
 memory_cell() {
-  local slug="${1//\//-}"
+  local slug
+  slug="$(basename "$(_claude_project_dir "$1")")"
   printf '%s\n' "${memory_status[$slug]:-no}"
 }
 

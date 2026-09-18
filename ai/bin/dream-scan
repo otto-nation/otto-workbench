@@ -4,17 +4,30 @@
 Replaces Phases 1+2 of the dream skill (Orient + Gather Signal).
 Outputs a structured markdown report to stdout.
 
+Sessions come from ``core.sessions``, which owns what a session is and where
+one lives across every harness on the machine. This script used to answer that
+itself, with Claude Code's directory layout and its record shape: interactive
+work moved to Pi and the scan went blind to most of the corpus while reporting
+nothing amiss. The report header now prints a per-harness count, so a harness
+that has stopped being discovered reads as a zero rather than as a corpus that
+quietly halved.
+
 Usage:
-  dream-scan [--days N] [--home DIR]
+  dream-scan [--days N] [--home DIR] [--list-transcripts] [--memory-dir REPO]
+
+The two exit-early flags answer "where does the corpus live" for callers that
+need the paths rather than the report: ``--list-transcripts`` prints every
+transcript in the window, one per line, and ``--memory-dir`` prints the memory
+directory for one repo. Skills use them instead of globbing a harness's tree.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -38,18 +51,12 @@ from core.trail import Trail, add_trail_args  # noqa: E402
 SCRIPT = Path(__file__).name
 MAX_TEXT_LENGTH = 500
 TEXT_PREVIEW_LENGTH = 200
-MIN_TEXT_LENGTH = 10
 DEFAULT_DAYS = 7
 
-RECORD_TYPE_USER = "user"
-CONTENT_TYPE_TEXT = "text"
 FRONTMATTER_DELIMITER = "---"
 MEMORY_INDEX = "MEMORY.md"
 LAST_DREAM_FILE = ".last-dream"
-JSONL_GLOB = "*.jsonl"
 TOPIC_GLOB = "*.md"
-
-PROJECTS_PATH = Path(".claude") / "projects"
 
 DATE_FMT = "%Y-%m-%d"
 DATETIME_FMT = "%Y-%m-%d %H:%M"
@@ -89,30 +96,10 @@ SIGNAL_PRIORITY = ["correction", "preference", "decision", "pattern", "review_fe
 STALE_DAYS = 90
 
 
-from core import log
+from core import log, sessions
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
-
-
-def extract_user_text(record: dict) -> str | None:
-    if record.get("type") != RECORD_TYPE_USER:
-        return None
-    content = record.get("message", {}).get("content", "")
-
-    text = _extract_text_from_content(content)
-    if not text or len(text) < MIN_TEXT_LENGTH or text.startswith("<"):
-        return None
-    return text
-
-
-def _extract_text_from_content(content: str | list | None) -> str | None:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == CONTENT_TYPE_TEXT]
-        return " ".join(texts) if texts else None
-    return None
 
 
 def classify_signal(text: str) -> str | None:
@@ -176,15 +163,9 @@ def _scan_topic_file(f: Path, now: datetime) -> dict:
 
 
 def scan_memory_state(home: Path) -> list[dict]:
-    projects_dir = home / PROJECTS_PATH
-    if not projects_dir.exists():
-        return []
-
     now = datetime.now()
     states = []
-    for memory_dir in sorted(projects_dir.glob("*/memory")):
-        if not memory_dir.is_dir():
-            continue
+    for memory_dir in sessions.memory_dirs(home):
         memory_md = memory_dir / MEMORY_INDEX
         if not memory_md.exists():
             continue
@@ -202,64 +183,47 @@ def scan_memory_state(home: Path) -> list[dict]:
     return states
 
 
-def _extract_signals_from_file(jsonl_file: Path, project_id: str) -> list[dict]:
-    session_date = datetime.fromtimestamp(jsonl_file.stat().st_mtime).strftime(DATE_FMT)
-    try:
-        raw_lines = jsonl_file.read_text().splitlines()
-    except OSError:
-        log.warn(f"Could not read {jsonl_file}")
-        return []
-    results = [_classify_line(line, project_id, session_date) for line in raw_lines]
-    return [sig for sig in results if sig is not None]
+def _signals_in(session: sessions.Session) -> list[dict]:
+    """Every classified human turn in one transcript.
 
-
-def _classify_line(raw_line: str, project_id: str, session_date: str) -> dict | None:
-    raw_line = raw_line.strip()
-    if not raw_line:
-        return None
-    try:
-        record = json.loads(raw_line)
-    except json.JSONDecodeError:
-        return None
-    text = extract_user_text(record)
-    if text is None:
-        return None
-    category = classify_signal(text)
-    if category is None:
-        return None
-    return {
-        "category": category,
-        "text": text[:MAX_TEXT_LENGTH],
-        "project_id": project_id,
-        "session_date": session_date,
-    }
-
-
-def scan_sessions(home: Path, days: int) -> list[dict]:
-    projects_dir = home / PROJECTS_PATH
-    if not projects_dir.exists():
-        return []
-
-    cutoff = datetime.now() - timedelta(days=days)
+    Each signal is dated from its own record rather than from the file, which
+    is what makes "how many distinct dates mention this" — how dream weighs a
+    signal — mean anything. Dating by mtime gave every turn in a session the
+    date the session last ended, so a week of work in one long-running session
+    counted once.
+    """
     signals = []
-    for project_dir in sorted(projects_dir.iterdir()):
-        if not project_dir.is_dir():
+    for message in sessions.iter_user_messages(session):
+        category = classify_signal(message.text)
+        if category is None:
             continue
-        signals.extend(_scan_project_sessions(project_dir, cutoff))
+        signals.append({
+            "category": category,
+            "text": message.text[:MAX_TEXT_LENGTH],
+            "project_id": _project_id_of(message),
+            "session_date": message.date,
+        })
     return signals
 
 
-def _scan_project_sessions(project_dir: Path, cutoff: datetime) -> list[dict]:
-    project_id = project_dir.name
+def _project_id_of(message: sessions.UserMessage) -> str:
+    """What to file a signal under.
+
+    The canonical slug of the cwd the session recorded, which is stable across
+    harnesses — the same repo worked in from Claude and from Pi files under one
+    id rather than two, because the harnesses' own directory names encode
+    differently. A transcript that never stated a cwd is filed under its
+    harness, which is all that is known about it.
+    """
+    if message.project_path is None:
+        return message.harness
+    return sessions.canonical_slug(message.project_path)
+
+
+def scan_sessions(discovered: list[sessions.Session]) -> list[dict]:
     signals = []
-    for jsonl_file in sorted(project_dir.glob(JSONL_GLOB)):
-        try:
-            mtime = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
-        except OSError:
-            continue
-        if mtime < cutoff:
-            continue
-        signals.extend(_extract_signals_from_file(jsonl_file, project_id))
+    for session in discovered:
+        signals.extend(_signals_in(session))
     return signals
 
 
@@ -303,12 +267,32 @@ def _format_signal_category(category: str, cat_signals: list[dict]) -> list[str]
     return lines
 
 
-def format_report(memory_states: list[dict], signals: list[dict]) -> str:
-    lines: list[str] = ["## Memory State\n"]
+def format_report(
+    memory_states: list[dict],
+    signals: list[dict],
+    counts: dict[str, int] | None = None,
+) -> str:
+    lines: list[str] = []
+    if counts is not None:
+        lines.extend(_format_counts(counts))
+    lines.append("## Memory State\n")
     lines.extend(_format_memory_section(memory_states))
     lines.append("## Session Signals\n")
     lines.extend(_format_signals_section(signals))
     return "\n".join(lines)
+
+
+def _format_counts(counts: dict[str, int]) -> list[str]:
+    """Transcripts scanned, per harness.
+
+    Stated because it is the only thing that makes a harness going undiscovered
+    visible: the failure is silent otherwise, and was — a scan of Claude alone
+    reported a full-looking corpus for months while most sessions were Pi's.
+    A zero here is the signal to check the layout table in core/sessions.py.
+    """
+    total = sum(counts.values())
+    per = ", ".join(f"{name} {n}" for name, n in sorted(counts.items()))
+    return ["## Sessions Scanned\n", f"{total} transcripts — {per}\n"]
 
 
 def _format_memory_section(states: list[dict]) -> list[str]:
@@ -338,11 +322,21 @@ def _format_signals_section(signals: list[dict]) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Scan session transcripts and memory state for dream consolidation.",
-        usage=f"{SCRIPT} [--days N] [--home DIR]",
+        usage=f"{SCRIPT} [--days N] [--home DIR] [--list-transcripts] [--memory-dir]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"scan sessions from last N days (default: {DEFAULT_DAYS})")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
+    parser.add_argument(
+        "--list-transcripts",
+        action="store_true",
+        help="print transcript paths for the window, one per line, and exit",
+    )
+    parser.add_argument(
+        "--memory-dir",
+        metavar="REPO",
+        help="print the memory directory for the repo at REPO, and exit",
+    )
     add_trail_args(parser)
     args = parser.parse_args()
 
@@ -351,6 +345,27 @@ def main() -> None:
         raise SystemExit(0)
 
     home = Path(args.home)
+
+    # Phases 5 and 5b of the dream skill grep the corpus for architectural and
+    # machine-level facts, which needs the file list rather than the report.
+    # Printing it here keeps one answer to "where are the sessions": a skill
+    # globbing a harness directory itself is what went blind when work moved to
+    # Pi.
+    if args.list_transcripts:
+        cutoff = datetime.now() - timedelta(days=args.days)
+        for session in sessions.discover_sessions(home, since=cutoff):
+            print(session.path)
+        raise SystemExit(0)
+
+    # The architecture skill reads a repo's memory before proposing changes, and
+    # was building the directory name with a transform of its own that did not
+    # match Claude's — so it resolved to nothing for any repo whose path holds a
+    # `_` or a `.`. Same reasoning as the branch above: the script that owns the
+    # location answers, rather than each skill deriving it again.
+    if args.memory_dir is not None:
+        print(sessions.claude_memory_dir(home, args.memory_dir))
+        raise SystemExit(0)
+
     trail = Trail.start(
         script=SCRIPT,
         context={"days": args.days},
@@ -365,11 +380,21 @@ def main() -> None:
         log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
-        signals = scan_sessions(home, args.days)
-        log.info(f"Found {len(signals)} signal(s)")
-        trail.info("scan_sessions", f"scanned sessions from last {args.days} days, found {len(signals)} signals")
+        cutoff = datetime.now() - timedelta(days=args.days)
+        discovered = sessions.discover_sessions(home, since=cutoff)
+        counts = {h.name: 0 for h in sessions.HARNESSES}
+        counts.update(Counter(s.harness for s in discovered))
+        log.info(f"Sessions: {counts}")
 
-        report = format_report(memory_states, signals)
+        signals = scan_sessions(discovered)
+        log.info(f"Found {len(signals)} signal(s)")
+        trail.info(
+            "scan_sessions",
+            f"scanned {sum(counts.values())} transcripts ({counts}) from last "
+            f"{args.days} days, found {len(signals)} signals",
+        )
+
+        report = format_report(memory_states, signals, counts)
         trail.info("generate_report", f"report generated, {len(report)} chars")
         print(report)
     except Exception as exc:

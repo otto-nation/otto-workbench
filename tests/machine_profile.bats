@@ -204,6 +204,16 @@ profile_row() {
   [[ "$(profile_row container)" == *"| node |"* ]]
 }
 
+# claude_memory_dir DIR — where Claude keeps the memory for a session whose cwd
+# is DIR. Spelled out rather than sourced so the test would catch the transform
+# changing under the profile. Every character outside [A-Za-z0-9] becomes a
+# hyphen, `_` and `.` included — a mktemp path holds both, which is what makes
+# this a fixture the wrong transform cannot satisfy.
+claude_memory_dir() {
+  printf '%s/.claude/projects/%s/memory' \
+    "$TMPDIR/home" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-')"
+}
+
 @test "the machine profile finds the memories a worktree repo keeps at its container" {
   # Claude records a session started in a worktree under the container, so a
   # table that only asked the checkouts reported "no" for every one of them
@@ -213,8 +223,10 @@ profile_row() {
   make_container_seed "$TMPDIR/seed"
   make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
   project_register "$TMPDIR/container/main"
-  mkdir -p "$TMPDIR/home/.claude/projects/${TMPDIR//\//-}-container/memory"
-  printf 'a fact\n' > "$TMPDIR/home/.claude/projects/${TMPDIR//\//-}-container/memory/one.md"
+  local mem
+  mem="$(claude_memory_dir "$TMPDIR/container")"
+  mkdir -p "$mem"
+  printf 'a fact\n' > "$mem/one.md"
 
   HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]

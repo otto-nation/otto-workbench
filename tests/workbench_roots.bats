@@ -278,6 +278,40 @@ print(record_path(), end='')
   [ "$(resolve_constants RETRO_CONSUMED_REVIEWS_FILE)" = "$(resolve_python_retro_consumed)" ]
 }
 
+# resolve_python_last_retro — the global retro stamp as retro-scan spells it:
+# its own LAST_RETRO_NAME under the Python gates directory. Loaded through
+# SourceFileLoader for the same reason as the consumed-reviews file above.
+resolve_python_last_retro() {
+  python3 -c "
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader(
+    'retro_scan', '$REPO_ROOT/ai/bin/retro-scan')
+spec = importlib.util.spec_from_loader('retro_scan', loader)
+mod = importlib.util.module_from_spec(spec)
+sys.modules['retro_scan'] = mod
+spec.loader.exec_module(mod)
+from core import workbench_paths
+print(workbench_paths.gates_dir() / mod.LAST_RETRO_NAME, end='')
+"
+}
+
+@test "bash and Python agree on the gates dir and the retro stamp" {
+  [ "$(resolve_constants GATE_STAMPS_DIR)" = "$(resolve_python gates_dir)" ]
+  [ "$(resolve_constants RETRO_STAMP_FILE)" = "$(resolve_python_last_retro)" ]
+}
+
+@test "the retro stamp rides along when the state root moves" {
+  # retro-complete.sh writes it in bash and retro-scan reads it in Python. A
+  # root that moves for one and not the other reads 0, which puts the scan in
+  # first-run mode: every merged PR refetched per repo, then every local review
+  # consumed and deleted.
+  export WORKBENCH_STATE_DIR="$TMPDIR/explicit-state"
+  local stamp="$TMPDIR/explicit-state/gates/last-retro"
+
+  [ "$(resolve_constants RETRO_STAMP_FILE)" = "$stamp" ]
+  [ "$(resolve_python_last_retro)" = "$stamp" ]
+}
+
 @test "bash and Python agree on the project registry file" {
   # lib/projects.sh appends to it and ai/lib/config/workbench_projects.py appends to it
   # — two writers, so a drift here is two registries, each holding half the

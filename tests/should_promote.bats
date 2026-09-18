@@ -1,48 +1,47 @@
 #!/usr/bin/env bats
-# Tests for should-promote.sh — per-project promote cooldown checks.
+# Tests for should-promote.sh — per-repo promote cooldown checks.
+#
+# The gate sweeps the project registry and counts a repo's sessions across
+# every harness and every worktree, so the fixtures here are registered repos
+# rather than bare directories under `.claude/projects`.
 
 bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
   common_setup
-  TEST_HOME="$(mktemp -d)"
+  # Fully resolved: on macOS $TMPDIR is a /var/folders path that git reports
+  # as /private/var/folders, and the gate encodes the path git gives it into
+  # the directory it looks for the memory in.
+  TEST_HOME="$(cd "$TMPDIR" && pwd -P)/home"
+  mkdir -p "$TEST_HOME"
   export HOME="$TEST_HOME"
+  gate_sandbox
   SHOULD_PROMOTE="$REPO_ROOT/ai/skills/promote/should-promote.sh"
 }
 
 teardown() {
-  rm -rf "$TEST_HOME"
   common_teardown
 }
 
-# Helper: create a project with a .last-promote timestamp and session files.
-# Usage: _make_project <name> <last-promote-ts> <num-sessions> [session-mtime-ts]
-# If last-promote-ts is empty, no .last-promote file is created (first run).
-# session-mtime-ts defaults to now (recent sessions).
+# _make_project NAME LAST_PROMOTE_TS NUM_SESSIONS [SESSION_MTIME]
+# A registered repo with a memory directory, a promote stamp and Claude
+# sessions. An empty LAST_PROMOTE_TS leaves no stamp, which is the first-run
+# case.
 _make_project() {
-  local name="$1"
-  local last_promote_ts="$2"
-  local num_sessions="$3"
-  local session_mtime="${4:-}"
-
-  local dir="$HOME/.claude/projects/$name"
-  mkdir -p "$dir/memory"
+  local name="$1" last_promote_ts="$2" num_sessions="$3" session_mtime="${4:-}"
+  local repo memory
+  repo="$(gate_repo "$name")"
+  memory="$(gate_memory "$repo")"
 
   if [ -n "$last_promote_ts" ]; then
-    echo "$last_promote_ts" > "$dir/memory/.last-promote"
+    echo "$last_promote_ts" > "$memory/.last-promote"
   fi
 
-  local i
-  for i in $(seq 1 "$num_sessions"); do
-    printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
-    if [ -n "$session_mtime" ]; then
-      touch -t "$session_mtime" "$dir/session-$i.jsonl"
-    fi
-  done
+  gate_sessions "$(gate_claude_dir "$repo")" "$num_sessions" "$session_mtime"
 }
 
-# ── Per-project cooldown logic ───────────────────────────────────────────────
+# ── Per-repo cooldown logic ──────────────────────────────────────────────────
 
 @test "should-promote: project A recent, project B overdue with enough sessions → fires" {
   local now
@@ -81,13 +80,7 @@ _make_project() {
 }
 
 @test "should-promote: no .last-promote files (first run) with enough sessions → fires" {
-  local dir="$HOME/.claude/projects/new-project"
-  mkdir -p "$dir/memory"
-
-  local i
-  for i in $(seq 1 11); do
-    printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
-  done
+  _make_project "new-project" "" 11
 
   run "$SHOULD_PROMOTE"
   [[ "$status" -eq 0 ]]
@@ -171,35 +164,114 @@ _make_project() {
   [[ "$status" -eq 1 ]]
 }
 
-# ── Projects without memory/ ────────────────────────────────────────────────
+# ── Repos without memory/ ───────────────────────────────────────────────────
 
-@test "should-promote: project without memory/ dir is ignored even with many sessions" {
-  local dir="$HOME/.claude/projects/no-memory-project"
-  mkdir -p "$dir"
-
-  local i
-  for i in $(seq 1 20); do
-    printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
-  done
+@test "should-promote: repo without memory/ dir is ignored even with many sessions" {
+  local repo
+  repo="$(gate_repo "no-memory-project")"
+  gate_sessions "$(gate_claude_dir "$repo")" 20
 
   run "$SHOULD_PROMOTE"
   [[ "$status" -eq 1 ]]
 }
 
-@test "should-promote: project without memory/ does not block eligible project" {
+@test "should-promote: repo without memory/ does not block eligible repo" {
   local now
   now=$(date +%s)
   local eight_days_ago=$((now - 691200))
 
-  local no_mem_dir="$HOME/.claude/projects/aaa-no-memory"
-  mkdir -p "$no_mem_dir"
-  local i
-  for i in $(seq 1 20); do
-    printf '{"type":"user"}\n' > "$no_mem_dir/session-$i.jsonl"
-  done
+  local no_mem
+  no_mem="$(gate_repo "aaa-no-memory")"
+  gate_sessions "$(gate_claude_dir "$no_mem")" 20
 
   _make_project "zzz-has-memory" "$eight_days_ago" 12
 
   run "$SHOULD_PROMOTE"
   [[ "$status" -eq 0 ]]
+}
+
+# ── Harness and worktree coverage ────────────────────────────────────────────
+# The bug this gate was rebuilt for: sessions counted under Claude Code only,
+# in the one directory named for the repo root. Interactive work moved to Pi
+# and spread across worktrees, and the gate stopped firing for months.
+
+@test "should-promote: Pi sessions count toward the minimum" {
+  local now
+  now=$(date +%s)
+  local eight_days_ago=$((now - 691200))
+
+  local repo memory
+  repo="$(gate_repo "pi-only")"
+  memory="$(gate_memory "$repo")"
+  echo "$eight_days_ago" > "$memory/.last-promote"
+  gate_sessions "$(gate_pi_dir "$repo")" 12
+
+  run "$SHOULD_PROMOTE"
+  [[ "$status" -eq 0 ]]
+}
+
+@test "should-promote: sessions spread across worktrees count toward one repo" {
+  local now
+  now=$(date +%s)
+  local eight_days_ago=$((now - 691200))
+
+  local repo memory
+  repo="$(gate_repo "spread")"
+  memory="$(gate_memory "$repo")"
+  echo "$eight_days_ago" > "$memory/.last-promote"
+
+  # Four sessions in each of three worktrees: under the minimum of 10 alone,
+  # over it together. Counting any single directory would leave this shut.
+  gate_sessions "$(gate_claude_dir "$repo/main")" 4
+  gate_sessions "$(gate_claude_dir "$repo/feature-a")" 4
+  gate_sessions "$(gate_pi_dir "$repo/feature-b")" 4
+
+  run "$SHOULD_PROMOTE"
+  [[ "$status" -eq 0 ]]
+}
+
+# ── The completion script and the gate agree on the set ──────────────────────
+
+@test "promote-complete settles the gate it is paired with" {
+  local now
+  now=$(date +%s)
+  _make_project "project-a" "$((now - 691200))" 12
+
+  run "$SHOULD_PROMOTE"
+  [ "$status" -eq 0 ]
+
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
+
+  run "$SHOULD_PROMOTE"
+  [ "$status" -eq 1 ]
+}
+
+@test "promote-complete stamps every registered repo with memory" {
+  local now
+  now=$(date +%s)
+  _make_project "project-a" "$((now - 691200))" 12
+  _make_project "project-b" "$((now - 691200))" 12
+
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$(gate_memory "$TEST_HOME/project-a")/.last-promote" ]
+  [ -f "$(gate_memory "$TEST_HOME/project-b")/.last-promote" ]
+}
+
+@test "promote-complete writes no stamp an unregistered repo would keep" {
+  # As in should_dream.bats: the gate reads forward from the registry, so a
+  # completion script globbing memory directories would disagree with it about
+  # which repos exist.
+  local orphan="$TEST_HOME/unregistered"
+  mkdir -p "$(gate_claude_dir "$orphan")/memory"
+
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
+  [ ! -f "$(gate_claude_dir "$orphan")/memory/.last-promote" ]
+}
+
+@test "promote-complete is quiet with nothing registered" {
+  run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
+  [ "$status" -eq 0 ]
 }

@@ -285,15 +285,14 @@ _pr_load_template() {
   PR_HAS_TEMPLATE=false
   PR_TEMPLATE=""
   local root
-  root=$(git rev-parse --show-toplevel 2> /dev/null) || root=""
-  [ -n "$root" ] || root="."
+  root=$(git rev-parse --show-toplevel 2> /dev/null) || root="."
   local candidate
   for candidate in \
     ".github/pull_request_template.md" \
     ".github/PULL_REQUEST_TEMPLATE.md" \
     "pull_request_template.md" \
     "PULL_REQUEST_TEMPLATE.md"; do
-    if [ -f "$root/$candidate" ]; then
+    if [[ -f "$root/$candidate" ]]; then
       PR_TEMPLATE=$(cat "$root/$candidate")
       PR_HAS_TEMPLATE=true
       return

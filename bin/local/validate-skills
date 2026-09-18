@@ -538,18 +538,27 @@ _check_shim_name() {
   return 0
 }
 
+# _for_each_shim CALLBACK [ARGS...] — discover every shim in the tree (a
+# SKILL.md carrying the override marker) and invoke CALLBACK with the shim's
+# path and display name appended after ARGS. The single owner of the
+# discovery loop — the SKILLS_DIR glob and the marker grep — that
+# _check_every_shim_name and _check_every_shim_pin both dispatch through.
+_for_each_shim() {
+  local skill_file
+  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+    [[ -f "$skill_file" ]] || continue
+    grep -q "$SHIM_MARKER" "$skill_file" || continue
+    "$@" "$skill_file" "skills/$(basename "$(dirname "$skill_file")")"
+  done
+  return 0
+}
+
 # _check_every_shim_name — every shim in the tree. Run whether or not the
 # package is pinned: a marker naming the wrong skill is wrong on its own terms,
 # and a tree carrying shims before the pin lands is where the typo is cheapest
 # to catch.
 _check_every_shim_name() {
-  local skill_file
-  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
-    [[ -f "$skill_file" ]] || continue
-    grep -q "$SHIM_MARKER" "$skill_file" || continue
-    _check_shim_name "$skill_file" "skills/$(basename "$(dirname "$skill_file")")"
-  done
-  return 0
+  _for_each_shim _check_shim_name
 }
 
 # Matches a skill script addressed through one harness's own skills root. The
@@ -586,15 +595,17 @@ _check_every_harness_script_path() {
   return 0
 }
 
+# _check_shim_pin_adapter PIN SKILL_FILE DISPLAY — reorders _for_each_shim's
+# fixed (skill_file, display) call shape into the (skill_file, display, pin)
+# _check_shim_pin expects.
+_check_shim_pin_adapter() {
+  local pin="$1" skill_file="$2" display="$3"
+  _check_shim_pin "$skill_file" "$display" "$pin"
+}
+
 # _check_every_shim_pin PIN — holds every shim in the tree against the pin.
 _check_every_shim_pin() {
-  local pin="$1" skill_file
-  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
-    [[ -f "$skill_file" ]] || continue
-    grep -q "$SHIM_MARKER" "$skill_file" || continue
-    _check_shim_pin "$skill_file" "skills/$(basename "$(dirname "$skill_file")")" "$pin"
-  done
-  return 0
+  _for_each_shim _check_shim_pin_adapter "$1"
 }
 
 _check_every_harness_script_path

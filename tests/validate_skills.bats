@@ -745,6 +745,11 @@ BODY
 # _retarget_shim NAME CLAIMED — point an existing shim's marker at CLAIMED,
 # leaving it in its own directory. This is the shape of the mistake: a shim
 # renamed, or copied to seed a second one, with the marker left behind.
+#
+# Matches on the literal trailing comma _make_shim always writes after the
+# name (`Overrides superpowers:$name,`). If _make_shim's wording ever drops
+# that comma, this sed finds no match and silently no-ops instead of failing
+# loudly — keep the two in sync if either is touched.
 _retarget_shim() {
   local name="$1" claimed="$2"
   # Separate declarations: a single `local` evaluates every right-hand side

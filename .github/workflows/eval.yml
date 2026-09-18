@@ -58,6 +58,27 @@ jobs:
           npm install -g @anthropic-ai/claude-code
           echo "Claude Code CLI: $(claude --version)" >> "$GITHUB_STEP_SUMMARY"
 
+      # Two model calls, a few cents, ahead of the corpus run that spends the
+      # real money. Every agent below this line gets its coding rules through an
+      # undocumented --bare/--add-dir coupling, and when that breaks there is no
+      # error and no missing file — just agents quietly running unruled. Exit 2
+      # is the canary failing to measure, which is a broken check rather than a
+      # rules regression; see ai/lib/eval/rules_canary.py.
+      #
+      # It does not gate the corpus run. A canary that cannot measure would
+      # otherwise cancel the week's eval, and the two answer different questions.
+      - name: Check the rules still reach an agent
+        id: canary
+        if: steps.creds.outputs.available == 'true'
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -o pipefail
+          rc=0
+          ai/bin/rules-canary --json 2>&1 | tee canary-output.txt || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+
       - name: Run the eval and compare against baselines
         id: run
         if: steps.creds.outputs.available == 'true'
@@ -89,3 +110,31 @@ jobs:
             echo "::error::eval-models exited ${{ steps.run.outputs.rc }}"
             exit 1
           fi
+
+      # Reported and gated separately from the corpus: a rules-delivery failure
+      # and a model regression need different people looking at them.
+      - name: Publish the canary result
+        if: steps.creds.outputs.available == 'true'
+        run: |
+          {
+            echo "## Rules canary"
+            echo ""
+            echo '```'
+            cat canary-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "${{ steps.canary.outputs.rc }}" in
+            0) ;;
+            1)
+              echo "::error::--add-dir no longer loads coding rules: every agent is running unruled"
+              exit 1
+              ;;
+            2)
+              echo "::error::the rules canary could not measure — see ai/lib/eval/rules_canary.py"
+              exit 1
+              ;;
+            *)
+              echo "::error::rules-canary exited unexpectedly (rc=${{ steps.canary.outputs.rc }}) — the canary script itself may have failed to run rather than measuring a regression"
+              exit 1
+              ;;
+          esac

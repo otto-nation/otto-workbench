@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Check that `--add-dir` still loads the operator's coding rules.
+
+Usage:
+  rules-canary [--json] [--floor N]
+
+Runs one trivial prompt twice against the same planted fixture directory,
+differing only in whether `--add-dir` is passed, and fails when the difference
+in billed input tokens falls below the floor. Why the check is a difference of
+two runs rather than one absolute reading is on `eval/rules_canary.py`.
+
+Spends two real model calls — a few cents cold, near-free warm. It is not a
+pull-request gate: it runs in the weekly Eval workflow, before the corpus run
+that spends the real money.
+
+Exit codes:
+  0  the rules still arrive
+  1  they do not — every agent is running without coding rules
+  2  the canary could not measure (no CLI, no credentials, a run billing zero)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+# ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
+_AI_LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
+
+from _version import version_string as _version_string  # noqa: E402
+from core import log, proc, timeouts  # noqa: E402
+from eval.rules_canary import (  # noqa: E402
+    CANARY_PROMPT,
+    RULES_PREFIX_FLOOR,
+    CanaryResult,
+    CanaryRun,
+    billed_input_from_envelope,
+    write_fixture,
+)
+
+SCRIPT = Path(__file__).name
+
+EXIT_REGRESSION = 1
+EXIT_UNMEASURED = 2
+
+
+def _canary_cmd(add_dir: str | None) -> list[str]:
+    """The fix path's flag set, minus what would change what is measured.
+
+    `--bare` and `--output-format json` are the two that matter: the first is
+    what makes `--add-dir` load-bearing in the first place, the second is what
+    carries the usage envelope. The tool and permission flags the real fix
+    command passes are left off deliberately — they widen what the agent may do
+    without changing the prompt prefix, and this prompt does nothing.
+    """
+    cmd = ["claude", "-p", "--bare", "--output-format", "json"]
+    if add_dir:
+        cmd += ["--add-dir", add_dir]
+    return cmd
+
+
+def _run_half(cwd: Path, add_dir: str | None) -> CanaryRun:
+    """One half of the comparison.
+
+    A CLI that is not installed raises out of the spawn rather than returning a
+    result, and this is the check that runs where it is least likely to be
+    there. That is the unmeasured case, not a crash: it comes back as
+    `MISSING_RETURNCODE` so the verdict reports a canary that could not measure
+    and exits 2, instead of a traceback that reads as the check itself being
+    broken.
+
+    `NETWORK` is the tier by the table's own reasoning: the prompt is trivial
+    and the reply is four tokens, so what this waits on is latency rather than
+    generation. A breach comes back as a non-zero return code, which reads as an
+    unmeasured run — the honest answer, since a canary that timed out measured
+    nothing.
+    """
+    try:
+        result = proc.run(
+            _canary_cmd(add_dir),
+            timeout=timeouts.NETWORK,
+            cwd=str(cwd),
+            input_text=CANARY_PROMPT,
+        )
+    except (FileNotFoundError, PermissionError) as exc:
+        log.dim(f"claude could not be run: {exc}")
+        return CanaryRun(billed_input=0, exit_code=proc.MISSING_RETURNCODE)
+    return CanaryRun(
+        billed_input=billed_input_from_envelope(result.stdout),
+        exit_code=result.returncode,
+    )
+
+
+def measure(floor: int) -> CanaryResult:
+    """Run both halves against one planted fixture and compare them.
+
+    The fixture directory is the working directory for both runs, and the
+    `--add-dir` target is a second, empty directory: naming the fixture itself
+    would confound "the flag loads rules from the directory it names" with "the
+    flag loads rules from the working directory", and it is the latter the fix
+    path actually relies on.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        fixture = write_fixture(root / "fixture")
+        elsewhere = root / "elsewhere"
+        elsewhere.mkdir()
+        return CanaryResult(
+            with_add_dir=_run_half(fixture, str(elsewhere)),
+            without_add_dir=_run_half(fixture, None),
+            floor=floor,
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Check that --add-dir still loads coding rules into an agent.",
+        usage="rules-canary [--json] [--floor N]",
+    )
+    parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
+    parser.add_argument("--json", action="store_true", help="emit the measurement as JSON")
+    parser.add_argument(
+        "--floor", type=int, default=RULES_PREFIX_FLOOR,
+        help=f"minimum token delta to accept (default: {RULES_PREFIX_FLOOR})",
+    )
+    args = parser.parse_args()
+
+    if args.version:
+        print(_version_string(SCRIPT))
+        raise SystemExit(0)
+
+    result = measure(args.floor)
+
+    if args.json:
+        print(json.dumps({
+            "with_add_dir": result.with_add_dir.billed_input,
+            "without_add_dir": result.without_add_dir.billed_input,
+            "delta": result.delta,
+            "floor": result.floor,
+            "measured": result.measured,
+            "ok": result.ok,
+        }, indent=2))
+    elif result.ok:
+        log.ok(result.summary)
+    else:
+        log.error(result.summary)
+
+    if not result.measured:
+        raise SystemExit(EXIT_UNMEASURED)
+    if not result.ok:
+        raise SystemExit(EXIT_REGRESSION)
+
+
+if __name__ == "__main__":
+    main()

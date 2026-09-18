@@ -39,9 +39,12 @@ _pinned() {
 }
 
 @test "the shellcheck on PATH is the version CI pins" {
-  # Skipped rather than failed where the tool is absent: the gate that runs
-  # shellcheck already refuses to proceed without it, and this suite should not
-  # be the thing that reports a missing dependency.
+  # Skipped rather than failed where the tool is absent: the pre-push gate
+  # already refuses to proceed without it, and this suite should not be the
+  # thing that reports a missing dependency.
+  #
+  # (A comment line starting with the tool's own name parses as a directive,
+  # which is SC1072 — hence the rewording.)
   command -v shellcheck >/dev/null 2>&1 || skip "shellcheck not installed"
 
   local pinned installed

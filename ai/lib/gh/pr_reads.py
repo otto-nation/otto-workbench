@@ -913,8 +913,10 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
     viewer = data.get("data", {}).get("viewer", {})
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest", {})
 
-    warn_if_truncated(pr_node.get("reviews") or {}, f"{repo}#{pr} reviews")
-    warn_if_truncated(pr_node.get("commits") or {}, f"{repo}#{pr} commits")
+    reviews = pr_node.get("reviews") or {}
+    commits = pr_node.get("commits") or {}
+    warn_if_truncated(reviews, f"{repo}#{pr} reviews")
+    warn_if_truncated(commits, f"{repo}#{pr} commits")
 
     found = _drain_thread_pages(owner, name, int(pr), pr_node.get("reviewThreads") or {})
     comments_whole = _complete_truncated_comments(found.threads)
@@ -936,11 +938,11 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
         head_sha=pr_node.get("headRefOid", ""),
         head_ref=pr_node.get("headRefName", ""),
         base_ref=pr_node.get("baseRefName", ""),
-        reviews=pr_node.get("reviews", {}).get("nodes", []),
+        reviews=reviews.get("nodes", []),
         review_threads=found.threads,
         threads_complete=found.complete and comments_whole and issue_whole,
         issue_comments=issue_comments,
-        commits=pr_node.get("commits", {}).get("nodes", []),
+        commits=commits.get("nodes", []),
         author=(pr_node.get("author") or {}).get("login", ""),
         is_draft=pr_node.get("isDraft", False),
         labels=[n["name"] for n in pr_node.get("labels", {}).get("nodes", [])],

@@ -91,6 +91,29 @@ def test_poll_reports_each_failed_job_once(capsys):
     assert len(chunks) == 1
 
 
+def test_poll_reads_new_failures_through_ci_runs_definition():
+    """New-failure detection is `ci_runs.failed_jobs`'s definition, not its own.
+
+    Stub `ci_runs.failed_jobs` to call a job "failed" that GitHub itself marked
+    a success — standing in for a future change to its definition. `ci_wait`
+    must report exactly that job. If it still hand-rolled its own check against
+    `run_reads.FAILURE_CONCLUSIONS` instead of calling through, it would look at
+    this job's real "success" conclusion and never report it at all.
+    """
+    weird_job = {"name": "Weird", "conclusion": "success", "databaseId": 20, "status": "completed"}
+    run_data = _run("completed", "success", [weird_job])
+
+    with patch("gh.run_reads.fetch_latest_run_ids", return_value=[100]), \
+         patch("gh.run_reads.fetch_run_data", return_value=run_data), \
+         patch("pr.ci_runs.failed_jobs", return_value=[weird_job]), \
+         patch("pr.ci_wait.emit_partial") as emit_partial, \
+         patch("pr.ci_wait.time.sleep"):
+        _poll()
+
+    emit_partial.assert_called_once()
+    assert emit_partial.call_args[0][2] == [weird_job]
+
+
 def test_poll_emits_status_lines(capsys):
     """Status lines showing job counts appear on stderr."""
     run_data = _run("completed", "success", [

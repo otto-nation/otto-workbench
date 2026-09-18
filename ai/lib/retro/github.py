@@ -101,6 +101,7 @@ query($owner: String!, $name: String!, $pr: Int!) {{
           path
           line
           comments(first: {RETRO_THREAD_COMMENTS_LIMIT}) {{
+            totalCount
             nodes {{
               author {{ login }}
               body
@@ -195,12 +196,24 @@ def _threads_for(repo: str, pr_node: dict) -> list[dict]:
     """
     threads_data = pr_node.get("reviewThreads", {})
     thread_nodes = threads_data.get("nodes", [])
-    if threads_data.get("totalCount", 0) <= len(thread_nodes):
-        return thread_nodes
-    # A short refetch is still better than the truncated batch it replaces, and
-    # this feeds a report rather than a ledger: a missed thread costs a rule
-    # signal, so the count is taken as-is rather than failing the scan.
-    return fetch_review_threads(repo, pr_node["number"]).threads
+    if threads_data.get("totalCount", 0) > len(thread_nodes):
+        # A short refetch is still better than the truncated batch it replaces,
+        # and this feeds a report rather than a ledger: a missed thread costs a
+        # rule signal, so the count is taken as-is rather than failing the scan.
+        return fetch_review_threads(repo, pr_node["number"]).threads
+    # Thread *count* is not the only way this comes back short. The page size
+    # for comments within a thread is set for the common thread, so a deep one
+    # is cut off with the thread list itself intact — which the check above
+    # cannot see. Refetching the PR is what pages those comments properly.
+    if any(_comments_truncated(t) for t in thread_nodes):
+        return fetch_review_threads(repo, pr_node["number"]).threads
+    return thread_nodes
+
+
+def _comments_truncated(thread: dict) -> bool:
+    """Whether this thread carries more comments than the page returned."""
+    comments = thread.get("comments", {})
+    return comments.get("totalCount", 0) > len(comments.get("nodes", []))
 
 
 def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:

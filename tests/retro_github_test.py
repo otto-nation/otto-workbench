@@ -17,6 +17,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core.proc import CmdResult  # noqa: E402
+from gh.pr_reads import ThreadSet  # noqa: E402
 from retro import github  # noqa: E402
 
 # 2026-01-01 and 2026-06-01 as epoch seconds, for windows either side of a PR.
@@ -130,3 +131,36 @@ def test_the_detail_query_asks_for_one_pr_not_a_batch():
     # The window query carries no nested connections at all.
     assert "reviewThreads" not in github._RETRO_PRS_QUERY
     assert "comments" not in github._RETRO_PRS_QUERY
+
+
+def test_a_thread_with_more_comments_than_the_page_is_refetched():
+    """Lowering the per-thread comment limit is only safe if a deep thread is
+    noticed. The thread-count check cannot see this: the thread list is whole
+    and it is the comments inside one of them that were cut off."""
+    deep = json.loads(_detail(1, "2026-08-01T00:00:00Z").stdout)
+    thread = deep["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]
+    thread["comments"]["totalCount"] = github.RETRO_THREAD_COMMENTS_LIMIT + 5
+
+    with patch.object(github.gh_client, "graphql") as gql, \
+         patch.object(github, "fetch_review_threads") as refetch:
+        gql.side_effect = [
+            _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
+            CmdResult(0, json.dumps(deep)),
+        ]
+        refetch.return_value = ThreadSet([thread])
+        github.fetch_repo_review_data("owner/repo", _JUN)
+
+    refetch.assert_called_once()
+
+
+def test_a_thread_within_the_page_is_not_refetched():
+    """The control: the common thread must not earn a second round trip."""
+    with patch.object(github.gh_client, "graphql") as gql, \
+         patch.object(github, "fetch_review_threads") as refetch:
+        gql.side_effect = [
+            _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
+            _detail(1, "2026-08-01T00:00:00Z"),
+        ]
+        github.fetch_repo_review_data("owner/repo", _JUN)
+
+    refetch.assert_not_called()

@@ -351,10 +351,10 @@ def _export() -> None:
     # second `pr` invocation in the same reset window rediscovers the spent
     # budget once more. Upgrade trigger: persist it under
     # cache_dir("gh-budget") keyed on (user id, resource), once no caller reads
-    # a refused call as an authoritative empty answer — today
-    # `_check_existing_pending`, `dedup.fetch_bot_reviews`, `landed.merged_pr`
-    # and `_drain_thread_pages` past page one all do, and a false refusal there
-    # duplicates a review, force-pushes over merged work, or drops triage state.
+    # a refused call as an authoritative empty answer — `landed.merged_pr`
+    # still does, and a false refusal there force-pushes over merged work.
+    # The thread fetch no longer does: a refused page comes back
+    # `complete=False` and `sync_threads` keeps the records it could not see.
     if not _latched:
         os.environ.pop(LATCH_ENV, None)
         return

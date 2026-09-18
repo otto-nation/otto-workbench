@@ -240,7 +240,9 @@ _repo_dirs_under_root() {
     [[ -d "$entry" ]] || continue
     name="${entry%/}"
     name="${name##*/}"
-    _dir_belongs_to_repo "$name" "$claude_slug" "$pi_slug" && printf '%s\n' "$entry"
+    if _dir_belongs_to_repo "$name" "$claude_slug" "$pi_slug"; then
+      printf '%s\n' "$entry"
+    fi
   done
   return 0
 }

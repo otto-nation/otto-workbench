@@ -5,7 +5,7 @@ Replaces Phase 1 of the retro skill (Orient).
 Outputs a structured markdown report to stdout.
 
 Usage:
-  retro-scan [--home DIR] [--workbench DIR] [--since DURATION]
+  retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]
 """
 
 from __future__ import annotations
@@ -38,7 +38,8 @@ from core.trail import Trail, add_trail_args  # noqa: E402
 from review.dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
 from retro.github import GQL_MERGED_PRS_LIMIT, fetch_repo_review_data  # noqa: E402
 from retro.report import DATE_FMT, format_matched_snippet, format_report  # noqa: E402
-from retro.reviews import CONSUMED_REVIEWS_NAME, scan_local_reviews  # noqa: E402
+from retro.consumed import ConsumeRecord, write_record  # noqa: E402
+from retro.reviews import scan_local_reviews  # noqa: E402
 from retro.rules import (  # noqa: E402
     RULES_REL,
     TermWeights,
@@ -302,7 +303,9 @@ def _build_themes(scan_repos: list[dict]) -> dict[str, list[dict]]:
     return themes
 
 
-def _run_retro(trail, home, workbench, since_override: str | None = None) -> None:
+def _run_retro(
+    trail, home, workbench, since_override: str | None = None, consume: bool = False,
+) -> None:
     log.info(f"Home: {home}")
     log.info(f"Workbench: {workbench}")
 
@@ -407,7 +410,6 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
             })
     trail.info("fetch_pr_comments", f"fetched review data from {len(repos)} repos")
 
-    state_dir = workbench_paths.state_dir()
     local_scan = scan_local_reviews(
         workbench_paths.reviews_dir(), rules, rule_match_counts, weights,
     )
@@ -422,11 +424,17 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     unmatched_count += local_scan.unmatched
     trail.info("scan_local_reviews", f"scanned {sum(len(r['prs']) for r in local_repos)} local reviews")
 
-    if local_scan.consumed:
-        consumed_file = state_dir / CONSUMED_REVIEWS_NAME
-        consumed_file.parent.mkdir(parents=True, exist_ok=True)
-        consumed_file.write_text("\n".join(local_scan.consumed) + "\n")
-        trail.info("write_consumed", f"wrote {len(local_scan.consumed)} consumed review dirs")
+    if consume:
+        # Written even when the scan consumed nothing. The record is this
+        # scan's claim over the reviews root, and an empty claim still has to
+        # displace the previous run's — skipping the write on empty is what
+        # lets an abandoned retro's list survive into a later completion.
+        write_record(ConsumeRecord(
+            scan_id=trail.root,
+            scanned_at=datetime.now(timezone.utc).isoformat(),
+            reviews=local_scan.consumed,
+        ))
+        trail.info("write_consumed", f"recorded {len(local_scan.consumed)} consumed review dirs under scan {trail.root}")
 
     themes = _build_themes(scan_repos)
 
@@ -450,6 +458,11 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     report = format_report(scan_data, version)
     trail.info("generate_report", f"report generated, {len(report)} chars")
     print(report)
+    if consume:
+        # The handle the completion quotes back. Printed after the report so it
+        # is the last thing on stdout whatever the report's own length, and as a
+        # comment so a reader pasting the report somewhere does not see it.
+        print(f"\n<!-- scan-id: {trail.root} | consumed: {len(local_scan.consumed)} -->")
 
 
 def main() -> None:
@@ -457,18 +470,31 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description="Scan PR review comments and cross-reference against coding rules.",
-        usage="retro-scan [--home DIR] [--workbench DIR] [--since DURATION]",
+        usage="retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--home", type=str, default=str(Path.home()), help="home directory override")
     parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
     parser.add_argument("--since", type=str, default=None, help="override scan window (e.g. 7d, 24h, 30m)")
+    parser.add_argument(
+        "--consume", action="store_true",
+        help="record the local reviews read, so the retro may delete them when it completes",
+    )
     add_trail_args(parser)
     args = parser.parse_args()
 
     if args.version:
         print(_version_string(SCRIPT))
         raise SystemExit(0)
+
+    if args.consume and args.since:
+        # --since is the debugging and historical-analysis window, and a scan
+        # over an arbitrary window is not the scan the retro is completing.
+        # Refused rather than silently not recording: a run that asked to
+        # consume and was quietly ignored would look like it had armed the
+        # cleanup, and the retro would delete nothing with no reason given.
+        log.error("--consume cannot be combined with --since: a debug window is not a retro's scan")
+        sys.exit(2)
 
     home = Path(os.path.expanduser(args.home))
     workbench = Path(os.path.expanduser(args.workbench)).resolve()
@@ -479,7 +505,10 @@ def main() -> None:
     )
 
     try:
-        _run_retro(trail, home, workbench, since_override=args.since)
+        _run_retro(
+            trail, home, workbench,
+            since_override=args.since, consume=args.consume,
+        )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

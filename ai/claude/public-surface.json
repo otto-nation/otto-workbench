@@ -25,6 +25,7 @@
     "command:pr-describe",
     "command:pr-rebase",
     "command:promote-scan",
+    "command:retro-consume",
     "command:retro-scan",
     "command:reuse-mode-tracker",
     "command:reuse-session-start",

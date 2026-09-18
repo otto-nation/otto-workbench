@@ -137,13 +137,15 @@ WORKBENCH_GLOBAL_SCOPE="global"
 
 # ─── Review state ─────────────────────────────────────────────────────────────
 # The shell half of two joins the Python side also spells out — this file for
-# bash, ai/lib/core/workbench_paths.py's reviews_dir() and retro-scan's
+# bash, ai/lib/core/workbench_paths.py's reviews_dir() and retro.consumed's
 # CONSUMED_REVIEWS_NAME for Python. tests/workbench_roots.bats cross-validates
 # both pairs, the same way it does the roots they hang off.
 REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
-# Written by retro-scan, then read and emptied by the retro skill's
-# retro-complete.sh — the list of review directories a retro has consumed.
-RETRO_CONSUMED_REVIEWS_FILE="$WORKBENCH_STATE_DIR/retro-consumed-reviews.txt"
+# Written by `retro-scan --consume` and consumed by ai/bin/retro-consume, which
+# honours it only for the scan that wrote it. No shell reads its contents — the
+# name is here because the state root it hangs off is shared, and
+# tests/workbench_roots.bats holds the two spellings together.
+RETRO_CONSUMED_REVIEWS_FILE="$WORKBENCH_STATE_DIR/retro-consumed-reviews.json"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"

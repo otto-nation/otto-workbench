@@ -19,17 +19,12 @@ from core import log
 from review.document import ReviewDocument
 from review.paths import ReviewEntry, ReviewEntryKind, iter_review_entries
 from review.types import Finding
+from retro.consumed import ConsumedReview
 from retro.report import format_matched_snippet
 from retro.rules import TermWeights, find_nearest_rule, term_weights
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
-
-# Beside reviews/ under the state root rather than under --home: both are
-# generated data, and retro-complete.sh reads them through the state root too.
-# Its half of this name is RETRO_CONSUMED_REVIEWS_FILE in lib/constants.sh;
-# tests/workbench_roots.bats holds the two together.
-CONSUMED_REVIEWS_NAME = "retro-consumed-reviews.txt"
 
 # The repository a review written before `meta.json` recorded one is for. The
 # sidecar is the answer everywhere it exists — see `_review_repo`.
@@ -167,11 +162,15 @@ class LocalReviewScan:
     ``unmatched`` is how many of those findings matched no rule, and
     ``consumed`` names the review directories the scan read — the retro
     records these as spent so a later run does not re-report them.
+
+    Each consumed entry carries the review's timestamp as the scan saw it, so
+    the deletion at the end of the retro can tell the review it analysed from
+    one re-run in the meantime.
     """
 
     repos: list[dict]
     unmatched: int
-    consumed: list[str]
+    consumed: list[ConsumedReview]
 
 
 def scan_local_reviews(
@@ -187,7 +186,7 @@ def scan_local_reviews(
     if weights is None:
         weights = term_weights(rules)
     local_repos: dict[str, list[dict]] = {}
-    consumed_dirs: list[str] = []
+    consumed_dirs: list[ConsumedReview] = []
     unmatched = 0
 
     for entry in iter_review_entries(reviews_dir):
@@ -200,7 +199,11 @@ def scan_local_reviews(
             continue
         unmatched += scanned.unmatched
         local_repos.setdefault(scanned.repo_key, []).append(scanned.pr_entry)
-        consumed_dirs.append(entry.path.name)
+        consumed_dirs.append(ConsumedReview(
+            dir_name=entry.path.name,
+            repo=scanned.repo_key,
+            reviewed_at=entry.reviewed_at,
+        ))
 
     result_list = [
         {"github": f"local/{repo_key}", "prs": prs}

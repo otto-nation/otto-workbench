@@ -262,20 +262,14 @@ resolve_constants() {
   bash -c '. "$1/lib/constants.sh"; printf "%s" "${!2}"' _ "$REPO_ROOT" "$1"
 }
 
-# resolve_python_retro_consumed — the consumed-reviews file as retro-scan
-# spells it: its own CONSUMED_REVIEWS_NAME under the Python state root. Loaded
-# through SourceFileLoader because the script carries no .py extension.
+# resolve_python_retro_consumed — the consume record as Python spells it:
+# retro.consumed's own CONSUMED_REVIEWS_NAME under the Python state root.
 resolve_python_retro_consumed() {
   python3 -c "
-import importlib.machinery, importlib.util, sys
-loader = importlib.machinery.SourceFileLoader(
-    'retro_scan', '$REPO_ROOT/ai/bin/retro-scan')
-spec = importlib.util.spec_from_loader('retro_scan', loader)
-mod = importlib.util.module_from_spec(spec)
-sys.modules['retro_scan'] = mod
-spec.loader.exec_module(mod)
-from core import workbench_paths
-print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+from retro.consumed import record_path
+print(record_path(), end='')
 "
 }
 
@@ -300,11 +294,12 @@ print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
 }
 
 @test "both joins ride along when the state root moves" {
-  # retro-scan writes the consumed list in Python and retro-complete.sh deletes
-  # the directories it names in bash. A root that moves for one and not the
-  # other leaves every consumed review on disk with nothing left to collect it.
+  # retro-scan --consume writes the record and retro-consume reads it, both in
+  # Python; the bash constant names the same file so a shell reader can find
+  # it. A root that moves for one and not the other leaves every consumed
+  # review on disk with nothing left to collect it.
   export WORKBENCH_STATE_DIR="$TMPDIR/explicit-state"
-  local consumed="$TMPDIR/explicit-state/retro-consumed-reviews.txt"
+  local consumed="$TMPDIR/explicit-state/retro-consumed-reviews.json"
 
   [ "$(resolve_constants REVIEWS_DIR)" = "$TMPDIR/explicit-state/reviews" ]
   [ "$(resolve_python reviews_dir)" = "$TMPDIR/explicit-state/reviews" ]

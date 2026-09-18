@@ -26,6 +26,17 @@ ${answer_format}
 - **needs a person** — the resolution dropped or duplicated logic and choosing
   what the branch meant is a judgement call, not a repair
 
+## What the `fixed` box asks for
+
+The check is the oracle, so the box asks what it now says: name the check you
+re-ran and what it reported. This pass repairs what a rebase left behind
+rather than changing what the branch intended, so it does not owe a new test
+— the branch already carries whatever tests its own commits wrote.
+
+If a repair changed behaviour rather than restoring it, that is the case where
+a test is owed, and it is also a sign the choice was not yours to make: prefer
+`needs a person` and say what the resolution turned on.
+
 ## Rules
 
 - The check output above is the oracle — fix what it reports, not what you would

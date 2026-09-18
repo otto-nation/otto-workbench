@@ -167,8 +167,13 @@ class ItemOutcome:
     # it reads back as the pass's own work, which is what it recorded.
     settled_by: SettledBy = SettledBy.PASS
     summary: str = ""
-    # Why, in the words the surface reporting this prints. Empty for FIXED,
-    # where the change speaks for itself.
+    # Why, in the words the surface reporting this prints. On a FIXED entry it
+    # is the test evidence the fix box asks for — the test that fails without
+    # the change, or why the change needs none. No surface renders it on a fixed
+    # row today: the reply cites `summary` and the commit, and the summary table
+    # cites the commit. It is recorded so the operator reading the tracking file
+    # sees the claim, and so a later surface can show it without the parse
+    # having thrown it away.
     reason: str = ""
     file: str = ""
     line: int = 0

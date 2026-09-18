@@ -17,6 +17,18 @@ ${answer_format}
 - **needs a person** — a design decision, an architectural change, or something
   needing input you do not have
 
+## What the `fixed` box asks for
+
+Here the failing check is the test, so the box asks for the check rather than
+for a new one: name the check you re-ran and what it said. "golangci-lint run:
+clean" or "pytest tests/foo_test.py: 12 passed" is the answer.
+
+The one case that owes a *new* test is a failure whose root cause was a code
+bug the suite did not catch — the check caught it downstream, and nothing
+would catch it again. Add the case that fails without your fix and name it.
+A failure whose cause was the check's own fixture, a lint rule, or a build
+config owes nothing beyond the re-run.
+
 ## Rules
 
 - Make the minimal correct change — do not refactor surrounding code

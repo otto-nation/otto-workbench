@@ -30,6 +30,15 @@ from eval.rules_canary import (  # noqa: E402
     write_fixture,
 )
 
+# The reference measurement from Claude Code 2.1.265 on the first-party API,
+# reproduced from the comment block above `RULES_PREFIX_FLOOR` in
+# eval/rules_canary.py — named here so the figures below share one source
+# instead of drifting apart as separate literals.
+REFERENCE_WITH_ADD_DIR = 42435
+REFERENCE_WITHOUT_ADD_DIR = 2376
+REFERENCE_DELTA = REFERENCE_WITH_ADD_DIR - REFERENCE_WITHOUT_ADD_DIR
+REFERENCE_EMPTY_CWD = 33646  # flag held on, empty cwd — the flag-ignored stand-in
+
 
 def _envelope(*, input_tokens=2, cache_read=0, cache_write=0) -> str:
     """A `--output-format json` reply carrying the given usage."""
@@ -96,14 +105,14 @@ class TestCanaryRunMeasured:
 
 class TestCanaryVerdict:
     def test_a_delta_above_the_floor_passes(self):
-        result = CanaryResult(_run(42435), _run(2376))
-        assert result.delta == 40059
+        result = CanaryResult(_run(REFERENCE_WITH_ADD_DIR), _run(REFERENCE_WITHOUT_ADD_DIR))
+        assert result.delta == REFERENCE_DELTA
         assert result.ok
         assert "still loads" in result.summary
 
     def test_the_flag_being_ignored_fails(self):
         """The failure this exists to catch: both halves bill the same prefix."""
-        result = CanaryResult(_run(33646), _run(33646))
+        result = CanaryResult(_run(REFERENCE_EMPTY_CWD), _run(REFERENCE_EMPTY_CWD))
         assert result.delta == 0
         assert not result.ok
         assert "running without coding rules" in result.summary
@@ -144,7 +153,7 @@ class TestCanaryVerdict:
         checked only the floor would report the rules pipeline healthy on the
         strength of a run that never completed.
         """
-        result = CanaryResult(_run(42435, exit_code=1), _run(2376))
+        result = CanaryResult(_run(REFERENCE_WITH_ADD_DIR, exit_code=1), _run(REFERENCE_WITHOUT_ADD_DIR))
         assert result.delta >= result.floor
         assert not result.measured
         assert not result.ok

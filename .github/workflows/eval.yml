@@ -125,12 +125,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           case "${{ steps.canary.outputs.rc }}" in
             0) ;;
+            1)
+              echo "::error::--add-dir no longer loads coding rules: every agent is running unruled"
+              exit 1
+              ;;
             2)
               echo "::error::the rules canary could not measure — see ai/lib/eval/rules_canary.py"
               exit 1
               ;;
             *)
-              echo "::error::--add-dir no longer loads coding rules: every agent is running unruled"
+              echo "::error::rules-canary exited unexpectedly (rc=${{ steps.canary.outputs.rc }}) — the canary script itself may have failed to run rather than measuring a regression"
               exit 1
               ;;
           esac

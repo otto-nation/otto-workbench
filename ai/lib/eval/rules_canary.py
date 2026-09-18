@@ -9,7 +9,7 @@ agent would then run with no coding rules, with no error and no missing file.
 The call sites are already pinned by test; what is not pinned is the behaviour
 those call sites depend on, which is what this measures.
 
-## Why the measurement is a difference of two runs
+Why the measurement is a difference of two runs:
 
 The obvious check — run once with the flag and assert the prefix is large — does
 not work, and the way it fails is the reason this module exists. A run in an
@@ -25,7 +25,7 @@ memory — appears in both halves and cancels. Sanitising `HOME` to remove the
 user memory instead is not an option: the CLI refuses to start without its
 config file, and the refusal bills zero tokens while exiting 0.
 
-## Why the fixture is planted rather than this repo
+Why the fixture is planted rather than this repo:
 
 Measuring against the workbench's own rules would tie the floor to how large
 that corpus happens to be in the week the check runs, and ordinary rule edits

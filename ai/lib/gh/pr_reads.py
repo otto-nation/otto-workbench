@@ -473,6 +473,35 @@ class ThreadSet:
     complete: bool = True
 
 
+def warn_if_truncated(connection: dict, what: str) -> bool:
+    """Report a `last:`-paged connection that came back short of its totalCount.
+
+    Returns whether it truncated, so a caller with something better to do than
+    warn may. A page of nodes looks the same whole or cut off, and `totalCount`
+    is the only thing in the answer that tells the two apart — without it the
+    reads below the cut are wrong with no symptom.
+
+    Every caller pages with `last:`, so the entries missing are the oldest and
+    the newest are intact. That is what keeps the truncation a warning rather
+    than a failure: review verdicts, the pending-review lookup and the
+    new-commit scan all read the recent end. The exposure is dedup, which looks
+    for a finding it posted long enough ago to have fallen off and, not finding
+    it, posts it again — so the warning is what makes a duplicate post
+    explicable instead of inexplicable.
+
+    Absent `totalCount` this reports nothing: a caller that did not ask for it
+    gets today's silence rather than a warning on every read.
+    """
+    total = connection.get("totalCount", 0)
+    nodes = connection.get("nodes", [])
+    if total <= len(nodes):
+        return False
+    log.warn(
+        f"{what}: {total} exist but only the most recent {len(nodes)} were fetched — "
+        f"reads over the older ones are incomplete")
+    return True
+
+
 def _complete_truncated_comments(threads: list[dict]) -> bool:
     """Refetch the comments of any thread the page size cut off. Returns success.
 
@@ -883,6 +912,9 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
 
     viewer = data.get("data", {}).get("viewer", {})
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest", {})
+
+    warn_if_truncated(pr_node.get("reviews") or {}, f"{repo}#{pr} reviews")
+    warn_if_truncated(pr_node.get("commits") or {}, f"{repo}#{pr} commits")
 
     found = _drain_thread_pages(owner, name, int(pr), pr_node.get("reviewThreads") or {})
     comments_whole = _complete_truncated_comments(found.threads)

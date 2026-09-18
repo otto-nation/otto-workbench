@@ -1,5 +1,9 @@
 Fix CI failures for branch ${branch_name} in ${repo}.
 
+## Your role
+
+${role_block}
+
 ## Failures to fix
 
 ${tracking_content}

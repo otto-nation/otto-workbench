@@ -895,6 +895,30 @@ class TestOutputBlockContract:
         assert agent_templates.GENERATED_BLOCK in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    def test_fix_templates_share_the_role_block(self, render, tmp_path):
+        """Every fix agent runs under guidance written for the operator.
+
+        `--add-dir` restores CLAUDE.md discovery that `--bare` skips, so the
+        operator's whole rule set arrives on every invocation — including the
+        parts about creating PRs, pushing, and filing issues, none of which
+        this agent can do. The block scopes that out, and it is one fact about
+        the role rather than four domain-specific paragraphs.
+        """
+        rendered = _FIX_RENDERERS[render](tmp_path)
+        assert agent_templates.ROLE_BLOCK in rendered
+
+    def test_the_verify_template_does_not_claim_the_editing_role(self):
+        """The gate is read-only and says so itself in stricter terms.
+
+        Handing it a block that opens "you are editing files in a worktree"
+        would contradict the one instruction that matters most there — that it
+        checks work rather than continuing it.
+        """
+        text = (TEMPLATE_DIR / "verify-fixes.md").read_text()
+        assert "${role_block}" not in text
+        assert "Do not edit source files" in text
+
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(
         self, render, tmp_path,
     ):

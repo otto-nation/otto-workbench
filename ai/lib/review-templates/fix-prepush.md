@@ -4,6 +4,10 @@ An automated rebase replayed this branch and resolved its conflicts. The
 pre-push checks then failed on the files below. Repair what the resolution left
 behind.
 
+## Your role
+
+${role_block}
+
 ## Files the check complained about
 
 ${tracking_content}

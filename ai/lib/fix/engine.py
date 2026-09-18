@@ -227,8 +227,8 @@ class FixAdapter(ABC):
         """The substitutions this domain's template needs beyond the shared ones.
 
         The engine supplies `branch_name`, `repo`, `tracking_content`,
-        `tracking_file`, `answer_format`, `worktree_block`, `generated_block`
-        and `max_turns`.
+        `tracking_file`, `answer_format`, `worktree_block`, `generated_block`,
+        `role_block` and `max_turns`.
         """
 
     @abstractmethod
@@ -310,6 +310,7 @@ def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
         answer_format=fix_tracking.instructions(adapter.item_noun),
         worktree_block=agent_templates.build_worktree_block(str(adapter.workdir)),
         generated_block=agent_templates.GENERATED_BLOCK,
+        role_block=agent_templates.ROLE_BLOCK,
         max_turns=str(turns),
         **adapter.template_vars(),
     )

@@ -1,5 +1,9 @@
 Fix review findings for branch ${branch_name} in ${repo}.
 
+## Your role
+
+${role_block}
+
 ## Findings to fix
 
 ${tracking_content}

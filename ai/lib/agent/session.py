@@ -245,5 +245,11 @@ def is_quota_error(log_path: str) -> bool:
 
 
 def build_add_dirs(wt_path: str, artifact_dir: str) -> list[str]:
-    """Directories the agent may read outside its cwd."""
+    """Directories the agent may read outside its cwd.
+
+    Never empty, and that matters for more than file access: under ``--bare``
+    it is ``--add-dir`` that restores CLAUDE.md discovery, so an invocation
+    built with no directory loses the operator's whole rule set silently. See
+    `agent.backend_claude._base_cmd`.
+    """
     return [artifact_dir, wt_path]

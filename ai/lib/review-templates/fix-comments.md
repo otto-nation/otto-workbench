@@ -1,5 +1,9 @@
 Fix PR review comment suggestions for branch ${branch_name} in ${repo}.
 
+## Your role
+
+${role_block}
+
 ## Comment threads to address
 
 ${tracking_content}

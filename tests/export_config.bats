@@ -73,15 +73,15 @@ _build_tarball() {
 }
 
 @test "_profile_excludes_skill: returns non-zero for included skill" {
-  ! _profile_excludes_skill "server" "anatomy"
+  run ! _profile_excludes_skill "server" "anatomy"
 }
 
 @test "_profile_excludes_skill: returns non-zero for unknown skill" {
-  ! _profile_excludes_skill "server" "nonexistent-skill"
+  run ! _profile_excludes_skill "server" "nonexistent-skill"
 }
 
 @test "_profile_excludes_skill: returns non-zero for unknown profile" {
-  ! _profile_excludes_skill "nonexistent-profile" "dream"
+  run ! _profile_excludes_skill "nonexistent-profile" "dream"
 }
 
 @test "_profile_excludes_skill: returns non-zero when profiles.yml missing" {

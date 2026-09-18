@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for resolve_layers() and user override integration in lib/files.sh.
+bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
@@ -190,7 +191,7 @@ _rule_layers() {
 }
 
 @test "is_disabled: returns false when no sentinel" {
-  ! is_disabled "$USER_DIR" "foo"
+  run ! is_disabled "$USER_DIR" "foo"
 }
 
 # ─── skill_agent ─────────────────────────────────────────────────────────────

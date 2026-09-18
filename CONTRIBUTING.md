@@ -28,12 +28,26 @@ several minutes rather than well under one.
 ## Running Tests
 
 ```bash
+task gate          # the whole pre-push gate, exactly as pushing runs it
 task test          # run both suites (bats, then pytest)
 task test:pytest   # run only the pytest suite
 task lint          # ShellCheck all shell scripts
 ```
 
-Both go through `bin/local/run-tests`, which owns the parallelism settings for the whole
+`task gate` is the one to reach for before pushing. It delegates to
+`git/hooks/pre-push-workbench` rather than repeating its steps, so what it runs is
+the same sequence in the same order with the same exit-code handling — the hook
+stays the single definition of green and the task is a name for it. There is no
+flag to skip the slow half: a gate with one is a gate people run with it. When you
+want only a part, run the part — `task test`, `task test:pytest`, `task lint` —
+rather than a gate that reports on less than it says.
+
+Assembling the sequence by hand is what this replaces, and it fails in ways that
+read as a pass: `bin/local/run-tests | tail -40` reports `tail`'s exit status and
+not the suite's, and deciding pass/fail by grepping output for `✗` reads text
+where there is a status to check.
+
+Both test targets go through `bin/local/run-tests`, which owns the parallelism settings for the whole
 repo — the Taskfile, the pre-push hook, and CI all call it rather than spelling the flags
 out themselves. It sizes the run from the cores the machine is *not* already using — the
 core count less the one-minute load average, floored at 2 and capped at 12 — so a suite

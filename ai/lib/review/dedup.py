@@ -18,8 +18,9 @@ from __future__ import annotations
 import functools
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
+from core import log
 from gh import client as gh_client
 from gh.pr_reads import PRData, GQL_REVIEWS_LIMIT
 
@@ -167,22 +168,39 @@ def dedup_against_posted(
 
 # ── Bot review fetching ───────────────────────────────────────────────────
 
-def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list[dict]:
-    """Return all visible, non-PENDING, non-DISMISSED reviews from the bot.
+@dataclass(frozen=True)
+class BotReviews:
+    """The bot's visible reviews on a PR, as the lookup found them.
+
+    ``looked`` is the lookup's own success. An empty list used to mean both
+    "the bot has posted nothing" and "we could not find out", and the caller
+    acts on that by posting: the dedup guard reads an empty list as nothing to
+    match against, so a failed lookup publishes the whole review a second time.
+
+    Each entry has keys: id, body, state.
+    """
+
+    reviews: list[dict] = field(default_factory=list)
+    looked: bool = True
+
+
+def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotReviews:
+    """The bot's visible, non-PENDING, non-DISMISSED reviews, and whether we asked.
 
     Uses GraphQL to detect minimized (hidden/outdated) reviews and exclude
     them — the REST API does not expose minimizedReason.
-    Each entry has keys: id, body, state.
 
     Note: fetches at most the last 100 reviews. PRs with more than 100 reviews
     may miss older bot reviews — cursor-based pagination is not implemented.
     """
     if pr_data is not None:
-        return pr_data.bot_reviews_visible(pr_data.viewer_login)
+        return BotReviews(pr_data.bot_reviews_visible(pr_data.viewer_login))
 
     bot_user = get_bot_login()
     if not bot_user:
-        return []
+        # Not "the bot has no reviews": we do not know who the bot is, so we
+        # could not have recognised one.
+        return BotReviews(looked=False)
 
     owner, name = repo.split("/", 1)
     query = f"""
@@ -206,27 +224,35 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
         query, variables={"owner": owner, "name": name, "pr": int(pr)},
     )
     if not result.ok:
-        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=[])
-        return [
+        # `None` rather than `[]` as the default: the fallback failing too is
+        # the case that must not read as "the bot has posted nothing".
+        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=None)
+        if all_reviews is None:
+            log.warn(
+                f"Could not read {repo}#{pr}'s reviews by either route — "
+                "dedup has nothing to match against")
+            return BotReviews(looked=False)
+        return BotReviews([
             {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
             for r in all_reviews
             if r.get("user", {}).get("login") == bot_user
             and r.get("state") not in ("PENDING", "DISMISSED")
-        ]
+        ])
 
     try:
         data = json.loads(result.stdout)
         nodes = data["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
     except (json.JSONDecodeError, KeyError, TypeError):
-        return []
+        log.warn(f"Could not parse {repo}#{pr}'s reviews — dedup has nothing to match against")
+        return BotReviews(looked=False)
 
-    return [
+    return BotReviews([
         {"id": n["databaseId"], "body": n.get("body", ""), "state": n.get("state", "")}
         for n in nodes
         if n.get("author", {}).get("login") == bot_user
         and n.get("state") not in ("PENDING", "DISMISSED")
         and not n.get("minimizedReason")
-    ]
+    ])
 
 
 # ── Whole-review dedup ────────────────────────────────────────────────────

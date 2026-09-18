@@ -6,6 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+from core.proc import CmdResult  # noqa: E402
 from review import dedup as review_dedup  # noqa: E402
 
 
@@ -245,33 +246,58 @@ class TestFetchBotReviews:
             {"id": 3, "user": {"login": "bot"}, "state": "PENDING", "body": "pending"},
         ])
         result = review_dedup.fetch_bot_reviews("org/repo", "1")
-        assert len(result) == 1
-        assert result[0]["id"] == 1
+        assert len(result.reviews) == 1
+        assert result.reviews[0]["id"] == 1
+        assert result.looked
 
     def test_ignores_pending(self, monkeypatch):
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "PENDING", "user": {"login": "bot"}},
         ])
-        assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
+        assert review_dedup.fetch_bot_reviews("org/repo", "1").reviews == []
 
     def test_ignores_dismissed(self, monkeypatch):
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "DISMISSED", "user": {"login": "bot"}},
         ])
-        assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
+        assert review_dedup.fetch_bot_reviews("org/repo", "1").reviews == []
 
     def test_ignores_other_users(self, monkeypatch):
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "COMMENTED", "user": {"login": "alice"}},
         ])
-        assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
+        assert review_dedup.fetch_bot_reviews("org/repo", "1").reviews == []
 
-    def test_api_failure_returns_empty(self, monkeypatch):
+    def test_an_unknown_bot_login_is_not_an_absence_of_reviews(self, monkeypatch):
+        """Not knowing who the bot is means we could not have recognised its
+        reviews — which the dedup guard reads as "nothing posted yet"."""
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "")
-        assert review_dedup.fetch_bot_reviews("org/repo", "1") == []
+        found = review_dedup.fetch_bot_reviews("org/repo", "1")
+        assert found.reviews == []
+        assert found.looked is False
+
+    def test_both_routes_failing_is_reported_as_unanswered(self, monkeypatch, capsys):
+        """The REST fallback failing too is the case that must not read as
+        "the bot has posted nothing" — that republishes the whole review."""
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.graphql",
+                            lambda *a, **k: CmdResult(1, "", "nope"))
+        monkeypatch.setattr("gh.client.api_json", lambda *a, **k: k.get("default"))
+        found = review_dedup.fetch_bot_reviews("org/repo", "1")
+        assert found.reviews == []
+        assert found.looked is False
+        assert "nothing to match against" in capsys.readouterr().err
+
+    def test_a_successful_empty_read_is_answered(self, monkeypatch):
+        """The control: a PR the bot has genuinely not reviewed."""
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [])
+        found = review_dedup.fetch_bot_reviews("org/repo", "1")
+        assert found.reviews == []
+        assert found.looked is True
 
 
 class TestCheckReviewAlreadyPosted:

@@ -263,10 +263,27 @@ def _get_diff(repo: str, pr: str) -> str:
     return r.stdout
 
 
-def _check_existing_pending(repo: str, pr: str, pr_data: PRData | None = None) -> int | None:
-    """Check for existing PENDING review and return its ID."""
+@dataclass(frozen=True)
+class PendingReview:
+    """The PR's open PENDING review, as the lookup found it.
+
+    ``looked`` is whether the lookup itself succeeded, which is not the same
+    question as whether a pending review exists — the distinction
+    `MarkerComment.found` already draws for comments, for the same reason. A
+    caller that reads a failed listing as "no pending review" opens a second
+    one, and GitHub allows a user only one at a time.
+    """
+
+    review_id: int | None = None
+    looked: bool = True
+
+
+def _check_existing_pending(
+    repo: str, pr: str, pr_data: PRData | None = None,
+) -> PendingReview:
+    """The PR's PENDING review, and whether we managed to ask."""
     if pr_data is not None:
-        return pr_data.pending_review_id
+        return PendingReview(pr_data.pending_review_id)
     r = gh_client.api(f"repos/{repo}/pulls/{pr}/reviews")
     if not r.ok:
         # Warned rather than silent: a caller that reads None as "no pending
@@ -274,36 +291,51 @@ def _check_existing_pending(repo: str, pr: str, pr_data: PRData | None = None) -
         # only thing that explains the duplicate.
         log.warn(proc.failure_message(
             f"Could not check {repo}#{pr} for an existing pending review", r))
-        return None
+        return PendingReview(looked=False)
     try:
         reviews = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        return None
+        log.warn(f"Could not parse {repo}#{pr}'s reviews — treating the check as unanswered")
+        return PendingReview(looked=False)
     for review in reviews:
         if review.get("state") == REVIEW_STATE_PENDING:
-            return int(review.get("id", 0)) or None
-    return None
+            return PendingReview(int(review.get("id", 0)) or None)
+    return PendingReview()
 
 
-def _count_new_commits(repo: str, pr: str, review_sha: str, pr_data: PRData | None = None) -> int:
-    """Count commits on the PR since the review SHA."""
+@dataclass(frozen=True)
+class NewCommits:
+    """How far the branch moved since the review, as the lookup found it.
+
+    ``counted`` separates "nothing new since the review" from "we could not
+    ask", which were both 0. Only the warning told them apart, and a warning is
+    not something the code rendering the drift banner can read.
+    """
+
+    count: int = 0
+    counted: bool = True
+
+
+def _count_new_commits(
+    repo: str, pr: str, review_sha: str, pr_data: PRData | None = None,
+) -> NewCommits:
+    """Commits on the PR since the review SHA, and whether we managed to count."""
     if pr_data is not None:
-        return pr_data.new_commit_count(review_sha)
+        return NewCommits(pr_data.new_commit_count(review_sha))
     r = gh_client.api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
     if not r.ok:
-        # 0 is also the answer for "nothing new since the review", so the
-        # warning is what tells those two apart.
         log.warn(proc.failure_message(f"Could not count new commits on {repo}#{pr}", r))
-        return 0
+        return NewCommits(counted=False)
     try:
         commits = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        return 0
+        log.warn(f"Could not parse {repo}#{pr}'s commits — the drift count is unknown")
+        return NewCommits(counted=False)
     for i, c in enumerate(commits):
         sha = c.get("sha", "")
         if sha.startswith(review_sha) or review_sha.startswith(sha):
-            return len(commits) - i - 1
-    return len(commits)
+            return NewCommits(len(commits) - i - 1)
+    return NewCommits(len(commits))
 
 
 # ── Review threads ─────────────────────────────────────────────────────────
@@ -393,6 +425,27 @@ query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
   }}
 }}
 """
+
+
+def _warn_truncated_connection(
+    connection: dict | None, limit: int, what: str, consequence: str,
+) -> None:
+    """Warn when a connection held more than the page asked for.
+
+    These two are paged rather than paginated: `reviews` and `commits` take the
+    newest `last: N`, which is the right end for every caller here, so a PR
+    past the limit loses its oldest entries rather than its newest. Neither
+    asked for `totalCount`, so the loss was invisible — the warning is the
+    whole fix, because raising the limits costs every PR and paginating them
+    buys nothing any caller reads.
+    """
+    if not connection:
+        return
+    total = connection.get("totalCount", 0)
+    got = len(connection.get("nodes", []))
+    if total > got:
+        log.warn(f"{what}: {total} exist but only the newest {got} were read "
+                 f"(limit {limit}) — {consequence}")
 
 
 @dataclass(frozen=True)
@@ -633,6 +686,7 @@ query($owner: String!, $name: String!, $pr: Int!) {{
       reviewDecision
       reviewRequests(first: 20) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} ... on Team {{ name slug }} }} }} }}
       reviews(last: {GQL_REVIEWS_LIMIT}) {{
+        totalCount
         nodes {{
           databaseId
           state
@@ -660,6 +714,7 @@ query($owner: String!, $name: String!, $pr: Int!) {{
         }}
       }}
       commits(last: {GQL_COMMITS_LIMIT}) {{
+        totalCount
         nodes {{
           commit {{
             oid
@@ -833,6 +888,16 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
     comments_whole = _complete_truncated_comments(found.threads)
     issue_comments, issue_whole = _drain_issue_comments(
         owner, name, int(pr), pr_node.get("comments") or {})
+    # The two connections nothing pages: `last:` keeps the newest, which every
+    # caller wants, so the oldest falling off is reported rather than fetched.
+    _warn_truncated_connection(
+        pr_node.get("reviews"), GQL_REVIEWS_LIMIT,
+        f"{repo}#{pr} reviews",
+        "an older bot review may be missed, so dedup can repost its findings")
+    _warn_truncated_connection(
+        pr_node.get("commits"), GQL_COMMITS_LIMIT,
+        f"{repo}#{pr} commits",
+        "the drift count is a floor rather than the real number")
 
     return PRData(
         viewer_login=viewer.get("login", ""),

@@ -56,7 +56,7 @@ from core import log
 from core import publishing
 from pr.comments_state import ThreadRecord, ThreadState
 from core.proc import CmdResult
-from gh.pr_reads import PRData, fetch_review_threads
+from gh.pr_reads import PRData, ThreadSet, fetch_review_threads
 from core.text import plural
 
 
@@ -160,10 +160,15 @@ mutation($threadId: ID!) {
 def fetch_threads(
     owner: str, repo_name: str, pr_number: int,
     pr_data: PRData | None = None,
-) -> list[dict]:
-    """Fetch all review threads via GraphQL. Returns list of thread nodes."""
+) -> ThreadSet:
+    """Every review thread via GraphQL, and whether the walk finished.
+
+    The completeness rides along rather than being dropped here: a caller that
+    writes a thread ledger has to know whether a thread it cannot see is gone
+    or merely unreached.
+    """
     if pr_data is not None:
-        return pr_data.review_threads
+        return ThreadSet(pr_data.review_threads, pr_data.threads_complete)
     return fetch_review_threads(f"{owner}/{repo_name}", pr_number)
 
 
@@ -558,7 +563,7 @@ def resolve_thread(thread_id: str) -> bool:
 # ── State sync ─────────────────────────────────────────────────────────────
 
 def sync_threads(
-    threads: list[dict],
+    fetched: ThreadSet,
     prior_threads: dict[str, ThreadRecord],
     my_login: str,
 ) -> dict[str, ThreadRecord]:
@@ -568,9 +573,23 @@ def sync_threads(
     over from `prior_threads`, because nothing re-derives them — except on a
     thread that has been replied to since the decision was made, where carrying
     them would attach a verdict to a conversation it never read.
+
+    Takes the `ThreadSet` rather than its list because absence means two
+    different things. After a complete fetch, a thread that is not there was
+    deleted, and dropping its record is how the ledger stays honest. After an
+    incomplete one it was merely unreached, and dropping it discards a triage
+    verdict a person made and nothing can rebuild — so the prior records are
+    seeded first and the loop overwrites the ones actually seen. The next
+    complete fetch reaps whatever is genuinely gone.
+
+    A `ThreadSet` and not a `complete: bool = True` parameter: a defaulting
+    flag is the argument a later call site forgets to pass, and forgetting it
+    restores the data loss silently.
     """
     result: dict[str, ThreadRecord] = {}
-    for thread in threads:
+    if not fetched.complete:
+        result.update(prior_threads)
+    for thread in fetched.threads:
         tid = thread["id"]
         comments = thread.get("comments", {}).get("nodes", [])
         is_resolved = thread.get("isResolved", False)

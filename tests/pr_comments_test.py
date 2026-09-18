@@ -20,6 +20,7 @@ from pr import state as pr_state
 from core import publishing
 from review import issue as review_issue
 from core.proc import CmdResult
+from gh.pr_reads import ThreadSet
 from pr.comments import (
     compute_thread_state, sync_threads, fetch_threads, render_dashboard,
 )
@@ -39,9 +40,21 @@ def test_fetch_threads_uses_the_paginated_fetcher():
 
 
 def test_fetch_threads_prefers_prefetched_pr_data():
-    pr_data = SimpleNamespace(review_threads=[{"id": "PRRT_cached"}])
+    pr_data = SimpleNamespace(review_threads=[{"id": "PRRT_cached"}], threads_complete=True)
     with patch.object(pr_comments, "fetch_review_threads") as fetcher:
-        assert fetch_threads("owner", "repo", 42, pr_data) == [{"id": "PRRT_cached"}]
+        fetched = fetch_threads("owner", "repo", 42, pr_data)
+    assert fetched.threads == [{"id": "PRRT_cached"}]
+    assert fetched.complete
+    fetcher.assert_not_called()
+
+
+def test_fetch_threads_carries_a_short_prefetch_through():
+    """The consolidated read knows the thread walk fell short; dropping that
+    here is how the ledger came to be written from a partial set."""
+    pr_data = SimpleNamespace(review_threads=[{"id": "PRRT_1"}], threads_complete=False)
+    with patch.object(pr_comments, "fetch_review_threads") as fetcher:
+        fetched = fetch_threads("owner", "repo", 42, pr_data)
+    assert fetched.complete is False
     fetcher.assert_not_called()
 
 
@@ -244,7 +257,7 @@ def test_sync_clears_summary_on_new_replies():
             last_seen_reply_id=1001,
         ),
     }
-    result = sync_threads(threads, prior_threads, "isaacg")
+    result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert result["T_abc"].classification is None
     assert result["T_abc"].summary is None
     assert result["T_abc"].decided_at is None
@@ -257,7 +270,7 @@ def test_sync_new_thread_no_prior_state():
         "comments": {"nodes": _make_comments(("alice", "Fix this"))},
     }]
     prior_threads = {}
-    result = sync_threads(threads, prior_threads, "isaacg")
+    result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert "T_abc" in result
     assert result["T_abc"].state == ThreadState.NEW
     assert result["T_abc"].reviewer == "alice"
@@ -282,7 +295,7 @@ def test_sync_keeps_cached_classification():
             last_seen_reply_id=1000,
         ),
     }
-    result = sync_threads(threads, prior_threads, "isaacg")
+    result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert result["T_abc"].classification == "suggestion"
     assert result["T_abc"].summary == "Fix the handler"
 
@@ -304,7 +317,7 @@ def test_sync_detects_new_reply_updates_state():
             last_seen_reply_id=1000,
         ),
     }
-    result = sync_threads(threads, prior_threads, "isaacg")
+    result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert result["T_abc"].state == ThreadState.ADDRESSED
     assert result["T_abc"].last_seen_reply_id == 1001
 
@@ -319,7 +332,7 @@ def test_sync_resolved_on_github_overrides():
         "T_abc": ThreadRecord(
             state=ThreadState.NEW, last_seen_reply_id=1000, reviewer="alice"),
     }
-    result = sync_threads(threads, prior_threads, "isaacg")
+    result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert result["T_abc"].state == ThreadState.RESOLVED
 
 
@@ -719,3 +732,74 @@ class TestRelativeTime:
 
     def test_an_unparseable_stamp_reads_as_no_age(self):
         assert pr_comments._relative_time("not a timestamp") == ""
+
+
+# ── An incomplete fetch must not erase what it could not see ────────────────
+#
+# The triage fields are the only thing on a ThreadRecord that no API call
+# rebuilds — a person decided them. sync_threads builds its result from the
+# threads it was handed, so a short fetch silently dropped the records for
+# every thread it missed. The pair below is the whole argument: the flag is
+# what lets the carry-forward happen without also resurrecting threads that
+# were really deleted.
+
+
+def _triaged(summary: str) -> ThreadRecord:
+    return ThreadRecord(
+        state=ThreadState.NEW,
+        classification="suggestion",
+        reviewer="alice",
+        file="handler.go",
+        line=42,
+        summary=summary,
+        decided_at="2026-06-14T15:00:00Z",
+        last_seen_reply_id=1000,
+    )
+
+
+def test_sync_keeps_a_triage_verdict_for_a_thread_the_fetch_could_not_reach():
+    """#1354: a thread on an unread page is unknown, not gone."""
+    reached = [{
+        "id": "T_page1",
+        "isResolved": False,
+        "comments": {"nodes": _make_comments(("alice", "Fix this"))},
+    }]
+    prior = {"T_page1": _triaged("page one"), "T_page2": _triaged("page two")}
+
+    result = sync_threads(ThreadSet(reached, complete=False), prior, "isaacg")
+
+    assert "T_page2" in result
+    assert result["T_page2"].classification == "suggestion"
+    assert result["T_page2"].summary == "page two"
+    assert result["T_page2"].decided_at == "2026-06-14T15:00:00Z"
+
+
+def test_sync_drops_a_thread_absent_from_a_complete_fetch():
+    """The reaper. Without this the carry-forward above would strand a record
+    for every thread GitHub really deleted, and nothing would ever clear it."""
+    reached = [{
+        "id": "T_page1",
+        "isResolved": False,
+        "comments": {"nodes": _make_comments(("alice", "Fix this"))},
+    }]
+    prior = {"T_page1": _triaged("page one"), "T_deleted": _triaged("gone")}
+
+    result = sync_threads(ThreadSet(reached, complete=True), prior, "isaacg")
+
+    assert "T_deleted" not in result
+
+
+def test_sync_prefers_the_fetched_record_over_the_carried_one():
+    """The seed must not shadow the loop: a thread we did read is authoritative
+    even when the fetch as a whole fell short."""
+    prior = {"T_abc": _triaged("stale")}
+    reached = [{
+        "id": "T_abc",
+        "isResolved": True,
+        "comments": {"nodes": _make_comments(("alice", "Fix this"))},
+    }]
+
+    result = sync_threads(ThreadSet(reached, complete=False), prior, "isaacg")
+
+    assert result["T_abc"].state == ThreadState.RESOLVED
+    assert result["T_abc"].summary == "stale"

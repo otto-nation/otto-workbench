@@ -136,7 +136,7 @@ def fetch_reply_threads(
 
     owner, name = repo.split("/", 1)
     try:
-        raw_threads = fetch_threads(owner, name, int(pr_number), pr_data)
+        fetched = fetch_threads(owner, name, int(pr_number), pr_data)
     except Exception as exc:
         # Context, not a prerequisite — but announced, for the same reason the
         # missing-login skip above is: a silent one is indistinguishable from a
@@ -144,6 +144,15 @@ def fetch_reply_threads(
         log.warn(f"Could not fetch reply threads — skipping thread analysis: {exc}")
         return ReplyThreads([], {})
 
+    # Said out loud for the same reason: this is prior-round context, so a
+    # short set degrades the review rather than failing it, but a reader
+    # comparing counts against the PR should know why they disagree.
+    if not fetched.complete:
+        log.warn(
+            f"Reply-thread analysis is working from {len(fetched.threads)} threads — "
+            "the fetch did not reach them all")
+
+    raw_threads = fetched.threads
     if not raw_threads:
         return ReplyThreads([], {})
 

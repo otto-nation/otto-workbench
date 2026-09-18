@@ -32,6 +32,8 @@ from fix import tracking as fix_tracking
 from pr import state as pr_state
 from core import proc
 from core.proc import CmdResult
+from gh.pr_reads import ThreadSet
+from pr import comments_state as pcs
 from pr.comments_state import ThreadState
 from core import log
 from core import markdown
@@ -381,13 +383,13 @@ class TestMatchThreadToFinding:
 class TestFetchReplyThreads:
     def test_empty_when_no_bot_login(self):
         with patch("review.reply_threads.get_bot_login", return_value=""), \
-             patch("review.reply_threads.fetch_threads", return_value=[]):
+             patch("review.reply_threads.fetch_threads", return_value=ThreadSet([])):
             result = fetch_reply_threads("owner/repo", "42")
         assert result == ReplyThreads(threads=[], summary={})
 
     def test_empty_when_no_threads(self):
         with patch("review.reply_threads.get_bot_login", return_value="bot"), \
-             patch("review.reply_threads.fetch_threads", return_value=[]):
+             patch("review.reply_threads.fetch_threads", return_value=ThreadSet([])):
             result = fetch_reply_threads("owner/repo", "42")
         assert result == ReplyThreads(threads=[], summary={})
 
@@ -418,7 +420,7 @@ class TestFetchReplyThreads:
             },
         ]
         with patch("review.reply_threads.get_bot_login", return_value="bot"), \
-             patch("review.reply_threads.fetch_threads", return_value=threads):
+             patch("review.reply_threads.fetch_threads", return_value=ThreadSet(threads)):
             result = fetch_reply_threads("owner/repo", "42")
         assert len(result.threads) == 1
         assert result.threads[0]["finding_id"] == "M1"
@@ -437,7 +439,7 @@ class TestFetchReplyThreads:
             },
         ]
         with patch("review.reply_threads.get_bot_login", return_value="bot"), \
-             patch("review.reply_threads.fetch_threads", return_value=threads):
+             patch("review.reply_threads.fetch_threads", return_value=ThreadSet(threads)):
             result = fetch_reply_threads("owner/repo", "42")
         states = {t["state"] for t in result.threads}
         assert ReplyState.RESOLVED in states
@@ -466,7 +468,7 @@ class TestFetchReplyThreads:
             )},
         }]
         with patch("review.reply_threads.get_bot_login", return_value="bot"), \
-             patch("review.reply_threads.fetch_threads", return_value=threads):
+             patch("review.reply_threads.fetch_threads", return_value=ThreadSet(threads)):
             result = fetch_reply_threads("owner/repo", "42")
 
         assert result.threads[0]["finding_id"] == "M1"
@@ -485,7 +487,7 @@ class TestFetchReplyThreads:
             )},
         }]
         with patch("review.reply_threads.get_bot_login", return_value="bot"), \
-             patch("review.reply_threads.fetch_threads", return_value=threads):
+             patch("review.reply_threads.fetch_threads", return_value=ThreadSet(threads)):
             result = fetch_reply_threads("owner/repo", "42")
 
         assert result.threads[0]["finding_id"] == "M1"
@@ -4219,7 +4221,7 @@ class TestRunReply:
         return (
             patch.object(thread_replies, "fetch_pr_data",
                          return_value=SimpleNamespace(viewer_login=login)),
-            patch.object(pc, "fetch_threads", return_value=raw),
+            patch.object(pc, "fetch_threads", return_value=ThreadSet(raw)),
         )
 
     def test_posts_the_body_from_the_file(self, tmp_path):
@@ -9425,3 +9427,102 @@ class TestUndeliveredDeferredIssueReachesTheState:
         """The gate declining the write is not a tracking issue gone missing."""
         fix = self._finalize(worktree, self._provider("github"))
         assert fix.deferred_issue_pending is False
+
+
+# ── A truncated fetch must not erase the ledger (#1354) ─────────────────────
+
+
+class TestTruncatedThreadFetch:
+    """End to end: what `pr comments` writes when it could not read every thread.
+
+    Driven through `_run_threads` rather than `sync_threads` because the loss
+    happened between them — the sweep fetched, synced, and saved, and only the
+    save is durable. `fetch_pr_data` is the single seam the whole path hangs
+    off, so patching it is enough to stand up a short fetch.
+    """
+
+    def _ctx(self, tmp_path):
+        work = tmp_path / "wt"
+        (work / ".git").mkdir(parents=True)
+        return make_ctx(repo="owner/repo", pr_number=1, branch="isaac/feat/x",
+                        worktree_root=work, head_sha="abc1234",
+                        target_dir=tmp_path / "target")
+
+    def _pr_data(self, threads, *, complete):
+        from gh.pr_reads import PRData
+        return PRData(
+            viewer_login="isaacg", head_sha="abc1234", head_ref="isaac/feat/x",
+            base_ref="main", review_threads=threads, threads_complete=complete,
+        )
+
+    def _thread(self, tid, author="alice"):
+        return {
+            "id": tid, "isResolved": False, "path": "handler.go", "line": 42,
+            "comments": {"totalCount": 1, "nodes": [{
+                "id": f"c-{tid}", "databaseId": 1000, "author": {"login": author},
+                "body": "Fix this", "createdAt": "2026-06-14T12:00:00Z",
+            }]},
+        }
+
+    def _seed_ledger(self, ctx):
+        """A prior run's ledger, carrying a human verdict on each of two threads."""
+        state_path = pc.threads_state_path(ctx.target_dir)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        triaged = {
+            tid: pcs.ThreadRecord(
+                state=ThreadState.NEW, classification="suggestion", reviewer="alice",
+                file="handler.go", line=42, summary=f"verdict on {tid}",
+                decided_at="2026-06-14T15:00:00Z", last_seen_reply_id=1000,
+            )
+            for tid in ("T_page1", "T_page2")
+        }
+        pcs.save_state(state_path, pcs.CommentsState(
+            repo="owner/repo", pr_number=1, my_login="isaacg", threads=triaged,
+        ))
+        return state_path
+
+    def _run(self, tmp_path, threads, *, complete, finish=False):
+        ctx = self._ctx(tmp_path)
+        state_path = self._seed_ledger(ctx)
+        args = cli_review_threads._build_parser().parse_args(
+            ["--finish"] if finish else [])
+        with patch.object(cli_review_threads, "fetch_pr_data",
+                          return_value=self._pr_data(threads, complete=complete)), \
+             patch.object(closeout, "finish_deferred_work") as fin:
+            code = cli_review_threads._run_threads(MagicMock(), args, ctx)
+        return code, pcs.load_state(state_path), fin
+
+    def test_an_incomplete_fetch_does_not_erase_triage_from_the_written_ledger(
+            self, tmp_path):
+        """The bug, at the layer that made it permanent."""
+        _code, written, _fin = self._run(
+            tmp_path, [self._thread("T_page1")], complete=False)
+
+        assert "T_page2" in written.threads
+        assert written.threads["T_page2"].summary == "verdict on T_page2"
+        assert written.threads["T_page2"].classification == "suggestion"
+
+    def test_a_complete_fetch_still_drops_a_deleted_thread(self, tmp_path):
+        """The control: absence after a full read still means gone."""
+        _code, written, _fin = self._run(
+            tmp_path, [self._thread("T_page1")], complete=True)
+
+        assert "T_page2" not in written.threads
+
+    def test_finish_refuses_an_incomplete_fetch_and_publishes_nothing(self, tmp_path):
+        """Closeout asserts the round is answered; the unread threads are the
+        ones most likely to be unanswered. Status and effect asserted together —
+        matching stderr alone would pass for a run that printed and published."""
+        code, _written, fin = self._run(
+            tmp_path, [self._thread("T_page1")], complete=False, finish=True)
+
+        assert code == 1
+        fin.assert_not_called()
+
+    def test_finish_proceeds_on_a_complete_fetch(self, tmp_path):
+        """The control for the refusal above."""
+        code, _written, fin = self._run(
+            tmp_path, [self._thread("T_page1")], complete=True, finish=True)
+
+        assert code == 0
+        fin.assert_called_once()

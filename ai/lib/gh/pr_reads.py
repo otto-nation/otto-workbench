@@ -40,13 +40,29 @@ REVIEW_STATE_PENDING = "PENDING"
 # fields become runtime-conditional.
 GQL_REVIEWS_LIMIT = 100
 GQL_THREADS_LIMIT = 100
-GQL_THREAD_COMMENTS_LIMIT = 50
+
+# Sized for the thread people actually write, not the worst one on record.
+# GitHub scores a query from its `first:` values before running it, and this
+# one is nested inside `reviewThreads`, so it is multiplied by 100 and is most
+# of what both queries cost. Measured over 217 threads on the repo under
+# heaviest review: p50 and p90 are 2 comments, the mean is 4.2, and 3 threads
+# exceed 10. Ten therefore serves 98.6% of threads whole for a fifth of the
+# charge, and `_complete_truncated_comments` finishes off the rest — which is
+# not a new risk: the old value of 50 was itself under the observed maximum of
+# 163, so the set was already being truncated, silently.
+GQL_THREAD_COMMENTS_LIMIT = 10
+
 GQL_ISSUE_COMMENTS_LIMIT = 100
 GQL_COMMITS_LIMIT = 100
 
 # Ceiling on review-thread pages, so a server that keeps reporting hasNextPage
 # cannot spin forever. 20 pages is 2000 threads — far beyond any real PR.
 GQL_MAX_THREAD_PAGES = 20
+
+# The same guard for issue comments. 10 pages is 1000 comments against an
+# observed maximum of 230, so this bounds a misbehaving server rather than any
+# PR someone might actually open.
+GQL_MAX_ISSUE_COMMENT_PAGES = 10
 
 
 # ── What a review knows about its PR ────────────────────────────────────────
@@ -295,6 +311,7 @@ _THREAD_NODE_FIELDS = f"""
           line
           comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
             totalCount
+            pageInfo {{ hasNextPage endCursor }}
             nodes {{
               id
               databaseId
@@ -303,6 +320,52 @@ _THREAD_NODE_FIELDS = f"""
               createdAt
             }}
           }}
+"""
+
+# One thread's comments, addressed by the thread's own node id. This is what
+# finishes off a thread the page size cut off, so it asks for the largest page
+# GitHub allows: it only runs for a thread already known to be deep, and a
+# second round trip is the thing worth avoiding here.
+# Issue comments past the first page. Separate from the consolidated query so a
+# PR over the 100-comment cap costs one extra call rather than making every PR
+# pay for a second page it does not have.
+_ISSUE_COMMENTS_QUERY = f"""
+query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $pr) {{
+      comments(first: {GQL_ISSUE_COMMENTS_LIMIT}, after: $endCursor) {{
+        totalCount
+        pageInfo {{ hasNextPage endCursor }}
+        nodes {{
+          databaseId
+          author {{ login __typename }}
+          body
+          createdAt
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+_THREAD_COMMENTS_QUERY = """
+query($threadId: ID!, $endCursor: String) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $endCursor) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          databaseId
+          author { login }
+          body
+          createdAt
+        }
+      }
+    }
+  }
+}
 """
 
 # The cursor variable is named endCursor so this query stays compatible with
@@ -326,19 +389,160 @@ query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
 """
 
 
-def _warn_truncated_comments(threads: list[dict]) -> None:
-    """Warn for any thread whose comments were cut off by the page size."""
+@dataclass(frozen=True)
+class ThreadSet:
+    """Every review thread on a PR, and whether that is actually all of them.
+
+    `complete` is the pagination's own success, not a property of the PR. A
+    caller that persists a thread ledger has to tell "this PR has N threads"
+    from "we stopped early at N", and a bare list cannot: a page that failed
+    mid-walk returned a short list indistinguishable from a complete one, so
+    `pr comments` wrote a ledger missing every thread past the failure and
+    dropped the triage verdicts on them — the one thing on a record that no API
+    call re-derives.
+
+    The distinction is per-fetch rather than per-thread, and that is enough:
+    the fetch never learns which ids it failed to reach, but it knows for
+    certain whether it walked to exhaustion. A thread absent from a *complete*
+    fetch is deleted and its record should go; one absent from an *incomplete*
+    fetch is merely unknown and its record must stand. That also makes the
+    carry-forward self-healing — the first complete fetch afterwards reaps
+    anything genuinely gone, so a truncated run cannot strand a record forever.
+    """
+
+    threads: list[dict] = field(default_factory=list)
+    complete: bool = True
+
+
+def _complete_truncated_comments(threads: list[dict]) -> bool:
+    """Refetch the comments of any thread the page size cut off. Returns success.
+
+    The page size is set for the common thread rather than the worst one — the
+    p90 thread carries two comments — so the rare deep thread is finished off
+    with a second call instead of being paid for on every thread in every
+    query. A warning alone was what this used to do, and the truncated set went
+    on to feed dedup, which reads a missing comment as one never posted and
+    posts it again.
+    """
+    ok = True
     for thread in threads:
         comments_data = thread.get("comments", {})
         total = comments_data.get("totalCount", 0)
         nodes = comments_data.get("nodes", [])
-        if total > len(nodes):
+        if total <= len(nodes):
+            continue
+        full = _drain_thread_comments(thread["id"], nodes, comments_data)
+        if full is None:
             path = thread.get("path", "?")
-            log.warn(f"Thread at {path} has {total} comments but only {len(nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
+            log.warn(
+                f"Thread at {path} has {total} comments and the refetch failed — "
+                f"only {len(nodes)} are available")
+            ok = False
+            continue
+        comments_data["nodes"] = full
+    return ok
 
 
-def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict:
-    """Fetch one page of review threads. Returns the reviewThreads node, or {}."""
+def _drain_thread_comments(
+    thread_id: str, first_nodes: list[dict], first_page: dict,
+) -> list[dict] | None:
+    """Every comment on one thread, or None when a page could not be read.
+
+    Keyed on the thread's node id rather than the PR, so this asks only for the
+    thread that overflowed instead of re-running the whole consolidated query
+    at a larger page size.
+    """
+    nodes = list(first_nodes)
+    page_info = first_page.get("pageInfo", {})
+    seen: set[str] = set()
+
+    for _ in range(GQL_MAX_THREAD_PAGES):
+        if not page_info.get("hasNextPage"):
+            return nodes
+        cursor = page_info.get("endCursor")
+        if not cursor or cursor in seen:
+            return None
+        seen.add(cursor)
+        r = gh_client.graphql(
+            _THREAD_COMMENTS_QUERY, variables={"threadId": thread_id, "endCursor": cursor},
+        )
+        if not r.ok:
+            return None
+        try:
+            data = json.loads(r.stdout)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        page = (data.get("data", {}).get("node") or {}).get("comments") or {}
+        nodes.extend(page.get("nodes", []))
+        page_info = page.get("pageInfo", {})
+
+    # ceiling: a thread past GQL_MAX_THREAD_PAGES pages of comments is still
+    # short, and says so rather than reading as complete. Upgrade trigger:
+    # raise the bound once a real thread trips it — the warning above names
+    # the thread when one does.
+    return None if page_info.get("hasNextPage") else nodes
+
+
+def _drain_issue_comments(
+    owner: str, name: str, pr: int, first_page: dict,
+) -> tuple[list[dict], bool]:
+    """Every issue comment on the PR, and whether the walk finished.
+
+    100 is GitHub's hard cap on `first:`, so this is not a page size that can
+    be raised — a PR past it needs a second call or it is silently short. This
+    query asked for neither `totalCount` nor `pageInfo`, so nothing downstream
+    could even tell: the observed maximum on the repo under heaviest review is
+    230 comments, and the 130 past the cap were invisible to triage, to the
+    dashboard, and to the settlement pass that looks for its own verdicts among
+    them.
+
+    A `tuple` rather than a type because both halves are the same fact — the
+    comments and whether they are all of them — and unlike `ThreadSet` nothing
+    carries this pair further than the line below.
+    """
+    nodes = list(first_page.get("nodes", []))
+    page_info = first_page.get("pageInfo", {})
+    seen: set[str] = set()
+
+    for _ in range(GQL_MAX_ISSUE_COMMENT_PAGES - 1):
+        if not page_info.get("hasNextPage"):
+            return nodes, True
+        cursor = page_info.get("endCursor")
+        if not cursor or cursor in seen:
+            return nodes, False
+        seen.add(cursor)
+        r = gh_client.graphql(
+            _ISSUE_COMMENTS_QUERY,
+            variables={"owner": owner, "name": name, "pr": pr, "endCursor": cursor},
+        )
+        if not r.ok:
+            log.warn(proc.failure_message(
+                "Failed to fetch a page of issue comments — the set is incomplete", r))
+            return nodes, False
+        try:
+            data = json.loads(r.stdout)
+        except (json.JSONDecodeError, TypeError):
+            log.warn("Failed to parse a page of issue comments — the set is incomplete")
+            return nodes, False
+        pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
+        page = pr_node.get("comments") or {}
+        nodes.extend(page.get("nodes", []))
+        page_info = page.get("pageInfo", {})
+
+    if page_info.get("hasNextPage"):
+        log.warn(
+            f"Issue comments hit the {GQL_MAX_ISSUE_COMMENT_PAGES}-page ceiling — "
+            f"stopping at {len(nodes)}")
+        return nodes, False
+    return nodes, True
+
+
+def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict | None:
+    """One page of review threads, or None when the page could not be read.
+
+    None rather than `{}`: an empty node is what a PR with no threads returns,
+    and the caller has to tell that from a page it failed to fetch.
+    """
     variables: dict = {"owner": owner, "name": name, "pr": pr}
     if cursor:
         variables["endCursor"] = cursor
@@ -346,18 +550,28 @@ def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict:
     if not r.ok:
         log.warn(proc.failure_message(
             "Failed to fetch a page of review threads (fetch) — the thread set is incomplete", r))
-        return {}
+        return None
     try:
         data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         log.warn("Failed to fetch a page of review threads (parse) — the thread set is incomplete")
-        return {}
+        return None
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
     return pr_node.get("reviewThreads") or {}
 
 
-def _drain_thread_pages(owner: str, name: str, pr: int, first_page: dict) -> list[dict]:
-    """Follow reviewThreads pagination from an already-fetched first page."""
+def _drain_thread_pages(
+    owner: str, name: str, pr: int, first_page: dict | None,
+) -> ThreadSet:
+    """Follow reviewThreads pagination from an already-fetched first page.
+
+    Every way of stopping short — a failed page, a missing or repeated cursor,
+    the page ceiling — comes back `complete=False`. Each of those used to warn
+    and return the threads gathered so far, which the caller could not tell
+    from the whole set.
+    """
+    if first_page is None:
+        return ThreadSet([], complete=False)
     threads = list(first_page.get("nodes", []))
     page_info = first_page.get("pageInfo", {})
     # GitHub cursors are strictly increasing; a repeat means the server or the
@@ -366,31 +580,35 @@ def _drain_thread_pages(owner: str, name: str, pr: int, first_page: dict) -> lis
 
     for _ in range(GQL_MAX_THREAD_PAGES - 1):
         if not page_info.get("hasNextPage"):
-            return threads
+            return ThreadSet(threads)
         cursor = page_info.get("endCursor")
         if not cursor:
             log.warn(f"Review threads report another page but no cursor — stopping at {len(threads)} threads")
-            return threads
+            return ThreadSet(threads, complete=False)
         if cursor in seen:
             log.warn(f"Review thread pagination repeated cursor {cursor} — stopping at {len(threads)} threads")
-            return threads
+            return ThreadSet(threads, complete=False)
         seen.add(cursor)
         page = _threads_page(owner, name, pr, cursor)
+        if page is None:
+            return ThreadSet(threads, complete=False)
         threads.extend(page.get("nodes", []))
         page_info = page.get("pageInfo", {})
 
     if page_info.get("hasNextPage"):
         log.warn(f"Review thread pagination hit the {GQL_MAX_THREAD_PAGES}-page ceiling — stopping at {len(threads)} threads")
-    return threads
+        return ThreadSet(threads, complete=False)
+    return ThreadSet(threads)
 
 
-def fetch_review_threads(repo: str, pr: str | int) -> list[dict]:
-    """Fetch every review thread on a PR, following pagination past page one."""
+def fetch_review_threads(repo: str, pr: str | int) -> ThreadSet:
+    """Every review thread on a PR, and whether the walk actually finished."""
     owner, name = repo.split("/", 1)
     first_page = _threads_page(owner, name, int(pr), None)
-    threads = _drain_thread_pages(owner, name, int(pr), first_page)
-    _warn_truncated_comments(threads)
-    return threads
+    found = _drain_thread_pages(owner, name, int(pr), first_page)
+    if not _complete_truncated_comments(found.threads):
+        return ThreadSet(found.threads, complete=False)
+    return found
 
 
 # ── Consolidated GraphQL PR data ───────────────────────────────────────────
@@ -426,6 +644,8 @@ query($owner: String!, $name: String!, $pr: Int!) {{
         }}
       }}
       comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
+        totalCount
+        pageInfo {{ hasNextPage endCursor }}
         nodes {{
           databaseId
           author {{ login __typename }}
@@ -468,6 +688,10 @@ class PRData:
     labels: list[str] = field(default_factory=list)
     review_decision: str = ""
     requested_reviewers: list[str] = field(default_factory=list)
+    # Whether `review_threads` is all of them — see `ThreadSet`, whose meaning
+    # this carries through the consolidated read. Defaulted True so a caller
+    # constructing PRData directly, as the tests do, keeps today's shape.
+    threads_complete: bool = True
 
     @property
     def pending_review_id(self) -> int | None:
@@ -599,8 +823,10 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
     viewer = data.get("data", {}).get("viewer", {})
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest", {})
 
-    threads = _drain_thread_pages(owner, name, int(pr), pr_node.get("reviewThreads") or {})
-    _warn_truncated_comments(threads)
+    found = _drain_thread_pages(owner, name, int(pr), pr_node.get("reviewThreads") or {})
+    comments_whole = _complete_truncated_comments(found.threads)
+    issue_comments, issue_whole = _drain_issue_comments(
+        owner, name, int(pr), pr_node.get("comments") or {})
 
     return PRData(
         viewer_login=viewer.get("login", ""),
@@ -608,8 +834,9 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
         head_ref=pr_node.get("headRefName", ""),
         base_ref=pr_node.get("baseRefName", ""),
         reviews=pr_node.get("reviews", {}).get("nodes", []),
-        review_threads=threads,
-        issue_comments=pr_node.get("comments", {}).get("nodes", []),
+        review_threads=found.threads,
+        threads_complete=found.complete and comments_whole and issue_whole,
+        issue_comments=issue_comments,
         commits=pr_node.get("commits", {}).get("nodes", []),
         author=(pr_node.get("author") or {}).get("login", ""),
         is_draft=pr_node.get("isDraft", False),

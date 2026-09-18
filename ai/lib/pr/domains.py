@@ -395,6 +395,11 @@ class CommentsSummary(Domain):
     has_approvals: bool = False
     seen_issue_comment_ids: list[int] = field(default_factory=list)
     seen_review_body_comment_ids: list[int] = field(default_factory=list)
+    # Whether the fetch behind these counts reached every thread. Defaulted
+    # True so a state file written before the field reads as it always did;
+    # a short tally that claimed to be the whole PR is what this exists to
+    # stop `pr status` reporting as settled.
+    complete: bool = True
 
     def move_to_resolved(
         self, priors: Sequence[ThreadState], *, updated_at: str,
@@ -449,7 +454,8 @@ class CommentsSummary(Domain):
     def render_status(self) -> list[str]:
         if not self.updated_at:
             return ["**Comments**: not checked yet"]
-        lines = [f"**Comments**: {self.total_threads} thread(s)"]
+        suffix = "" if self.complete else " [PARTIAL — not all threads could be read]"
+        lines = [f"**Comments**: {self.total_threads} thread(s){suffix}"]
         if self.by_state:
             parts = [f"{s}: {ct}" for s, ct in sorted(self.by_state.items())]
             lines.append(f"  {', '.join(parts)}")
@@ -460,9 +466,14 @@ class CommentsSummary(Domain):
     def readiness(self) -> Readiness:
         if not self.updated_at:
             return Readiness(unchecked=("comments",))
+        blockers = []
         if self.blocking_reviewers:
-            return Readiness(blockers=("blocking reviewers",))
-        return Readiness()
+            blockers.append("blocking reviewers")
+        # A PR is not ready on the strength of threads nobody could read: the
+        # unread ones are the likeliest to be unanswered.
+        if not self.complete:
+            blockers.append("thread fetch incomplete")
+        return Readiness(blockers=tuple(blockers))
 
 
 @dataclass

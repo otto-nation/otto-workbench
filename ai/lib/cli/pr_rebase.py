@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import sys
 import traceback
+from pathlib import Path
 
 from core import log
 from core import publishing
@@ -48,6 +49,7 @@ from rebase import inspect as rebase_inspect
 from rebase import land as rebase_land
 from rebase import lease as rebase_lease
 from rebase import lifecycle
+from rebase import pr_snapshot as rebase_pr_snapshot
 from rebase import stash
 from rebase import target as rebase_target
 from rebase import types as rebase_types
@@ -126,7 +128,9 @@ def cmd_push(
 
 def cmd_start(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    force: bool = False, *, target_ref: str, trail: Trail | None = None,
+    force: bool = False, *, target_ref: str,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
+    trail: Trail | None = None,
 ) -> int:
     """Start or resume a rebase onto the resolved target ref.
 
@@ -157,7 +161,8 @@ def cmd_start(
         reason="no in-progress rebase detected",
     )
     rc = lifecycle.fresh(
-        cwd, ctx, mode, force=force, target_ref=target_ref, trail=trail,
+        cwd, ctx, mode, force=force, target_ref=target_ref, snapshot=snapshot,
+        trail=trail,
     )
 
     if stashed:
@@ -229,7 +234,14 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
         )
         return cmd_abort(cwd, ctx, target_ref=target_ref)
 
-    target_ref = rebase_target.resolve_target_ref(cwd, ctx, args.onto, trail=trail)
+    # One read of the PR for the whole run: the base to replay onto, whether it
+    # already merged, and whether anyone is reviewing it were three questions
+    # and are now one round trip. Skipped entirely for --onto, which needs no
+    # base from GitHub, and harmless when gh cannot answer.
+    snapshot = rebase_pr_snapshot.fetch(cwd, ctx)
+    target_ref = rebase_target.resolve_target_ref(
+        cwd, ctx, args.onto, snapshot=snapshot, trail=trail,
+    )
 
     mode, reason = _select_mode(args)
     trail.decision("mode", f"selected {mode}", reason=reason)
@@ -243,7 +255,7 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
         trail.decision("preflight", "waiving the already-landed check",
                        reason=f"{REFUSAL_OVERRIDE_FLAG} flag set")
     rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
-                   trail=trail)
+                   snapshot=snapshot, trail=trail)
 
     if rc == 0 and mode is RunMode.PUSH:
         rc = cmd_push(cwd, ctx, target_ref=target_ref, trail=trail)
@@ -268,6 +280,10 @@ def main(argv: list[str] | None = None) -> int:
         ctx.target_dir,
         command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
         started=pr_state.now_iso(),
+        # The replay rewrites this checkout's history in place — the strongest
+        # reason in the codebase for a tree to have one writer at a time.
+        # `cwd` above is require_worktree()'s answer, so it is never None here.
+        worktree=Path(cwd),
     )
 
     trail = Trail.start(

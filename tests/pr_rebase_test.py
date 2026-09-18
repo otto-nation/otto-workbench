@@ -41,6 +41,7 @@ from rebase import refusals  # noqa: E402
 from rebase import stash as rebase_stash  # noqa: E402
 from rebase import target as rebase_target  # noqa: E402
 from rebase import lease as rebase_lease  # noqa: E402
+from rebase import pr_snapshot as rebase_pr_snapshot  # noqa: E402
 from config import workbench_config  # noqa: E402
 from agent import invoke as agent_invoke  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
@@ -2150,7 +2151,8 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
     assert result == 0
     mock_drive.assert_called_once_with(
         "/fake", ctx, rebase_types.RunMode.FIX, target_ref=_TARGET, force=False,
-        tally=rebase_types.ResolutionTally(), lease=None, trail=None,
+        tally=rebase_types.ResolutionTally(), lease=None, snapshot=None,
+        trail=None,
     )
 
 
@@ -3991,6 +3993,12 @@ def _run_main(cmd_start_rc: int, *flags: str,
     The target-ref resolution runs for real off the two probes it consults, so
     a test can move the repo's trunk or the PR's base and watch what main()
     hands the commands.
+
+    The lock is stubbed rather than taken. A MagicMock's `target_dir` is a
+    MagicMock, and `main()` now hands it to a lock that creates the directory —
+    which, left real, writes a `MagicMock/mock.target_dir/<id>/` tree into
+    whatever directory the suite happens to run from. What main() does with the
+    lock is pinned in run_lock_test and pr_cli_test against real paths.
     """
     fake_ctx = mock.MagicMock()
     fake_ctx.worktree_root = Path("/fake")
@@ -4000,6 +4008,7 @@ def _run_main(cmd_start_rc: int, *flags: str,
     fake_trail.__exit__ = mock.Mock(return_value=False)
 
     with mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=fake_ctx), \
+         mock.patch.object(pr_rebase_cli.run_lock, "claim_for_process"), \
          mock.patch.object(rebase_target, "pr_base_branch", return_value=pr_base), \
          mock.patch.object(git_topology, "default_branch",
                            return_value=default_branch), \

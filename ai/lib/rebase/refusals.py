@@ -19,6 +19,7 @@ from pr import context as pr_context
 from pr.domains import RebaseStatus
 
 from . import inspect as rebase_inspect
+from . import pr_snapshot as rebase_pr_snapshot
 from . import types as rebase_types
 
 CONFLICT_FILE_BUDGET = rebase_types.CONFLICT_FILE_BUDGET
@@ -48,6 +49,7 @@ def as_refusal(
 
 def tracker_landed_check(
     cwd: str, ctx: pr_context.ResolvedContext,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
 ) -> RefusalReport | None:
     """Evidence from GitHub that the branch's PR merged, or None.
 
@@ -59,7 +61,17 @@ def tracker_landed_check(
 
     The most authoritative signal, and the only one that survives a squash
     merge once the target ref has moved on with unrelated work.
+
+    Reads *snapshot* when the caller has one, so the state and the PR's base
+    come from a single ``gh pr view``. The unanswered snapshot is not a refusal:
+    a tracker that said nothing is not a tracker saying the branch landed.
     """
+    if snapshot is not None:
+        if not snapshot.merged:
+            return None
+        return as_refusal(branch_landed.merged_report(
+            branch_landed.MergedPR(number=snapshot.number, url=snapshot.url),
+        ), ctx.branch)
     return as_refusal(branch_landed.by_tracker(
         cwd, branch=ctx.branch, repo=ctx.repo, pr_number=ctx.pr_number,
     ), ctx.branch)

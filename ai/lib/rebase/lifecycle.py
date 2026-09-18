@@ -24,6 +24,7 @@ from pr.domains import RebaseStatus
 from . import inspect as rebase_inspect
 from . import land as rebase_land
 from . import lease as rebase_lease
+from . import pr_snapshot as rebase_pr_snapshot
 from . import refusals
 from . import resolve_ai as rebase_resolve
 from . import target as rebase_target
@@ -134,6 +135,7 @@ def drive_to_completion(
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
     lease: rebase_lease.PushLease | None = None,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
@@ -158,7 +160,7 @@ def drive_to_completion(
     with tspan(trail, "drive_to_completion"):
         return _drive_loop(
             cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
-            lease=lease, trail=trail,
+            lease=lease, snapshot=snapshot, trail=trail,
         )
 
 
@@ -167,6 +169,7 @@ def _drive_loop(
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
     lease: rebase_lease.PushLease | None = None,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     tally = tally if tally is not None else ResolutionTally()
@@ -175,7 +178,7 @@ def _drive_loop(
         if not rebase_inspect.rebase_in_progress(cwd):
             return rebase_success(
                 cwd, ctx, mode, tally, target_ref=target_ref,
-                lease=lease, trail=trail,
+                lease=lease, snapshot=snapshot, trail=trail,
             )
 
         rc, conflict_found = _drive_one_step(
@@ -335,6 +338,7 @@ def step_advance(
 def fresh(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Start a fresh rebase onto the target ref."""
@@ -373,7 +377,7 @@ def fresh(
     # deleted, and the checkout below starts from exactly that ref. Asking the
     # tracker first is what turns "Cannot checkout feat/x" into the refusal
     # this preflight exists to give.
-    landed = None if force else refusals.tracker_landed_check(cwd, ctx)
+    landed = None if force else refusals.tracker_landed_check(cwd, ctx, snapshot)
     if landed is not None:
         return refusals.refuse(ctx, landed, target_ref=target_ref, trail=trail)
 
@@ -434,7 +438,7 @@ def fresh(
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
             cwd, ctx, mode, tally, target_ref=target_ref,
-            lease=lease, trail=trail,
+            lease=lease, snapshot=snapshot, trail=trail,
         )
 
     if not rebase_inspect.rebase_in_progress(cwd):
@@ -446,7 +450,7 @@ def fresh(
 
     return drive_to_completion(
         cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
-        lease=lease, trail=trail,
+        lease=lease, snapshot=snapshot, trail=trail,
     )
 
 
@@ -454,6 +458,7 @@ def rebase_success(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None, *, target_ref: str,
     lease: rebase_lease.PushLease | None = None,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Handle rebase completion — update state and optionally force-push."""

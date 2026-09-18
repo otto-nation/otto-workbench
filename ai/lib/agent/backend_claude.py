@@ -87,7 +87,19 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
 
 
 def _base_cmd() -> list[str]:
-    """Shared flags used by both agent and fix commands."""
+    """Shared flags used by both agent and fix commands.
+
+    ``--bare`` skips hooks, plugins and — the part that matters here — CLAUDE.md
+    auto-discovery. What puts the operator's memory back is ``--add-dir``, which
+    every command built from this one passes: the flag restores memory loading
+    wholesale, not merely access to the directory it names. So the coding rules
+    an agent runs under arrive through a flag passed for filesystem reasons.
+
+    That coupling is undocumented Claude behaviour and load-bearing. A command
+    built without ``--add-dir`` silently loses the whole rule set with no error
+    and no missing-file to notice, which is why the call sites are pinned by
+    test rather than left to the reader — see `TestEveryCommandCarriesAnAddDir`.
+    """
     return [
         "claude", "-p", "--bare", "--verbose",
         "--permission-mode", "acceptEdits",

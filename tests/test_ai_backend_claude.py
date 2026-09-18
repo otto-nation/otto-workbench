@@ -8,6 +8,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import backend_claude as ai_backend_claude
+from core.phases import Phase
+
+_FIX_PHASE = Phase.FIX
 
 
 class TestLoadAgentDef:
@@ -184,3 +187,66 @@ class TestPreflight:
         models = {"claude-sonnet-5": ["group"]}
         assert ai_backend_claude.preflight(models, object()) is False
         assert seen["models"] == models
+
+
+class TestEveryCommandCarriesAnAddDir:
+    """`--add-dir` is what puts the operator's rules back under `--bare`.
+
+    `--bare` skips CLAUDE.md auto-discovery; passing any `--add-dir` restores
+    memory loading wholesale, not just access to the named directory. Verified
+    against Claude Code 2.1.265 by running the fix flag set with tools
+    suppressed: with `--add-dir` the agent quotes the workbench rules back, and
+    without it the same prompt answers that it has no such instructions.
+
+    So a command built without one loses every coding rule the agent runs
+    under, with no error and no missing file to notice. Nothing in the CLI's
+    documented contract promises this coupling, which is exactly why it is
+    pinned here — if a Claude upgrade breaks it, this test is where the
+    assumption is written down, even though it cannot itself detect that.
+    """
+
+    def _fix_cmd(self, **kwargs):
+        return ai_backend_claude._build_fix_cmd(
+            ai_backend_claude.AgentInvocation(prompt="", **kwargs),
+        )
+
+    def test_a_fix_command_passes_every_directory_it_was_given(self):
+        cmd = self._fix_cmd(add_dirs=["/tmp/wt", "/tmp/artifacts"])
+        assert cmd.count("--add-dir") == 2
+        for d in ("/tmp/wt", "/tmp/artifacts"):
+            assert cmd[cmd.index(d) - 1] == "--add-dir"
+
+    def test_an_agent_command_passes_every_directory_it_was_given(self):
+        cmd = ai_backend_claude._build_agent_cmd(
+            ai_backend_claude.AgentInvocation(prompt="", add_dirs=["/tmp/wt"]),
+        )
+        assert cmd.count("--add-dir") == 1
+        assert cmd[cmd.index("/tmp/wt") - 1] == "--add-dir"
+
+    def test_the_fix_runner_never_hands_the_backend_an_empty_list(self):
+        """The invariant lives in `run_fix`, which falls back to cwd.
+
+        A caller passing no directories is the case that would silently drop
+        the rules, so the fallback is the thing worth pinning rather than the
+        command builder's faithful rendering of whatever it is handed.
+        """
+        from agent import invoke as agent_invoke
+
+        captured = {}
+
+        def fake_invoke_fix(inv):
+            captured["add_dirs"] = inv.add_dirs
+            return 0
+
+        import agent.backend as ai_backend
+        original = ai_backend.invoke_fix
+        ai_backend.invoke_fix = fake_invoke_fix
+        try:
+            agent_invoke.run_fix(
+                _FIX_PHASE, "prompt", cwd="/tmp/the-worktree",
+                session_log="", produced=lambda: True,
+            )
+        finally:
+            ai_backend.invoke_fix = original
+
+        assert captured["add_dirs"] == ["/tmp/the-worktree"]

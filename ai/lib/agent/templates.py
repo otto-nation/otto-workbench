@@ -102,6 +102,46 @@ GENERATED_BLOCK = (
 )
 
 
+# What a fix agent is, for the benefit of the guidance arriving beside this.
+#
+# A fix invocation carries the operator's whole memory tree — `--add-dir`
+# restores CLAUDE.md discovery that `--bare` would otherwise skip, and the fix
+# path always passes one (`invoke.run_fix` falls back to `[work_dir]`, so the
+# list is never empty). Roughly half of what arrives describes work this agent
+# cannot do: creating PRs, pushing, force-push protocol, filing issues, running
+# the self-review pipeline it is itself running inside. It is denied `gh`
+# outright on the Claude backend, and the engine commits for it.
+#
+# So the problem this solves is not missing guidance, it is guidance that does
+# not apply competing with the task. Naming the role is cheaper and more honest
+# than selecting rules per agent: the constraints are one fact about the role,
+# where a per-rule scoping key would make them a property of a dozen files that
+# must then stay in agreement forever — and the unit would still be wrong, since
+# a single rule file holds both worktree rules that apply here and PR rules that
+# do not.
+#
+# Negation is weaker than omission and this does not pretend otherwise. What it
+# buys is that a wrong turn costs turns rather than writes: `gh` is blocked
+# mechanically and committing is not this agent's to do. The Pi backend has no
+# equivalent tool denial, so this block is carrying more weight there.
+ROLE_BLOCK = (
+    "You are editing files in a worktree, and that is the whole of your job. "
+    "You do not commit, push, rebase, create pull requests, file issues, or run "
+    "`gh` — the pipeline that called you does the committing, and the operator "
+    "does the rest.\n"
+    "\n"
+    "Your context includes the operator's standing instructions, and much of it "
+    "describes those workflows: how to open a PR, when to force-push, how to "
+    "file an issue, what to run before creating a PR. That guidance is real and "
+    "it is not yours — it describes the operator's job, not this invocation. Do "
+    "not act on it, and do not treat it as work left undone.\n"
+    "\n"
+    "Everything in that guidance about the code itself applies to you in full: "
+    "testing, style, comments, error handling, portability, and the conventions "
+    "of the repo you are editing."
+)
+
+
 def build_worktree_block(wt_path: str) -> str:
     """Where the branch is checked out and how to address it.
 

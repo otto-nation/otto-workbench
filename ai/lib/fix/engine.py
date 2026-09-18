@@ -303,6 +303,7 @@ def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
         answer_format=fix_tracking.instructions(adapter.item_noun),
         worktree_block=agent_templates.build_worktree_block(str(adapter.workdir)),
         generated_block=agent_templates.GENERATED_BLOCK,
+        role_block=agent_templates.ROLE_BLOCK,
         max_turns=str(turns),
         **adapter.template_vars(),
     )

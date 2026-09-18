@@ -740,6 +740,97 @@ BODY
   [[ "$output" == *"written against superpowers v6.3.0"* ]]
 }
 
+# ── Superpowers shim override name ──────────────────────────────────────────
+
+# _retarget_shim NAME CLAIMED — point an existing shim's marker at CLAIMED,
+# leaving it in its own directory. This is the shape of the mistake: a shim
+# renamed, or copied to seed a second one, with the marker left behind.
+_retarget_shim() {
+  local name="$1" claimed="$2"
+  # Separate declarations: a single `local` evaluates every right-hand side
+  # before binding any of the names, so a `file=` referring to `$name` on the
+  # same line expands it empty.
+  local file="$FAKE_WORKBENCH/ai/skills/$name/SKILL.md"
+  local tmp="$file.tmp"
+  sed "s/Overrides superpowers:$name,/Overrides superpowers:$claimed,/" \
+    "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+@test "a shim whose marker names another skill fails" {
+  # Pi collides on directory name, so this override displaces nothing — the
+  # upstream skill keeps answering and the shim is never read.
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+  _retarget_shim using-git-worktrees brainstorming
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claims to override 'brainstorming'"* ]]
+  [[ "$output" == *"'using-git-worktrees'"* ]]
+}
+
+@test "a shim whose marker matches its directory passes" {
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a marker naming no skill at all fails" {
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+  _retarget_shim using-git-worktrees ""
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"without naming a skill"* ]]
+}
+
+@test "the override name is checked even when the package is not pinned" {
+  # The pin check exits early on an undeclared package. A mistargeted marker is
+  # wrong on its own terms, so it must still be caught in that state — which is
+  # exactly the mid-adoption tree where a shim is most likely to be edited.
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+  _retarget_shim using-git-worktrees brainstorming
+  echo '{"packages":["git:github.com/usemaximum/pi-extensions"]}' \
+    > "$FAKE_WORKBENCH/ai/pi/settings.json"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claims to override 'brainstorming'"* ]]
+}
+
+@test "every shim's name is checked, not a hardcoded list" {
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+  _make_shim some-future-shim v6.3.0 v6.3.0
+  _retarget_shim some-future-shim writing-skills
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"skills/some-future-shim"* ]]
+}
+
+@test "a skill with no override marker is not name-checked" {
+  # The check keys on the marker. An ordinary skill whose name happens to match
+  # nothing upstream must not be dragged into it.
+  _make_skill ordinary-skill
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "prose naming another override does not stand in for the marker" {
+  # Only the header is searched, as with the pin. A body sentence mentioning a
+  # sibling override must not be read as this shim's marker.
+  _make_shim using-git-worktrees v6.3.0 v6.3.0
+  cat >> "$FAKE_WORKBENCH/ai/skills/using-git-worktrees/SKILL.md" <<'BODY'
+
+See also: Overrides superpowers:brainstorming, handled by its own shim.
+BODY
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
 # ── lifecycle cadence vs the hook that gates it ──────────────────────────────
 
 # Writes a should-*.sh beside a skill. Only the two constants are read, so the

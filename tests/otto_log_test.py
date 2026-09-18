@@ -19,6 +19,15 @@ from agent import usage as ai_usage
 from core import trail as trail_module
 from core import workbench_paths
 from core.trail import Trail
+# The read path is `core.trail_query`'s. Reaching for it here rather than
+# through the CLI keeps `otto-log` importing only the names it calls.
+from core.trail_query import (
+    FALLBACK_WINDOW,
+    discover_trails,
+    filter_events,
+    load_events,
+    parse_since,
+)
 
 otto_log = load_script("otto_log", BIN_DIR / "otto-log")
 
@@ -90,25 +99,25 @@ def _write_raw(name: str, *records: str) -> Path:
 class TestTrailDiscovery:
     def test_finds_the_month_file_every_writer_appends_to(self):
         _make_trail("ci-check", [("fetch", "fetched")])
-        trails = otto_log.discover_trails()
+        trails = discover_trails()
         assert len(trails) == 1
         assert trails[0].parent == workbench_paths.trail_dir()
 
     def test_an_empty_root_has_no_trails(self):
-        assert otto_log.discover_trails() == []
+        assert discover_trails() == []
 
     def test_every_script_lands_in_the_same_file(self):
         _make_trail("ci-check", [("a", "first")])
         _make_trail("claude-review", [("b", "second")])
-        assert len(otto_log.discover_trails()) == 1
+        assert len(discover_trails()) == 1
 
 
 class TestQueryFiltering:
     def test_filter_by_script(self):
         _make_trail("ci-check", [("a", "first")])
         _make_trail("pr-rebase", [("b", "second")])
-        events = otto_log.load_events(otto_log.discover_trails())
-        filtered = otto_log.filter_events(events, script="ci-check")
+        events = load_events(discover_trails())
+        filtered = filter_events(events, script="ci-check")
         assert filtered
         assert all(e["script"] == "ci-check" for e in filtered)
 
@@ -117,16 +126,16 @@ class TestQueryFiltering:
         trail.info("ok", "fine")
         trail.error("bad", "broken")
         trail.finish()
-        events = otto_log.load_events(otto_log.discover_trails())
-        filtered = otto_log.filter_events(events, level="error")
+        events = load_events(discover_trails())
+        filtered = filter_events(events, level="error")
         assert filtered
         assert all(e["level"] == "error" for e in filtered)
 
     def test_filter_by_invocation(self):
         inv1 = _make_trail("test", [("a", "first")])
         _make_trail("test", [("b", "second")])
-        events = otto_log.load_events(otto_log.discover_trails())
-        filtered = otto_log.filter_events(events, invocation=inv1)
+        events = load_events(discover_trails())
+        filtered = filter_events(events, invocation=inv1)
         assert filtered
         assert all(e["invocation"] == inv1 for e in filtered)
 
@@ -137,11 +146,11 @@ class TestQueryFiltering:
         new_inv = _make_trail("test", [("a", "first")])
         _write_raw("legacy.jsonl", _raw_record(invocation=new_inv[:8]))
 
-        events = otto_log.load_events(otto_log.discover_trails())
-        old = otto_log.filter_events(events, invocation=new_inv[:8])
+        events = load_events(discover_trails())
+        old = filter_events(events, invocation=new_inv[:8])
         assert [e["script"] for e in old] == ["old-run"]
         assert all(e["script"] == "test" for e in
-                   otto_log.filter_events(events, invocation=new_inv))
+                   filter_events(events, invocation=new_inv))
 
 
 class TestCommandCorrelation:
@@ -150,24 +159,24 @@ class TestCommandCorrelation:
     def test_filter_by_root_selects_every_process_in_the_command(self):
         root, _, _ = _make_command(*_PR_REVIEW)
         _make_trail("pr", [("other", "unrelated run")])
-        events = otto_log.load_events(otto_log.discover_trails())
-        filtered = otto_log.filter_events(events, root=root)
+        events = load_events(discover_trails())
+        filtered = filter_events(events, root=root)
         assert {e["script"] for e in filtered} == set(_PR_REVIEW)
 
     def test_filter_by_invocation_still_selects_one_process(self):
         """The narrow question is still askable — `--root` is an addition."""
         _, child, _ = _make_command(*_PR_REVIEW)
-        events = otto_log.load_events(otto_log.discover_trails())
-        filtered = otto_log.filter_events(events, invocation=child)
+        events = load_events(discover_trails())
+        filtered = filter_events(events, invocation=child)
         assert {e["script"] for e in filtered} == {"claude-review"}
 
     def test_a_record_predating_the_root_field_is_its_own_command(self):
         """Every grouping goes through `_root_of`, so history written before the
         field existed still answers a root query — as a command of one."""
         inv = _make_trail("ci-check", [("a", "first")])
-        events = otto_log.load_events(otto_log.discover_trails())
+        events = load_events(discover_trails())
         assert all(e["script"] == "ci-check"
-                   for e in otto_log.filter_events(events, root=inv))
+                   for e in filter_events(events, root=inv))
 
     def test_show_renders_the_whole_command_from_its_root(self, capsys):
         root, _, _ = _make_command(*_PR_REVIEW)
@@ -295,7 +304,7 @@ class TestSinceSkipsFilesByName:
     def test_drops_a_month_below_the_cutoff(self):
         self._write("2026-01.jsonl", "old")
         self._write("2026-08.jsonl", "new")
-        names = [p.name for p in otto_log.discover_trails(
+        names = [p.name for p in discover_trails(
             since=datetime(2026, 8, 1, tzinfo=timezone.utc))]
         assert names == ["2026-08.jsonl"]
 
@@ -303,14 +312,14 @@ class TestSinceSkipsFilesByName:
         """`legacy.jsonl` holds every pre-cutover record; its stem names no month."""
         self._write("legacy.jsonl", "carried")
         self._write("2026-01.jsonl", "old")
-        names = [p.name for p in otto_log.discover_trails(
+        names = [p.name for p in discover_trails(
             since=datetime(2026, 8, 1, tzinfo=timezone.utc))]
         assert names == ["legacy.jsonl"]
 
     def test_no_cutoff_reads_everything(self):
         self._write("2026-01.jsonl", "old")
         self._write("legacy.jsonl", "carried")
-        assert len(otto_log.discover_trails()) == 2
+        assert len(discover_trails()) == 2
 
 
 class TestRepoScoping:
@@ -583,6 +592,36 @@ class TestSummaryIsNotAlwaysFinish:
             script=None, since=None, repo=None, json=True))
         rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
         assert rows[0]["duration_ms"] is None
+
+
+class TestParseSince:
+    """The one window parser, in both of the modes its callers need.
+
+    A glance (`otto-log --since`) prefers the last hour to an error; a scan
+    parameter (`retro-scan --since`) prefers the error, because silently
+    narrowing the window makes a report claim there was nothing to find.
+    """
+
+    @pytest.mark.parametrize("window,seconds", [
+        ("30m", 1800), ("24h", 86400), ("7d", 604800),
+    ])
+    def test_each_unit_names_its_own_span(self, window, seconds):
+        before = datetime.now(timezone.utc)
+        cutoff = parse_since(window)
+        assert abs((before - cutoff).total_seconds() - seconds) < 60
+
+    def test_an_unreadable_window_falls_back_to_the_hour(self):
+        before = datetime.now(timezone.utc)
+        cutoff = parse_since("garbage")
+        assert abs((before - cutoff) - FALLBACK_WINDOW).total_seconds() < 60
+
+    def test_strict_refuses_an_unreadable_window_instead(self):
+        with pytest.raises(SystemExit):
+            parse_since("garbage", strict=True)
+
+    def test_strict_refuses_a_count_that_is_not_a_number(self):
+        with pytest.raises(SystemExit):
+            parse_since("xd", strict=True)
 
 
 class TestLogPointerRendering:

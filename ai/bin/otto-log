@@ -25,7 +25,6 @@ import statistics
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone, timedelta
 from enum import Enum, auto
 from pathlib import Path
 
@@ -39,19 +38,27 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
 sys.path.insert(0, str(_AI_LIB_DIR))
 
 from agent import usage as ai_usage
-from core import log
 from core import workbench_paths
 from core.trail import (
     EVENT_TYPE_WIDTH,
     FINISH_ACTION,
     INVOCATION_HEX_WIDTH,
     LEVEL_WIDTH,
-    MONTH_STEM,
     TRAIL_KEEP_MONTHS,
-    TS_FORMAT,
     TS_TIME_OF_DAY,
     TS_TO_SECONDS,
     prune_trail,
+)
+# Reading the root is `core.trail_query`'s, not this script's: the scans report
+# on the machine's own tooling from the same records, and a reader they can
+# import beats each one re-parsing what this CLI renders. Only what this CLI
+# calls is imported — a name a test wants comes from `core.trail_query` too,
+# rather than being re-exported from here for it.
+from core.trail_query import (
+    filter_events,
+    load_trail_events,
+    parse_since as _parse_since,
+    root_of as _root_of,
 )
 
 
@@ -65,81 +72,6 @@ ANSI_LEVELS = {
 }
 
 
-# ── Discovery ─────────────────────────────────────────────────────────────
-
-def discover_trails(since: datetime | None = None) -> list[Path]:
-    """Every trail file a *since* window can reach, oldest month first."""
-    try:
-        files = sorted(workbench_paths.trail_dir().glob("*.jsonl"))
-    except OSError:
-        # A missing trail root is not an error — glob on a directory that
-        # does not exist yet raises nothing, so the only thing this catches
-        # is a real I/O failure (e.g. permissions), and an empty result is
-        # the right answer either way: there is nothing to query.
-        return []
-    if since is None:
-        return files
-    cutoff = f"{since:%Y-%m}"
-    # A stem that does not name a month cannot be placed in time by its name,
-    # so no window excludes it — see `trail.MONTH_STEM`.
-    return [p for p in files if not MONTH_STEM.match(p.stem) or p.stem >= cutoff]
-
-
-# ── Loading ───────────────────────────────────────────────────────────────
-
-def _parse_trail_file(path: str | Path) -> list[dict]:
-    try:
-        text = Path(path).read_text()
-    except OSError:
-        return []
-    events = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
-
-
-def load_events(trail_paths: list[str | Path]) -> list[dict]:
-    events = []
-    for path in trail_paths:
-        events.extend(_parse_trail_file(path))
-    events.sort(key=lambda e: e.get("ts", ""))
-    return events
-
-
-def load_trail_events(since: str | None) -> list[dict]:
-    """Every event in the files *since* can reach, oldest first.
-
-    The window is applied twice on purpose: once at the filename, which is what
-    lets a year of history stay unopened, and once per record in
-    `filter_events`, which is what makes the boundary exact.
-    """
-    return load_events(discover_trails(_parse_since(since) if since else None))
-
-
-# ── Filtering ─────────────────────────────────────────────────────────────
-
-def _root_of(event: dict) -> str:
-    """The command *event* belongs to — its `root`, or its own invocation.
-
-    A root's own events carry no `root` field, and neither does anything written
-    before the field existed, so both read as a command of one process. Every
-    grouping goes through this rather than the raw key, which is what lets one
-    query span records from either side of the cutover.
-    """
-    return event.get("root") or event.get("invocation", "?")
-
-# What a window with no recognizable unit suffix is read as. A query is not
-# worth failing over a typo, and the narrowest useful window shows less rather
-# than the wrong thing — the same hour `recent` defaults to.
-_FALLBACK_WINDOW = timedelta(hours=1)
-
-
 def _positive_int(value: str) -> int:
     """An argparse type for a month count: never negative.
 
@@ -151,54 +83,6 @@ def _positive_int(value: str) -> int:
     if n < 0:
         raise argparse.ArgumentTypeError(f"must be a non-negative integer: {value!r}")
     return n
-
-
-def _parse_since(since: str) -> datetime:
-    now = datetime.now(timezone.utc)
-    suffixes = {"h": "hours", "d": "days", "m": "minutes"}
-    suffix = since[-1:] if since else ""
-    unit = suffixes.get(suffix)
-    if not unit:
-        return now - _FALLBACK_WINDOW
-    try:
-        return now - timedelta(**{unit: int(since[:-1])})
-    except ValueError:
-        log.error(f"Invalid --since value: {since!r}")
-        sys.exit(1)
-
-
-def filter_events(
-    events: list[dict],
-    script: str | None = None,
-    level: str | None = None,
-    event_type: str | None = None,
-    invocation: str | None = None,
-    root: str | None = None,
-    pr: int | str | None = None,
-    repo: str | None = None,
-    since: str | None = None,
-) -> list[dict]:
-    result = events
-    if script:
-        result = [e for e in result if e.get("script") == script]
-    if level:
-        result = [e for e in result if e.get("level") == level]
-    if event_type:
-        result = [e for e in result if e.get("event_type") == event_type]
-    if invocation:
-        result = [e for e in result if e.get("invocation") == invocation]
-    if root:
-        result = [e for e in result if _root_of(e) == root]
-    if pr is not None:
-        pr_str = str(pr)
-        result = [e for e in result if str(e.get("context", {}).get("pr", "")) == pr_str]
-    if repo:
-        result = [e for e in result if e.get("context", {}).get("repo") == repo]
-    if since:
-        cutoff = _parse_since(since)
-        cutoff_str = cutoff.strftime(TS_FORMAT)
-        result = [e for e in result if e.get("ts", "") >= cutoff_str]
-    return result
 
 
 # ── Formatting ────────────────────────────────────────────────────────────

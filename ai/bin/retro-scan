@@ -14,7 +14,7 @@ import argparse
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 _BIN_DIR = Path(__file__).resolve().parent
@@ -35,6 +35,7 @@ from git import client as git_client  # noqa: E402
 from core import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from core.trail import Trail, add_trail_args  # noqa: E402
+from core.trail_query import parse_since  # noqa: E402
 from review.dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
 from retro.github import GQL_MERGED_PRS_LIMIT, fetch_repo_review_data  # noqa: E402
 from retro.report import DATE_FMT, format_matched_snippet, format_report  # noqa: E402
@@ -202,19 +203,14 @@ def _dedup_local_against_github(
 # ── Since parsing ──────────────────────────────────────────────────────────
 
 def _parse_since(since: str) -> int:
-    """Parse a duration string (e.g. 7d, 24h, 30m) into a UTC timestamp."""
-    suffixes = {"h": "hours", "d": "days", "m": "minutes"}
-    suffix = since[-1:] if since else ""
-    unit = suffixes.get(suffix)
-    if not unit:
-        log.error(f"Invalid --since value: {since!r} (use e.g. 7d, 24h, 30m)")
-        sys.exit(1)
-    try:
-        dt = datetime.now(timezone.utc) - timedelta(**{unit: int(since[:-1])})
-        return int(dt.timestamp())
-    except ValueError:
-        log.error(f"Invalid --since value: {since!r}")
-        sys.exit(1)
+    """The scan window *since* names, as the epoch seconds this scan compares against.
+
+    The parsing is `core.trail_query`'s; this is the epoch form the GitHub
+    queries downstream take. `strict` because a window is a scan parameter here
+    rather than a glance: reading an unrecognized `--since` as the default hour
+    would make the report claim there was nothing to find.
+    """
+    return int(parse_since(since, strict=True).timestamp())
 
 
 # ── Scanning ─────────────────────────────────────────────────────────────────

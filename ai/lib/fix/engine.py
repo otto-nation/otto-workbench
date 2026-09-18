@@ -417,11 +417,11 @@ def _record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> Non
     and because the question is about the pass rather than about any one box:
     `tracking._record_verdict` decides a single verdict and is kept to that.
     """
-    if trail is None:
+    if not trail:
         return
     unevidenced = [
         o.id for o in outcomes
-        if o.outcome is FixOutcome.FIXED and not o.reason
+        if o.outcome.counts_as_fixed and not o.reason
     ]
     if not unevidenced:
         return

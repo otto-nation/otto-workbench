@@ -85,10 +85,18 @@ def _post_chunked_review(
     is_chunked = len(chunks) > 1
     results: list[dict] = []
 
-    existing_id = review_github._check_existing_pending(repo, pr, pr_data)
-    if existing_id:
-        log.warn(f"Deleting existing PENDING review #{existing_id}")
-        gh_client.api(f"repos/{repo}/pulls/{pr}/reviews/{existing_id}", method="DELETE")
+    pending = review_github._check_existing_pending(repo, pr, pr_data)
+    if pending.review_id:
+        log.warn(f"Deleting existing PENDING review #{pending.review_id}")
+        gh_client.api(
+            f"repos/{repo}/pulls/{pr}/reviews/{pending.review_id}", method="DELETE")
+    elif not pending.looked:
+        # Not the same as "there is no pending review": GitHub allows one per
+        # user, so posting into an unanswered check is how a run collides with
+        # a pending review it could not see.
+        log.warn(
+            "Could not check for an existing PENDING review — if this posts a "
+            "duplicate, that unanswered check is why")
 
     for i, chunk in enumerate(chunks):
         chunk_num = i + 1
@@ -181,7 +189,7 @@ def write_post_tracking(review_file: str, entry: PostTracking):
 
 def _format_comment_body(
     findings: list[Finding], severity_filter: set[str],
-    review_sha: str, head_sha: str, new_commit_count: int,
+    review_sha: str, head_sha: str, drift: review_github.NewCommits,
     sections: ReviewSections | None = None,
 ) -> str:
     """Format findings as a single comment body for stale-SHA posting."""
@@ -191,11 +199,18 @@ def _format_comment_body(
         sections=sections,
     )
 
+    # "0 new commits" is what an uncounted drift used to render as, which reads
+    # to a human as "the branch has not moved" — the opposite of the warning
+    # this banner exists to give.
+    moved = (
+        f"({drift.count} new commit{plural(drift.count)})" if drift.counted
+        else "(the count of new commits could not be read)"
+    )
     header = (
         f"> **Note:** This review was written against commit "
         f"`{git_client.abbrev(review_sha)}`. "
         f"PR HEAD has since moved to `{git_client.abbrev(head_sha)}` "
-        f"({new_commit_count} new commit{plural(new_commit_count)}). "
+        f"{moved}. "
         f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
     )
     return f"{header}\n{body}"
@@ -230,9 +245,9 @@ def _post_as_comment(
     diff_text = review_github._get_diff(args.repo, args.pr)
     review_format.resolve_permalinks(findings, args.repo, diff_text, head_ref, base_ref)
 
-    new_commits = review_github._count_new_commits(args.repo, args.pr, review_sha, pr_data)
+    drift = review_github._count_new_commits(args.repo, args.pr, review_sha, pr_data)
     body = _format_comment_body(
-        findings, severity_filter, review_sha, head_sha, new_commits,
+        findings, severity_filter, review_sha, head_sha, drift,
         sections=sections,
     )
 
@@ -398,9 +413,16 @@ def _post_and_track(
 
     # Fetch bot reviews once for both dedup and orphan detection
     bot_reviews = review_dedup.fetch_bot_reviews(args.repo, args.pr, pr_data)
+    if not bot_reviews.looked:
+        # The dedup guard below matches against this list, so an unanswered
+        # lookup reads as "nothing posted yet" and republishes the review.
+        log.warn(
+            "Could not read the bot's existing reviews — dedup has nothing to "
+            "match against, so a repost here would not be caught")
 
     # Check for already-posted duplicate
-    existing_ids = review_dedup.check_review_already_posted(bot_reviews, body_text)
+    existing_ids = review_dedup.check_review_already_posted(
+        bot_reviews.reviews, body_text)
     if existing_ids:
         log.warn(f"Review already posted (review IDs: {existing_ids})")
         write_post_tracking(args.review_file, PostTracking(
@@ -411,7 +433,7 @@ def _post_and_track(
         ))
         return
 
-    orphaned_ids = _find_orphaned_chunks(bot_reviews)
+    orphaned_ids = _find_orphaned_chunks(bot_reviews.reviews)
     if orphaned_ids:
         _mark_orphaned_reviews(args.repo, args.pr, orphaned_ids)
 

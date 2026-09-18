@@ -16,6 +16,7 @@ from core.proc import CmdResult
 from gh.pr_reads import (
     PRData, fetch_pr_data, fetch_review_threads,
     GQL_MAX_THREAD_PAGES, GQL_THREAD_COMMENTS_LIMIT,
+    GQL_REVIEWS_LIMIT, GQL_COMMITS_LIMIT,
 )
 
 
@@ -408,6 +409,43 @@ class TestFetchPrData:
                 "repository": {"pullRequest": pr},
             },
         })
+
+    @patch("gh.client.graphql")
+    def test_a_truncated_review_list_is_reported(self, mock_gql, capsys):
+        """#1365: `reviews(last: N)` silently dropped the oldest reviews.
+
+        Dedup matches against this list, so a bot review that fell off reads as
+        a finding never posted and gets posted again.
+        """
+        mock_gql.return_value = CmdResult(0, self._graphql_response(
+            reviews={"totalCount": GQL_REVIEWS_LIMIT + 7, "nodes": []},
+        ))
+        fetch_pr_data("owner/repo", "1")
+
+        said = capsys.readouterr().err
+        assert "reviews" in said
+        assert "dedup can repost" in said
+
+    @patch("gh.client.graphql")
+    def test_a_truncated_commit_list_is_reported(self, mock_gql, capsys):
+        mock_gql.return_value = CmdResult(0, self._graphql_response(
+            commits={"totalCount": GQL_COMMITS_LIMIT + 3, "nodes": []},
+        ))
+        fetch_pr_data("owner/repo", "1")
+
+        assert "drift count is a floor" in capsys.readouterr().err
+
+    @patch("gh.client.graphql")
+    def test_an_untruncated_connection_says_nothing(self, mock_gql, capsys):
+        """The control: the warnings must not fire on an ordinary PR."""
+        mock_gql.return_value = CmdResult(0, self._graphql_response(
+            reviews={"totalCount": 2, "nodes": [{}, {}]},
+            commits={"totalCount": 1, "nodes": [{}]},
+        ))
+        fetch_pr_data("owner/repo", "1")
+
+        said = capsys.readouterr().err
+        assert "only the newest" not in said
 
     @patch("gh.client.graphql")
     def test_basic_parse(self, mock_gql):

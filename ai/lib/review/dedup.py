@@ -18,8 +18,9 @@ from __future__ import annotations
 import functools
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
+from core import log
 from gh import client as gh_client
 from gh.pr_reads import PRData, GQL_REVIEWS_LIMIT
 
@@ -85,14 +86,40 @@ def get_bot_login() -> str:
 
 # ── Bot comment collection ──────────────────────────────────────────────────
 
-def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[PostedFinding]:
+@dataclass(frozen=True)
+class PostedFindings:
+    """What the bot has already said on a PR, as the lookup found it.
+
+    ``looked`` is the lookup's own success, carried for the reason
+    `BotReviews.looked` is: `dedup_against_posted` reads an empty list as
+    "nothing has been posted yet" and keeps every finding, so a failed lookup
+    reposts findings a reviewer already has in front of them.
+
+    Worse than the review-level case, which at least warns: this path is the
+    one that decides whether an individual finding is a repeat.
+    """
+
+    findings: list[PostedFinding] = field(default_factory=list)
+    looked: bool = True
+
+
+def _collect_inline_comments(
+    repo: str, pr: str, bot_user: str, pr_data: PRData | None = None,
+) -> PostedFindings:
     if pr_data is not None:
         posted = [
             PostedFinding(c.get("path", ""), c.get("body", ""))
             for c in pr_data.bot_inline_comments(bot_user)
         ]
     else:
-        all_comments = gh_client.api_json(f"repos/{repo}/pulls/{pr}/comments", default=[])
+        # `None` rather than `[]`: a failed listing must not read as a PR the
+        # bot has not commented on.
+        all_comments = gh_client.api_json(
+            f"repos/{repo}/pulls/{pr}/comments", default=None)
+        if all_comments is None:
+            log.warn(f"Could not read {repo}#{pr}'s inline comments — dedup cannot tell "
+                     "a repeat from a new finding")
+            return PostedFindings(looked=False)
         posted = [
             PostedFinding(c.get("path", ""), c.get("body", ""))
             for c in all_comments
@@ -102,14 +129,21 @@ def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData 
     # rather than part of what it says, and the fresh finding it is about to be
     # scored against carries none — so it comes off before the words are
     # counted, or every comparison loses the two tokens only this side has.
-    return [replace(c, body=strip_sid_markers(c.body)) for c in posted]
+    return PostedFindings([replace(c, body=strip_sid_markers(c.body)) for c in posted])
 
 
-def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[PostedFinding]:
+def _collect_review_findings(
+    repo: str, pr: str, bot_user: str, pr_data: PRData | None = None,
+) -> PostedFindings:
     if pr_data is not None:
         bodies = pr_data.bot_review_bodies(bot_user)
     else:
-        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=[])
+        all_reviews = gh_client.api_json(
+            f"repos/{repo}/pulls/{pr}/reviews", default=None)
+        if all_reviews is None:
+            log.warn(f"Could not read {repo}#{pr}'s review bodies — dedup cannot tell "
+                     "a repeat from a new finding")
+            return PostedFindings(looked=False)
         bodies = [
             r.get("body", "") for r in all_reviews
             if r.get("user", {}).get("login") == bot_user
@@ -118,17 +152,26 @@ def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData 
     for body in bodies:
         if body:
             entries.extend(_extract_body_findings(body))
-    return entries
+    return PostedFindings(entries)
 
 
-def _fetch_bot_comments(repo: str, pr: str, pr_data: PRData | None = None) -> list[PostedFinding]:
+def _fetch_bot_comments(
+    repo: str, pr: str, pr_data: PRData | None = None,
+) -> PostedFindings:
     bot_user = pr_data.viewer_login if pr_data is not None else get_bot_login()
     if not bot_user:
-        return []
+        # Not "the bot has posted nothing": without a login nothing could have
+        # been recognised as the bot's.
+        return PostedFindings(looked=False)
 
-    entries = _collect_inline_comments(repo, pr, bot_user, pr_data)
-    entries.extend(_collect_review_findings(repo, pr, bot_user, pr_data))
-    return entries
+    inline = _collect_inline_comments(repo, pr, bot_user, pr_data)
+    bodies = _collect_review_findings(repo, pr, bot_user, pr_data)
+    # Either half failing leaves the set short, and a short set is what makes a
+    # repeat look new — so the pair is only as answered as its weaker half.
+    return PostedFindings(
+        inline.findings + bodies.findings,
+        looked=inline.looked and bodies.looked,
+    )
 
 
 # ── Dedup ───────────────────────────────────────────────────────────────────
@@ -138,12 +181,21 @@ def dedup_against_posted(
     pr_data: PRData | None = None,
 ) -> tuple[list[Finding], list[Finding]]:
     existing = _fetch_bot_comments(repo, pr, pr_data)
-    if not existing:
+    if not existing.looked:
+        # Keeping everything is the same answer an empty set produces, and it
+        # is the right one — a finding nobody can prove is a repeat should
+        # still be posted. The warning is what the log has to show for it,
+        # because the reviewer is the one who sees the duplicate.
+        log.warn(
+            "Could not read what the bot has already posted — dedup is skipped, "
+            "so findings already on the PR may be posted again")
+        return findings, []
+    if not existing.findings:
         return findings, []
 
     posted_entries = [
         (c.path, word_set(c.body))
-        for c in existing
+        for c in existing.findings
     ]
 
     kept, deduped = [], []
@@ -167,22 +219,39 @@ def dedup_against_posted(
 
 # ── Bot review fetching ───────────────────────────────────────────────────
 
-def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list[dict]:
-    """Return all visible, non-PENDING, non-DISMISSED reviews from the bot.
+@dataclass(frozen=True)
+class BotReviews:
+    """The bot's visible reviews on a PR, as the lookup found them.
+
+    ``looked`` is the lookup's own success. An empty list used to mean both
+    "the bot has posted nothing" and "we could not find out", and the caller
+    acts on that by posting: the dedup guard reads an empty list as nothing to
+    match against, so a failed lookup publishes the whole review a second time.
+
+    Each entry has keys: id, body, state.
+    """
+
+    reviews: list[dict] = field(default_factory=list)
+    looked: bool = True
+
+
+def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotReviews:
+    """The bot's visible, non-PENDING, non-DISMISSED reviews, and whether we asked.
 
     Uses GraphQL to detect minimized (hidden/outdated) reviews and exclude
     them — the REST API does not expose minimizedReason.
-    Each entry has keys: id, body, state.
 
     Note: fetches at most the last 100 reviews. PRs with more than 100 reviews
     may miss older bot reviews — cursor-based pagination is not implemented.
     """
     if pr_data is not None:
-        return pr_data.bot_reviews_visible(pr_data.viewer_login)
+        return BotReviews(pr_data.bot_reviews_visible(pr_data.viewer_login))
 
     bot_user = get_bot_login()
     if not bot_user:
-        return []
+        # Not "the bot has no reviews": we do not know who the bot is, so we
+        # could not have recognised one.
+        return BotReviews(looked=False)
 
     owner, name = repo.split("/", 1)
     query = f"""
@@ -206,27 +275,35 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
         query, variables={"owner": owner, "name": name, "pr": int(pr)},
     )
     if not result.ok:
-        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=[])
-        return [
+        # `None` rather than `[]` as the default: the fallback failing too is
+        # the case that must not read as "the bot has posted nothing".
+        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=None)
+        if all_reviews is None:
+            log.warn(
+                f"Could not read {repo}#{pr}'s reviews by either route — "
+                "dedup has nothing to match against")
+            return BotReviews(looked=False)
+        return BotReviews([
             {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
             for r in all_reviews
             if r.get("user", {}).get("login") == bot_user
             and r.get("state") not in ("PENDING", "DISMISSED")
-        ]
+        ])
 
     try:
         data = json.loads(result.stdout)
         nodes = data["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
     except (json.JSONDecodeError, KeyError, TypeError):
-        return []
+        log.warn(f"Could not parse {repo}#{pr}'s reviews — dedup has nothing to match against")
+        return BotReviews(looked=False)
 
-    return [
+    return BotReviews([
         {"id": n["databaseId"], "body": n.get("body", ""), "state": n.get("state", "")}
         for n in nodes
         if n.get("author", {}).get("login") == bot_user
         and n.get("state") not in ("PENDING", "DISMISSED")
         and not n.get("minimizedReason")
-    ]
+    ])
 
 
 # ── Whole-review dedup ────────────────────────────────────────────────────

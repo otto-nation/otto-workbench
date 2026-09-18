@@ -5657,15 +5657,29 @@ class TestTheSchemaExampleIsValidJson:
         prompt = triage_prompt.build_triage_prompt(
             [], "diff", unseen_comments=self.COMMENTS,
         )
-        assert set(self._schema(prompt)) == {"threads", "comment_items", "stats"}
+        assert set(self._schema(prompt)) == {"threads", "comment_items"}
 
     def test_the_schema_parses_without_them(self):
         """Pairs with the case above: the branch that omits the block was the
         only one under test, so its passing said nothing about the other."""
         assert set(self._schema(triage_prompt.build_triage_prompt([], "diff"))) == {
             "threads",
-            "stats",
         }
+
+    def test_the_model_is_not_asked_for_counts_it_cannot_keep_current(self):
+        """No `stats` block, in either branch.
+
+        The tally is counted from the entries after the code has finished
+        reclassifying them, so asking the model for it too would give two
+        answers to one question and ship the stale one.
+        """
+        for prompt in (
+            triage_prompt.build_triage_prompt([], "diff"),
+            triage_prompt.build_triage_prompt(
+                [], "diff", unseen_comments=self.COMMENTS,
+            ),
+        ):
+            assert "stats" not in self._schema(prompt)
 
     def test_the_comment_item_fields_survive_the_splice(self):
         """Guards the repair as well as the defect: single-bracing by deleting

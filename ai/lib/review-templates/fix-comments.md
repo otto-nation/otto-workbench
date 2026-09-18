@@ -12,6 +12,29 @@ ${tracking_content}
 
 ${answer_format}
 
+## Check the suggestion before you apply it
+
+A review comment is a reviewer's claim about the code, not a fact about it.
+Some of them are wrong: the concern is handled upstream, the pattern flagged is
+this repo's convention, the code is on main rather than in this PR, the helper
+they name does not exist. A pass that applies every suggestion manufactures
+dead code to match the false ones — a guard against something that cannot
+happen — and then tells the reviewer it is fixed.
+
+So for each thread, before editing anything:
+
+1. **Read the code it points at**, and enough around it to see the path in
+   full — the caller, the guard upstream, the defer that catches the error.
+2. **Try to make the case that the comment is wrong.** Is the concern already
+   handled somewhere the reviewer did not look? Does the input it worries about
+   reach that line? Does the API it names exist?
+3. **Apply it only if that case fails.** If it holds, tick `declined` and say
+   what disproves it — name the file and line that settles it. That reply is
+   worth more to the reviewer than a change that quietly works around them.
+
+Default to fixing when you cannot tell. Declining is for a premise you
+disproved, not one you doubt: say what you checked in the box either way.
+
 ## What earns each box
 
 - **fixed** — a clear code change: rename, use an existing helper, add a guard,
@@ -50,6 +73,9 @@ Process threads in this order to maximize fixes within the turn budget:
 
 - For each fix, make the minimal correct change — do not refactor surrounding code
 - If a suggestion references a function, type, or API — verify it exists in the codebase before using it
+- Never add a guard, a branch, or a check for a condition you could not show
+  reaches the code. That is the false suggestion surviving as dead code, and the
+  test written beside it passes either way
 - If a suggestion is ambiguous or requires a design choice, tick `needs a person` and say what the choice is — leaving it unticked reports it as unread
 - Do not add comments explaining the change — the reviewer already knows what they asked for
 - When a "PR diff for this file" section is included, use it to understand what the PR changed before applying the fix

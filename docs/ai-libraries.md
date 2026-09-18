@@ -927,6 +927,12 @@ phrased loosely read as no annotation at all, and the pass had to guess which
 findings its own agent had touched. `record` re-renders the document from the
 outcomes instead, so what it says is what the pass decided.
 
+Every claimed fix goes to the verify gate before any of it is committed — see
+`fix.verify`. A ticked `fixed` box is a claim that an edit was made, which is
+not the claim the commit message and the re-rendered document then publish; the
+gate is what tells the two apart, and a fix it falsifies lands as work still
+owed rather than as done.
+
 The commit always happens; the push waits for `--post`. `land` owns both, and
 the split is its: a local commit asserts nothing to anybody, while a push puts
 the pass's work on a branch somebody else is reading.

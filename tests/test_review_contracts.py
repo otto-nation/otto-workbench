@@ -918,6 +918,49 @@ class TestOutputBlockContract:
         assert "${role_block}" not in text
         assert "Do not edit source files" in text
 
+    # The two domains whose items are somebody's claim about the code: a review
+    # finding and a PR review comment. CI and pre-push are excluded because
+    # their item is a check that already failed — there is no premise to
+    # disprove, and telling those passes to doubt the failure is how a real red
+    # build gets declined.
+    _CLAIM_DOMAINS = ("comments", "findings")
+
+    @pytest.mark.parametrize("render", _CLAIM_DOMAINS)
+    def test_a_claim_domain_is_told_to_disprove_before_it_edits(
+        self, render, tmp_path,
+    ):
+        """A false finding fixed becomes dead code with a vacuous test beside it.
+
+        That is not hypothetical: a CRLF finding that was wrong got a guard and
+        a test which passed with or without it. The disprove gate ahead of the
+        fix pass does not cover this — it is skipped at low effort and below
+        three must/should findings, and it never runs at all for comments.
+        """
+        text = " ".join(_FIX_RENDERERS[render](tmp_path).split())
+
+        # The ask itself, and that it comes before the edit rather than after.
+        assert "before you" in text
+        assert "not a fact about it" in text
+        assert "Try to make the case that the" in text
+        # The failure mode it exists to prevent, named so the agent can see it.
+        assert "dead code" in text
+        # And the cap on it: doubt is not disproof, or a fix pass talks itself
+        # out of real work.
+        assert "Default to fixing when you cannot tell" in text
+
+    @pytest.mark.parametrize("render", sorted(set(_FIX_RENDERERS) - set(_CLAIM_DOMAINS)))
+    def test_a_check_domain_is_not_told_to_doubt_its_failure(
+        self, render, tmp_path,
+    ):
+        """CI and pre-push are handed a check that failed, not a claim.
+
+        Their oracle is the red build. A pass told to disprove it declines real
+        failures, which is the opposite defect from the one the claim domains
+        have.
+        """
+        text = " ".join(_FIX_RENDERERS[render](tmp_path).split())
+        assert "Try to make the case that the" not in text
+
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(
         self, render, tmp_path,

@@ -39,6 +39,7 @@
     "config:agent.phases=describe",
     "config:agent.phases=disprove",
     "config:agent.phases=fix",
+    "config:agent.phases=fix_verify",
     "config:agent.phases=group",
     "config:agent.phases=holistic",
     "config:agent.phases=prepush_fix",

@@ -142,6 +142,13 @@ Read the review file **after the command completes** and present:
 - If Must-fix or Should-fix findings remain unfixed, list them with any
   skip reasons annotated inline as `*(skipped — reason)*`
 
+A finding annotated with what a check *found* — "the named test does not
+exist", "the repro still exits 3" — is one the verify gate falsified rather
+than one the agent declined. The fix pass ticked it, the gate ran something,
+and the claim did not hold; the edit is in the commit but nothing calls it
+fixed. Report those separately from the skips: they are the findings most
+likely still to be real.
+
 **Do not** ask "how would you like to proceed" or offer choices.
 **Do not** attempt to fix remaining findings manually via Edit tool —
 all fixing is done by `pr review --self --fix --push`. The fix agent determines
@@ -170,6 +177,10 @@ If they differ, say so and push the branch; do not report the work as shipped.
   branch unpublished.
 - **Non-destructive.** All fixes are applied via Edit tool — individual changes
   are reviewable in the git log.
+- **Gated.** Every claimed fix goes to a verify gate before the commit: it runs
+  the reviewer's repro, exercises the changed path, or checks the test the fix
+  pass named, and a fix it falsifies is committed but recorded as needing a
+  person rather than as fixed. There is no flag to switch this off.
 - **Idempotent.** Running twice on the same review skips already-fixed findings.
 - **Review preserved.** The review file is kept in `~/.local/state/workbench/reviews/`
   for retro analysis — it is not deleted after fixing.

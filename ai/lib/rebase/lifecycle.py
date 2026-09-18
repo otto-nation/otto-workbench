@@ -454,7 +454,6 @@ def fresh(
     )
 
 
-
 def rebase_success(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None, *, target_ref: str,

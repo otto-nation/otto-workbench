@@ -456,17 +456,51 @@ class TestFetchPrData:
             fetch_pr_data("owner/repo", "1")
 
     @patch("gh.client.graphql")
-    def test_comment_truncation_warning(self, mock_gql, capsys):
+    def test_a_thread_over_the_comment_limit_is_refetched_in_full(self, mock_gql):
+        """The page size serves the p90 thread; the deep one earns a second call.
+
+        This used to warn and hand the truncated thread on, which reaches dedup
+        as a comment never posted and gets posted a second time.
+        """
+        thread = _make_thread(thread_id="PRT_1", path="big.py")
+        thread["comments"]["totalCount"] = GQL_THREAD_COMMENTS_LIMIT + 2
+        thread["comments"]["pageInfo"] = {"hasNextPage": True, "endCursor": "cc1"}
+        extra = [
+            {"id": "c98", "databaseId": 98, "author": {"login": "kgn"},
+             "body": "later", "createdAt": "2026-01-01T00:00:00Z"},
+            {"id": "c99", "databaseId": 99, "author": {"login": "kgn"},
+             "body": "latest", "createdAt": "2026-01-02T00:00:00Z"},
+        ]
+        mock_gql.side_effect = [
+            CmdResult(0, self._graphql_response(
+                reviewThreads=_review_threads_node([thread]),
+            )),
+            CmdResult(0, json.dumps({"data": {"node": {"comments": {
+                "totalCount": GQL_THREAD_COMMENTS_LIMIT + 2,
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                "nodes": extra,
+            }}}})),
+        ]
+        pd = fetch_pr_data("owner/repo", "1")
+        got = pd.review_threads[0]["comments"]["nodes"]
+        assert [c["databaseId"] for c in got][-2:] == [98, 99]
+        assert pd.threads_complete
+
+    @patch("gh.client.graphql")
+    def test_a_failed_comment_refetch_marks_the_set_incomplete(self, mock_gql, capsys):
+        """A refetch that fails must not read as a thread that was always short."""
         thread = _make_thread(thread_id="PRT_1", path="big.py")
         thread["comments"]["totalCount"] = GQL_THREAD_COMMENTS_LIMIT + 1
-        mock_gql.return_value = CmdResult(0, self._graphql_response(
-            reviewThreads=_review_threads_node([thread]),
-        ))
+        thread["comments"]["pageInfo"] = {"hasNextPage": True, "endCursor": "cc1"}
+        mock_gql.side_effect = [
+            CmdResult(0, self._graphql_response(
+                reviewThreads=_review_threads_node([thread]),
+            )),
+            _GQL_FAILED,
+        ]
         pd = fetch_pr_data("owner/repo", "1")
-        assert len(pd.review_threads) == 1
-        stderr = capsys.readouterr().err
-        assert "big.py" in stderr
-        assert "GQL_THREAD_COMMENTS_LIMIT" in stderr
+        assert pd.threads_complete is False
+        assert "big.py" in capsys.readouterr().err
 
     @patch("gh.client.graphql")
     def test_threads_beyond_the_first_page_are_fetched(self, mock_gql):
@@ -509,8 +543,9 @@ class TestFetchReviewThreads:
     @patch("gh.client.graphql")
     def test_single_page_makes_one_call(self, mock_gql):
         mock_gql.return_value = CmdResult(0, _threads_response([_make_thread("PRT_1")]))
-        threads = fetch_review_threads("owner/repo", 7)
-        assert [t["id"] for t in threads] == ["PRT_1"]
+        found = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in found.threads] == ["PRT_1"]
+        assert found.complete
         mock_gql.assert_called_once()
         assert "endCursor" not in mock_gql.call_args.kwargs["variables"]
 
@@ -521,8 +556,11 @@ class TestFetchReviewThreads:
             CmdResult(0, _threads_response([_make_thread("PRT_2")], has_next=True, cursor="c2")),
             CmdResult(0, _threads_response([_make_thread("PRT_3")])),
         ]
-        threads = fetch_review_threads("owner/repo", 7)
-        assert [t["id"] for t in threads] == ["PRT_1", "PRT_2", "PRT_3"]
+        found = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in found.threads] == ["PRT_1", "PRT_2", "PRT_3"]
+        # The positive control: a walk that reached the end says so, which is
+        # what stops `complete` from being hardwired False.
+        assert found.complete
         cursors = [c.kwargs["variables"].get("endCursor") for c in mock_gql.call_args_list]
         assert cursors == [None, "c1", "c2"]
 
@@ -532,9 +570,10 @@ class TestFetchReviewThreads:
         mock_gql.return_value = CmdResult(
             0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor="stuck"),
         )
-        threads = fetch_review_threads("owner/repo", 7)
+        found = fetch_review_threads("owner/repo", 7)
         assert mock_gql.call_count == 2
-        assert len(threads) == 2
+        assert len(found.threads) == 2
+        assert found.complete is False
         assert "repeated cursor" in capsys.readouterr().err
 
     @patch("gh.client.graphql")
@@ -542,8 +581,9 @@ class TestFetchReviewThreads:
         mock_gql.return_value = CmdResult(
             0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor=None),
         )
-        threads = fetch_review_threads("owner/repo", 7)
-        assert [t["id"] for t in threads] == ["PRT_1"]
+        found = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in found.threads] == ["PRT_1"]
+        assert found.complete is False
         mock_gql.assert_called_once()
         assert "no cursor" in capsys.readouterr().err
 
@@ -553,22 +593,32 @@ class TestFetchReviewThreads:
             CmdResult(0, _threads_response([_make_thread(f"PRT_{i}")], has_next=True, cursor=f"c{i}"))
             for i in range(GQL_MAX_THREAD_PAGES)
         ]
-        threads = fetch_review_threads("owner/repo", 7)
+        found = fetch_review_threads("owner/repo", 7)
         assert mock_gql.call_count == GQL_MAX_THREAD_PAGES
-        assert len(threads) == GQL_MAX_THREAD_PAGES
+        assert len(found.threads) == GQL_MAX_THREAD_PAGES
+        assert found.complete is False
         assert f"{GQL_MAX_THREAD_PAGES}-page ceiling" in capsys.readouterr().err
 
     @patch("gh.client.graphql")
-    def test_failed_page_warns_and_keeps_earlier_threads(self, mock_gql, capsys):
+    def test_a_failed_page_reports_the_set_as_incomplete(self, mock_gql, capsys):
+        """The threads gathered so far are kept, but not as the whole set.
+
+        This used to return a bare list, so a caller writing a thread ledger
+        could not tell it from a PR that really has one thread.
+        """
         mock_gql.side_effect = [
             CmdResult(0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor="c1")),
             _GQL_FAILED,
         ]
-        threads = fetch_review_threads("owner/repo", 7)
-        assert [t["id"] for t in threads] == ["PRT_1"]
+        found = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in found.threads] == ["PRT_1"]
+        assert found.complete is False
         assert "incomplete" in capsys.readouterr().err
 
     @patch("gh.client.graphql")
-    def test_first_page_failure_returns_empty(self, mock_gql):
+    def test_first_page_failure_is_not_a_pr_without_threads(self, mock_gql):
+        """A total failure and an empty PR were the same value: `[]`."""
         mock_gql.return_value = _GQL_FAILED
-        assert fetch_review_threads("owner/repo", 7) == []
+        found = fetch_review_threads("owner/repo", 7)
+        assert found.threads == []
+        assert found.complete is False

@@ -98,24 +98,33 @@ def _run_threads(trail, args, ctx) -> int:
     prior_threads = prior_state.threads if prior_state else {}
 
     # Fetch from GitHub (served from pr_data, no extra API calls)
-    threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+    fetched = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+    threads_raw = fetched.threads
     verdicts = pc.fetch_reviewer_verdicts(repo, pr_number, pr_data)
     issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login, pr_data)
     review_body_comments = pc.fetch_review_body_comments(
         repo, pr_number, my_login, pr_data,
     )
     trail.info("fetch_threads", f"fetched {len(threads_raw)} threads",
-               data={"count": len(threads_raw)})
+               data={"count": len(threads_raw), "complete": fetched.complete})
+    if not fetched.complete:
+        log.warn(
+            f"Only {len(threads_raw)} review threads could be read — the rest are "
+            "unreachable right now, so their triage verdicts are being kept rather "
+            "than treated as resolved")
 
     # Sync
-    threads = pc.sync_threads(threads_raw, prior_threads, my_login)
+    threads = pc.sync_threads(fetched, prior_threads, my_login)
     synced_resolved = sum(1 for t in threads.values() if t.state == ThreadState.RESOLVED)
     synced_open = len(threads) - synced_resolved
     trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
                data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
 
-    # Resolve verified threads if requested (or as part of triage)
-    if args.finish or args.triage:
+    # Resolve verified threads if requested (or as part of triage). A --finish
+    # that will refuse below because the fetch is short must refuse before
+    # this runs too — otherwise the "nothing was published" message it prints
+    # is false: GitHub already got the resolutions this loop sent.
+    if args.triage or (args.finish and fetched.complete):
         resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
             log.info(f"Resolved {resolved_count} verified threads")
@@ -192,6 +201,7 @@ def _run_threads(trail, args, ctx) -> int:
             has_approvals=has_approvals,
             seen_issue_comment_ids=current_ids,
             seen_review_body_comment_ids=current_review_ids,
+            complete=fetched.complete,
             updated_at=pr_state.now_iso(),
         ))
 
@@ -252,6 +262,18 @@ def _run_threads(trail, args, ctx) -> int:
     # otherwise close out the previous run's deferred set and leave this one's
     # untouched. Outside the state-update try/except, because a caller running
     # this to close the loop needs a failure to be an error, not a log line.
+    if args.finish and not fetched.complete:
+        # Closeout publishes a summary and replies asserting the round is
+        # answered. Asserting that over a thread set we could not finish
+        # reading is the same error as writing the ledger from it: the threads
+        # we never saw are the ones most likely to be unanswered.
+        log.error(
+            "--finish needs the whole thread set and this fetch was short — "
+            "nothing was published. Re-run once the threads are readable again "
+            "(an exhausted GitHub API budget is the usual cause, and it refills "
+            "on its own)")
+        return 1
+
     if args.finish:
         track = TRACK_ALL if args.track_all else frozenset(args.track)
         closeout.finish_deferred_work(ctx, report, trail=trail, track=track)

@@ -613,10 +613,18 @@ def run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | Non
     pr_number = ctx.pr_number
     owner, repo_name = repo.split("/", 1)
     pr_data = fetch_pr_data(repo, str(pr_number))
-    threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+    fetched = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
 
-    thread = find_reply_target(threads_raw, target, pr_data.viewer_login)
+    thread = find_reply_target(fetched.threads, target, pr_data.viewer_login)
     if thread is None:
+        # An incomplete fetch is named here rather than left implicit: "no
+        # thread matches" sends the reader looking for a typo in their target,
+        # and the thread may simply be on a page we could not read.
+        if not fetched.complete:
+            log.error(
+                f"no review thread on PR #{pr_number} matches {target!r} among the "
+                f"{len(fetched.threads)} we could read — the thread set is incomplete")
+            return 1
         log.error(f"no review thread on PR #{pr_number} matches {target!r}")
         return 1
 

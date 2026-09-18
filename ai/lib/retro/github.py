@@ -1,9 +1,23 @@
 """Fetching a repo's recent review activity from GitHub.
 
-One GraphQL round trip per repo where the API allows it, falling back to REST
-when it does not, flattened into the plain comment dicts the rest of the retro
-reads. Deciding which comments matter is `retro.rules`'; rendering them is
-`retro.report`'s.
+Two GraphQL round trips per repo — one for the PRs in the window, one per PR
+for its comments — falling back to REST when the API will not answer, flattened
+into the plain comment dicts the rest of the retro reads. Deciding which
+comments matter is `retro.rules`'; rendering them is `retro.report`'s.
+
+This used to be one round trip per repo, on the reading that fewer calls is
+cheaper. For GraphQL that is backwards: the hourly budget is spent in points
+scored from the `first:` values *before the query runs*, so nesting fifty PRs
+by a hundred threads by fifty comments was charged for 260,000 nodes — about
+2,600 points, half the hourly budget — on every scan, whatever the repo
+actually held. Worse, the window filter was applied in Python afterwards, so a
+scan paid full price for every PR it then discarded.
+
+Asking twice costs about 120 points for the same answer. The first query takes
+numbers and merge dates only, which is what the window filter needs; the second
+runs only for the PRs that survive it. A round trip is not the unit of cost
+here — the requested node count is — and a reader tempted to batch this back
+into one query should start from that.
 
 Normalising a raw comment's shape and dropping the noise (approvals,
 thumbs-up, a bare "nit") is part of producing that plain comment dict, so it
@@ -21,10 +35,7 @@ from datetime import datetime, timezone
 
 from gh import client as gh_client
 from core import log
-from gh.pr_reads import (
-    GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,
-    fetch_review_threads,
-)
+from gh.pr_reads import fetch_review_threads
 from retro.report import COMMENT_BODY_MAX
 
 
@@ -36,7 +47,29 @@ NOISE_PATTERNS = re.compile(
 
 GQL_MERGED_PRS_LIMIT = 50
 
-_RETRO_QUERY = f"""
+# This module's own page sizes, rather than `gh.pr_reads`'s. The two queries
+# have nothing in common but their shape: that one reads a single PR and
+# recovers from truncation by paginating, while this one nests the same fields
+# fifty PRs deep and recovers through `_threads_for`'s refetch. Sharing the
+# constants meant tuning the single-PR query silently rewrote this one, fifty
+# times over.
+RETRO_THREADS_LIMIT = 100
+
+# Same reasoning as `gh.pr_reads`' equivalent, and the same measurement behind
+# it: p90 is two comments per thread and 3 threads in 217 exceed ten. Nested
+# under `reviewThreads`, this is multiplied by 100 and is most of what the
+# detail query costs. `_threads_for` refetches any PR whose threads were cut
+# off, so a low value here is short reports' problem only if that refetch also
+# fails — and it warns when it does.
+RETRO_THREAD_COMMENTS_LIMIT = 10
+
+RETRO_ISSUE_COMMENTS_LIMIT = 100
+
+# Phase one: which PRs are in the window. Fifty nodes and nothing nested, so
+# the whole question costs a single point however many comments the repo's PRs
+# turn out to carry. The window filter runs against this, and only the
+# survivors are paid for below.
+_RETRO_PRS_QUERY = f"""
 query($owner: String!, $name: String!) {{
   repository(owner: $owner, name: $name) {{
     pullRequests(states: MERGED, first: {GQL_MERGED_PRS_LIMIT}, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{
@@ -45,25 +78,42 @@ query($owner: String!, $name: String!) {{
         title
         mergedAt
         author {{ login }}
-        reviewThreads(first: {GQL_THREADS_LIMIT}) {{
-          totalCount
-          nodes {{
-            path
-            line
-            comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
-              nodes {{
-                author {{ login }}
-                body
-              }}
+      }}
+    }}
+  }}
+}}
+"""
+
+# Phase two: one in-window PR's review activity. The same fields the batched
+# query asked for, but scoped to a single PR, so the nesting multiplies by one
+# instead of by fifty.
+_RETRO_PR_DETAIL_QUERY = f"""
+query($owner: String!, $name: String!, $pr: Int!) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $pr) {{
+      number
+      title
+      mergedAt
+      author {{ login }}
+      reviewThreads(first: {RETRO_THREADS_LIMIT}) {{
+        totalCount
+        nodes {{
+          path
+          line
+          comments(first: {RETRO_THREAD_COMMENTS_LIMIT}) {{
+            totalCount
+            nodes {{
+              author {{ login }}
+              body
             }}
           }}
         }}
-        comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
-          totalCount
-          nodes {{
-            author {{ login }}
-            body
-          }}
+      }}
+      comments(first: {RETRO_ISSUE_COMMENTS_LIMIT}) {{
+        totalCount
+        nodes {{
+          author {{ login }}
+          body
         }}
       }}
     }}
@@ -146,9 +196,24 @@ def _threads_for(repo: str, pr_node: dict) -> list[dict]:
     """
     threads_data = pr_node.get("reviewThreads", {})
     thread_nodes = threads_data.get("nodes", [])
-    if threads_data.get("totalCount", 0) <= len(thread_nodes):
-        return thread_nodes
-    return fetch_review_threads(repo, pr_node["number"])
+    if threads_data.get("totalCount", 0) > len(thread_nodes):
+        # A short refetch is still better than the truncated batch it replaces,
+        # and this feeds a report rather than a ledger: a missed thread costs a
+        # rule signal, so the count is taken as-is rather than failing the scan.
+        return fetch_review_threads(repo, pr_node["number"]).threads
+    # Thread *count* is not the only way this comes back short. The page size
+    # for comments within a thread is set for the common thread, so a deep one
+    # is cut off with the thread list itself intact — which the check above
+    # cannot see. Refetching the PR is what pages those comments properly.
+    if any(_comments_truncated(t) for t in thread_nodes):
+        return fetch_review_threads(repo, pr_node["number"]).threads
+    return thread_nodes
+
+
+def _comments_truncated(thread: dict) -> bool:
+    """Whether this thread carries more comments than the page returned."""
+    comments = thread.get("comments", {})
+    return comments.get("totalCount", 0) > len(comments.get("nodes", []))
 
 
 def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:
@@ -163,7 +228,7 @@ def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:
     total_comments = comments_data.get("totalCount", 0)
     comment_nodes = comments_data.get("nodes", [])
     if total_comments > len(comment_nodes):
-        log.warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: GQL_ISSUE_COMMENTS_LIMIT={GQL_ISSUE_COMMENTS_LIMIT})")
+        log.warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: RETRO_ISSUE_COMMENTS_LIMIT={RETRO_ISSUE_COMMENTS_LIMIT})")
 
     all_comments = _flatten_thread_comments(thread_nodes)
     all_comments.extend(_flatten_issue_comments(comment_nodes))
@@ -190,7 +255,7 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
         if since_ts > 0 else "2020-01-01T00:00:00Z"
     )
     owner, name = repo.split("/", 1)
-    r = gh_client.graphql(_RETRO_QUERY, variables={"owner": owner, "name": name})
+    r = gh_client.graphql(_RETRO_PRS_QUERY, variables={"owner": owner, "name": name})
     if not r.ok:
         log.warn(f"GraphQL failed for {repo}: {r.detail}")
         return _fetch_repo_review_data_rest(repo, since_ts)
@@ -207,12 +272,45 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
         .get("nodes", [])
     )
 
+    # Filtered before the detail query rather than after it: the window is why
+    # most of these PRs are not wanted, and asking about them anyway was most
+    # of what the old single query spent.
+    in_window = [
+        n for n in pr_nodes
+        if n.get("mergedAt") and n["mergedAt"] >= since_date
+    ]
+
     results = []
-    for pr_node in pr_nodes:
-        parsed = _parse_pr_node(repo, pr_node, since_date)
+    for pr_node in in_window:
+        detail = _fetch_pr_detail(repo, owner, name, pr_node["number"])
+        if detail is None:
+            continue
+        parsed = _parse_pr_node(repo, detail, since_date)
         if parsed:
             results.append(parsed)
     return results
+
+
+def _fetch_pr_detail(repo: str, owner: str, name: str, number: int) -> dict | None:
+    """One in-window PR's review activity, or None when it cannot be read.
+
+    A PR that fails is skipped rather than failing the scan: the retro reads
+    what it can and reports on that, and one unreadable PR costs a rule signal
+    rather than the whole run. Said out loud so a short report has a reason.
+    """
+    r = gh_client.graphql(
+        _RETRO_PR_DETAIL_QUERY,
+        variables={"owner": owner, "name": name, "pr": number},
+    )
+    if not r.ok:
+        log.warn(f"GraphQL failed for {repo}#{number}: {r.detail}")
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        log.warn(f"GraphQL error for {repo}#{number}: {e}")
+        return None
+    return (data.get("data", {}).get("repository", {}) or {}).get("pullRequest")
 
 
 def _fetch_repo_review_data_rest(repo: str, since_ts: int) -> list[dict]:

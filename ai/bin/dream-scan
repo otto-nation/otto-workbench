@@ -27,6 +27,7 @@ import argparse
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -381,7 +382,8 @@ def main() -> None:
 
         cutoff = datetime.now() - timedelta(days=args.days)
         discovered = sessions.discover_sessions(home, since=cutoff)
-        counts = sessions.session_counts(home, since=cutoff)
+        counts = {h.name: 0 for h in sessions.HARNESSES}
+        counts.update(Counter(s.harness for s in discovered))
         log.info(f"Sessions: {counts}")
 
         signals = scan_sessions(discovered)

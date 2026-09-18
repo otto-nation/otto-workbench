@@ -757,6 +757,46 @@ class TestTemplateRendering:
         left = _unsubstituted(_render_verify_fixes(tmp_path))
         assert not left, f"verify-fixes.md left: {left}"
 
+    def test_the_comments_adapter_declares_the_gate_s_own_phase(self):
+        """The one domain that runs a gate must name the gate's phase.
+
+        Without it the engine falls back to the fix pass's phase, and the gate
+        is handed `fix-comments.md` — a prompt instructing it to edit source,
+        which `verify-fixes.md` forbids in as many words. The fallback is for a
+        domain with no gate, so nothing else catches this.
+        """
+        phase = fix_comments.CommentFixAdapter.verify_phase
+        assert phase is Phase.COMMENTS_VERIFY
+        assert PHASES[phase].template_for() == "verify-fixes.md"
+
+    def test_the_gate_is_told_to_check_the_claim_not_trust_it(self, tmp_path):
+        """The claim is the fix agent's own words about its own work.
+
+        Handing it over without telling the gate to falsify it makes "run the
+        named test, it is green, tick verified" the cheapest path — which is
+        the trap the rest of this prompt exists to close, re-entering through
+        the front door.
+        """
+        text = " ".join(_render_verify_fixes(tmp_path).split())
+
+        assert "The claim the fix pass made" in text
+        assert "Does the named test exist" in text
+        assert "Would it have failed before the change" in text
+        # Provenance: the gate is told who wrote the claim and when.
+        assert "written by the agent whose work you are checking" in text
+        # And that a green named test does not by itself settle the verdict.
+        assert "not by itself a **verified**" in text
+
+    def test_a_claim_nobody_made_is_never_broken_on_its_own(self, tmp_path):
+        """Absence of evidence caps at `not verified`.
+
+        Without this the claim check makes the gate *more* likely to demote a
+        good fix, which costs the operator real work — the opposite of what
+        asking for evidence was for.
+        """
+        text = " ".join(_render_verify_fixes(tmp_path).split())
+        assert "It is never **broken** on its own" in text
+
     def test_every_template_is_covered(self):
         """A new template must be added to this file's render coverage."""
         covered = {_template_of(key) for key in _BUILD_PROMPT_EXTRAS} | {

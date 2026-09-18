@@ -494,8 +494,11 @@ class ReplyOutcome:
 
 
 # What a verdict means when the agent ticked its box without saying why. FIXED
-# is absent deliberately: the change itself is the reason, and an entry that
-# needs no explanation should carry whatever triage already put on it.
+# is absent deliberately, though no longer because a fixed entry has nothing to
+# say: the fix box asks what holds the change, so a FIXED outcome usually
+# carries that evidence and needs no stand-in. One that carries none falls
+# through to whatever triage already put on the entry, which is the same
+# outcome the original rule produced.
 _UNSTATED_REASON = {
     FixOutcome.DEFERRED: "agent could not auto-fix",
     FixOutcome.NEEDS_HUMAN: "agent could not auto-fix",

@@ -18,6 +18,7 @@ when nothing holds it. Before believing a passing test, check all three.
 - The assertion cannot be satisfied incidentally. An `or` arm that is always true (`assert x in content or " " in text`) makes the whole assertion a tautology, and it passes on any input
 - The patch target is the name the code under test actually looks up. Patching `mod.subprocess.run` proves nothing once the function was migrated to call `gh_client.api` — the test keeps passing against code it no longer touches
 - The input reaches the branch under test rather than stopping at an early guard. A test named for a commit failure that supplies input rejected before the commit is attempted exercises the guard, not the failure
+- Cover the path the change is actually on before the edge case beside it. A commit that reworks a common-path helper and adds a case only for non-ASCII input, an empty list, or a rare error has tested the thing it did not change; the common path it did change is still held by nothing
 - Assert the exit status alongside the output. A test matching only stdout passes for a command that emitted the expected line and then failed
 - Cover both unset and empty-string when testing a config or env-var fallback — real environments export `VAR=""`, and `get(k, default)` returns the empty string where `get(k) or default` returns the default
 

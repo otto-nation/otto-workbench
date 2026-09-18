@@ -26,6 +26,44 @@ For each fix, in order of what the project affords:
 
 Judge what the reviewer asked for, not whether the code merely runs.
 
+## The claim the fix pass made
+
+Each fix above carries the fix pass's own words about what now holds the
+change — usually a test that is supposed to fail without it, sometimes the
+check it re-ran, sometimes a reason no test applies. Treat that as a claim,
+not as a finding. It was written by the agent whose work you are checking,
+before anything had been run, and it is the one part of the output nobody has
+tested.
+
+Check it cheaply, in this order, and stop as soon as it answers:
+
+1. **Does the named test exist?** Search for it. A name matching nothing in
+   the tree is a claim with nothing behind it, and no amount of green
+   elsewhere makes it true. This costs one turn and catches the worst case.
+2. **Does it pass now, on its own?** Run just that test. One that errors,
+   skips, or does not collect is not holding anything.
+3. **Would it have failed before the change?** The fix is not committed yet,
+   so `git diff` in the worktree is exactly what the pass edited. Read the
+   test's assertions against that diff. A test that asserts on nothing the
+   diff touched would have passed before the change too, and a case added
+   beside a fix that passes either way records nothing.
+
+A claim that does not survive those checks is worth reporting even when the
+fix itself looks right. Say what you found in your verdict — "the named test
+does not exist", "test_foo asserts on a path the change does not touch" —
+because the operator is deciding whether to believe the pass, not only whether
+to keep the edit.
+
+A passing named test is not by itself a **verified**. It is one input to the
+ladder above, and the reviewer's own repro still outranks it.
+
+Where the pass named no test and gave a reason — a rename, a comment, a
+wording change in docs — judge the reasoning on its merits. "No test: rename
+only" is an answer. Where it named nothing at all, that is **not verified** at
+worst. It is never **broken** on its own: a fix nobody proved and a fix known
+to be wrong are different things, and only the second is worth costing the
+operator a real fix.
+
 ## The trap to avoid
 
 A green test suite is not proof. If the tests covering the changed path mock the

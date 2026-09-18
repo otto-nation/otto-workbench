@@ -36,6 +36,7 @@ import textwrap
 from pathlib import Path
 from typing import NamedTuple
 
+from core import log
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
 
@@ -66,7 +67,10 @@ class _Box(NamedTuple):
 _BOXES: tuple[_Box, ...] = (
     _Box("fixed", FixOutcome.FIXED,
          "you applied the change. Apply it with the Edit tool on the source "
-         "file first"),
+         "file first, then replace `<why>` with the test that now fails "
+         "without it — the test's name, or the case you added to an existing "
+         "one. If the change needs no test — prose, a comment, a rename with "
+         "no behaviour behind it — say that instead, in those words"),
     _Box("declined", FixOutcome.DECLINED,
          "you read the {noun} and it should not be acted on. Replace `<why>` "
          "with the reason, in one sentence"),
@@ -80,9 +84,17 @@ _BOXES: tuple[_Box, ...] = (
 # report the placeholder as the agent's words.
 _WHY = "<why>"
 
-# FIXED needs no reason — the change speaks for itself — so it is rendered as a
-# bare box and the other two ask for one.
-_REASONED = frozenset({FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN})
+# Every fix box asks for the agent's words after the tick. FIXED joins the other
+# two because "the change speaks for itself" turned out to be the thing that was
+# not true: a ticked box means an edit was made, and across five consecutive fix
+# passes four of them edited code and shipped no assertion, while the fifth
+# added a case for an accented path and left the common one uncovered. Nothing
+# in the format could tell that from a fix that was genuinely untestable,
+# because the box had nowhere to say which one it was. Now it does, and an
+# exemption is a sentence an operator can read and disagree with.
+_REASONED = frozenset(
+    {FixOutcome.FIXED, FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN},
+)
 
 _SECTION_RE = re.compile(
     r"^## <!-- fix:(?P<id>[^\s>]+) -->[ ]*(?P<heading>.*)$", re.MULTILINE,
@@ -127,10 +139,11 @@ _HEADING_SEP = " — "
 def _suffix(box: _Box, reasoned: frozenset) -> str:
     """What the render leaves after a box's label for the agent to fill in.
 
-    `reasoned` is the vocabulary's own set rather than the fix pass's, because
-    the two disagree about which boxes owe an explanation: a fix needs none (the
-    change speaks for itself) while every verify verdict does — "what did you
-    run" is the entire evidentiary value of one.
+    `reasoned` is the vocabulary's own set rather than the fix pass's. Both sets
+    currently ask on every box, but they ask for different things — a fix names
+    the test that holds the change, a verdict names what was run — and the
+    parameter is what lets one change its mind without silently moving the
+    other. A single shared set would make that drift invisible.
     """
     return f" — {_WHY}" if box.outcome in reasoned else ""
 
@@ -246,9 +259,15 @@ def instructions(noun: str) -> str:
     return textwrap.dedent("""\
         Every {noun} above carries three boxes. Answer each one by ticking exactly
         one of them with the Edit tool, in the tracking file, having read the file
-        it points at first:
+        it points at first. Each box asks for your words after it — replace
+        `<why>` with them:
 
         {boxes}
+
+        A behaviour change ticked `fixed` is expected to carry a test that fails
+        without it. Write a regression test as part of the fix and name it in the
+        box. Where one genuinely does not apply, say so in the box and say why —
+        that is an answer, and an empty `<why>` is not.
 
         Leave all three boxes unticked only for a {noun} you never got to. That
         reads as work still owed and the {noun} is handed to another pass, so use
@@ -372,9 +391,18 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
     the file, so an agent that reorders the list cannot change what its answer
     means.
 
-    Only the boxes that ask for a reason keep one. `ItemOutcome` states that a
-    FIXED entry carries no reason, and an agent that annotates its tick anyway
-    should not be the one thing that makes that untrue.
+    Every box in `_BOXES` asks for a reason, so this always keeps one — `_BOXES`
+    and `_REASONED` name the same three outcomes. A FIXED entry's reason is its
+    test evidence, and it is kept for the same purpose the other two are kept
+    for: an operator reading what the pass claimed, and deciding whether to
+    believe it.
+
+    A FIXED box ticked with no reason — the agent left `<why>` standing — is
+    read as FIXED regardless: the ask is a prompt contract, not a parse-time
+    gate (see `test_a_fix_ticked_without_evidence_still_reads_as_fixed`). It is
+    still logged here, so the exact failure this contract exists to catch —
+    an edit applied with no evidence it holds — leaves a trace an operator can
+    find instead of vanishing into a `reason` field nothing renders.
     """
     ticked = {
         box.group("label"): _reason(box.group("rest"))
@@ -385,7 +413,9 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
         if box.label not in ticked:
             continue
         into.outcome = box.outcome
-        into.reason = ticked[box.label] if box.outcome in _REASONED else ""
+        into.reason = ticked[box.label]
+        if box.outcome is FixOutcome.FIXED and not into.reason:
+            log.warn(f"{into.id}: ticked fixed with no test evidence")
         return
 
 

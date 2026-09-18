@@ -167,8 +167,15 @@ class ItemOutcome:
     # it reads back as the pass's own work, which is what it recorded.
     settled_by: SettledBy = SettledBy.PASS
     summary: str = ""
-    # Why, in the words the surface reporting this prints. Empty for FIXED,
-    # where the change speaks for itself.
+    # Why, in the words the surface reporting this prints. On a FIXED entry it
+    # is the test evidence the fix box asks for — the test that fails without
+    # the change, or why the change needs none.
+    #
+    # Two things read it on a fixed row. `rebase.prepush._outcome_line` puts it
+    # in the fix commit's body, which lands verbatim on the default branch under
+    # squash-merge; and `fix.engine._verify_item` shows it to the verify gate as
+    # a claim to check. The PR reply and the summary table still cite `summary`
+    # and the commit rather than this.
     reason: str = ""
     file: str = ""
     line: int = 0

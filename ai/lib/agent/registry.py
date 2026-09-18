@@ -118,7 +118,12 @@ _SPECS: tuple[PhaseSpec, ...] = (
         thinking=Thinking.LOW, max_turns=15, max_budget=1.5,
         shape=PhaseShape.FIX,
         scales_with_omitted=False,
-        scaling=ItemScaling(turns_per_item=4, turns_cap=40,
+        # Five turns an item rather than four: the gate now also checks the fix
+        # pass's claim about what holds each change — does the named test exist,
+        # does it pass, would it have failed before — on top of reaching its own
+        # verdict. A gate told to be frugal and given more to do answers "not
+        # verified" more often, which is the failure that looks like success.
+        scaling=ItemScaling(turns_per_item=5, turns_cap=40,
                             budget_per_item=0.4, budget_cap=3.0),
     ),
     # The CI fix pass gets the same 20 turns and $3 whatever it is handed: the

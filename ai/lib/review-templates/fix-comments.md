@@ -17,6 +17,22 @@ ${answer_format}
 - **needs a person** — a design decision, an architectural change, or something
   needing input you do not have
 
+## The test the `fixed` box asks for
+
+A reviewer asking for a code change is asking for behaviour that holds. Write
+the regression test alongside the change and name it in the box — it is also
+the most useful thing the reply can tell them, because it says the fix is held
+rather than merely made.
+
+A test that earns the box fails without your change. A case added beside the
+fix that passes either way records nothing, and a suite that mocks the thing
+you changed cannot answer the reviewer's question at all.
+
+Prefer a case added to the suite that already covers the file over a new file.
+Where the comment asks for something a test cannot express — a rename, a
+comment, a wording change in docs — say that in the box in those words. "No
+test: rename only" is an answer. An empty `<why>` is not.
+
 ## Priority order
 
 Process threads in this order to maximize fixes within the turn budget:

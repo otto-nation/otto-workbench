@@ -62,7 +62,7 @@ class TestRender:
         assert "## <!-- fix:T2 --> docs/guide.md — @other" in text
         # No file at all still gets a heading with a location in it.
         assert "## <!-- fix:T3 --> — — @third" in text
-        assert text.count("- [ ] fixed\n") == 3
+        assert text.count("- [ ] fixed — <why>\n") == 3
         assert text.count("- [ ] declined — <why>\n") == 3
         assert text.count("- [ ] needs a person — <why>\n") == 3
 
@@ -135,16 +135,59 @@ class TestParse:
         assert outcome.reason == "the premise does not hold"
         assert fix_tracking.checked(path) == 1
 
-    def test_a_reason_written_after_fixed_is_not_reported_as_one(self, tmp_path):
-        """`ItemOutcome` says a FIXED entry carries no reason; the parse holds to it."""
+    def test_the_test_evidence_written_after_fixed_is_kept(self, tmp_path):
+        """The fix box asks what test holds the change; the parse reads it back.
+
+        The evidence is the whole point of the box asking. A parse that dropped
+        it would leave an operator with a ticked box and no way to tell a fix
+        with a regression test from one without.
+        """
         path = tmp_path / "t.md"
         fix_tracking.write(path, "t", [FixItem(id="A")])
         path.write_text(path.read_text().replace(
-            "- [ ] fixed", "- [x] fixed — renamed the guard",
+            "- [ ] fixed — <why>",
+            "- [x] fixed — test_the_guard_rejects_an_empty_name",
+        ))
+        outcome = fix_tracking.parse(path)[0]
+        assert outcome.outcome == FixOutcome.FIXED
+        assert outcome.reason == "test_the_guard_rejects_an_empty_name"
+
+    def test_a_fix_ticked_without_evidence_still_reads_as_fixed(self, tmp_path):
+        """The ask is a prompt contract, not a parse-time gate.
+
+        An agent that ticks the box and leaves `<why>` standing has applied the
+        change — refusing to read that as FIXED would discard real work over a
+        missing sentence, and send a later pass back over a finding already
+        answered.
+        """
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A")])
+        path.write_text(path.read_text().replace(
+            "- [ ] fixed — <why>", "- [x] fixed — <why>",
         ))
         outcome = fix_tracking.parse(path)[0]
         assert outcome.outcome == FixOutcome.FIXED
         assert outcome.reason == ""
+
+    def test_a_fix_with_no_evidence_is_still_logged(self, tmp_path, capsys):
+        """FIXED with no reason is accepted, but not silently.
+
+        The parse does not gate on the reason (see the test above), so a
+        warning is the only trace that an agent ticked `fixed` and left `<why>`
+        standing — without it, the exact failure this contract exists to catch
+        leaves no record an operator would ever see.
+        """
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A")])
+        path.write_text(path.read_text().replace(
+            "- [ ] fixed — <why>", "- [x] fixed — <why>",
+        ))
+        fix_tracking.parse(path)
+        warning = capsys.readouterr().err
+        # The whole line, not the bare id: "A" is one capital letter, and it
+        # discriminates here only because the rest of the message happens to
+        # carry none. A reword introducing one would make this vacuous.
+        assert "A: ticked fixed with no test evidence" in warning
 
     def test_a_fix_that_landed_outranks_a_position_argued_beside_it(self, tmp_path):
         path = tmp_path / "t.md"
@@ -176,7 +219,7 @@ class TestInstructions:
     def test_it_spells_every_box_the_render_writes(self):
         boxes = _shown_boxes(fix_tracking.instructions("finding"))
         assert boxes == [
-            "- [x] fixed",
+            "- [x] fixed — <why>",
             "- [x] declined — <why>",
             "- [x] needs a person — <why>",
         ]
@@ -311,16 +354,16 @@ class TestVerifyVerdicts:
         assert "- [ ] verified" in text
         assert "- [ ] not verified" in text
         assert "- [ ] broken" in text
-        assert "- [ ] fixed\n" not in text
+        assert "- [ ] fixed" not in text
 
 
 class TestEveryVerifyVerdictAsksForEvidence:
     """A verdict with no reason is a verdict nobody can act on.
 
-    The fix boxes and the verify boxes disagree about this: a fix needs no
-    reason because the change speaks for itself, while "what did you run" is
-    the entire evidentiary value of a verify verdict — including the passing
-    one, which is the claim a reviewer will rely on.
+    Both vocabularies ask for evidence on every box, for the same underlying
+    reason: "what did you run" is the entire evidentiary value of a verify
+    verdict, and "what test holds this" is the same question asked of a fix
+    before anyone has run anything.
     """
 
     def test_all_three_boxes_carry_the_placeholder(self):
@@ -332,7 +375,105 @@ class TestEveryVerifyVerdictAsksForEvidence:
             assert f"- [ ] {label} — <why>" in text, f"{label} asks for no evidence"
 
     def test_the_fix_boxes_are_unchanged_by_the_verify_vocabulary(self):
-        """FIXED still renders bare — the two sets must not leak into each other."""
+        """The two sets ask the same shape now, but must stay separate sets."""
         text = fix_tracking.render("Fix", [FixItem(id="t1", file="a.py", line=1)])
-        assert "- [ ] fixed\n" in text
+        assert "- [ ] fixed — <why>" in text
         assert "- [ ] declined — <why>" in text
+        for label in ("verified", "not verified", "broken"):
+            assert f"- [ ] {label}" not in text
+
+
+class TestEveryFixTemplateAsksForTheTest:
+    """The `fixed` box means "behaviour holds", not "a file was edited".
+
+    Five consecutive fix passes are the reason this is pinned. Four edited code
+    and shipped no assertion; the fifth added a case for an accented path while
+    reworking the common-path setup it left uncovered. Every one of them ticked
+    `fixed` truthfully under the old contract, because the contract asked only
+    that an edit be made.
+
+    The shared half of the ask lives in `instructions()` and reaches every
+    domain through `${answer_format}`. The domain half lives in each template,
+    because what a test is worth differs per domain: a findings fix owes a
+    regression test, while a CI fix's oracle is the check that was already
+    failing. Both halves are pinned here so a new fix phase cannot arrive
+    without one.
+    """
+
+    def _fix_templates(self):
+        """Every phase the fix runner serves, with its template text.
+
+        Enumerated from the registry rather than listed by hand: a phase added
+        later is a phase this test must cover, and a hardcoded list would let
+        it through while still reporting green.
+        """
+        from agent import templates as agent_templates
+        from agent.registry import PHASES
+        from core.phases import PhaseShape
+
+        root = agent_templates.template_dir()
+        # Newlines collapsed: these are wrapped prose files, so a phrase the
+        # contract asks for may be split across two lines. Matching the raw
+        # text would make the assertion depend on where the wrap happened to
+        # fall, and a rewrap would fail a template that still says the thing.
+        return {
+            phase: " ".join((root / spec.template_for()).read_text().split())
+            for phase, spec in PHASES.items()
+            if spec.shape is PhaseShape.FIX
+            # The verify gate answers a different question in a different
+            # vocabulary — it is forbidden to edit source, so it can never be
+            # the pass that adds a test.
+            and spec.template_for() != "verify-fixes.md"
+        }
+
+    def test_the_shared_ask_names_a_test_and_the_way_out_of_one(self):
+        text = fix_tracking.instructions("finding")
+        assert "fails without it" in text
+        assert "regression test" in text
+        # The exemption has to be offered in the same breath, or the honest
+        # answer for a prose fix is to tick the box and say nothing.
+        assert "does not apply" in text
+
+    def test_every_fix_template_says_what_its_domain_owes(self):
+        for phase, text in self._fix_templates().items():
+            assert "`fixed` box asks for" in text, (
+                f"{phase} never tells its agent what the fixed box asks for"
+            )
+
+    def test_every_fix_phase_is_claimed_by_one_of_the_domain_tests(self):
+        """No phase gets the shared half enforced and the domain half skipped.
+
+        The two tests below name their phases, which is what lets them assert
+        different things. That is also how a new fix phase slips through: it
+        satisfies the generic test above and neither of them. This partition is
+        what fails when one arrives, naming the phase nobody decided about.
+        """
+        behaviour = {"fix", "comments_fix"}
+        check_driven = {"ci_fix", "prepush_fix"}
+        assert set(self._fix_templates()) == behaviour | check_driven, (
+            "a fix phase belongs to neither domain group — decide whether it "
+            "owes a regression test or a re-run, and add it to that test"
+        )
+
+    def test_the_two_behaviour_domains_ask_for_a_regression_test(self):
+        """Findings and comments both change behaviour, so both owe a test."""
+        templates = self._fix_templates()
+        for phase in ("fix", "comments_fix"):
+            text = templates[phase]
+            assert "fails without your change" in text, (
+                f"{phase} does not say the test must fail without the fix"
+            )
+
+    def test_the_check_driven_domains_ask_for_the_check_instead(self):
+        """CI and pre-push already have an oracle; a new test is not the ask.
+
+        Demanding one here would be the cargo-cult version of this rule: the
+        failing check is the thing that proves the fix, and a test invented to
+        satisfy a checklist is the vacuous kind this whole change exists to
+        stop.
+        """
+        templates = self._fix_templates()
+        for phase in ("ci_fix", "prepush_fix"):
+            assert "name the check you re-ran" in templates[phase], (
+                f"{phase} does not ask which check was re-run"
+            )

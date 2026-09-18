@@ -190,6 +190,35 @@ def test_main_reports_a_missing_run_and_exits_one(capsys):
     assert "No workflow runs found" in capsys.readouterr().err
 
 
+def test_main_takes_no_checkout_lock_without_fix():
+    """The dashboard path reads GitHub and writes nothing to the worktree.
+
+    Locking it anyway can refuse, or be refused by, a concurrent `pr rebase`
+    that legitimately holds it.
+    """
+    with patch.object(sys, "argv", ["ci-check"]), \
+         patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
+         patch.object(ci_check.run_lock, "claim_for_process") as claim, \
+         patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
+        ci_check.main([])
+
+    assert claim.call_args.kwargs["worktree"] is None
+
+
+def test_main_takes_the_checkout_lock_with_fix():
+    """--fix rebases and commits in this checkout, so the tree needs locking too."""
+    ctx = make_ctx()
+    with patch.object(sys, "argv", ["ci-check", "--fix"]), \
+         patch.object(ci_check.pr_context, "resolve", return_value=ctx), \
+         patch.object(ci_check.run_lock, "claim_for_process") as claim, \
+         patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
+        ci_check.main(["--fix"])
+
+    assert claim.call_args.kwargs["worktree"] == ctx.worktree_root
+
+
 # ── the fix pass, end to end ──────────────────────────────────────────────
 
 

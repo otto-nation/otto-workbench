@@ -80,6 +80,7 @@ def cmd_abort(
 
 def cmd_push(
     cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Force-push after a completed rebase."""
@@ -89,6 +90,12 @@ def cmd_push(
         return 1
 
     state = rebase_types.load_or_init(ctx)
+    if not state.rebase.updated_at:
+        core_trail.terr(trail, "push", "no recorded rebase to push")
+        log.error("Cannot push — no rebase recorded for this branch.")
+        log.dim("Run `pr rebase` first, or push by hand.")
+        return 1
+
     # The lease the rebase recorded, not one rebuilt here. By now HEAD is the
     # rewritten tip and origin/<branch> is whatever the rebase's own fetch
     # brought down, so neither reading can say what the remote was at before
@@ -96,12 +103,26 @@ def cmd_push(
     lease = rebase_lease.PushLease(
         branch=ctx.branch, expect=state.rebase.lease_expect,
     )
-    if not state.rebase.updated_at:
-        core_trail.terr(trail, "push", "no recorded rebase to push")
-        log.error("Cannot push — no rebase recorded for this branch.")
-        log.dim("Run `pr rebase` first, or push by hand.")
+    # An empty expect is a real value ("the remote must not have this ref
+    # yet"), but it is also what a state file written before `lease_expect`
+    # existed deserializes to. The two are indistinguishable in state.json, so
+    # check the claim against the checkout's own view of the remote rather
+    # than trusting it blindly — a branch this old cannot legitimately still
+    # be unpushed.
+    if lease.creates_the_ref and rebase_inspect.ref_exists(
+        cwd, f"refs/remotes/origin/{ctx.branch}",
+    ):
+        core_trail.terr(
+            trail, "push", "recorded lease is stale — origin already has this branch",
+            data={"branch": ctx.branch},
+        )
+        log.error("Cannot push — the recorded rebase has no lease, but origin "
+                  "already has this branch.")
+        log.dim("Run `pr rebase` again (without --no-push) to record a fresh "
+                "lease, or push by hand after checking what origin holds.")
         return 1
 
+    lifecycle._name_the_open_pr(snapshot, trail=trail)
     log.info("Force-pushing...")
     landed = rebase_land.land_rebased(cwd, args=lease.args, trail=trail)
     if not landed.ok:
@@ -149,7 +170,8 @@ def cmd_start(
         )
         log.info("Detected in-progress rebase — resuming...")
         return lifecycle.drive_to_completion(
-            cwd, ctx, mode, target_ref=target_ref, force=True, trail=trail,
+            cwd, ctx, mode, target_ref=target_ref, force=True,
+            snapshot=snapshot, trail=trail,
         )
 
     stashed = stash.auto_stash(cwd, trail=trail)
@@ -258,7 +280,7 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
                    snapshot=snapshot, trail=trail)
 
     if rc == 0 and mode is RunMode.PUSH:
-        rc = cmd_push(cwd, ctx, target_ref=target_ref, trail=trail)
+        rc = cmd_push(cwd, ctx, target_ref=target_ref, snapshot=snapshot, trail=trail)
     return rc
 
 

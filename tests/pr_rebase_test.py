@@ -3982,6 +3982,27 @@ def test_cmd_start_stash_failure_aborts():
     mock_fresh.assert_not_called()
 
 
+def test_cmd_start_resume_forwards_the_snapshot():
+    """A resumed rebase still needs the snapshot for the open-PR notice.
+
+    Without forwarding it, `drive_to_completion` cannot name the PR a resumed
+    force-push is about to rewrite, and the round trip that fetched it is
+    thrown away for nothing.
+    """
+    ctx = mock.MagicMock()
+    snapshot = rebase_pr_snapshot.PRSnapshot(state="OPEN", number=1)
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=True), \
+         mock.patch.object(rebase_target, "resume_target_ref", return_value=_TARGET), \
+         mock.patch.object(lifecycle, "drive_to_completion", return_value=0) as drive:
+        pr_rebase_cli.cmd_start(
+            "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            snapshot=snapshot,
+        )
+
+    assert drive.call_args.kwargs["snapshot"] is snapshot
+
+
 # ── main() --push dispatch ──────────────────────────────────────────────────
 
 

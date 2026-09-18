@@ -305,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
     # is locked alongside the target. Not required here: the dashboard path
     # reads GitHub and needs no worktree at all, and a bare-repo run of it is
     # legitimate. None means the target lock alone, which is what it had.
-    worktree = ctx.worktree_root if ctx.worktree_root else None
+    worktree = ctx.worktree_root if args.fix and ctx.worktree_root else None
 
     # A no-op when pr launched us — we resolve the same target and find its key
     # already in WORKBENCH_RUN_LOCK.

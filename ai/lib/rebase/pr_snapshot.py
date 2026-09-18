@@ -30,6 +30,7 @@ from pr import context as pr_context
 FIELDS = ("state", "number", "url", "baseRefName", "isDraft", "reviewDecision")
 
 MERGED = "MERGED"
+OPEN = "OPEN"
 
 
 @dataclass(frozen=True)
@@ -64,9 +65,10 @@ class PRSnapshot:
 
         Draft is excluded deliberately: a draft is the author's own workspace,
         and force-pushing to one is the routine case rather than a surprise to
-        anybody.
+        anybody. A closed-but-unmerged PR is excluded too — nobody is reviewing
+        an abandoned PR, so only ``OPEN`` qualifies.
         """
-        return self.answered and not self.merged and not self.is_draft
+        return self.state == OPEN and not self.is_draft
 
 
 def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:

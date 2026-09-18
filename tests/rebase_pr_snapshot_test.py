@@ -86,6 +86,11 @@ class TestOpenAndReady:
             state="MERGED", number=1,
         ).open_and_ready
 
+    def test_a_closed_unmerged_pr_is_not_awaiting_review(self):
+        assert not rebase_pr_snapshot.PRSnapshot(
+            state="CLOSED", number=1,
+        ).open_and_ready
+
 
 class TestItReplacesTheSecondCall:
     """The two reads this collapsed, each still answering the same way."""

@@ -19,6 +19,7 @@
 #   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/CLAUDE.md's
 #   - flagged `task ... pr:create` invocations match git-operations.md's
 #   - every superpowers shim records the version ai/pi/settings.json pins
+#   - every superpowers shim's override marker names its own directory
 #   - skill scripts are invoked through the shared skills root, not a
 #     harness-specific one
 #
@@ -507,6 +508,50 @@ _check_shim_pin() {
   return 0
 }
 
+# _check_shim_name FILE DISPLAY — holds one shim's claimed override name against
+# the directory it lives in.
+#
+# The override works by name collision: Pi resolves a skill by its directory
+# name, and a workbench skill wins over a package skill of the same name. So a
+# marker naming something other than its own directory displaces nothing — the
+# upstream skill keeps answering, and the shim sits beside it unread. Nothing
+# else notices, since both files load cleanly and the pin check still passes.
+#
+# Only the header is searched, for the same reason _check_shim_pin searches it:
+# a body discussing another override in prose must not stand in for the marker.
+_check_shim_name() {
+  local skill_file="$1" display="$2" dir_name claimed
+  dir_name="$(basename "$(dirname "$skill_file")")"
+  claimed=$(sed '/^# /q' "$skill_file" \
+    | sed -n "s/.*${SHIM_MARKER}\\([a-z0-9-]*\\).*/\\1/p" | head -1)
+
+  if [[ -z "$claimed" ]]; then
+    _fail "$display: carries the override marker without naming a skill — write \`${SHIM_MARKER}<name>\` in the override comment"
+    return 0
+  fi
+
+  if [[ "$claimed" == "$dir_name" ]]; then
+    _pass "$display: overrides superpowers:$claimed by matching directory name"
+  else
+    _fail "$display: claims to override '$claimed', but its directory is named '$dir_name' — the names must match or nothing is displaced"
+  fi
+  return 0
+}
+
+# _check_every_shim_name — every shim in the tree. Run whether or not the
+# package is pinned: a marker naming the wrong skill is wrong on its own terms,
+# and a tree carrying shims before the pin lands is where the typo is cheapest
+# to catch.
+_check_every_shim_name() {
+  local skill_file
+  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+    [[ -f "$skill_file" ]] || continue
+    grep -q "$SHIM_MARKER" "$skill_file" || continue
+    _check_shim_name "$skill_file" "skills/$(basename "$(dirname "$skill_file")")"
+  done
+  return 0
+}
+
 # Matches a skill script addressed through one harness's own skills root. The
 # filename at the end is what keeps this off prose mentioning a root —
 # writing-skills names both of them in a sentence about where skills install.
@@ -553,6 +598,7 @@ _check_every_shim_pin() {
 }
 
 _check_every_harness_script_path
+_check_every_shim_name
 
 PI_SETTINGS="$WORKBENCH_DIR/ai/pi/settings.json"
 if [[ -f "$PI_SETTINGS" ]]; then

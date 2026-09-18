@@ -75,6 +75,12 @@ skip: "Do not use for X (use Y instead)."
 vocabulary and the upstream phrasing a user would trigger on. Winning the name
 and losing the trigger means the upstream procedure runs anyway.
 
+The displacement itself is by name collision, so the directory must be named
+exactly what it displaces, and the `Overrides superpowers:<name>` marker must
+name that same skill. A marker pointing somewhere else displaces nothing —
+upstream keeps answering and the shim is never read. `validate-skills` fails on
+the mismatch, since nothing at runtime would report it.
+
 ## Step 3: The `agent:` Contract
 
 `agent: <name>` declares that the skill's body is an agent protocol maintained
@@ -161,6 +167,7 @@ fields, and the agent-stub pairing. A skill is not done until it passes.
 | Sometimes-on, both harnesses | A skill |
 | Sometimes-on, Claude only | A rule with `harness: [claude]` |
 | Body is an agent protocol | `agent:` + placeholder, no `invocation:` |
+| Displacing an upstream skill | Directory name, marker name, and displaced name are all one name |
 | Need a string transform in a code block | Pipe to `tr`/`sed`, never `${var//}` |
 | Invoking a script beside the SKILL.md | `bash ~/.agents/skills/<name>/<script>.sh`, never `~/.claude/skills/` |
 | Auto-triggered | `lifecycle_*` **and** the `should-*.sh` constants |
@@ -177,3 +184,4 @@ fields, and the agent-stub pairing. A skill is not done until it passes.
 | "`~/.claude/skills/` works on my machine" | It works because Claude Code is installed. Under Pi that path does not exist, and nothing says so. |
 | "I'll add `invocation:` to the agent stub too" | There is no command to type; the protocol arrives by dispatch. |
 | "The description is close enough" | The description is the trigger. A skill that never fires is not installed, it is just present. |
+| "The marker is a comment, it just documents the override" | It is the only record of which skill the shim claims. Naming the wrong one means the override was never made and nothing says so. |

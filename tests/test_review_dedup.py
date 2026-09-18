@@ -182,7 +182,7 @@ class TestFetchBotComments:
             patch("gh.client.login", return_value="bot"),
             patch("gh.client.api_json", side_effect=[
                 None,
-                [{"body": "- **[M1]** **`b.go:1`** \u2014 review", "user": {"login": "bot"}}],
+                [{"body": "- **[M1]** **`b.go:1`** — review", "user": {"login": "bot"}}],
             ]),
         ):
             result = review_dedup._fetch_bot_comments("org/repo", "1")

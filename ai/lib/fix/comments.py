@@ -222,6 +222,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         fix_state.persist(
             self._state_for(content, cp, replies, summary, tracking),
             self.workdir, self.ctx, self.trail, resolved=list(replies.resolved),
+            summary_posted_url=summary.url or "",
+            replies_delivered=self._replies_delivered(),
         )
         self.result = _result_for(content, cp, replies, summary, run)
 
@@ -287,6 +289,19 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             return True
         return comment_replies.replies_drafted(
             self.round.already_addressed, self.round.dismissed)
+
+    def _replies_delivered(self) -> bool:
+        """Whether this round sent its replies for real, discharging the debt.
+
+        `_replies_pending` is False whenever publishing is on — both of its
+        conditions require the gate to be shut — so the gate being open is
+        exactly the case where `settle_fixed` and `post_triage_replies` sent
+        whatever this round's triage found rather than queuing it. A round
+        re-triages every thread still open, so a debt an earlier round left
+        behind is retried here too; nothing to send is nothing owed, and
+        either way the queue this round closes has nothing left in it.
+        """
+        return publishing.enabled()
 
 
 def _result_for(

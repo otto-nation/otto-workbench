@@ -365,13 +365,16 @@ class FixSummary(Domain):
         longer knows to send.  --finish clears the flag once the write lands.
 
         The reply queue and the deferred summary are the same shape, and for
-        the same reason.  Both are debts a phase other than the fix pass
-        discharges — the closeout drains the queue, the publisher posts the
-        summary — so a fix pass carries them false meaning "not raised this
-        round".  Letting that overwrite a true is how a `--settle` that re-armed
-        them lost the re-arm to the next `--fix`, leaving `--finish` to skip a
-        closeout the PR was still owed.  Only the phase that pays the debt
-        clears it, through `replies_sent` and `summary_posted`.
+        the same reason.  A round that says nothing about either — no fixed
+        thread, no drafted triage reply, a summary this round had nothing new
+        to post — carries them false meaning "not raised this round", and
+        letting that overwrite a true is how a `--settle` that re-armed them
+        lost the re-arm to the next `--fix`, leaving `--finish` to skip a
+        closeout the PR was still owed.  A round that does deliver the debt —
+        this fix pass sent the reply or posted the summary itself, same as
+        `--finish` would have — is not silent about it, so it clears the field
+        directly with `replies_sent`/`summary_posted` after this merge lands,
+        rather than through the OR above.
 
         Every other field is per-round and comes from this pass.
         """

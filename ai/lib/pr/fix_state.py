@@ -99,12 +99,24 @@ def persist(
     ctx: pr_context.ResolvedContext,
     trail: Trail | None,
     resolved: list[ThreadState] | None = None,
+    summary_posted_url: str = "",
+    replies_delivered: bool = False,
 ) -> None:
     """Save what the pass did, and what it resolved, in one write.
 
     `resolved` names the bucket each thread this pass resolved on GitHub came
     from. The comment counts were snapshotted and saved before the pass ran, so
     they only account for those resolutions if the delta is applied here.
+
+    `summary_posted_url` and `replies_delivered` discharge the two cycle-scoped
+    debts on the *merged* state, the same way `render_deferred_summary` and
+    `post_pending_fix_replies` already do. `FixSummary.merge_into` ORs
+    `summary_deferred`/`replies_pending` against the prior round on purpose — a
+    round that says nothing about a debt must not clear it — but a round that
+    itself delivers the debt says something, and the OR alone has no way to
+    read that: the fresh round's `False` is indistinguishable from silence once
+    it is folded in. Calling the discharge methods here, after the merge, is
+    what tells them apart.
 
     Not `pr_state.apply_state_update`, which takes a domain name and a dict.
     Two differences rule it out and only one is about typing: this hands over a
@@ -124,6 +136,10 @@ def persist(
             worktree_root=str(wt_path),
         )
         pr_state.apply(st, fix_summary)
+        if summary_posted_url:
+            st.fix.summary_posted(summary_posted_url)
+        if replies_delivered:
+            st.fix.replies_sent()
         st.comments.move_to_resolved(resolved or [], updated_at=pr_state.now_iso())
         pr_state.save_state(ctx.target_dir, st)
     except Exception as exc:

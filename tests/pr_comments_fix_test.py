@@ -351,3 +351,25 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
         merged = pr_comments_fix.FixSummary().merge_into(paid)
 
         assert merged.replies_pending is False
+
+    def test_a_round_that_delivers_the_debt_itself_is_not_left_owed(self):
+        """The merge alone cannot tell "delivered" from "silent" — the caller
+        that knows which one happened has to say so with an explicit discharge
+        after the merge, the way `fix_state.persist` does for the real pass.
+
+        Without that discharge, `later`'s honest ``False`` — this round posted
+        the summary and sent the reply itself, so neither is owed — gets OR'd
+        against `prior`'s stale ``True`` and comes out stuck true forever.
+        """
+        prior = pr_comments_fix.FixSummary(replies_pending=True, summary_deferred=True)
+        later = pr_comments_fix.FixSummary()
+
+        merged = later.merge_into(prior)
+        assert merged.replies_pending is True
+        assert merged.summary_deferred is True
+
+        merged.replies_sent()
+        merged.summary_posted("https://example.test/c/2")
+
+        assert merged.replies_pending is False
+        assert merged.summary_deferred is False

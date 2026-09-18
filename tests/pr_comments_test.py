@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from conftest import triaged_thread_record
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -34,8 +36,8 @@ REPO = "owner/repo"
 
 def test_fetch_threads_uses_the_paginated_fetcher():
     with patch.object(pr_comments, "fetch_review_threads",
-                      return_value=[{"id": "PRRT_1"}]) as fetcher:
-        assert fetch_threads("owner", "repo", 42) == [{"id": "PRRT_1"}]
+                      return_value=ThreadSet([{"id": "PRRT_1"}], complete=True)) as fetcher:
+        assert fetch_threads("owner", "repo", 42) == ThreadSet([{"id": "PRRT_1"}], complete=True)
     fetcher.assert_called_once_with("owner/repo", 42)
 
 
@@ -744,17 +746,7 @@ class TestRelativeTime:
 # were really deleted.
 
 
-def _triaged(summary: str) -> ThreadRecord:
-    return ThreadRecord(
-        state=ThreadState.NEW,
-        classification="suggestion",
-        reviewer="alice",
-        file="handler.go",
-        line=42,
-        summary=summary,
-        decided_at="2026-06-14T15:00:00Z",
-        last_seen_reply_id=1000,
-    )
+_triaged = triaged_thread_record
 
 
 def test_sync_keeps_a_triage_verdict_for_a_thread_the_fetch_could_not_reach():

@@ -120,8 +120,11 @@ def _run_threads(trail, args, ctx) -> int:
     trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
                data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
 
-    # Resolve verified threads if requested (or as part of triage)
-    if args.finish or args.triage:
+    # Resolve verified threads if requested (or as part of triage). A --finish
+    # that will refuse below because the fetch is short must refuse before
+    # this runs too — otherwise the "nothing was published" message it prints
+    # is false: GitHub already got the resolutions this loop sent.
+    if args.triage or (args.finish and fetched.complete):
         resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
             log.info(f"Resolved {resolved_count} verified threads")

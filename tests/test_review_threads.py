@@ -22,6 +22,7 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import (
     assert_no_worktree_exit, git_in, git_out, make_ctx, run_checked,
+    triaged_thread_record,
 )
 from agent import retry as agent_retry
 from fix import comment_checklist
@@ -9464,16 +9465,29 @@ class TestTruncatedThreadFetch:
             }]},
         }
 
+    def _verified_thread(self, tid):
+        """A thread GitHub already shows as acknowledged by the reviewer."""
+        return {
+            "id": tid, "isResolved": False, "path": "handler.go", "line": 42,
+            "comments": {"totalCount": 2, "nodes": [
+                {"id": f"c-{tid}-1", "databaseId": 1000,
+                 "author": {"login": "alice"}, "body": "Fix this",
+                 "createdAt": "2026-06-14T12:00:00Z"},
+                {"id": f"c-{tid}-2", "databaseId": 1001,
+                 "author": {"login": "isaacg"}, "body": "Done",
+                 "createdAt": "2026-06-14T13:00:00Z"},
+                {"id": f"c-{tid}-3", "databaseId": 1002,
+                 "author": {"login": "alice"}, "body": "lgtm",
+                 "createdAt": "2026-06-14T14:00:00Z"},
+            ]},
+        }
+
     def _seed_ledger(self, ctx):
         """A prior run's ledger, carrying a human verdict on each of two threads."""
         state_path = pc.threads_state_path(ctx.target_dir)
         state_path.parent.mkdir(parents=True, exist_ok=True)
         triaged = {
-            tid: pcs.ThreadRecord(
-                state=ThreadState.NEW, classification="suggestion", reviewer="alice",
-                file="handler.go", line=42, summary=f"verdict on {tid}",
-                decided_at="2026-06-14T15:00:00Z", last_seen_reply_id=1000,
-            )
+            tid: triaged_thread_record(f"verdict on {tid}")
             for tid in ("T_page1", "T_page2")
         }
         pcs.save_state(state_path, pcs.CommentsState(
@@ -9526,3 +9540,23 @@ class TestTruncatedThreadFetch:
 
         assert code == 0
         fin.assert_called_once()
+
+    def test_finish_on_an_incomplete_fetch_resolves_nothing_on_github(
+            self, tmp_path):
+        """The guard's "nothing was published" claim must stay true: a
+        verified thread in the short fetch must not get resolved on GitHub
+        before --finish bails out."""
+        ctx = self._ctx(tmp_path)
+        self._seed_ledger(ctx)
+        args = cli_review_threads._build_parser().parse_args(["--finish"])
+        with patch.object(
+                cli_review_threads, "fetch_pr_data",
+                return_value=self._pr_data(
+                    [self._verified_thread("T_verified")], complete=False)), \
+             patch.object(closeout, "finish_deferred_work") as fin, \
+             patch.object(pc, "resolve_thread") as resolve:
+            code = cli_review_threads._run_threads(MagicMock(), args, ctx)
+
+        assert code == 1
+        resolve.assert_not_called()
+        fin.assert_not_called()

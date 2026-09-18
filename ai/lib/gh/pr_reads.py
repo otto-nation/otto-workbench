@@ -64,6 +64,12 @@ GQL_MAX_THREAD_PAGES = 20
 # PR someone might actually open.
 GQL_MAX_ISSUE_COMMENT_PAGES = 10
 
+# The same guard for a single thread's comments, at GQL_THREAD_COMMENTS_LIMIT
+# per page: 20 pages is 200 comments against an observed maximum of 10 per
+# thread, so this bounds a misbehaving server rather than any thread someone
+# might actually leave.
+GQL_MAX_THREAD_COMMENT_PAGES = 20
+
 
 # ── What a review knows about its PR ────────────────────────────────────────
 
@@ -456,7 +462,7 @@ def _drain_thread_comments(
     page_info = first_page.get("pageInfo", {})
     seen: set[str] = set()
 
-    for _ in range(GQL_MAX_THREAD_PAGES):
+    for _ in range(GQL_MAX_THREAD_COMMENT_PAGES):
         if not page_info.get("hasNextPage"):
             return nodes
         cursor = page_info.get("endCursor")
@@ -476,10 +482,10 @@ def _drain_thread_comments(
         nodes.extend(page.get("nodes", []))
         page_info = page.get("pageInfo", {})
 
-    # ceiling: a thread past GQL_MAX_THREAD_PAGES pages of comments is still
-    # short, and says so rather than reading as complete. Upgrade trigger:
-    # raise the bound once a real thread trips it — the warning above names
-    # the thread when one does.
+    # ceiling: a thread past GQL_MAX_THREAD_COMMENT_PAGES pages of comments is
+    # still short, and says so rather than reading as complete. Upgrade
+    # trigger: raise the bound once a real thread trips it — the warning above
+    # names the thread when one does.
     return None if page_info.get("hasNextPage") else nodes
 
 

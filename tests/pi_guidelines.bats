@@ -66,7 +66,7 @@ _run_step() {
 
   _run_step
   grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
-  ! grep -q "GO RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+  run ! grep -q "GO RULE BODY" "$HOME/.pi/agent/AGENTS.md"
 }
 
 @test "a rule scoped away from pi is left out" {
@@ -74,7 +74,10 @@ _run_step() {
   _rule bash-tool.md 'harness: [claude]' "CLAUDE ONLY BODY"
 
   _run_step
-  ! grep -q "CLAUDE ONLY BODY" "$HOME/.pi/agent/AGENTS.md"
+  # The positive half is what makes the negative one mean something: without it
+  # the assertion holds on a run that wrote no context file at all.
+  grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+  run ! grep -q "CLAUDE ONLY BODY" "$HOME/.pi/agent/AGENTS.md"
 }
 
 @test "the context file is written on a machine that has no Claude Code install" {
@@ -118,7 +121,7 @@ _run_step() {
 
   _run_step
   grep -q "OVERRIDE BODY" "$HOME/.pi/agent/AGENTS.md"
-  ! grep -q "REPO BODY" "$HOME/.pi/agent/AGENTS.md"
+  run ! grep -q "REPO BODY" "$HOME/.pi/agent/AGENTS.md"
 }
 
 @test "an empty paths list is not a scope" {
@@ -153,7 +156,8 @@ _run_step() {
   _rule general.md 'description: irrelevant to pi' "GENERAL RULE BODY"
 
   _run_step
-  ! grep -q "description: irrelevant to pi" "$HOME/.pi/agent/AGENTS.md"
+  grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+  run ! grep -q "description: irrelevant to pi" "$HOME/.pi/agent/AGENTS.md"
 }
 
 @test "the file names its source and its escape hatch" {
@@ -196,7 +200,8 @@ _run_step() {
 
   rm "$RULES/doomed.md"
   _run_step
-  ! grep -q "DOOMED BODY" "$HOME/.pi/agent/AGENTS.md"
+  grep -q "GENERAL RULE BODY" "$HOME/.pi/agent/AGENTS.md"
+  run ! grep -q "DOOMED BODY" "$HOME/.pi/agent/AGENTS.md"
 }
 
 @test "AGENTS.override.md is never touched" {

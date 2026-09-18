@@ -623,6 +623,39 @@ class ReportThread:
     # "cannot tell", which the upsert reads as post rather than edit.
     my_login: str = ""
 
+    @classmethod
+    def from_node(
+        cls, node: dict, my_login: str = "", *,
+        state: ThreadState = ThreadState.NEW,
+        classification: str | None = None,
+        reviewer: str = "",
+    ) -> "ReportThread":
+        """A raw GraphQL review-thread node as a report thread.
+
+        The five fields GitHub owns — the node id, its comments, whether it is
+        resolved, and the file and line it is anchored to — are read here and
+        nowhere else, so a change to the GraphQL shape has one place to land.
+
+        The other three are keyword arguments because the two callers answer
+        them differently and both answers are correct. The report path takes
+        state, classification and reviewer from the synced `ThreadRecord`, which
+        is what carries a triage verdict across runs; the reply path has no
+        record to read and computes state from the conversation it just fetched.
+        A factory that recomputed state for both would discard the verdict on
+        the report path.
+        """
+        return cls(
+            id=node.get("id", ""),
+            state=state,
+            classification=classification,
+            reviewer=reviewer,
+            comments=node.get("comments", {}).get("nodes", []),
+            is_resolved=node.get("isResolved", False),
+            file=node.get("path", ""),
+            line=node.get("line"),
+            my_login=my_login,
+        )
+
 
 def finding_location(entry: CommentItem | ReportThread) -> str:
     """Reviewer and code location of an entry, or "" when it has neither.

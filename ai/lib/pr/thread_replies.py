@@ -563,15 +563,10 @@ def find_reply_target(
         if data.get("id") != target and wanted not in ids:
             continue
         is_resolved = data.get("isResolved", False)
-        return ReportThread(
-            id=data.get("id", ""),
+        return ReportThread.from_node(
+            data, my_login,
             state=pc.compute_thread_state(comments, is_resolved, my_login),
             reviewer=(comments[0].get("author") or {}).get("login", "") if comments else "",
-            comments=comments,
-            is_resolved=is_resolved,
-            file=data.get("path", ""),
-            line=data.get("line"),
-            my_login=my_login,
         )
     return None
 

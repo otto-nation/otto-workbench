@@ -403,6 +403,35 @@ def _count(outcomes: list[ItemOutcome], outcome: FixOutcome) -> int:
     return sum(1 for o in outcomes if o.outcome is outcome)
 
 
+def _record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> None:
+    """Record the fixes claimed with no evidence behind them.
+
+    A FIXED box asks for the test that holds the change, and a pass may tick it
+    anyway — the ask is a prompt contract, not a parse-time gate. The parse says
+    so on stderr as it reads each one, which serves the operator watching the
+    run and nobody afterwards. This is the durable half: one event per pass,
+    naming the items, so `otto-log show` can answer what a pass claimed without
+    evidence long after the terminal it scrolled past is gone.
+
+    Emitted here rather than from the parse because this is where the trail is,
+    and because the question is about the pass rather than about any one box:
+    `tracking._record_verdict` decides a single verdict and is kept to that.
+    """
+    if trail is None:
+        return
+    unevidenced = [
+        o.id for o in outcomes
+        if o.outcome is FixOutcome.FIXED and not o.reason
+    ]
+    if not unevidenced:
+        return
+    trail.warn(
+        "fix_unevidenced",
+        f"{len(unevidenced)} fix(es) ticked with no test evidence",
+        data={"items": unevidenced},
+    )
+
+
 def _settle(
     adapter: FixAdapter, batches: list[_Batch], by_id: dict[str, FixItem],
     turns: int, trail: Trail | None,
@@ -678,6 +707,11 @@ def run(
     by_id = {item.id: item for item in items}
 
     settled = _settle(adapter, results, by_id, max_turns, trail)
+
+    # Before the gate runs, so the record is of what the pass claimed rather
+    # than of what survived being checked: a fix the gate later falsifies is a
+    # different finding from one that never offered evidence at all.
+    _record_unevidenced(settled.outcomes, trail)
 
     # Before the scope is read and before anything is committed: a fix the gate
     # falsifies must not reach `landing` as a fix, or the commit and the record

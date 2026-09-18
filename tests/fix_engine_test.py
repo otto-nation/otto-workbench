@@ -904,3 +904,76 @@ def test_a_domain_that_declares_no_gate_phase_still_runs(tmp_path, landed, head)
     _run(adapter, verify=run_verify)
 
     assert seen["phase"] is adapter.phase
+
+
+# ── the unevidenced claim ───────────────────────────────────────────────────
+
+
+class _RecordingTrail:
+    """A trail that keeps what it was told, so a test can read it back."""
+
+    def __init__(self):
+        self.events = []
+
+    def info(self, action, detail, data=None):
+        self.events.append(("info", action, detail, data or {}))
+
+    def warn(self, action, detail, data=None):
+        self.events.append(("warn", action, detail, data or {}))
+
+    def error(self, action, detail, data=None):
+        self.events.append(("error", action, detail, data or {}))
+
+
+def _warned(trail):
+    return [e for e in trail.events if e[0] == "warn" and e[1] == "fix_unevidenced"]
+
+
+def test_a_fix_claimed_without_evidence_reaches_the_trail(tmp_path, landed, head):
+    """The durable half of the record, which stderr alone does not give.
+
+    A FIXED box ticked with the `<why>` placeholder still standing is read as
+    fixed, so the pass claims work it offered nothing to support. That claim is
+    the one an operator most wants to audit later, and before this it existed
+    only as a line on a terminal nobody kept.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    trail = _RecordingTrail()
+
+    _run(adapter, trail=trail, run_fix=_answer(adapter))
+
+    warned = _warned(trail)
+    assert len(warned) == 1
+    assert warned[0][3]["items"] == ["i0"]
+
+
+def test_an_evidenced_fix_is_not_reported_as_unevidenced(tmp_path, landed, head):
+    """The negative control: the event must not fire on the ordinary path."""
+    adapter = StubAdapter(tmp_path, count=1)
+    trail = _RecordingTrail()
+
+    _run(adapter, trail=trail,
+         run_fix=_answer(adapter, reason="covered by test_x"))
+
+    assert _warned(trail) == []
+
+
+def test_every_unevidenced_item_is_named_not_just_counted(tmp_path, landed, head):
+    """One event per pass, naming each item — a count alone is not auditable."""
+    adapter = StubAdapter(tmp_path, count=3)
+    trail = _RecordingTrail()
+
+    _run(adapter, trail=trail, run_fix=_answer(adapter))
+
+    warned = _warned(trail)
+    assert len(warned) == 1
+    assert warned[0][3]["items"] == ["i0", "i1", "i2"]
+
+
+def test_a_pass_with_no_trail_still_runs(tmp_path, landed, head):
+    """The trail is optional everywhere else in the engine; it stays so here."""
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(adapter, run_fix=_answer(adapter))
+
+    assert [o.outcome for o in run.outcomes] == [FixOutcome.FIXED]

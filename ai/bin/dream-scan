@@ -381,9 +381,7 @@ def main() -> None:
 
         cutoff = datetime.now() - timedelta(days=args.days)
         discovered = sessions.discover_sessions(home, since=cutoff)
-        counts = {h.name: 0 for h in sessions.HARNESSES}
-        for session in discovered:
-            counts[session.harness] = counts.get(session.harness, 0) + 1
+        counts = sessions.session_counts(home, since=cutoff)
         log.info(f"Sessions: {counts}")
 
         signals = scan_sessions(discovered)

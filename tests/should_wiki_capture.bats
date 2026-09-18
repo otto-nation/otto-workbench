@@ -44,7 +44,10 @@ _stub_wiki() {
 
 # _stamp_file DIR — where the gate records DIR's repo cooldown. Spelled out
 # rather than sourced, so the test would catch the location or the slug
-# transform changing out from under the gate.
+# transform changing out from under the gate. The encoding matches
+# gate_pi_dir's on purpose, for the same reason: spelled out here rather than
+# delegated, so a change to either drifts into a failing test instead of
+# silently staying in sync.
 _stamp_file() {
   local encoded
   encoded="$(printf '%s' "${1#/}" | tr -c 'A-Za-z0-9_' '-')"

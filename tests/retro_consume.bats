@@ -218,7 +218,7 @@ PY
 # ── retro-complete passes the ID through ────────────────────────────────────
 
 @test "retro-complete without a scan id refuses before banking the window" {
-  HOME="$TMPDIR/home" mkdir -p "$TMPDIR/home/.claude"
+  mkdir -p "$TMPDIR/home/.claude"
 
   HOME="$TMPDIR/home" run "$RETRO_COMPLETE"
   [[ "$status" -eq 2 ]]

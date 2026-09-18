@@ -49,10 +49,15 @@ _write_stamp() {
   echo "$1" > "$(_stamp_file)"
 }
 
+# _four_days_ago / _one_day_ago — the overdue and recent cooldown offsets
+# every case below writes into the stamp, named here so they are stated once
+# rather than recomputed inline in every test body.
+_four_days_ago() { printf '%s' "$(( $(date +%s) - 345600 ))"; }
+_one_day_ago() { printf '%s' "$(( $(date +%s) - 86400 ))"; }
+
 @test "should-retro: overdue (4 days) with enough sessions → fires" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
   _make_project "test-proj" 6
@@ -62,9 +67,8 @@ _write_stamp() {
 }
 
 @test "should-retro: recent (1 day ago) → does not fire" {
-  local now
-  now=$(date +%s)
-  local one_day_ago=$((now - 86400))
+  local one_day_ago
+  one_day_ago=$(_one_day_ago)
 
   _write_stamp "$one_day_ago"
   _make_project "test-proj" 10
@@ -74,9 +78,8 @@ _write_stamp() {
 }
 
 @test "should-retro: overdue but only 2 sessions → does not fire" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
   _make_project "test-proj" 2
@@ -98,9 +101,8 @@ _write_stamp() {
 }
 
 @test "should-retro: exactly 5 sessions meets minimum" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
   _make_project "test-proj" 5
@@ -110,9 +112,8 @@ _write_stamp() {
 }
 
 @test "should-retro: 4 sessions does not meet minimum" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
   _make_project "test-proj" 4
@@ -122,9 +123,8 @@ _write_stamp() {
 }
 
 @test "should-retro: sessions older than last retro are not counted" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
   _make_project "test-proj" 6 "202001010000"
@@ -134,9 +134,8 @@ _write_stamp() {
 }
 
 @test "should-retro: uses global timestamp, checks sessions across any project" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
 
@@ -148,9 +147,8 @@ _write_stamp() {
 }
 
 @test "should-retro: skips repos without memory/ directory" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
 
@@ -165,9 +163,8 @@ _write_stamp() {
 # ── Harness and worktree coverage ────────────────────────────────────────────
 
 @test "should-retro: Pi sessions count toward the minimum" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
 
@@ -181,9 +178,8 @@ _write_stamp() {
 }
 
 @test "should-retro: sessions spread across worktrees count toward one repo" {
-  local now
-  now=$(date +%s)
-  local four_days_ago=$((now - 345600))
+  local four_days_ago
+  four_days_ago=$(_four_days_ago)
 
   _write_stamp "$four_days_ago"
 
@@ -203,9 +199,7 @@ _write_stamp() {
 # ── The completion script and the gate agree on the stamp ────────────────────
 
 @test "retro-complete settles the gate it is paired with" {
-  local now
-  now=$(date +%s)
-  _write_stamp "$((now - 345600))"
+  _write_stamp "$(_four_days_ago)"
   _make_project "test-proj" 6
 
   run "$SHOULD_RETRO"

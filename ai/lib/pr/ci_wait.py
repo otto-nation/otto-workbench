@@ -99,9 +99,8 @@ def poll_until_complete(
 
         merged = fetched.merged
         new_failed_jobs = [
-            j for j in merged.get("jobs", [])
-            if j.get("conclusion") in run_reads.FAILURE_CONCLUSIONS
-            and j.get("databaseId", 0) not in reported_job_ids
+            j for j in ci_runs.failed_jobs(merged)
+            if j.get("databaseId", 0) not in reported_job_ids
         ]
         if new_failed_jobs:
             emit_partial(repo, merged, new_failed_jobs, reported_job_ids, trail)

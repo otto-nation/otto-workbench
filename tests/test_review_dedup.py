@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -357,6 +358,52 @@ class TestFetchBotReviews:
         found = review_dedup.fetch_bot_reviews("org/repo", "1")
         assert found.reviews == []
         assert found.looked is True
+
+    def _graphql_reviews(self, nodes, total):
+        return CmdResult(0, json.dumps({"data": {"repository": {"pullRequest": {
+            "reviews": {"totalCount": total, "nodes": nodes},
+        }}}}))
+
+    def test_truncated_reviews_are_warned_about(self, monkeypatch, capsys):
+        """A bot review past the page reads here as one never posted.
+
+        Dedup then posts its findings a second time. Nothing in a short page
+        distinguishes it from a whole one, so `totalCount` is the only thing
+        that can raise the warning.
+        """
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.graphql", lambda *a, **k: self._graphql_reviews(
+            [{"databaseId": 1, "state": "COMMENTED", "body": "review text",
+              "author": {"login": "bot"}}],
+            total=142,
+        ))
+        result = review_dedup.fetch_bot_reviews("org/repo", "1")
+        assert [r["id"] for r in result.reviews] == [1]
+        assert "142" in capsys.readouterr().err
+
+    def test_complete_reviews_are_not_warned_about(self, monkeypatch, capsys):
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.graphql", lambda *a, **k: self._graphql_reviews(
+            [{"databaseId": 1, "state": "COMMENTED", "body": "review text",
+              "author": {"login": "bot"}}],
+            total=1,
+        ))
+        review_dedup.fetch_bot_reviews("org/repo", "1")
+        assert capsys.readouterr().err == ""
+
+    def test_an_unreadable_response_says_so(self, monkeypatch, capsys):
+        """An unparseable answer is a failed lookup, not a PR with no reviews.
+
+        The two must not collapse: dedup reads "no reviews" as nothing to match
+        against and posts the whole review again, so a parse failure that
+        returned an empty list would republish silently.
+        """
+        monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
+        monkeypatch.setattr("gh.client.graphql", lambda *a, **k: CmdResult(0, "not json"))
+        result = review_dedup.fetch_bot_reviews("org/repo", "1")
+        assert result.looked is False
+        assert result.reviews == []
+        assert "dedup has nothing to match against" in capsys.readouterr().err
 
 
 class TestCheckReviewAlreadyPosted:

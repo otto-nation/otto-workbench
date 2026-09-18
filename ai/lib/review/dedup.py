@@ -22,6 +22,7 @@ from dataclasses import dataclass, field, replace
 
 from core import log
 from gh import client as gh_client
+from gh import pr_reads
 from gh.pr_reads import PRData, GQL_REVIEWS_LIMIT
 
 from review.format import CLASS_SKIPPED
@@ -241,8 +242,10 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotR
     Uses GraphQL to detect minimized (hidden/outdated) reviews and exclude
     them — the REST API does not expose minimizedReason.
 
-    Note: fetches at most the last 100 reviews. PRs with more than 100 reviews
-    may miss older bot reviews — cursor-based pagination is not implemented.
+    Fetches at most the last `GQL_REVIEWS_LIMIT` reviews and warns when there
+    were more: a bot review past the cut reads here as one never posted, and
+    its findings are posted a second time. The warning is what makes that
+    duplicate explicable — cursor-based pagination is not implemented.
     """
     if pr_data is not None:
         return BotReviews(pr_data.bot_reviews_visible(pr_data.viewer_login))
@@ -259,6 +262,7 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotR
       repository(owner: $owner, name: $name) {{
         pullRequest(number: $pr) {{
           reviews(last: {GQL_REVIEWS_LIMIT}) {{
+            totalCount
             nodes {{
               databaseId
               state
@@ -292,10 +296,13 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotR
 
     try:
         data = json.loads(result.stdout)
-        nodes = data["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
+        reviews = data["data"]["repository"]["pullRequest"]["reviews"]
+        nodes = reviews["nodes"]
     except (json.JSONDecodeError, KeyError, TypeError):
         log.warn(f"Could not parse {repo}#{pr}'s reviews — dedup has nothing to match against")
         return BotReviews(looked=False)
+
+    pr_reads.warn_if_truncated(reviews, f"{repo}#{pr} reviews")
 
     return BotReviews([
         {"id": n["databaseId"], "body": n.get("body", ""), "state": n.get("state", "")}

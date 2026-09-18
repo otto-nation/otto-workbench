@@ -14,7 +14,7 @@ if str(LIB_DIR) not in sys.path:
 
 from core.proc import CmdResult
 from gh.pr_reads import (
-    PRData, fetch_pr_data, fetch_review_threads,
+    PRData, fetch_pr_data, fetch_review_threads, warn_if_truncated,
     GQL_MAX_THREAD_PAGES, GQL_THREAD_COMMENTS_LIMIT,
     GQL_REVIEWS_LIMIT, GQL_COMMITS_LIMIT,
 )
@@ -482,6 +482,47 @@ class TestFetchPrData:
         assert pd.review_threads[0]["path"] == "a.py"
 
     @patch("gh.client.graphql")
+    def test_truncated_reviews_are_warned_about(self, mock_gql, capsys):
+        """A short page of reviews is indistinguishable from a whole one.
+
+        `reviews` is paged with `last:`, so the ones lost are the oldest — and
+        an older bot review falling off is read by dedup as a finding never
+        posted, which it then posts again. The warning is what makes that
+        duplicate explicable.
+        """
+        review = _make_review(database_id=10, login="alice")
+        mock_gql.return_value = CmdResult(0, self._graphql_response(
+            reviews={"totalCount": 137, "nodes": [review]},
+        ))
+        fetch_pr_data("owner/repo", "1")
+        err = capsys.readouterr().err
+        assert "137" in err
+        assert "reviews" in err
+
+    @patch("gh.client.graphql")
+    def test_complete_reviews_are_not_warned_about(self, mock_gql, capsys):
+        """The warning must fire on truncation, not on every read."""
+        review = _make_review(database_id=10, login="alice")
+        mock_gql.return_value = CmdResult(0, self._graphql_response(
+            reviews={"totalCount": 1, "nodes": [review]},
+        ))
+        fetch_pr_data("owner/repo", "1")
+        assert "reviews" not in capsys.readouterr().err
+
+    @patch("gh.client.graphql")
+    def test_truncated_commits_are_warned_about(self, mock_gql, capsys):
+        """`new_commit_count` scans these, and the headlines feed the review prompt."""
+        mock_gql.return_value = CmdResult(0, self._graphql_response(
+            commits={"totalCount": 212, "nodes": [
+                {"commit": {"oid": "deadbeef", "messageHeadline": "feat: x"}},
+            ]},
+        ))
+        fetch_pr_data("owner/repo", "1")
+        err = capsys.readouterr().err
+        assert "212" in err
+        assert "commits" in err
+
+    @patch("gh.client.graphql")
     def test_graphql_failure_exits(self, mock_gql):
         mock_gql.return_value = _GQL_FAILED
         with pytest.raises(SystemExit):
@@ -553,6 +594,23 @@ class TestFetchPrData:
         pd = fetch_pr_data("owner/repo", "1")
         assert [t["id"] for t in pd.review_threads] == ["PRT_1", "PRT_2"]
         assert mock_gql.call_args_list[1].kwargs["variables"]["endCursor"] == "cur1"
+
+
+# ── Truncation detection ────────────────────────────────────────────
+
+class TestWarnIfTruncated:
+    def test_reports_a_short_page(self, capsys):
+        assert warn_if_truncated({"totalCount": 5, "nodes": [1, 2]}, "x reviews") is True
+        assert "x reviews" in capsys.readouterr().err
+
+    def test_silent_when_whole(self, capsys):
+        assert warn_if_truncated({"totalCount": 2, "nodes": [1, 2]}, "x") is False
+        assert capsys.readouterr().err == ""
+
+    def test_silent_without_a_total_count(self, capsys):
+        """A connection that did not ask for it gets today's silence, not noise."""
+        assert warn_if_truncated({"nodes": [1, 2]}, "x") is False
+        assert capsys.readouterr().err == ""
 
 
 # ── Review thread pagination ─────────────────────────────────────────────────

@@ -427,27 +427,6 @@ query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
 """
 
 
-def _warn_truncated_connection(
-    connection: dict | None, limit: int, what: str, consequence: str,
-) -> None:
-    """Warn when a connection held more than the page asked for.
-
-    These two are paged rather than paginated: `reviews` and `commits` take the
-    newest `last: N`, which is the right end for every caller here, so a PR
-    past the limit loses its oldest entries rather than its newest. Neither
-    asked for `totalCount`, so the loss was invisible — the warning is the
-    whole fix, because raising the limits costs every PR and paginating them
-    buys nothing any caller reads.
-    """
-    if not connection:
-        return
-    total = connection.get("totalCount", 0)
-    got = len(connection.get("nodes", []))
-    if total > got:
-        log.warn(f"{what}: {total} exist but only the newest {got} were read "
-                 f"(limit {limit}) — {consequence}")
-
-
 @dataclass(frozen=True)
 class ThreadSet:
     """Every review thread on a PR, and whether that is actually all of them.
@@ -471,6 +450,39 @@ class ThreadSet:
 
     threads: list[dict] = field(default_factory=list)
     complete: bool = True
+
+
+def warn_if_truncated(
+    connection: dict, what: str,
+    consequence: str = "reads over the older ones are incomplete",
+) -> bool:
+    """Report a `last:`-paged connection that came back short of its totalCount.
+
+    Returns whether it truncated, so a caller with something better to do than
+    warn may. A page of nodes looks the same whole or cut off, and `totalCount`
+    is the only thing in the answer that tells the two apart — without it the
+    reads below the cut are wrong with no symptom.
+
+    Every caller pages with `last:`, so the entries missing are the oldest and
+    the newest are intact. That is what keeps the truncation a warning rather
+    than a failure: review verdicts, the pending-review lookup and the
+    new-commit scan all read the recent end. The exposure is dedup, which looks
+    for a finding it posted long enough ago to have fallen off and, not finding
+    it, posts it again — so the warning is what makes a duplicate post
+    explicable instead of inexplicable. `consequence` names what a specific
+    caller loses when that happens; the default is generic for a caller with
+    nothing more specific to say.
+
+    Absent `totalCount` this reports nothing: a caller that did not ask for it
+    gets today's silence rather than a warning on every read.
+    """
+    total = connection.get("totalCount", 0)
+    nodes = connection.get("nodes", [])
+    if total <= len(nodes):
+        return False
+    log.warn(f"{what}: {total} exist but only the newest {len(nodes)} were read "
+             f"— {consequence}")
+    return True
 
 
 def _complete_truncated_comments(threads: list[dict]) -> bool:
@@ -884,31 +896,32 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
     viewer = data.get("data", {}).get("viewer", {})
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest", {})
 
+    reviews = pr_node.get("reviews") or {}
+    commits = pr_node.get("commits") or {}
+    # The two connections nothing pages: `last:` keeps the newest, which every
+    # caller wants, so the oldest falling off is reported rather than fetched.
+    warn_if_truncated(
+        reviews, f"{repo}#{pr} reviews",
+        "an older bot review may be missed, so dedup can repost its findings")
+    warn_if_truncated(
+        commits, f"{repo}#{pr} commits",
+        "the drift count is a floor rather than the real number")
+
     found = _drain_thread_pages(owner, name, int(pr), pr_node.get("reviewThreads") or {})
     comments_whole = _complete_truncated_comments(found.threads)
     issue_comments, issue_whole = _drain_issue_comments(
         owner, name, int(pr), pr_node.get("comments") or {})
-    # The two connections nothing pages: `last:` keeps the newest, which every
-    # caller wants, so the oldest falling off is reported rather than fetched.
-    _warn_truncated_connection(
-        pr_node.get("reviews"), GQL_REVIEWS_LIMIT,
-        f"{repo}#{pr} reviews",
-        "an older bot review may be missed, so dedup can repost its findings")
-    _warn_truncated_connection(
-        pr_node.get("commits"), GQL_COMMITS_LIMIT,
-        f"{repo}#{pr} commits",
-        "the drift count is a floor rather than the real number")
 
     return PRData(
         viewer_login=viewer.get("login", ""),
         head_sha=pr_node.get("headRefOid", ""),
         head_ref=pr_node.get("headRefName", ""),
         base_ref=pr_node.get("baseRefName", ""),
-        reviews=pr_node.get("reviews", {}).get("nodes", []),
+        reviews=reviews.get("nodes", []),
         review_threads=found.threads,
         threads_complete=found.complete and comments_whole and issue_whole,
         issue_comments=issue_comments,
-        commits=pr_node.get("commits", {}).get("nodes", []),
+        commits=commits.get("nodes", []),
         author=(pr_node.get("author") or {}).get("login", ""),
         is_draft=pr_node.get("isDraft", False),
         labels=[n["name"] for n in pr_node.get("labels", {}).get("nodes", [])],

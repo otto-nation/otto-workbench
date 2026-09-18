@@ -54,14 +54,33 @@ def _dedupe_items(items: tuple[ci.FailureItem, ...]) -> tuple[ci.FailureItem, ..
     return tuple(kept)
 
 
+def failed_jobs(run_data: dict) -> list[dict]:
+    """The jobs in one run's payload that GitHub concluded in a failure state.
+
+    One definition, read by the report and by the merge alike, so that what a
+    merged conclusion asserts and what the report can name cannot come apart:
+    a run's claim to have failed is the jobs this finds under it.
+    """
+    return [j for j in run_data.get("jobs", []) if j.get("conclusion") in FAILURE_CONCLUSIONS]
+
+
+def _claims_failure(run_data: dict) -> bool:
+    """Whether a run concluded in a failure state with a failed job to show for it.
+
+    The invariant the merged conclusion rests on. A conclusion is a word GitHub
+    writes on the run; a failed job is the thing a report can name and a fix
+    pass can act on, so the word alone does not carry a verdict.
+    """
+    return run_data.get("conclusion") in FAILURE_CONCLUSIONS and bool(failed_jobs(run_data))
+
+
 def parse_run(repo: str, run_data: dict) -> ci.RunState:
     """Parse gh run data into a RunState with classified failures."""
-    failed_jobs = [j for j in run_data.get("jobs", []) if j.get("conclusion") in FAILURE_CONCLUSIONS]
     failures: dict[str, ci.FailureGroup] = {}
 
     with ThreadPoolExecutor(max_workers=5) as pool:
         results = list(pool.map(
-            lambda j: ci_annotations.fetch_job_failure(repo, j, run_data), failed_jobs,
+            lambda j: ci_annotations.fetch_job_failure(repo, j, run_data), failed_jobs(run_data),
         ))
 
     for r in results:
@@ -90,8 +109,18 @@ def merge_runs(run_data_list: list[dict]) -> dict | None:
     """Merge multiple workflow run dicts into a single combined run.
 
     The first run becomes the primary; its conclusion is overridden to
-    "failure" if any run has a real failure conclusion.  Jobs from all
-    runs are collected into the primary's "jobs" list.
+    "failure" if any run failed a job.  Jobs from all runs are collected into
+    the primary's "jobs" list.
+
+    A failure conclusion alone does not earn the override — the run must have a
+    failed job under it. GitHub concludes a run `action_required` when it is
+    held awaiting manual approval, and `startup_failure` or `stale` when it
+    never got going, and each of those runs carries no jobs at all. Overriding
+    on the conclusion alone turned every one of them into a merged `failure`
+    over an empty failure list: a red verdict naming nothing, which readiness
+    reports as a blocker and no fix pass can clear. The run's own conclusion
+    still stands where it leads the merge, so what GitHub said is reported —
+    it is only the merged verdict that waits for evidence.
     """
     if not run_data_list:
         return None
@@ -99,7 +128,7 @@ def merge_runs(run_data_list: list[dict]) -> dict | None:
     all_jobs = []
     any_incomplete = False
     for rd in run_data_list:
-        if rd.get("conclusion") in FAILURE_CONCLUSIONS:
+        if _claims_failure(rd):
             primary["conclusion"] = "failure"
         if rd.get("status") not in (None, "completed"):
             any_incomplete = True
@@ -110,7 +139,11 @@ def merge_runs(run_data_list: list[dict]) -> dict | None:
     primary["jobs"] = all_jobs
     if any_incomplete:
         primary["status"] = "in_progress"
-        if primary.get("conclusion") not in FAILURE_CONCLUSIONS:
+        # Asked of the merged payload, so the jobs weighed are every run's. A
+        # conclusion is kept only where a failed job stands behind it; anything
+        # else is cleared, because a run still going has not reached a verdict
+        # and a word with no evidence under it is not one worth carrying.
+        if not _claims_failure(primary):
             primary["conclusion"] = ""
     return primary
 
@@ -141,6 +174,15 @@ def _primary_first(payloads: list[dict]) -> list[dict]:
 
     Order is otherwise preserved, and a run with jobs leads normally however it
     concluded: the jobs are the evidence, and a run that has them has a claim.
+
+    # ceiling: only `cancelled` is demoted, so a jobless run in another
+    # non-success state still leads over a successful sibling and carries its
+    # own word into the merged conclusion. Demoting those too would report the
+    # commit green while its CI has not been permitted to start, which is the
+    # worse error of the two. Upgrade trigger: a commit is observed carrying a
+    # jobless `action_required`, `stale` or `startup_failure` run alongside a
+    # run that passed — approval-gated workflows are currently the only run at
+    # their own commit, which is what keeps this latent.
     """
     lead_index = next(
         (i for i, p in enumerate(payloads) if p.get("conclusion") != "cancelled" or p.get("jobs")),

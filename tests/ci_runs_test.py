@@ -44,10 +44,64 @@ def test_merge_runs_cancelled_does_not_poison_conclusion():
 def test_merge_runs_real_failure_overrides():
     runs = [
         {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
-        {"_run_id": 2, "databaseId": 2, "conclusion": "failure", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "failure",
+         "jobs": [{"name": "test", "status": "completed", "conclusion": "failure"}]},
     ]
     result = ci_runs.merge_runs(runs)
     assert result["conclusion"] == "failure"
+
+
+def test_merge_runs_jobless_action_required_does_not_poison_conclusion():
+    """An approval-gated run has no jobs, so it can name no failure.
+
+    GitHub concludes a run `action_required` while it waits for someone to
+    approve it, and such a run carries no jobs at all. Overriding on that
+    conclusion reported the commit `failure` over an empty failure list — a
+    red verdict naming nothing, which no fix pass can clear.
+    """
+    runs = [
+        {"_run_id": 1, "databaseId": 1, "conclusion": "success",
+         "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "action_required", "jobs": []},
+    ]
+    result = ci_runs.merge_runs(runs)
+    assert result["conclusion"] == "success"
+
+
+def test_merge_runs_jobless_startup_failure_and_stale_do_not_poison_conclusion():
+    """The rule is the missing evidence, not the particular word for it."""
+    for conclusion in ("startup_failure", "stale"):
+        runs = [
+            {"_run_id": 1, "databaseId": 1, "conclusion": "success",
+             "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]},
+            {"_run_id": 2, "databaseId": 2, "conclusion": conclusion, "jobs": []},
+        ]
+        assert ci_runs.merge_runs(runs)["conclusion"] == "success", conclusion
+
+
+def test_merge_runs_action_required_with_a_failed_job_still_overrides():
+    """A *job* in that state has genuinely run, so its run keeps its claim.
+
+    `FAILURE_CONCLUSIONS` is the job-level filter too, and there the word means
+    something the run-level use does not: only the jobless run is declined.
+    """
+    runs = [
+        {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "action_required",
+         "jobs": [{"name": "deploy", "status": "completed", "conclusion": "action_required"}]},
+    ]
+    result = ci_runs.merge_runs(runs)
+    assert result["conclusion"] == "failure"
+
+
+def test_merge_runs_a_failed_job_under_a_passing_run_still_overrides():
+    """The jobs are the evidence, so they are what the override reads."""
+    runs = [
+        {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "failure",
+         "jobs": [{"name": "lint", "status": "completed", "conclusion": "timed_out"}]},
+    ]
+    assert ci_runs.merge_runs(runs)["conclusion"] == "failure"
 
 
 def test_merge_runs_empty_list():
@@ -90,12 +144,30 @@ def test_merge_runs_in_progress_clears_success():
 def test_merge_runs_in_progress_preserves_failure():
     """A real failure should still surface even when another run is in-progress."""
     runs = [
-        {"_run_id": 1, "databaseId": 1, "status": "completed", "conclusion": "failure", "jobs": []},
+        {"_run_id": 1, "databaseId": 1, "status": "completed", "conclusion": "failure",
+         "jobs": [{"name": "test", "status": "completed", "conclusion": "failure"}]},
         {"_run_id": 2, "databaseId": 2, "status": "in_progress", "conclusion": None, "jobs": []},
     ]
     result = ci_runs.merge_runs(runs)
     assert result["conclusion"] == "failure"
     assert result["status"] == "in_progress"
+
+
+def test_merge_runs_in_progress_clears_a_jobless_failure_conclusion():
+    """A run still going has reached no verdict, and the finished one named nothing.
+
+    The conclusion was kept purely because the word was in `FAILURE_CONCLUSIONS`,
+    so an approval-gated run beside a running one reported the commit red while
+    its real CI had not finished.
+    """
+    runs = [
+        {"_run_id": 1, "databaseId": 1, "status": "completed",
+         "conclusion": "action_required", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "status": "in_progress", "conclusion": None, "jobs": []},
+    ]
+    result = ci_runs.merge_runs(runs)
+    assert result["status"] == "in_progress"
+    assert result["conclusion"] == ""
 
 
 # ── fetch_merged ─────────────────────────────────────────────────────────
@@ -150,6 +222,23 @@ def test_every_fetched_run_is_still_reported_when_one_is_reordered():
     ])
     assert [p["_run_id"] for p in fetched.payloads] == [300, 200]
     assert len(fetched.merged["jobs"]) == 1
+
+
+def test_an_approval_gated_run_is_not_reported_as_a_failure_naming_nothing():
+    """The whole path: a jobless `action_required` run through to the RunState.
+
+    This is the reported shape — a run held awaiting approval is the only run
+    at its commit on this repo, so nothing else can carry the conclusion. The
+    merge used to write `failure` over it, and `parse_run` then found no failed
+    job to name, leaving `conclusion: failure` above `failures: {}`.
+    """
+    fetched = _fetch_merged([
+        {"databaseId": 400, "conclusion": "action_required", "status": "completed",
+         "number": 7, "headSha": "abc123", "jobs": []},
+    ])
+    state = ci_runs.parse_run("owner/repo", fetched.merged)
+    assert state.failures == {}
+    assert state.conclusion != "failure"
 
 
 def test_all_runs_cancelled_and_jobless_still_merges():

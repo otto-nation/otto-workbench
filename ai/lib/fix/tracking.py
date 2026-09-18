@@ -36,6 +36,7 @@ import textwrap
 from pathlib import Path
 from typing import NamedTuple
 
+from core import log
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
 
@@ -390,10 +391,18 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
     the file, so an agent that reorders the list cannot change what its answer
     means.
 
-    Only the boxes that ask for a reason keep one — which is now every box. A
-    FIXED entry's reason is its test evidence, and it is kept for the same
-    purpose the other two are kept for: an operator reading what the pass
-    claimed, and deciding whether to believe it.
+    Every box in `_BOXES` asks for a reason, so this always keeps one — `_BOXES`
+    and `_REASONED` name the same three outcomes. A FIXED entry's reason is its
+    test evidence, and it is kept for the same purpose the other two are kept
+    for: an operator reading what the pass claimed, and deciding whether to
+    believe it.
+
+    A FIXED box ticked with no reason — the agent left `<why>` standing — is
+    read as FIXED regardless: the ask is a prompt contract, not a parse-time
+    gate (see `test_a_fix_ticked_without_evidence_still_reads_as_fixed`). It is
+    still logged here, so the exact failure this contract exists to catch —
+    an edit applied with no evidence it holds — leaves a trace an operator can
+    find instead of vanishing into a `reason` field nothing renders.
     """
     ticked = {
         box.group("label"): _reason(box.group("rest"))
@@ -404,7 +413,9 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
         if box.label not in ticked:
             continue
         into.outcome = box.outcome
-        into.reason = ticked[box.label] if box.outcome in _REASONED else ""
+        into.reason = ticked[box.label]
+        if box.outcome is FixOutcome.FIXED and not into.reason:
+            log.warn(f"{into.id}: ticked fixed with no test evidence")
         return
 
 

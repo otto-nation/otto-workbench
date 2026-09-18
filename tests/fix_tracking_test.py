@@ -169,6 +169,24 @@ class TestParse:
         assert outcome.outcome == FixOutcome.FIXED
         assert outcome.reason == ""
 
+    def test_a_fix_with_no_evidence_is_still_logged(self, tmp_path, capsys):
+        """FIXED with no reason is accepted, but not silently.
+
+        The parse does not gate on the reason (see the test above), so a
+        warning is the only trace that an agent ticked `fixed` and left `<why>`
+        standing — without it, the exact failure this contract exists to catch
+        leaves no record an operator would ever see.
+        """
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A")])
+        path.write_text(path.read_text().replace(
+            "- [ ] fixed — <why>", "- [x] fixed — <why>",
+        ))
+        fix_tracking.parse(path)
+        warning = capsys.readouterr().err
+        assert "A" in warning
+        assert "no test evidence" in warning
+
     def test_a_fix_that_landed_outranks_a_position_argued_beside_it(self, tmp_path):
         path = tmp_path / "t.md"
         fix_tracking.write(path, "t", [FixItem(id="A")])
@@ -387,7 +405,6 @@ class TestEveryFixTemplateAsksForTheTest:
         later is a phase this test must cover, and a hardcoded list would let
         it through while still reporting green.
         """
-        sys.path.insert(0, LIB_DIR)
         from agent import templates as agent_templates
         from agent.registry import PHASES
         from core.phases import PhaseShape

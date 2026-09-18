@@ -4209,3 +4209,44 @@ def test_a_held_run_says_nothing_about_a_push_it_is_not_making(capsys):
         mode=rebase_types.RunMode.FIX_ONLY,
     )
     assert "ready for review" not in capsys.readouterr().err
+
+
+# ── When no lease can be named ───────────────────────────────────────────────
+
+
+def test_a_push_with_no_nameable_lease_is_refused(capsys):
+    """The remote has the branch and this run never read where it was.
+
+    Both fallbacks are wrong: a bare lease is satisfied by the run's own fetch
+    (the clobber), and an empty expect is rejected against a ref that exists.
+    Stopping leaves the replay in the worktree, which is recoverable.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         _lands(_pushed()) as owner, \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"):
+        rc = lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.FIX, target_ref=_TARGET,
+            lease=None,
+        )
+
+    assert rc == 1
+    owner.assert_not_called()
+    assert "cannot tell what the remote was at" in capsys.readouterr().err
+
+
+def test_a_run_that_never_pushes_does_not_need_a_lease(capsys):
+    """--no-push reaches no remote, so an unnameable lease stops nothing."""
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"):
+        rc = lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            lease=None,
+        )
+
+    assert rc == 0

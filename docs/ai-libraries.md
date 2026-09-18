@@ -3336,6 +3336,21 @@ bytes (2 MiB) of its command's tail under a line saying what was dropped, and an
 artifact month ages out on the same six-month cutoff the JSONL files take — a
 record and the output it names go together.
 
+### core/trail_query.py
+
+Reading back what `core.trail` wrote — discovery, parsing, filtering.
+
+`trail.py` owns the write path and the file naming; this owns the read path
+over the same root. They are split because the readers are no longer only
+`otto-log`: a scan that reports on the machine's own tooling — what ran, what
+failed, how often — answers that from the trail, and shelling out to the CLI to
+parse its rendered lines back into records is a worse version of importing the
+three functions that produced them.
+
+A window is applied twice on purpose. Once at the filename, which is what lets
+a year of history stay unopened, and once per record in `filter_events`, which
+is what makes the boundary exact.
+
 ### core/tree_lock.py
 
 Advisory lock declaring that a tree is being validated.

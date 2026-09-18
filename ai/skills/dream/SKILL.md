@@ -43,6 +43,20 @@ The report contains two sections:
 
 Use this report as input for Phase 3. Read the topic files referenced in the Memory State section to understand what's already stored before making changes.
 
+### Note the scan ID
+
+The report opens with the scan's trail root, the same way `retro-scan` reports
+its own:
+
+```
+<!-- scan-id: 0072f33e6c26 -->
+```
+
+Keep that ID for the rest of the run. The scan is one process, the phases below
+are yours, and the close is another process later — passing the ID to each is
+what files them as one dream rather than three unrelated commands. A dream that
+drops it still works: each record simply stands alone.
+
 ---
 
 ## Phase 3: CONSOLIDATE
@@ -108,11 +122,29 @@ Remove or archive entries that are:
 - Contradicted by newer entries
 - About projects that no longer exist on this machine
 
+### Record what the dream did
+
+The trail holds what the scan found. What was done with it is worth the same
+record — counts, so a later run can be compared against this one rather than
+read as prose:
+
+```bash
+WORKBENCH_TRAIL_ROOT=<scan-id> otto-log record --script dream \
+  --action consolidate --detail "<one line>" \
+  --data added=<n> --data updated=<n> --data archived=<n>
+```
+
+Repeat per phase that changed something, with `--action prune`, `--action
+architecture_update`, or `--action machine_update`. Skip a phase that changed
+nothing. `--level warn` marks a phase that hit something a reader should know
+about; the default is `info`.
+
 ### Record the dream timestamp
 
-After completing all 4 phases:
+After completing all 4 phases, passing the scan ID from Phase 1 so the close
+lands under the same run:
 ```bash
-bash ~/.agents/skills/dream/dream-complete.sh
+bash ~/.agents/skills/dream/dream-complete.sh --root <scan-id>
 ```
 
 ---

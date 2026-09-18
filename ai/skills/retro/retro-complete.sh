@@ -12,6 +12,9 @@
 # is completing — without it, an abandoned run's record or a debug scan's would
 # be honoured just the same.
 #
+# The same ID is the scan's trail root, so the close this script records lands
+# under the retro it completes rather than as a command of its own.
+#
 # Usage: retro-complete.sh SCAN_ID
 #
 # Exit codes:
@@ -43,3 +46,39 @@ fi
 
 mkdir -p "$GATE_STAMPS_DIR"
 date +%s > "$RETRO_STAMP_FILE"
+
+# ── Record the close on the trail ────────────────────────────────────────────
+# Best-effort by design: this runs from a Stop hook, and a trail write is a
+# record of the retro rather than part of it. A workbench whose otto-log
+# predates `record` — the state every machine is in until this ships — fails
+# the subcommand, and that must not fail the retro it is reporting on.
+
+# Whether the agent recorded anything between the scan and here. Nothing
+# enforces that it did — the phases are instructions in SKILL.md, and a run that
+# skipped them leaves a trail holding a scan and a close with nothing between,
+# which reads as a retro that proposed nothing rather than one that never wrote
+# it down. Reported, not enforced: the retro's real work is already on disk by
+# now, and failing here would not bring the missing records back.
+_warn_if_no_phases_recorded() {
+  local otto_log="$1"
+  # Captured before counting: piping straight into `wc -l` reports the pipeline's
+  # last command, so a query that died would count zero lines and be announced
+  # as a run that recorded nothing.
+  local found
+  if ! found=$("$otto_log" query --root "$SCAN_ID" --script retro --json 2>/dev/null); then
+    return 0
+  fi
+  [[ -z "$found" ]] || return 0
+  echo "Note: no retro phase records under $SCAN_ID — the trail will show" >&2
+  echo "      this run's scan and close with nothing in between." >&2
+}
+
+_record_close() {
+  local otto_log="$LOCAL_BIN_DIR/otto-log"
+  [[ -x "$otto_log" ]] || return 0
+  _warn_if_no_phases_recorded "$otto_log"
+  WORKBENCH_TRAIL_ROOT="$SCAN_ID" "$otto_log" record \
+    --script retro --action close --detail "retro complete" >/dev/null 2>&1 || true
+}
+
+_record_close

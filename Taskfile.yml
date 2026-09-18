@@ -35,6 +35,8 @@ tasks:
 
   gate:
     desc: "Run the full pre-push gate (validators, shellcheck, bats, pytest)"
+    # silent only suppresses go-task's echo of the command line below — the
+    # hook's own _step/_pass/_fail output still prints, same as test/lint above.
     silent: true
     cmds:
       # Delegation, not a second copy. git/hooks/pre-push-workbench owns the

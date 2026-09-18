@@ -14,6 +14,14 @@
 # `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
 # `PR_TITLE`, `PR_DESCRIPTION`.
 
+# Resolved from this file's own location, as lib/git_layout.sh resolves its
+# siblings. _pr_load_template asks git for the repo root, which an inherited
+# GIT_DIR would otherwise answer for the caller's repository.
+_pr_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib"
+# shellcheck source=../gitenv.sh
+. "$_pr_lib_dir/gitenv.sh"
+unset _pr_lib_dir
+
 # _push_verified BRANCH [--set-upstream]
 # Pushes BRANCH through the owner in ai/lib/git/push.py, which confirms the remote
 # ref actually moved. Returns non-zero on a refused, lost, or unverified push,
@@ -281,11 +289,17 @@ _pr_resolve_issue() {
 #
 # Falls back to the working directory when git cannot answer, which is the
 # behaviour every existing caller already had.
+#
+# The lookup clears the inherited git environment inside a subshell, the idiom
+# git_shared_dir uses. GIT_DIR is read ahead of directory discovery, so a run
+# under a git hook — pre-push exports one — would have `--show-toplevel` answer
+# the cwd rather than the repo root, silently restoring the very bug this
+# resolution exists to fix.
 _pr_load_template() {
   PR_HAS_TEMPLATE=false
   PR_TEMPLATE=""
   local root
-  root=$(git rev-parse --show-toplevel 2> /dev/null) || root="."
+  root=$(git_env_clear; git rev-parse --show-toplevel 2> /dev/null) || root="."
   local candidate
   for candidate in \
     ".github/pull_request_template.md" \

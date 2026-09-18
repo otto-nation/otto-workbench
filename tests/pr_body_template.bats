@@ -106,6 +106,21 @@ off template"
   [[ "$output" == *"does not use this repo's template"* ]]
 }
 
+@test "the template is found from a subdirectory under an inherited GIT_DIR" {
+  # GIT_DIR is read ahead of directory discovery, so `git rev-parse
+  # --show-toplevel` answers the caller's cwd rather than the repo root when one
+  # is exported — which the pre-push hook does. Without the cleared environment
+  # the root resolves to the subdirectory, every candidate misses again, and the
+  # check goes back to silently passing anything. The bug the fix closes is
+  # reachable through the export alone, so the export is what this pins.
+  git init -q .
+  mkdir -p lib/deep
+  cd lib/deep || return 1
+
+  GIT_DIR="$TMPDIR/.git" _pr_load_template
+  [ "$PR_HAS_TEMPLATE" = "true" ]
+}
+
 @test "a template outside any repo is still found in the working directory" {
   # Not every caller is inside a git worktree, and the pre-#1301 behaviour for
   # those was to read the template beside them. `git rev-parse` answering

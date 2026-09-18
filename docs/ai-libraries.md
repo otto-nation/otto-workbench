@@ -3108,7 +3108,17 @@ the target lock alone.
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to
-reap — a lock file naming a dead pid is a released record, not a held lock.
+reap.
+
+Neither file is ever deleted, so a machine accumulates one per target it has
+ever run against and nearly all of them name processes that exited long ago.
+That is not a leak and deleting them is not maintenance: the record is what
+makes the next contender's error message name a command rather than a pid. But
+it does mean **the presence of a lock file says nothing about whether a lock is
+held**, and a dead pid in one is the normal case rather than evidence of a
+crash. A released record carries a ``released`` timestamp, written under the
+flock just before it is dropped; a held one has ``released: null``. To ask the
+kernel rather than read the file, call ``is_held``.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,

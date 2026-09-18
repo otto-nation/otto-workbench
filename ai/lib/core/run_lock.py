@@ -30,7 +30,17 @@ the target lock alone.
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to
-reap — a lock file naming a dead pid is a released record, not a held lock.
+reap.
+
+Neither file is ever deleted, so a machine accumulates one per target it has
+ever run against and nearly all of them name processes that exited long ago.
+That is not a leak and deleting them is not maintenance: the record is what
+makes the next contender's error message name a command rather than a pid. But
+it does mean **the presence of a lock file says nothing about whether a lock is
+held**, and a dead pid in one is the normal case rather than evidence of a
+crash. A released record carries a ``released`` timestamp, written under the
+flock just before it is dropped; a held one has ``released: null``. To ask the
+kernel rather than read the file, call ``is_held``.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
@@ -61,6 +71,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core import log
@@ -124,10 +135,46 @@ def _claim(handle, path: Path, command: str, started: str,
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
         raise LockBusy(_read_holder(path), path, subject) from exc
+    _write_record(handle, {
+        "pid": os.getpid(), "command": command, "started": started,
+        # Overwritten with a timestamp on release. Present and null while held,
+        # so a reader can tell "still running" from "finished" — rather than
+        # having to guess from a pid that is dead either way.
+        "released": None,
+    })
+
+
+def _write_record(handle, record: dict) -> None:
+    """Replace the holder record under the flock we hold."""
     handle.seek(0)
     handle.truncate()
-    json.dump({"pid": os.getpid(), "command": command, "started": started}, handle)
+    json.dump(record, handle)
     handle.flush()
+
+
+def _note_release(handle, path: Path) -> None:
+    """Stamp the record as released, before the flock is dropped.
+
+    Before, not after, and that ordering is the whole correctness argument: we
+    still hold the lock, so no other process can be writing this file, and the
+    stamp cannot land on top of the next holder's record.
+
+    Best-effort. Failing to annotate a lock we are done with must not turn a
+    finished run into a failed one.
+    """
+    record = _read_holder(path)
+    if not record:
+        return
+    record["released"] = _now()
+    try:
+        _write_record(handle, record)
+    except (OSError, ValueError):
+        pass
+
+
+def _now() -> str:
+    """An ISO timestamp, resolved here so core.run_lock owes pr.state nothing."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _restore_env(previous: str | None, var: str = LOCK_ENV) -> None:
@@ -213,8 +260,11 @@ def _holding(prepared, command: str, started: str, var: str,
         yield
     finally:
         _restore_env(previous, var)
-        # The record stays on disk: flock releases on close, and the stale
-        # text is what makes the next contender's error message readable.
+        # The record stays on disk: flock releases on close, and the text is
+        # what makes the next contender's error message readable. Stamped as
+        # released first, so what stays is not mistaken for a live holder by
+        # anyone reading the file later.
+        _note_release(handle, path)
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
 
@@ -267,6 +317,36 @@ def claim_for_process(target_dir: Path, command: str, started: str, *,
             sys.exit(1)
         os.environ[var] = value
         _HELD.append(handle)
+
+
+def is_held(target_dir: Path) -> bool:
+    """Whether a run currently holds *target_dir*'s lock.
+
+    The only honest way to ask. A ``run.lock`` on disk says nothing — the file
+    is never removed, so a machine accumulates one per target ever used and
+    almost all of them name processes that exited long ago. Probing for the
+    exclusive lock is what distinguishes them: it fails precisely when someone
+    holds it.
+
+    Deliberately ignores the env markers: a caller inside a holder's own process
+    tree is asking about the lock, not about its own ancestry.
+    """
+    path = Path(target_dir) / LOCK_FILE
+    if not path.exists():
+        return False
+    try:
+        handle = open(path, "a+")
+    except OSError:
+        return False
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    else:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        return False
+    finally:
+        handle.close()
 
 
 def report_busy(exc: LockBusy) -> None:

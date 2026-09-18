@@ -375,3 +375,53 @@ def test_a_contended_checkout_says_so_and_suggests_another_worktree(
     err = capsys.readouterr().err
     assert "owns this checkout" in err
     assert "worktree" in err
+
+
+# ── Telling a released record from a held one ────────────────────────────────
+#
+# The file is never deleted, so almost every run.lock on a machine names a dead
+# pid. These pin the difference between that and a lock someone holds.
+
+
+def test_a_held_record_says_it_has_not_been_released(worktree):
+    with acquire(worktree, command="pr review --fix", started="t"):
+        record = json.loads((worktree / LOCK_FILE).read_text())
+        assert record["released"] is None
+
+
+def test_a_released_record_is_stamped_with_when(worktree):
+    with acquire(worktree, command="pr review --fix", started="t"):
+        pass
+    record = json.loads((worktree / LOCK_FILE).read_text())
+    assert record["released"]
+    # Still names the command: the record's whole job is the next error message.
+    assert record["command"] == "pr review --fix"
+
+
+def test_the_release_stamp_does_not_overwrite_the_next_holder(worktree):
+    """Written under the flock, so it cannot land on a successor's record."""
+    with acquire(worktree, command="first run", started="t"):
+        pass
+    os.environ.pop(LOCK_ENV, None)
+    with acquire(worktree, command="second run", started="t"):
+        record = json.loads((worktree / LOCK_FILE).read_text())
+        assert record["command"] == "second run"
+        assert record["released"] is None
+
+
+def test_is_held_is_true_only_while_someone_holds_it(worktree):
+    """Both directions: a guard that answers "free" to everything is useless."""
+    assert not run_lock.is_held(worktree)
+    with acquire(worktree, command="pr review --fix", started="t"):
+        assert run_lock.is_held(worktree)
+    assert not run_lock.is_held(worktree)
+
+
+def test_is_held_is_false_for_a_target_never_run(tmp_path):
+    assert not run_lock.is_held(tmp_path / "never-used")
+
+
+def test_is_held_ignores_our_own_env_marker(worktree):
+    """It asks the kernel, not our ancestry — a stray marker must not lie."""
+    os.environ[LOCK_ENV] = str(worktree)
+    assert not run_lock.is_held(worktree)

@@ -2012,6 +2012,10 @@ def _stub_pr_flow(monkeypatch, tmp_path):
     monkeypatch.setattr(review_recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
     monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    # The real one would flock a tmp_path that is not a git repo; what it is
+    # handed is asserted directly in the test below.
+    monkeypatch.setattr(review_run.run_lock, "claim_for_process",
+                        lambda *a, **kw: None)
     monkeypatch.setattr(review_invoke, "run", lambda request: 0)
     monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
     monkeypatch.setattr(review_completion, "summarise", lambda *a, **kw: None)
@@ -2288,3 +2292,43 @@ def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir,
     cr._run_self_review(_self_review_args())
 
     assert body.call_args.args[1] == ""
+
+
+def test_a_pr_review_locks_the_worktree_it_actually_writes_to(tmp_path, monkeypatch):
+    """The tree reviewed is not the tree the run was launched in.
+
+    `setup_pr_worktree` switches to the PR's own worktree and hard-resets it,
+    so the checkout claimed at entry — where the operator stood — is not the
+    one being written to. The lock has to be taken again once the real tree is
+    known, or the reset happens in a tree no lock covers.
+    """
+    review_file = tmp_path / "review" / "review.md"
+    review_file.parent.mkdir()
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+
+    reviewed = tmp_path / "pr-worktree"
+    reviewed.mkdir()
+    _stub_pr_flow(monkeypatch, tmp_path)
+    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+                        lambda *a, **kw: SimpleNamespace(path=str(reviewed),
+                                                         is_fallback=False))
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(reviewed), None))
+    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(review_publish, "post", MagicMock())
+    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+
+    claim = MagicMock()
+    monkeypatch.setattr(review_run.run_lock, "claim_for_process", claim)
+
+    ctx = make_ctx(target_dir=tmp_path / "t")
+    review_run.run_pr_review(
+        ctx,
+        review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
+        review_file, trail=MagicMock(),
+    )
+
+    assert claim.call_args.kwargs["worktree"] == reviewed
+    # Same target as the lock taken at entry, so the two are one claim and the
+    # second passes through rather than contending with the first.
+    assert claim.call_args[0][0] == ctx.target_dir

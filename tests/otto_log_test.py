@@ -680,11 +680,11 @@ class TestCommandDuration:
         """No finish survives, so the duration is unknown — and a span between
         whatever records it managed to write would be a guess."""
         events = [
-            _raw_event(ts="2026-09-01T00:00:00Z", invocation="aaaaaaaaaaaa"),
-            _raw_event(ts="2026-09-01T00:04:00Z", invocation="aaaaaaaaaaaa"),
+            _raw_event(ts="2026-09-01T00:00:00Z", invocation="gggggggggggg"),
+            _raw_event(ts="2026-09-01T00:04:00Z", invocation="gggggggggggg"),
         ]
 
-        assert otto_log._command_duration_ms(events, "aaaaaaaaaaaa") is None
+        assert otto_log._command_duration_ms(events, "gggggggggggg") is None
 
     def test_show_reports_the_whole_command_not_just_its_root(self, capsys):
         _write_raw(

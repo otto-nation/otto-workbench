@@ -27,7 +27,7 @@ teardown() {
 # HOME. Overriding HOME for the sandbox would break it, so the config it wants
 # is trusted explicitly rather than left to fail silently under `|| true`.
 _run_complete() {
-  HOME="$FAKE_HOME" MISE_TRUSTED_CONFIG_PATHS=/ run "$@"
+  HOME="$FAKE_HOME" MISE_TRUSTED_CONFIG_PATHS="$HOME" run "$@"
 }
 
 # One scan run to hang the rest of a command off, as the real scans open it.
@@ -64,7 +64,7 @@ _events_under() {
 
   [[ "$status" -eq 0 ]]
   run "$OTTO_LOG" query --root "$root" --script dream --json
-  [[ "$output" == *'"projects":2'* ]]
+  [[ "$output" == *'"projects":2}'* ]]
 }
 
 @test "dream close: says so when the agent recorded no phases" {

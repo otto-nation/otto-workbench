@@ -47,13 +47,14 @@ read as a pass: `bin/local/run-tests | tail -40` reports `tail`'s exit status an
 not the suite's, and deciding pass/fail by grepping output for `✗` reads text
 where there is a status to check.
 
-Both test targets go through `bin/local/run-tests`, which owns the parallelism settings for the whole
-repo — the Taskfile, the pre-push hook, and CI all call it rather than spelling the flags
-out themselves. It sizes the run from the cores the machine is *not* already using — the
-core count less the one-minute load average, floored at 2 and capped at 12 — so a suite
-started beside another one takes the share that one left rather than oversubscribing the
-box. Set `TEST_JOBS` to take the sizing back, and `TEST_JOBS=1` to get the serial ordering
-when bisecting a test that only fails under concurrency.
+Both test targets go through `bin/local/run-tests`, which owns the parallelism
+settings for the whole repo — the Taskfile, the pre-push hook, and CI all call it
+rather than spelling the flags out themselves. It sizes the run from the cores
+the machine is *not* already using — the core count less the one-minute load
+average, floored at 2 and capped at 12 — so a suite started beside another one
+takes the share that one left rather than oversubscribing the box. Set
+`TEST_JOBS` to take the sizing back, and `TEST_JOBS=1` to get the serial
+ordering when bisecting a test that only fails under concurrency.
 
 Sizing from load is what keeps concurrent whole-suite runs honest. Neither suite fails
 gracefully when it cannot get scheduled: a subprocess that never runs surfaces as a

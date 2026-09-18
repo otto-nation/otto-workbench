@@ -61,6 +61,11 @@ from config.workbench_config import WorkbenchConfig
 # of it is what keeps the sweep and the write from drifting apart.
 TRACKING_FILENAME = "fix-tracking.md"
 
+# The gate's own checklist, published for the same reason: a review's sweep
+# removes both files by name, and a gate running inside a review directory
+# would otherwise leave its answers beside the deliverable.
+VERIFY_TRACKING_FILENAME = "verify-tracking.md"
+
 # What a retry is told about the file it is handed. The first pass's settled
 # items are not in it, and an agent that assumes otherwise re-reads work that is
 # already done out of a budget raised precisely because the first one ran out.
@@ -207,7 +212,7 @@ class FixAdapter(ABC):
         gate was asked about. Overwriting it would destroy the record of what
         was claimed at the moment the claim is being checked.
         """
-        return self.artifacts / "verify-tracking.md"
+        return self.artifacts / VERIFY_TRACKING_FILENAME
 
     @property
     def verify_session_log(self) -> Path:

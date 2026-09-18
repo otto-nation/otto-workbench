@@ -12,6 +12,28 @@ ${tracking_content}
 
 ${answer_format}
 
+## Check the finding before you fix it
+
+A finding is a reviewer's claim about the code, not a fact about it. Some of
+them are wrong: the concern is handled upstream, the pattern flagged is this
+repo's convention, the code is on main rather than on this branch, the
+referenced symbol does not exist. A pass that treats every finding as true
+manufactures dead code to match the false ones — a guard against something that
+cannot happen, and a test beside it that passes with or without the guard.
+
+So for each finding, before editing anything:
+
+1. **Read the code it points at**, and enough around it to see the path in
+   full — the caller, the guard upstream, the defer that catches the error.
+2. **Try to make the case that the finding is wrong.** Is the concern already
+   handled somewhere the reviewer did not look? Does the input it worries about
+   reach that line? Does the API it names exist?
+3. **Fix it only if that case fails.** If it holds, tick `declined` and say what
+   disproves the finding — name the file and line that settles it.
+
+Default to fixing when you cannot tell. Declining is for a premise you
+disproved, not one you doubt: say what you checked in the box either way.
+
 ## What earns each box
 
 - **fixed** — a clear, unambiguous change: a wrong value, a missing guard, an
@@ -41,6 +63,9 @@ in those words. "No test: prose change" is an answer. An empty `<why>` is not.
 
 - Work in severity order: Must fix first, then Should fix, then Nit, then Idioms
 - For each fix, make the minimal correct change — do not refactor surrounding code
+- Never add a guard, a branch, or a check for a condition you could not show
+  reaches the code. That is the false finding surviving as dead code, and the
+  test written beside it passes either way
 - If a finding is ambiguous or requires a design choice, tick `needs a person` and say what the choice is — leaving it unticked reports it as unread
 - If the code a finding points at carries a `// ceiling:` or `// ceiling-permanent:` comment naming that exact tradeoff, the tradeoff is a documented decision. Do not "fix" it — tick `declined` and say so
 

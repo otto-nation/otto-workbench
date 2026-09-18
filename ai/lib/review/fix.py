@@ -24,6 +24,12 @@ phrased loosely read as no annotation at all, and the pass had to guess which
 findings its own agent had touched. `record` re-renders the document from the
 outcomes instead, so what it says is what the pass decided.
 
+Every claimed fix goes to the verify gate before any of it is committed — see
+`fix.verify`. A ticked `fixed` box is a claim that an edit was made, which is
+not the claim the commit message and the re-rendered document then publish; the
+gate is what tells the two apart, and a fix it falsifies lands as work still
+owed rather than as done.
+
 The commit always happens; the push waits for `--post`. `land` owns both, and
 the split is its: a local commit asserts nothing to anybody, while a push puts
 the pass's work on a branch somebody else is reading.
@@ -41,6 +47,7 @@ from pathlib import Path
 
 from fix import engine as fix_engine
 from fix import types as fix_types
+from fix import verify as fix_verify
 from core import log
 from core.phases import Phase
 from pr.fix import FixOutcome, ItemOutcome
@@ -175,6 +182,12 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
     """
 
     phase = Phase.FIX
+    # The gate that checks the pass's own claims before anything is committed.
+    # Declared for the reason the comments adapter declares one: without it the
+    # engine falls back to `phase`, and the gate is prompted with
+    # `fix-findings.md` — a template telling it to edit source, which the gate's
+    # own rules forbid.
+    verify_phase = Phase.FIX_VERIFY
     title = "Review Fix Tracking"
     action = "applying review findings"
     item_noun = "finding"
@@ -203,6 +216,11 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         run that wrote it.
         """
         return Path(phase_log_path(self.job.review_file, self.phase))
+
+    @property
+    def verify_session_log(self) -> Path:
+        """The gate's session log, named by the registry for the same reason."""
+        return Path(phase_log_path(self.job.review_file, self.verify_phase))
 
     def add_dirs(self) -> list[Path]:
         """The worktree, and the review directory the tracking file sits in."""
@@ -269,6 +287,13 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
 
     Returns without running an agent when there is no review to work from or
     nothing in it still open.
+
+    The gate runs on every pass, with no flag to switch it off. A ticked `fixed`
+    box is the agent saying it made an edit, and this pass commits on the
+    strength of that box alone — two passes shipped a failing suite and an
+    untested behaviour change that way, both truthful under the box's own
+    contract. A pass cheap enough to be worth skipping the check is a pass whose
+    commits nobody should be reading as fixed.
     """
     doc = ReviewDocument.read(job.review_file) if _has_output(job.review_file) else None
     if doc is None:
@@ -282,4 +307,6 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
         log.info("No findings left to fix — skipping fix pass")
         return
 
-    fix_engine.run(ReviewFixAdapter(job, findings), trail=trail)
+    fix_engine.run(
+        ReviewFixAdapter(job, findings), trail=trail, verify=fix_verify.run,
+    )

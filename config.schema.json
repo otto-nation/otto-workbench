@@ -111,6 +111,7 @@
               "synthesis",
               "disprove",
               "fix",
+              "fix_verify",
               "comments_fix",
               "comments_verify",
               "comments_triage",

@@ -90,6 +90,29 @@ _SPECS: tuple[PhaseSpec, ...] = (
         scaling=ItemScaling(turns_per_item=2, turns_cap=60),
         retry=RetryBudget(ceiling=60, turns_min=40, bump=20),
     ),
+    # The review fix pass's verify gate, and the same phase as the comments
+    # gate in everything but its budget: a review has an `--effort` behind it,
+    # so `max_budget=None` takes the preset's per-agent cap the way every other
+    # review phase does, where the comments gate has to pin its own.
+    #
+    # Not `optional`, for the reason COMMENTS_VERIFY is not: the flag and the
+    # effort skips it would earn are the review pipeline's own, and what makes
+    # this gate skippable is a pass declining to hand `fix_engine.run` a
+    # `verify=` at all.
+    #
+    # The engine chunks the fix pass and not the gate, so a pass that fixed more
+    # than the cap covers gives the gate less than five turns an item. That
+    # fails the safe way — an item it never reached is unverified, which leaves
+    # the fix standing — and the alternative is a gate that spends more than the
+    # pass it is checking.
+    PhaseSpec(
+        Phase.FIX_VERIFY, PhaseDomain.REVIEW, "Verify gate",
+        template="verify-fixes.md",
+        thinking=Thinking.LOW, max_turns=15,
+        shape=PhaseShape.FIX,
+        scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=5, turns_cap=40),
+    ),
     # The comments fix pass runs outside a review, so no effort preset sets its
     # dollar cap: it scales with the checklist it is handed, between a floor
     # that covers a single item and a cap one agent can finish inside.

@@ -48,6 +48,7 @@ class TestPhaseDomains:
             Phase.SYNTHESIS: PhaseDomain.REVIEW,
             Phase.DISPROVE: PhaseDomain.REVIEW,
             Phase.FIX: PhaseDomain.REVIEW,
+            Phase.FIX_VERIFY: PhaseDomain.REVIEW,
             Phase.COMMENTS_FIX: PhaseDomain.COMMENTS,
             Phase.COMMENTS_VERIFY: PhaseDomain.COMMENTS,
             Phase.COMMENTS_TRIAGE: PhaseDomain.COMMENTS,
@@ -81,6 +82,7 @@ class TestPhaseThinkingDefaults:
             Phase.SYNTHESIS: Thinking.MEDIUM,
             Phase.DISPROVE: Thinking.MEDIUM,
             Phase.FIX: Thinking.LOW,
+            Phase.FIX_VERIFY: Thinking.LOW,
             # Neither fix pass named a thinking level before it was a phase —
             # both called the backend without one and took its default.
             Phase.COMMENTS_FIX: None,
@@ -115,6 +117,7 @@ class TestPhaseMaxTurnsDefaults:
             Phase.SYNTHESIS: 15,
             Phase.DISPROVE: 15,
             Phase.FIX: 20,
+            Phase.FIX_VERIFY: 15,
             Phase.COMMENTS_FIX: 20,
             Phase.COMMENTS_VERIFY: 15,
             Phase.CI_FIX: 20,
@@ -168,8 +171,8 @@ class TestPhaseShapes:
     def test_only_the_fix_phases_edit_the_workspace(self):
         editing = {p for p, s in PHASES.items() if s.shape is PhaseShape.FIX}
         assert editing == {
-            Phase.FIX, Phase.COMMENTS_FIX, Phase.COMMENTS_VERIFY,
-            Phase.CI_FIX, Phase.PREPUSH_FIX,
+            Phase.FIX, Phase.FIX_VERIFY, Phase.COMMENTS_FIX,
+            Phase.COMMENTS_VERIFY, Phase.CI_FIX, Phase.PREPUSH_FIX,
         }
 
     def test_only_the_stateless_phases_are_prompts(self):
@@ -280,6 +283,7 @@ class TestPhaseLogNames:
             Phase.SYNTHESIS: "synthesis.jsonl",
             Phase.DISPROVE: "disprove.jsonl",
             Phase.FIX: "fix.jsonl",
+            Phase.FIX_VERIFY: "fix_verify.jsonl",
         }
         assert {p: PHASES[p].log_filename for p in REVIEW_PHASES} == expected
 
@@ -312,13 +316,17 @@ class TestPhaseOutputNames:
             Phase.SYNTHESIS: "",
             Phase.DISPROVE: "disprove.md",
             Phase.FIX: "",
+            Phase.FIX_VERIFY: "",
         }
         assert {p: PHASES[p].output_filename for p in REVIEW_PHASES} == expected
 
-    def test_phases_that_write_the_review_file_name_no_artifact(self):
-        # single and synthesis produce review.md; fix edits it in place.
+    def test_phases_that_write_no_findings_artifact(self):
+        # single and synthesis produce review.md, fix edits it in place, and
+        # the verify gate answers on the fix engine's own checklist.
         empty = {p for p in REVIEW_PHASES if not PHASES[p].output_filename}
-        assert empty == {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX}
+        assert empty == {
+            Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX, Phase.FIX_VERIFY,
+        }
 
     def test_every_artifact_name_is_distinct(self):
         names = [

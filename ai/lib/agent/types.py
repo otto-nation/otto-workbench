@@ -49,9 +49,14 @@ from core.phases import (
 # ceiling sits above it rather than clamping the retry to what just ran out.
 DEFAULT_RETRY_CEILING = 30
 
-# The phases whose output is the review document itself, and the one fan-out
+# The phases that write no findings artifact of their own, and the one fan-out
 # phase whose artifacts carry an index. Both are read by `PhaseSpec` below.
-_WRITES_REVIEW_FILE = frozenset({Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX})
+# `single` and `synthesis` write the review document; `fix` edits it in place;
+# the verify gate writes neither — its checklist is the fix engine's file, named
+# by the engine rather than derived from a phase.
+_NO_FINDINGS_ARTIFACT = frozenset(
+    {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX, Phase.FIX_VERIFY},
+)
 _INDEXED = frozenset({Phase.GROUP})
 
 
@@ -295,9 +300,9 @@ class PhaseSpec:
     def output_filename(self) -> str:
         """The findings artifact this phase writes into the review directory.
 
-        Empty for a phase that writes into the review document rather than an
-        artifact of its own: ``single`` and ``synthesis`` produce ``review.md``
-        and ``fix`` edits it in place. Raises for a phase outside the review
-        domain, as ``log_filename`` does.
+        Empty for a phase that writes no findings artifact of its own:
+        ``single`` and ``synthesis`` produce ``review.md``, ``fix`` edits it in
+        place, and ``fix_verify`` answers on the fix engine's checklist. Raises
+        for a phase outside the review domain, as ``log_filename`` does.
         """
-        return "" if self.phase in _WRITES_REVIEW_FILE else f"{self._stem}.md"
+        return "" if self.phase in _NO_FINDINGS_ARTIFACT else f"{self._stem}.md"

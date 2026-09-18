@@ -81,6 +81,7 @@ class Phase(StrEnum):
     SYNTHESIS = "synthesis"
     DISPROVE = "disprove"
     FIX = "fix"
+    FIX_VERIFY = "fix_verify"
     COMMENTS_FIX = "comments_fix"
     COMMENTS_VERIFY = "comments_verify"
     COMMENTS_TRIAGE = "comments_triage"

@@ -24,6 +24,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from agent import invoke as agent_invoke
+from agent.registry import PHASES
 from fix import engine as fix_engine
 from git import land
 from git import push
@@ -159,11 +160,26 @@ def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None):
     return run_fix
 
 
-def _run(job: ReviewJob, boxes: dict[str, str], *, work=None, **kwargs):
-    """Run the pass with the agent stubbed, and hand back the stub."""
-    with patch.object(fix_engine.agent_invoke, "run_fix",
-                      side_effect=_answer(job, boxes, work=work)) as inv:
-        review_fix.run_fix_pass(job, **kwargs)
+def _run(
+    job: ReviewJob, boxes: dict[str, str], *, work=None, verdicts=None, **kwargs,
+):
+    """Run the pass with the agent stubbed, and hand back the stub.
+
+    The verify gate is stubbed alongside it, at `fix_verify.run` rather than at
+    the agent: the two share one `run_fix`, so a single stub would hand the
+    gate's checklist to a helper that answers in the fix pass's vocabulary and
+    every case here would fail on a box the verify file does not carry.
+
+    `verdicts` defaults to none at all, which the engine reads as a gate that
+    answered nothing — unverified, still fixed, still committed. That keeps the
+    cases below about what this module decides; the gate's own effect on them is
+    `TestTheVerifyGate`'s.
+    """
+    with patch.object(review_fix.fix_verify, "run",
+                      side_effect=lambda *a, **k: dict(verdicts or {})):
+        with patch.object(fix_engine.agent_invoke, "run_fix",
+                          side_effect=_answer(job, boxes, work=work)) as inv:
+            review_fix.run_fix_pass(job, **kwargs)
     return inv
 
 
@@ -262,6 +278,103 @@ class TestWhatTheReviewLendsTheAgentCall:
 
         assert adapter.tracking_path.parent in adapter.add_dirs()
         assert adapter.workdir in adapter.add_dirs()
+
+
+# ── the gate over the pass's own claims ────────────────────────────────
+
+
+class TestTheVerifyGate:
+    """A ticked `fixed` box is an edit claim; the gate is what checks it.
+
+    `fix_engine_test` holds what a verdict does to an outcome. What is here is
+    the review's own half: that the gate runs at all, that it is the gate's
+    prompt the agent is handed, and that its leavings are named where the
+    review's sweep looks for them.
+    """
+
+    REVIEW = "## Must fix\n- [ ] **[M1]** `helper.py:1` — Missing helper\n"
+
+    @patch("git.land.push.push", return_value=_PUSHED)
+    def test_a_fix_the_gate_falsifies_is_not_committed_as_fixed(
+        self, mock_push, git_wt, tmp_path,
+    ):
+        """The defect: a broken fix committed and ticked off on the strength of a box.
+
+        Two passes shipped exactly this — a suite left failing, and a behaviour
+        change with no assertion behind it — and both were truthful under the
+        box's own contract.
+        """
+        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        _run(
+            job, {"M1": "fixed — test_helper"},
+            work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
+            verdicts={"M1": fix_engine.Verdict(
+                ok=False, detail="test_helper does not exist",
+            )},
+        )
+
+        review = Path(job.review_file).read_text()
+        assert "- [x] **[M1]**" not in review
+        assert "test_helper does not exist" in review
+        # The edit itself still lands — it is in the worktree either way, and
+        # throwing it away would cost the next round the work. What the gate
+        # changes is what the commit and the document call it.
+        msg = git_out(git_wt, "log", "-1", "--format=%B")
+        assert "fixed" not in msg
+        assert "Skipped:\n  - [M1] test_helper does not exist" in msg
+
+    @patch("git.land.push.push", return_value=_PUSHED)
+    def test_a_fix_the_gate_confirms_is_committed_as_fixed(
+        self, mock_push, git_wt, tmp_path,
+    ):
+        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        _run(
+            job, {"M1": "fixed — test_helper"},
+            work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
+            verdicts={"M1": fix_engine.Verdict(ok=True, detail="suite green")},
+        )
+
+        assert "- [x] **[M1]**" in Path(job.review_file).read_text()
+        assert _committed_paths(git_wt) == {"helper.py"}
+
+    def test_the_pass_hands_the_engine_a_gate_at_all(self, git_wt, tmp_path):
+        """No `verify=` is the whole bug: the engine's gate is opt-in per domain.
+
+        Everything else here would pass against a pass that never gated — the
+        stub in `_run` patches the runner, not the wiring — so this asserts the
+        argument reaches `fix_engine.run`.
+        """
+        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        with patch.object(review_fix.fix_engine, "run") as run:
+            review_fix.run_fix_pass(job)
+
+        assert run.call_args.kwargs["verify"] is review_fix.fix_verify.run
+
+    def test_the_gate_is_prompted_as_the_gate_not_as_the_fix_pass(self):
+        """Falling back to `phase` hands a checking agent fix-findings.md.
+
+        That template tells it to edit source, which the gate's own rules
+        forbid in as many words — the bug #1358 fixed for the comments domain.
+        """
+        phase = review_fix.ReviewFixAdapter.verify_phase
+        assert phase is Phase.FIX_VERIFY
+        assert PHASES[phase].template_for() == "verify-fixes.md"
+
+    def test_the_gates_session_log_is_one_the_reviews_sweep_removes(
+        self, git_wt, tmp_path,
+    ):
+        """Named from the registry, for the reason the fix pass's log is.
+
+        The engine's default sits under a name `review_gc` never asks for, so a
+        gated pass would leave its session log beside the deliverable.
+        """
+        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        adapter = review_fix.ReviewFixAdapter(job, [_finding("M1")])
+
+        assert adapter.verify_session_log == Path(
+            review_paths.phase_log_path(job.review_file, Phase.FIX_VERIFY),
+        )
+        assert adapter.verify_session_log.parent == Path(job.artifact_dir)
 
 
 # ── what the pass commits ───────────────────────────────────────────────────

@@ -14,13 +14,11 @@
 # `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
 # `PR_TITLE`, `PR_DESCRIPTION`.
 
-# Resolved from this file's own location, as lib/git_layout.sh resolves its
-# siblings. _pr_load_template asks git for the repo root, which an inherited
-# GIT_DIR would otherwise answer for the caller's repository.
-_pr_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib"
+# WORKBENCH_ROOT comes from ai/core.sh, which this file requires be sourced
+# first (see the header above). _pr_load_template asks git for the repo root,
+# which an inherited GIT_DIR would otherwise answer for the caller's repository.
 # shellcheck source=../gitenv.sh
-. "$_pr_lib_dir/gitenv.sh"
-unset _pr_lib_dir
+. "$WORKBENCH_ROOT/lib/gitenv.sh"
 
 # _push_verified BRANCH [--set-upstream]
 # Pushes BRANCH through the owner in ai/lib/git/push.py, which confirms the remote

@@ -60,6 +60,25 @@ _pinned() {
   }
 }
 
+@test "the download is checksum-verified against a pinned digest" {
+  # Every other binary this repo pulls into CI is verified — install-worktrunk
+  # checks a published .sha256, and the release workflow checksums its own
+  # artifacts. ShellCheck publishes no digest beside its assets, so this one is
+  # recorded in the action; the point of the test is that it cannot quietly go
+  # missing, leaving CI to run whatever the download returned.
+  local digest
+  digest="$(grep -E '^\s+SHELLCHECK_SHA256:' "$ACTION" | awk '{print $2}')"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+
+  # And it has to actually be checked, not merely declared.
+  grep -q 'sha256sum -c' "$ACTION"
+  # Before the archive is unpacked: verifying after extraction is theatre.
+  local check_at extract_at
+  check_at="$(grep -n 'sha256sum -c' "$ACTION" | head -1 | cut -d: -f1)"
+  extract_at="$(grep -n 'tar -xJf' "$ACTION" | head -1 | cut -d: -f1)"
+  [[ "$check_at" -lt "$extract_at" ]]
+}
+
 @test "the CI job installs shellcheck before running it" {
   # The pin is inert if the job never uses the action: the runner's own 0.9
   # stays on PATH and the two diverge again silently.

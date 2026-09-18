@@ -22,6 +22,11 @@ runs:
         # machine-readable link between the two, so the check that they agree
         # is tests/shellcheck_version.bats.
         SHELLCHECK_VERSION: v0.11.0
+        # sha256 of shellcheck-v0.11.0.linux.x86_64.tar.xz. ShellCheck
+        # publishes no .sha256 beside its assets, so unlike install-worktrunk
+        # this cannot fetch the digest — it is recorded here, and moving the
+        # version means recording the new one.
+        SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
       run: |
         set -euo pipefail
         url="https://github.com/koalaman/shellcheck/releases/download"
@@ -29,6 +34,7 @@ runs:
         tmp="$(mktemp -d)"
         trap 'rm -rf "$tmp"' EXIT
         wget -qO "$tmp/sc.tar.xz" "$url"
+        echo "${SHELLCHECK_SHA256}  $tmp/sc.tar.xz" | sha256sum -c -
         tar -xJf "$tmp/sc.tar.xz" -C "$tmp"
         sudo install -m 0755 \
           "$tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck

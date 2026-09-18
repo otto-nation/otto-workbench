@@ -1502,6 +1502,19 @@ def test_gc_skips_own_target_when_pruning(
     assert mock_prune_targets.call_args.kwargs["skip"] == target
 
 
+def test_the_maintenance_script_branches_on_the_exit_code_pr_actually_uses():
+    """`pr` and the maintenance script spell EX_TEMPFAIL in different languages.
+
+    The script cannot import the constant, so the number is written twice: once
+    as `EXIT_BUDGET_EXHAUSTED` here and once as a bash comparison there. Nothing
+    else ties them together, and drift is silent — the script would log a spent
+    budget as a failure again, which is the bug this exit code exists to fix.
+    Cheaper to bind them with an assertion than to leave the duplication unheld.
+    """
+    script = (REPO_ROOT / "maintenance" / "bin" / "otto-workbench-maintenance").read_text()
+    assert f"-eq {pr_cli.EXIT_BUDGET_EXHAUSTED} ]]" in script
+
+
 @patch("pr_cli.review_gc.prune_merged_targets",
        return_value=review_gc.PruneOutcome(0, cut_short=True))
 @patch("pr_cli.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())

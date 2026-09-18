@@ -25,6 +25,7 @@ import statistics
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 from pathlib import Path
 
@@ -46,6 +47,7 @@ from core.trail import (
     INVOCATION_HEX_WIDTH,
     LEVEL_WIDTH,
     TRAIL_KEEP_MONTHS,
+    TS_FORMAT,
     TS_TIME_OF_DAY,
     TS_TO_SECONDS,
     Trail,
@@ -174,6 +176,58 @@ def _finish_event(events: list[dict], invocation: str | None = None) -> dict | N
     return None
 
 
+def _command_duration_ms(events: list[dict], invocation: str | None = None) -> int | None:
+    """How long the whole command took, not just the process that opened it.
+
+    The root's own `duration_ms` measures that process, which is the answer
+    whenever the command ends when the root exits — every process tree does.
+    A command can also gain records *after* its root has gone: `otto-log record`
+    files an event under an inherited root, so the phases an agent runs between
+    a scan and its close land under the scan's command minutes after the scan
+    exited. Taking the root's figure there reports the scan alone, and prints a
+    sub-second duration beside an hour of work.
+
+    So the run's start is derived from its own finish — `ts` back off
+    `duration_ms`, the one point where a wall clock and the monotonic clock name
+    the same instant — and the command runs from there to its last record. When
+    the root's finish *is* the last record the two agree exactly, which is what
+    keeps every command written before `record` existed reading as it always did.
+
+    None when no finish survives: a killed run's duration is unknown, and a
+    span between whatever records it managed to write would be a guess with no
+    lower bound on how wrong it is.
+
+    The extension is only as good as the clocks involved — it trusts a later
+    process's wall clock, where the root's own figure was one monotonic reading.
+    Same machine, so the skew is not worth modelling; it is worth knowing that
+    a timestamp is second-granular, so a trailing record rounds the total to the
+    second it landed in.
+    """
+    finish = _finish_event(events, invocation=invocation)
+    if finish is None or finish.get("duration_ms") is None:
+        return None
+    started = _event_time(finish)
+    last = _event_time(events[-1]) if events else None
+    if started is None or last is None:
+        return finish["duration_ms"]
+    started -= timedelta(milliseconds=finish["duration_ms"])
+    # Never shorter than what the root measured: a record whose clock reads
+    # behind the root's would otherwise shorten a run that demonstrably ran.
+    return max(finish["duration_ms"], round((last - started).total_seconds() * _MS_PER_SECOND))
+
+
+def _event_time(event: dict) -> datetime | None:
+    """An event's stamp as a time, or None when it does not parse.
+
+    A record with an unreadable `ts` is rendered rather than dropped elsewhere,
+    so timing it falls back instead of failing the whole listing.
+    """
+    try:
+        return datetime.strptime(event.get("ts", ""), TS_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 def _command_label(scripts: list[str]) -> str:
     """How a listing names a command: its outermost script, and how many others.
 
@@ -215,8 +269,8 @@ def _format_show(events: list[dict], focus: str | None = None) -> str:
     ts = first.get("ts", "?")
     # That run's own finish, not whichever process ended first: a child's
     # duration covers its part, and only the headline run's covers the whole.
-    finish = _finish_event(events, invocation=root)
-    duration = f" — {finish['duration_ms'] / _MS_PER_SECOND:.1f}s" if finish else ""
+    duration_ms = _command_duration_ms(events, invocation=root)
+    duration = f" — {duration_ms / _MS_PER_SECOND:.1f}s" if duration_ms is not None else ""
     ctx = first.get("context", {})
     ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items())
 
@@ -510,7 +564,6 @@ def cmd_list(args):
     if args.json:
         for inv_id, inv_events in sorted_invs:
             first = inv_events[0]
-            finish = _finish_event(inv_events, invocation=inv_id)
             scripts = _scripts_in_order(inv_events)
             print(json.dumps({
                 "invocation": inv_id,
@@ -521,14 +574,14 @@ def cmd_list(args):
                 "scripts": scripts,
                 "ts": first.get("ts"),
                 "event_count": len(inv_events),
-                "duration_ms": finish.get("duration_ms") if finish else None,
+                "duration_ms": _command_duration_ms(inv_events, invocation=inv_id),
             }, separators=(",", ":")))
     else:
         for inv_id, inv_events in sorted_invs:
             first = inv_events[0]
-            finish = _finish_event(inv_events, invocation=inv_id)
+            duration_ms = _command_duration_ms(inv_events, invocation=inv_id)
             duration = (
-                f"{finish['duration_ms'] / _MS_PER_SECOND:.1f}s" if finish else "?")
+                f"{duration_ms / _MS_PER_SECOND:.1f}s" if duration_ms is not None else "?")
             ts = first.get("ts", "?")[TS_TO_SECONDS]
             script = _command_label(_scripts_in_order(inv_events))
             n = len(inv_events)

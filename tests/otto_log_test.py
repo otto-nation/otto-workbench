@@ -71,20 +71,43 @@ def _make_command(*scripts: str) -> list[str]:
 _PR_REVIEW = ("pr", "claude-review", "review-orchestrate")
 
 
-def _raw_record(**fields) -> str:
-    """One trail record as a line, with every required field defaulted.
+def _raw_event(**fields) -> dict:
+    """One trail record, with every required field defaulted.
 
     For the tests that cannot go through `Trail` — history from before a field
     existed, or a stamp hours in the past. Each names only what it is about and
     inherits the rest, so a new required field is added here rather than in
     every literal that predates it.
+
+    The record rather than its line, for the readers that take events as they
+    come off the loader. `_raw_record` is the same thing serialized.
     """
-    return json.dumps({
+    return {
         "ts": "2026-01-01T00:00:00Z", "script": "old-run",
         "invocation": "a1b2c3d4", "level": "info", "event_type": "action",
         "action": "x", "detail": "", "context": {},
         **fields,
-    }) + "\n"
+    }
+
+
+def _raw_record(**fields) -> str:
+    """One trail record as a line, for the tests that write a trail file."""
+    return json.dumps(_raw_event(**fields)) + "\n"
+
+
+def _finish_event_fields(**fields) -> dict:
+    """The summary that closes a run, carrying the duration it measured."""
+    return dict(event_type="summary", action="finish", **fields)
+
+
+def _raw_finish(**fields) -> str:
+    """`_raw_record`'s finish form, as a line."""
+    return _raw_record(**_finish_event_fields(**fields))
+
+
+def _finish(**fields) -> dict:
+    """`_raw_event`'s finish form, as a record."""
+    return _raw_event(**_finish_event_fields(**fields))
 
 
 def _write_raw(name: str, *records: str) -> Path:
@@ -592,6 +615,93 @@ class TestSummaryIsNotAlwaysFinish:
             script=None, since=None, repo=None, json=True))
         rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
         assert rows[0]["duration_ms"] is None
+
+
+class TestCommandDuration:
+    """What a command's duration covers once records can outlive its root.
+
+    `otto-log record` files an event under an inherited root, so a command can
+    gain records after the process that opened it has exited. The root's own
+    `duration_ms` stops measuring the command at that point.
+    """
+
+    def test_a_run_that_ends_when_its_root_exits_reports_what_it_measured(self):
+        """Every command written before `record` existed is this one."""
+        events = [
+            _raw_event(ts="2026-09-01T00:00:00Z", invocation="aaaaaaaaaaaa"),
+            _finish(ts="2026-09-01T00:00:07Z", invocation="aaaaaaaaaaaa",
+                        duration_ms=7000),
+        ]
+
+        assert otto_log._command_duration_ms(events, "aaaaaaaaaaaa") == 7000
+
+    def test_a_long_run_that_logged_late_keeps_its_measured_duration(self):
+        """`duration_ms` runs from process start, the first event from whenever it
+        was written. A 22-minute run that wrote both records in its last second
+        is real history, and the span between its events is not its duration."""
+        events = [
+            _raw_event(ts="2026-09-09T00:25:17Z", invocation="bbbbbbbbbbbb",
+                        action="unexpected_error"),
+            _finish(ts="2026-09-09T00:25:17Z", invocation="bbbbbbbbbbbb",
+                        duration_ms=1368728),
+        ]
+
+        assert otto_log._command_duration_ms(events, "bbbbbbbbbbbb") == 1368728
+
+    def test_a_record_after_the_root_exits_extends_the_command(self):
+        """The dream case: a scan, then an agent's phases minutes later."""
+        events = [
+            _raw_event(ts="2026-09-01T00:00:00Z", script="dream-scan",
+                        invocation="cccccccccccc"),
+            _finish(ts="2026-09-01T00:00:02Z", script="dream-scan",
+                        invocation="cccccccccccc", duration_ms=2000),
+            _raw_event(ts="2026-09-01T00:05:02Z", script="dream",
+                        invocation="dddddddddddd", root="cccccccccccc",
+                        action="consolidate"),
+        ]
+
+        # Five minutes of agent work after a two-second scan, not two seconds.
+        assert otto_log._command_duration_ms(events, "cccccccccccc") == 302000
+
+    def test_a_trailing_record_never_shortens_a_run(self):
+        """A later process whose clock reads behind the root's cannot subtract
+        from a duration the root measured."""
+        events = [
+            _raw_event(ts="2026-09-01T00:00:10Z", invocation="eeeeeeeeeeee"),
+            _finish(ts="2026-09-01T00:00:10Z", invocation="eeeeeeeeeeee",
+                        duration_ms=10000),
+            _raw_event(ts="2026-09-01T00:00:05Z", invocation="ffffffffffff",
+                        root="eeeeeeeeeeee"),
+        ]
+
+        assert otto_log._command_duration_ms(events, "eeeeeeeeeeee") == 10000
+
+    def test_a_killed_run_reports_nothing_rather_than_a_span(self):
+        """No finish survives, so the duration is unknown — and a span between
+        whatever records it managed to write would be a guess."""
+        events = [
+            _raw_event(ts="2026-09-01T00:00:00Z", invocation="aaaaaaaaaaaa"),
+            _raw_event(ts="2026-09-01T00:04:00Z", invocation="aaaaaaaaaaaa"),
+        ]
+
+        assert otto_log._command_duration_ms(events, "aaaaaaaaaaaa") is None
+
+    def test_show_reports_the_whole_command_not_just_its_root(self, capsys):
+        _write_raw(
+            "2026-09.jsonl",
+            _raw_record(ts="2026-09-01T00:00:00Z", script="dream-scan",
+                        invocation="cccccccccccc"),
+            _raw_finish(ts="2026-09-01T00:00:02Z", script="dream-scan",
+                        invocation="cccccccccccc", duration_ms=2000),
+            _raw_record(ts="2026-09-01T00:05:02Z", script="dream",
+                        invocation="dddddddddddd", root="cccccccccccc",
+                        action="consolidate"),
+        )
+
+        otto_log.cmd_show(argparse.Namespace(
+            invocation="cccccccccccc", only=False, json=False))
+
+        assert "302.0s" in capsys.readouterr().out
 
 
 class TestParseSince:

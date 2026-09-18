@@ -22,23 +22,34 @@ from git import topology as git_topology
 from pr import context as pr_context
 
 from . import inspect as rebase_inspect
+from . import pr_snapshot as rebase_pr_snapshot
 from . import types as rebase_types
 
 RefDivergence = rebase_types.RefDivergence
 UNPUSHED_SUBJECT_LIMIT = rebase_types.UNPUSHED_SUBJECT_LIMIT
 
 
-def pr_base_branch(cwd: str, ctx: pr_context.ResolvedContext) -> str | None:
+def pr_base_branch(
+    cwd: str, ctx: pr_context.ResolvedContext,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
+) -> str | None:
     """The branch the PR targets per GitHub, or None when it cannot say.
 
     Only asked when a PR number is already resolved: a branch with no PR yet
     has no base to report, and probing by branch name would spend a round trip
     on every rebase to learn nothing.
 
+    Reads *snapshot* when the caller already has one, which is the whole reason
+    that type exists — the base and the already-landed state come out of a
+    single ``gh pr view``. Falls back to its own read so a caller without one
+    still works.
+
     Best effort like ``branch_landed.merged_pr`` — gh may be absent,
     unauthenticated or rate-limited, and the repo's default branch is the right
     answer for all but stacked and release-branch PRs.
     """
+    if snapshot is not None:
+        return snapshot.base_ref or None
     if not ctx.pr_number:
         return None
 
@@ -48,7 +59,8 @@ def pr_base_branch(cwd: str, ctx: pr_context.ResolvedContext) -> str | None:
 
 def resolve_target_ref(
     cwd: str, ctx: pr_context.ResolvedContext, onto: str | None,
-    *, trail: Trail | None = None,
+    *, snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
+    trail: Trail | None = None,
 ) -> str:
     """The ref this run rebases onto, most authoritative source first.
 
@@ -65,7 +77,7 @@ def resolve_target_ref(
     if onto:
         return decide(onto, "--onto flag set")
 
-    base = pr_base_branch(cwd, ctx)
+    base = pr_base_branch(cwd, ctx, snapshot)
     if base:
         return decide(f"origin/{base}", f"PR #{ctx.pr_number} targets {base}")
 

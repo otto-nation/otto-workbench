@@ -206,7 +206,6 @@ REFUSAL_EXIT = 4
 REFUSAL_OVERRIDE_FLAG = "--force"
 CONFLICT_FILE_BUDGET = 20
 MAX_REBASE_STEPS = 500
-FORCE_PUSH_ARGS = ("--force-with-lease",)
 REGEN_MESSAGE = "chore: regenerate after rebase"
 UNPUSHED_SUBJECT_LIMIT = 10
 
@@ -253,6 +252,12 @@ class RebaseOutcome:
     # than crediting this run with a resolution it did not perform.
     files_replayed: list[str] = field(default_factory=list)
     force_pushed: bool | None = None
+    # The remote tip the replay was based on, remembered from before the fetch.
+    # Saved because `pr rebase --no-push` finishes the rebase in one run and
+    # pushes in the next, and by then the only readings still available are the
+    # rewritten local tip and a tracking ref the fetch has moved — the two
+    # values a lease must not be built from.
+    lease_expect: str = ""
     # Keyword-only and required: the recorded base is what a caller reading
     # state.json uses to tell which branch a run actually replayed onto, so a
     # default here would let an outcome report a base the rebase never used.
@@ -269,6 +274,7 @@ class RebaseOutcome:
             files_stale=self.files_stale,
             files_replayed=self.files_replayed,
             force_pushed=self.force_pushed is True,
+            lease_expect=self.lease_expect,
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(ctx.target_dir, state)

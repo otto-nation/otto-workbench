@@ -40,6 +40,8 @@ from rebase import lifecycle  # noqa: E402
 from rebase import refusals  # noqa: E402
 from rebase import stash as rebase_stash  # noqa: E402
 from rebase import target as rebase_target  # noqa: E402
+from rebase import lease as rebase_lease  # noqa: E402
+from rebase import pr_snapshot as rebase_pr_snapshot  # noqa: E402
 from config import workbench_config  # noqa: E402
 from agent import invoke as agent_invoke  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
@@ -73,9 +75,11 @@ def _unconfigured(cmd):
 # is here so the tests that read it back are reading one thing.
 _LANDED_SHA = "1a2b3c4"
 
+_LEASE = rebase_lease.PushLease(branch="isaac/feat/x", expect="abc123")
+
 # What `push.resume_command` renders for this script's force-push, which is the
 # line `--no-push` prints and a refusal offers.
-_RESUME = "git -C '/fake' push --force-with-lease"
+_RESUME = f"git -C '/fake' push {_LEASE.args[0]}"
 
 
 def _pushed(sha: str = _LANDED_SHA) -> land.LandResult:
@@ -1488,6 +1492,7 @@ def test_drive_to_completion_already_done():
          mock.patch.object(lifecycle, "rebase_success", return_value=0) as mock_success:
         result = lifecycle.drive_to_completion(
             "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert result == 0
@@ -1521,6 +1526,7 @@ def test_drive_to_completion_with_conflicts_fix():
          mock.patch.object(lifecycle, "rebase_success", return_value=0) as mock_success:
         result = lifecycle.drive_to_completion(
             "/fake", ctx, rebase_types.RunMode.FIX, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert result == 0
@@ -1540,6 +1546,7 @@ def test_drive_to_completion_conflicts_no_fix():
          mock.patch.object(lifecycle, "step_conflicts", return_value=3):
         result = lifecycle.drive_to_completion(
             "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert result == 3
@@ -1562,6 +1569,7 @@ def test_drive_to_completion_empty_commit():
          mock.patch.object(lifecycle, "rebase_success", return_value=0):
         result = lifecycle.drive_to_completion(
             "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert result == 0
@@ -1579,6 +1587,7 @@ def test_drive_to_completion_safety_valve():
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
         result = lifecycle.drive_to_completion(
             "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert result == 1
@@ -1824,6 +1833,7 @@ def test_replayed_files_are_candidates_for_the_prepush_repair():
          ) as mock_land:
         lifecycle.rebase_success(
             "/fake", ctx, rebase_types.RunMode.FIX, tally, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert mock_land.call_args.kwargs["resolved_files"] == [
@@ -1850,6 +1860,7 @@ def test_a_file_both_resolved_and_replayed_is_one_repair_candidate():
          ) as mock_land:
         lifecycle.rebase_success(
             "/fake", ctx, rebase_types.RunMode.FIX, tally, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert mock_land.call_args.kwargs["resolved_files"] == ["go.sum"]
@@ -1868,6 +1879,7 @@ def test_a_run_with_nothing_to_repair_passes_no_candidates():
         lifecycle.rebase_success(
             "/fake", ctx, rebase_types.RunMode.FIX,
             rebase_types.ResolutionTally(), target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert mock_land.call_args.kwargs["resolved_files"] is None
@@ -1889,6 +1901,7 @@ def test_rebase_success_counts_commits_before_push():
          mock.patch.object(core_report, "emit_json") as mock_emit:
         lifecycle.rebase_success(
             "/fake", ctx, rebase_types.RunMode.FIX, tally, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert mock_emit.call_args[0][0]["commits_replayed"] == 2
@@ -2138,7 +2151,8 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
     assert result == 0
     mock_drive.assert_called_once_with(
         "/fake", ctx, rebase_types.RunMode.FIX, target_ref=_TARGET, force=False,
-        tally=rebase_types.ResolutionTally(), trail=None,
+        tally=rebase_types.ResolutionTally(), lease=None, snapshot=None,
+        trail=None,
     )
 
 
@@ -3141,12 +3155,12 @@ def test_land_asks_the_owner_for_a_force_push_with_the_regen_recovery():
     landed = _pushed()
 
     with _owner_reports(landed) as owner:
-        assert rebase_land.land_rebased("/fake") is landed
+        assert rebase_land.land_rebased("/fake", args=_LEASE.args) is landed
 
     assert owner.call_args[0][0] == "/fake"
     kwargs = owner.call_args.kwargs
     assert kwargs["gated"] is True
-    assert kwargs["args"] == ("--force-with-lease",)
+    assert kwargs["args"] == _LEASE.args
     assert kwargs["regen"] == rebase_types.REGEN_MESSAGE
 
 
@@ -3154,7 +3168,7 @@ def test_a_landed_push_never_reaches_the_ai_fix():
     with _owner_reports(_pushed()), \
          mock.patch.object(prepush, "fix_push_failures") as mock_fix:
         assert rebase_land.land_rebased(
-            "/fake", resolved_files=["server.go"]).ok
+            "/fake", resolved_files=["server.go"], args=_LEASE.args).ok
 
     mock_fix.assert_not_called()
 
@@ -3168,10 +3182,10 @@ def test_a_refusal_hands_the_hook_output_to_the_ai_fix():
          mock.patch.object(prepush, "fix_push_failures",
                            return_value=repaired) as mock_fix:
         assert rebase_land.land_rebased(
-            "/fake", resolved_files=["server.go"]) is repaired
+            "/fake", resolved_files=["server.go"], args=_LEASE.args) is repaired
 
     mock_fix.assert_called_once_with(
-        "/fake", "gofmt: server.go", ["server.go"], trail=None)
+        "/fake", "gofmt: server.go", ["server.go"], args=_LEASE.args, trail=None)
 
 
 def test_a_fix_that_produced_nothing_leaves_the_refusal_standing():
@@ -3181,7 +3195,7 @@ def test_a_fix_that_produced_nothing_leaves_the_refusal_standing():
     with _owner_reports(refusal), \
          mock.patch.object(prepush, "fix_push_failures", return_value=None):
         assert rebase_land.land_rebased(
-            "/fake", resolved_files=["server.go"]) is refusal
+            "/fake", resolved_files=["server.go"], args=_LEASE.args) is refusal
 
 
 @pytest.mark.parametrize("result", [
@@ -3204,7 +3218,7 @@ def test_only_a_refusal_reaches_the_ai_fix(result):
     with _owner_reports(result), \
          mock.patch.object(prepush, "fix_push_failures") as mock_fix:
         assert rebase_land.land_rebased(
-            "/fake", resolved_files=["server.go"]) is result
+            "/fake", resolved_files=["server.go"], args=_LEASE.args) is result
 
     mock_fix.assert_not_called()
 
@@ -3228,7 +3242,7 @@ def test_a_dropped_refusal_is_not_handed_to_the_ai_fix():
     with _owner_reports(dropped), \
          mock.patch.object(prepush, "fix_push_failures") as mock_fix:
         assert rebase_land.land_rebased(
-            "/fake", resolved_files=["server.go"]) is dropped
+            "/fake", resolved_files=["server.go"], args=_LEASE.args) is dropped
 
     mock_fix.assert_not_called()
 
@@ -3237,7 +3251,7 @@ def test_a_refusal_with_no_resolved_files_skips_the_ai_fix():
     """Nothing the AI resolved means nothing it has standing to repair."""
     with _owner_reports(_refused()), \
          mock.patch.object(prepush, "fix_push_failures") as mock_fix:
-        assert not rebase_land.land_rebased("/fake").ok
+        assert not rebase_land.land_rebased("/fake", args=_LEASE.args).ok
 
     mock_fix.assert_not_called()
 
@@ -3246,7 +3260,7 @@ def test_a_refusal_that_said_nothing_skips_the_ai_fix():
     """An empty complaint is not a prompt — the agent would be guessing."""
     with _owner_reports(_refused(error="")), \
          mock.patch.object(prepush, "fix_push_failures") as mock_fix:
-        rebase_land.land_rebased("/fake", resolved_files=["server.go"])
+        rebase_land.land_rebased("/fake", resolved_files=["server.go"], args=_LEASE.args)
 
     mock_fix.assert_not_called()
 
@@ -3318,12 +3332,13 @@ def test_the_pass_force_pushes_the_branch_it_repaired(tmp_path):
     with _fix_pass() as (owner, _):
         result = prepush.fix_push_failures(
             str(tmp_path), "gofmt: server.go needs formatting", ["server.go"],
+            args=_LEASE.args,
         )
 
     assert result.sha == "abc1234"
     kwargs = owner.call_args.kwargs
     assert kwargs["gated"] is True
-    assert kwargs["args"] == ("--force-with-lease",)
+    assert kwargs["args"] == _LEASE.args
 
 
 def test_the_pass_commits_everything_it_touched(tmp_path):
@@ -3341,7 +3356,9 @@ def test_the_pass_commits_everything_it_touched(tmp_path):
 
     with _fix_pass(snapshots=({"theirs.go"},
                               {"theirs.go", "server.go", "unnamed.go"})) as (owner, _):
-        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+        )
 
     assert owner.call_args.kwargs["paths"] == {"server.go", "unnamed.go"}
 
@@ -3351,7 +3368,9 @@ def test_a_pass_that_cannot_say_what_it_touched_commits_nothing(tmp_path):
     (tmp_path / "server.go").write_text("package main\n")
 
     with _fix_pass(snapshots=(frozenset(), None)) as (owner, _):
-        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+        )
 
     assert owner.call_args.kwargs["paths"] == set()
 
@@ -3361,7 +3380,9 @@ def test_the_pass_accounts_for_an_agent_that_committed_its_own_work(tmp_path):
     (tmp_path / "server.go").write_text("package main\n")
 
     with _fix_pass() as (owner, _):
-        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+        )
 
     assert owner.call_args.kwargs["recover_from"] == "9999999"
 
@@ -3371,7 +3392,9 @@ def test_the_commit_body_carries_each_file_s_verdict(tmp_path):
     (tmp_path / "server.go").write_text("package main\n")
 
     with _fix_pass(tick="needs a person", reason="the resolution dropped a branch") as (owner, _):
-        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+        )
 
     message = owner.call_args.kwargs["message"]
     assert message.startswith(prepush.FIX_SUBJECT)
@@ -3389,7 +3412,9 @@ def test_the_commit_body_carries_a_fixed_row_s_evidence(tmp_path):
     (tmp_path / "server.go").write_text("package main\n")
 
     with _fix_pass(tick="fixed", reason="golangci-lint run: clean") as (owner, _):
-        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+        )
 
     message = owner.call_args.kwargs["message"]
     assert "1 fixed, 0 unresolved" in message
@@ -3404,7 +3429,9 @@ def test_a_fixed_row_with_no_evidence_still_names_its_file(tmp_path):
     (tmp_path / "server.go").write_text("package main\n")
 
     with _fix_pass(tick="fixed", reason="") as (owner, _):
-        prepush.fix_push_failures(str(tmp_path), "vet: server.go", ["server.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+        )
 
     message = owner.call_args.kwargs["message"]
     assert "- server.go\n" in message or message.rstrip().endswith("- server.go")
@@ -3417,6 +3444,7 @@ def test_the_check_output_reaches_the_agent(tmp_path):
     with _fix_pass():
         prepush.fix_push_failures(
             str(tmp_path), "gofmt: server.go needs formatting", ["server.go"],
+            args=_LEASE.args,
         )
 
     assert "gofmt: server.go needs formatting" in _prompts[0]
@@ -3430,7 +3458,8 @@ def test_the_pass_bills_to_the_run_s_repo_and_pr(tmp_path):
 
     with _fix_pass() as (_, box):
         prepush.fix_push_failures(
-            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+            trail=trail,
         )
 
     assert (box[0].repo, box[0].pr, box[0].branch) == ("org/repo", "7", "feat/x")
@@ -3443,14 +3472,17 @@ def test_a_branch_with_no_pr_bills_to_the_repo_alone(tmp_path):
 
     with _fix_pass() as (_, box):
         prepush.fix_push_failures(
-            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+            trail=trail,
         )
 
     assert (box[0].repo, box[0].pr) == ("org/repo", "")
 
 
 def test_the_tracking_file_sits_beside_the_rebase_s_other_leavings(tmp_path):
-    adapter = prepush.PrePushFixAdapter(str(tmp_path), ["a.py"], "output")
+    adapter = prepush.PrePushFixAdapter(
+        str(tmp_path), ["a.py"], "output", args=_LEASE.args,
+    )
     artifacts = adapter.artifacts
 
     assert adapter.tracking_path == artifacts / "fix-tracking.md"
@@ -3468,7 +3500,9 @@ def test_the_artifacts_are_never_written_into_the_worktree(tmp_path):
     """
     worktree = tmp_path / "wt"
     worktree.mkdir()
-    adapter = prepush.PrePushFixAdapter(str(worktree), ["a.py"], "output")
+    adapter = prepush.PrePushFixAdapter(
+        str(worktree), ["a.py"], "output", args=_LEASE.args,
+    )
 
     assert worktree not in adapter.artifacts.parents
     assert adapter.artifacts.is_relative_to(pr_target.targets_root())
@@ -3481,8 +3515,8 @@ def test_two_unkeyed_checkouts_do_not_share_a_directory(tmp_path):
     two.mkdir(parents=True)
     one.mkdir()
 
-    assert (prepush.PrePushFixAdapter(str(one), ["a.py"], "o").artifacts
-            != prepush.PrePushFixAdapter(str(two), ["a.py"], "o").artifacts)
+    assert (prepush.PrePushFixAdapter(str(one), ["a.py"], "o", args=_LEASE.args).artifacts
+            != prepush.PrePushFixAdapter(str(two), ["a.py"], "o", args=_LEASE.args).artifacts)
 
 
 def test_the_pass_records_what_it_did_on_the_trail(tmp_path):
@@ -3493,7 +3527,8 @@ def test_the_pass_records_what_it_did_on_the_trail(tmp_path):
 
     with _fix_pass():
         prepush.fix_push_failures(
-            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+            trail=trail,
         )
 
     entries = {c.args[1]: c.kwargs.get("data", {}) for c in trail.info.call_args_list}
@@ -3510,7 +3545,8 @@ def test_a_pass_that_committed_nothing_is_not_reported_as_a_commit(tmp_path):
 
     with _fix_pass(landed=land.LandResult(land.CommitStatus.NO_CHANGES)):
         prepush.fix_push_failures(
-            str(tmp_path), "vet: server.go", ["server.go"], trail=trail,
+            str(tmp_path), "vet: server.go", ["server.go"], args=_LEASE.args,
+            trail=trail,
         )
 
     entries = [c.args[1] for c in trail.info.call_args_list]
@@ -3524,7 +3560,9 @@ def test_no_backend_attempts_nothing(tmp_path):
 
     with _fix_pass(available=False) as (owner, _), \
          mock.patch.object(rebase_conflicts, "is_generated_file", return_value=None):
-        result = prepush.fix_push_failures(str(tmp_path), "errors", ["file.go"])
+        result = prepush.fix_push_failures(
+            str(tmp_path), "errors", ["file.go"], args=_LEASE.args,
+        )
 
     assert result is None
     owner.assert_not_called()
@@ -3547,7 +3585,9 @@ def test_a_generated_file_is_rebuilt_instead_of_prompted(tmp_path):
          mock.patch.object(regen, "run_regeneration",
                            side_effect=lambda job, **kw: regenerated.append(job.cmd) or True), \
          _repo_declaring(["mise run generate"], root=tmp_path):
-        prepush.fix_push_failures(str(tmp_path), "drift: models.go", ["models.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), "drift: models.go", ["models.go"], args=_LEASE.args,
+        )
 
     assert box[0] is None, "a generated file was handed to the fix pass"
     assert regenerated == [("mise", "run", "generate")]
@@ -3567,12 +3607,12 @@ def test_a_rebuild_with_nothing_else_to_fix_is_still_landed(tmp_path):
                            return_value=land.LandResult(land.CommitStatus.PUSHED, "reb1234")) as owner, \
          _repo_declaring(["mise run generate"], root=tmp_path):
         result = prepush.fix_push_failures(
-            str(tmp_path), "drift: models.go", ["models.go"],
+            str(tmp_path), "drift: models.go", ["models.go"], args=_LEASE.args,
         )
 
     assert result.sha == "reb1234"
     kwargs = owner.call_args.kwargs
-    assert kwargs["args"] == ("--force-with-lease",)
+    assert kwargs["args"] == _LEASE.args
     assert kwargs["gated"] is True
     assert kwargs["message"] == prepush.REGEN_MESSAGE
     # No agent ran, so there is no snapshot to scope from and none is needed:
@@ -3593,7 +3633,7 @@ def test_a_rebuild_alongside_editable_work_is_swept_into_the_agent_s_commit(tmp_
          _repo_declaring(["mise run generate"], root=tmp_path):
         prepush.fix_push_failures(
             str(tmp_path), "drift: models.go, vet: server.go",
-            ["models.go", "server.go"],
+            ["models.go", "server.go"], args=_LEASE.args,
         )
 
     # `prepush.land` and `fix_engine.land` are one module, so the count is what
@@ -3617,7 +3657,7 @@ def test_the_agent_is_asked_only_about_the_hand_written_files(tmp_path):
          _repo_declaring(["mise run generate"], root=tmp_path):
         prepush.fix_push_failures(
             str(tmp_path), "drift: models.go, vet: handler.go",
-            ["models.go", "handler.go"],
+            ["models.go", "handler.go"], args=_LEASE.args,
         )
 
     assert [i.id for i in box[0].items()] == ["handler.go"]
@@ -3629,7 +3669,9 @@ def test_a_generated_file_with_no_regenerator_is_left_alone(tmp_path):
 
     with _fix_pass() as (owner, box), \
          _repo_declaring([], root=tmp_path, mise_task=False):
-        result = prepush.fix_push_failures(str(tmp_path), "drift: x.gen", ["x.gen"])
+        result = prepush.fix_push_failures(
+            str(tmp_path), "drift: x.gen", ["x.gen"], args=_LEASE.args,
+        )
 
     assert box[0] is None
     assert result is None
@@ -3662,7 +3704,7 @@ def test_only_the_files_actually_rebuilt_are_reported_as_committed(tmp_path):
                            return_value=land.LandResult(land.CommitStatus.PUSHED, "reb1234")):
         prepush.fix_push_failures(
             str(tmp_path), "drift: models.go, drift: x.gen",
-            ["models.go", "x.gen"], trail=trail,
+            ["models.go", "x.gen"], args=_LEASE.args, trail=trail,
         )
 
     entries = {c.args[1]: c.kwargs.get("data", {}) for c in trail.info.call_args_list}
@@ -3681,7 +3723,8 @@ def test_a_rebuild_that_did_not_commit_is_recorded(tmp_path):
                            return_value=land.LandResult(land.CommitStatus.NO_CHANGES)), \
          _repo_declaring(["mise run generate"], root=tmp_path):
         prepush.fix_push_failures(
-            str(tmp_path), "drift: models.go", ["models.go"], trail=trail,
+            str(tmp_path), "drift: models.go", ["models.go"],
+            args=_LEASE.args, trail=trail,
         )
 
     assert "regenerated files did not commit" in [
@@ -3709,7 +3752,9 @@ def _targets(tmp_path, error_output, resolved_files):
     with mock.patch.object(prepush.PrePushFixAdapter, "__init__", capture), \
          mock.patch.object(prepush.ai_backend, "is_available", return_value=True), \
          mock.patch.object(fix_engine, "run", return_value=fix_engine.FixRun()):
-        prepush.fix_push_failures(tmp_path.as_posix(), error_output, resolved_files)
+        prepush.fix_push_failures(
+            tmp_path.as_posix(), error_output, resolved_files, args=_LEASE.args,
+        )
 
     return box[0].editable if box[0] else []
 
@@ -3754,7 +3799,8 @@ def test_the_unscoped_fallback_is_recorded(tmp_path):
 
     with _fix_pass():
         prepush.fix_push_failures(
-            str(tmp_path), "build failed", ["server.go"], trail=trail,
+            str(tmp_path), "build failed", ["server.go"],
+            args=_LEASE.args, trail=trail,
         )
 
     assert "check output named no resolved file" in [
@@ -3768,7 +3814,9 @@ def test_the_error_output_handed_over_is_truncated(tmp_path):
     long_error = "server.go " + "x" * 10000
 
     with _fix_pass() as (_, box):
-        prepush.fix_push_failures(str(tmp_path), long_error, ["server.go"])
+        prepush.fix_push_failures(
+            str(tmp_path), long_error, ["server.go"], args=_LEASE.args,
+        )
 
     assert len(box[0].check_output) == prepush.FIX_ERROR_MAX_CHARS
 
@@ -3934,6 +3982,27 @@ def test_cmd_start_stash_failure_aborts():
     mock_fresh.assert_not_called()
 
 
+def test_cmd_start_resume_forwards_the_snapshot():
+    """A resumed rebase still needs the snapshot for the open-PR notice.
+
+    Without forwarding it, `drive_to_completion` cannot name the PR a resumed
+    force-push is about to rewrite, and the round trip that fetched it is
+    thrown away for nothing.
+    """
+    ctx = mock.MagicMock()
+    snapshot = rebase_pr_snapshot.PRSnapshot(state="OPEN", number=1)
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=True), \
+         mock.patch.object(rebase_target, "resume_target_ref", return_value=_TARGET), \
+         mock.patch.object(lifecycle, "drive_to_completion", return_value=0) as drive:
+        pr_rebase_cli.cmd_start(
+            "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            snapshot=snapshot,
+        )
+
+    assert drive.call_args.kwargs["snapshot"] is snapshot
+
+
 # ── main() --push dispatch ──────────────────────────────────────────────────
 
 
@@ -3945,6 +4014,12 @@ def _run_main(cmd_start_rc: int, *flags: str,
     The target-ref resolution runs for real off the two probes it consults, so
     a test can move the repo's trunk or the PR's base and watch what main()
     hands the commands.
+
+    The lock is stubbed rather than taken. A MagicMock's `target_dir` is a
+    MagicMock, and `main()` now hands it to a lock that creates the directory —
+    which, left real, writes a `MagicMock/mock.target_dir/<id>/` tree into
+    whatever directory the suite happens to run from. What main() does with the
+    lock is pinned in run_lock_test and pr_cli_test against real paths.
     """
     fake_ctx = mock.MagicMock()
     fake_ctx.worktree_root = Path("/fake")
@@ -3954,6 +4029,7 @@ def _run_main(cmd_start_rc: int, *flags: str,
     fake_trail.__exit__ = mock.Mock(return_value=False)
 
     with mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=fake_ctx), \
+         mock.patch.object(pr_rebase_cli.run_lock, "claim_for_process"), \
          mock.patch.object(rebase_target, "pr_base_branch", return_value=pr_base), \
          mock.patch.object(git_topology, "default_branch",
                            return_value=default_branch), \
@@ -4025,6 +4101,7 @@ def test_rebase_success_in_fix_only_prints_the_push_command(capsys):
          mock.patch.object(core_report, "emit_json") as mock_emit:
         rc = lifecycle.rebase_success(
             "/fake", ctx, rebase_types.RunMode.FIX_ONLY, target_ref=_TARGET,
+            lease=_LEASE,
         )
 
     assert rc == 0
@@ -4054,7 +4131,9 @@ def test_manual_push_hint_only_when_the_run_never_pushes(mode, hinted, capsys):
          _lands(landed), \
          mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(core_report, "emit_json"):
-        rc = lifecycle.rebase_success("/fake", ctx, mode, target_ref=_TARGET)
+        rc = lifecycle.rebase_success(
+            "/fake", ctx, mode, target_ref=_TARGET, lease=_LEASE,
+        )
 
     assert rc == 0
     err = capsys.readouterr().err
@@ -4096,3 +4175,181 @@ def test_main_without_a_worktree_exits_with_guidance(capsys):
          mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls:
         assert_no_worktree_exit(capsys, "isaac/feat/x", pr_rebase_cli.main)
     mock_trail_cls.start.assert_not_called()
+
+
+# ── Naming the PR a force-push is about to rewrite ──────────────────────────
+#
+# A branch with an open PR is shared. The push is legitimate — review findings,
+# CI fixes, a rebase a reviewer asked for — so this is a notice, never a gate.
+
+
+def _rebase_success_with(snapshot, mode=rebase_types.RunMode.FIX):
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         _lands(_pushed()), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"):
+        return lifecycle.rebase_success(
+            "/fake", ctx, mode, target_ref=_TARGET, lease=_LEASE,
+            snapshot=snapshot,
+        )
+
+
+def test_a_ready_pr_is_named_before_the_force_push(capsys):
+    rc = _rebase_success_with(rebase_pr_snapshot.PRSnapshot(
+        state="OPEN", number=1358, url="https://gh/1358", is_draft=False,
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "https://gh/1358" in err
+    assert "ready for review" in err
+    # The push still happens: this is a notice, not a gate.
+    assert "force-pushing" in err
+
+
+def test_a_draft_is_pushed_to_without_ceremony(capsys):
+    """Force-pushing a draft is the normal way to work on one."""
+    _rebase_success_with(rebase_pr_snapshot.PRSnapshot(
+        state="OPEN", number=1358, url="https://gh/1358", is_draft=True,
+    ))
+    assert "ready for review" not in capsys.readouterr().err
+
+
+def test_nothing_is_claimed_when_github_could_not_be_asked(capsys):
+    """An unanswered read must not be reported as "no PR"."""
+    _rebase_success_with(rebase_pr_snapshot.PRSnapshot())
+    assert "ready for review" not in capsys.readouterr().err
+
+
+def test_a_held_run_says_nothing_about_a_push_it_is_not_making(capsys):
+    """--no-push reaches no remote, so there is nobody to warn."""
+    _rebase_success_with(
+        rebase_pr_snapshot.PRSnapshot(state="OPEN", number=1358, is_draft=False),
+        mode=rebase_types.RunMode.FIX_ONLY,
+    )
+    assert "ready for review" not in capsys.readouterr().err
+
+
+# ── When no lease can be named ───────────────────────────────────────────────
+
+
+def test_a_push_with_no_nameable_lease_is_refused(capsys):
+    """The remote has the branch and this run never read where it was.
+
+    Both fallbacks are wrong: a bare lease is satisfied by the run's own fetch
+    (the clobber), and an empty expect is rejected against a ref that exists.
+    Stopping leaves the replay in the worktree, which is recoverable.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         _lands(_pushed()) as owner, \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"):
+        rc = lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.FIX, target_ref=_TARGET,
+            lease=None,
+        )
+
+    assert rc == 1
+    owner.assert_not_called()
+    assert "cannot tell what the remote was at" in capsys.readouterr().err
+
+
+def test_a_run_that_never_pushes_does_not_need_a_lease(capsys):
+    """--no-push reaches no remote, so an unnameable lease stops nothing."""
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"):
+        rc = lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+            lease=None,
+        )
+
+    assert rc == 0
+
+
+def _push_state(lease_expect="abc123"):
+    """A recorded rebase, as cmd_push reads it back out of state.json."""
+    state = mock.MagicMock()
+    state.rebase.updated_at = "t"
+    state.rebase.lease_expect = lease_expect
+    state.rebase.commits_replayed = 1
+    state.rebase.conflicts_resolved = 0
+    state.rebase.files_resolved = []
+    state.rebase.files_stale = []
+    state.rebase.files_replayed = []
+    return state
+
+
+def test_the_default_invocation_names_the_pr_before_pushing(capsys):
+    """A bare `pr rebase` is RunMode.PUSH, which pushes from cmd_push.
+
+    The notice first lived only in rebase_success, whose `lands_here` is false
+    for exactly this mode — so the single most common way to run the command
+    was the one way that force-pushed a reviewed branch silently.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    snapshot = rebase_pr_snapshot.PRSnapshot(
+        state="OPEN", number=1358, url="https://gh/1358", is_draft=False,
+    )
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_types, "load_or_init", return_value=_push_state()), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(git_client, "commits_ahead", return_value=1), \
+         _lands(_pushed()):
+        rc = pr_rebase_cli.cmd_push(
+            "/fake", ctx, target_ref=_TARGET, snapshot=snapshot,
+        )
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "https://gh/1358" in err
+    assert "ready for review" in err
+
+
+def test_the_default_invocation_pushes_under_the_recorded_lease():
+    """cmd_push must use the tip the rebase recorded, not one rebuilt here."""
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_types, "load_or_init",
+                           return_value=_push_state(lease_expect="deadbee")), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(git_client, "commits_ahead", return_value=1), \
+         _lands(_pushed()) as owner:
+        pr_rebase_cli.cmd_push("/fake", ctx, target_ref=_TARGET)
+
+    assert owner.call_args.kwargs["args"] == (
+        "--force-with-lease=refs/heads/isaac/feat/x:deadbee",
+    )
+
+
+def test_a_lease_recorded_before_the_field_existed_is_refused(capsys):
+    """An empty expect claims "the remote has no such ref" — check it.
+
+    A state file written before `lease_expect` shipped deserializes the field
+    to "", which is indistinguishable from a branch legitimately not yet
+    pushed. Pushing on that claim fails with git's `stale info` and no clue
+    why, so the claim is tested against the remote first.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_inspect, "ref_exists", return_value=True), \
+         mock.patch.object(rebase_types, "load_or_init",
+                           return_value=_push_state(lease_expect="")), \
+         _lands(_pushed()) as owner:
+        rc = pr_rebase_cli.cmd_push("/fake", ctx, target_ref=_TARGET)
+
+    assert rc == 1
+    owner.assert_not_called()
+    assert "origin already has this branch" in capsys.readouterr().err

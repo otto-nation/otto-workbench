@@ -3087,19 +3087,56 @@ The lock is keyed on the target, not the caller: ``pr review 2973`` from a repo
 root and ``pr review --self`` from inside the PR's own worktree take the same
 lock, while reviews of two different PRs launched from one directory take two.
 
-Uses ``fcntl.flock`` on ``<target_dir>/run.lock``. The kernel drops the lock
-when the holder exits for any reason, including SIGKILL, so there is no
-stale-lock state to reap.
+That key is ``(origin repo key, branch)`` and says nothing about *where* a run
+writes. Two runs can name different branches and mutate one checkout: a ``--pr``
+run keys on the branch GitHub reports for the PR, while the worktree it was
+launched in stands on whatever it stands on, and ``pr_context`` only relocates a
+run to a branch's own worktree when it was given ``--branch``. Both runs then
+take different target locks, both succeed, and both edit and commit in the same
+tree.
 
-``claude-review`` (both its PR and its ``--self`` paths), ``ci-check`` and
-``review-threads`` take the lock themselves, so invoking those three directly is
-guarded too. When ``pr`` launched them they resolve the same target, compute the
-same key, find it in ``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead
-of deadlocking against the lock their own parent holds.
+So a run that writes to a checkout locks that too, keyed on the checkout's own
+``--absolute-git-dir`` — per linked worktree, not per repo. The two locks answer
+different questions and neither implies the other: the target lock asks whether
+this PR is being worked on, the checkout lock whether this working tree is being
+written to. Both are non-blocking and always taken target-first, so a pair
+cannot deadlock against another pair.
 
-That list is exhaustive, not an example: ``pr-rebase`` and ``pr-describe`` are
-delegates that take no lock of their own, so running either directly is
-unguarded and only ``pr rebase`` / ``pr describe`` serialize them.
+A caller that writes to no checkout, or whose worktree git cannot resolve, takes
+the target lock alone.
+
+Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
+``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
+exits for any reason, including SIGKILL, so there is no stale-lock state to
+reap.
+
+Neither file is ever deleted, so a machine accumulates one per target it has
+ever run against and nearly all of them name processes that exited long ago.
+That is not a leak and deleting them is not maintenance: the record is what
+makes the next contender's error message name a command rather than a pid. But
+it does mean **the presence of a lock file says nothing about whether a lock is
+held**, and a dead pid in one is the normal case rather than evidence of a
+crash. A released record carries a ``released`` timestamp, written under the
+flock just before it is dropped; a held one has ``released: null``. To ask the
+kernel rather than read the file, call ``is_held``.
+
+``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
+``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
+so invoking any of them directly is guarded too. When ``pr`` launched them they
+resolve the same target, compute the same key, find it in
+``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead of deadlocking
+against the lock their own parent holds.
+
+That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
+are the remaining delegates and take no lock of their own: neither is a
+documented entry point, and both run only under a ``pr review`` that holds the
+lock across the subprocess.
+
+The pass-through is an exact string match on the target and does not prove the
+flock is ours. A value exported into a shell by hand, or left behind by a run
+killed before its ``finally``, therefore reads as ownership. Proving it would
+mean re-probing a lock we already hold, which fails precisely because we hold
+it; the marker is the only thing that can answer, so it is trusted.
 
 ### core/schema_gen.py
 
@@ -3921,6 +3958,48 @@ never mutates it.
 
 Force-pushing a replayed branch, with the hook-rejection recovery ladder.
 
+### rebase/lease.py
+
+The lease a replayed branch is force-pushed under.
+
+``git push --force-with-lease`` with no expected value protects the remote by
+requiring it to match *our remote-tracking ref*. That is the wrong guarantee for
+this tool, and git's own manual says so:
+
+    A general note on safety: supplying this option without an expected value,
+    i.e. as ``--force-with-lease`` or ``--force-with-lease=<refname>`` interacts
+    very badly with anything that implicitly runs ``git fetch`` on the remote to
+    be pushed to in the background.
+
+A rebase run begins with exactly that fetch. So a colleague's commit, pushed
+while we were not looking, is pulled into ``origin/<branch>`` by our own fetch,
+the bare lease then finds the remote matching what it expects, and the replay
+force-pushes their work away. The lease was satisfied by evidence the tool
+manufactured a moment earlier.
+
+The fix is to name the commit ourselves: ``--force-with-lease=<ref>:<expect>``,
+where *expect* is the remote tip as it stood **before** the fetch. A colleague's
+push then makes the remote disagree with what we named, and git refuses.
+
+``--force-if-includes`` is the other candidate and is wrong here. It proves the
+remote tip is reachable from the local branch's reflog, and a worktree this tool
+materialised on demand has no reflog to speak of — only the zero-old
+``branch: Created from refs/remotes/origin/<branch>`` entry, which does not
+count. It rejects the routine case (a fresh worktree, a fresh clone, an expired
+reflog) while the explicit lease accepts all three and still refuses the
+clobber.
+
+Two values of *expect* are legal and they are not interchangeable:
+
+* a **full SHA** — the remote must still be at that commit;
+* the **empty string** — the remote must not have the ref at all, which is the
+  only form that can create a branch on its first push.
+
+Passing a SHA for a ref the remote does not have fails with ``stale info``, and
+passing the empty string for a ref it does have fails the same way. Neither is
+recoverable mid-push, so ``resolve`` is the only place that chooses between
+them, and it chooses by asking whether the ref is there.
+
 ### rebase/lifecycle.py
 
 Driving a rebase to completion — the step loop and the two ways it ends.
@@ -3929,6 +4008,24 @@ Driving a rebase to completion — the step loop and the two ways it ends.
 the same loop, which advances a step at a time until git says the rebase is
 over and ``rebase_success`` lands what was replayed. Every exit is either that,
 a refusal, or an abort that leaves the branch where it started.
+
+### rebase/pr_snapshot.py
+
+What GitHub says about the PR being rebased, read once per run.
+
+A fresh rebase asked GitHub about its PR twice: once for ``baseRefName``, to
+know what to replay onto, and once for ``state``, to refuse a branch whose PR
+already merged. Two round trips for one PR, and each new question — is it a
+draft, who is reviewing it — would have added a third.
+
+So the PR is read once and the answer is passed around. ``gh pr view`` takes a
+field list, so asking for six costs exactly what asking for one did.
+
+Best effort, like every tracker read in this codebase: ``gh`` may be absent,
+unauthenticated, rate-limited, or the branch may have no PR at all. All of those
+arrive as ``PRSnapshot()`` with ``answered`` false, which every consumer reads as
+"the tracker has nothing to say" — never as an answer that stops a rebase. The
+git-side signals still get their turn.
 
 ### rebase/prepush.py
 

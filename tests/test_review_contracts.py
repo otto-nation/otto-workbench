@@ -661,6 +661,9 @@ def _render_fix_findings(wt_path) -> str:
 def _render_fix_prepush(wt_path) -> str:
     return _render_adapter(rebase_prepush.PrePushFixAdapter(
         str(wt_path), ["server.go"], "gofmt: server.go needs formatting",
+        # The lease the refused push carried; this renders a prompt and never
+        # pushes, so the value only has to be the shape the adapter stores.
+        args=("--force-with-lease=refs/heads/user/feat/thing:abc123",),
         repo="owner/repo", branch="user/feat/thing",
     ))
 

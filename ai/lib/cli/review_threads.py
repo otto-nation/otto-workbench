@@ -408,9 +408,9 @@ def main(argv: list[str] | None = None) -> int:
             ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
         )
     branch = ctx.branch
-    # Called for its raise, not its value: a bare-repo run must fail here,
+    # Called for its raise as much as its value: a bare-repo run must fail here,
     # before the lock and the trail.
-    ctx.require_worktree()
+    worktree = ctx.require_worktree()
     head_sha = ctx.head_sha
 
     # A no-op when pr launched us — we resolve the same target and find its key
@@ -420,6 +420,9 @@ def main(argv: list[str] | None = None) -> int:
         ctx.target_dir,
         command=" ".join([SCRIPT, *(argv if argv is not None else sys.argv[1:])]),
         started=pr_state.now_iso(),
+        # This run's --fix pass commits in that checkout; no worktree switch
+        # happens on this path, so it is the tree that gets written to.
+        worktree=worktree,
     )
 
     trail = Trail.start(

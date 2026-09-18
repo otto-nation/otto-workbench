@@ -1741,7 +1741,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(
     """Checking out the target moves HEAD — the recover sha must come from the new worktree."""
     ctx = SimpleNamespace(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
-        target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
+        worktree_root=tmp_path, target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
     )
     monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
     monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
@@ -2117,10 +2117,16 @@ def _self_review_args(**overrides):
 
 
 def _stub_self_review(cr, monkeypatch, target, reviews_dir):
-    """Drive _run_self_review far enough to reach the lock, and no further."""
+    """Drive _run_self_review far enough to reach the lock, and no further.
+
+    `worktree_root` is the tree a plain `--self` reviews, and the lock now reads
+    it. A sibling of the target rather than the target itself: the two are
+    different directories in a real run, and sharing one here would hide a
+    confusion between them.
+    """
     ctx = SimpleNamespace(
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
-        target_dir=target,
+        worktree_root=target.parent / "wt", target_dir=target,
     )
     monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
     monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
@@ -2223,7 +2229,7 @@ def test_self_review_resolves_locally(cr, tmp_path, reviews_dir, monkeypatch):
     seen = {}
     target = tmp_path / "pr" / "target"
     ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
-                          head_sha="abc1234", target_dir=target)
+                          head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
 
     def record(depth, **kw):
         seen["depth"] = depth
@@ -2250,7 +2256,7 @@ def test_self_review_still_finds_an_open_pr(cr, tmp_path, reviews_dir, monkeypat
     """
     target = tmp_path / "pr" / "target"
     ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
-                          head_sha="abc1234", target_dir=target)
+                          head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
     body = MagicMock()
 
     monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
@@ -2270,7 +2276,7 @@ def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir,
     no number, and the run goes ahead regardless."""
     target = tmp_path / "pr" / "target"
     ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
-                          head_sha="abc1234", target_dir=target)
+                          head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
     body = MagicMock()
 
     monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")

@@ -515,6 +515,9 @@ class RebaseSummary(Domain):
     files_stale: list[str] = field(default_factory=list)
     files_replayed: list[str] = field(default_factory=list)
     force_pushed: bool = False
+    # The remote tip the replay was based on. Carried across the gap between a
+    # `--no-push` rebase and the push that finishes it; see RebaseOutcome.
+    lease_expect: str = ""
 
     def render_status(self) -> list[str]:
         if not self.updated_at:

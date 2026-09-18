@@ -13,7 +13,10 @@ from git import land
 from git import push
 from git.land import CommitStatus
 from rebase import land as rebase_land
+from rebase import lease as rebase_lease
 from rebase import prepush
+
+_LEASE = rebase_lease.PushLease(branch="isaac/feat/x", expect="abc123")
 
 
 def _pushed(sha="1a2b3c4"):
@@ -43,38 +46,46 @@ class TestCheckFailureSeam:
         with self._owner_reports(_refused()), \
              mock.patch.object(prepush, "fix_push_failures",
                                return_value=repaired) as fix:
-            got = rebase_land.land_rebased("/fake", resolved_files=["server.go"])
+            got = rebase_land.land_rebased(
+                "/fake", resolved_files=["server.go"], args=_LEASE.args,
+            )
 
         assert got is repaired
         fix.assert_called_once_with(
-            "/fake", "gofmt: server.go", ["server.go"], trail=None)
+            "/fake", "gofmt: server.go", ["server.go"], args=_LEASE.args,
+            trail=None,
+        )
 
     def test_a_fix_that_produced_nothing_leaves_the_refusal_standing(self):
         refusal = _refused()
         with self._owner_reports(refusal), \
              mock.patch.object(prepush, "fix_push_failures", return_value=None):
-            got = rebase_land.land_rebased("/fake", resolved_files=["server.go"])
+            got = rebase_land.land_rebased(
+                "/fake", resolved_files=["server.go"], args=_LEASE.args,
+            )
         assert got is refusal
 
     def test_a_landed_push_never_reaches_the_fix(self):
         with self._owner_reports(_pushed()), \
              mock.patch.object(prepush, "fix_push_failures") as fix:
             assert rebase_land.land_rebased(
-                "/fake", resolved_files=["server.go"]).ok
+                "/fake", resolved_files=["server.go"], args=_LEASE.args).ok
         fix.assert_not_called()
 
     def test_no_resolved_files_skips_the_fix(self):
         """Nothing the AI resolved means nothing it has standing to repair."""
         with self._owner_reports(_refused()), \
              mock.patch.object(prepush, "fix_push_failures") as fix:
-            rebase_land.land_rebased("/fake")
+            rebase_land.land_rebased("/fake", args=_LEASE.args)
         fix.assert_not_called()
 
     def test_an_empty_complaint_skips_the_fix(self):
         """An empty complaint is not a prompt — the agent would be guessing."""
         with self._owner_reports(_refused(error="")), \
              mock.patch.object(prepush, "fix_push_failures") as fix:
-            rebase_land.land_rebased("/fake", resolved_files=["server.go"])
+            rebase_land.land_rebased(
+                "/fake", resolved_files=["server.go"], args=_LEASE.args,
+            )
         fix.assert_not_called()
 
 
@@ -84,10 +95,10 @@ class TestGatedPush:
         with mock.patch.object(
             land, "land_head", return_value=_pushed(),
         ) as owner:
-            rebase_land.land_rebased("/fake")
+            rebase_land.land_rebased("/fake", args=_LEASE.args)
 
         kwargs = owner.call_args.kwargs
         assert owner.call_args[0][0] == "/fake"
         assert kwargs["gated"] is True
-        assert kwargs["args"] == rebase_land.FORCE_PUSH_ARGS
+        assert kwargs["args"] == _LEASE.args
         assert kwargs["regen"] == rebase_land.REGEN_MESSAGE

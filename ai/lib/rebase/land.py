@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from core import log
 from core.trail import Trail
 from git import land
@@ -12,12 +14,12 @@ from git import push
 from . import prepush
 from . import types as rebase_types
 
-FORCE_PUSH_ARGS = rebase_types.FORCE_PUSH_ARGS
 REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
 
 
 def land_rebased(
     cwd: str, resolved_files: list[str] | None = None, *,
+    args: Sequence[str],
     trail: Trail | None = None,
 ) -> land.LandResult:
     """Force-push the replayed branch, auto-recovering from a hook rejection.
@@ -35,9 +37,13 @@ def land_rebased(
     `--no-push` comes back `held`, with the force-push command in `resume`,
     rather than as a failure or as a hand-written hint.
 
+    `args` carries the lease and has no default: it names the commit the remote
+    must still be at, which only the caller that read it before the fetch can
+    know. A default here would be a bare lease, and a bare lease is satisfied by
+    the tool's own fetch — see `rebase.lease`.
     """
     landed = land.land_head(
-        cwd, gated=True, args=FORCE_PUSH_ARGS, trail=trail, regen=REGEN_MESSAGE,
+        cwd, gated=True, args=tuple(args), trail=trail, regen=REGEN_MESSAGE,
     )
     # Only a refusal leaves something an agent could repair. A held, lost, or
     # unverified push says nothing is wrong with the worktree, and handing one to
@@ -48,7 +54,9 @@ def land_rebased(
         return landed
 
     log.info("Attempting to fix pre-push check failures...")
+    # The same lease: a refused push left the remote where it was, so the tip
+    # the repair is pushed against is still the one we named.
     repaired = prepush.fix_push_failures(
-        cwd, landed.error, resolved_files, trail=trail,
+        cwd, landed.error, resolved_files, args=tuple(args), trail=trail,
     )
     return repaired if repaired is not None else landed

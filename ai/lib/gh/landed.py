@@ -141,6 +141,17 @@ def by_tracker(
     no longer exists anywhere but in the tracker's history.
     """
     merged = merged_pr(cwd, branch=branch, repo=repo, pr_number=pr_number)
+    return merged_report(merged)
+
+
+def merged_report(merged: MergedPR | None) -> Landed | None:
+    """A merged PR as this module's evidence type, or None for no answer.
+
+    Split from ``by_tracker`` so a caller that already read the PR — one that
+    batched this question with others into a single ``gh pr view`` — phrases the
+    finding exactly as the read-it-here path does, rather than assembling a
+    second wording that drifts from this one.
+    """
     if merged is None:
         return None
     where = f" ({merged.url})" if merged.url else ""

@@ -31,19 +31,25 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 import traceback
+from pathlib import Path
 
 from core import log
 from core import publishing
+from core import run_lock
 from core import trail as core_trail
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 from git import client as git_client
 from pr import context as pr_context
+from pr import state as pr_state
 from pr.domains import RebaseStatus, RebaseSummary
 from rebase import inspect as rebase_inspect
 from rebase import land as rebase_land
+from rebase import lease as rebase_lease
 from rebase import lifecycle
+from rebase import pr_snapshot as rebase_pr_snapshot
 from rebase import stash
 from rebase import target as rebase_target
 from rebase import types as rebase_types
@@ -74,6 +80,7 @@ def cmd_abort(
 
 def cmd_push(
     cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Force-push after a completed rebase."""
@@ -82,8 +89,42 @@ def cmd_push(
         log.error("Cannot push — rebase still in progress.")
         return 1
 
+    state = rebase_types.load_or_init(ctx)
+    if not state.rebase.updated_at:
+        core_trail.terr(trail, "push", "no recorded rebase to push")
+        log.error("Cannot push — no rebase recorded for this branch.")
+        log.dim("Run `pr rebase` first, or push by hand.")
+        return 1
+
+    # The lease the rebase recorded, not one rebuilt here. By now HEAD is the
+    # rewritten tip and origin/<branch> is whatever the rebase's own fetch
+    # brought down, so neither reading can say what the remote was at before
+    # the replay — which is the only thing a lease may name.
+    lease = rebase_lease.PushLease(
+        branch=ctx.branch, expect=state.rebase.lease_expect,
+    )
+    # An empty expect is a real value ("the remote must not have this ref
+    # yet"), but it is also what a state file written before `lease_expect`
+    # existed deserializes to. The two are indistinguishable in state.json, so
+    # check the claim against the checkout's own view of the remote rather
+    # than trusting it blindly — a branch this old cannot legitimately still
+    # be unpushed.
+    if lease.creates_the_ref and rebase_inspect.ref_exists(
+        cwd, f"refs/remotes/origin/{ctx.branch}",
+    ):
+        core_trail.terr(
+            trail, "push", "recorded lease is stale — origin already has this branch",
+            data={"branch": ctx.branch},
+        )
+        log.error("Cannot push — the recorded rebase has no lease, but origin "
+                  "already has this branch.")
+        log.dim("Run `pr rebase` again (without --no-push) to record a fresh "
+                "lease, or push by hand after checking what origin holds.")
+        return 1
+
+    rebase_pr_snapshot.name_the_open_pr(snapshot, trail=trail)
     log.info("Force-pushing...")
-    landed = rebase_land.land_rebased(cwd, trail=trail)
+    landed = rebase_land.land_rebased(cwd, args=lease.args, trail=trail)
     if not landed.ok:
         core_trail.terr(
             trail, "push", "force-push failed",
@@ -91,7 +132,6 @@ def cmd_push(
         )
         return 1
 
-    state = rebase_types.load_or_init(ctx)
     RebaseOutcome(
         commits_replayed=(state.rebase.commits_replayed
                           or git_client.commits_ahead(cwd, target_ref=target_ref)),
@@ -100,6 +140,7 @@ def cmd_push(
         files_stale=state.rebase.files_stale,
         files_replayed=state.rebase.files_replayed,
         force_pushed=True,
+        lease_expect=state.rebase.lease_expect,
         target_base=target_ref,
     ).save(ctx)
     log.ok("Force-pushed successfully.")
@@ -108,7 +149,9 @@ def cmd_push(
 
 def cmd_start(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    force: bool = False, *, target_ref: str, trail: Trail | None = None,
+    force: bool = False, *, target_ref: str,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
+    trail: Trail | None = None,
 ) -> int:
     """Start or resume a rebase onto the resolved target ref.
 
@@ -127,7 +170,8 @@ def cmd_start(
         )
         log.info("Detected in-progress rebase — resuming...")
         return lifecycle.drive_to_completion(
-            cwd, ctx, mode, target_ref=target_ref, force=True, trail=trail,
+            cwd, ctx, mode, target_ref=target_ref, force=True,
+            snapshot=snapshot, trail=trail,
         )
 
     stashed = stash.auto_stash(cwd, trail=trail)
@@ -139,7 +183,8 @@ def cmd_start(
         reason="no in-progress rebase detected",
     )
     rc = lifecycle.fresh(
-        cwd, ctx, mode, force=force, target_ref=target_ref, trail=trail,
+        cwd, ctx, mode, force=force, target_ref=target_ref, snapshot=snapshot,
+        trail=trail,
     )
 
     if stashed:
@@ -211,7 +256,19 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
         )
         return cmd_abort(cwd, ctx, target_ref=target_ref)
 
-    target_ref = rebase_target.resolve_target_ref(cwd, ctx, args.onto, trail=trail)
+    # One read of the PR for the whole run: the base to replay onto, whether it
+    # already merged, and whether anyone is reviewing it were three questions
+    # and are now one round trip. Harmless when gh cannot answer — an
+    # unanswered snapshot refuses nothing and reports nothing.
+    #
+    # Still read under --onto, which needs no base from GitHub: the other two
+    # questions are about the branch rather than the base, and a run that names
+    # its own target is no less able to land on a merged PR or to rewrite one
+    # somebody is reviewing.
+    snapshot = rebase_pr_snapshot.fetch(cwd, ctx)
+    target_ref = rebase_target.resolve_target_ref(
+        cwd, ctx, args.onto, snapshot=snapshot, trail=trail,
+    )
 
     mode, reason = _select_mode(args)
     trail.decision("mode", f"selected {mode}", reason=reason)
@@ -225,10 +282,10 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
         trail.decision("preflight", "waiving the already-landed check",
                        reason=f"{REFUSAL_OVERRIDE_FLAG} flag set")
     rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
-                   trail=trail)
+                   snapshot=snapshot, trail=trail)
 
     if rc == 0 and mode is RunMode.PUSH:
-        rc = cmd_push(cwd, ctx, target_ref=target_ref, trail=trail)
+        rc = cmd_push(cwd, ctx, target_ref=target_ref, snapshot=snapshot, trail=trail)
     return rc
 
 
@@ -239,6 +296,22 @@ def main(argv: list[str] | None = None) -> int:
         repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
     )
     cwd = str(ctx.require_worktree())
+
+    # A no-op when `pr rebase` launched us — it resolves the same target and we
+    # find its key already in WORKBENCH_RUN_LOCK. Taken here so that invoking
+    # this script directly is guarded too: it rewrites a branch's history and
+    # force-pushes the result, which is the last thing that should interleave
+    # with another run against the same target.
+    # Acquired before Trail.start so contention costs no trail artifacts.
+    run_lock.claim_for_process(
+        ctx.target_dir,
+        command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
+        started=pr_state.now_iso(),
+        # The replay rewrites this checkout's history in place — the strongest
+        # reason in the codebase for a tree to have one writer at a time.
+        # `cwd` above is require_worktree()'s answer, so it is never None here.
+        worktree=Path(cwd),
+    )
 
     trail = Trail.start(
         script=SCRIPT,

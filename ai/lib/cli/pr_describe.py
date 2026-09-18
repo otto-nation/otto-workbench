@@ -19,6 +19,7 @@ Usage:
 # doc-group: cli
 
 import json
+import sys
 from pathlib import Path
 
 from agent import invoke as agent_invoke
@@ -26,6 +27,7 @@ from gh import client as gh_client
 from git import client as git_client
 from git import topology as git_topology
 from core import log
+from core import run_lock
 from pr import context as pr_context
 from pr import state as pr_state
 from core.phases import Phase
@@ -297,6 +299,25 @@ def main(argv: list[str] | None = None) -> int:
     ctx = pr_context.resolve(
         repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
     )
+
+    # A no-op when `pr describe` launched us — same target, same key, already
+    # in WORKBENCH_RUN_LOCK. Taken so a direct invocation is guarded too: this
+    # rewrites the PR body and the target's state file, both of which a
+    # concurrent run reads and writes.
+    # Acquired before Trail.start so contention costs no trail artifacts.
+    # Reads the checkout to describe it and writes the target's state; no
+    # worktree switch, so the resolved tree is the one in play. Tested rather
+    # than required: run_describe degrades without one, and a lock is not the
+    # place to start refusing runs that already work.
+    worktree = ctx.worktree_root if ctx.worktree_root else None
+
+    run_lock.claim_for_process(
+        ctx.target_dir,
+        command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
+        started=pr_state.now_iso(),
+        worktree=worktree,
+    )
+
     trail = Trail.start(
         script=SCRIPT,
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},

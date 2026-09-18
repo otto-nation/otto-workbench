@@ -23,6 +23,8 @@ from pr.domains import RebaseStatus
 
 from . import inspect as rebase_inspect
 from . import land as rebase_land
+from . import lease as rebase_lease
+from . import pr_snapshot as rebase_pr_snapshot
 from . import refusals
 from . import resolve_ai as rebase_resolve
 from . import target as rebase_target
@@ -132,6 +134,8 @@ def drive_to_completion(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
+    lease: rebase_lease.PushLease | None = None,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
@@ -142,11 +146,21 @@ def drive_to_completion(
     ``tally`` carries in what the caller's own git call already observed — the
     fresh rebase resolves from the rerere cache before this loop starts, and a
     tally created here would not have seen it.
+
+    ``lease`` is what the push will be made under. ``fresh`` resolves one from
+    the tip it read before its fetch and passes it; a run resuming a rebase
+    started by an earlier process has no such reading to inherit, so one is
+    recovered here from the rebase state directory — readable now, and deleted
+    by git before anything lands.
     """
+    if lease is None:
+        lease = rebase_lease.resolve(
+            cwd, ctx.branch, rebase_inspect.rebase_orig_head(cwd),
+        )
     with tspan(trail, "drive_to_completion"):
         return _drive_loop(
             cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
-            trail=trail,
+            lease=lease, snapshot=snapshot, trail=trail,
         )
 
 
@@ -154,6 +168,8 @@ def _drive_loop(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
+    lease: rebase_lease.PushLease | None = None,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     tally = tally if tally is not None else ResolutionTally()
@@ -161,7 +177,8 @@ def _drive_loop(
     for _ in range(MAX_REBASE_STEPS):
         if not rebase_inspect.rebase_in_progress(cwd):
             return rebase_success(
-                cwd, ctx, mode, tally, target_ref=target_ref, trail=trail,
+                cwd, ctx, mode, tally, target_ref=target_ref,
+                lease=lease, snapshot=snapshot, trail=trail,
             )
 
         rc, conflict_found = _drive_one_step(
@@ -321,6 +338,7 @@ def step_advance(
 def fresh(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Start a fresh rebase onto the target ref."""
@@ -330,23 +348,36 @@ def fresh(
         log.error("Cannot rebase — currently on protected branch.")
         return 1
 
+    # Before the fetch, which is the whole point: this is the remote tip as we
+    # last saw it, and the fetch below replaces that reading with whatever the
+    # remote holds now. Leasing against the post-fetch value is what lets a
+    # colleague's push be overwritten by the replay — see `rebase.lease`.
+    remembered = rebase_lease.remembered_tip(cwd, ctx.branch)
+
     log.info("Fetching origin...")
     # --prune is defense in depth behind the already-landed preflight, not a
     # substitute for it: dropping the remote-tracking ref of a branch deleted
-    # on merge is what stops --force-with-lease from being satisfied by a stale
-    # lease and silently recreating the remote branch.
+    # on merge is what tells the lease the branch is gone, rather than leaving
+    # a stale tracking ref to name in an expect that would recreate it.
     fetch = git_client.run("fetch", "--prune", "origin", cwd=cwd)
     if not fetch.ok:
         log.warn(f"Fetch failed — rebasing against potentially stale {target_ref}.")
         if fetch.stderr.strip():
             log.dim(fetch.stderr.strip())
 
+    # Resolved here, between the fetch and the replay: the prune above is what
+    # settles whether the remote still has the branch, which is the question
+    # that picks between naming a commit and asserting there is none. Held as a
+    # value from here on so nothing downstream re-reads a ref the rebase has
+    # since moved.
+    lease = rebase_lease.resolve(cwd, ctx.branch, remembered)
+
     # Before the checkout, deliberately: --prune has just dropped
     # origin/<branch> for a branch whose PR merged and whose remote was
     # deleted, and the checkout below starts from exactly that ref. Asking the
     # tracker first is what turns "Cannot checkout feat/x" into the refusal
     # this preflight exists to give.
-    landed = None if force else refusals.tracker_landed_check(cwd, ctx)
+    landed = None if force else refusals.tracker_landed_check(cwd, ctx, snapshot)
     if landed is not None:
         return refusals.refuse(ctx, landed, target_ref=target_ref, trail=trail)
 
@@ -406,7 +437,8 @@ def fresh(
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
-            cwd, ctx, mode, tally, target_ref=target_ref, trail=trail,
+            cwd, ctx, mode, tally, target_ref=target_ref,
+            lease=lease, snapshot=snapshot, trail=trail,
         )
 
     if not rebase_inspect.rebase_in_progress(cwd):
@@ -418,13 +450,15 @@ def fresh(
 
     return drive_to_completion(
         cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
-        trail=trail,
+        lease=lease, snapshot=snapshot, trail=trail,
     )
 
 
 def rebase_success(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None, *, target_ref: str,
+    lease: rebase_lease.PushLease | None = None,
+    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Handle rebase completion — update state and optionally force-push."""
@@ -452,11 +486,34 @@ def rebase_success(
                   if tally.commits else
                   f" — reused {len(tally.replayed)} recorded resolution(s)")
 
+    if lands_here and lease is None:
+        # Nothing safe to name: the remote has the branch and this run never
+        # read the tip it was at. The two fallbacks are a bare lease, which the
+        # fetch would satisfy, and an empty expect, which git rejects against a
+        # ref that exists. Stopping leaves the replay in the worktree, which is
+        # recoverable; a wrong lease would not be.
+        terr(trail, "force_push", "no lease could be named for the push",
+             data={"branch": ctx.branch})
+        log.error("Refusing to force-push — cannot tell what the remote was at.")
+        log.dim("The rebase is complete in the worktree. Push it by hand after "
+                "checking what origin holds.")
+        RebaseOutcome(
+            commits_replayed=replayed,
+            conflicts_resolved=len(tally.files),
+            files_resolved=tally.files,
+            files_stale=tally.stale,
+            files_replayed=tally.replayed,
+            force_pushed=False,
+            target_base=target_ref,
+        ).save(ctx)
+        return 1
+
     landed = None
     if lands_here:
         # Announced only when the push will actually happen; a held run says the
         # same thing once at the end, through the label and the resume line.
         if mode.reaches_remote:
+            rebase_pr_snapshot.name_the_open_pr(snapshot, trail=trail)
             log.info(f"{label} — force-pushing...")
         # Replayed files go in alongside resolved ones: this is the candidate
         # set the pre-push repair matches a failing hook's output against, and
@@ -465,7 +522,7 @@ def rebase_success(
         # able to fail a check as anything the resolver wrote.
         repairable = list(dict.fromkeys(tally.files + tally.replayed))
         landed = rebase_land.land_rebased(
-            cwd, resolved_files=repairable or None, trail=trail,
+            cwd, resolved_files=repairable or None, args=lease.args, trail=trail,
         )
         if landed.ok:
             tinfo(trail, "force_push", "force-pushed to remote", data={"sha": landed.sha})
@@ -483,6 +540,10 @@ def rebase_success(
         # exactly what --no-push asked for, and recording it as a failed push
         # would be the summary's own invention.
         force_pushed=None if landed is None or landed.held else landed.ok,
+        # Saved even on a held run — especially then: `--no-push` is exactly the
+        # case where the push happens in a later process that can no longer read
+        # this value for itself.
+        lease_expect=lease.expect if lease is not None else "",
         target_base=target_ref,
     )
     outcome.save(ctx)

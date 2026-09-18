@@ -86,14 +86,40 @@ def get_bot_login() -> str:
 
 # ── Bot comment collection ──────────────────────────────────────────────────
 
-def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[PostedFinding]:
+@dataclass(frozen=True)
+class PostedFindings:
+    """What the bot has already said on a PR, as the lookup found it.
+
+    ``looked`` is the lookup's own success, carried for the reason
+    `BotReviews.looked` is: `dedup_against_posted` reads an empty list as
+    "nothing has been posted yet" and keeps every finding, so a failed lookup
+    reposts findings a reviewer already has in front of them.
+
+    Worse than the review-level case, which at least warns: this path is the
+    one that decides whether an individual finding is a repeat.
+    """
+
+    findings: list[PostedFinding] = field(default_factory=list)
+    looked: bool = True
+
+
+def _collect_inline_comments(
+    repo: str, pr: str, bot_user: str, pr_data: PRData | None = None,
+) -> PostedFindings:
     if pr_data is not None:
         posted = [
             PostedFinding(c.get("path", ""), c.get("body", ""))
             for c in pr_data.bot_inline_comments(bot_user)
         ]
     else:
-        all_comments = gh_client.api_json(f"repos/{repo}/pulls/{pr}/comments", default=[])
+        # `None` rather than `[]`: a failed listing must not read as a PR the
+        # bot has not commented on.
+        all_comments = gh_client.api_json(
+            f"repos/{repo}/pulls/{pr}/comments", default=None)
+        if all_comments is None:
+            log.warn(f"Could not read {repo}#{pr}'s inline comments — dedup cannot tell "
+                     "a repeat from a new finding")
+            return PostedFindings(looked=False)
         posted = [
             PostedFinding(c.get("path", ""), c.get("body", ""))
             for c in all_comments
@@ -103,14 +129,21 @@ def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData 
     # rather than part of what it says, and the fresh finding it is about to be
     # scored against carries none — so it comes off before the words are
     # counted, or every comparison loses the two tokens only this side has.
-    return [replace(c, body=strip_sid_markers(c.body)) for c in posted]
+    return PostedFindings([replace(c, body=strip_sid_markers(c.body)) for c in posted])
 
 
-def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[PostedFinding]:
+def _collect_review_findings(
+    repo: str, pr: str, bot_user: str, pr_data: PRData | None = None,
+) -> PostedFindings:
     if pr_data is not None:
         bodies = pr_data.bot_review_bodies(bot_user)
     else:
-        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=[])
+        all_reviews = gh_client.api_json(
+            f"repos/{repo}/pulls/{pr}/reviews", default=None)
+        if all_reviews is None:
+            log.warn(f"Could not read {repo}#{pr}'s review bodies — dedup cannot tell "
+                     "a repeat from a new finding")
+            return PostedFindings(looked=False)
         bodies = [
             r.get("body", "") for r in all_reviews
             if r.get("user", {}).get("login") == bot_user
@@ -119,17 +152,26 @@ def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData 
     for body in bodies:
         if body:
             entries.extend(_extract_body_findings(body))
-    return entries
+    return PostedFindings(entries)
 
 
-def _fetch_bot_comments(repo: str, pr: str, pr_data: PRData | None = None) -> list[PostedFinding]:
+def _fetch_bot_comments(
+    repo: str, pr: str, pr_data: PRData | None = None,
+) -> PostedFindings:
     bot_user = pr_data.viewer_login if pr_data is not None else get_bot_login()
     if not bot_user:
-        return []
+        # Not "the bot has posted nothing": without a login nothing could have
+        # been recognised as the bot's.
+        return PostedFindings(looked=False)
 
-    entries = _collect_inline_comments(repo, pr, bot_user, pr_data)
-    entries.extend(_collect_review_findings(repo, pr, bot_user, pr_data))
-    return entries
+    inline = _collect_inline_comments(repo, pr, bot_user, pr_data)
+    bodies = _collect_review_findings(repo, pr, bot_user, pr_data)
+    # Either half failing leaves the set short, and a short set is what makes a
+    # repeat look new — so the pair is only as answered as its weaker half.
+    return PostedFindings(
+        inline.findings + bodies.findings,
+        looked=inline.looked and bodies.looked,
+    )
 
 
 # ── Dedup ───────────────────────────────────────────────────────────────────
@@ -139,12 +181,21 @@ def dedup_against_posted(
     pr_data: PRData | None = None,
 ) -> tuple[list[Finding], list[Finding]]:
     existing = _fetch_bot_comments(repo, pr, pr_data)
-    if not existing:
+    if not existing.looked:
+        # Keeping everything is the same answer an empty set produces, and it
+        # is the right one — a finding nobody can prove is a repeat should
+        # still be posted. The warning is what the log has to show for it,
+        # because the reviewer is the one who sees the duplicate.
+        log.warn(
+            "Could not read what the bot has already posted — dedup is skipped, "
+            "so findings already on the PR may be posted again")
+        return findings, []
+    if not existing.findings:
         return findings, []
 
     posted_entries = [
         (c.path, word_set(c.body))
-        for c in existing
+        for c in existing.findings
     ]
 
     kept, deduped = [], []

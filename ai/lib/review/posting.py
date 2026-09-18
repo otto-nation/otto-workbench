@@ -204,7 +204,7 @@ def _format_comment_body(
     # this banner exists to give.
     moved = (
         f"({drift.count} new commit{plural(drift.count)})" if drift.counted
-        else "(how many commits since is unknown — the count could not be read)"
+        else "(the count of new commits could not be read)"
     )
     header = (
         f"> **Note:** This review was written against commit "

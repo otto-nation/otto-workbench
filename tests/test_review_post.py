@@ -1872,7 +1872,7 @@ class TestUnansweredLookupsAreAudible:
             [f], {"M"}, "aaa1111", "bbb2222", rp.NewCommits(counted=False))
 
         assert "0 new commit" not in body
-        assert "unknown" in body
+        assert "could not be read" in body
 
     def test_a_counted_drift_still_states_the_number(self, rp):
         f = rp.Finding(id="M1", severity="M", seq=1, path="a.py", line=1,

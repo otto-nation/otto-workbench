@@ -364,6 +364,15 @@ class FixSummary(Domain):
         that overwrite a true would leave a draft on disk that --finish no
         longer knows to send.  --finish clears the flag once the write lands.
 
+        The reply queue and the deferred summary are the same shape, and for
+        the same reason.  Both are debts a phase other than the fix pass
+        discharges — the closeout drains the queue, the publisher posts the
+        summary — so a fix pass carries them false meaning "not raised this
+        round".  Letting that overwrite a true is how a `--settle` that re-armed
+        them lost the re-arm to the next `--fix`, leaving `--finish` to skip a
+        closeout the PR was still owed.  Only the phase that pays the debt
+        clears it, through `replies_sent` and `summary_posted`.
+
         Every other field is per-round and comes from this pass.
         """
         return dataclass_replace(
@@ -376,4 +385,26 @@ class FixSummary(Domain):
             ),
             summary_url=self.summary_url or prior.summary_url,
             pr_body_pending=self.pr_body_pending or prior.pr_body_pending,
+            replies_pending=self.replies_pending or prior.replies_pending,
+            summary_deferred=self.summary_deferred or prior.summary_deferred,
         )
+
+    def replies_sent(self) -> None:
+        """The closeout drained the reply queue.
+
+        A named discharge rather than an assignment at the call site, because
+        `merge_into` now treats the flag as cycle-scoped: a plain `False` from
+        any other writer reads as "nothing to say this round" and is folded
+        away. This is the one write that means the debt is paid.
+        """
+        self.replies_pending = False
+
+    def summary_posted(self, url: str) -> None:
+        """The deferred summary reached the PR, at *url*.
+
+        The url and the flag move together: a summary recorded without clearing
+        the debt is re-posted next round, and a debt cleared without recording
+        the url leaves state claiming nothing was ever posted.
+        """
+        self.summary_url = url
+        self.summary_deferred = False

@@ -50,9 +50,15 @@ resolve the same target, compute the same key, find it in
 against the lock their own parent holds.
 
 That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
-are the remaining delegates and take no lock of their own: neither is a
-documented entry point, and both run only under a ``pr review`` that holds the
-lock across the subprocess.
+are the remaining delegates and take no lock of their own, for a reason that is
+not laziness: neither resolves a repo context. Both work from a review
+directory and the ``meta.json`` beside it, whose ``repo`` is a ``owner/repo``
+slug rather than a remote URL — and the two do not key alike, because
+``pr.target`` reduces a local remote to its trailing path segment. A lock keyed
+from the sidecar would name a directory no other run uses, which is worse than
+no lock: it would report success while excluding nobody. They run under a
+``pr review`` that holds the real lock across the subprocess, and a direct
+invocation of either is undocumented.
 
 The pass-through is an exact string match on the target and does not prove the
 flock is ours. A value exported into a shell by hand, or left behind by a run

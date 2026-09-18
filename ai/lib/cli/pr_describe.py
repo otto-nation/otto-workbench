@@ -305,10 +305,15 @@ def main(argv: list[str] | None = None) -> int:
     # rewrites the PR body and the target's state file, both of which a
     # concurrent run reads and writes.
     # Acquired before Trail.start so contention costs no trail artifacts.
-    # Reads the checkout to describe it and writes the target's state; no
-    # worktree switch, so the resolved tree is the one in play. Tested rather
-    # than required: run_describe degrades without one, and a lock is not the
-    # place to start refusing runs that already work.
+    #
+    # The checkout is read to describe it and no worktree switch happens, so
+    # the resolved tree is the one in play. Tested rather than required:
+    # run_describe degrades without one, and a lock is not the place to start
+    # refusing runs that already work.
+    #
+    # Spelled as an explicit test, not `or None`: the two are identical to
+    # Python, but validate-worktree-guards reads the AST and only an `if` is
+    # visible to it as the deliberate opt-out this is.
     worktree = ctx.worktree_root if ctx.worktree_root else None
 
     run_lock.claim_for_process(

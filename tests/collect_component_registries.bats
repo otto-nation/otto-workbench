@@ -3,6 +3,7 @@
 # that lib/registries.sh's collect_registries and the public surface generator
 # both build on. The depth these globs reach is the thing the two used to spell
 # out separately, so it is asserted here rather than in either caller.
+bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
@@ -105,7 +106,7 @@ _write_registry() {
 
   printf '%s\n' "${all[@]}" > "$BATS_TEST_TMPDIR/all.list"
   grep -q 'real.env.yml' "$BATS_TEST_TMPDIR/all.list"
-  ! grep -q 'scratch.env.yml' "$BATS_TEST_TMPDIR/all.list"
+  run ! grep -q 'scratch.env.yml' "$BATS_TEST_TMPDIR/all.list"
 }
 
 @test "a scratch checkout's nested registry.yml is out of the walk" {
@@ -119,5 +120,8 @@ _write_registry() {
   collect_registries all "$TMPDIR"
 
   printf '%s\n' "${all[@]}" > "$BATS_TEST_TMPDIR/all.list"
-  ! grep -q '/ignore/' "$BATS_TEST_TMPDIR/all.list"
+  # The positive half first: a negative grep alone holds just as well against a
+  # list discovery never wrote anything into.
+  grep -q "$TMPDIR/comp/" "$BATS_TEST_TMPDIR/all.list"
+  run ! grep -q '/ignore/' "$BATS_TEST_TMPDIR/all.list"
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for wt-cleanup — merge detection, age-based removal, dry-run mode,
 # quiet mode, and worktree protection (main/current).
+bats_require_minimum_version 1.5.0
 
 setup_file() {
   load 'test_helper'
@@ -743,7 +744,7 @@ JSON
   _run_cleanup --age 30
   [ "$status" -eq 0 ]
   grep -q "feat/idle" "$WT_REMOVE_LOG"
-  ! grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+  run ! grep -q -- "--force-delete" "$WT_REMOVE_LOG"
 }
 
 @test "a branch merged and idle at once is still deleted" {

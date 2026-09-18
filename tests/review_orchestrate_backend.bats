@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 
 setup_file() {
   load 'test_helper'
@@ -118,7 +119,7 @@ EOF
     --review-dir "$TMPDIR/review" --pr ""
 
   grep -q "# Self-Review: org/repo — feat/self" "$TMPDIR/review/review.md"
-  ! grep -q "## Verdict" "$TMPDIR/review/review.md"
+  run ! grep -q "## Verdict" "$TMPDIR/review/review.md"
 }
 
 @test "review-rebuild: no group files exits with error" {

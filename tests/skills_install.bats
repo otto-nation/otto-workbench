@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for step_skills — the cross-harness skill installer.
+bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
@@ -260,7 +261,7 @@ _run_summary() {
   [ -f "$HOME/.agents/skills/reviewer/SKILL.md" ]
   [ ! -L "$HOME/.agents/skills/reviewer" ]
   grep -q "REVIEW PROTOCOL BODY" "$HOME/.agents/skills/reviewer/SKILL.md"
-  ! grep -q "AGENT_PROTOCOL_PLACEHOLDER" "$HOME/.agents/skills/reviewer/SKILL.md"
+  run ! grep -q "AGENT_PROTOCOL_PLACEHOLDER" "$HOME/.agents/skills/reviewer/SKILL.md"
 }
 
 @test "the spliced skill keeps its own frontmatter" {
@@ -312,7 +313,7 @@ _run_summary() {
   [ "$status" -eq 0 ]
   [ -L "$HOME/.agents/skills/reviewer" ]
   [ "$(readlink "$HOME/.agents/skills/reviewer")" = "$FAKE_WORKBENCH/ai/skills/reviewer" ]
-  ! grep -q "REVIEW PROTOCOL BODY" "$HOME/.agents/skills/reviewer/SKILL.md"
+  run ! grep -q "REVIEW PROTOCOL BODY" "$HOME/.agents/skills/reviewer/SKILL.md"
 }
 
 @test "a skill directory with no SKILL.md is skipped, not fatal" {

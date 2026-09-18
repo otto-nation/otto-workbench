@@ -64,10 +64,10 @@ GQL_MAX_THREAD_PAGES = 20
 # PR someone might actually open.
 GQL_MAX_ISSUE_COMMENT_PAGES = 10
 
-# The same guard for a single thread's comments, at GQL_THREAD_COMMENTS_LIMIT
-# per page: 20 pages is 200 comments against an observed maximum of 10 per
-# thread, so this bounds a misbehaving server rather than any thread someone
-# might actually leave.
+# The same guard for a single thread's comments. _drain_thread_comments pages
+# through _THREAD_COMMENTS_QUERY, which hardcodes `first: 100`, so 20 pages is
+# 2000 comments against an observed maximum of 163 per thread — this bounds a
+# misbehaving server rather than any thread someone might actually leave.
 GQL_MAX_THREAD_COMMENT_PAGES = 20
 
 

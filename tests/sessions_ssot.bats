@@ -38,6 +38,27 @@ print(sessions.canonical_slug('$1'), end='')
 "
 }
 
+# pi_slug_shell PATH — the Pi session directory name lib/ai/session-count.sh
+# expects Pi to have given PATH.
+pi_slug_shell() {
+  bash -c '. "$1/lib/ai/session-count.sh" 2>/dev/null; _pi_session_slug "$2"' \
+    _ "$REPO_ROOT" "$1"
+}
+
+# pi_slug_python PATH — the same, from ai/lib/core/sessions.py.
+#
+# Triple-quoted so a path holding a quote or a `$` does not break the generated
+# source. The older helpers above interpolate bare and predate the Pi transform,
+# which is the one that keeps such characters instead of hyphenating them away.
+pi_slug_python() {
+  python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+from core import sessions
+print(sessions.pi_session_slug('''$1'''), end='')
+"
+}
+
 # count_python — interactive transcripts Python discovers under \$HOME.
 count_python() {
   python3 -c "
@@ -160,6 +181,85 @@ make_memory() {
 @test "trailing slashes do not change the slug" {
   [ "$(slug_shell /a/b/)" = "$(slug_shell /a/b)" ]
   [ "$(slug_python /a/b/)" = "$(slug_python /a/b)" ]
+}
+
+# ─── Pi's own transform ─────────────────────────────────────────────────────
+#
+# _canonical_slug names what this repo names itself; _pi_session_slug addresses
+# the store Pi wrote. These pin the second against values Pi actually produces,
+# which tests/pi_session_dir.bats checks against the real package.
+
+@test "the Pi slug keeps a dot, where the canonical slug does not" {
+  # The bug: a repo path holding a dot made its Pi sessions invisible to every
+  # gate, because the canonical slug hyphenated what Pi had kept.
+  local p="/Users/dev/git/otto.io"
+  [ "$(pi_slug_shell "$p")" = "--Users-dev-git-otto.io--" ]
+  [ "$(pi_slug_python "$p")" = "--Users-dev-git-otto.io--" ]
+  [ "$(slug_shell "$p")" = "--Users-dev-git-otto-io--" ]
+}
+
+@test "the Pi slug keeps non-ASCII verbatim" {
+  local p="/Users/dev/git/café/naïve" want="--Users-dev-git-café-naïve--"
+  [ "$(pi_slug_shell "$p")" = "$want" ]
+  [ "$(pi_slug_python "$p")" = "$want" ]
+}
+
+@test "the Pi slug keeps an astral character as one character" {
+  # Pi's regex walks UTF-16 code units, but no surrogate holds the code unit for
+  # `/`, `\` or `:`, so a code-point walk and a code-unit walk are the same
+  # function here. That is why _pi_session_slug carries no UTF-16 ceiling and
+  # _claude_project_dir does.
+  local p="/Users/dev/git/🎉repo" want="--Users-dev-git-🎉repo--"
+  [ "$(pi_slug_shell "$p")" = "$want" ]
+  [ "$(pi_slug_python "$p")" = "$want" ]
+}
+
+@test "the Pi slug replaces backslash and colon" {
+  [ "$(pi_slug_shell '/a/b:c')" = "--a-b-c--" ]
+  [ "$(pi_slug_python '/a/b:c')" = "--a-b-c--" ]
+  [ "$(pi_slug_shell '/a/b\c')" = "--a-b-c--" ]
+  [ "$(pi_slug_python '/a/b\c')" = "--a-b-c--" ]
+}
+
+@test "the Pi slug survives a byte that is not valid UTF-8" {
+  # BSD sed exits non-zero on one of these; a gate must slug the path rather
+  # than abort on the way to deciding whether to fire.
+  local p
+  p=$'/a/\xff/b'
+  run pi_slug_shell "$p"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | od -An -c | tr -d ' \n')" = "--a-377-b--" ]
+}
+
+@test "trailing and doubled slashes do not change the Pi slug" {
+  [ "$(pi_slug_shell /a/b/)" = "$(pi_slug_shell /a/b)" ]
+  [ "$(pi_slug_python /a/b/)" = "$(pi_slug_python /a/b)" ]
+  [ "$(pi_slug_shell //a//b)" = "$(pi_slug_shell /a/b)" ]
+  [ "$(pi_slug_python //a//b)" = "$(pi_slug_python /a/b)" ]
+}
+
+@test "a repo path holding a dot is found in Pi's store" {
+  # The end-to-end form of the bug. Before the split this counted 0.
+  make_session ".pi/agent/sessions" "--Users-dev-git-otto.io--" "a"
+  make_session ".pi/agent/sessions" "--Users-dev-git-otto.io-feat_one--" "b"
+  [ "$(count_shell /Users/dev/git/otto.io)" -eq 2 ]
+}
+
+@test "a repo whose Pi slug prefixes another is not confused with it" {
+  # /a/b must not swallow /a/bc — the prefix arm needs a literal separator.
+  make_session ".pi/agent/sessions" "--a-b--" "a"
+  make_session ".pi/agent/sessions" "--a-bc--" "b"
+  make_session ".pi/agent/sessions" "--a-b-feat--" "c"
+  [ "$(count_shell /a/b)" -eq 2 ]
+  [ "$(count_shell /a/bc)" -eq 1 ]
+}
+
+@test "a Pi slug carrying a glob metacharacter matches only itself" {
+  # Pi keeps brackets where the canonical slug hyphenated them, so a slug can
+  # now reach the unquoted pattern side of the prefix test as a live glob.
+  make_session ".pi/agent/sessions" "--a-[xy]-b--" "a"
+  make_session ".pi/agent/sessions" "--a-x-b--" "b"
+  [ "$(count_shell '/a/[xy]/b')" -eq 1 ]
 }
 
 # ─── Discovery ──────────────────────────────────────────────────────────────

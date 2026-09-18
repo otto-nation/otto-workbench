@@ -23,10 +23,13 @@ normalises both to ``UserMessage`` so consumers never branch on harness.
 
 The slug a directory is named for is deliberately never parsed back into a path.
 Claude's transform maps every non-alphanumeric to ``-``, so ``a-b`` and ``a_b``
-both become ``a-b`` and the original is unrecoverable; Pi keeps underscores and
-wraps in a doubled delimiter, so the two harnesses do not even agree on the
-encoding. Both write the cwd *into* the transcript, which is a fact rather than
-an inference, so ``project_path_of`` reads that. The slug is written, never read.
+both become ``a-b`` and the original is unrecoverable; Pi's transform
+(``pi_session_slug``) only replaces ``/``, ``\`` and ``:`` — a dot, a space, an
+accent, an emoji all survive verbatim — so the two harnesses do not even agree
+on the encoding, and the harness-neutral ``canonical_slug`` (which replaces
+everything outside ``[A-Za-z0-9_]``) matches neither one's store. Both write
+the cwd *into* the transcript, which is a fact rather than an inference, so
+``project_path_of`` reads that. The slug is written, never read.
 
 Memory is the one thing here that is genuinely Claude-shaped: it still lives in
 that harness's tree, one ``memory/`` directory per project slug. That is not a
@@ -416,16 +419,60 @@ def _parse_iso(stamp: str) -> datetime | None:
 
 # ── Project identity ─────────────────────────────────────────────────────────
 
-# What a memory directory is named for. Pi's transform rather than Claude's
-# because it keeps underscores, so `feat/add_auth` and `feat/add-auth` stay
-# distinct where Claude's would collide them. The doubled delimiter is Pi's too
-# and is kept so a slug is recognisable as one on sight.
+def pi_session_slug(path: Path | str) -> str:
+    """The directory name Pi gives a session whose cwd is ``path``.
+
+    Pi's own transform, from ``getDefaultSessionDir()`` in
+    ``@earendil-works/pi-coding-agent/dist/core/session-manager.js``: strip one
+    leading separator, replace ``/``, ``\\`` and ``:`` with a hyphen, wrap the
+    result in ``--``. Everything else survives verbatim — a dot, a space, an
+    accent, an emoji.
+
+    Not ``canonical_slug`` below: that one replaces everything outside
+    ``[A-Za-z0-9_]``, so it cannot address Pi's store. It looked for
+    ``--Users-dev-git-otto-io--`` where Pi had written
+    ``--Users-dev-git-otto.io--``, which made every repo whose path holds a dot
+    or a non-ASCII character invisible to the session gates.
+
+    ``str.replace`` on single BMP characters, which neither decodes nor
+    validates the subject — so this agrees with the shell half on an
+    undecodable byte, and with Pi on an astral one. ``_pi_session_slug`` in
+    ``lib/ai/session-count.sh`` is that half, held to this by
+    ``tests/sessions_ssot.bats``.
+
+    No caller in ``ai/lib`` today — nothing here yet addresses Pi's own store
+    the way ``claude_slug`` below addresses Claude's for ``claude_memory_dir``.
+    It exists so the shell and Python transforms can be held to each other by
+    ``tests/sessions_ssot.bats``, ahead of the consumer that will need it.
+    """
+    text = str(path)
+    while "//" in text:
+        text = text.replace("//", "/")
+    while text.endswith("/") and text != "/":
+        text = text[:-1]
+    if text[:1] in ("/", "\\"):
+        text = text[1:]
+    for separator in ("\\", "/", ":"):
+        text = text.replace(separator, "-")
+    return f"--{text}--"
+
+
+# The harness-neutral canonical name for a project path, and not any harness's
+# directory name. It keeps underscores, so `feat/add_auth` and `feat/add-auth`
+# stay distinct where Claude's transform would collide them; the doubled
+# delimiter makes a slug recognisable as one on sight.
 #
 # lib/ai/session-count.sh spells the same transform for shell; a divergence is
-# two tools disagreeing about which directory a repo's memory lives in, so
+# two tools disagreeing about what a project is called, so
 # tests/sessions_ssot.bats fails when they drift.
 def canonical_slug(path: Path | str) -> str:
-    """The directory name standing for a project path.
+    """The harness-neutral canonical name for a project path.
+
+    Stable and filesystem-safe, which is what the things this repo names
+    itself need: the gate stamps under ``$GATE_STAMPS_DIR`` and ``dream-scan``'s
+    per-project grouping key. Addressing a harness's own store needs that
+    harness's transform instead — ``pi_session_slug`` above, or ``claude_slug``
+    below, which is also where memory hangs.
 
     ASCII alnum, not ``str.isalnum()``, for the reason ``claude_slug`` below
     spells it that way: the shell half is ``_encode_slug`` in

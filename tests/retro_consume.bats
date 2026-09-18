@@ -94,6 +94,7 @@ PY
   [[ "$status" -eq 0 ]]
   # The scan reached the local reviews — otherwise "no record" would only mean
   # it stopped before the write, which proves nothing about the gate.
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$output" == *"repo-self-branch"* ]] || [[ "$stderr" == *"local review"* ]]
   [[ ! -f "$RECORD" ]]
   [[ -d "$REVIEWS/repo-self-branch" ]]

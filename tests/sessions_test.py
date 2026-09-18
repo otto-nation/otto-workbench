@@ -8,6 +8,7 @@ a human turn from a pipeline's, and dating a turn from its own record.
 
 import json
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -336,17 +337,20 @@ def test_discovers_both_harnesses(tmp_path):
     assert len(sessions.discover_sessions(tmp_path)) == 2
 
 
-def test_session_counts_are_reported_per_harness(tmp_path):
+def test_discovery_reports_the_harness_that_wrote_each_transcript(tmp_path):
+    """The per-harness tally dream-scan's report header is built from.
+
+    Counted here off ``Session.harness`` rather than through a counting helper:
+    the zero-fill that makes an undiscovered harness read as ``pi 0`` instead of
+    vanishing belongs to the report, and is asserted end-to-end against the real
+    script in tests/dream_scan.bats.
+    """
     write_transcript(tmp_path, "claude", "-repo", "a", [claude_user("one prompt here")])
     write_transcript(tmp_path, "pi", "--repo--", "b", [pi_user("two prompt here")])
     write_transcript(tmp_path, "pi", "--repo--", "c", [pi_user("three prompt here")])
-    assert sessions.session_counts(tmp_path) == {"claude": 1, "pi": 2}
 
-
-def test_a_harness_that_stops_being_discovered_reads_as_zero(tmp_path):
-    """The visible failure mode the layout ceiling names."""
-    write_transcript(tmp_path, "claude", "-repo", "a", [claude_user("one prompt here")])
-    assert sessions.session_counts(tmp_path)["pi"] == 0
+    discovered = sessions.discover_sessions(tmp_path)
+    assert Counter(s.harness for s in discovered) == {"claude": 1, "pi": 2}
 
 
 def test_pi_flat_subagent_files_are_not_sessions(tmp_path):

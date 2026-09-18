@@ -382,6 +382,11 @@ def main() -> None:
 
         cutoff = datetime.now() - timedelta(days=args.days)
         discovered = sessions.discover_sessions(home, since=cutoff)
+        # Tallied off the list already in hand, not by a second discovery pass:
+        # every Session carries the harness that wrote it. Seeded from HARNESSES
+        # first so a harness that went undiscovered reports `pi 0` rather than
+        # dropping out of the header — the silent failure _format_counts exists
+        # to make visible, and what tests/dream_scan.bats asserts end to end.
         counts = {h.name: 0 for h in sessions.HARNESSES}
         counts.update(Counter(s.harness for s in discovered))
         log.info(f"Sessions: {counts}")

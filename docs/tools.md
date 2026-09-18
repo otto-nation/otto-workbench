@@ -34,6 +34,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
 | `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
 | `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
+| `rules-canary` | Canary for the --add-dir coupling — fails when coding rules stop reaching an agent |
 | `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
 | `build-otto-ai-tools-tarball` | Package otto-ai-tools into a self-contained tarball for distribution |
 | `build-claude-config-tarball` | Package Claude Code configuration into a tarball for server or container deployment |

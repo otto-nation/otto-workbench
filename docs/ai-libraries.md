@@ -2601,6 +2601,49 @@ reads both. Anything else in this module stays behind the preflight.
 
 The eval harness: fixture tasks, the scorers that grade each task's output, and the aggregation the CI ratchet gates on.
 
+### eval/rules_canary.py
+
+Does `--add-dir` still bring the operator's coding rules with it.
+
+`agent.backend_claude._base_cmd` runs `claude -p --bare`, which skips CLAUDE.md
+auto-discovery. What puts the rules back is `--add-dir`, a flag passed for
+filesystem reasons: it restores memory loading wholesale, not merely access to
+the directory it names. That coupling is undocumented Claude behaviour, so a CLI
+upgrade could keep honouring the flag while dropping what it implies — every
+agent would then run with no coding rules, with no error and no missing file.
+The call sites are already pinned by test; what is not pinned is the behaviour
+those call sites depend on, which is what this measures.
+
+## Why the measurement is a difference of two runs
+
+The obvious check — run once with the flag and assert the prefix is large — does
+not work, and the way it fails is the reason this module exists. A run in an
+empty directory still bills ~33.5k tokens with the flag set: the CLI's own
+system prompt, its tool definitions, and the operator's `~/.claude` memory. Only
+the remainder is the directory's rules. An absolute floor anywhere below that
+baseline passes on a run where the project rules never loaded at all, which is
+precisely the failure being watched for.
+
+So both halves run against the same planted fixture and differ in nothing but
+the flag. Everything not attributable to the flag — system prompt, tools, user
+memory — appears in both halves and cancels. Sanitising `HOME` to remove the
+user memory instead is not an option: the CLI refuses to start without its
+config file, and the refusal bills zero tokens while exiting 0.
+
+## Why the fixture is planted rather than this repo
+
+Measuring against the workbench's own rules would tie the floor to how large
+that corpus happens to be in the week the check runs, and ordinary rule edits
+would move it. The canary writes its own `CLAUDE.md` of known size, so the
+expected delta is derived from what it planted rather than from a number
+observed once on one machine.
+
+`billed_input` is the metric, not `cache_creation_input_tokens`. A cold run
+bills the prefix as cache writes and a warm one as cache reads — the same
+prefix, moved between two fields. A check keyed on writes reads a warm run as a
+zero delta, so it would pass on the first CI run of the day and fail on the
+second for no reason anyone could act on.
+
 ### eval/scoring.py
 
 Evaluation scoring, aggregation, and baseline comparison.

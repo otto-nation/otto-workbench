@@ -34,6 +34,7 @@
     "command:review-post",
     "command:review-rebuild",
     "command:review-threads",
+    "command:rules-canary",
     "command:run-auto-task",
     "command:validate-review-positions",
     "command:wiki",

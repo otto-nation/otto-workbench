@@ -124,6 +124,11 @@ tools:
     visibility: hidden
     description: "Evaluation runner — scores AI calls against a corpus, one task per manifest"
 
+  - name: rules-canary
+    permission: false
+    visibility: hidden
+    description: "Canary for the --add-dir coupling — fails when coding rules stop reaching an agent"
+
   - name: otto-mcp-server
     permission: false
     visibility: hidden

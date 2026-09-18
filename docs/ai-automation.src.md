@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 466 -->
+<!-- doc-budget: 482 -->
 
 # AI Automation
 
@@ -116,6 +116,22 @@ metrics gate, and why a dead run is not a score, are on
 [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on demand
 — not a pull-request check: each run spends real money on real model calls, and
 without `ANTHROPIC_API_KEY` it validates the corpus and stops.
+
+### Checking the rules still reach an agent
+
+Every agent the pipeline runs gets its coding rules through an undocumented
+`--bare`/`--add-dir` coupling, which can break with no error and no missing file.
+
+```bash
+rules-canary            # exit 0 rules arrive, 1 they do not, 2 could not measure
+rules-canary --json     # both readings, the delta, and the floor
+```
+
+How it measures that, and why it is a difference of two runs, are on
+[`eval/rules_canary.py`](ai-libraries.md#evalrules_canarypy). The
+[`Eval` workflow](../.github/workflows/eval.yml) runs it ahead of the corpus and
+reports it separately — a canary that cannot measure should not cancel the
+week's eval.
 
 ### How a review's verdict is decided
 

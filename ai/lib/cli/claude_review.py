@@ -220,10 +220,25 @@ def _run_self_review(args, generator_version: str = "") -> review_run.ReviewOutc
     # runs on one branch are two processes committing to it. A no-op when `pr`
     # launched us — we resolve the same target and find its key already in
     # WORKBENCH_RUN_LOCK.
+    #
+    # The checkout is locked only for a plain `--self`, which reviews the tree
+    # it was launched in. Given a PR or a branch, the body switches to another
+    # worktree and that one is what gets written to, so locking the launch tree
+    # here would name the wrong checkout — and hold a lock over a tree this run
+    # never touches. Two runs on one branch still contend on the target.
+    # Locked only when this run reviews the tree it was launched in. Given a PR
+    # or a branch, the body switches to another worktree and writes there, so
+    # the resolved one is not what to lock. None when there is no worktree at
+    # all, which the target lock already covers.
+    reviewed_tree = None
+    if ctx.worktree_root and not (is_pr or is_branch):
+        reviewed_tree = ctx.worktree_root
+
     run_lock.claim_for_process(
         ctx.target_dir,
         command=" ".join([SCRIPT] + sys.argv[1:]),
         started=pr_state.now_iso(),
+        worktree=reviewed_tree,
     )
 
     return _run_self_review_body(
@@ -363,6 +378,10 @@ def main(argv: list[str] | None = None, *,
     ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
     # A no-op when pr launched us — we resolve the same target and find its key
     # already in WORKBENCH_RUN_LOCK.
+    #
+    # No checkout lock: this path sets up a worktree of its own for the PR and
+    # resets it, so the tree it writes to is not the one resolved here. The
+    # target lock is what stops two reviews of one PR.
     run_lock.claim_for_process(
         ctx.target_dir,
         command=" ".join([SCRIPT] + sys.argv[1:]),

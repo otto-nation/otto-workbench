@@ -949,6 +949,14 @@ def main():
 
     # The lock is acquired before _dispatch so contention costs no trail
     # artifacts.
+    #
+    # The target's lock only. Which checkout a run writes to is the handler's
+    # question, not this one's: `pr review 2973` resolves a worktree here and
+    # then reviews in one of its own, so a checkout lock taken at this level
+    # would name a tree the run never touches and refuse a concurrent review of
+    # a different PR launched from the same directory. Every handler that does
+    # write to the resolved checkout takes it — pr-rebase, pr-describe,
+    # ci-check, review-threads, and claude-review's plain --self.
     try:
         lock = (
             run_lock.acquire(

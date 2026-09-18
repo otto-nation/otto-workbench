@@ -3087,9 +3087,28 @@ The lock is keyed on the target, not the caller: ``pr review 2973`` from a repo
 root and ``pr review --self`` from inside the PR's own worktree take the same
 lock, while reviews of two different PRs launched from one directory take two.
 
-Uses ``fcntl.flock`` on ``<target_dir>/run.lock``. The kernel drops the lock
-when the holder exits for any reason, including SIGKILL, so there is no
-stale-lock state to reap.
+That key is ``(origin repo key, branch)`` and says nothing about *where* a run
+writes. Two runs can name different branches and mutate one checkout: a ``--pr``
+run keys on the branch GitHub reports for the PR, while the worktree it was
+launched in stands on whatever it stands on, and ``pr_context`` only relocates a
+run to a branch's own worktree when it was given ``--branch``. Both runs then
+take different target locks, both succeed, and both edit and commit in the same
+tree.
+
+So a run that writes to a checkout locks that too, keyed on the checkout's own
+``--absolute-git-dir`` — per linked worktree, not per repo. The two locks answer
+different questions and neither implies the other: the target lock asks whether
+this PR is being worked on, the checkout lock whether this working tree is being
+written to. Both are non-blocking and always taken target-first, so a pair
+cannot deadlock against another pair.
+
+A caller that writes to no checkout, or whose worktree git cannot resolve, takes
+the target lock alone.
+
+Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
+``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
+exits for any reason, including SIGKILL, so there is no stale-lock state to
+reap — a lock file naming a dead pid is a released record, not a held lock.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
@@ -3979,6 +3998,24 @@ Driving a rebase to completion — the step loop and the two ways it ends.
 the same loop, which advances a step at a time until git says the rebase is
 over and ``rebase_success`` lands what was replayed. Every exit is either that,
 a refusal, or an abort that leaves the branch where it started.
+
+### rebase/pr_snapshot.py
+
+What GitHub says about the PR being rebased, read once per run.
+
+A fresh rebase asked GitHub about its PR twice: once for ``baseRefName``, to
+know what to replay onto, and once for ``state``, to refuse a branch whose PR
+already merged. Two round trips for one PR, and each new question — is it a
+draft, who is reviewing it — would have added a third.
+
+So the PR is read once and the answer is passed around. ``gh pr view`` takes a
+field list, so asking for six costs exactly what asking for one did.
+
+Best effort, like every tracker read in this codebase: ``gh`` may be absent,
+unauthenticated, rate-limited, or the branch may have no PR at all. All of those
+arrive as ``PRSnapshot()`` with ``answered`` false, which every consumer reads as
+"the tracker has nothing to say" — never as an answer that stops a rebase. The
+git-side signals still get their turn.
 
 ### rebase/prepush.py
 

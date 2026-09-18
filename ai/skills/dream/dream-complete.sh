@@ -76,9 +76,26 @@ done < <(_memory_repos)
 # predates `record` — the state every machine is in until this ships — fails
 # the subcommand, and that must not fail the dream it is reporting on.
 
+# Whether the agent recorded anything between the scan and here. Nothing
+# enforces that it did — the phases are instructions in SKILL.md, and a run that
+# skipped them leaves a trail holding a scan and a close with nothing between,
+# which reads as a dream that found nothing rather than one that never wrote it
+# down. Reported, not enforced: the dream's real work is already on disk by now,
+# and failing here would not bring the missing records back.
+_warn_if_no_phases_recorded() {
+  local otto_log="$1"
+  [[ -n "$OPT_ROOT" ]] || return 0
+  local phases
+  phases=$("$otto_log" query --root "$OPT_ROOT" --script dream --json 2>/dev/null | wc -l | tr -d ' ')
+  [[ "$phases" -gt 0 ]] && return 0
+  echo "Note: no dream phase records under $OPT_ROOT — the trail will show" >&2
+  echo "      this run's scan and close with nothing in between." >&2
+}
+
 _record_close() {
   local otto_log="$LOCAL_BIN_DIR/otto-log"
   [[ -x "$otto_log" ]] || return 0
+  _warn_if_no_phases_recorded "$otto_log"
   WORKBENCH_TRAIL_ROOT="$OPT_ROOT" "$otto_log" record \
     --script dream --action close --detail "dream complete across $projects project(s)" \
     --data "projects=$projects" >/dev/null 2>&1 || true

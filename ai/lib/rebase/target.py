@@ -35,14 +35,14 @@ def pr_base_branch(
 ) -> str | None:
     """The branch the PR targets per GitHub, or None when it cannot say.
 
-    Only asked when a PR number is already resolved: a branch with no PR yet
-    has no base to report, and probing by branch name would spend a round trip
-    on every rebase to learn nothing.
-
     Reads *snapshot* when the caller already has one, which is the whole reason
     that type exists — the base and the already-landed state come out of a
-    single ``gh pr view``. Falls back to its own read so a caller without one
-    still works.
+    single ``gh pr view`` that ``pr_snapshot.fetch`` asks by branch name when
+    no PR number is resolved yet, so a branch with an open PR still surfaces a
+    base here even before its number is known. Without a snapshot, this falls
+    back to its own read, which *is* gated on a resolved PR number: probing by
+    branch name on every rebase would spend a round trip to learn nothing when
+    no snapshot was already fetched.
 
     Best effort like ``branch_landed.merged_pr`` — gh may be absent,
     unauthenticated or rate-limited, and the repo's default branch is the right

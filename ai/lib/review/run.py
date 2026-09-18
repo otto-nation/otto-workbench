@@ -30,11 +30,13 @@ from pathlib import Path
 
 from core import log
 from core import prompt
+from core import run_lock
 from core.phases import Phase
 from core.trail import Trail
 from gh import client as gh_client
 from git import client as git_client
 from pr import context as pr_context
+from pr import state as pr_state
 from review import invoke as review_invoke
 from review import issue as review_issue
 from review import preflight as review_preflight
@@ -76,6 +78,7 @@ class ReviewFlags:
     auto_post: bool = False
     auto_submit: bool = False
     repo_dir: str = ""
+    command: str = ""
 
 
 def run_pr_review(
@@ -163,6 +166,26 @@ def run_pr_review(
     try:
         wt_path, pinned_wt = review_recover.pin_recover_worktree(
             recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
+        )
+
+        # The checkout lock, taken here rather than beside the target lock in
+        # `claude-review`: this is the first point at which the tree this run
+        # actually writes to is known. The one claimed at entry is where the
+        # operator stood, and the two are routinely different — `setup_pr_worktree`
+        # switches to the PR's own worktree and hard-resets it, which is a write
+        # to a tree no lock covered until now.
+        #
+        # The target lock already stops a second review of this PR. What this
+        # adds is the case where the same tree is reached by two runs that do
+        # not share a target.
+        # Same command string as the target-lock claim in `claude-review`'s
+        # `main()`, so the two locks report one holder rather than a different
+        # command depending on which of the two a contender trips.
+        run_lock.claim_for_process(
+            ctx.target_dir,
+            command=flags.command or f"claude-review {pr_number}",
+            started=pr_state.now_iso(),
+            worktree=Path(wt_path),
         )
 
         # Inside the try, so a refusal still cleans up the worktree it read.

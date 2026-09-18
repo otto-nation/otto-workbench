@@ -32,9 +32,12 @@ Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 exits for any reason, including SIGKILL, so there is no stale-lock state to
 reap.
 
-Neither file is ever deleted, so a machine accumulates one per target it has
-ever run against and nearly all of them name processes that exited long ago.
-That is not a leak and deleting them is not maintenance: the record is what
+Neither file is ever deleted, so a machine accumulates one ``run.lock`` per
+target it has ever run against and one ``workbench-run-tree.lock`` per
+checkout it has ever written to — the two counts need not match, since a
+target can be worked from several checkouts and a checkout can serve several
+targets. Nearly all of the accumulated files name processes that exited long
+ago. That is not a leak and deleting them is not maintenance: the record is what
 makes the next contender's error message name a command rather than a pid. But
 it does mean **the presence of a lock file says nothing about whether a lock is
 held**, and a dead pid in one is the normal case rather than evidence of a
@@ -50,9 +53,15 @@ resolve the same target, compute the same key, find it in
 against the lock their own parent holds.
 
 That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
-are the remaining delegates and take no lock of their own: neither is a
-documented entry point, and both run only under a ``pr review`` that holds the
-lock across the subprocess.
+are the remaining delegates and take no lock of their own, for a reason that is
+not laziness: neither resolves a repo context. Both work from a review
+directory and the ``meta.json`` beside it, whose ``repo`` is a ``owner/repo``
+slug rather than a remote URL — and the two do not key alike, because
+``pr.target`` reduces a local remote to its trailing path segment. A lock keyed
+from the sidecar would name a directory no other run uses, which is worse than
+no lock: it would report success while excluding nobody. They run under a
+``pr review`` that holds the real lock across the subprocess, and a direct
+invocation of either is undocumented.
 
 The pass-through is an exact string match on the target and does not prove the
 flock is ours. A value exported into a shell by hand, or left behind by a run
@@ -323,8 +332,9 @@ def is_held(target_dir: Path) -> bool:
     """Whether a run currently holds *target_dir*'s lock.
 
     The only honest way to ask. A ``run.lock`` on disk says nothing — the file
-    is never removed, so a machine accumulates one per target ever used and
-    almost all of them name processes that exited long ago. Probing for the
+    is never removed, so a machine accumulates one per target ever used (and a
+    ``workbench-run-tree.lock`` per checkout ever written to) and almost all of
+    them name processes that exited long ago. Probing for the
     exclusive lock is what distinguishes them: it fails precisely when someone
     holds it.
 

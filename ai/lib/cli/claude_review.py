@@ -119,6 +119,7 @@ def _flags(args, generator_version: str) -> review_run.ReviewFlags:
         auto_post=args.post,
         auto_submit=args.submit,
         repo_dir=args.repo_dir or "",
+        command=" ".join([SCRIPT] + sys.argv[1:]),
     )
 
 
@@ -221,11 +222,6 @@ def _run_self_review(args, generator_version: str = "") -> review_run.ReviewOutc
     # launched us — we resolve the same target and find its key already in
     # WORKBENCH_RUN_LOCK.
     #
-    # The checkout is locked only for a plain `--self`, which reviews the tree
-    # it was launched in. Given a PR or a branch, the body switches to another
-    # worktree and that one is what gets written to, so locking the launch tree
-    # here would name the wrong checkout — and hold a lock over a tree this run
-    # never touches. Two runs on one branch still contend on the target.
     # Locked only when this run reviews the tree it was launched in. Given a PR
     # or a branch, the body switches to another worktree and writes there, so
     # the resolved one is not what to lock. None when there is no worktree at
@@ -265,6 +261,26 @@ def _run_self_review_body(
         wt_cleanup = review_worktree.switch_to_branch(pr_input, wt_path)
         if wt_cleanup:
             wt_path = wt_cleanup.path
+
+    # The switch above is the first point at which the tree this run writes to
+    # is known: the claim at entry deliberately named no checkout for these two
+    # paths, because the launch tree is not the one written. Claim it now, so
+    # the switched-to tree is covered for the rest of the run. Same target, so
+    # this extends the existing claim rather than contending with it.
+    #
+    # Gated on `is_pr or is_branch`, not on `wt_cleanup` truthiness:
+    # `switch_to_pr_branch`/`switch_to_branch` return None when the checkout is
+    # already on the target branch, which is exactly the re-review flow this
+    # lock exists to cover (`pr review --self --fix --push` run from inside a
+    # branch that already has the PR checked out). `wt_path` names the right
+    # tree whether or not an actual switch happened.
+    if is_pr or is_branch:
+        run_lock.claim_for_process(
+            ctx.target_dir,
+            command=" ".join([SCRIPT] + sys.argv[1:]),
+            started=pr_state.now_iso(),
+            worktree=Path(wt_path),
+        )
 
     # Read HEAD after the switch — checking out a PR hard-resets the worktree to
     # the remote head, so ctx.head_sha can predate the commit the pipeline recorded.

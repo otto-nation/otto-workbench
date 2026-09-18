@@ -485,7 +485,6 @@ def warn_if_truncated(
     return True
 
 
-
 def _complete_truncated_comments(threads: list[dict]) -> bool:
     """Refetch the comments of any thread the page size cut off. Returns success.
 

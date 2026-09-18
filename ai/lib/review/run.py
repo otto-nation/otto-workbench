@@ -78,6 +78,7 @@ class ReviewFlags:
     auto_post: bool = False
     auto_submit: bool = False
     repo_dir: str = ""
+    command: str = ""
 
 
 def run_pr_review(
@@ -177,9 +178,12 @@ def run_pr_review(
         # The target lock already stops a second review of this PR. What this
         # adds is the case where the same tree is reached by two runs that do
         # not share a target.
+        # Same command string as the target-lock claim in `claude-review`'s
+        # `main()`, so the two locks report one holder rather than a different
+        # command depending on which of the two a contender trips.
         run_lock.claim_for_process(
             ctx.target_dir,
-            command=f"claude-review {pr_number}",
+            command=flags.command or f"claude-review {pr_number}",
             started=pr_state.now_iso(),
             worktree=Path(wt_path),
         )

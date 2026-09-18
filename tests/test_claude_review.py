@@ -2180,6 +2180,98 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
         assert record["command"] == "pr review --self --fix"
 
 
+def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
+    cr, tmp_path, reviews_dir, monkeypatch,
+):
+    """`claude-review --self <branch>` writes to a different tree than launched from.
+
+    `_run_self_review` leaves the checkout unlocked at entry for this case —
+    the switch below hasn't happened yet, so the launch tree isn't the one
+    that ends up written to. Once `switch_to_branch` lands on the real tree,
+    that has to be the one the checkout lock covers.
+    """
+    target = tmp_path / "pr" / "target"
+    switched = tmp_path / "switched-wt"
+    switched.mkdir()
+
+    ctx = SimpleNamespace(
+        repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
+        worktree_root=tmp_path / "launch-wt", target_dir=target,
+    )
+    monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
+    monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(
+        review_worktree, "switch_to_branch",
+        lambda branch, wt: review_worktree.WorktreeResult(
+            path=str(switched), cleanup_ref=branch, is_fallback=False),
+    )
+    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_run, "run_self_review", MagicMock())
+
+    claim = MagicMock()
+    monkeypatch.setattr(claude_review.run_lock, "claim_for_process", claim)
+
+    cr._run_self_review(SimpleNamespace(
+        positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
+        force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
+        model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
+        generated=False, recover=False, debug=False,
+        post=False, push=False, no_post=False, submit=False,
+    ), "test 1.0")
+
+    # First claim is at entry with no checkout named (the launch tree is not
+    # what gets written to). Second is after the switch, on the real one.
+    assert claim.call_args_list[0].kwargs["worktree"] is None
+    assert claim.call_args_list[1].kwargs["worktree"] == switched
+
+
+def test_self_review_on_a_branch_already_checked_out_still_locks_it(
+    cr, tmp_path, reviews_dir, monkeypatch,
+):
+    """`switch_to_branch` returns None when the checkout is already on the
+    target branch — the re-review flow (`--self --fix --push` run from inside
+    a branch that already has its own PR checked out). The checkout lock has
+    to fire even though no actual switch happened, because `--fix` still
+    commits into that tree.
+    """
+    target = tmp_path / "pr" / "target"
+    already_checked_out = tmp_path / "already-checked-out"
+    already_checked_out.mkdir()
+
+    ctx = SimpleNamespace(
+        repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
+        worktree_root=tmp_path / "launch-wt", target_dir=target,
+    )
+    monkeypatch.setattr(
+        review_worktree, "resolve_wt_path",
+        lambda repo_dir, pr_input: str(already_checked_out),
+    )
+    monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(review_worktree, "switch_to_branch", lambda branch, wt: None)
+    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review_run, "run_self_review", MagicMock())
+
+    claim = MagicMock()
+    monkeypatch.setattr(claude_review.run_lock, "claim_for_process", claim)
+
+    cr._run_self_review(SimpleNamespace(
+        positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
+        force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
+        model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
+        generated=False, recover=False, debug=False,
+        post=False, push=False, no_post=False, submit=False,
+    ), "test 1.0")
+
+    # First claim is at entry with no checkout named. Second still fires after
+    # the no-op switch, naming the tree that is already checked out.
+    assert claim.call_args_list[0].kwargs["worktree"] is None
+    assert claim.call_args_list[1].kwargs["worktree"] == Path(str(already_checked_out))
+
+
 # ── the supersession refusal (ordering in the binary flow) ───────────────────
 
 
@@ -2332,3 +2424,43 @@ def test_a_pr_review_locks_the_worktree_it_actually_writes_to(tmp_path, monkeypa
     # Same target as the lock taken at entry, so the two are one claim and the
     # second passes through rather than contending with the first.
     assert claim.call_args[0][0] == ctx.target_dir
+
+
+def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, monkeypatch):
+    """The checkout lock and the target lock report the same holder.
+
+    The target lock is claimed in `claude-review`'s `main()` with the full
+    invocation (`" ".join([SCRIPT] + sys.argv[1:])`). The checkout lock here
+    used to hardcode `f"claude-review {pr_number}"` instead, so a contender
+    tripping the checkout lock saw a different command than one tripping the
+    target lock for the same run. `flags.command` threads the same string
+    through to both.
+    """
+    review_file = tmp_path / "review" / "review.md"
+    review_file.parent.mkdir()
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+
+    reviewed = tmp_path / "pr-worktree"
+    reviewed.mkdir()
+    _stub_pr_flow(monkeypatch, tmp_path)
+    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+                        lambda *a, **kw: SimpleNamespace(path=str(reviewed),
+                                                         is_fallback=False))
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(reviewed), None))
+    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(review_publish, "post", MagicMock())
+    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+
+    claim = MagicMock()
+    monkeypatch.setattr(review_run.run_lock, "claim_for_process", claim)
+
+    ctx = make_ctx(target_dir=tmp_path / "t")
+    review_run.run_pr_review(
+        ctx,
+        review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
+                               command="claude-review 42 --fix --push"),
+        review_file, trail=MagicMock(),
+    )
+
+    assert claim.call_args.kwargs["command"] == "claude-review 42 --fix --push"

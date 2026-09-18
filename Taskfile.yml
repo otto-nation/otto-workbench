@@ -33,6 +33,24 @@ tasks:
     cmds:
       - bin/local/run-tests --bats --files "tests/{{.FILENAME}}" -- --show-output-of-passing-tests
 
+  gate:
+    desc: "Run the full pre-push gate (validators, shellcheck, bats, pytest)"
+    # silent only suppresses go-task's echo of the command line below — the
+    # hook's own _step/_pass/_fail output still prints, same as test/lint above.
+    silent: true
+    cmds:
+      # Delegation, not a second copy. git/hooks/pre-push-workbench owns the
+      # sequence and the exit-code handling — its _run_step checks each step's
+      # status rather than reading its output — and re-listing those steps here
+      # would be a second definition of green that drifts from the one CI runs.
+      #
+      # The hook takes no arguments and reads no stdin, so a direct call is the
+      # same run git makes; </dev/null is there so it cannot inherit a terminal
+      # to block on. No skip flag, deliberately: a gate with a documented way to
+      # skip its slow half is a gate people run with the flag. `task test`,
+      # `task test:pytest` and `task lint` remain for running one part on purpose.
+      - git/hooks/pre-push-workbench < /dev/null
+
   lint:
     desc: "Run ShellCheck on all shell scripts"
     silent: true

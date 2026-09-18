@@ -292,16 +292,6 @@ def _modified_since(path: Path, since: datetime | None) -> bool:
         return False
 
 
-def session_counts(home: Path, since: datetime | None = None) -> dict[str, int]:
-    """Transcripts per harness. Surfaced in dream-scan's report header so a
-    harness that has stopped being discovered reads as a zero rather than as a
-    corpus that quietly halved."""
-    return {
-        h.name: len(discover_sessions(home, since=since, harness=h.name))
-        for h in HARNESSES
-    }
-
-
 # ── Reading ──────────────────────────────────────────────────────────────────
 
 

@@ -13,15 +13,23 @@ Uses ``fcntl.flock`` on ``<target_dir>/run.lock``. The kernel drops the lock
 when the holder exits for any reason, including SIGKILL, so there is no
 stale-lock state to reap.
 
-``claude-review`` (both its PR and its ``--self`` paths), ``ci-check`` and
-``review-threads`` take the lock themselves, so invoking those three directly is
-guarded too. When ``pr`` launched them they resolve the same target, compute the
-same key, find it in ``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead
-of deadlocking against the lock their own parent holds.
+``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
+``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
+so invoking any of them directly is guarded too. When ``pr`` launched them they
+resolve the same target, compute the same key, find it in
+``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead of deadlocking
+against the lock their own parent holds.
 
-That list is exhaustive, not an example: ``pr-rebase`` and ``pr-describe`` are
-delegates that take no lock of their own, so running either directly is
-unguarded and only ``pr rebase`` / ``pr describe`` serialize them.
+That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
+are the remaining delegates and take no lock of their own: neither is a
+documented entry point, and both run only under a ``pr review`` that holds the
+lock across the subprocess.
+
+The pass-through is an exact string match on the target and does not prove the
+flock is ours. A value exported into a shell by hand, or left behind by a run
+killed before its ``finally``, therefore reads as ownership. Proving it would
+mean re-probing a lock we already hold, which fails precisely because we hold
+it; the marker is the only thing that can answer, so it is trusted.
 """
 
 # doc-group: platform

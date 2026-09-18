@@ -31,15 +31,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 import traceback
 
 from core import log
 from core import publishing
+from core import run_lock
 from core import trail as core_trail
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 from git import client as git_client
 from pr import context as pr_context
+from pr import state as pr_state
 from pr.domains import RebaseStatus, RebaseSummary
 from rebase import inspect as rebase_inspect
 from rebase import land as rebase_land
@@ -254,6 +257,18 @@ def main(argv: list[str] | None = None) -> int:
         repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
     )
     cwd = str(ctx.require_worktree())
+
+    # A no-op when `pr rebase` launched us — it resolves the same target and we
+    # find its key already in WORKBENCH_RUN_LOCK. Taken here so that invoking
+    # this script directly is guarded too: it rewrites a branch's history and
+    # force-pushes the result, which is the last thing that should interleave
+    # with another run against the same target.
+    # Acquired before Trail.start so contention costs no trail artifacts.
+    run_lock.claim_for_process(
+        ctx.target_dir,
+        command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
+        started=pr_state.now_iso(),
+    )
 
     trail = Trail.start(
         script=SCRIPT,

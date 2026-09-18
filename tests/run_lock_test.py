@@ -174,6 +174,34 @@ def test_claim_for_process_passes_through_when_pr_already_holds_it(worktree):
         assert record["command"] == "pr review --fix"
 
 
+def test_a_rewriting_delegate_is_guarded_on_its_own(worktree):
+    """pr-rebase rewrites history and force-pushes, so a direct run must lock.
+
+    It was reachable unguarded: only `pr rebase` took a lock, and invoking the
+    backing script itself serialized against nothing.
+    """
+    run_lock.claim_for_process(
+        worktree, command="pr-rebase --fix", started="t",
+    )
+    with pytest.raises(LockBusy):
+        _contend(worktree)
+
+
+def test_a_delegate_passes_through_the_lock_its_parent_holds(worktree):
+    """`pr rebase` locks, then launches pr-rebase, which must not deadlock.
+
+    The two agree because the parent forwards a target flag and the child
+    resolves the same key. This pins the arrangement from the lock's side; the
+    forwarding itself is pinned in pr_cli_test.
+    """
+    with acquire(worktree, command="pr rebase --fix", started="t"):
+        run_lock.claim_for_process(
+            worktree, command="pr-rebase --fix", started="t",
+        )
+        record = json.loads((worktree / LOCK_FILE).read_text())
+        assert record["command"] == "pr rebase --fix"
+
+
 def test_claim_for_process_exits_when_another_run_owns_the_target(worktree, capsys):
     with acquire(worktree, command="pr review --fix", started="t"):
         os.environ.pop(LOCK_ENV, None)

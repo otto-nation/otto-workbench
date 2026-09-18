@@ -89,7 +89,7 @@ tasks:
           /*) ;;
           *) echo "WORKBENCH_LIB_DIR must be an absolute path: $WORKBENCH_LIB_DIR" >&2; exit 1 ;;
         esac
-        for _f in lib/ai/core.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py; do
+        for _f in lib/ai/core.sh lib/gitenv.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py; do
           if [ ! -f "$WORKBENCH_LIB_DIR/$_f" ]; then
             echo "WORKBENCH_LIB_DIR does not contain $_f: $WORKBENCH_LIB_DIR" >&2
             exit 1

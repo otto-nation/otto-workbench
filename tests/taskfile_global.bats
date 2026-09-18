@@ -285,6 +285,7 @@ teardown() {
   local partial="$BATS_TEST_TMPDIR/partial"
   mkdir -p "$partial/lib/ai"
   cp "$REPO_ROOT/lib/ai/core.sh" "$partial/lib/ai/core.sh"
+  cp "$REPO_ROOT/lib/gitenv.sh" "$partial/lib/gitenv.sh"
   cp "$REPO_ROOT/lib/conventions.sh" "$partial/lib/conventions.sh"
   cp "$REPO_ROOT/lib/config_cli.py" "$partial/lib/config_cli.py"
 

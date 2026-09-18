@@ -258,8 +258,13 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
 
     # One read of the PR for the whole run: the base to replay onto, whether it
     # already merged, and whether anyone is reviewing it were three questions
-    # and are now one round trip. Skipped entirely for --onto, which needs no
-    # base from GitHub, and harmless when gh cannot answer.
+    # and are now one round trip. Harmless when gh cannot answer — an
+    # unanswered snapshot refuses nothing and reports nothing.
+    #
+    # Still read under --onto, which needs no base from GitHub: the other two
+    # questions are about the branch rather than the base, and a run that names
+    # its own target is no less able to land on a merged PR or to rewrite one
+    # somebody is reviewing.
     snapshot = rebase_pr_snapshot.fetch(cwd, ctx)
     target_ref = rebase_target.resolve_target_ref(
         cwd, ctx, args.onto, snapshot=snapshot, trail=trail,

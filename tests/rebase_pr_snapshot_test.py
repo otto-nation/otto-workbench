@@ -138,3 +138,41 @@ class TestItReplacesTheSecondCall:
 
         assert from_snapshot.detail == from_its_own_read.detail
         assert from_snapshot.signal == from_its_own_read.signal
+
+
+class TestNameTheOpenPR:
+    """The notice, which both force-push sites call."""
+
+    def test_it_names_a_ready_pr(self, capsys):
+        rebase_pr_snapshot.name_the_open_pr(rebase_pr_snapshot.PRSnapshot(
+            state="OPEN", number=1358, url="https://gh/1358",
+        ))
+        err = capsys.readouterr().err
+        assert "https://gh/1358" in err
+        assert "ready for review" in err
+
+    def test_it_falls_back_to_the_number_when_there_is_no_url(self, capsys):
+        rebase_pr_snapshot.name_the_open_pr(
+            rebase_pr_snapshot.PRSnapshot(state="OPEN", number=1358),
+        )
+        assert "#1358" in capsys.readouterr().err
+
+    def test_it_says_nothing_about_a_draft(self, capsys):
+        rebase_pr_snapshot.name_the_open_pr(rebase_pr_snapshot.PRSnapshot(
+            state="OPEN", number=1, is_draft=True,
+        ))
+        assert capsys.readouterr().err == ""
+
+    def test_it_says_nothing_about_a_closed_pr(self, capsys):
+        rebase_pr_snapshot.name_the_open_pr(
+            rebase_pr_snapshot.PRSnapshot(state="CLOSED", number=1),
+        )
+        assert capsys.readouterr().err == ""
+
+    def test_it_says_nothing_when_github_could_not_be_asked(self, capsys):
+        rebase_pr_snapshot.name_the_open_pr(rebase_pr_snapshot.PRSnapshot())
+        assert capsys.readouterr().err == ""
+
+    def test_it_tolerates_having_no_snapshot_at_all(self, capsys):
+        rebase_pr_snapshot.name_the_open_pr(None)
+        assert capsys.readouterr().err == ""

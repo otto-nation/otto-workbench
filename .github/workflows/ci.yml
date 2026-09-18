@@ -11,8 +11,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/install-shellcheck
       - name: Run ShellCheck
-        # Discovery lives in lib/files.sh so CI and the pre-push hook agree
+        # Discovery lives in lib/files.sh, the version is pinned by the action
+        # above, and the flags are below — all three match the pre-push hook, so
+        # a green gate is a prediction about this job rather than a guess.
         run: |
           source lib/files.sh
           list_shell_scripts . | xargs shellcheck --severity=warning

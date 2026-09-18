@@ -1,0 +1,48 @@
+name: Install ShellCheck
+description: >-
+  Put a pinned ShellCheck on PATH, in place of the 0.9.0 ubuntu-24.04 ships.
+  The pre-push hook and this job run the same discovery and the same flags, so
+  the version is the one remaining way they can disagree — and they did: 0.9
+  raises SC2154 for `$stderr` after bats' `run --separate-stderr`, which 0.11
+  knows is assigned. A local gate that cannot see what CI will say is a gate
+  that reports green and then loses a round trip to a finding nobody could
+  reproduce.
+
+  Bumping this is a deliberate act: a new ShellCheck sees things the old one
+  did not, so the version moves when someone moves it and fixes what it finds,
+  rather than on whatever day the runner image changes.
+
+runs:
+  using: composite
+  steps:
+    - name: Install ShellCheck
+      shell: bash
+      env:
+        # Keep in step with what brew/Brewfile installs locally. There is no
+        # machine-readable link between the two, so the check that they agree
+        # is tests/shellcheck_version.bats.
+        SHELLCHECK_VERSION: v0.11.0
+        # sha256 of shellcheck-v0.11.0.linux.x86_64.tar.xz. ShellCheck
+        # publishes no .sha256 beside its assets, so unlike install-worktrunk
+        # this cannot fetch the digest — it is recorded here, and moving the
+        # version means recording the new one.
+        SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+      run: |
+        set -euo pipefail
+        url="https://github.com/koalaman/shellcheck/releases/download"
+        url="$url/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+        tmp="$(mktemp -d)"
+        trap 'rm -rf "$tmp"' EXIT
+        wget -qO "$tmp/sc.tar.xz" "$url"
+        echo "${SHELLCHECK_SHA256}  $tmp/sc.tar.xz" | sha256sum -c -
+        tar -xJf "$tmp/sc.tar.xz" -C "$tmp"
+        sudo install -m 0755 \
+          "$tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+        # Fail here rather than later: a PATH that still resolves to the
+        # runner's own 0.9 would lint the tree under a version nobody chose,
+        # and the only symptom is a finding the local gate cannot reproduce.
+        installed="$(shellcheck --version | awk '/^version:/ {print "v" $2}')"
+        [[ "$installed" == "${SHELLCHECK_VERSION}" ]] || {
+          echo "Expected ${SHELLCHECK_VERSION} on PATH, got ${installed}" >&2
+          exit 1
+        }

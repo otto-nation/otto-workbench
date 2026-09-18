@@ -1,0 +1,109 @@
+#!/usr/bin/env bats
+# The ShellCheck the pre-push gate runs and the one CI runs must be the same
+# version, or a green gate is not a prediction about CI.
+#
+# What prompted this: the gate passed a branch whose bats file used `$stderr`
+# after `run --separate-stderr`, and CI failed it on SC2154. ubuntu-24.04 ships
+# 0.9, which does not know bats assigns that variable; brew had 0.11, which
+# does. The finding was real for 0.9 and unreproducible locally, and it cost a
+# round trip on an already-merged PR to discover why.
+#
+# The pin lives in .github/actions/install-shellcheck/action.yml. Brew does not
+# pin, so this compares the pin against whatever is actually on PATH — which is
+# the brew build locally and the pinned build in CI. Either one drifting from
+# the pin fails here.
+bats_require_minimum_version 1.5.0
+
+setup() {
+  load 'test_helper'
+  common_setup
+  ACTION="$REPO_ROOT/.github/actions/install-shellcheck/action.yml"
+}
+
+teardown() {
+  common_teardown
+}
+
+# _pinned — the version the CI action installs, as `v0.11.0`.
+_pinned() {
+  grep -E '^\s+SHELLCHECK_VERSION:' "$ACTION" | awk '{print $2}'
+}
+
+@test "the CI action pins a concrete version" {
+  local pinned
+  pinned="$(_pinned)"
+  [[ -n "$pinned" ]]
+  # A tag, not a branch or `latest`: the point of the pin is that the version
+  # moves when a person moves it.
+  [[ "$pinned" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+@test "the shellcheck the gate lints with is the version CI pins" {
+  # Scoped to where the answer means something. This asks whether the binary
+  # that lints the tree matches the pin, and only two environments lint: a
+  # developer machine running the pre-push hook, and the CI ShellCheck job,
+  # which installs the pin before it runs.
+  #
+  # The bats shards are neither. They never invoke the linter, so the 0.9 the
+  # runner image ships is not the version anything will lint with — asserting
+  # against it there fails a job over a binary it does not use, which is what
+  # the first push of this branch did.
+  #
+  # Skipped rather than failed where the tool is absent: the pre-push gate
+  # already refuses to proceed without it, and this suite should not be the
+  # thing that reports a missing dependency.
+  #
+  # (A comment line starting with the tool's own name parses as a directive,
+  # which is SC1072 — hence the rewording.)
+  command -v shellcheck >/dev/null 2>&1 || skip "shellcheck not installed"
+  [[ -z "${CI:-}" ]] || skip "CI installs the pin in the lint job; shards do not lint"
+
+  local pinned installed
+  pinned="$(_pinned)"
+  installed="v$(shellcheck --version | awk '/^version:/ {print $2}')"
+
+  [[ "$installed" == "$pinned" ]] || {
+    echo "shellcheck on PATH is $installed, CI pins $pinned" >&2
+    echo "Bump SHELLCHECK_VERSION in $ACTION and fix whatever the new" >&2
+    echo "version finds, or pin brew back. A gate on one version cannot" >&2
+    echo "predict a CI job on another." >&2
+    return 1
+  }
+}
+
+@test "the download is checksum-verified against a pinned digest" {
+  # Every other binary this repo pulls into CI is verified — install-worktrunk
+  # checks a published .sha256, and the release workflow checksums its own
+  # artifacts. ShellCheck publishes no digest beside its assets, so this one is
+  # recorded in the action; the point of the test is that it cannot quietly go
+  # missing, leaving CI to run whatever the download returned.
+  local digest
+  digest="$(grep -E '^\s+SHELLCHECK_SHA256:' "$ACTION" | awk '{print $2}')"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+
+  # And it has to actually be checked, not merely declared.
+  grep -q 'sha256sum -c' "$ACTION"
+  # Before the archive is unpacked: verifying after extraction is theatre.
+  local check_at extract_at
+  check_at="$(grep -n 'sha256sum -c' "$ACTION" | head -1 | cut -d: -f1)"
+  extract_at="$(grep -n 'tar -xJf' "$ACTION" | head -1 | cut -d: -f1)"
+  [[ "$check_at" -lt "$extract_at" ]]
+}
+
+@test "the CI job installs shellcheck before running it" {
+  # The pin is inert if the job never uses the action: the runner's own 0.9
+  # stays on PATH and the two diverge again silently.
+  local workflow="$REPO_ROOT/.github/workflows/ci.yml"
+  # From the job's own key to the next one at the same indent. NR>1 on the end
+  # pattern is what stops `shellcheck:` terminating its own range.
+  local job
+  job="$(awk '/^  shellcheck:/{f=1} f && /^  [a-z_-]+:$/ && ++n>1{exit} f' "$workflow")"
+
+  [[ "$job" == *"uses: ./.github/actions/install-shellcheck"* ]]
+  # And the install has to come before the lint step that depends on it.
+  local install_at lint_at
+  install_at="$(printf '%s\n' "$job" | grep -n "install-shellcheck" | head -1 | cut -d: -f1)"
+  lint_at="$(printf '%s\n' "$job" | grep -n "list_shell_scripts" | head -1 | cut -d: -f1)"
+  [[ -n "$install_at" && -n "$lint_at" ]]
+  [[ "$install_at" -lt "$lint_at" ]]
+}

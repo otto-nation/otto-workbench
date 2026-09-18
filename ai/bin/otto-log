@@ -38,6 +38,7 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
 sys.path.insert(0, str(_AI_LIB_DIR))
 
 from agent import usage as ai_usage
+from core import log
 from core import workbench_paths
 from core.trail import (
     EVENT_TYPE_WIDTH,
@@ -47,6 +48,8 @@ from core.trail import (
     TRAIL_KEEP_MONTHS,
     TS_TIME_OF_DAY,
     TS_TO_SECONDS,
+    Trail,
+    add_trail_args,
     prune_trail,
 )
 # Reading the root is `core.trail_query`'s, not this script's: the scans report
@@ -535,6 +538,72 @@ def cmd_list(args):
                   f"{ts}  {n:>{_EVENT_COUNT_WIDTH}} events  {duration}")
 
 
+# What `record` will write, which is a subset of what `Trail` can. A debug
+# event is for watching a run that is already instrumented, and the callers
+# here have no run to watch; a span needs two events around work this process
+# is not doing.
+RECORD_LEVELS = ("info", "warn", "error")
+
+
+def _record_data(pairs: list[str]) -> dict:
+    """`--data k=v` pairs as the object the record carries.
+
+    A value that reads as a number is stored as one: the counts these records
+    exist to hold are summed and compared by whatever reads them back, and a
+    string `"12"` sorts before `"9"`. Anything else stays the text it was.
+    """
+    data: dict = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        if not sep or not key:
+            log.error(f"--data expects key=value, got: {pair!r}")
+            sys.exit(2)
+        data[key] = _coerce(value)
+    return data
+
+
+def _coerce(value: str) -> int | float | str:
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except ValueError:
+            continue
+    return value
+
+
+def cmd_record(args):
+    """Write one event to the trail on behalf of a caller that cannot.
+
+    Every Python entry point opens its own `Trail`. The callers this is for
+    cannot: the shell scripts that close out a dream or a retro, and the agent
+    running the phases between the scan and the close, which has a terminal and
+    no process of its own to instrument. Without it the trail holds what the
+    scan found and nothing about what was done with it.
+
+    The run inherits `WORKBENCH_TRAIL_ROOT` like any other, so a record written
+    from inside a larger command is filed under that command rather than as an
+    orphan of its own.
+
+    No `finish` event follows: this process's duration measures the write, not
+    the work being recorded, and a 4ms figure beside a consolidation that took
+    an hour is worse than no figure at all.
+    """
+    context = {}
+    if args.repo:
+        context["repo"] = args.repo
+    if args.pr is not None:
+        context["pr"] = args.pr
+    trail = Trail.start(script=args.script, context=context, debug=args.debug)
+    data = _record_data(args.data) or None
+    writers = {
+        "info": lambda: trail.summary(args.action, args.detail, data=data),
+        "warn": lambda: trail.warn(args.action, args.detail, data=data),
+        "error": lambda: trail.error(args.action, args.detail, data=data),
+    }
+    writers[args.level]()
+    print(trail.invocation)
+
+
 def cmd_prune(args):
     """Sweep now, at whatever horizon the caller names.
 
@@ -614,6 +683,21 @@ def main():
     p_list.add_argument("--repo", help="Filter by repo (org/repo)")
     p_list.add_argument("--json", action="store_true", help="Output raw JSONL")
 
+    # record
+    p_record = sub.add_parser(
+        "record", help="Write one event to the trail (for shell and agent callers)")
+    p_record.add_argument("--script", required=True, help="Name the event is filed under")
+    p_record.add_argument("--action", required=True, help="What happened, as a short key")
+    p_record.add_argument("--detail", default="", help="One line of prose about it")
+    p_record.add_argument(
+        "--level", default="info", choices=RECORD_LEVELS, help="Severity (default: info)")
+    p_record.add_argument(
+        "--data", action="append", default=[], metavar="KEY=VALUE",
+        help="Structured field, repeatable — numeric values are stored as numbers")
+    p_record.add_argument("--repo", help="Subject repo (org/repo), recorded as context")
+    p_record.add_argument("--pr", type=int, help="Subject PR number, recorded as context")
+    add_trail_args(p_record)
+
     # prune
     p_prune = sub.add_parser("prune", help="Drop trail months past the horizon")
     p_prune.add_argument(
@@ -641,6 +725,7 @@ def main():
         "query": cmd_query,
         "show": cmd_show,
         "list": cmd_list,
+        "record": cmd_record,
         "prune": cmd_prune,
         "stats": cmd_stats,
     }

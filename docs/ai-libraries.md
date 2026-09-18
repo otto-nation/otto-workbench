@@ -3921,6 +3921,48 @@ never mutates it.
 
 Force-pushing a replayed branch, with the hook-rejection recovery ladder.
 
+### rebase/lease.py
+
+The lease a replayed branch is force-pushed under.
+
+``git push --force-with-lease`` with no expected value protects the remote by
+requiring it to match *our remote-tracking ref*. That is the wrong guarantee for
+this tool, and git's own manual says so:
+
+    A general note on safety: supplying this option without an expected value,
+    i.e. as ``--force-with-lease`` or ``--force-with-lease=<refname>`` interacts
+    very badly with anything that implicitly runs ``git fetch`` on the remote to
+    be pushed to in the background.
+
+A rebase run begins with exactly that fetch. So a colleague's commit, pushed
+while we were not looking, is pulled into ``origin/<branch>`` by our own fetch,
+the bare lease then finds the remote matching what it expects, and the replay
+force-pushes their work away. The lease was satisfied by evidence the tool
+manufactured a moment earlier.
+
+The fix is to name the commit ourselves: ``--force-with-lease=<ref>:<expect>``,
+where *expect* is the remote tip as it stood **before** the fetch. A colleague's
+push then makes the remote disagree with what we named, and git refuses.
+
+``--force-if-includes`` is the other candidate and is wrong here. It proves the
+remote tip is reachable from the local branch's reflog, and a worktree this tool
+materialised on demand has no reflog to speak of — only the zero-old
+``branch: Created from refs/remotes/origin/<branch>`` entry, which does not
+count. It rejects the routine case (a fresh worktree, a fresh clone, an expired
+reflog) while the explicit lease accepts all three and still refuses the
+clobber.
+
+Two values of *expect* are legal and they are not interchangeable:
+
+* a **full SHA** — the remote must still be at that commit;
+* the **empty string** — the remote must not have the ref at all, which is the
+  only form that can create a branch on its first push.
+
+Passing a SHA for a ref the remote does not have fails with ``stale info``, and
+passing the empty string for a ref it does have fails the same way. Neither is
+recoverable mid-push, so ``resolve`` is the only place that chooses between
+them, and it chooses by asking whether the ref is there.
+
 ### rebase/lifecycle.py
 
 Driving a rebase to completion — the step loop and the two ways it ends.

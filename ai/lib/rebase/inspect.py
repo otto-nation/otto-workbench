@@ -21,6 +21,7 @@ GIT_REBASE_APPLY_DIR = "rebase-apply"
 GIT_REBASE_TODO = "git-rebase-todo"
 GIT_REBASE_NEXT = "next"
 GIT_REBASE_LAST = "last"
+GIT_REBASE_ORIG_HEAD = "orig-head"
 
 _PICK_COMMANDS = frozenset({
     "pick", "p", "reword", "r", "edit", "e",
@@ -162,6 +163,30 @@ def status_lines(cwd: str) -> list[str] | None:
 def ref_exists(cwd: str, ref: str) -> bool:
     """Whether *ref* resolves in the repo at *cwd*."""
     return git_client.ok("rev-parse", "--verify", "--quiet", ref, cwd=cwd)
+
+
+def rebase_orig_head(cwd: str) -> str:
+    """The branch tip as it stood when the in-progress rebase started, or "".
+
+    Written by both backends into their own state directory, and read from
+    there rather than from ``ORIG_HEAD``: the conflict resolver runs an agent
+    with a general shell, and any ``git reset`` or ``git merge`` it happens to
+    run moves ``ORIG_HEAD`` while leaving this file alone.
+
+    Only readable *while* the rebase is in progress — git removes the directory
+    on the final step, which is before anything lands. A caller that needs the
+    value at push time has to take it at the start of the run.
+    """
+    git_path = git_dir(cwd)
+    for state_dir in (GIT_REBASE_MERGE_DIR, GIT_REBASE_APPLY_DIR):
+        head = git_path / state_dir / GIT_REBASE_ORIG_HEAD
+        try:
+            sha = head.read_text().strip()
+        except OSError:
+            continue
+        if sha:
+            return sha
+    return ""
 
 
 def shares_history(cwd: str, *, target_ref: str) -> bool:

@@ -43,6 +43,7 @@ from pr import context as pr_context
 from pr.domains import RebaseStatus, RebaseSummary
 from rebase import inspect as rebase_inspect
 from rebase import land as rebase_land
+from rebase import lease as rebase_lease
 from rebase import lifecycle
 from rebase import stash
 from rebase import target as rebase_target
@@ -82,8 +83,22 @@ def cmd_push(
         log.error("Cannot push — rebase still in progress.")
         return 1
 
+    state = rebase_types.load_or_init(ctx)
+    # The lease the rebase recorded, not one rebuilt here. By now HEAD is the
+    # rewritten tip and origin/<branch> is whatever the rebase's own fetch
+    # brought down, so neither reading can say what the remote was at before
+    # the replay — which is the only thing a lease may name.
+    lease = rebase_lease.PushLease(
+        branch=ctx.branch, expect=state.rebase.lease_expect,
+    )
+    if not state.rebase.updated_at:
+        core_trail.terr(trail, "push", "no recorded rebase to push")
+        log.error("Cannot push — no rebase recorded for this branch.")
+        log.dim("Run `pr rebase` first, or push by hand.")
+        return 1
+
     log.info("Force-pushing...")
-    landed = rebase_land.land_rebased(cwd, trail=trail)
+    landed = rebase_land.land_rebased(cwd, args=lease.args, trail=trail)
     if not landed.ok:
         core_trail.terr(
             trail, "push", "force-push failed",
@@ -91,7 +106,6 @@ def cmd_push(
         )
         return 1
 
-    state = rebase_types.load_or_init(ctx)
     RebaseOutcome(
         commits_replayed=(state.rebase.commits_replayed
                           or git_client.commits_ahead(cwd, target_ref=target_ref)),
@@ -100,6 +114,7 @@ def cmd_push(
         files_stale=state.rebase.files_stale,
         files_replayed=state.rebase.files_replayed,
         force_pushed=True,
+        lease_expect=state.rebase.lease_expect,
         target_base=target_ref,
     ).save(ctx)
     log.ok("Force-pushed successfully.")

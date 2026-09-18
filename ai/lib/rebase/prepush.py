@@ -56,7 +56,6 @@ from . import types as rebase_types
 GeneratedFix = rebase_types.GeneratedFix
 RegenQueue = regen.RegenQueue
 
-FORCE_PUSH_ARGS = rebase_types.FORCE_PUSH_ARGS
 REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
 
 
@@ -220,6 +219,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
 
     def __init__(
         self, cwd: str, editable: list[str], check_output: str, *,
+        args: Sequence[str],
         rebuilt: Sequence[str] = (),
         repo: str = "", pr: str = "", branch: str = "",
         trail: Trail | None = None,
@@ -227,6 +227,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         self.workdir = Path(cwd)
         self.artifacts = _artifacts_dir(self.workdir)
         self.editable = editable
+        self.args = tuple(args)
         # Regenerated before the pass starts, so they are already dirty when
         # the engine takes its baseline and fall outside the agent's delta.
         # They are still this commit's: one commit is what the hook validated,
@@ -305,7 +306,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         scope = set() if changed is None else changed | set(self.rebuilt)
         return fix_engine.LandSpec(
             message=message, regen=REGEN_MESSAGE, recover=True,
-            args=FORCE_PUSH_ARGS, paths=scope,
+            args=self.args, paths=scope,
         )
 
     def record(self, run: fix_engine.FixRun) -> None:
@@ -341,7 +342,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
 
 def fix_push_failures(
     cwd: str, error_output: str, resolved_files: list[str],
-    *, trail: Trail | None = None,
+    *, args: Sequence[str], trail: Trail | None = None,
 ) -> land.LandResult | None:
     """Fix pre-push check errors, then land the repair.
 
@@ -353,6 +354,9 @@ def fix_push_failures(
     and no backend, or neither pass produced anything worth committing. The
     caller then reports the push that sent it here, which is still the honest
     answer about the branch.
+
+    `args` is the lease the refused push carried. Reused rather than rebuilt:
+    that push was rejected, so the remote is still at the tip it named.
     """
     truncated = error_output[:FIX_ERROR_MAX_CHARS]
     # A file that conflicted in several replayed commits is listed once per
@@ -377,12 +381,13 @@ def fix_push_failures(
     # stays here: without it a machine with no backend pays for the tracking
     # file and the batching before failing at the call.
     if not editable or not ai_backend.is_available():
-        return _land_rebuild(cwd, generated, trail=trail)
+        return _land_rebuild(cwd, generated, args=args, trail=trail)
 
     context = trail.context if trail else {}
     pr = context.get("pr")
     adapter = PrePushFixAdapter(
         cwd, editable, truncated,
+        args=args,
         rebuilt=_rebuilt_files(generated),
         repo=str(context.get("repo") or ""),
         pr=str(pr) if pr else "",
@@ -393,7 +398,8 @@ def fix_push_failures(
 
 
 def _land_rebuild(
-    cwd: str, generated: GeneratedFix, *, trail: Trail | None = None,
+    cwd: str, generated: GeneratedFix, *, args: Sequence[str],
+    trail: Trail | None = None,
 ) -> land.LandResult | None:
     """Commit and force-push a repair that was entirely a regeneration.
 
@@ -410,7 +416,7 @@ def _land_rebuild(
 
     rebuilt = _rebuilt_files(generated)
     landed = land.land(
-        cwd, message=REGEN_MESSAGE, gated=True, args=FORCE_PUSH_ARGS,
+        cwd, message=REGEN_MESSAGE, gated=True, args=tuple(args),
         trail=trail, paths=rebuilt,
     )
     if landed.sha:

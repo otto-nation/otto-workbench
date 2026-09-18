@@ -370,6 +370,15 @@ class CommentItem:
 
 @dataclass
 class TriageStats:
+    """A tally of one triage round, counted from the entries it describes.
+
+    Derived rather than reported. Every field here is a count of rows the model
+    already returned, so asking the model for them too gives two answers to one
+    question — and the code reclassifies entries after the model has spoken
+    (see `downgrade_unsupported_verdicts`), which leaves a reported tally
+    describing verdicts that are no longer the ones shipped beside it.
+    """
+
     total: int = 0
     actionable: int = 0
     questions: int = 0
@@ -379,6 +388,40 @@ class TriageStats:
     invalid: int = 0
     comment_items_total: int = 0
     comment_items_actionable: int = 0
+
+    @classmethod
+    def counted(
+        cls, threads: list["CommentItem"], comment_items: list["CommentItem"],
+    ) -> "TriageStats":
+        """Count a round's entries.
+
+        Call this after every reclassification the round performs, never
+        before: counting first and mutating after is what lets the two
+        disagree.
+
+        The thread counts cover threads only, and the two `comment_items_`
+        fields cover the decomposed top-level comments — the split the
+        persisted `TriageSummary` already reports, kept rather than merged so a
+        stat does not silently change meaning.
+        """
+        def classified(entries, value):
+            return sum(1 for e in entries if e.classification is value)
+
+        def verified(entries, value):
+            return sum(1 for e in entries if e.verification is value)
+
+        return cls(
+            total=len(threads),
+            actionable=classified(threads, Classification.ACTIONABLE_SUGGESTION),
+            questions=classified(threads, Classification.QUESTION),
+            approvals=classified(threads, Classification.APPROVAL),
+            conflicting=classified(threads, Classification.CONFLICTING),
+            valid=verified(threads, Verification.VALID),
+            invalid=verified(threads, Verification.INVALID),
+            comment_items_total=len(comment_items),
+            comment_items_actionable=classified(
+                comment_items, Classification.ACTIONABLE_SUGGESTION),
+        )
 
 
 @dataclass

@@ -25,7 +25,9 @@ from git.land import CommitStatus  # noqa: E402
 from pr import fix_state  # noqa: E402
 from pr.comments_fix import FixSummary  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
-from pr.fix import FixOutcome, FixRecord  # noqa: E402
+from pr.fix import (  # noqa: E402
+    RECONCILED_REASON, FixOutcome, FixRecord, ItemOutcome, SettledBy,
+)
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import CommentItem  # noqa: E402
 
@@ -265,3 +267,52 @@ class TestTheStampIsIdempotent:
         record = fix_state.fix_record_for(
             {FixOutcome.FIXED: [entry]}, commit_sha="newc456")
         assert record.items[0].commit_sha == "newc456"
+
+
+class TestReconcileWritesTheWholeSettlement:
+    """The record owns the write, so a row cannot be half-settled.
+
+    An outcome flipped by reconciliation carries three things that only make
+    sense together: what it settled to, that reconciliation is what settled it,
+    and why. Kept on the record rather than at the caller so no future caller
+    can set one and forget the other two.
+    """
+
+    def _record(self):
+        return FixRecord(items=[
+            ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED),
+            ItemOutcome(id="t2", outcome=FixOutcome.DEFERRED),
+        ])
+
+    def test_a_settled_row_records_who_settled_it_and_why(self):
+        record = self._record()
+
+        flipped = record.reconcile({"t1": FixOutcome.SETTLED_ELSEWHERE})
+
+        assert flipped == 1
+        settled = record.items[0]
+        assert settled.outcome is FixOutcome.SETTLED_ELSEWHERE
+        assert settled.settled_by is SettledBy.RECONCILIATION
+        assert settled.reason == RECONCILED_REASON
+
+    def test_an_item_no_settlement_names_is_left_alone(self):
+        record = self._record()
+
+        record.reconcile({"t1": FixOutcome.SETTLED_ELSEWHERE})
+
+        untouched = record.items[1]
+        assert untouched.outcome is FixOutcome.DEFERRED
+        assert untouched.settled_by is not SettledBy.RECONCILIATION
+        assert untouched.reason == ""
+
+    def test_an_id_less_outcome_is_never_reconciled(self):
+        """`""` is not an identity — it must not collect every settlement."""
+        record = FixRecord(items=[ItemOutcome(id="", outcome=FixOutcome.DEFERRED)])
+
+        assert record.reconcile({"": FixOutcome.SETTLED_ELSEWHERE}) == 0
+        assert record.items[0].outcome is FixOutcome.DEFERRED
+
+    def test_nothing_to_settle_flips_nothing(self):
+        record = self._record()
+
+        assert record.reconcile({}) == 0

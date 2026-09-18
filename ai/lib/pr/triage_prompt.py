@@ -152,12 +152,12 @@ Top-level comments:
 """
         # Single braces, unlike the outer f-string this is substituted into.
         # Nothing collapses them on the way through, so they are already what
-        # the model sees, and must match the `threads` and `stats` blocks the
-        # outer template renders beside them.
+        # the model sees, and must match the `threads` block the outer template
+        # renders beside them.
         # Concatenation, not an f-string: this block's braces are single, and
         # converting it would double them into the schema the model sees.
         comment_items_schema = (
-            """
+            """,
   "comment_items": [
     {
       "source_id": "id from input comment",
@@ -179,7 +179,7 @@ Top-level comments:
             + """)",
       "evidence_line": 0
     }
-  ],"""
+  ]"""
         )
 
     # The verification sentence is prose the model reads; wrap it to the width
@@ -226,19 +226,7 @@ Return JSON matching this exact schema:
       "evidence_file": "file proving the verdict (required for {Verification.ALREADY_ADDRESSED}/{Verification.INVALID})",
       "evidence_line": 0
     }}
-  ],{comment_items_schema}
-  "stats": {{
-    "total": "count of threads",
-    "actionable": "count of actionable threads",
-    "questions": "count of question threads",
-    "approvals": "count of approval threads",
-    "conflicting": "count of conflicting threads",
-    "valid": "count of valid threads",
-    "invalid": "count of invalid threads",
-    "already_addressed": "count of already-addressed threads",
-    "comment_items_total": "count of decomposed comment items (0 if none)",
-    "comment_items_actionable": "count of actionable comment items (0 if none)"
-  }}
+  ]{comment_items_schema}
 }}
 
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."""

@@ -370,9 +370,12 @@ def reconcile_fix_snapshot(
     """
     answered_sources = answered_sources or {}
     handled_locations = settled_locations(threads_by_id)
-    flipped = 0
+    # What GitHub contradicts, decided here because it takes the review threads
+    # this module fetched. The write itself belongs to the record that owns the
+    # outcomes — see `FixRecord.reconcile`.
+    settlements: dict[str, FixOutcome] = {}
     for outcome in state.fix.fix.items:
-        if outcome.outcome not in UNSETTLED_OUTCOMES:
+        if outcome.outcome not in UNSETTLED_OUTCOMES or not outcome.id:
             continue
         entry = CommentItem.from_outcome(
             outcome, state.fix.reviewers.get(outcome.id, ""),
@@ -382,10 +385,8 @@ def reconcile_fix_snapshot(
         )
         if settlement is None:
             continue
-        outcome.outcome = settlement
-        outcome.settled_by = SettledBy.RECONCILIATION
-        outcome.reason = RECONCILED_REASON
-        flipped += 1
+        settlements[outcome.id] = settlement
+    flipped = state.fix.fix.reconcile(settlements)
     if flipped:
         log.info(f"Reconciled {flipped} stale outcome(s) against GitHub")
     return flipped

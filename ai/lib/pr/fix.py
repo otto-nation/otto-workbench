@@ -39,6 +39,7 @@ at all.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import StrEnum
 
@@ -266,3 +267,27 @@ class FixRecord:
             else:
                 anonymous.append(item)
         return dataclass_replace(self, items=list(merged.values()) + anonymous)
+
+    def reconcile(self, settlements: Mapping[str, FixOutcome]) -> int:
+        """Settle outcomes that GitHub has contradicted. Returns the flip count.
+
+        The caller decides *which* items are stale and what each one settles
+        to — that needs the review threads, which this type does not have and
+        should not learn about. What belongs here is the write: an outcome, the
+        hand that reached it, and the reason, set together so a row cannot end
+        up settled by nobody or settled for no stated reason.
+
+        Keyed by item id, so an id-less outcome is never reconciled. Those
+        cannot be addressed individually anywhere else either — see the
+        ceiling on ``merge_into``.
+        """
+        flipped = 0
+        for item in self.items:
+            settlement = settlements.get(item.id) if item.id else None
+            if settlement is None:
+                continue
+            item.outcome = settlement
+            item.settled_by = SettledBy.RECONCILIATION
+            item.reason = RECONCILED_REASON
+            flipped += 1
+        return flipped

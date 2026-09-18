@@ -104,19 +104,7 @@ Return JSON matching this exact schema:
       "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
       "evidence_line": 0
     }
-  ],
-  "stats": {
-    "total": "count of threads",
-    "actionable": "count of actionable threads",
-    "questions": "count of question threads",
-    "approvals": "count of approval threads",
-    "conflicting": "count of conflicting threads",
-    "valid": "count of valid threads",
-    "invalid": "count of invalid threads",
-    "already_addressed": "count of already-addressed threads",
-    "comment_items_total": "count of decomposed comment items (0 if none)",
-    "comment_items_actionable": "count of actionable comment items (0 if none)"
-  }
+  ]
 }
 
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation.

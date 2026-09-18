@@ -28,7 +28,8 @@ from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import (  # noqa: E402
     Classification, ClassificationResult, CommentItem, CommentSourceKind,
     Complexity, Disposition,
-    ReplyOutcome, ReportThread, TrackingResult, Verification, Vocabulary,
+    ReplyOutcome, ReportThread, TrackingResult, TriageStats, Verification,
+    Vocabulary,
     _coerce_vocab, triage_result_from_dict,
 )
 
@@ -457,3 +458,66 @@ class TestTheRecordRoundTripIsLossless:
             ItemOutcome(id="t1", file="a.py", line=8, outcome=FixOutcome.FIXED))
         assert not back.has_evidence()
         assert (back.file, back.line) == ("a.py", 8)
+
+
+class TestTriageStatsAreCountedNotReported:
+    """The tally describes the entries beside it, because it is made from them.
+
+    The counts used to come from the model and were then partially recounted
+    after the code reclassified entries, so a downgraded verdict left the
+    stats block contradicting the verdicts it was shipped with.
+    """
+
+    def _round(self):
+        threads = [
+            _entry("t1", classification=Classification.ACTIONABLE_SUGGESTION,
+                   verification=Verification.VALID),
+            _entry("t2", classification=Classification.ACTIONABLE_SUGGESTION,
+                   verification=Verification.INVALID),
+            _entry("t3", classification=Classification.QUESTION),
+            _entry("t4", classification=Classification.APPROVAL),
+            _entry("t5", classification=Classification.CONFLICTING),
+        ]
+        items = [
+            _entry("c1", classification=Classification.ACTIONABLE_SUGGESTION),
+            _entry("c2", classification=Classification.QUESTION),
+        ]
+        return threads, items
+
+    def test_every_field_counts_the_entries(self):
+        threads, items = self._round()
+
+        stats = TriageStats.counted(threads, items)
+
+        assert (stats.total, stats.actionable) == (5, 2)
+        assert (stats.questions, stats.approvals, stats.conflicting) == (1, 1, 1)
+        assert (stats.valid, stats.invalid) == (1, 1)
+        assert (stats.comment_items_total, stats.comment_items_actionable) == (2, 1)
+
+    def test_a_downgraded_verdict_moves_every_count_it_touches(self):
+        """The defect: recounting `invalid` alone left `valid` overstating.
+
+        Downgrading the one VALID thread must drop `valid` to zero, not leave
+        it reporting a verdict no entry holds any more.
+        """
+        threads, items = self._round()
+        before = TriageStats.counted(threads, items)
+        assert before.valid == 1
+
+        threads[0].verification = Verification.NEEDS_DISCUSSION
+
+        after = TriageStats.counted(threads, items)
+        assert after.valid == 0
+        assert after.total == before.total
+
+    def test_the_thread_counts_do_not_absorb_the_comment_items(self):
+        """`total` is threads; the decomposed comments have their own pair."""
+        threads, items = self._round()
+
+        stats = TriageStats.counted(threads, items)
+
+        assert stats.total == len(threads)
+        assert stats.comment_items_total == len(items)
+
+    def test_an_empty_round_counts_zero(self):
+        assert TriageStats.counted([], []) == TriageStats()

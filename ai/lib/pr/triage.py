@@ -33,7 +33,7 @@ from pr import thread_context
 from pr import triage_prompt
 from pr.comments_state import ThreadState
 from pr.thread_models import (
-    CommentItem, CommentSourceKind, Complexity, PRReport, TriageResult,
+    CommentItem, CommentSourceKind, Complexity, PRReport, TriageResult, TriageStats,
     Verification, triage_result_from_dict,
 )
 
@@ -189,16 +189,14 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     triage_result = triage_result_from_dict(raw)
     assign_item_ids(triage_result.comment_items)
 
-    downgraded = downgrade_unsupported_verdicts(
-        triage_result.threads, repo_dir, trail,
-    ) + downgrade_unsupported_verdicts(
-        triage_result.comment_items, repo_dir, trail,
+    downgrade_unsupported_verdicts(triage_result.threads, repo_dir, trail)
+    downgrade_unsupported_verdicts(triage_result.comment_items, repo_dir, trail)
+    # Counted here, after the last reclassification, so the tally describes the
+    # verdicts actually shipped beside it rather than the ones the model first
+    # proposed.
+    triage_result.stats = TriageStats.counted(
+        triage_result.threads, triage_result.comment_items,
     )
-    if downgraded:
-        # The model's own count is stale once a verdict moves.
-        triage_result.stats.invalid = sum(
-            1 for t in triage_result.threads if t.verification is Verification.INVALID
-        )
 
     # Update triage state
     try:

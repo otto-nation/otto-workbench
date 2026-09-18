@@ -38,7 +38,17 @@ _pinned() {
   [[ "$pinned" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
-@test "the shellcheck on PATH is the version CI pins" {
+@test "the shellcheck the gate lints with is the version CI pins" {
+  # Scoped to where the answer means something. This asks whether the binary
+  # that lints the tree matches the pin, and only two environments lint: a
+  # developer machine running the pre-push hook, and the CI ShellCheck job,
+  # which installs the pin before it runs.
+  #
+  # The bats shards are neither. They never invoke the linter, so the 0.9 the
+  # runner image ships is not the version anything will lint with — asserting
+  # against it there fails a job over a binary it does not use, which is what
+  # the first push of this branch did.
+  #
   # Skipped rather than failed where the tool is absent: the pre-push gate
   # already refuses to proceed without it, and this suite should not be the
   # thing that reports a missing dependency.
@@ -46,6 +56,7 @@ _pinned() {
   # (A comment line starting with the tool's own name parses as a directive,
   # which is SC1072 — hence the rewording.)
   command -v shellcheck >/dev/null 2>&1 || skip "shellcheck not installed"
+  [[ -z "${CI:-}" ]] || skip "CI installs the pin in the lint job; shards do not lint"
 
   local pinned installed
   pinned="$(_pinned)"

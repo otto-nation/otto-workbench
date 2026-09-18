@@ -128,7 +128,7 @@ class TestCanaryVerdict:
         clears any floor — so a check that lost the sign would report the rules
         arriving on a run that demonstrates the opposite.
         """
-        result = CanaryResult(_run(2376), _run(42435))
+        result = CanaryResult(_run(REFERENCE_WITHOUT_ADD_DIR), _run(REFERENCE_WITH_ADD_DIR))
         assert result.delta == -REFERENCE_DELTA
         assert not result.ok
 

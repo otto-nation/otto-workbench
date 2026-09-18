@@ -176,7 +176,17 @@ _latched: dict[Resource, Latch] = {}
 # GraphQL would let a self-clearing 30/min search throttle latch the entire
 # GraphQL budget for up to an hour. Falling through to `None` — "make the
 # call" — is the documented safe default for anything unmodeled.
+#
+# Measured: one `gh search prs` fires a GraphQL request *and* a REST call to
+# /search/issues, coming back `X-Ratelimit-Resource: graphql` and `search`
+# respectively — two budgets behind one subcommand.
 _GRAPHQL_COMMANDS = frozenset({"pr", "repo", "issue", "label"})
+
+# The same third budget reached the other way. `pr.supersession` calls
+# `gh api search/issues` directly, which would otherwise read as REST and let
+# a 30/min search throttle latch the whole 5000/hour core budget — the live
+# instance of what the `gh search` subcommand would have done latently.
+_SEARCH_ENDPOINT_PREFIX = "search/"
 
 
 def is_budget_exhausted(said: str) -> bool:
@@ -200,7 +210,11 @@ def resource_for(args: tuple[str, ...]) -> Resource | None:
         rest = args[1:]
         if not rest:
             return None
-        return Resource.GRAPHQL if rest[0] == "graphql" else Resource.CORE
+        if rest[0] == "graphql":
+            return Resource.GRAPHQL
+        if rest[0].startswith(_SEARCH_ENDPOINT_PREFIX):
+            return None
+        return Resource.CORE
     if args[0] in _GRAPHQL_COMMANDS:
         return Resource.GRAPHQL
     return None

@@ -320,3 +320,37 @@ def test_threads_meeting_the_same_refusal_probe_once(stub_gh, capsys):
     recorded = calls.read_text().splitlines()
     assert sum(1 for line in recorded if "-i" in line.split()) == 1
     assert capsys.readouterr().err.count("budget exhausted") == 1
+
+
+@pytest.mark.parametrize("argv", [
+    ("search", "prs", "--repo", "o/r"),
+    ("api", "search/issues?q=repo:o/r+sym+is:merged"),
+])
+def test_a_search_call_is_not_attributed_to_a_budget_it_does_not_spend(argv):
+    """Search is a third budget: 30/min, and it clears on its own.
+
+    Its exhaustion message is worded identically to the primary quota's, so
+    matching it and guessing a resource would latch the whole GraphQL or core
+    budget for an hour on the strength of a throttle that lifts in seconds.
+    Measured: one `gh search prs` fires a GraphQL request and a REST call to
+    /search/issues, returning `X-Ratelimit-Resource: graphql` and `search`.
+    `pr.supersession` reaches the same budget through `gh api search/issues`.
+    """
+    assert budget.resource_for(argv) is None
+
+
+def test_a_search_refusal_does_not_latch_the_core_budget(stub_gh):
+    """The live path: a throttled `gh api search/issues` must not stop the
+    ordinary REST calls behind it.
+
+    Two searches rather than a search and a REST read: a real core refusal
+    *should* latch, so mixing the two would pass on the strength of the wrong
+    call. Both searches must go out.
+    """
+    calls = _refusing_gh(stub_gh)
+
+    gh_client.api("search/issues?q=repo:o/r+one+is:merged")
+    gh_client.api("search/issues?q=repo:o/r+two+is:merged")
+
+    assert budget.latched(budget.Resource.CORE) is None
+    assert len(_non_probe_calls(calls)) == 2

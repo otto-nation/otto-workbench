@@ -284,7 +284,10 @@ PY
   result=$(_py_here <<'PY'
 from retro import github as retro_github
 calls = []
-retro_github.fetch_review_threads = lambda repo, pr: calls.append((repo, pr)) or [{"path": f"f{i}.py"} for i in range(114)]
+from gh.pr_reads import ThreadSet
+# Returns a ThreadSet, as the real fetcher does: a bare list here would keep
+# passing against a _threads_for that had stopped unwrapping it.
+retro_github.fetch_review_threads = lambda repo, pr: calls.append((repo, pr)) or ThreadSet([{"path": f"f{i}.py"} for i in range(114)])
 pr_node = {"number": 7, "reviewThreads": {"totalCount": 114, "nodes": [{"path": "a.py"}] * 100}}
 print(len(retro_github._threads_for("o/r", pr_node)), calls)
 PY

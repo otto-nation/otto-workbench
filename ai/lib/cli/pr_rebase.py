@@ -122,7 +122,7 @@ def cmd_push(
                 "lease, or push by hand after checking what origin holds.")
         return 1
 
-    lifecycle._name_the_open_pr(snapshot, trail=trail)
+    rebase_pr_snapshot.name_the_open_pr(snapshot, trail=trail)
     log.info("Force-pushing...")
     landed = rebase_land.land_rebased(cwd, args=lease.args, trail=trail)
     if not landed.ok:

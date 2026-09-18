@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core import log
+from core.trail import Trail, tinfo
 from gh import client as gh_client
 from pr import context as pr_context
 
@@ -69,6 +71,36 @@ class PRSnapshot:
         an abandoned PR, so only ``OPEN`` qualifies.
         """
         return self.state == OPEN and not self.is_draft
+
+
+def name_the_open_pr(
+    snapshot: PRSnapshot | None, *, trail: Trail | None = None,
+) -> None:
+    """Say whose PR is about to be rewritten, when there is one.
+
+    A branch with an open PR is shared: someone may be reading it, may have
+    marked it ready, may be merging it. Rewriting its history is a legitimate
+    thing to do — review findings, CI fixes, a rebase a reviewer asked for — so
+    this is a notice and not a gate, the same call the pre-push hook makes for
+    the same reason. A gate here would fire on the common good case and be
+    waived by reflex.
+
+    Lives beside the snapshot rather than in ``lifecycle`` because both places
+    that force-push have to call it: ``rebase_success`` for the modes that land
+    there, and ``cmd_push`` for ``RunMode.PUSH``, which is what a bare
+    ``pr rebase`` selects and which lands nowhere near the other.
+
+    Says nothing for a draft, a closed PR, or when GitHub could not be asked.
+    """
+    if snapshot is None or not snapshot.open_and_ready:
+        return
+    where = snapshot.url or f"#{snapshot.number}"
+    log.warn(f"This branch has an open PR, marked ready for review: {where}")
+    log.dim("Force-pushing rewrites what a reviewer may be reading — say on the "
+            "PR what this push changed.")
+    tinfo(trail, "ready_pr_push", "force-pushing a branch with a ready PR",
+          data={"pr": snapshot.number, "url": snapshot.url,
+                "review_decision": snapshot.review_decision})
 
 
 def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:

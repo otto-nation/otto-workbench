@@ -4271,3 +4271,85 @@ def test_a_run_that_never_pushes_does_not_need_a_lease(capsys):
         )
 
     assert rc == 0
+
+
+def _push_state(lease_expect="abc123"):
+    """A recorded rebase, as cmd_push reads it back out of state.json."""
+    state = mock.MagicMock()
+    state.rebase.updated_at = "t"
+    state.rebase.lease_expect = lease_expect
+    state.rebase.commits_replayed = 1
+    state.rebase.conflicts_resolved = 0
+    state.rebase.files_resolved = []
+    state.rebase.files_stale = []
+    state.rebase.files_replayed = []
+    return state
+
+
+def test_the_default_invocation_names_the_pr_before_pushing(capsys):
+    """A bare `pr rebase` is RunMode.PUSH, which pushes from cmd_push.
+
+    The notice first lived only in rebase_success, whose `lands_here` is false
+    for exactly this mode — so the single most common way to run the command
+    was the one way that force-pushed a reviewed branch silently.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    snapshot = rebase_pr_snapshot.PRSnapshot(
+        state="OPEN", number=1358, url="https://gh/1358", is_draft=False,
+    )
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_types, "load_or_init", return_value=_push_state()), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(git_client, "commits_ahead", return_value=1), \
+         _lands(_pushed()):
+        rc = pr_rebase_cli.cmd_push(
+            "/fake", ctx, target_ref=_TARGET, snapshot=snapshot,
+        )
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "https://gh/1358" in err
+    assert "ready for review" in err
+
+
+def test_the_default_invocation_pushes_under_the_recorded_lease():
+    """cmd_push must use the tip the rebase recorded, not one rebuilt here."""
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_types, "load_or_init",
+                           return_value=_push_state(lease_expect="deadbee")), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(git_client, "commits_ahead", return_value=1), \
+         _lands(_pushed()) as owner:
+        pr_rebase_cli.cmd_push("/fake", ctx, target_ref=_TARGET)
+
+    assert owner.call_args.kwargs["args"] == (
+        "--force-with-lease=refs/heads/isaac/feat/x:deadbee",
+    )
+
+
+def test_a_lease_recorded_before_the_field_existed_is_refused(capsys):
+    """An empty expect claims "the remote has no such ref" — check it.
+
+    A state file written before `lease_expect` shipped deserializes the field
+    to "", which is indistinguishable from a branch legitimately not yet
+    pushed. Pushing on that claim fails with git's `stale info` and no clue
+    why, so the claim is tested against the remote first.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_inspect, "ref_exists", return_value=True), \
+         mock.patch.object(rebase_types, "load_or_init",
+                           return_value=_push_state(lease_expect="")), \
+         _lands(_pushed()) as owner:
+        rc = pr_rebase_cli.cmd_push("/fake", ctx, target_ref=_TARGET)
+
+    assert rc == 1
+    owner.assert_not_called()
+    assert "origin already has this branch" in capsys.readouterr().err

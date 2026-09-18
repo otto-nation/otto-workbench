@@ -454,6 +454,31 @@ def fresh(
     )
 
 
+def _name_the_open_pr(
+    snapshot: rebase_pr_snapshot.PRSnapshot | None, *, trail: Trail | None = None,
+) -> None:
+    """Say whose PR is about to be rewritten, when there is one.
+
+    A branch with an open PR is shared: someone may be reading it, may have
+    marked it ready, may be merging it. Rewriting its history is a legitimate
+    thing to do — review findings, CI fixes, a rebase a reviewer asked for — so
+    this is a notice and not a gate, the same call the pre-push hook makes for
+    the same reason. A gate here would fire on the common good case and be
+    waived by reflex.
+
+    Says nothing for a draft, or when GitHub could not be asked.
+    """
+    if snapshot is None or not snapshot.open_and_ready:
+        return
+    where = snapshot.url or f"#{snapshot.number}"
+    log.warn(f"This branch has an open PR, marked ready for review: {where}")
+    log.dim("Force-pushing rewrites what a reviewer may be reading — say on the "
+            "PR what this push changed.")
+    tinfo(trail, "ready_pr_push", "force-pushing a branch with a ready PR",
+          data={"pr": snapshot.number, "url": snapshot.url,
+                "review_decision": snapshot.review_decision})
+
+
 def rebase_success(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None, *, target_ref: str,
@@ -513,6 +538,7 @@ def rebase_success(
         # Announced only when the push will actually happen; a held run says the
         # same thing once at the end, through the label and the resume line.
         if mode.reaches_remote:
+            _name_the_open_pr(snapshot, trail=trail)
             log.info(f"{label} — force-pushing...")
         # Replayed files go in alongside resolved ones: this is the candidate
         # set the pre-push repair matches a failing hook's output against, and

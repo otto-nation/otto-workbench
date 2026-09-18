@@ -4154,3 +4154,58 @@ def test_main_without_a_worktree_exits_with_guidance(capsys):
          mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls:
         assert_no_worktree_exit(capsys, "isaac/feat/x", pr_rebase_cli.main)
     mock_trail_cls.start.assert_not_called()
+
+
+# ── Naming the PR a force-push is about to rewrite ──────────────────────────
+#
+# A branch with an open PR is shared. The push is legitimate — review findings,
+# CI fixes, a rebase a reviewer asked for — so this is a notice, never a gate.
+
+
+def _rebase_success_with(snapshot, mode=rebase_types.RunMode.FIX):
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         _lands(_pushed()), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"):
+        return lifecycle.rebase_success(
+            "/fake", ctx, mode, target_ref=_TARGET, lease=_LEASE,
+            snapshot=snapshot,
+        )
+
+
+def test_a_ready_pr_is_named_before_the_force_push(capsys):
+    rc = _rebase_success_with(rebase_pr_snapshot.PRSnapshot(
+        state="OPEN", number=1358, url="https://gh/1358", is_draft=False,
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "https://gh/1358" in err
+    assert "ready for review" in err
+    # The push still happens: this is a notice, not a gate.
+    assert "force-pushing" in err
+
+
+def test_a_draft_is_pushed_to_without_ceremony(capsys):
+    """Force-pushing a draft is the normal way to work on one."""
+    _rebase_success_with(rebase_pr_snapshot.PRSnapshot(
+        state="OPEN", number=1358, url="https://gh/1358", is_draft=True,
+    ))
+    assert "ready for review" not in capsys.readouterr().err
+
+
+def test_nothing_is_claimed_when_github_could_not_be_asked(capsys):
+    """An unanswered read must not be reported as "no PR"."""
+    _rebase_success_with(rebase_pr_snapshot.PRSnapshot())
+    assert "ready for review" not in capsys.readouterr().err
+
+
+def test_a_held_run_says_nothing_about_a_push_it_is_not_making(capsys):
+    """--no-push reaches no remote, so there is nobody to warn."""
+    _rebase_success_with(
+        rebase_pr_snapshot.PRSnapshot(state="OPEN", number=1358, is_draft=False),
+        mode=rebase_types.RunMode.FIX_ONLY,
+    )
+    assert "ready for review" not in capsys.readouterr().err

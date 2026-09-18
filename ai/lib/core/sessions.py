@@ -441,7 +441,7 @@ def pi_session_slug(path: Path | str) -> str:
     ``tests/sessions_ssot.bats``.
 
     No caller in ``ai/lib`` today — nothing here yet addresses Pi's own store
-    the way ``claude_slug`` below addresses Claude's for ``memory_dir_for``.
+    the way ``claude_slug`` below addresses Claude's for ``claude_memory_dir``.
     It exists so the shell and Python transforms can be held to each other by
     ``tests/sessions_ssot.bats``, ahead of the consumer that will need it.
     """

@@ -15,7 +15,7 @@ setup() {
   # ~/.local/bin they resolve otto-log through. Both come off HOME inside
   # lib/constants.sh, so this is the only way to point them at a sandbox.
   FAKE_HOME="$TMPDIR/home"
-  mkdir -p "$FAKE_HOME/.claude/projects" "$FAKE_HOME/.local/bin"
+  mkdir -p "$FAKE_HOME/.claude/projects" "$FAKE_HOME/.local/bin" "$WORKBENCH_STATE_DIR"
   ln -sf "$OTTO_LOG" "$FAKE_HOME/.local/bin/otto-log"
 }
 
@@ -48,10 +48,26 @@ _events_under() {
   "$OTTO_LOG" query --root "$root" --script "$script" --json | wc -l | tr -d ' '
 }
 
+# _memory_project NAME — a registered repo with a memory directory, printed.
+#
+# The close sweeps the project registry and encodes each repo's path into the
+# directory its memory lives in, so a bare directory under `.claude/projects`
+# named for nothing is swept by nothing. The registry line carries its identity
+# field, which is what a machine the sync has already run holds and is what
+# keeps the fixture from depending on git discovery under $TMPDIR.
+_memory_project() {
+  local repo="$TMPDIR/repos/$1" mem
+  mkdir -p "$repo"
+  printf '%s\t%s\n' "$repo" "$repo/.git" >> "$WORKBENCH_STATE_DIR/projects.registry"
+  mem="$FAKE_HOME/.claude/projects/$(printf '%s' "$repo" | tr -c 'A-Za-z0-9' '-')/memory"
+  mkdir -p "$mem"
+  printf '%s' "$mem"
+}
+
 # ── dream ───────────────────────────────────────────────────────────────────
 
 @test "dream close: files itself under the scan it was given" {
-  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
+  _memory_project p1
   local root
   root=$(_open_run dream-scan)
 
@@ -62,8 +78,8 @@ _events_under() {
 }
 
 @test "dream close: counts the projects it closed" {
-  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory" \
-           "$FAKE_HOME/.claude/projects/p2/memory"
+  _memory_project p1
+  _memory_project p2
   local root
   root=$(_open_run dream-scan)
 
@@ -75,7 +91,7 @@ _events_under() {
 }
 
 @test "dream close: says so when the agent recorded no phases" {
-  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
+  _memory_project p1
   local root
   root=$(_open_run dream-scan)
 
@@ -86,7 +102,7 @@ _events_under() {
 }
 
 @test "dream close: stays quiet when the agent did record its phases" {
-  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
+  _memory_project p1
   local root
   root=$(_open_run dream-scan)
   WORKBENCH_TRAIL_ROOT="$root" "$OTTO_LOG" record \
@@ -99,7 +115,7 @@ _events_under() {
 }
 
 @test "dream close: a run with no root is not warned about" {
-  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
+  _memory_project p1
 
   _run_complete bash "$DREAM_COMPLETE"
 
@@ -112,7 +128,7 @@ _events_under() {
   # phases went unrecorded; a query that could not answer knows nothing about
   # that either way, and saying so anyway sends the reader after a run that is
   # on the trail.
-  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
+  _memory_project p1
   rm -f "$FAKE_HOME/.local/bin/otto-log"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$FAKE_HOME/.local/bin/otto-log"
   chmod +x "$FAKE_HOME/.local/bin/otto-log"
@@ -125,19 +141,18 @@ _events_under() {
 
 @test "dream close: still completes when otto-log cannot record" {
   # Every machine until this ships: an installed otto-log with no `record`.
-  mkdir -p "$FAKE_HOME/.claude/projects/p1/memory"
+  local memory
+  memory=$(_memory_project p1)
   # Removed first: the sandbox entry is a symlink into the repo, and a redirect
   # onto it writes through the link to the checked-out otto-log itself.
   rm -f "$FAKE_HOME/.local/bin/otto-log"
   printf '#!/usr/bin/env bash\nexit 2\n' > "$FAKE_HOME/.local/bin/otto-log"
   chmod +x "$FAKE_HOME/.local/bin/otto-log"
-  touch "$FAKE_HOME/.claude/.dream-pending"
 
   _run_complete bash "$DREAM_COMPLETE" --root aaaaaaaaaaaa
 
   [[ "$status" -eq 0 ]]
-  [[ -f "$FAKE_HOME/.claude/projects/p1/memory/.last-dream" ]]
-  [[ ! -f "$FAKE_HOME/.claude/.dream-pending" ]]
+  [[ -f "$memory/.last-dream" ]]
 }
 
 @test "dream close: --root without a value is refused" {

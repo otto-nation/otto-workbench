@@ -23,10 +23,13 @@ normalises both to ``UserMessage`` so consumers never branch on harness.
 
 The slug a directory is named for is deliberately never parsed back into a path.
 Claude's transform maps every non-alphanumeric to ``-``, so ``a-b`` and ``a_b``
-both become ``a-b`` and the original is unrecoverable; Pi keeps underscores and
-wraps in a doubled delimiter, so the two harnesses do not even agree on the
-encoding. Both write the cwd *into* the transcript, which is a fact rather than
-an inference, so ``project_path_of`` reads that. The slug is written, never read.
+both become ``a-b`` and the original is unrecoverable; Pi's transform
+(``pi_session_slug``) only replaces ``/``, ``\`` and ``:`` — a dot, a space, an
+accent, an emoji all survive verbatim — so the two harnesses do not even agree
+on the encoding, and the harness-neutral ``canonical_slug`` (which replaces
+everything outside ``[A-Za-z0-9_]``) matches neither one's store. Both write
+the cwd *into* the transcript, which is a fact rather than an inference, so
+``project_path_of`` reads that. The slug is written, never read.
 
 Memory is the one thing here that is genuinely Claude-shaped: it still lives in
 that harness's tree, one ``memory/`` directory per project slug. That is not a
@@ -436,6 +439,11 @@ def pi_session_slug(path: Path | str) -> str:
     undecodable byte, and with Pi on an astral one. ``_pi_session_slug`` in
     ``lib/ai/session-count.sh`` is that half, held to this by
     ``tests/sessions_ssot.bats``.
+
+    No caller in ``ai/lib`` today — nothing here yet addresses Pi's own store
+    the way ``claude_slug`` below addresses Claude's for ``memory_dir_for``.
+    It exists so the shell and Python transforms can be held to each other by
+    ``tests/sessions_ssot.bats``, ahead of the consumer that will need it.
     """
     text = str(path)
     while "//" in text:

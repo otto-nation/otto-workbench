@@ -3155,10 +3155,13 @@ normalises both to ``UserMessage`` so consumers never branch on harness.
 
 The slug a directory is named for is deliberately never parsed back into a path.
 Claude's transform maps every non-alphanumeric to ``-``, so ``a-b`` and ``a_b``
-both become ``a-b`` and the original is unrecoverable; Pi keeps underscores and
-wraps in a doubled delimiter, so the two harnesses do not even agree on the
-encoding. Both write the cwd *into* the transcript, which is a fact rather than
-an inference, so ``project_path_of`` reads that. The slug is written, never read.
+both become ``a-b`` and the original is unrecoverable; Pi's transform
+(``pi_session_slug``) only replaces ``/``, ``\`` and ``:`` — a dot, a space, an
+accent, an emoji all survive verbatim — so the two harnesses do not even agree
+on the encoding, and the harness-neutral ``canonical_slug`` (which replaces
+everything outside ``[A-Za-z0-9_]``) matches neither one's store. Both write
+the cwd *into* the transcript, which is a fact rather than an inference, so
+``project_path_of`` reads that. The slug is written, never read.
 
 Memory is the one thing here that is genuinely Claude-shaped: it still lives in
 that harness's tree, one ``memory/`` directory per project slug. That is not a

@@ -4033,10 +4033,24 @@ Writing it is `retro-scan`'s under `--consume`; reading and enforcing it is
 
 Fetching a repo's recent review activity from GitHub.
 
-One GraphQL round trip per repo where the API allows it, falling back to REST
-when it does not, flattened into the plain comment dicts the rest of the retro
-reads. Deciding which comments matter is `retro.rules`'; rendering them is
-`retro.report`'s.
+Two GraphQL round trips per repo — one for the PRs in the window, one per PR
+for its comments — falling back to REST when the API will not answer, flattened
+into the plain comment dicts the rest of the retro reads. Deciding which
+comments matter is `retro.rules`'; rendering them is `retro.report`'s.
+
+This used to be one round trip per repo, on the reading that fewer calls is
+cheaper. For GraphQL that is backwards: the hourly budget is spent in points
+scored from the `first:` values *before the query runs*, so nesting fifty PRs
+by a hundred threads by fifty comments was charged for 260,000 nodes — about
+2,600 points, half the hourly budget — on every scan, whatever the repo
+actually held. Worse, the window filter was applied in Python afterwards, so a
+scan paid full price for every PR it then discarded.
+
+Asking twice costs about 120 points for the same answer. The first query takes
+numbers and merge dates only, which is what the window filter needs; the second
+runs only for the PRs that survive it. A round trip is not the unit of cost
+here — the requested node count is — and a reader tempted to batch this back
+into one query should start from that.
 
 Normalising a raw comment's shape and dropping the noise (approvals,
 thumbs-up, a bare "nit") is part of producing that plain comment dict, so it

@@ -72,12 +72,21 @@ fi
 # is a symlink the ai/claude component installs. Components install
 # independently, so its absence is a machine that never asked for it — a skip,
 # not a warning to repeat on every cycle for the life of the install.
+# 75 is `pr`'s EXIT_BUDGET_EXHAUSTED: the sweep stopped because the account's
+# hourly GitHub quota is spent. Distinguished from a real failure because it is
+# neither broken nor actionable — the budget refills on its own and the next
+# cycle collects what this one could not ask about. Calling it a failure sent
+# someone looking for an expired token.
 if [[ -x "$LOCAL_BIN_DIR/pr" ]]; then
   log "Collecting stale PR artifacts"
-  if "$LOCAL_BIN_DIR/pr" gc 2>&1; then
+  gc_status=0
+  "$LOCAL_BIN_DIR/pr" gc 2>&1 || gc_status=$?
+  if [[ $gc_status -eq 0 ]]; then
     log "PR artifact collection complete"
+  elif [[ $gc_status -eq 75 ]]; then  # pr EXIT_BUDGET_EXHAUSTED (EX_TEMPFAIL)
+    log "PR artifact collection skipped — GitHub API budget exhausted, will retry next cycle"
   else
-    log "WARNING: pr gc failed (non-fatal)"
+    log "WARNING: pr gc failed (non-fatal, exit $gc_status)"
   fi
 fi
 

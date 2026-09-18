@@ -44,6 +44,7 @@ from core import log
 from core import proc
 from core import timeouts
 from core.proc import CmdResult
+from gh import budget
 
 # What `run` reports when `gh` is not installed. `proc.run` lets
 # `FileNotFoundError` escape, and three call sites caught it while forty-two
@@ -114,21 +115,6 @@ _RATE_LIMIT_MARKERS = (
     "retry later",
 )
 
-# How GitHub words an exhausted *primary* budget — the hourly quota, which is
-# per user and counted separately for REST and GraphQL.
-#
-# Not retried, because the reset is up to an hour out and every ladder here
-# gives up in under nine minutes: retrying only spends the remaining attempts
-# against a budget that is already gone, then reports the same failure later.
-# Matched all the same, so the message can say which budget ran out and that
-# waiting is the remedy — the diagnosis this is otherwise expensive to reach.
-# `gh api rate_limit` is itself exempt from the limit, so it cheerfully answers
-# 5000/5000 while every other call is refused.
-_BUDGET_EXHAUSTED_MARKERS = (
-    "api rate limit exceeded",
-    "api rate limit already exceeded",
-)
-
 
 def _is_rate_limited(said: str) -> bool:
     """Whether the response is a throttle that waiting will clear.
@@ -145,12 +131,6 @@ def _is_rate_limited(said: str) -> bool:
     return any(marker in lower for marker in _RATE_LIMIT_MARKERS)
 
 
-def is_budget_exhausted(said: str) -> bool:
-    """Whether the primary hourly quota is gone, for REST or for GraphQL."""
-    lower = said.lower()
-    return any(marker in lower for marker in _BUDGET_EXHAUSTED_MARKERS)
-
-
 def _is_line_resolution_error(said: str) -> bool:
     """Whether GitHub rejected an inline comment's line position."""
     return "line could not be resolved" in said.lower()
@@ -164,6 +144,11 @@ def _ladder_for(r: CmdResult) -> _Ladder | None:
     five-second delay, so a routine 404 — a branch with no PR yet, an issue
     that was deleted — cost twenty seconds and reported the same empty result
     at the end of it. A 4xx is an answer.
+
+    An exhausted primary budget is still deliberately absent, for the reason it
+    always was: the reset is up to an hour out and every ladder here gives up
+    in under nine minutes. `run`'s breaker now means the second such failure in
+    a process is not attempted at all, so this no longer decides it alone.
     """
     if r.ok:
         return None
@@ -174,18 +159,6 @@ def _ladder_for(r: CmdResult) -> _Ladder | None:
     return None
 
 
-# Said after an exhausted-budget failure, because the failure itself does not
-# say it. The quota is hourly and per user, so a second token belonging to the
-# same account is the same budget — which is the wrong turn this sentence
-# exists to prevent.
-BUDGET_EXHAUSTED_HINT = (
-    "the hourly GitHub API quota for this account is spent — it refills on its "
-    "own, and another token for the same user shares it. `gh api rate_limit` "
-    "is exempt from the limit, so it reports a full budget either way; "
-    "`gh api rate_limit --jq .resources` shows the reset times"
-)
-
-
 def _error_message(r: CmdResult) -> str:
     """The most specific account of a failed call the response supports.
 
@@ -194,10 +167,10 @@ def _error_message(r: CmdResult) -> str:
     of an empty stdout is the difference between naming HTTP 503 and printing
     nothing after the colon.
 
-    An exhausted primary budget gets the hint appended, because that failure is
-    the one whose text does not imply its own remedy: "API rate limit already
-    exceeded for user ID 7399350" reads like something to fix or authenticate
-    around, and the answer is to wait.
+    An exhausted primary budget used to get a remedy appended here, which was
+    dead code: this is only reached from the retry-waiting log below, and such
+    a budget is deliberately never retried. `gh.budget` says it instead, once
+    per resource when the latch arms rather than once per refused call.
     """
     try:
         parsed = json.loads(r.stdout)
@@ -209,8 +182,6 @@ def _error_message(r: CmdResult) -> str:
         message = (r.detail or r.combined_output.strip())[:proc.DETAIL_LIMIT]
     elif errors:
         message += " — " + "; ".join(str(e) for e in errors)
-    if is_budget_exhausted(r.combined_output):
-        return f"{message} ({BUDGET_EXHAUSTED_HINT})"
     return message
 
 
@@ -264,6 +235,7 @@ def run(
     *args: str,
     cwd: str | Path | None = None,
     input_text: str | None = None,
+    _skip_breaker: bool = False,
 ) -> CmdResult:
     """Run gh with *args* in *cwd*, capturing both streams.
 
@@ -274,9 +246,25 @@ def run(
     There is no `timeout` parameter and no retry here. The bound follows from
     the argv, and retry belongs to `api` and `graphql`, which know they are
     talking to the API rather than driving a local artifact download.
+
+    The budget breaker *is* here, and is not the retry this disclaims. Retry
+    makes more calls and is a policy only a caller can choose; the breaker
+    makes fewer and needs no such judgement, because a call we have already
+    been refused for quota cannot succeed on this attempt either. A caller that
+    declined to wait did not thereby volunteer to spend a budget it has been
+    told is gone — and the sites that bled twenty-one calls over a dead quota
+    were `run` callers precisely because they had opted out of the ladder.
+
+    *_skip_breaker* is for the probe that reads the reset header, which is the
+    one call that must go out while the latch is arming.
     """
+    resource = budget.resource_for(args)
+    if not _skip_breaker:
+        latch = budget.latched(resource)
+        if latch is not None:
+            return budget.latched_result(latch)
     try:
-        return proc.run(
+        r = proc.run(
             ["gh", *args], cwd=cwd, timeout=_timeout_for(args), input_text=input_text,
         )
     except FileNotFoundError:
@@ -284,6 +272,9 @@ def run(
             returncode=GH_MISSING_RETURNCODE,
             stderr="gh is not installed — install the GitHub CLI to use this",
         )
+    if not _skip_breaker and not r.ok and budget.is_budget_exhausted(r.combined_output):
+        budget.arm(r.combined_output, resource)
+    return r
 
 
 def out(

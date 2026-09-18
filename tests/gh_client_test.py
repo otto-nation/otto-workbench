@@ -12,7 +12,6 @@ them out anyway.
 """
 
 import json
-import stat
 import sys
 from pathlib import Path
 
@@ -23,31 +22,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from gh import budget  # noqa: E402
 from gh import client as gh_client  # noqa: E402
 from core import proc  # noqa: E402
 from core import timeouts  # noqa: E402
 from core.proc import CmdResult  # noqa: E402
-
-
-def _stub_gh(tmp_path: Path, monkeypatch, body: str) -> Path:
-    """Put a `gh` on PATH whose body is *body*, and record every invocation.
-
-    The stub appends its argv to `calls.txt` before running *body*, so a test
-    can assert what the client actually asked for as well as what it did with
-    the answer.
-    """
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    calls = tmp_path / "calls.txt"
-    script = bin_dir / "gh"
-    script.write_text(
-        "#!/bin/sh\n"
-        f'printf "%s\\n" "$*" >> {calls}\n'
-        f"{body}\n"
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
-    return calls
 
 
 @pytest.fixture
@@ -149,18 +128,15 @@ def test_an_exhausted_budget_is_not_retried(said):
     already gone."""
     r = CmdResult(returncode=1, stderr=said)
     assert gh_client._ladder_for(r) is None
-    assert gh_client.is_budget_exhausted(said)
+    assert budget.is_budget_exhausted(said)
 
 
-def test_an_exhausted_budget_explains_the_remedy():
-    """"API rate limit already exceeded" reads like something to authenticate
-    around; the remedy is to wait, and a second token for the same user is the
-    same budget."""
-    r = CmdResult(returncode=1,
-                  stderr="GraphQL: API rate limit already exceeded for user ID 1.")
-    message = gh_client._error_message(r)
-    assert "hourly GitHub API quota" in message
-    assert "another token for the same user shares it" in message
+# The remedy used to be asserted here, against `_error_message`. That test
+# could not fail when its subject broke: `_error_message` is only reached from
+# the retry-waiting log, and an exhausted budget is never retried, so the
+# branch it covered was unreachable in production. Saying the remedy is now
+# `gh.budget`'s job, and `tests/gh_budget_test.py` asserts it against the path
+# that actually runs.
 
 
 def test_an_ordinary_failure_gets_no_hint():
@@ -205,10 +181,10 @@ def test_the_transient_ladder_is_short_enough_not_to_look_wedged():
 # ── Retry loop ──────────────────────────────────────────────────────────────
 
 
-def test_a_throttle_is_retried_until_it_clears(tmp_path, monkeypatch, no_sleep):
+def test_a_throttle_is_retried_until_it_clears(tmp_path, stub_gh, no_sleep):
     """The stub reports a secondary rate limit twice, then answers."""
     counter = tmp_path / "n"
-    _stub_gh(tmp_path, monkeypatch, f"""
+    stub_gh(f"""
 n=$(cat {counter} 2>/dev/null || echo 0)
 echo $((n + 1)) > {counter}
 if [ "$n" -lt 2 ]; then
@@ -223,8 +199,8 @@ echo '{{"login": "octocat"}}'
     assert len(no_sleep) == 2
 
 
-def test_a_not_found_is_returned_on_the_first_attempt(tmp_path, monkeypatch, no_sleep):
-    calls = _stub_gh(tmp_path, monkeypatch, """
+def test_a_not_found_is_returned_on_the_first_attempt(stub_gh, no_sleep):
+    calls = stub_gh("""
 echo '{"message": "Not Found"}'
 exit 1
 """)
@@ -234,8 +210,8 @@ exit 1
     assert no_sleep == []
 
 
-def test_a_throttle_that_never_clears_gives_up_and_returns_it(tmp_path, monkeypatch, no_sleep):
-    _stub_gh(tmp_path, monkeypatch, """
+def test_a_throttle_that_never_clears_gives_up_and_returns_it(stub_gh, no_sleep):
+    stub_gh("""
 echo 'You have exceeded a secondary rate limit'
 exit 1
 """)
@@ -244,8 +220,8 @@ exit 1
     assert len(no_sleep) == gh_client.RATE_LIMIT_LADDER.attempts - 1
 
 
-def test_retry_off_makes_exactly_one_attempt(tmp_path, monkeypatch, no_sleep):
-    calls = _stub_gh(tmp_path, monkeypatch, """
+def test_retry_off_makes_exactly_one_attempt(stub_gh, no_sleep):
+    calls = stub_gh("""
 echo 'You have exceeded a secondary rate limit'
 exit 1
 """)
@@ -254,9 +230,9 @@ exit 1
     assert no_sleep == []
 
 
-def test_an_unresolvable_line_raises_rather_than_retrying(tmp_path, monkeypatch, no_sleep):
+def test_an_unresolvable_line_raises_rather_than_retrying(stub_gh, no_sleep):
     """Not a transport failure: the diff moved, so the caller must re-anchor."""
-    _stub_gh(tmp_path, monkeypatch, """
+    stub_gh("""
 echo '{"message": "line could not be resolved to a diff position"}'
 exit 1
 """)
@@ -279,41 +255,41 @@ def test_a_missing_gh_is_a_result_rather_than_an_exception(tmp_path, monkeypatch
     assert gh_client.out("api", "user", default="unknown") == "unknown"
 
 
-def test_run_carries_stderr_so_a_caller_can_name_the_cause(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "echo 'HTTP 503: upstream is down' >&2; exit 1")
+def test_run_carries_stderr_so_a_caller_can_name_the_cause(stub_gh):
+    stub_gh("echo 'HTTP 503: upstream is down' >&2; exit 1")
     r = gh_client.run("api", "user")
     assert not r.ok
     assert "503" in r.detail
     assert r.server_error
 
 
-def test_out_strips_and_returns_stdout(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "echo '  octocat  '")
+def test_out_strips_and_returns_stdout(stub_gh):
+    stub_gh("echo '  octocat  '")
     assert gh_client.out("api", "user") == "octocat"
 
 
-def test_ok_reads_the_exit_code(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "exit 0")
+def test_ok_reads_the_exit_code(stub_gh):
+    stub_gh("exit 0")
     assert gh_client.ok("auth", "status")
 
 
-def test_lines_drops_blanks(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "printf 'a\\n\\nb\\n'")
+def test_lines_drops_blanks(stub_gh):
+    stub_gh("printf 'a\\n\\nb\\n'")
     assert gh_client.lines("api", "user") == ["a", "b"]
 
 
-def test_json_out_falls_back_when_the_output_is_not_json(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "echo '<html>gateway timeout</html>'")
+def test_json_out_falls_back_when_the_output_is_not_json(stub_gh):
+    stub_gh("echo '<html>gateway timeout</html>'")
     assert gh_client.json_out("api", "user", default={"x": 1}) == {"x": 1}
 
 
-def test_json_out_falls_back_on_a_failed_call(tmp_path, monkeypatch, no_sleep):
-    _stub_gh(tmp_path, monkeypatch, "exit 1")
+def test_json_out_falls_back_on_a_failed_call(stub_gh, no_sleep):
+    stub_gh("exit 1")
     assert gh_client.json_out("api", "user", default=[]) == []
 
 
-def test_stdin_reaches_gh(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "cat")
+def test_stdin_reaches_gh(stub_gh):
+    stub_gh("cat")
     r = gh_client.run("api", "graphql", input_text='{"query": "x"}')
     assert r.stdout == '{"query": "x"}'
 
@@ -388,8 +364,8 @@ def test_escape_sequences_are_refused_unless_asked_for():
 # ── Request bodies ──────────────────────────────────────────────────────────
 
 
-def test_api_sends_its_body_on_stdin(tmp_path, monkeypatch):
-    calls = _stub_gh(tmp_path, monkeypatch, "cat")
+def test_api_sends_its_body_on_stdin(stub_gh):
+    calls = stub_gh("cat")
     r = gh_client.api(
         "repos/o/r/pulls/1/reviews", method="POST", input_text='{"event": "COMMENT"}',
     )
@@ -397,15 +373,15 @@ def test_api_sends_its_body_on_stdin(tmp_path, monkeypatch):
     assert "--input -" in calls.read_text()
 
 
-def test_api_without_a_body_asks_gh_to_read_nothing(tmp_path, monkeypatch):
-    calls = _stub_gh(tmp_path, monkeypatch, "echo '{}'")
+def test_api_without_a_body_asks_gh_to_read_nothing(stub_gh):
+    calls = stub_gh("echo '{}'")
     gh_client.api("user")
     assert "--input" not in calls.read_text()
 
 
-def test_graphql_sends_a_whole_document_on_stdin(tmp_path, monkeypatch):
+def test_graphql_sends_a_whole_document_on_stdin(stub_gh):
     """A mutation with a nested variable does not fit gh's -f/-F field list."""
-    calls = _stub_gh(tmp_path, monkeypatch, "cat")
+    calls = stub_gh("cat")
     document = '{"query": "mutation { x }", "variables": {"input": {"a": 1}}}'
     r = gh_client.graphql("", input_text=document)
     assert r.stdout == document
@@ -417,45 +393,45 @@ def test_graphql_sends_a_whole_document_on_stdin(tmp_path, monkeypatch):
 # ── Reads ───────────────────────────────────────────────────────────────────
 
 
-def test_pr_view_asks_for_the_fields_as_one_comma_list(tmp_path, monkeypatch):
-    calls = _stub_gh(tmp_path, monkeypatch, "echo '{\"title\": \"t\", \"body\": \"b\"}'")
+def test_pr_view_asks_for_the_fields_as_one_comma_list(stub_gh):
+    calls = stub_gh("echo '{\"title\": \"t\", \"body\": \"b\"}'")
     assert gh_client.pr_view(7, "title", "body", repo="o/r") == {"title": "t", "body": "b"}
     assert "pr view 7 --repo o/r --json title,body" in calls.read_text()
 
 
-def test_pr_view_without_a_number_asks_about_the_current_branch(tmp_path, monkeypatch):
-    calls = _stub_gh(tmp_path, monkeypatch, "echo '{\"number\": 3}'")
+def test_pr_view_without_a_number_asks_about_the_current_branch(stub_gh):
+    calls = stub_gh("echo '{\"number\": 3}'")
     assert gh_client.pr_view("", "number") == {"number": 3}
     assert "pr view --json number" in calls.read_text()
 
 
-def test_pr_view_is_empty_when_gh_cannot_answer(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "exit 1")
+def test_pr_view_is_empty_when_gh_cannot_answer(stub_gh):
+    stub_gh("exit 1")
     assert gh_client.pr_view(7, "title", repo="o/r") == {}
 
 
-def test_pr_view_is_empty_rather_than_none_on_a_null_body(tmp_path, monkeypatch):
+def test_pr_view_is_empty_rather_than_none_on_a_null_body(stub_gh):
     """`gh pr view` answers `null` for a PR it can see but cannot describe."""
-    _stub_gh(tmp_path, monkeypatch, "echo null")
+    stub_gh("echo null")
     assert gh_client.pr_view(7, "title", repo="o/r") == {}
 
 
-def test_login_reads_the_authenticated_user(tmp_path, monkeypatch):
-    calls = _stub_gh(tmp_path, monkeypatch, "echo octocat")
+def test_login_reads_the_authenticated_user(stub_gh):
+    calls = stub_gh("echo octocat")
     assert gh_client.login() == "octocat"
     assert "api user --jq .login" in calls.read_text()
 
 
-def test_login_is_empty_when_gh_is_unauthenticated(tmp_path, monkeypatch, no_sleep):
+def test_login_is_empty_when_gh_is_unauthenticated(stub_gh, no_sleep):
     """Unauthenticated is an answer, so it comes back without a wait."""
-    _stub_gh(tmp_path, monkeypatch, "echo 'gh auth login required' >&2; exit 1")
+    stub_gh("echo 'gh auth login required' >&2; exit 1")
     assert gh_client.login() == ""
     assert no_sleep == []
 
 
-def test_login_waits_out_a_throttle(tmp_path, monkeypatch, no_sleep):
+def test_login_waits_out_a_throttle(stub_gh, no_sleep):
     """It resolves against the API, so it earns the ladder every read gets."""
-    _stub_gh(tmp_path, monkeypatch, """
+    stub_gh("""
 echo 'You have exceeded a secondary rate limit'
 exit 1
 """)
@@ -463,21 +439,21 @@ exit 1
     assert len(no_sleep) == gh_client.RATE_LIMIT_LADDER.attempts - 1
 
 
-def test_repo_slug_reads_owner_and_name(tmp_path, monkeypatch):
-    _stub_gh(tmp_path, monkeypatch, "echo otto-nation/otto-workbench")
+def test_repo_slug_reads_owner_and_name(stub_gh):
+    stub_gh("echo otto-nation/otto-workbench")
     assert gh_client.repo_slug() == "otto-nation/otto-workbench"
 
 
-def test_repo_slug_is_empty_outside_a_repo(tmp_path, monkeypatch, no_sleep):
+def test_repo_slug_is_empty_outside_a_repo(stub_gh, no_sleep):
     """Not a GitHub repository is an answer too — no ladder, no wait."""
-    _stub_gh(tmp_path, monkeypatch, "echo 'no git remote found' >&2; exit 1")
+    stub_gh("echo 'no git remote found' >&2; exit 1")
     assert gh_client.repo_slug() == ""
     assert no_sleep == []
 
 
-def test_repo_slug_waits_out_a_throttle(tmp_path, monkeypatch, no_sleep):
+def test_repo_slug_waits_out_a_throttle(stub_gh, no_sleep):
     """A throttle must not be reported as "not a GitHub repository"."""
-    _stub_gh(tmp_path, monkeypatch, """
+    stub_gh("""
 echo 'You have exceeded a secondary rate limit'
 exit 1
 """)

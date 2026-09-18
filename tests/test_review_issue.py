@@ -359,6 +359,10 @@ def test_fetch_issue_context_github_subprocess_failure(capsys):
     mock_result = MagicMock()
     mock_result.returncode = 1
     mock_result.stdout = ""
+    # Set explicitly: `subprocess.run(text=True)` always returns a str here, so
+    # an auto-MagicMock stands in for a stream that cannot occur, and anything
+    # classifying the failure by what it said reads the mock instead.
+    mock_result.stderr = ""
 
     with patch("subprocess.run", return_value=mock_result):
         result = fetch_issue_context("github", "42", repo="owner/repo")

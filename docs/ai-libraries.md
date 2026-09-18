@@ -525,6 +525,14 @@ the terminal `pr_outcome` event it fires, no longer depends on someone typing
 `pr gc` by hand. The step is skipped on an install without the ai component,
 which is what puts `pr` on the path.
 
+Both prunes ask GitHub how a PR ended, so both stop when the account's hourly
+quota is spent rather than walking the rest of their allowance against a
+question nothing can answer. That is reported as `PruneOutcome.cut_short`
+rather than folded into the count: a sweep that pruned nothing because every PR
+is still open and one that pruned nothing because it could not ask are the same
+number and different facts, and an unattended sweep is only ever read through
+them.
+
 ### review/grouping.py
 
 How a review's changed files are divided, and what doctrine applies to each.
@@ -3376,6 +3384,56 @@ environment is routinely set after import — by tests, and by callers that
 re-point a root before invoking a subprocess — and an import-time constant
 would capture whichever value happened to be live when the first importer
 loaded this module.
+
+### gh/budget.py
+
+What we know about this account's GitHub API quota, and what follows from it.
+
+A scheduled `pr gc` produced this, six times in three seconds, and then
+reported success:
+
+    ⚠ GC: gh could not report usemaximum/maximum#3659 (GraphQL: API rate limit
+      already exceeded for user ID 7399350.) — leaving it in place
+    ▸ GC: nothing to clean
+
+Each line is a round trip that could not have succeeded. The first one proved
+the budget was gone; the rest spent a subprocess each to be told so again. Two
+prune loops at ten PRs apiece, plus the context resolution in front of them,
+put the ceiling at about twenty-one.
+
+So this module owns one fact — *this resource is refused until it refills* —
+and the two things that follow from it: a call we have already proven will be
+refused is not made, and the remedy is explained once rather than once per
+call. That second half is why the hint lives here and not in
+`client._error_message`, where it used to. The hint is a fact about the budget,
+not about the call; appended per failure it reproduces the warning storm above.
+It was also unreachable there, since `_error_message`'s only production caller
+is the retry-waiting log and an exhausted budget is deliberately never retried.
+
+Three things about this failure are worth writing down, because each one is
+expensive to rediscover:
+
+`gh api rate_limit` lies. It is exempt from the limit it reports on, so it
+answers cheerfully while every real call is refused. Measured at one instant,
+with 5000/5000 GraphQL points spent:
+
+    gh api graphql -i    X-Ratelimit-Remaining: 0      reset 15:30:15
+    gh api rate_limit    remaining: 5000               reset 16:21:12
+
+Both numbers wrong, including the reset. The only true reading is the
+`X-Ratelimit-*` headers on a call that actually went out, which is why the
+reset time here comes from a probe rather than from that endpoint, and why
+nothing in this module or its hint recommends it.
+
+A refused request is not charged. That is what makes the probe free: the call
+that arms this latch has already failed, and asking once more with `-i` to read
+the reset costs a subprocess and no quota.
+
+REST and GraphQL are separate budgets, 5000 each, and `gh pr view` spends the
+GraphQL one despite looking like neither. A latch keyed on the wrong resource
+would block the wrong half of the API, so `resource_for` maps argv to a budget
+and anything it does not recognise is called rather than refused. Failing open
+costs one wasted call; failing closed invents an outage.
 
 ### gh/client.py
 

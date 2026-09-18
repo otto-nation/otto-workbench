@@ -248,6 +248,12 @@ def _merged_pr_mentioning(repo: str, symbol: str) -> str:
     before starting, and every caller treats its absence as "nothing found".
     A search that outruns its bound therefore degrades to silence rather than
     raising through a preflight the reader only asked for a hint from.
+
+    The search endpoints are metered under their own budget (30/min) rather
+    than the hourly REST one, and they word an exhausted budget exactly as the
+    hourly quota does. `gh.budget.resource_for` returns None here for that
+    reason, so a throttle on this call is retried by nobody and latches
+    nothing — it degrades to the same silence as any other failure.
     """
     r = gh_client.api(
         f"search/issues?q=repo:{repo}+{symbol}+is:merged",

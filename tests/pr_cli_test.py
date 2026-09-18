@@ -34,6 +34,7 @@ from pr import state as pr_state  # noqa: E402
 from core import run_lock  # noqa: E402
 from core import timeouts  # noqa: E402
 from core import tool_parser  # noqa: E402
+from review import gc as review_gc  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
@@ -1469,8 +1470,8 @@ def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree):
     assert not _lock_file(target).exists()
 
 
-@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
-@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=review_gc.PruneOutcome())
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
 @patch("pr_cli.review_gc.gc_reviews", return_value=0)
 @patch("pr_cli.pr_context.resolve")
 def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
@@ -1487,8 +1488,8 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
     assert not _lock_file(worktree).exists()
 
 
-@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
-@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=review_gc.PruneOutcome())
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
 @patch("pr_cli.review_gc.gc_reviews", return_value=0)
 @patch("pr_cli.pr_context.resolve")
 def test_gc_skips_own_target_when_pruning(
@@ -1499,6 +1500,70 @@ def test_gc_skips_own_target_when_pruning(
     mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     _run_main("--repo-dir", str(worktree), "gc")
     assert mock_prune_targets.call_args.kwargs["skip"] == target
+
+
+def test_the_maintenance_script_branches_on_the_exit_code_pr_actually_uses():
+    """`pr` and the maintenance script spell EX_TEMPFAIL in different languages.
+
+    The script cannot import the constant, so the number is written twice: once
+    as `EXIT_BUDGET_EXHAUSTED` here and once as a bash comparison there. Nothing
+    else ties them together, and drift is silent — the script would log a spent
+    budget as a failure again, which is the bug this exit code exists to fix.
+    Cheaper to bind them with an assertion than to leave the duplication unheld.
+    """
+    script = (REPO_ROOT / "maintenance" / "bin" / "otto-workbench-maintenance").read_text()
+    assert f"-eq {pr_cli.EXIT_BUDGET_EXHAUSTED} ]]" in script
+
+
+@patch("pr_cli.review_gc.prune_merged_targets",
+       return_value=review_gc.PruneOutcome(0, cut_short=True))
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
+@patch("pr_cli.review_gc.gc_reviews", return_value=0)
+@patch("pr_cli.pr_context.resolve")
+def test_gc_cut_short_by_the_budget_is_not_reported_as_nothing_to_clean(
+        mock_resolve, _gc, _prune, _prune_targets, worktree, capsys):
+    """The headline symptom: a sweep that could not ask reported success.
+
+    "nothing to clean" is a claim about the artifacts; the truth was that the
+    PRs behind them were never asked about. Asserting the exit code alongside
+    the wording on purpose — a test matching only stderr passes for a command
+    that printed the right line and then exited 0, which is the bug.
+    """
+    target = worktree / "target"
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
+
+    code = _run_main("--repo-dir", str(worktree), "gc")
+
+    err = capsys.readouterr().err
+    assert code == pr_cli.EXIT_BUDGET_EXHAUSTED
+    assert "nothing to clean" not in err
+    assert "never asked about" in err
+
+
+@patch("pr_cli.review_gc.prune_merged_targets",
+       return_value=review_gc.PruneOutcome(0, cut_short=True))
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
+@patch("pr_cli.review_gc.gc_reviews", return_value=0)
+@patch("pr_cli.pr_context.resolve")
+def test_gc_cut_short_records_a_trail_event(
+        mock_resolve, _gc, _prune, _prune_targets, worktree):
+    """The sweep is unattended, so the console line has no reader.
+
+    Without a trail record there is nothing to measure the spender-side fix
+    against later — an hour of refused sweeps would leave no trace at all.
+    """
+    target = worktree / "target"
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
+    mock_trail = MagicMock()
+
+    with patch("sys.argv", ["pr", "--repo-dir", str(worktree), "gc"]), \
+         patch("pr_cli.Trail.start", return_value=mock_trail):
+        try:
+            pr_cli.main()
+        except SystemExit:
+            pass
+
+    assert mock_trail.summary.call_args.args[0] == "gc_cut_short"
 
 
 @patch("pr_cli.pr_context.resolve")

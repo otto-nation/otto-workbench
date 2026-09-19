@@ -51,7 +51,8 @@ class PostResult:
 _HINT_POST = "Post to GitHub:  pr review --post"
 
 
-def post(pr_number: str, review_file: str, submit: bool, *, bin_dir: Path) -> None:
+def post(pr_number: str, review_file: str, submit: bool, *, bin_dir: Path,
+         branch: str = "") -> None:
     """Hand the review to review-post.
 
     A spawn rather than a call for the same reason as the orchestrate one, and
@@ -59,6 +60,11 @@ def post(pr_number: str, review_file: str, submit: bool, *, bin_dir: Path) -> No
     deliberately ignored: `review-post` exits 1 on a chunk failure having
     already posted earlier chunks, and the review on disk is the deliverable
     either way.
+
+    `branch`, when known, is passed through as `--expect-ref` so review-post
+    can tell this run's review from one written by a run the lock never made
+    contend with it — see `ai/bin/pr`'s `_review_post` for the sibling call
+    site this mirrors.
     """
     post_args = [
         str(bin_dir / "review-post"),
@@ -67,6 +73,8 @@ def post(pr_number: str, review_file: str, submit: bool, *, bin_dir: Path) -> No
     ]
     if submit:
         post_args.append("--submit")
+    if branch:
+        post_args += ["--expect-ref", branch]
     subprocess.run(post_args, check=False, timeout=timeouts.UNBOUNDED)
 
 
@@ -120,6 +128,7 @@ def resolve(
     auto_post: bool,
     auto_submit: bool,
     bin_dir: Path,
+    branch: str = "",
 ) -> PostResult:
     """Post the review, or decide not to, and say which happened.
 
@@ -135,7 +144,7 @@ def resolve(
         return PostResult(False, False, "", (_HINT_POST,))
 
     if auto_post:
-        post(pr_number, str(review_file), auto_submit, bin_dir=bin_dir)
+        post(pr_number, str(review_file), auto_submit, bin_dir=bin_dir, branch=branch)
         return PostResult(True, auto_submit, posted_log)
 
     if not prompt.confirm("Satisfied with the review?"):
@@ -147,7 +156,7 @@ def resolve(
     if not prompt.confirm("Post review to GitHub?"):
         return PostResult(False, False, "", (_HINT_POST,))
 
-    post(pr_number, str(review_file), False, bin_dir=bin_dir)
+    post(pr_number, str(review_file), False, bin_dir=bin_dir, branch=branch)
 
     submitted = False
     if prompt.confirm("Submit review now?"):

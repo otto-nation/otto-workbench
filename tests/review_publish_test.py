@@ -100,6 +100,31 @@ def test_auto_submit_rides_along_with_auto_post(review_file, posts):
     assert result.submitted is True
 
 
+def test_auto_post_passes_branch_to_review_post(review_file, posts):
+    """The branch running the review reaches review-post as its own arg.
+
+    review-post turns this into --expect-ref, which is what tells two
+    concurrent runs against the same PR apart. A caller that swallowed the
+    branch here would leave the automatic post path unprotected even though
+    `pr review --post`'s own call site (ai/bin/pr) passes it.
+    """
+    result = _resolve(review_file, auto_post=True, branch="alice/feat/thing")
+
+    bound = _POST_SIGNATURE.bind(*posts[0][1], **posts[0][2])
+    assert bound.arguments["branch"] == "alice/feat/thing"
+    assert result.posted is True
+
+
+def test_interactive_post_passes_branch_to_review_post(review_file, posts, monkeypatch):
+    """The branch also reaches review-post on the confirm-then-post path."""
+    _answers(monkeypatch, True, True, False)
+
+    _resolve(review_file, branch="alice/feat/thing")
+
+    bound = _POST_SIGNATURE.bind(*posts[0][1], **posts[0][2])
+    assert bound.arguments["branch"] == "alice/feat/thing"
+
+
 def test_an_unsatisfying_review_is_not_posted_but_is_still_reported(
     review_file, posts, monkeypatch,
 ):

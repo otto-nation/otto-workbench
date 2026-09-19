@@ -613,13 +613,22 @@ pytest tests/ -q | tail -6'
 }
 
 # _claude_guard COMMAND — prints "blocked" or "allowed" for the Claude hook.
+#
+# The guard's own status is read directly rather than through `$?` after an
+# assignment: `out=$(...)` succeeds whatever the command inside it did, so a
+# `$?` on the next line reports the assignment and this helper would answer
+# "allowed" for every command — including the ones it exists to catch.
 _claude_guard() {
-  local out
-  out=$(python3 -c '
+  local payload
+  payload=$(python3 -c '
 import json, sys
 print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
-' "$1" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1)
-  if [ "$?" -eq 2 ]; then echo blocked; else echo allowed; fi
+' "$1")
+  if printf '%s' "$payload" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" > /dev/null 2>&1; then
+    echo allowed
+  else
+    echo blocked
+  fi
 }
 
 @test "test-pipe-guard: the two harnesses agree on example commands, not just word lists" {

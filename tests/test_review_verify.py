@@ -328,6 +328,41 @@ class TestParseVerificationKeepsAColonThatIsNotALineSuffix:
         assert findings[0]["path"] == "C:/src/x.py"
 
 
+class TestParseVerificationReadsALineList:
+    """A finding naming two discrete lines still names one file.
+
+    A duplicate declaration is the case that produces this location: the
+    finding cites both offsets, and the path used to keep the whole `:64,82`
+    suffix. `_match_evidence` then stat'd a path no filesystem holds and
+    `_drop_reason` called it "file not found", discarding a correct finding
+    about a file that was right there.
+    """
+
+    def test_a_comma_separated_pair_leaves_the_path(self):
+        text = '- **[S2]** `ai/lib/review/run.py:64,82` — duplicate field\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "ai/lib/review/run.py"
+
+    def test_a_three_line_list_leaves_the_path(self):
+        text = '- **[S2]** `ai/lib/review/run.py:12,18,24` — duplicate field\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "ai/lib/review/run.py"
+
+    def test_a_real_file_named_by_a_line_list_is_found(self, tmp_path):
+        """The drop this whole fix exists to prevent, end to end.
+
+        Through the seam the run uses: the reader strips the location, and
+        `_match_evidence` stats what it handed back. Calling `_match_evidence`
+        with an unstripped path instead would test a layer that never sees one.
+        """
+        (tmp_path / "run.py").write_text('command: str = ""\n')
+        text = '- **[S2]** `run.py:64,82` — duplicate field\n'
+        finding = review_verify._parse_findings_for_verification(text)[0]
+        detail = review_verify._match_evidence(finding["path"], None, str(tmp_path))
+        assert detail["file_exists"]
+        assert detail["match_result"]
+
+
 class TestParseVerificationSpacedPaths:
     def test_spaced_path_finding_is_not_swallowed_by_the_previous_one(self):
         text = (

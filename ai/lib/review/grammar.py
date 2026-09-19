@@ -207,7 +207,12 @@ _SEGMENT_CHAR = r"[^\s/:*`—]"
 # line suffix is or a finding parses one way and verifies against the other.
 # `strip_line_suffix` removes what this matches, so a reader that matched one
 # without capturing it does not decide for itself what it was.
-_LINE_SUFFIX_BODY = r":\d+(?:[-–]\d+)?"
+# A list is one suffix, not several: `:64,82` names two lines of one file, and
+# a reader that takes only the first leaves `,82` on the path. That stat'd a
+# path no filesystem holds, so the evidence gate reported "file not found"
+# about a file that exists and dropped a correct finding.
+_LINE_SPAN = r"\d+(?:[-–]\d+)?"
+_LINE_SUFFIX_BODY = rf":{_LINE_SPAN}(?:\s*,\s*{_LINE_SPAN})*"
 LINE_SUFFIX = rf"(?:{_LINE_SUFFIX_BODY})?"
 _LINE_SUFFIX_TAIL_RE = re.compile(rf"{_LINE_SUFFIX_BODY}$")
 
@@ -264,8 +269,14 @@ _FIRST_FILE_RE = re.compile(
     r"|"
     rf"{_SEGMENT_CHAR}+(?:/{_SEGMENT_CHAR}+)+"
     r")"
-    r"(?::(\d+)(?:[-–](\d+))?)?"
+    rf"({_LINE_SUFFIX_BODY})?"
 )
+
+# The digits inside a `_FIRST_FILE_RE` suffix match, for a location naming more
+# than the two endpoints `FindingLocation` has fields for — `:12,18,24` keeps
+# its first and last as `line`/`end_line`, the same pair a plain `:12-18` range
+# already yields, rather than the second number silently falling off the finding.
+_LINE_NUM_RE = re.compile(r"\d+")
 
 
 def finding_location(after_id: str) -> FindingLocation:
@@ -287,10 +298,11 @@ def finding_location(after_id: str) -> FindingLocation:
     file_match = _FIRST_FILE_RE.match(section_text)
     if not file_match:
         return FindingLocation()
+    numbers = [int(n) for n in _LINE_NUM_RE.findall(file_match.group(2) or "")]
     return FindingLocation(
         path=file_match.group(1).strip(),
-        line=int(file_match.group(2)) if file_match.group(2) else None,
-        end_line=int(file_match.group(3)) if file_match.group(3) else None,
+        line=numbers[0] if numbers else None,
+        end_line=numbers[-1] if len(numbers) > 1 else None,
     )
 
 

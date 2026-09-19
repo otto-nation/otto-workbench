@@ -209,6 +209,27 @@ def test_a_delegate_passes_through_the_lock_its_parent_holds(worktree):
         assert record["command"] == "pr rebase --fix"
 
 
+def test_claim_for_process_stamps_released_at_exit(worktree, monkeypatch):
+    """The checkout lock is only ever taken through this path — with no
+    context manager to run the release stamp, the kernel dropping the flock
+    at exit would otherwise leave `released: null` forever, indistinguishable
+    from a live holder. An atexit hook has to do what `_holding`'s `finally`
+    does for `acquire`.
+    """
+    registered = []
+    monkeypatch.setattr(
+        run_lock.atexit, "register",
+        lambda fn, *args: registered.append((fn, args)),
+    )
+    run_lock.claim_for_process(worktree, command="pr-rebase --fix", started="t")
+    assert registered, "claim_for_process must register a release hook"
+    for fn, args in registered:
+        fn(*args)
+    record = json.loads((worktree / LOCK_FILE).read_text())
+    assert record["released"]
+    assert record["command"] == "pr-rebase --fix"
+
+
 def test_claim_for_process_exits_when_another_run_owns_the_target(worktree, capsys):
     with acquire(worktree, command="pr review --fix", started="t"):
         os.environ.pop(LOCK_ENV, None)

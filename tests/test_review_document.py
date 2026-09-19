@@ -689,6 +689,21 @@ class TestFindingLocation:
         loc = finding_location("**`git/hooks/pre-push-workbench:124-131`**")
         assert (loc.path, loc.line, loc.end_line) == ("git/hooks/pre-push-workbench", 124, 131)
 
+    def test_comma_separated_line_list(self):
+        """A finding naming two discrete lines keeps both, not just the first.
+
+        `_FIRST_FILE_RE` used its own hardcoded `:\\d+(?:-\\d+)?` suffix instead
+        of the shared `LINE_SUFFIX` macro, so `,82` was left dangling off the
+        path and `end_line` came back None — silently dropping the second line
+        rather than reflecting it.
+        """
+        loc = finding_location("**`run.py:64,82`**")
+        assert (loc.path, loc.line, loc.end_line) == ("run.py", 64, 82)
+
+    def test_three_line_list_keeps_first_and_last(self):
+        loc = finding_location("**`run.py:12,18,24`**")
+        assert (loc.path, loc.line, loc.end_line) == ("run.py", 12, 24)
+
     def test_slashless_code_span_is_not_a_path(self):
         """A bare identifier in a code span is prose, not an extensionless path."""
         assert not finding_location("`session_log` defaults to empty").named

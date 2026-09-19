@@ -8,6 +8,11 @@ draft, who is reviewing it — would have added a third.
 So the PR is read once and the answer is passed around. ``gh pr view`` takes a
 field list, so asking for six costs exactly what asking for one did.
 
+The same read also settles whether to warn before a force-push reaches a
+shared branch: ``name_the_open_pr`` gates on ``state`` and ``isDraft`` and is
+called from both places that force-push — ``rebase_success`` for the modes
+that land there, and ``cmd_push`` for the bare ``pr rebase`` that does not.
+
 Best effort, like every tracker read in this codebase: ``gh`` may be absent,
 unauthenticated, rate-limited, or the branch may have no PR at all. All of those
 arrive as ``PRSnapshot()`` with ``answered`` false, which every consumer reads as
@@ -111,6 +116,9 @@ def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:
     still found.
     """
     target = str(ctx.pr_number) if ctx.pr_number else ctx.branch
+    # Neither is set only when both pr_number and branch are empty, which the
+    # guard below turns into the empty snapshot before an empty target ever
+    # reaches gh — never a bare `gh pr view` with nothing to look up.
     if not target:
         return PRSnapshot()
     data = gh_client.pr_view(target, *FIELDS, repo=ctx.repo, cwd=cwd)

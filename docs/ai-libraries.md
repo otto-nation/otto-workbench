@@ -3119,7 +3119,8 @@ rather than being spelled out again in each binary that reports.
 
 ### core/run_lock.py
 
-Advisory whole-run lock, scoped to what a run targets.
+Advisory whole-run lock, scoped to what a run targets and, when it writes
+to a checkout, the checkout too.
 
 Two concurrent runs against one PR corrupt each other: they both
 read-modify-write that target's ``state.json``, and with ``--fix`` they both
@@ -3159,12 +3160,12 @@ checkout it has ever written to — the two counts need not match, since a
 target can be worked from several checkouts and a checkout can serve several
 targets. Nearly all of the accumulated files name processes that exited long
 ago. That is not a leak and deleting them is not maintenance: the record is what
-makes the next contender's error message name a command rather than a pid. But
-it does mean **the presence of a lock file says nothing about whether a lock is
-held**, and a dead pid in one is the normal case rather than evidence of a
-crash. A released record carries a ``released`` timestamp, written under the
-flock just before it is dropped; a held one has ``released: null``. To ask the
-kernel rather than read the file, call ``is_held``.
+makes the next contender's error message name a command rather than a pid.
+**The presence of a lock file says nothing about whether a lock is held** — a
+dead pid in one is the normal case rather than evidence of a crash. A released
+record carries a ``released`` timestamp, written under the flock just before
+it is dropped; a held one has ``released: null``. To ask the kernel rather
+than read the file, call ``is_held``.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
@@ -4072,6 +4073,11 @@ draft, who is reviewing it — would have added a third.
 
 So the PR is read once and the answer is passed around. ``gh pr view`` takes a
 field list, so asking for six costs exactly what asking for one did.
+
+The same read also settles whether to warn before a force-push reaches a
+shared branch: ``name_the_open_pr`` gates on ``state`` and ``isDraft`` and is
+called from both places that force-push — ``rebase_success`` for the modes
+that land there, and ``cmd_push`` for the bare ``pr rebase`` that does not.
 
 Best effort, like every tracker read in this codebase: ``gh`` may be absent,
 unauthenticated, rate-limited, or the branch may have no PR at all. All of those

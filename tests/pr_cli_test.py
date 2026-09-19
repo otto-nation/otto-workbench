@@ -500,6 +500,27 @@ def test_cmd_review_post_passes_submit(mock_run, reviews_dir):
     assert "--submit" in cmd
 
 
+@patch("pr_cli.subprocess.run")
+def test_cmd_review_post_names_the_branch_it_publishes_for(mock_run, reviews_dir):
+    """The review is found by PR number; the run lock keys on the branch.
+
+    Without the branch travelling with the request, review-post has nothing to
+    check the sidecar against and will publish whatever the PR-keyed lookup
+    found — including a review a run the lock never made contend with is still
+    writing.
+    """
+    mock_run.return_value = MagicMock(returncode=0)
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("# Review")
+
+    pr_cli.cmd_review(["--post"], make_ctx(pr_number=42, branch="isaac/feat/x"))
+
+    cmd = mock_run.call_args[0][0]
+    assert "--expect-ref" in cmd
+    assert cmd[cmd.index("--expect-ref") + 1] == "isaac/feat/x"
+
+
 def test_cmd_review_post_fails_without_review_file(reviews_dir):
     rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42))
     assert rc == 1

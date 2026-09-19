@@ -100,6 +100,31 @@ def test_auto_submit_rides_along_with_auto_post(review_file, posts):
     assert result.submitted is True
 
 
+def test_auto_post_passes_branch_to_review_post(review_file, posts):
+    """The branch running the review reaches review-post as its own arg.
+
+    review-post turns this into --expect-ref, which is what tells two
+    concurrent runs against the same PR apart. A caller that swallowed the
+    branch here would leave the automatic post path unprotected even though
+    `pr review --post`'s own call site (ai/bin/pr) passes it.
+    """
+    result = _resolve(review_file, auto_post=True, branch="alice/feat/thing")
+
+    bound = _POST_SIGNATURE.bind(*posts[0][1], **posts[0][2])
+    assert bound.arguments["branch"] == "alice/feat/thing"
+    assert result.posted is True
+
+
+def test_interactive_post_passes_branch_to_review_post(review_file, posts, monkeypatch):
+    """The branch also reaches review-post on the confirm-then-post path."""
+    _answers(monkeypatch, True, True, False)
+
+    _resolve(review_file, branch="alice/feat/thing")
+
+    bound = _POST_SIGNATURE.bind(*posts[0][1], **posts[0][2])
+    assert bound.arguments["branch"] == "alice/feat/thing"
+
+
 def test_an_unsatisfying_review_is_not_posted_but_is_still_reported(
     review_file, posts, monkeypatch,
 ):
@@ -229,3 +254,39 @@ def test_submit_pending_survives_an_unreadable_post_tracking_file(
     review_publish.submit_pending("owner/repo", "1", str(review_dir / "review.md"))
 
     assert "Could not read review_id" in capsys.readouterr().err
+
+
+# ── the argv post() actually builds ─────────────────────────────────────────
+#
+# The tests above stub `post` out, so they hold what `resolve` hands it and
+# nothing about what it does with that. These drive the real `post` and assert
+# on the argv, which is where `branch` becomes the flag review-post reads.
+
+
+def _post_argv(monkeypatch, tmp_path, **kw):
+    """Run the real `post` and return the argv it would have spawned."""
+    seen = {}
+    monkeypatch.setattr(
+        review_publish.subprocess, "run",
+        lambda argv, **_: seen.setdefault("argv", list(argv)))
+    review_publish.post("42", str(tmp_path / "review.md"), False,
+                        bin_dir=tmp_path, **kw)
+    return seen["argv"]
+
+
+def test_post_turns_a_branch_into_expect_ref(monkeypatch, tmp_path):
+    """The flag review-post reads to refuse another run's review.
+
+    Without this the guard is inert on the automatic path: review-post has
+    nothing to compare the sidecar against and publishes whatever the
+    PR-keyed lookup found.
+    """
+    argv = _post_argv(monkeypatch, tmp_path, branch="alice/feat/thing")
+
+    assert "--expect-ref" in argv
+    assert argv[argv.index("--expect-ref") + 1] == "alice/feat/thing"
+
+
+def test_post_omits_expect_ref_when_no_branch_is_known(monkeypatch, tmp_path):
+    """A caller that cannot name its branch has nothing to claim, and still posts."""
+    assert "--expect-ref" not in _post_argv(monkeypatch, tmp_path)

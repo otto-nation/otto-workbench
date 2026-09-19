@@ -368,6 +368,12 @@ def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int
         return 1
 
     cmd = [str(BIN_DIR / "review-post"), "--pr", pr_num, "--review-file", str(review)]
+    # What this run is publishing for. The review file is found by PR number
+    # while the run lock keys on the branch, so naming the branch is what lets
+    # review-post tell this run's review from one written by a run the lock
+    # never made contend with it.
+    if ctx.branch:
+        cmd += ["--expect-ref", ctx.branch]
     if "--submit" in argv:
         cmd.append("--submit")
         argv = [a for a in argv if a != "--submit"]

@@ -9,6 +9,19 @@
 - Prefer real dependencies over mocks when feasible — mocks hide integration bugs
 - Every bug fix and behavioral change must include a regression test
 
+## Reading a Suite Result
+
+- Never pipe a test suite or validator into `tail`, `head`, `grep`, or any other
+  filter to inspect its result. The pipeline's exit status is the filter's, not the
+  suite's — `false | tail -1` exits 0 — so a failing run reads as a pass, and a
+  `$?` captured after the pipe is reporting on the filter. Redirect to a file and
+  read the status, then grep the file
+- `set -o pipefail` makes the pipeline report the first failing stage, which is the
+  one narrow way a pipe is safe here. Prefer the redirect anyway: the status is the
+  thing being checked, and a file leaves the whole run to read afterwards
+- Enforced by `ai/pi/extensions/test-pipe-guard` under Pi and by
+  `ai/claude/bin/claude-bash-guard` under Claude Code
+
 ## A Test Must Fail When Its Subject Breaks
 
 A test that cannot fail is worse than no test: it reports the behavior is held

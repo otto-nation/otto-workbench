@@ -871,7 +871,10 @@ _init_test_repo() {
 }
 
 @test "background hook: allows a 2>&1 redirect" {
-  run _run_guard '{"tool_input":{"command":"bats tests/claude_settings.bats 2>&1 | tail -5"}}'
+  # The subject is the `&` in `2>&1`, which must not read as a background start.
+  # Deliberately not a test runner: a piped suite is refused by the testpipe rule
+  # below, which would make this pass or fail for the wrong reason.
+  run _run_guard '{"tool_input":{"command":"make build 2>&1 | tail -5"}}'
   [ "$status" -eq 0 ]
 }
 
@@ -1662,4 +1665,45 @@ _referenced_home_paths() {
     echo "referenced by settings.json but absent from ai/skills: ${missing[*]}"
     return 1
   }
+}
+
+# ── piped test runs ─────────────────────────────────────────────────────────
+#
+# The rule is testing.md § Reading a Suite's Result, enforced here and by
+# ai/pi/extensions/test-pipe-guard for the harness this hook does not run in.
+
+@test "testpipe hook: blocks a suite piped into tail" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ -q | tail -6"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"exit status"* ]]
+}
+
+@test "testpipe hook: blocks a suite piped into grep" {
+  run _run_guard '{"tool_input":{"command":"bats tests/x.bats | grep -c ok"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: allows the redirect that keeps the status" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ -q > /tmp/out.txt 2>&1; echo $?"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: allows a pipe under set -o pipefail" {
+  run _run_guard '{"tool_input":{"command":"set -o pipefail; pytest tests/ | tail -3"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: a || fallback is not a pipe" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ -q || echo failed"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: naming a runner as an argument is not invoking one" {
+  run _run_guard '{"tool_input":{"command":"grep pytest notes.md | head"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: piping something that is not a suite is fine" {
+  run _run_guard '{"tool_input":{"command":"git log --oneline | head -5"}}'
+  [ "$status" -eq 0 ]
 }

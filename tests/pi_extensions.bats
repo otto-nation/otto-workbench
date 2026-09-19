@@ -486,3 +486,82 @@ curl -sI localhost:3000'
   [ -n "$claude_value" ]
   [ "$pi_value" = "$claude_value" ]
 }
+
+# ── test-pipe-guard ─────────────────────────────────────────────────────────
+#
+# Same split as sleep-guard and background-guard above: the predicate is in
+# detect.ts, which imports nothing, so node can load it directly.
+
+# _pipes COMMAND — prints true or false for isPipedTestRun(COMMAND).
+_pipes() {
+  run node --input-type=module -e "
+    const { isPipedTestRun } = await import('$REPO_ROOT/ai/pi/extensions/test-pipe-guard/detect.ts');
+    process.stdout.write(String(isPipedTestRun(process.argv[1])));
+  " -- "$1"
+}
+
+@test "test-pipe-guard: a suite piped into tail is a finding" {
+  _pipes 'pytest tests/ -q | tail -6'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "test-pipe-guard: the redirect that keeps the status is not" {
+  _pipes 'pytest tests/ -q > /tmp/out.txt 2>&1; echo $?'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: pipefail keeps the suite's own status" {
+  _pipes 'set -o pipefail; pytest tests/ | tail -3'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: a || fallback is not a pipe" {
+  # `pytest ... || echo failed` already reports the suite's status. Splitting
+  # naively on `|` would read it as a pipe into `| echo`.
+  _pipes 'pytest tests/ -q || echo failed'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: naming a runner as an argument is not invoking one" {
+  _pipes 'grep pytest notes.md | head'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: piping something that is not a suite is fine" {
+  _pipes 'git log --oneline | head -5'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: a runner reached by path still matches" {
+  _pipes 'bin/local/run-tests | head -20'
+  [ "$output" = true ]
+}
+
+@test "test-pipe-guard: an env prefix is not a way around the rule" {
+  _pipes 'WORKBENCH_X=1 pytest tests/ | wc -l'
+  [ "$output" = true ]
+}
+
+@test "test-pipe-guard: a suite inside a heredoc body is content, not a command" {
+  _pipes 'cat > /tmp/s.sh <<EOF
+pytest tests/ | tail -1
+EOF'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: the two harnesses share one runner list" {
+  # Claude's hook and this extension enforce the same rule for different
+  # harnesses. Two lists that drift apart are one rule with two meanings, and
+  # nothing else in either tree would report it.
+  local pi_list claude_list
+  pi_list=$(sed -n '/^export const TEST_RUNNERS = \[/,/^\];/p' \
+    "$REPO_ROOT/ai/pi/extensions/test-pipe-guard/detect.ts" |
+    grep -oE '"[a-z-]+"' | tr -d '"' | sort | tr '\n' ' ')
+  claude_list=$(grep -oE "^TEST_RUNNERS='[^']+'" \
+    "$REPO_ROOT/ai/claude/bin/claude-bash-guard" |
+    sed -E "s/^TEST_RUNNERS='([^']+)'/\1/" | tr '|' '\n' | sort | tr '\n' ' ')
+  [ -n "$pi_list" ]
+  [ -n "$claude_list" ]
+  [ "$pi_list" = "$claude_list" ]
+}

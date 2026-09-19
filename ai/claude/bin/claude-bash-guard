@@ -43,6 +43,14 @@ block() {
 # hook does not run in, and tests/pi_extensions.bats holds the two to one value.
 SLEEP_WAIT_THRESHOLD_SECONDS=10
 
+# The commands whose exit status is the thing a caller is reading, and the
+# filters that discard it. Kept in step with TEST_RUNNERS in
+# ai/pi/extensions/test-pipe-guard/detect.ts — tests/pi_extensions.bats holds the
+# two lists to one set, so adding a runner here alone fails the suite rather
+# than letting the harnesses disagree about a given command.
+TEST_RUNNERS='pytest|bats|run-tests|validate-all|go|cargo|npm|pnpm|yarn|jest|vitest'
+STATUS_FILTERS='tail|head|grep|egrep|rg|sed|awk|wc|tee|cut|sort|uniq'
+
 # Fail open: a malformed payload must not block every Bash call.
 cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [[ -n "$cmd" ]] || exit 0
@@ -58,6 +66,27 @@ fi
 
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
   block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead. See bash-tool.md § Avoid find -exec.'
+fi
+
+# A test suite piped into a filter reports the filter's status, not its own:
+# `false | tail -1` exits 0, so a failing run reads as a pass and a `$?` taken
+# after the pipe is the filter's. `set -o pipefail` is the one spelling that
+# keeps the suite's status, so a command setting it is left alone.
+#
+# `||` is excluded from the pipe match by requiring a single `|`: a
+# `pytest ... || echo failed` is a fallback and already reports the suite's own
+# status. The runner must be the command being run rather than an argument, so
+# `grep pytest notes.md | head` does not match.
+if ! [[ "$cmd" =~ set[[:space:]]+-[a-zA-Z]*o[[:space:]]+pipefail ]]; then
+  # Anchored to the head of a statement, so the runner is the command being run
+  # rather than an argument to something else: `grep pytest notes.md | head`
+  # names one and invokes nothing. A leading path is allowed so
+  # `bin/local/run-tests` matches as `run-tests`, and leading `VAR=x`
+  # assignments are skipped so an env prefix is not a way around the rule.
+  re_piped="(^|[;&]|&&)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:]|]*/)?($TEST_RUNNERS)([[:space:]][^|]*)?\|[^|]*($STATUS_FILTERS)([[:space:]]|$)"
+  if [[ "$cmd" =~ $re_piped ]]; then
+    block 'Piping a test suite into a filter reports the filter exit status, not the suite one — false | tail -1 exits 0, so a failing run reads as a pass and a $? read after the pipe is the filter status. Redirect to a file and read the status, then grep the file: pytest ... > /tmp/out.txt 2>&1; echo $?. set -o pipefail is accepted where a pipe is genuinely wanted. See testing.md § Reading a Suite Result.'
+  fi
 fi
 
 # ── Statement-anchored rules ─────────────────────────────────────────────────

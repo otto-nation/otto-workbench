@@ -1980,3 +1980,44 @@ def test_reconciliation_is_hooked_in_exactly_one_place():
              and isinstance(node.func.value, ast.Name)
              and node.func.value.id == "push_intent"]
     assert len(calls) == 1
+
+
+# ── cmd_fix forwards the publishing gate to describe ────────────────────────
+
+
+def _describe_cmd(argv, tmp_path):
+    """Run cmd_fix over a state with nothing to fix, and return describe's argv.
+
+    A real `worktree_root` on purpose: `cmd_fix` opens with
+    `ctx.require_worktree()`, so a context without one exits before any
+    delegate runs and every assertion below would hold vacuously.
+
+    Empty state otherwise, because describe runs at the tail of every `pr fix`
+    regardless — that isolates the forwarding from the fix passes.
+    """
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a",
+                               worktree_root=str(tmp_path))
+    with patch("pr_cli.pr_state.load_state", return_value=state), \
+         patch("pr_cli.subprocess.run",
+               return_value=MagicMock(returncode=0)) as mock_run:
+        pr_cli.cmd_fix(argv, make_ctx(worktree_root=tmp_path))
+        return _first_call_containing(mock_run, "pr-describe")
+
+
+def test_cmd_fix_post_reaches_the_description(tmp_path):
+    """Editing the body is gated, so a `pr fix --post` that dropped the flag
+    would push its commits and post its replies, then draft the description
+    alone — the one output of the run left unpublished, with nothing saying so.
+    """
+    assert "--post" in _describe_cmd(["--post"], tmp_path)
+
+
+def test_cmd_fix_without_post_leaves_the_description_drafted(tmp_path):
+    assert "--post" not in _describe_cmd([], tmp_path)
+
+
+def test_cmd_fix_still_withholds_its_other_flags_from_describe(tmp_path):
+    """`--post` is the exception to the no-argv rule, not the end of it."""
+    cmd = _describe_cmd(["--post", "--fix", "--wait"], tmp_path)
+    assert "--fix" not in cmd
+    assert "--wait" not in cmd

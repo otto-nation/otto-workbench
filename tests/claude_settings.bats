@@ -871,7 +871,10 @@ _init_test_repo() {
 }
 
 @test "background hook: allows a 2>&1 redirect" {
-  run _run_guard '{"tool_input":{"command":"bats tests/claude_settings.bats 2>&1 | tail -5"}}'
+  # The subject is the `&` in `2>&1`, which must not read as a background start.
+  # Deliberately not a test runner: a piped suite is refused by the testpipe rule
+  # below, which would make this pass or fail for the wrong reason.
+  run _run_guard '{"tool_input":{"command":"make build 2>&1 | tail -5"}}'
   [ "$status" -eq 0 ]
 }
 
@@ -1662,4 +1665,103 @@ _referenced_home_paths() {
     echo "referenced by settings.json but absent from ai/skills: ${missing[*]}"
     return 1
   }
+}
+
+# ── piped test runs ─────────────────────────────────────────────────────────
+#
+# The rule is testing.md § Reading a Suite's Result, enforced here and by
+# ai/pi/extensions/test-pipe-guard for the harness this hook does not run in.
+
+@test "testpipe hook: blocks a suite piped into tail" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ -q | tail -6"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"exit status"* ]]
+}
+
+@test "testpipe hook: blocks a suite piped into grep" {
+  run _run_guard '{"tool_input":{"command":"bats tests/x.bats | grep -c ok"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: allows the redirect that keeps the status" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ -q > /tmp/out.txt 2>&1; echo $?"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: allows a pipe under set -o pipefail" {
+  run _run_guard '{"tool_input":{"command":"set -o pipefail; pytest tests/ | tail -3"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: a || fallback is not a pipe" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ -q || echo failed"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: naming a runner as an argument is not invoking one" {
+  run _run_guard '{"tool_input":{"command":"grep pytest notes.md | head"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: piping something that is not a suite is fine" {
+  run _run_guard '{"tool_input":{"command":"git log --oneline | head -5"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: blocks a runner that starts a later line" {
+  # bash's ^/$ anchor the whole string, not each line, so a runner preceded by
+  # an earlier line must still be seen — the lines are joined with `; ` before
+  # this rule runs.
+  run _run_guard '{"tool_input":{"command":"echo start\npytest tests/ -q | tail -6"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: blocks a runner as a non-leading pipeline stage" {
+  run _run_guard '{"tool_input":{"command":"cat file | pytest tests/ | tail -5"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: blocks a filter that is not the segment right after the runner" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ -q | jq . | tail -5"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: a build command piped into a filter is fine" {
+  run _run_guard '{"tool_input":{"command":"npm run build | tail -20"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: a go build piped into a filter is fine" {
+  run _run_guard '{"tool_input":{"command":"go build ./... | tail -20"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: a cargo build piped into a filter is fine" {
+  run _run_guard '{"tool_input":{"command":"cargo build 2>&1 | tail -50"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "testpipe hook: blocks go test piped into a filter" {
+  run _run_guard '{"tool_input":{"command":"go test ./... | tail -20"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: blocks npm test piped into a filter" {
+  run _run_guard '{"tool_input":{"command":"npm test | tail -20"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: blocks npm run test piped into a filter" {
+  run _run_guard '{"tool_input":{"command":"npm run test | tail -5"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: a runner reached by path still matches" {
+  run _run_guard '{"tool_input":{"command":"bin/local/run-tests | head -20"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: an env prefix is not a way around the rule" {
+  run _run_guard '{"tool_input":{"command":"WORKBENCH_X=1 pytest tests/ | wc -l"}}'
+  [ "$status" -eq 2 ]
 }

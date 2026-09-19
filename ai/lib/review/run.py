@@ -232,6 +232,7 @@ def run_pr_review(
             repo, pr_number, review_file,
             no_post=flags.no_post, auto_post=flags.auto_post,
             auto_submit=flags.auto_submit, bin_dir=flags.bin_dir,
+            branch=ctx.branch or "",
         )
 
         return finish_review(

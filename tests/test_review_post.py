@@ -1526,6 +1526,77 @@ class TestDryRunIntegration:
         assert result.returncode != 0
         assert "repo" in result.stderr.lower() or "meta" in result.stderr.lower()
 
+    def test_a_review_written_for_another_branch_is_refused(self, tmp_path):
+        """The artifact keys on the PR; the run lock keys on the branch.
+
+        Two runs that resolve different targets take different locks and so do
+        not contend, yet they can share one `review.md`. Posting reads whatever
+        is on disk, so without this the publish path could send a review another
+        run is still writing — or one belonging to a different branch entirely.
+        """
+        review_dir = tmp_path / "foreign-review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_MD)
+        (review_dir / "meta.json").write_text(json.dumps({
+            "repo": "test/repo", "head_sha": "abc123def456",
+            "head_ref": "someone-else/feat/x",
+        }))
+
+        result = self._run_dry_run(
+            review_file, tmp_path, extra_args=["--expect-ref", "isaac/feat/mine"])
+
+        assert result.returncode != 0
+        assert "someone-else/feat/x" in result.stderr
+        assert "isaac/feat/mine" in result.stderr
+
+    def test_a_review_written_for_this_branch_is_posted(self, tmp_path):
+        """Pairs with the case above: the guard must not refuse everything."""
+        review_dir = tmp_path / "own-review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_MD)
+        (review_dir / "meta.json").write_text(json.dumps({
+            "repo": "test/repo", "head_sha": "abc123def456",
+            "head_ref": "isaac/feat/mine",
+        }))
+
+        result = self._run_dry_run(
+            review_file, tmp_path, extra_args=["--expect-ref", "isaac/feat/mine"])
+
+        assert result.returncode == 0
+
+    def test_a_sidecar_naming_no_branch_is_posted(self, tmp_path):
+        """A review written before the field existed still publishes.
+
+        The sidecar is read leniently everywhere else for the same reason, and
+        refusing here would strand every review already on disk.
+        """
+        result = self._run_dry_run(
+            self._setup_review(tmp_path),
+            tmp_path, extra_args=["--expect-ref", "isaac/feat/mine"])
+
+        assert result.returncode == 0
+
+    def test_a_caller_naming_no_branch_still_posts(self, tmp_path):
+        """`--expect-ref` is the caller volunteering what it is publishing for.
+
+        A direct `review-post` invocation that does not know its branch is not
+        an error — the guard is for the dispatcher that does.
+        """
+        review_dir = tmp_path / "unclaimed"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_MD)
+        (review_dir / "meta.json").write_text(json.dumps({
+            "repo": "test/repo", "head_sha": "abc123def456",
+            "head_ref": "someone-else/feat/x",
+        }))
+
+        result = self._run_dry_run(review_file, tmp_path)
+
+        assert result.returncode == 0
+
     def test_dry_run_includes_static_analysis(self, tmp_path):
         review_with_sa = (
             "# Review: test-org/test-repo#42 — Fix handler\n"

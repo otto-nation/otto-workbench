@@ -95,6 +95,26 @@ stage_invokes_runner() {
   return 1
 }
 
+# statement_pipes_a_test STATEMENT — true when STATEMENT is a pipeline whose
+# last stage is a filter and whose earlier stages include a test runner.
+#
+# Any earlier stage, not only the one before the first pipe: that is what
+# catches `cat f | pytest tests/ | tail -5`, where the runner is not leading,
+# and `pytest tests/ | jq . | tail -5`, where the filter is not the segment
+# right after the runner.
+statement_pipes_a_test() {
+  local statement="$1" k
+  local -a stages
+  [[ "$statement" == *"|"* ]] || return 1
+  IFS='|' read -ra stages <<<"$statement"
+  (( ${#stages[@]} >= 2 )) || return 1
+  stage_is_filter "${stages[-1]}" || return 1
+  for ((k = 0; k < ${#stages[@]} - 1; k++)); do
+    stage_invokes_runner "${stages[$k]}" && return 0
+  done
+  return 1
+}
+
 # stage_is_filter STAGE — true when STAGE's own command is one of
 # STATUS_FILTERS, matched on its last path segment so a filter reached by path
 # still counts.
@@ -198,17 +218,9 @@ fi
 if ! [[ "$stripped" =~ set[[:space:]]+-[a-zA-Z]*o[[:space:]]+pipefail ]]; then
   piped_test_found=""
   while IFS= read -r statement; do
-    [[ "$statement" == *"|"* ]] || continue
-    IFS='|' read -ra stages <<<"$statement"
-    (( ${#stages[@]} >= 2 )) || continue
-    stage_is_filter "${stages[-1]}" || continue
-    for ((k = 0; k < ${#stages[@]} - 1; k++)); do
-      if stage_invokes_runner "${stages[$k]}"; then
-        piped_test_found=1
-        break
-      fi
-    done
-    [[ -n "$piped_test_found" ]] && break
+    statement_pipes_a_test "$statement" || continue
+    piped_test_found=1
+    break
   # `||` is a fallback rather than a pipe — `pytest ... || echo failed` already
   # reports the suite's own status — so it is split away here alongside `;` and
   # `&&`, before the remaining `|` characters are read as pipes.

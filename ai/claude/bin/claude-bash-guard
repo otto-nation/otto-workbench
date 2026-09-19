@@ -231,7 +231,7 @@ if ! [[ "$stripped" =~ set[[:space:]]+-[a-zA-Z]*o[[:space:]]+pipefail ]]; then
   done < <(printf '%s\n' "$stripped" | sed -E 's/(&&|\|\||;)/\n/g')
 
   if [[ -n "$piped_test_found" ]]; then
-    block 'Piping a test suite into a filter reports the filter exit status, not the suite'"'"'s — false | tail -1 exits 0, so a failing run reads as a pass and a $? read after the pipe is the filter status. Redirect to a file and read the status, then grep the file: pytest ... > /tmp/out.txt 2>&1; echo $?. set -o pipefail is accepted where a pipe is genuinely wanted. See testing.md § Reading a Suite Result.'
+    block 'Piping a test suite into a filter reports the filter'"'"'s exit status, not the suite'"'"'s — false | tail -1 exits 0, so a failing run reads as a pass and a $? read after the pipe is the filter status. Redirect to a file and read the status, then grep the file: pytest ... > /tmp/out.txt 2>&1; echo $?. set -o pipefail is accepted where a pipe is genuinely wanted. See testing.md § Reading a Suite Result.'
   fi
 fi
 

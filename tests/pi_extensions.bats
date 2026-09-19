@@ -550,6 +550,12 @@ EOF'
   [ "$output" = false ]
 }
 
+@test "test-pipe-guard: a runner that starts a later line still matches" {
+  _pipes 'echo start
+pytest tests/ -q | tail -6'
+  [ "$output" = true ]
+}
+
 @test "test-pipe-guard: a runner as a non-leading pipeline stage still matches" {
   _pipes 'cat file | pytest tests/ | tail -5'
   [ "$output" = true ]

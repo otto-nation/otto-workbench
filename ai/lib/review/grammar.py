@@ -207,7 +207,12 @@ _SEGMENT_CHAR = r"[^\s/:*`—]"
 # line suffix is or a finding parses one way and verifies against the other.
 # `strip_line_suffix` removes what this matches, so a reader that matched one
 # without capturing it does not decide for itself what it was.
-_LINE_SUFFIX_BODY = r":\d+(?:[-–]\d+)?"
+# A list is one suffix, not several: `:64,82` names two lines of one file, and
+# a reader that takes only the first leaves `,82` on the path. That stat'd a
+# path no filesystem holds, so the evidence gate reported "file not found"
+# about a file that exists and dropped a correct finding.
+_LINE_SPAN = r"\d+(?:[-–]\d+)?"
+_LINE_SUFFIX_BODY = rf":{_LINE_SPAN}(?:\s*,\s*{_LINE_SPAN})*"
 LINE_SUFFIX = rf"(?:{_LINE_SUFFIX_BODY})?"
 _LINE_SUFFIX_TAIL_RE = re.compile(rf"{_LINE_SUFFIX_BODY}$")
 

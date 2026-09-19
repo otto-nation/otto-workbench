@@ -31,6 +31,21 @@ Resolution = rebase_types.Resolution
 
 # ── Prompt construction ──────────────────────────────────────────────────
 
+# Bounds "keep both", which on its own is satisfied by emitting a declaration
+# twice: two commits that each add the same field or kwarg at different offsets
+# are non-overlapping additions by its letter. One rebase of this repo landed a
+# dataclass field declared twice and a repeated keyword argument — a hard
+# `SyntaxError` — both from resolutions that followed the instruction exactly.
+# Kept beside the sentence it qualifies in both builders, since a model reads
+# the caveat with the rule rather than a paragraph away.
+_DUPLICATE_CAVEAT = (
+    " But an addition is only non-overlapping if the result declares each thing"
+    " once: when both sides add the same field, parameter, import, or key at"
+    " different offsets, that is one declaration written twice, so keep a"
+    " single copy rather than both."
+)
+
+
 def build_resolve_prompt(
     filepath: str, content: str, sha: str, subject: str,
     *, target_ref: str,
@@ -73,8 +88,8 @@ def build_resolve_prompt(
             "the base side, use the base-side names."
         )
     merge_instructions += (
-        " If both sides add non-overlapping content, keep both. "
-        "If they modify the same lines, combine them sensibly.\n"
+        f" If both sides add non-overlapping content, keep both.{_DUPLICATE_CAVEAT}"
+        " If they modify the same lines, combine them sensibly.\n"
     )
     parts.append(merge_instructions)
 
@@ -125,8 +140,8 @@ def build_chunked_prompt(
         "The HEAD side of each conflict shows the current state of identifiers, "
         "types, and structure — if anything was renamed or restructured on the "
         "base side, use the base-side names. "
-        "If both sides add non-overlapping content, keep both. "
-        "If they modify the same lines, combine them sensibly.\n"
+        f"If both sides add non-overlapping content, keep both.{_DUPLICATE_CAVEAT}"
+        " If they modify the same lines, combine them sensibly.\n"
     )
 
     for block in blocks:

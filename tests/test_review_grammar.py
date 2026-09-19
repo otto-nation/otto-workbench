@@ -149,6 +149,22 @@ class TestStripLineSuffix:
         assert strip_line_suffix("src/x.py:12-18") == "src/x.py"
         assert strip_line_suffix("src/x.py:12–18") == "src/x.py"
 
+    def test_a_trailing_line_list_comes_off(self):
+        """A finding about two discrete lines names both, comma-separated.
+
+        The list is a line suffix like any other: leaving it on the path sent
+        the verifier to stat `run.py:64,82`, which no filesystem holds, and it
+        reported "file not found" about a file that exists — dropping a
+        correct finding.
+        """
+        assert strip_line_suffix("src/x.py:64,82") == "src/x.py"
+        assert strip_line_suffix("src/x.py:64, 82") == "src/x.py"
+        assert strip_line_suffix("src/x.py:12,18,24") == "src/x.py"
+
+    def test_a_line_list_mixing_ranges_comes_off(self):
+        assert strip_line_suffix("src/x.py:12-18,24") == "src/x.py"
+        assert strip_line_suffix("src/x.py:12,18-24") == "src/x.py"
+
     def test_a_path_with_no_suffix_is_returned_whole(self):
         assert strip_line_suffix("src/x.py") == "src/x.py"
 

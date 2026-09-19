@@ -422,6 +422,33 @@ def test_build_resolve_prompt_includes_both_contexts():
     assert "base-side names" in prompt
 
 
+def test_both_prompts_bound_keep_both_with_the_duplicate_caveat():
+    """"Keep both" must not be the last word on two sides adding one thing.
+
+    Two commits that each add the same declaration at different offsets are
+    non-overlapping additions by the letter of that instruction, so a resolver
+    told only to keep both emits the declaration twice — which landed a
+    repeated dataclass field and a repeated kwarg (a hard `SyntaxError`) in one
+    rebase of this very branch. Both builders carry the caveat or neither is
+    fixed: the chunked one runs on large files, which is where it happened.
+    """
+    full = rebase_resolve.build_resolve_prompt(
+        "src/auth.py", "conflict content",
+        "abc123", "fix: auth refresh", target_ref=_TARGET,
+    )
+    chunked = rebase_resolve.build_chunked_prompt(
+        "src/auth.py",
+        [_block(conflict="<<<<<<< HEAD\na\n=======\nb\n>>>>>>> abc123\n")],
+        "abc123", "fix: auth refresh", target_ref=_TARGET,
+    )
+    for prompt in (full, chunked):
+        assert "keep both" in prompt
+        keep_both = prompt.index("keep both")
+        caveat = prompt.find("declares each thing", keep_both)
+        assert caveat != -1, "keep-both instruction carries no duplicate caveat"
+        assert caveat - keep_both < 400, "caveat too far from the instruction to bind it"
+
+
 def test_build_resolve_prompt_names_the_resolved_ref():
     """The prompt tells the model which branch the commit is being replayed onto."""
     prompt = rebase_resolve.build_resolve_prompt(

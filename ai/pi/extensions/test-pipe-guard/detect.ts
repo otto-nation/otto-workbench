@@ -40,6 +40,15 @@ export const TEST_RUNNERS = [
 ];
 
 /**
+ * The runners above that are general-purpose build tools too — `go build`,
+ * `npm run dev` — where the output is often the point and piping one is
+ * ordinary. For these, bare invocation isn't enough: the test subcommand
+ * itself has to be present. Kept in step with BUILD_STYLE_RUNNERS in
+ * ai/claude/bin/claude-bash-guard.
+ */
+const SUBCOMMAND_REQUIRED = ["go", "cargo", "npm", "pnpm", "yarn"];
+
+/**
  * The filters that discard the status they were handed.
  *
  * Every one of these exits on its own terms — `tail` succeeds on empty input —
@@ -74,10 +83,12 @@ const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
  * command rather than only at the head, because `set -o pipefail` on its own
  * line above the run is the ordinary spelling.
  *
- * Both spellings, since `set -eo pipefail` is as common as the long form.
+ * `set -[a-zA-Z]*o pipefail` covers both the long form and a bundled short
+ * flag (`set -eo pipefail`), since the letters before the required `o` are
+ * unconstrained and `-o` alone is the zero-letter case of the same pattern.
  */
 function hasPipefail(command: string): boolean {
-  return /\bset\s+-[a-zA-Z]*o\s+pipefail\b|\bset\s+-o\s+pipefail\b/.test(command);
+  return /\bset\s+-[a-zA-Z]*o\s+pipefail\b/.test(command);
 }
 
 /**
@@ -125,12 +136,34 @@ function basename(token: string): string {
  * else: `grep pytest notes.md` names one and invokes nothing. Leading
  * environment assignments and `sudo`-style prefixes are skipped so
  * `WORKBENCH_X=1 pytest` still matches.
+ *
+ * A SUBCOMMAND_REQUIRED runner is also a general-purpose build tool, so the
+ * bare name isn't enough — `go test`/`cargo test` directly, or `npm`/`pnpm`/
+ * `yarn` via `test`/`run test`/`run-script test`. Anything else (`go build`,
+ * `npm run dev`) is left alone: the output is often the point, and piping one
+ * is ordinary.
  */
 function invokesRunner(stage: string): boolean {
   const tokens = stage.trim().split(/\s+/).filter(Boolean);
-  for (const token of tokens) {
-    if (token.includes("=")) continue;
-    return TEST_RUNNERS.includes(basename(token));
+  let name: string | undefined;
+  let rest: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].includes("=")) continue;
+    name = basename(tokens[i]);
+    rest = tokens.slice(i + 1);
+    break;
+  }
+  if (name === undefined || !TEST_RUNNERS.includes(name)) return false;
+  if (!SUBCOMMAND_REQUIRED.includes(name)) return true;
+
+  const nonflag = rest.filter((t) => !t.startsWith("-"));
+  if (nonflag[0] === "test") return true;
+  if (
+    (name === "npm" || name === "pnpm" || name === "yarn") &&
+    (nonflag[0] === "run" || nonflag[0] === "run-script") &&
+    nonflag[1] === "test"
+  ) {
+    return true;
   }
   return false;
 }

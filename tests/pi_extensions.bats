@@ -550,6 +550,46 @@ EOF'
   [ "$output" = false ]
 }
 
+@test "test-pipe-guard: a runner as a non-leading pipeline stage still matches" {
+  _pipes 'cat file | pytest tests/ | tail -5'
+  [ "$output" = true ]
+}
+
+@test "test-pipe-guard: a filter that is not the segment right after the runner still matches" {
+  _pipes 'pytest tests/ -q | jq . | tail -5'
+  [ "$output" = true ]
+}
+
+@test "test-pipe-guard: a build command piped into a filter is fine" {
+  _pipes 'npm run build | tail -20'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: a go build piped into a filter is fine" {
+  _pipes 'go build ./... | tail -20'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: a cargo build piped into a filter is fine" {
+  _pipes 'cargo build 2>&1 | tail -50'
+  [ "$output" = false ]
+}
+
+@test "test-pipe-guard: go test piped into a filter is a finding" {
+  _pipes 'go test ./... | tail -20'
+  [ "$output" = true ]
+}
+
+@test "test-pipe-guard: npm test piped into a filter is a finding" {
+  _pipes 'npm test | tail -20'
+  [ "$output" = true ]
+}
+
+@test "test-pipe-guard: npm run test piped into a filter is a finding" {
+  _pipes 'npm run test | tail -5'
+  [ "$output" = true ]
+}
+
 @test "test-pipe-guard: the two harnesses share one runner list" {
   # Claude's hook and this extension enforce the same rule for different
   # harnesses. Two lists that drift apart are one rule with two meanings, and
@@ -564,4 +604,44 @@ EOF'
   [ -n "$pi_list" ]
   [ -n "$claude_list" ]
   [ "$pi_list" = "$claude_list" ]
+}
+
+# _claude_guard COMMAND — prints "blocked" or "allowed" for the Claude hook.
+_claude_guard() {
+  local out
+  out=$(python3 -c '
+import json, sys
+print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
+' "$1" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1)
+  if [ "$?" -eq 2 ]; then echo blocked; else echo allowed; fi
+}
+
+@test "test-pipe-guard: the two harnesses agree on example commands, not just word lists" {
+  # A text-equal TEST_RUNNERS list is compatible with the two engines
+  # disagreeing on a given command — see the multi-line, non-leading-stage,
+  # and multi-stage-pipe shapes below, each of which the two implementations
+  # once answered differently for.
+  local cmd pi_result claude_result
+  local -a commands=(
+    'echo start
+pytest tests/ -q | tail -6'
+    'cat file | pytest tests/ | tail -5'
+    'pytest tests/ -q | jq . | tail -5'
+    'set -o pipefail; pytest tests/ | tail -3'
+    'npm run build | tail -20'
+    'go test ./... | tail -20'
+    'cat > /tmp/s.sh <<EOF
+pytest tests/ | tail -1
+EOF'
+  )
+  for cmd in "${commands[@]}"; do
+    _pipes "$cmd"
+    if [ "$output" = true ]; then pi_result=blocked; else pi_result=allowed; fi
+    claude_result=$(_claude_guard "$cmd")
+    [ "$pi_result" = "$claude_result" ] || {
+      echo "disagreement on: $cmd"
+      echo "pi: $pi_result, claude: $claude_result"
+      return 1
+    }
+  done
 }

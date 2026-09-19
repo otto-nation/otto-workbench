@@ -49,66 +49,78 @@ SLEEP_WAIT_THRESHOLD_SECONDS=10
 # two lists to one set, so adding a runner here alone fails the suite rather
 # than letting the harnesses disagree about a given command.
 TEST_RUNNERS='pytest|bats|run-tests|validate-all|go|cargo|npm|pnpm|yarn|jest|vitest'
+
+# The runners above that are general-purpose build tools too — `go build`,
+# `npm run dev` — where the output is often the point and piping one is
+# ordinary. For these, bare invocation isn't enough: the test subcommand
+# itself has to be present. Kept in step with SUBCOMMAND_REQUIRED in the same
+# Pi file.
+BUILD_STYLE_RUNNERS='go|cargo|npm|pnpm|yarn'
+
 STATUS_FILTERS='tail|head|grep|egrep|rg|sed|awk|wc|tee|cut|sort|uniq'
+
+# stage_invokes_runner STAGE — true when STAGE runs one of TEST_RUNNERS with
+# the subcommand that makes it a test run rather than a build/format/lint:
+# `go test`/`cargo test` directly, and `npm`/`pnpm`/`yarn` also via
+# `run test`/`run-script test`. The runner has to be the command being run
+# rather than an argument to something else, so `grep pytest notes.md` names
+# one and invokes nothing. A leading `VAR=x` assignment is skipped so an env
+# prefix is not a way around the rule.
+stage_invokes_runner() {
+  local stage="$1" tok name t
+  local -a tokens rest nonflag
+  read -ra tokens <<<"$stage"
+  local i=0
+  while (( i < ${#tokens[@]} )) && [[ "${tokens[$i]}" == *=* ]]; do
+    ((i++))
+  done
+  (( i < ${#tokens[@]} )) || return 1
+  tok="${tokens[$i]}"
+  name="${tok##*/}"
+  [[ "|$TEST_RUNNERS|" == *"|$name|"* ]] || return 1
+  [[ "|$BUILD_STYLE_RUNNERS|" == *"|$name|"* ]] || return 0
+  rest=("${tokens[@]:$((i + 1))}")
+  nonflag=()
+  for t in "${rest[@]}"; do
+    [[ "$t" == -* ]] && continue
+    nonflag+=("$t")
+  done
+  (( ${#nonflag[@]} > 0 )) || return 1
+  [[ "${nonflag[0]}" == "test" ]] && return 0
+  if [[ "$name" == npm || "$name" == pnpm || "$name" == yarn ]] &&
+     [[ "${nonflag[0]}" == "run" || "${nonflag[0]}" == "run-script" ]] &&
+     [[ "${nonflag[1]:-}" == "test" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# stage_is_filter STAGE — true when STAGE's own command is one of
+# STATUS_FILTERS, matched on its last path segment so a filter reached by path
+# still counts.
+stage_is_filter() {
+  local stage="$1" name
+  local -a tokens
+  read -ra tokens <<<"$stage"
+  (( ${#tokens[@]} > 0 )) || return 1
+  name="${tokens[0]##*/}"
+  [[ "|$STATUS_FILTERS|" == *"|$name|"* ]]
+}
 
 # Fail open: a malformed payload must not block every Bash call.
 cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [[ -n "$cmd" ]] || exit 0
 
-# ── Whole-command rules ──────────────────────────────────────────────────────
-# These scan the command as written. Order is by specificity: the first rule to
-# match is the message Claude sees, so a narrow rule earns its place above a
-# broad one.
-
-if [[ "$cmd" == *"gh pr create"* ]]; then
-  block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
-fi
-
-if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
-  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead. See bash-tool.md § Avoid find -exec.'
-fi
-
-# A test suite piped into a filter reports the filter's status, not its own:
-# `false | tail -1` exits 0, so a failing run reads as a pass and a `$?` taken
-# after the pipe is the filter's. `set -o pipefail` is the one spelling that
-# keeps the suite's status, so a command setting it is left alone.
+# ── Normalize the command for scanning ───────────────────────────────────────
+# Every rule below reads one of these instead of $cmd directly.
 #
-# `||` is excluded from the pipe match by requiring a single `|`: a
-# `pytest ... || echo failed` is a fallback and already reports the suite's own
-# status. The runner must be the command being run rather than an argument, so
-# `grep pytest notes.md | head` does not match.
-if ! [[ "$cmd" =~ set[[:space:]]+-[a-zA-Z]*o[[:space:]]+pipefail ]]; then
-  # Anchored to the head of a statement, so the runner is the command being run
-  # rather than an argument to something else: `grep pytest notes.md | head`
-  # names one and invokes nothing. A leading path is allowed so
-  # `bin/local/run-tests` matches as `run-tests`, and leading `VAR=x`
-  # assignments are skipped so an env prefix is not a way around the rule.
-  re_piped="(^|[;&]|&&)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:]|]*/)?($TEST_RUNNERS)([[:space:]][^|]*)?\|[^|]*($STATUS_FILTERS)([[:space:]]|$)"
-  if [[ "$cmd" =~ $re_piped ]]; then
-    block 'Piping a test suite into a filter reports the filter exit status, not the suite one — false | tail -1 exits 0, so a failing run reads as a pass and a $? read after the pipe is the filter status. Redirect to a file and read the status, then grep the file: pytest ... > /tmp/out.txt 2>&1; echo $?. set -o pipefail is accepted where a pipe is genuinely wanted. See testing.md § Reading a Suite Result.'
-  fi
-fi
-
-# ── Statement-anchored rules ─────────────────────────────────────────────────
-# These match at the start of any statement, not just the start of the command —
-# a leading no-op token must not be a way around them. They scan a quote-stripped
-# copy so a pattern inside a quoted argument is not read as an invocation.
-#
-# ceiling: quoted spans are stripped with two sed passes, which mis-handle
-# escaped quotes and embedded apostrophes, in both directions. An unpaired
-# apostrophe re-pairs with a later quote, so `echo it's; cd /x && ls 'q'` strips
-# the real cd away and is not blocked; an escaped quote ends a span early, so
-# `echo "say \"{a,b}\" now"` strips to `echo {a,b}\` and is blocked as brace
-# expansion. Both outcomes cost at most one permission prompt — these rules
-# steer command style, they are not a security boundary. Upgrade to a real
-# tokenizer if either misfire shows up on a command worth running.
-
 # Every line is scanned, because a multi-line command is several commands and
 # the second one prompts just as loudly as the first. Heredoc bodies are the
 # exception: they are content being written to a file, not commands, so a
 # `cd /x && ls` inside one is not an invocation. Surviving lines are joined with
-# `; ` so the anchors below treat a new line as the new statement it is — and so
-# a lone `cd <dir>`, the sanctioned form, still has no separator to match on.
+# `; ` so the statement-anchored rules below treat a new line as the new
+# statement it is — and so a lone `cd <dir>`, the sanctioned form, still has no
+# separator to match on.
 re_heredoc="<<(-?)[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
 scannable=""
 marker=""
@@ -131,6 +143,14 @@ while IFS= read -r line; do
   fi
 done < <(printf '%s\n' "$cmd")
 
+# ceiling: quoted spans are stripped with two sed passes, which mis-handle
+# escaped quotes and embedded apostrophes, in both directions. An unpaired
+# apostrophe re-pairs with a later quote, so `echo it's; cd /x && ls 'q'` strips
+# the real cd away and is not blocked; an escaped quote ends a span early, so
+# `echo "say \"{a,b}\" now"` strips to `echo {a,b}\` and is blocked as brace
+# expansion. Both outcomes cost at most one permission prompt — these rules
+# steer command style, they are not a security boundary. Upgrade to a real
+# tokenizer if either misfire shows up on a command worth running.
 stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
 
 # A second variant that strips only single-quoted spans. A `$VAR` survives
@@ -143,6 +163,71 @@ sq_stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g")
 # quoted destination would otherwise leave nothing there to capture — turning a
 # blockable write into a silent pass.
 placeheld=$(printf '%s' "$scannable" | sed -e "s/'[^']*'/QUOTEDARG/g" -e 's/"[^"]*"/QUOTEDARG/g')
+
+# ── Whole-command rules ──────────────────────────────────────────────────────
+# These scan the command as written. Order is by specificity: the first rule to
+# match is the message Claude sees, so a narrow rule earns its place above a
+# broad one.
+
+if [[ "$cmd" == *"gh pr create"* ]]; then
+  block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
+fi
+
+if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
+  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead. See bash-tool.md § Avoid find -exec.'
+fi
+
+# A test suite piped into a filter reports the filter's status, not its own:
+# `false | tail -1` exits 0, so a failing run reads as a pass and a `$?` taken
+# after the pipe is the filter's. `set -o pipefail` is the one spelling that
+# keeps the suite's status, so a command setting it is left alone.
+#
+# Reads $stripped — heredoc-stripped, lines joined with `; `, quotes gone — so
+# a runner on a later line is seen the same way the statement-anchored rules
+# below see it. A bare `$cmd` scan misses that: bash's `^`/`$` anchor the whole
+# string, not each line, so `echo start\npytest tests/ | tail -6` would read as
+# having no statement boundary before `pytest` at all.
+#
+# Mirrors pipedRunner() in ai/pi/extensions/test-pipe-guard/detect.ts stage for
+# stage: split into statements on `;`/`&&`/`||`, split each statement into
+# pipeline stages on a single `|`, and block when the last stage is a filter
+# and any earlier stage invokes a runner — not only the stage right before the
+# first pipe. That is what catches `cat f | pytest tests/ | tail -5` (the
+# runner is a non-leading stage) and `pytest tests/ | jq . | tail -5` (the
+# filter is not the segment right after the runner).
+if ! [[ "$stripped" =~ set[[:space:]]+-[a-zA-Z]*o[[:space:]]+pipefail ]]; then
+  piped_test_found=""
+  while IFS= read -r statement; do
+    [[ "$statement" == *"|"* ]] || continue
+    IFS='|' read -ra stages <<<"$statement"
+    (( ${#stages[@]} >= 2 )) || continue
+    stage_is_filter "${stages[-1]}" || continue
+    for ((k = 0; k < ${#stages[@]} - 1; k++)); do
+      if stage_invokes_runner "${stages[$k]}"; then
+        piped_test_found=1
+        break
+      fi
+    done
+    [[ -n "$piped_test_found" ]] && break
+  # `||` is a fallback rather than a pipe — `pytest ... || echo failed` already
+  # reports the suite's own status — so it is split away here alongside `;` and
+  # `&&`, before the remaining `|` characters are read as pipes.
+  #
+  # The trailing newline printf adds is load-bearing, the same way it is for
+  # the sleep rule below: read discards a final line with no terminator, so
+  # without it a single-statement command is never scanned at all.
+  done < <(printf '%s\n' "$stripped" | sed -E 's/(&&|\|\||;)/\n/g')
+
+  if [[ -n "$piped_test_found" ]]; then
+    block 'Piping a test suite into a filter reports the filter exit status, not the suite'"'"'s — false | tail -1 exits 0, so a failing run reads as a pass and a $? read after the pipe is the filter status. Redirect to a file and read the status, then grep the file: pytest ... > /tmp/out.txt 2>&1; echo $?. set -o pipefail is accepted where a pipe is genuinely wanted. See testing.md § Reading a Suite Result.'
+  fi
+fi
+
+# ── Statement-anchored rules ─────────────────────────────────────────────────
+# These match at the start of any statement, not just the start of the command —
+# a leading no-op token must not be a way around them. They scan the
+# quote-stripped, heredoc-stripped copies computed above so a pattern inside a
+# quoted argument or a heredoc body is not read as an invocation.
 
 # Ahead of every rule below: a `-c` wrapper hides its payload from all of them,
 # and from the analyzer, so whatever is inside can only be judged once unwrapped.

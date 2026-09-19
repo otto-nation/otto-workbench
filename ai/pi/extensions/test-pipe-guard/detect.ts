@@ -134,8 +134,8 @@ function basename(token: string): string {
  *
  * The runner has to be the command being run, not an argument to something
  * else: `grep pytest notes.md` names one and invokes nothing. Leading
- * environment assignments and `sudo`-style prefixes are skipped so
- * `WORKBENCH_X=1 pytest` still matches.
+ * environment assignments are skipped so `WORKBENCH_X=1 pytest` still
+ * matches — a `sudo`-style prefix is not, so `sudo pytest` does not.
  *
  * A SUBCOMMAND_REQUIRED runner is also a general-purpose build tool, so the
  * bare name isn't enough — `go test`/`cargo test` directly, or `npm`/`pnpm`/

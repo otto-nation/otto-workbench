@@ -1755,3 +1755,13 @@ _referenced_home_paths() {
   run _run_guard '{"tool_input":{"command":"npm run test | tail -5"}}'
   [ "$status" -eq 2 ]
 }
+
+@test "testpipe hook: a runner reached by path still matches" {
+  run _run_guard '{"tool_input":{"command":"bin/local/run-tests | head -20"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "testpipe hook: an env prefix is not a way around the rule" {
+  run _run_guard '{"tool_input":{"command":"WORKBENCH_X=1 pytest tests/ | wc -l"}}'
+  [ "$status" -eq 2 ]
+}

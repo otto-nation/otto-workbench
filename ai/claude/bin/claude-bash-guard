@@ -110,7 +110,9 @@ statement_pipes_a_test() {
   (( ${#stages[@]} >= 2 )) || return 1
   stage_is_filter "${stages[-1]}" || return 1
   for ((k = 0; k < ${#stages[@]} - 1; k++)); do
-    stage_invokes_runner "${stages[$k]}" && return 0
+    if stage_invokes_runner "${stages[$k]}"; then
+      return 0
+    fi
   done
   return 1
 }

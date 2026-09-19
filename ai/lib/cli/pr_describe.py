@@ -275,16 +275,24 @@ def run_describe(
         print(revised)
         return 0
 
-    if not _apply_body(ctx.repo, ctx.pr_number, revised):
+    applied = _apply_body(ctx.repo, ctx.pr_number, revised)
+    if not applied and publishing.enabled():
+        # The gate was open and the write still failed — a real error, not a
+        # draft. publishing.enabled() is what tells the two apart: _apply_body
+        # returns False for both, and a draft is not a failure.
         if trail:
             trail.error("describe", "could not write the PR body",
                         data={"pr": ctx.pr_number})
         return 1
 
-    log.info(f"Revised PR description against {template_path or 'the default template'}")
-    if trail:
-        trail.info("describe", "description revised",
-                   data={"template": template_path, "head_sha": ctx.head_sha})
+    if applied:
+        log.info(f"Revised PR description against {template_path or 'the default template'}")
+        if trail:
+            trail.info("describe", "description revised",
+                       data={"template": template_path, "head_sha": ctx.head_sha})
+    # Recorded either way: a draft still reflects a real revision the AI
+    # produced at this HEAD, so a repeated run before `--post` should not
+    # re-earn the AI call — see the module docstring's commit-awareness note.
     _persist(wt_path, ctx, DescribeSummary(
         head_sha=ctx.head_sha, template_path=template_path,
         changed=True, updated_at=pr_state.now_iso(),

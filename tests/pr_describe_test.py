@@ -226,7 +226,8 @@ def test_unreachable_pr_stops_before_the_ai_call(worktree):
     assert not prompt.called
 
 
-def test_a_rejected_edit_is_not_recorded(worktree):
+def test_a_rejected_edit_is_not_recorded(worktree, publishing_on):
+    """A real `gh pr edit` failure, distinct from a draft: the gate is open."""
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt",
@@ -329,3 +330,24 @@ def test_post_lets_the_edit_through(publishing_on):
                            return_value=mock.MagicMock(ok=True)) as run:
         assert pr_describe_cli._apply_body("owner/repo", 7, "NEW BODY") is True
     assert run.call_args.kwargs["input_text"] == "NEW BODY"
+
+
+def test_run_describe_with_the_gate_closed_is_not_a_failure(worktree, capsys):
+    """A drafted edit is the default outcome, not an error.
+
+    Exercises the real `_apply_body` — unlike every other case in this file,
+    which stubs it to always return True — so a regression that treats a
+    draft's False the same as a genuine `gh pr edit` failure fails here.
+    """
+    with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
+         mock.patch.object(pr_describe_cli, "_git", return_value=""), \
+         mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt",
+                           return_value=(_wrapped("NEW BODY"), 0)), \
+         mock.patch.object(pr_describe_cli.gh_client, "run") as run:
+        rc = pr_describe_cli.run_describe(_ctx(worktree))
+    assert rc == 0
+    run.assert_not_called()
+    assert "DRAFT" in capsys.readouterr().err
+    state = pr_state.load_state(worktree / "target")
+    assert state.describe.head_sha == "aaaa111"
+    assert state.describe.changed is True

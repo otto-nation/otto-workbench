@@ -27,6 +27,22 @@
 A test that cannot fail is worse than no test: it reports the behavior is held
 when nothing holds it. Before believing a passing test, check all three.
 
+The check that settles it is to break the subject and watch the test fail. Delete
+the line the test exists to hold, run it, confirm it fails, restore. A passing
+test proves the code passes; only a failing one proves the test is holding
+anything. Every item below is a way a test can look right and hold nothing, and
+the revert catches all of them at once — including the ways not listed.
+
+Do this hardest on a test written to close a review finding. The recurring
+failure is not a wrong fix but a correct fix with a test that does not constrain
+it: a fixture that stubs out the very function the fix changed, an assertion on
+what the caller passed rather than on what the callee did with it. The fix is
+right, the test passes, and deleting the fix leaves it passing.
+
+A filter is the other way to fool yourself here: `-k`, a `grep`, a subset path.
+A revert whose test was deselected reports no failures and reads as proof. Run
+the whole file.
+
 - Do not add tests that simply assert constant values
 - The assertion cannot be satisfied incidentally. An `or` arm that is always true (`assert x in content or " " in text`) makes the whole assertion a tautology, and it passes on any input
 - The patch target is the name the code under test actually looks up. Patching `mod.subprocess.run` proves nothing once the function was migrated to call `gh_client.api` — the test keeps passing against code it no longer touches

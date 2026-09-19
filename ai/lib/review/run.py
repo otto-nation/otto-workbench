@@ -61,6 +61,7 @@ class ReviewFlags:
 
     bin_dir: Path
     generator_version: str
+    command: str = ""
     issue_link: str = ""
     max_parallel: int = 1
     max_cost: float | None = None
@@ -78,7 +79,6 @@ class ReviewFlags:
     auto_post: bool = False
     auto_submit: bool = False
     repo_dir: str = ""
-    command: str = ""
 
 
 def run_pr_review(

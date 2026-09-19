@@ -1502,6 +1502,28 @@ def test_drive_to_completion_already_done():
     assert tally.commits == 0
 
 
+def test_drive_to_completion_recovers_lease_from_remembered_tip():
+    """A resumed rebase (no ``lease=`` passed) must recover it from the
+    remote-tracking ref, not from the local branch's pre-rebase tip —
+    unpushed local commits would otherwise leave the lease naming a SHA the
+    remote never had, and the eventual push is refused with ``stale info``.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(lifecycle, "rebase_success", return_value=0) as mock_success, \
+         mock.patch.object(rebase_lease, "remembered_tip", return_value="remote-tip") as mock_remembered, \
+         mock.patch.object(rebase_lease, "resolve", return_value=_LEASE) as mock_resolve:
+        lifecycle.drive_to_completion(
+            "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
+        )
+
+    mock_remembered.assert_called_once_with("/fake", ctx.branch)
+    mock_resolve.assert_called_once_with("/fake", ctx.branch, "remote-tip")
+    mock_success.assert_called_once()
+
+
 def test_drive_to_completion_with_conflicts_fix():
     """Conflicts detected with --fix: resolves via AI and continues."""
     ctx = mock.MagicMock()
@@ -4258,8 +4280,16 @@ def test_a_push_with_no_nameable_lease_is_refused(capsys):
     assert "cannot tell what the remote was at" in capsys.readouterr().err
 
 
-def test_a_run_that_never_pushes_does_not_need_a_lease(capsys):
-    """--no-push reaches no remote, so an unnameable lease stops nothing."""
+def test_a_run_that_defers_its_push_does_not_need_a_lease(capsys):
+    """PUSH pushes from cmd_push, not here, so an unnameable lease stops nothing.
+
+    This is not the --no-push case: RunMode.PUSH still reaches the remote
+    (``RunMode.PUSH.reaches_remote`` is ``True``), just seconds later and from
+    a different function. REBASE_ONLY/FIX_ONLY are the true --no-push modes,
+    and both land here — see
+    ``test_a_no_push_run_with_no_nameable_lease_is_refused`` for what they
+    require.
+    """
     ctx = mock.MagicMock()
     ctx.branch = "isaac/feat/x"
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
@@ -4271,6 +4301,29 @@ def test_a_run_that_never_pushes_does_not_need_a_lease(capsys):
         )
 
     assert rc == 0
+
+
+def test_a_no_push_run_with_no_nameable_lease_is_refused(capsys):
+    """REBASE_ONLY lands in rebase_success and still needs a nameable lease.
+
+    Unlike RunMode.PUSH, --no-push modes never reach a separate cmd_push —
+    they land here, and the held push still resolves ``lease.args`` to build
+    the printed resume command. Refused the same way FIX is.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    with mock.patch.object(git_client, "commits_ahead", return_value=2), \
+         _lands(_pushed()) as owner, \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core_report, "emit_json"):
+        rc = lifecycle.rebase_success(
+            "/fake", ctx, rebase_types.RunMode.REBASE_ONLY, target_ref=_TARGET,
+            lease=None,
+        )
+
+    assert rc == 1
+    owner.assert_not_called()
+    assert "cannot tell what the remote was at" in capsys.readouterr().err
 
 
 def _push_state(lease_expect="abc123"):

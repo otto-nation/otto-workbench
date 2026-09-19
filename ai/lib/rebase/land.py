@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from core import log
 from core.trail import Trail
 from git import land
@@ -19,7 +17,7 @@ REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
 
 def land_rebased(
     cwd: str, resolved_files: list[str] | None = None, *,
-    args: Sequence[str],
+    args: tuple[str, ...],
     trail: Trail | None = None,
 ) -> land.LandResult:
     """Force-push the replayed branch, auto-recovering from a hook rejection.

@@ -150,12 +150,18 @@ def drive_to_completion(
     ``lease`` is what the push will be made under. ``fresh`` resolves one from
     the tip it read before its fetch and passes it; a run resuming a rebase
     started by an earlier process has no such reading to inherit, so one is
-    recovered here from the rebase state directory — readable now, and deleted
-    by git before anything lands.
+    recovered here from the remote-tracking ref instead — the original
+    process's fetch is what last moved it, and nothing has fetched since, so
+    it still holds that same value. The rebase state directory's ``orig-head``
+    is the tempting reading and the wrong one: it is the *local* branch tip
+    when the rebase began, so unpushed local commits leave it ahead of the
+    remote, and naming it in the lease fails the eventual push with ``stale
+    info`` even though the remote never moved — see
+    ``rebase_lease.remembered_tip``.
     """
     if lease is None:
         lease = rebase_lease.resolve(
-            cwd, ctx.branch, rebase_inspect.rebase_orig_head(cwd),
+            cwd, ctx.branch, rebase_lease.remembered_tip(cwd, ctx.branch),
         )
     with tspan(trail, "drive_to_completion"):
         return _drive_loop(

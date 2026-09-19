@@ -1,4 +1,5 @@
-"""Advisory whole-run lock, scoped to what a run targets.
+"""Advisory whole-run lock, scoped to what a run targets and, when it writes
+to a checkout, the checkout too.
 
 Two concurrent runs against one PR corrupt each other: they both
 read-modify-write that target's ``state.json``, and with ``--fix`` they both
@@ -38,12 +39,12 @@ checkout it has ever written to — the two counts need not match, since a
 target can be worked from several checkouts and a checkout can serve several
 targets. Nearly all of the accumulated files name processes that exited long
 ago. That is not a leak and deleting them is not maintenance: the record is what
-makes the next contender's error message name a command rather than a pid. But
-it does mean **the presence of a lock file says nothing about whether a lock is
-held**, and a dead pid in one is the normal case rather than evidence of a
-crash. A released record carries a ``released`` timestamp, written under the
-flock just before it is dropped; a held one has ``released: null``. To ask the
-kernel rather than read the file, call ``is_held``.
+makes the next contender's error message name a command rather than a pid.
+**The presence of a lock file says nothing about whether a lock is held** — a
+dead pid in one is the normal case rather than evidence of a crash. A released
+record carries a ``released`` timestamp, written under the flock just before
+it is dropped; a held one has ``released: null``. To ask the kernel rather
+than read the file, call ``is_held``.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
@@ -74,6 +75,7 @@ it; the marker is the only thing that can answer, so it is trusted.
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import fcntl
 import json
@@ -306,8 +308,12 @@ def claim_for_process(target_dir: Path, command: str, started: str, *,
     """Take the locks for the rest of this process's life, or exit 1.
 
     For entry points whose entire body is the critical section. The kernel
-    releases the flocks at exit, so there is nothing to unwind — which spares
-    every ``main()`` from wrapping itself in a ``with`` block just to lock.
+    releases the flocks at exit, so there is nothing to unwind for the lock
+    itself — which spares every ``main()`` from wrapping itself in a ``with``
+    block just to lock. The record on disk is a separate concern: nothing
+    stamps it as released just because the flock is gone, so an ``atexit``
+    hook does that part explicitly, the same way ``_holding`` does for
+    ``acquire``'s context-manager path.
 
     ``worktree`` is the checkout this run writes to; see ``acquire``.
     """
@@ -326,6 +332,7 @@ def claim_for_process(target_dir: Path, command: str, started: str, *,
             sys.exit(1)
         os.environ[var] = value
         _HELD.append(handle)
+        atexit.register(_note_release, handle, path)
 
 
 def is_held(target_dir: Path) -> bool:

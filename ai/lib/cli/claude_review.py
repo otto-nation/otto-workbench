@@ -102,6 +102,7 @@ def _flags(args, generator_version: str) -> review_run.ReviewFlags:
     return review_run.ReviewFlags(
         bin_dir=BIN_DIR,
         generator_version=generator_version,
+        command=" ".join([SCRIPT] + sys.argv[1:]),
         issue_link=args.issue or "",
         max_parallel=args.max_parallel,
         max_cost=args.max_cost,
@@ -119,7 +120,6 @@ def _flags(args, generator_version: str) -> review_run.ReviewFlags:
         auto_post=args.post,
         auto_submit=args.submit,
         repo_dir=args.repo_dir or "",
-        command=" ".join([SCRIPT] + sys.argv[1:]),
     )
 
 
@@ -223,9 +223,11 @@ def _run_self_review(args, generator_version: str = "") -> review_run.ReviewOutc
     # WORKBENCH_RUN_LOCK.
     #
     # Locked only when this run reviews the tree it was launched in. Given a PR
-    # or a branch, the body switches to another worktree and writes there, so
-    # the resolved one is not what to lock. None when there is no worktree at
-    # all, which the target lock already covers.
+    # or a branch, the body switches to another worktree and that one is what
+    # gets written to, so locking the launch tree here would name the wrong
+    # checkout — and hold a lock over a tree this run never touches. None when
+    # there is no worktree at all, which the target lock already covers. Two
+    # runs on one branch still contend on the target either way.
     reviewed_tree = None
     if ctx.worktree_root and not (is_pr or is_branch):
         reviewed_tree = ctx.worktree_root
@@ -395,9 +397,10 @@ def main(argv: list[str] | None = None, *,
     # A no-op when pr launched us — we resolve the same target and find its key
     # already in WORKBENCH_RUN_LOCK.
     #
-    # No checkout lock: this path sets up a worktree of its own for the PR and
-    # resets it, so the tree it writes to is not the one resolved here. The
-    # target lock is what stops two reviews of one PR.
+    # No checkout lock here: this path sets up a worktree of its own for the PR
+    # and resets it, so the tree it writes to is not the one resolved here. The
+    # checkout is claimed further in, by `review.run`, once that tree exists —
+    # same target, so it passes through this claim rather than contending.
     run_lock.claim_for_process(
         ctx.target_dir,
         command=" ".join([SCRIPT] + sys.argv[1:]),

@@ -560,8 +560,15 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     # pr-describe re-resolves HEAD itself and no-ops when nothing landed, so
     # this is free on a run where every fix pass was a skip. The user's argv is
     # not forwarded: --fix and friends mean nothing here.
+    #
+    # `--post` is the exception, and it is forwarded rather than passed along
+    # with the rest for the same reason the rest are dropped: it is the one
+    # flag that means something to describe. Editing the PR body is gated like
+    # every other GitHub write, so without this a `pr fix --post` would push
+    # its commits and post its replies and then draft the description alone.
     log.blank()
-    if _run_delegate(_COMMANDS["describe"], [], ctx,
+    describe_argv = ["--post"] if "--post" in argv else []
+    if _run_delegate(_COMMANDS["describe"], describe_argv, ctx,
                      original_pr=_kw.get("original_pr"),
                      original_branch=_kw.get("original_branch")) != 0:
         exit_code = 1

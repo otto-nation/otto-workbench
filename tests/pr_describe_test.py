@@ -85,7 +85,7 @@ def test_fetching_the_body_gives_up_when_gh_cannot_answer():
         assert pr_describe_cli._fetch_pr_body("owner/repo", 7) is None
 
 
-def test_applying_the_body_sends_it_on_stdin():
+def test_applying_the_body_sends_it_on_stdin(publishing_on):
     """`--body-file -` reads the body from stdin, so gh must be given one."""
     with mock.patch.object(pr_describe_cli.gh_client, "run",
                            return_value=mock.MagicMock(ok=True)) as run:
@@ -299,3 +299,33 @@ def test_no_pr_reports_before_demanding_a_worktree(capsys):
                    worktree_root=None, head_sha="aaaa111")
     assert pr_describe_cli.run_describe(ctx) == 0
     assert "nothing to describe" in capsys.readouterr().err
+
+
+# ── the publishing gate ─────────────────────────────────────────────────────
+
+
+def test_a_draft_run_does_not_edit_the_pr(capsys):
+    """The AI writes the body; publishing it is something a caller opts into.
+
+    Every other GitHub write in the `pr` CLI is gated, and this was the one
+    AI-authored write that reached a PR with no flag behind it.
+    """
+    with mock.patch.object(pr_describe_cli.gh_client, "run") as run:
+        assert pr_describe_cli._apply_body("owner/repo", 7, "NEW BODY") is False
+    run.assert_not_called()
+    assert "DRAFT" in capsys.readouterr().err
+
+
+def test_a_draft_run_shows_the_body_it_would_have_posted(capsys):
+    """Drafting is only useful if the operator can read what was withheld."""
+    with mock.patch.object(pr_describe_cli.gh_client, "run"):
+        pr_describe_cli._apply_body("owner/repo", 7, "NEW BODY")
+    assert "NEW BODY" in capsys.readouterr().err
+
+
+def test_post_lets_the_edit_through(publishing_on):
+    """Pairs with the draft case: proves the gate is not refusing everything."""
+    with mock.patch.object(pr_describe_cli.gh_client, "run",
+                           return_value=mock.MagicMock(ok=True)) as run:
+        assert pr_describe_cli._apply_body("owner/repo", 7, "NEW BODY") is True
+    assert run.call_args.kwargs["input_text"] == "NEW BODY"

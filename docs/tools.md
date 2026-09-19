@@ -425,7 +425,7 @@ pr [global flags] <command> [flags]
 | `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post] [--settle <id> --as <outcome>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort] [--onto <ref>]` | Rebase onto the branch's base — `--onto`, else the PR's base branch, else the repo's default branch |
-| `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
+| `describe [--force] [--dry-run] [--post]` | Revise the PR description against the repo's PR template; `--post` applies it (default: drafts) |
 | `gc` | Clean up stale PR review artifacts and cached state |
 
 **Every AI call `pr` makes is a phase.** Not only the review pipeline's: the
@@ -601,6 +601,12 @@ The pass records the HEAD it described. A repeated run against an unchanged
 branch is a no-op rather than another AI call, which is what lets `pr fix` call
 it unconditionally at the end of every run. `--force` ignores the recorded SHA;
 `--dry-run` prints the revision instead of applying it.
+
+The edit itself answers to the same publishing gate as every other GitHub write:
+without `--post` the revised body is drafted to stderr and the PR is untouched.
+`--dry-run` is the narrower request of the two — it prints the revision and
+records nothing, where a draft still records that the pass ran. `pr fix`
+forwards `--post` to the description for this reason, and forwards nothing else.
 
 The template is read from the first of `.github/pull_request_template.md`,
 `.github/PULL_REQUEST_TEMPLATE.md`, `pull_request_template.md`, or

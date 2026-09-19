@@ -249,4 +249,4 @@ def post_pending_fix_replies(
     if publishing.enabled():
         if attribution.commit_unpushed(record.commit_status):
             record.commit_status = CommitStatus.PUSHED
-        fix.replies_pending = False
+        fix.replies_sent()

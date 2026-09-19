@@ -39,6 +39,7 @@ from fix import types as fix_types
 from fix import verify as fix_verify
 from git import client as git_client
 from git import topology as git_topology
+from git.land import CommitStatus
 from pr import attribution
 from pr import comments as pc
 from pr import comments_fix as pr_comments_fix
@@ -50,7 +51,8 @@ from pr import summary_publish
 from pr import triage_round
 from pr.fix import FixOutcome, ItemOutcome
 from pr.thread_models import (
-    CommentFixResult, PRReport, ReplyOutcome, TrackingResult, TriageResult,
+    CommentFixResult, CommentItem, PRReport, ReplyOutcome, TrackingResult,
+    TriageResult,
 )
 
 
@@ -201,8 +203,9 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         # an earlier round's.
         attribution.stamp_pass_commit(tracking.both(FixOutcome.FIXED), cp.sha or "")
 
+        fixed_bucket = tracking.bucket(FixOutcome.FIXED)
         replies = self.round.replies.plus(comment_replies.settle_fixed(
-            tracking.bucket(FixOutcome.FIXED), self.threads_by_id, self.repo,
+            fixed_bucket, self.threads_by_id, self.repo,
             self.report.pr_number, cp, self.workdir,
         ))
         content = summary_model.RoundContent(
@@ -222,6 +225,8 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         fix_state.persist(
             self._state_for(content, cp, replies, summary, tracking),
             self.workdir, self.ctx, self.trail, resolved=list(replies.resolved),
+            summary_posted_url=summary.url or "",
+            replies_delivered=self._replies_delivered(fixed_bucket, cp),
         )
         self.result = _result_for(content, cp, replies, summary, run)
 
@@ -287,6 +292,33 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             return True
         return comment_replies.replies_drafted(
             self.round.already_addressed, self.round.dismissed)
+
+    def _replies_delivered(
+        self,
+        fixed_bucket: list[CommentItem],
+        cp: attribution.CommitPushResult,
+    ) -> bool:
+        """Whether this round sent its replies for real, discharging the debt.
+
+        `_replies_pending` is False whenever publishing is on — both of its
+        conditions require the gate to be shut — so the gate being open is
+        exactly the case where `settle_fixed` and `post_triage_replies` sent
+        whatever this round's triage found rather than queuing it. A round
+        re-triages every thread still open, so a debt an earlier round left
+        behind is retried here too; nothing to send is nothing owed, and
+        either way the queue this round closes has nothing left in it.
+
+        That holds for the triage half unconditionally, but `settle_fixed`
+        (`ai/lib/fix/comment_replies.py`) has a second gate of its own: it
+        refuses to send anything for the fixed bucket unless `cp.status` is
+        `PUSHED`. A round with fixed items but a commit that failed or held
+        at push time delivered nothing for that bucket, so reporting delivery
+        here would discharge a reply queue — this round's or a stale `True`
+        carried over from an earlier one — that was never actually sent.
+        """
+        if fixed_bucket and cp.status is not CommitStatus.PUSHED:
+            return False
+        return publishing.enabled()
 
 
 def _result_for(

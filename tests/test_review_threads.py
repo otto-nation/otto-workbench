@@ -1080,6 +1080,26 @@ class TestWhatTheRoundPersistsAndReports:
         state = self._state(tmp_path, dismissed=[self._entry()])
         assert state.replies_pending is True
 
+    def test_a_failed_push_does_not_report_the_fixed_reply_delivered(
+        self, tmp_path, publishing_on,
+    ):
+        """`settle_fixed` refuses to send the fixed bucket unless the commit
+        reached `PUSHED`, so reporting delivery here would discharge a reply
+        queue — this round's, or a stale `True` an earlier round left — that
+        was never actually sent.
+        """
+        adapter = self._adapter(tmp_path, fixable=[self._entry()])
+        cp = attribution.CommitPushResult("abc1234", CommitStatus.PUSH_FAILED, "")
+        assert adapter._replies_delivered([self._entry()], cp) is False
+
+    def test_a_pushed_commit_reports_the_fixed_reply_delivered(
+        self, tmp_path, publishing_on,
+    ):
+        """Pairs with the case above: proves the assertion is not vacuous."""
+        adapter = self._adapter(tmp_path, fixable=[self._entry()])
+        cp = attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, "")
+        assert adapter._replies_delivered([self._entry()], cp) is True
+
     def test_a_round_that_ran_names_the_commit_it_made(self, tmp_path):
         """HEAD after the pass, which is the commit the outcomes were measured against."""
         adapter = self._adapter(tmp_path, fixable=[self._entry()])

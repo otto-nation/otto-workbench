@@ -293,3 +293,83 @@ def test_fix_readiness_quotes_the_command_that_files_the_tracking_issue():
 
 def test_fix_readiness_clean_when_the_closeout_landed():
     assert _fix_with_closeout().readiness() == pr_domains.Readiness()
+
+
+class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
+    """`replies_pending` and `summary_deferred` are cycle-scoped.
+
+    Both are debts a phase other than the fix pass discharges, so a fix pass
+    reports them false meaning "not raised this round" rather than "paid". A
+    `--settle` that re-armed them used to lose the re-arm to the next `--fix`,
+    and `--finish` then skipped a closeout the PR was still owed.
+    """
+
+    def test_a_later_pass_does_not_wipe_a_settle_s_re_arm(self):
+        settled = pr_comments_fix.FixSummary(
+            replies_pending=True, summary_deferred=True,
+        )
+        later_fix = pr_comments_fix.FixSummary(
+            fix=FixRecord(items=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED)]),
+        )
+
+        merged = later_fix.merge_into(settled)
+
+        assert merged.replies_pending is True
+        assert merged.summary_deferred is True
+
+    def test_a_pass_that_raises_the_debt_still_sets_it(self):
+        raised = pr_comments_fix.FixSummary(
+            replies_pending=True, summary_deferred=True,
+        )
+
+        merged = raised.merge_into(pr_comments_fix.FixSummary())
+
+        assert merged.replies_pending is True
+        assert merged.summary_deferred is True
+
+    def test_draining_the_queue_is_what_clears_it(self):
+        summary = pr_comments_fix.FixSummary(replies_pending=True)
+
+        summary.replies_sent()
+
+        assert summary.replies_pending is False
+
+    def test_posting_the_summary_records_the_url_and_clears_the_debt(self):
+        """Together, because either alone is a state that misreports itself."""
+        summary = pr_comments_fix.FixSummary(summary_deferred=True)
+
+        summary.summary_posted("https://example.test/c/1")
+
+        assert summary.summary_url == "https://example.test/c/1"
+        assert summary.summary_deferred is False
+
+    def test_a_cleared_debt_stays_cleared_through_a_later_round(self):
+        """The discharge must not be undone by the sticky-OR it lives beside."""
+        paid = pr_comments_fix.FixSummary(replies_pending=True)
+        paid.replies_sent()
+
+        merged = pr_comments_fix.FixSummary().merge_into(paid)
+
+        assert merged.replies_pending is False
+
+    def test_a_round_that_delivers_the_debt_itself_is_not_left_owed(self):
+        """The merge alone cannot tell "delivered" from "silent" — the caller
+        that knows which one happened has to say so with an explicit discharge
+        after the merge, the way `fix_state.persist` does for the real pass.
+
+        Without that discharge, `later`'s honest ``False`` — this round posted
+        the summary and sent the reply itself, so neither is owed — gets OR'd
+        against `prior`'s stale ``True`` and comes out stuck true forever.
+        """
+        prior = pr_comments_fix.FixSummary(replies_pending=True, summary_deferred=True)
+        later = pr_comments_fix.FixSummary()
+
+        merged = later.merge_into(prior)
+        assert merged.replies_pending is True
+        assert merged.summary_deferred is True
+
+        merged.replies_sent()
+        merged.summary_posted("https://example.test/c/2")
+
+        assert merged.replies_pending is False
+        assert merged.summary_deferred is False

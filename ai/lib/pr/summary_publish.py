@@ -527,7 +527,6 @@ def render_deferred_summary(
         folded_texts=summary_model.folded_restatements(content, threads_by_id))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
-        fix.summary_url = url
-        fix.summary_deferred = False
+        fix.summary_posted(url)
     elif publishing.enabled():
         log.error("failed to post deferred fix summary")

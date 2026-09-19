@@ -316,3 +316,45 @@ class TestReconcileWritesTheWholeSettlement:
         record = self._record()
 
         assert record.reconcile({}) == 0
+
+
+class TestTheDischargeLandsOnTheMergedState:
+    """A round that delivered its own debt must not be left owing it.
+
+    `FixSummary.merge_into` ORs `replies_pending` and `summary_deferred`
+    against the prior round, so a fresh `False` cannot clear them — which is
+    correct for a round that said nothing, and wrong for a round that posted
+    the summary or sent the reply itself. `persist` is where the two are told
+    apart, because it is the caller that knows which happened and it runs after
+    the merge.
+    """
+
+    def _persisted(self, prior, **kw):
+        state = _make_state(prior)
+        with patch("pr.state.load_or_init", return_value=state), \
+             patch("pr.state.save_state"):
+            fix_state.persist(FixSummary(), _STATE_WORKTREE, make_ctx(), None, **kw)
+        return state
+
+    def test_a_delivered_reply_clears_the_queue_the_merge_re_armed(self):
+        state = self._persisted(
+            FixSummary(fix=_fix().fix, replies_pending=True),
+            replies_delivered=True,
+        )
+        assert state.fix.replies_pending is False
+
+    def test_a_posted_summary_clears_its_debt_and_records_the_url(self):
+        state = self._persisted(
+            FixSummary(fix=_fix().fix, summary_deferred=True),
+            summary_posted_url="https://example.test/c/9",
+        )
+        assert state.fix.summary_deferred is False
+        assert state.fix.summary_url == "https://example.test/c/9"
+
+    def test_a_silent_round_leaves_both_debts_standing(self):
+        """The control: no discharge argued, so the sticky-OR keeps them."""
+        state = self._persisted(
+            FixSummary(fix=_fix().fix, replies_pending=True, summary_deferred=True),
+        )
+        assert state.fix.replies_pending is True
+        assert state.fix.summary_deferred is True

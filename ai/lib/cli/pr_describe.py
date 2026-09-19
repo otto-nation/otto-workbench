@@ -27,6 +27,7 @@ from gh import client as gh_client
 from git import client as git_client
 from git import topology as git_topology
 from core import log
+from core import publishing
 from core import run_lock
 from pr import context as pr_context
 from pr import state as pr_state
@@ -172,6 +173,19 @@ def _usable_revision(text: str) -> bool:
 
 
 def _apply_body(repo: str, pr_number: int, body: str) -> bool:
+    """Replace the PR body, when publishing is on. Returns whether it landed.
+
+    Gated here rather than at the caller, matching `pr.comments._gh_post`: the
+    policy belongs beside the write, so a second caller cannot reach GitHub by
+    forgetting to ask. A draft reports False because nothing was written, and
+    `run_describe` reads that as the body not having been applied.
+
+    This is the write the gate most exists for — the text is AI-authored and
+    replaces a description a human wrote.
+    """
+    if not publishing.enabled():
+        publishing.draft(f"pr edit {repo}#{pr_number} --body-file -", body)
+        return False
     r = gh_client.run(
         "pr", "edit", str(pr_number), "--repo", repo, "--body-file", "-",
         input_text=body,
@@ -261,16 +275,24 @@ def run_describe(
         print(revised)
         return 0
 
-    if not _apply_body(ctx.repo, ctx.pr_number, revised):
+    applied = _apply_body(ctx.repo, ctx.pr_number, revised)
+    if not applied and publishing.enabled():
+        # The gate was open and the write still failed — a real error, not a
+        # draft. publishing.enabled() is what tells the two apart: _apply_body
+        # returns False for both, and a draft is not a failure.
         if trail:
             trail.error("describe", "could not write the PR body",
                         data={"pr": ctx.pr_number})
         return 1
 
-    log.info(f"Revised PR description against {template_path or 'the default template'}")
-    if trail:
-        trail.info("describe", "description revised",
-                   data={"template": template_path, "head_sha": ctx.head_sha})
+    if applied:
+        log.info(f"Revised PR description against {template_path or 'the default template'}")
+        if trail:
+            trail.info("describe", "description revised",
+                       data={"template": template_path, "head_sha": ctx.head_sha})
+    # Recorded either way: a draft still reflects a real revision the AI
+    # produced at this HEAD, so a repeated run before `--post` should not
+    # re-earn the AI call — see the module docstring's commit-awareness note.
     _persist(wt_path, ctx, DescribeSummary(
         head_sha=ctx.head_sha, template_path=template_path,
         changed=True, updated_at=pr_state.now_iso(),
@@ -292,6 +314,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Revise even when HEAD has not moved since the last pass")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the revision instead of applying it")
+    parser.add_argument("--post", action="store_true",
+                        help="Apply the revision to the PR; without it the edit "
+                             "is drafted")
     add_trail_args(parser)
 
     args = parser.parse_args(argv)
@@ -322,6 +347,15 @@ def main(argv: list[str] | None = None) -> int:
         started=pr_state.now_iso(),
         worktree=worktree,
     )
+
+    # After the lock and before the work, matching every other gated command.
+    # `--dry-run` is a narrower request than a draft — it prints the revision
+    # and writes no state — so it stays its own flag rather than folding in.
+    if args.post:
+        publishing.enable()
+    elif not args.dry_run:
+        log.info("Draft mode — the PR body is not edited. "
+                 "Re-run with --post to apply it.")
 
     trail = Trail.start(
         script=SCRIPT,

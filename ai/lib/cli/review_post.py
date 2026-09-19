@@ -224,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Parse and classify without posting")
     parser.add_argument("--submit", action="store_true",
                         help="Submit the review after posting (default: leave PENDING)")
+    parser.add_argument("--expect-ref",
+                        help="Refuse the review unless its sidecar names this "
+                             "branch as the one it was written for. Opt-in: "
+                             "omitted, or a sidecar with no branch recorded, "
+                             "always publishes")
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE,
                         help=f"Max inline comments per review chunk (default: {DEFAULT_CHUNK_SIZE})")
     add_trail_args(parser)
@@ -240,6 +245,23 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     repo = sidecar.repo
     args.repo = repo
+
+    # The artifact keys on the PR number and the run lock keys on the branch, so
+    # two runs the lock treats as unrelated can still reach one review.md. This
+    # is where they are told apart: the caller says which branch it is
+    # publishing for, and a sidecar naming a different one is another run's
+    # review — possibly one still being written.
+    #
+    # Both halves are optional and a missing one publishes, which is deliberate
+    # rather than lax. A sidecar predating the field has no branch to check, and
+    # refusing on that would strand every review already on disk; a caller that
+    # does not pass the flag has not claimed a branch to check against.
+    if args.expect_ref and sidecar.head_ref and sidecar.head_ref != args.expect_ref:
+        log.error(
+            f"This review was written for {sidecar.head_ref}, not "
+            f"{args.expect_ref} — refusing to post another run's review")
+        log.dim(f"Review file: {review_path}")
+        return 1
 
     trail = Trail.start(
         script=SCRIPT,

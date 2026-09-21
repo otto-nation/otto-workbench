@@ -303,8 +303,27 @@ _run_step_from_worktree() {
 @test "every extension in the real tree has an entry point Pi can load" {
   for dir in "$REPO_ROOT"/ai/pi/extensions/*/; do
     [ -d "$dir" ] || continue
+    # _-prefixed directories are shared modules imported by the extensions, not
+    # extensions themselves. step_pi_extensions skips them with a warning for
+    # want of an entry point, which is the behaviour the next test asserts.
+    [[ "$(basename "$dir")" == _* ]] && continue
     [ -f "${dir}index.ts" ] || [ -f "${dir}index.js" ] || [ -f "${dir}package.json" ]
   done
+}
+
+@test "a shared module is not installed as an extension" {
+  # ../_shared is imported by the guards' detect.ts files. Node resolves it
+  # from the extension's real path rather than its installed symlink, so it
+  # must stay out of ~/.pi/agent/extensions rather than being installed beside
+  # them. It has no index.ts/index.js/package.json, so step_pi_extensions
+  # skips it the same way it skips any other entry-point-less directory.
+  mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/_shared"
+  printf 'export function helper() {}\n' \
+    > "$FAKE_WORKBENCH/ai/pi/extensions/_shared/util.ts"
+  _make_extension capture
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$PI_EXT_DIR/_shared" ]
 }
 
 # ─── sleep-guard ──────────────────────────────────────────────────────────
@@ -620,10 +639,7 @@ pytest tests/ -q | tail -6'
 # "allowed" for every command — including the ones it exists to catch.
 _claude_guard() {
   local payload
-  payload=$(python3 -c '
-import json, sys
-print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
-' "$1")
+  payload=$(_json_command_payload "$1")
   if printf '%s' "$payload" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" > /dev/null 2>&1; then
     echo allowed
   else
@@ -659,4 +675,159 @@ EOF'
       return 1
     }
   done
+}
+
+# ── issue-defer-guard ────────────────────────────────────────────────────────
+# Same split as the guards above: the predicate is in detect.ts, which imports
+# nothing. Whether a review has open findings is a filesystem question index.ts
+# asks, and the Claude guard's copy of it is covered in claude_settings.bats.
+
+# _files_issue COMMAND — prints true or false for isIssueFiling(COMMAND).
+_files_issue() {
+  run node --input-type=module -e "
+    const { isIssueFiling } = await import('$REPO_ROOT/ai/pi/extensions/issue-defer-guard/detect.ts');
+    process.stdout.write(String(isIssueFiling(process.argv[1])));
+  " -- "$1"
+}
+
+@test "issue-defer-guard: gh issue create is filing" {
+  _files_issue 'gh issue create --title x --body-file /tmp/b.md'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "issue-defer-guard: reads and other subcommands are not filing" {
+  local cmd
+  for cmd in 'gh issue view 1' 'gh issue list --state open' 'gh issue edit 3 --body x' 'gh pr create'; do
+    _files_issue "$cmd"
+    [ "$output" = false ] || {
+      echo "matched a non-filing command: $cmd"
+      return 1
+    }
+  done
+}
+
+@test "issue-defer-guard: the phrase inside another command is not filing" {
+  # A guard that fired on any mention would block reading about itself.
+  _files_issue 'echo gh issue create'
+  [ "$output" = false ]
+
+  _files_issue 'grep -rn "gh issue create" ai/'
+  [ "$output" = false ]
+}
+
+@test "issue-defer-guard: a filing after a cd still counts" {
+  _files_issue 'cd /tmp/repo && gh issue create --title x'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "issue-defer-guard: a filing on a later line still counts" {
+  # A bare `^`/`$` does not cross a literal newline, so a multi-line command —
+  # the sanctioned form for a compound cd, per bash-tool.md § Avoid Compound
+  # `cd` Commands — must not slip past on a raw whole-string match.
+  _files_issue 'cd /tmp/repo
+gh issue create --title x'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "issue-defer-guard: agrees with the Claude guard command for command" {
+  # Two guards enforcing one rule that disagree are worse than one guard: which
+  # answer you get would depend on which harness you happen to be in. The
+  # Claude side needs a repo with an open-findings review before its pattern is
+  # reached, so build one (via the same helper claude_settings.bats uses) and
+  # compare the pair on every shape.
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  local cmd payload claude_blocks pi_blocks
+  for cmd in \
+    'gh issue create --title x' \
+    'cd /tmp && gh issue create' \
+    'echo gh issue create' \
+    'grep -rn "gh issue create" ai/' \
+    'gh issue view 1' \
+    'gh issue list'; do
+
+    payload=$(_json_command_payload "$cmd")
+
+    if _guard_in "$sandbox" "$payload" > /dev/null 2>&1; then
+      claude_blocks=false
+    else
+      claude_blocks=true
+    fi
+
+    _files_issue "$cmd"
+    pi_blocks="$output"
+
+    [ "$claude_blocks" = "$pi_blocks" ] || {
+      echo "guards disagree on: $cmd (claude=$claude_blocks pi=$pi_blocks)"
+      return 1
+    }
+  done
+}
+
+# _probe SANDBOX — branchReviewHasOpenFindings() as the Pi guard sees it, run
+# from SANDBOX/repo with SANDBOX/state as the state root. The probe reads git
+# and the filesystem, so unlike the predicate helpers above it needs a cwd.
+_probe() {
+  run node --input-type=module -e "
+    process.chdir(process.argv[1] + '/repo');
+    process.env.WORKBENCH_STATE_DIR = process.argv[1] + '/state';
+    const { branchReviewHasOpenFindings } = await import('$REPO_ROOT/ai/pi/extensions/issue-defer-guard/detect.ts');
+    process.stdout.write(String(branchReviewHasOpenFindings()));
+  " -- "$1"
+}
+
+@test "issue-defer-guard: the probe sees open findings on the branch" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  _probe "$sandbox"
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "issue-defer-guard: the probe is quiet once every finding is ticked" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" "x")"
+
+  _probe "$sandbox"
+  [ "$output" = false ]
+}
+
+@test "issue-defer-guard: the probe fails open with no review, no branch, or no remote" {
+  # Each is a state the probe cannot answer in. Blocking on any of them would
+  # make the guard fire on repos it knows nothing about, which is worse than
+  # the mistake it exists to prevent.
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing")"
+  _probe "$sandbox"
+  [ "$output" = false ]
+
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+  git -C "$sandbox/repo" checkout -q --detach
+  _probe "$sandbox"
+  [ "$output" = false ]
+
+  git -C "$sandbox/repo" checkout -q "isaac/fix/thing"
+  git -C "$sandbox/repo" remote remove origin
+  _probe "$sandbox"
+  [ "$output" = false ]
+}
+
+@test "issue-defer-guard: both harnesses read the same review for one branch" {
+  # The probe and _branch_review_has_open_findings build the review path
+  # independently — same repo-from-remote, same branch slug, same state root.
+  # A rename on either side makes that guard read an empty directory and fall
+  # silent, so the two are held to one answer here.
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  _probe "$sandbox"
+  [ "$output" = true ]
+
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  [ "$status" -eq 2 ]
 }

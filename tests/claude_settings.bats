@@ -1765,3 +1765,80 @@ _referenced_home_paths() {
   run _run_guard '{"tool_input":{"command":"WORKBENCH_X=1 pytest tests/ | wc -l"}}'
   [ "$status" -eq 2 ]
 }
+
+# ── Filing an issue during an open self-review ───────────────────────────────
+# The guard reads the review the branch is under, so these need a git repo with
+# a remote and a branch, plus a state root holding a review file. _run_guard
+# above runs against the real cwd, which is this repo on whatever branch the
+# suite happens to be on — these cannot use it.
+
+# _guard_in and _review_sandbox live in test_helper.bash — shared with
+# pi_extensions.bats, which uses the same layout to compare the Pi guard
+# against this one.
+
+@test "guard: blocks gh issue create while the branch review has open findings" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"deferral"* ]]
+}
+
+@test "guard: allows gh issue create once every finding is fixed" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" "x")"
+
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "guard: allows gh issue create when the branch has no review" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing")"
+
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "guard: leaves reads and comments alone during an open review" {
+  local sandbox cmd
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  for cmd in "gh issue view 1" "gh issue list" "gh pr comment 5 --body x"; do
+    run _guard_in "$sandbox" "{\"tool_input\":{\"command\":\"$cmd\"}}"
+    [ "$status" -eq 0 ] || {
+      echo "blocked a read: $cmd"
+      return 1
+    }
+  done
+}
+
+@test "guard: fails open when it cannot tell which review applies" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  # Detached HEAD names no branch, and a repo with no origin names no repo.
+  # Either way the guard cannot resolve a review, and a guard that blocked on
+  # its own uncertainty would be worse than the mistake it prevents.
+  git -C "$sandbox/repo" checkout -q --detach
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  [ "$status" -eq 0 ]
+
+  git -C "$sandbox/repo" checkout -q "isaac/fix/thing"
+  git -C "$sandbox/repo" remote remove origin
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "guard: the fallback state root matches the one roots.sh derives" {
+  # The guard sources nothing, so it spells out REVIEWS_DIR's default. A change
+  # to roots.sh that this does not follow makes the guard read an empty
+  # directory and fall silent, which is a guard that has stopped working
+  # without failing.
+  local fallback
+  fallback=$(sed -n 's|.*WORKBENCH_STATE_DIR:-\([^}]*\)}.*|\1|p' "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
+  [ "$fallback" = '$HOME/.local/state/workbench' ]
+
+  grep -q '"\$HOME/.local/state/workbench"' "$REPO_ROOT/lib/roots.sh"
+}

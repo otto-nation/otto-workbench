@@ -286,6 +286,25 @@ JSON
   [[ "$output" == *"would not say whether these branches merged"* ]]
 }
 
+@test "a refused lookup warns that --age may still remove worktrees" {
+  # "no branch will be deleted this run" reads as "nothing happens" on its own,
+  # but an --age removal still takes the worktree while keeping the branch — see
+  # "a refused lookup keeps the branch on an age removal" below. The warning has
+  # to say so, or an operator relying on it alone is surprised by a vanished
+  # worktree.
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[{"branch":"feat/stale","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":$old_timestamp}}]
+JSON
+  export GH_THROTTLED=1
+
+  _run_cleanup --age 30 --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no branch will be deleted this run"* ]]
+  [[ "$output" == *"--age may still remove their worktrees"* ]]
+}
+
 @test "a refused lookup keeps the branch on an age removal" {
   # The worktree still goes — inactivity is a local fact and needs no tracker —
   # but the branch stays. Withholding --force-delete is not enough on its own:

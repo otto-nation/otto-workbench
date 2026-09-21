@@ -110,6 +110,11 @@ _branch_pr_state() {
   # rather than both discarded: whether a failure was a spent quota or something
   # this repo could never answer is the whole of the caller's decision. fd 3
   # carries the answer out untouched while stderr is captured for reading.
+  # The classic fd-3 stdout/stderr swap: `3>&1` hands the outer subshell's
+  # original stdout to fd 3, then `2>&1 1>&3` inside the command substitution
+  # sends stderr where stdout used to go (captured by `said=$(...)`) and
+  # redirects stdout to fd 3 (the real terminal/caller stdout) — swapping which
+  # stream the substitution captures.
   local said rc=0
   { said=$(gh api \
     "repos/{owner}/{repo}/pulls?state=all&head={owner}:${encoded}&per_page=$_BRANCH_PR_PAGE" \

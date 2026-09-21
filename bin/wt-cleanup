@@ -230,6 +230,16 @@ _pr_state() {
   echo "${pr_states[$branch]:-}"
 }
 
+# _git_signals_merged MAIN_STATE SYMBOLS — true when git's own read of the
+# worktree (not the PR tracker) marks the branch merged into the default
+# branch. The sole owner of that check: _is_merged and _detect_reason both
+# call it rather than each carrying its own copy, so the two cannot drift
+# apart and disagree about which signal fired.
+_git_signals_merged() {
+  local main_state="$1" symbols="$2"
+  [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]
+}
+
 _is_merged() {
   local main_state="$1" symbols="$2" pr_state="$3"
   # git calls a branch integrated the moment the default branch is merged *into*
@@ -237,7 +247,7 @@ _is_merged() {
   # open-PR guard runs first — and on a refused lookup that guard never ran, so
   # there is nothing here to trust.
   [[ "$pr_state" == "$PR_STATE_UNKNOWN" ]] && return 1
-  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]; then
+  if _git_signals_merged "$main_state" "$symbols"; then
     return 0
   elif [[ "$pr_state" == "MERGED" ]]; then
     return 0
@@ -255,11 +265,13 @@ _within_grace_period() {
 
 _detect_reason() {
   local main_state="$1" symbols="$2" pr_state="$3" timestamp="$4"
-  # Gated on _is_merged rather than reading the git signals directly, so the
+  # Gated on _is_merged rather than acting on _git_signals_merged alone, so the
   # reason cannot contradict the verdict: under a refused lookup this would
   # otherwise print "merged" for a worktree being kept for an --age reason.
+  # Both this check and _is_merged's call the same predicate, so a future
+  # change to what counts as a git-signal merge only has one place to make it.
   if _is_merged "$main_state" "$symbols" "$pr_state" \
-     && { [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]; }; then
+     && _git_signals_merged "$main_state" "$symbols"; then
     echo "merged"
   elif [[ "$pr_state" == "MERGED" ]]; then
     echo "pr merged"
@@ -357,7 +369,7 @@ main() {
   if [[ "$pr_lookup_refused" == "true" ]]; then
     _log "TRACKER-REFUSED branches=${#pr_branches[@]}"
     if [[ "$quiet" != "true" ]]; then
-      warn "GitHub would not say whether these branches merged — no branch will be deleted this run"
+      warn "GitHub would not say whether these branches merged — no branch will be deleted this run, though --age may still remove their worktrees"
     fi
   fi
 

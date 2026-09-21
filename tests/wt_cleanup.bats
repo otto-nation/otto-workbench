@@ -236,10 +236,9 @@ JSON
   _write_worktrees <<'JSON'
 [{"branch":"feat/unasked","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0}}]
 JSON
-  # No fixture file exists, so the mock's `gh auth status` fails and
-  # branch_pr_states returns before making a request.
-  rm -f "$GH_PR_MERGED" "$GH_PR_OPEN" "$GH_PR_CLOSED"
-
+  # This case writes no PR fixture. The mock reports `gh auth status` as failing
+  # when none of the three exists, and $TMPDIR is per-test, so the tracker is
+  # unreachable here without anything having to remove them.
   _run_cleanup
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]

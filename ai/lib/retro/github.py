@@ -502,9 +502,14 @@ def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
     # already made by the time the first row is seen. Bounding it means paging
     # by hand against `&page=N` with the window as the stop condition, which is
     # a change to the shared helper rather than to this caller.
-    # Upgrade trigger: if the GraphQL path is removed, or once a scanned repo
-    # has more than a few hundred closed PRs. Free today because GraphQL
-    # answers first and this runs only when that fails.
+    # Upgrade trigger: once this stops being a fallback — if the GraphQL path
+    # is removed — or once one scan's page count is a material share of the
+    # hourly REST budget, which at 100 per page means a repo in the tens of
+    # thousands of closed PRs. Measured 2026-09-21: 1066 closed PRs here, so a
+    # fallback run costs 11 requests out of 5000/hour, and the trail shows this
+    # path has not run once in 11 scans. An earlier wording put the threshold
+    # at "a few hundred closed PRs", which was already met the day it was
+    # written — a trigger that reads as live while naming nothing.
     since_date = datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
     endpoint = "pulls?state=closed&sort=updated&direction=desc&per_page=100"
     prs = _gh_api(endpoint, repo)

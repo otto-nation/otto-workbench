@@ -7,23 +7,48 @@
 # `git branch --merged` have nothing to compare and report it unmerged forever.
 # The PR state is the only signal that survives a re-rooted repo.
 #
-# The lookup is batched — one `gh pr list` for the whole repo, not one `gh pr
-# view` per branch, which cost a sequential round trip each.
+# The lookup asks about the branches the caller names, not about the repo. It
+# used to page the whole PR history with `gh pr list --limit 1000` and index the
+# result, which cost a page that grows with every merge to answer about the
+# handful of branches a machine has worktrees for — and silently stopped being
+# correct once a repo passed 1000 PRs, since the oldest fell off the page and
+# read as "no PR at all". A branch nobody asked about is one nobody has to fetch.
+#
+# One REST request per branch, against the `core` hourly budget. An aliased
+# GraphQL query would answer every branch for a single point, which is cheaper
+# on paper and worse here: `gh pr view`, `gh pr list` and every read the review
+# pipeline makes spend the *graphql* budget, and this runs unattended on every
+# session exit. It has been observed asking its question with graphql exhausted
+# and core almost untouched, where the batch returns no answer at all — and no
+# answer means a squash-merged worktree is kept forever, since git alone cannot
+# see that merge. Nothing else in `bin/` or `lib/` spends core.
+#
+# The per-branch cost that buys is bounded by what the caller can act on: one
+# worktree each, a handful per machine.
 #
 # ```bash
 # declare -A states
-# branch_pr_states states || echo "no tracker available"
+# branch_pr_states states feat/x feat/y || echo "no tracker available"
 # echo "${states[feat/x]:-}"   # OPEN | MERGED | CLOSED, or empty
 # ```
 #
 # Bash-only — the state map is an associative array returned through a nameref.
 # Sourced directly by scripts that already load `lib/ui.sh` or on its own;
 # it depends only on `gh` and `jq`.
+#
+# `ai/lib/gh/client.py` owns "how to talk to GitHub" for Python, with retries and
+# budget accounting this deliberately does not reach for: its rate-limit ladder
+# waits up to nine minutes, which inside a `--quiet` janitor is a hang nobody
+# sees. Nothing owns that question for bash, and the two `gh` calls below are not
+# yet a reason to build an owner — a third caller would be.
 
-# One page covers every repo this has been pointed at (738 PRs in the largest).
-# A truncated page is reported rather than silently dropping branches — see
-# branch_pr_states.
-_BRANCH_PR_LIMIT=1000
+# PRs per page. A branch with more than one page of PRs over its life does not
+# exist, and the reduction below only asks whether any is open and whether any
+# merged, which a second page could not change.
+#
+# ceiling: one page rather than --paginate, upgrade if a branch ever carries more
+# than 100 PRs — an earlier page holding the merge would read as CLOSED.
+_BRANCH_PR_PAGE=100
 
 # branch_gh_available — whether gh can answer for the current repo.
 branch_gh_available() {
@@ -31,63 +56,81 @@ branch_gh_available() {
   gh auth status >/dev/null 2>&1
 }
 
-# _branch_pr_json — the raw PR page, or an empty array when the call fails.
+# _branch_pr_state BRANCH — OPEN, MERGED or CLOSED on stdout, or nothing at all
+# when the branch has no PR. Returns 1 when the question could not be asked.
 #
-# Kept separate from the grouping below so the caller can count what the page
-# actually held; once grouped, that count is gone.
-_branch_pr_json() {
-  gh pr list --state all --limit "$_BRANCH_PR_LIMIT" \
-    --json headRefName,state 2>/dev/null || echo '[]'
+# A branch can carry several PRs over its life, so they are reduced to the state
+# that decides what may be done to it: an open PR outranks everything, and a
+# merge outranks an unmerged close.
+#
+# REST has no "merged" state — a merged PR is `state: "closed"` with a non-null
+# `merged_at`, and an abandoned one is `state: "closed"` with a null one. Reading
+# the state field alone collapses the two, and the difference is exactly what the
+# caller removes a worktree on.
+#
+# The `{owner}:` prefix on `head` is load-bearing rather than decorative: GitHub
+# ignores the filter outright without it and answers with the repo's most recent
+# hundred PRs, which this reduction reads as the branch being OPEN. It is gh's
+# own placeholder, so the slug costs no round trip — but it expands only inside
+# the endpoint string, never inside a `-f` value.
+_branch_pr_state() {
+  local branch="$1" encoded
+
+  # An empty name would filter on `head={owner}:` — the unfiltered page again,
+  # and an answer about a branch that was never named.
+  [[ -n "$branch" ]] || return 1
+
+  # A `&`, `#` or `?` in a branch name would otherwise end the query parameter
+  # and take the rest of the name with it.
+  encoded=$(jq -rn --arg b "$branch" '$b|@uri') || return 1
+
+  gh api \
+    "repos/{owner}/{repo}/pulls?state=all&head={owner}:${encoded}&per_page=$_BRANCH_PR_PAGE" \
+    --jq 'if   any(.[]; .state == "open")   then "OPEN"
+          elif any(.[]; .merged_at != null) then "MERGED"
+          elif length > 0                   then "CLOSED"
+          else empty end' 2>/dev/null
 }
 
-# _branch_pr_rows JSON — one `branch<TAB>state` row per branch with a PR.
+# branch_pr_states ASSOC_ARRAY_NAME BRANCH... — fill an associative array
+# branch → state for the named branches.
 #
-# A branch can carry several PRs over its life, so the rows are grouped and
-# reduced to the state that decides what may be done to it: an open PR outranks
-# everything, and a merge outranks an unmerged close.
-_branch_pr_rows() {
-  jq -r '
-    group_by(.headRefName)[]
-    | [ .[0].headRefName,
-        (map(.state)
-         | if index("OPEN") then "OPEN"
-           elif index("MERGED") then "MERGED"
-           else "CLOSED" end) ]
-    | @tsv' <<<"$1"
-}
-
-# branch_pr_states ASSOC_ARRAY_NAME — fill an associative array branch → state.
+# Returns 1 and leaves the array empty when no tracker is reachable or a request
+# fails, so callers can carry on with git-only signals rather than treating it as
+# fatal. The distinction matters in one direction only: an empty map read as "no
+# branch has a PR" is what would let an open PR's worktree be removed, so a
+# question nobody could answer must not come back looking like an answer.
 #
-# One `gh pr list` call for the whole repo, not one `gh pr view` per branch: the
-# per-branch form costs a sequential round trip each and is what made a sweep
-# over a hundred branches unusable.
-#
-# Returns 1 and leaves the array empty when no tracker is reachable, so callers
-# can carry on with git-only signals rather than treating it as fatal.
+# Naming no branches is not an error — it is a caller with nothing to ask about,
+# which is answered with an empty map and no round trip.
 branch_pr_states() {
   local -n __states="$1"
+  shift
   __states=()
 
+  [[ $# -gt 0 ]] || return 0
   branch_gh_available || return 1
 
-  local json
-  json="$(_branch_pr_json)"
-
+  # Accumulated and assigned in one pass at the end: a branch that fails after an
+  # earlier one answered must not leave a half-filled map, which reports the
+  # branches it reached and silently denies the rest.
+  local -a rows=()
   local branch state
-  while IFS=$'\t' read -r branch state; do
-    [[ -n "$branch" ]] || continue
-    __states["$branch"]="$state"
-  done < <(_branch_pr_rows "$json")
+  for branch in "$@"; do
+    state=$(_branch_pr_state "$branch") || return 1
+    # if, not `[[ ]] &&`: this is the last statement in the loop body, so under
+    # `set -e` a false test on the final branch would return 1 from the whole
+    # function — reporting "no tracker" for a lookup that answered.
+    if [[ -n "$state" ]]; then
+      rows+=("${branch}"$'\t'"${state}")
+    fi
+  done
 
-  # Counted before grouping, which collapses a branch's several PRs into one
-  # row and would hide a full page behind a short branch list. A full page means
-  # PRs went unread, and a branch whose only PR was dropped is indistinguishable
-  # from one that never had a PR at all.
-  local fetched
-  fetched="$(jq 'length' <<<"$json")"
-  if [[ $fetched -ge $_BRANCH_PR_LIMIT ]]; then
-    echo "warning: PR list hit the ${_BRANCH_PR_LIMIT}-entry limit;" \
-         "some branches may be misreported as having no PR" >&2
-  fi
+  local row
+  for row in ${rows[@]+"${rows[@]}"}; do
+    IFS=$'\t' read -r branch state <<<"$row"
+    __states["$branch"]="$state"
+  done
+
   return 0
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for lib/branch_state.sh — the batched PR-state lookup shared by the
+# Tests for lib/branch_state.sh — the per-branch PR-state lookup shared by the
 # cleanup tools.
 
 setup_file() {
@@ -7,16 +7,61 @@ setup_file() {
   MOCK_BIN="$BATS_FILE_TMPDIR/bin"
   mkdir -p "$MOCK_BIN"
 
-  # Serves whatever JSON the test wrote, and counts its own invocations so a
-  # test can assert the lookup is batched rather than per-branch.
+  # Answers `gh api repos/{owner}/{repo}/pulls?...` the way REST does: an array
+  # of `{state, merged_at}`, where a merged PR is `closed` with a timestamp.
+  # Serving that shape rather than a canned verdict is what keeps the precedence
+  # tests honest — they exercise the reduction against what the endpoint really
+  # returns, including the merged-is-closed trap.
+  #
+  # The endpoint is parsed for its `head=` filter and answered only for the
+  # branch named there. A request whose filter is missing or empty gets the
+  # unfiltered page, exactly as GitHub gives it — which is what lets a test prove
+  # the owner prefix and the empty-name guard matter.
+  #
+  # Invocations are counted, and the branches asked about recorded, so a test can
+  # asssert the call shape as well as the answer.
   cat > "$MOCK_BIN/gh" <<'FAKEGH'
 #!/usr/bin/env bash
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
   [[ "${GH_AUTHED:-true}" == "true" ]] && exit 0
   exit 1
-elif [[ "$1" == "pr" && "$2" == "list" ]]; then
+elif [[ "$1" == "api" ]]; then
   echo "call" >> "$GH_CALL_LOG"
-  cat "$GH_PR_JSON"
+  endpoint="$2"
+
+  # The reduction under test rides in --jq, so the mock has to apply it the way
+  # gh does. Serving the body unfiltered would test nothing but the mock.
+  jq_filter="."
+  while [[ $# -gt 0 ]]; do
+    [[ "$1" == "--jq" ]] && jq_filter="$2"
+    shift
+  done
+
+  [[ -n "${GH_API_FAIL:-}" ]] && { echo '{"message":"Not Found"}'; exit 1; }
+
+  # `{owner}:branch`, url-decoded far enough for the characters a branch name
+  # can carry. Absent when the caller built the filter wrong.
+  filter=""
+  [[ "$endpoint" == *"head="* ]] && filter="${endpoint#*head=}" && filter="${filter%%&*}"
+  printf '%s\n' "$filter" >> "$GH_BRANCH_LOG"
+
+  # GitHub ignores a head filter with no owner prefix and returns the whole
+  # page. The mock reproduces that rather than hiding it.
+  if [[ -z "$filter" || "$filter" != *:* ]]; then
+    jq -r "$jq_filter" < "$GH_PR_JSON"
+    exit 0
+  fi
+
+  branch="${filter#*:}"
+  branch="$(printf '%b' "${branch//%/\\x}")"
+  # An owner-prefixed but empty branch name is the unfiltered page too.
+  if [[ -z "$branch" ]]; then
+    jq -r "$jq_filter" < "$GH_PR_JSON"
+    exit 0
+  fi
+
+  jq -c --arg b "$branch" '[.[] | select(.headRefName == $b)]' < "$GH_PR_JSON" \
+    | jq -r "$jq_filter"
   exit 0
 fi
 exit 1
@@ -33,8 +78,11 @@ setup() {
   export PATH="$MOCK_BIN:$PATH"
   export GH_PR_JSON="$TMPDIR/prs.json"
   export GH_CALL_LOG="$TMPDIR/gh-calls.log"
+  export GH_BRANCH_LOG="$TMPDIR/gh-branches.log"
   export GH_AUTHED=true
+  unset GH_API_FAIL
   : > "$GH_CALL_LOG"
+  : > "$GH_BRANCH_LOG"
   echo '[]' > "$GH_PR_JSON"
 
   source "$REPO_ROOT/lib/branch_state.sh"
@@ -44,6 +92,9 @@ teardown() {
   common_teardown
 }
 
+# Fixtures are written in the endpoint's own vocabulary: `state` is open or
+# closed, and `merged_at` is what distinguishes a landed PR from an abandoned
+# one. `headRefName` is the mock's filter key, not a REST field.
 _write_prs() {
   cat > "$GH_PR_JSON"
 }
@@ -68,18 +119,18 @@ _gh_calls() {
 @test "branch_pr_states returns non-zero and leaves the map empty without auth" {
   export GH_AUTHED=false
   declare -A states
-  run branch_pr_states states
+  run branch_pr_states states feat/a
   [ "$status" -ne 0 ]
 
   # `run` executes in a subshell, so re-run to inspect the map itself.
-  branch_pr_states states || true
+  branch_pr_states states feat/a || true
   [ "${#states[@]}" -eq 0 ]
 }
 
-@test "branch_pr_states makes no gh pr list call without auth" {
+@test "branch_pr_states makes no api call without auth" {
   export GH_AUTHED=false
   declare -A states
-  branch_pr_states states || true
+  branch_pr_states states feat/a || true
   [ "$(_gh_calls)" -eq 0 ]
 }
 
@@ -87,12 +138,12 @@ _gh_calls() {
 
 @test "each branch maps to its PR state" {
   _write_prs <<'JSON'
-[{"headRefName":"feat/a","state":"MERGED"},
- {"headRefName":"feat/b","state":"OPEN"},
- {"headRefName":"feat/c","state":"CLOSED"}]
+[{"headRefName":"feat/a","state":"closed","merged_at":"2026-01-01T00:00:00Z"},
+ {"headRefName":"feat/b","state":"open","merged_at":null},
+ {"headRefName":"feat/c","state":"closed","merged_at":null}]
 JSON
   declare -A states
-  branch_pr_states states
+  branch_pr_states states feat/a feat/b feat/c
 
   [ "${states[feat/a]}" = "MERGED" ]
   [ "${states[feat/b]}" = "OPEN" ]
@@ -101,30 +152,108 @@ JSON
 
 @test "a branch with no PR is absent from the map" {
   _write_prs <<'JSON'
-[{"headRefName":"feat/a","state":"MERGED"}]
+[{"headRefName":"feat/a","state":"closed","merged_at":"2026-01-01T00:00:00Z"}]
 JSON
   declare -A states
-  branch_pr_states states
+  branch_pr_states states feat/a feat/never-opened
 
   [ -z "${states[feat/never-opened]:-}" ]
   [ "${#states[@]}" -eq 1 ]
 }
 
-@test "an empty PR list yields an empty map and still succeeds" {
+@test "naming no branches succeeds with an empty map and no call" {
   declare -A states
   run branch_pr_states states
   [ "$status" -eq 0 ]
+
+  branch_pr_states states
+  [ "${#states[@]}" -eq 0 ]
+  [ "$(_gh_calls)" -eq 0 ]
+}
+
+# ── The REST state vocabulary ────────────────────────────────────────────────
+
+@test "a closed PR with a merge timestamp is MERGED, not CLOSED" {
+  # REST has no "merged" state. Reading .state alone makes a landed branch
+  # indistinguishable from an abandoned one — and the caller removes a worktree
+  # on exactly that difference.
+  _write_prs <<'JSON'
+[{"headRefName":"feat/landed","state":"closed","merged_at":"2026-01-01T00:00:00Z"}]
+JSON
+  declare -A states
+  branch_pr_states states feat/landed
+
+  [ "${states[feat/landed]}" = "MERGED" ]
+}
+
+@test "a closed PR with no merge timestamp is CLOSED" {
+  _write_prs <<'JSON'
+[{"headRefName":"feat/abandoned","state":"closed","merged_at":null}]
+JSON
+  declare -A states
+  branch_pr_states states feat/abandoned
+
+  [ "${states[feat/abandoned]}" = "CLOSED" ]
+}
+
+# ── Request shape ────────────────────────────────────────────────────────────
+
+@test "the head filter carries an owner prefix" {
+  # Without it GitHub ignores the filter and answers with the repo's most recent
+  # hundred PRs — any one of them open makes every branch read as OPEN.
+  _write_prs <<'JSON'
+[{"headRefName":"feat/other","state":"open","merged_at":null}]
+JSON
+  declare -A states
+  branch_pr_states states feat/asked-about
+
+  # The fixture's open PR is on a different branch, so a filter that worked
+  # leaves the map empty. One that was dropped returns that PR and says OPEN.
+  [ "${#states[@]}" -eq 0 ]
+  # The name is url-encoded by the time it reaches the endpoint, so the prefix
+  # is what is asserted here rather than the branch spelling.
+  run cat "$GH_BRANCH_LOG"
+  [[ "$output" == *"{owner}:feat%2Fasked-about"* ]]
+}
+
+@test "a branch name carrying a query delimiter is encoded" {
+  # A raw & or # would end the query parameter and take the rest of the name
+  # with it, leaving a filter for a shorter branch that may well exist.
+  _write_prs <<'JSON'
+[{"headRefName":"feat/a&b#c","state":"open","merged_at":null}]
+JSON
+  declare -A states
+  branch_pr_states states 'feat/a&b#c'
+
+  [ "${states['feat/a&b#c']}" = "OPEN" ]
+  run cat "$GH_BRANCH_LOG"
+  [[ "$output" != *"&b"* ]]
+}
+
+@test "an empty branch name is refused rather than asked about" {
+  # `head={owner}:` is the unfiltered page again, so the answer would describe
+  # whatever PR happens to be newest.
+  _write_prs <<'JSON'
+[{"headRefName":"feat/other","state":"open","merged_at":null}]
+JSON
+  declare -A states
+  run branch_pr_states states ""
+  [ "$status" -ne 0 ]
+
+  branch_pr_states states "" || true
+  [ "${#states[@]}" -eq 0 ]
+  [ "$(_gh_calls)" -eq 0 ]
 }
 
 # ── Precedence across several PRs on one branch ──────────────────────────────
 
 @test "an open PR outranks a merged one on the same branch" {
   _write_prs <<'JSON'
-[{"headRefName":"feat/reopened","state":"MERGED"},
- {"headRefName":"feat/reopened","state":"OPEN"}]
+[{"headRefName":"feat/reopened","state":"closed","merged_at":"2026-01-01T00:00:00Z"},
+ {"headRefName":"feat/reopened","state":"open","merged_at":null}]
 JSON
   declare -A states
-  branch_pr_states states
+  branch_pr_states states feat/reopened
 
   # The branch was reused for follow-up work; deleting it would drop live work.
   [ "${states[feat/reopened]}" = "OPEN" ]
@@ -132,11 +261,11 @@ JSON
 
 @test "a merged PR outranks a closed one on the same branch" {
   _write_prs <<'JSON'
-[{"headRefName":"feat/retried","state":"CLOSED"},
- {"headRefName":"feat/retried","state":"MERGED"}]
+[{"headRefName":"feat/retried","state":"closed","merged_at":null},
+ {"headRefName":"feat/retried","state":"closed","merged_at":"2026-01-01T00:00:00Z"}]
 JSON
   declare -A states
-  branch_pr_states states
+  branch_pr_states states feat/retried
 
   # An abandoned first attempt does not undo the landing of the second.
   [ "${states[feat/retried]}" = "MERGED" ]
@@ -144,84 +273,57 @@ JSON
 
 @test "several closed PRs collapse to CLOSED" {
   _write_prs <<'JSON'
-[{"headRefName":"feat/twice","state":"CLOSED"},
- {"headRefName":"feat/twice","state":"CLOSED"}]
+[{"headRefName":"feat/twice","state":"closed","merged_at":null},
+ {"headRefName":"feat/twice","state":"closed","merged_at":null}]
 JSON
   declare -A states
-  branch_pr_states states
+  branch_pr_states states feat/twice
 
   [ "${states[feat/twice]}" = "CLOSED" ]
 }
 
-# ── Batching ─────────────────────────────────────────────────────────────────
+# ── Cost ─────────────────────────────────────────────────────────────────────
 
-@test "many branches cost exactly one gh call" {
-  jq -n '[range(50) | {headRefName: "feat/b\(.)", state: "MERGED"}]' > "$GH_PR_JSON"
+@test "each branch costs exactly one call" {
+  local -a branches=()
+  for i in $(seq 0 5); do branches+=("feat/b$i"); done
+  jq -n '[range(6) | {headRefName: "feat/b\(.)", state: "closed",
+                      merged_at: "2026-01-01T00:00:00Z"}]' > "$GH_PR_JSON"
+
   declare -A states
-  branch_pr_states states
+  branch_pr_states states "${branches[@]}"
 
-  [ "${#states[@]}" -eq 50 ]
-  [ "$(_gh_calls)" -eq 1 ]
+  [ "${#states[@]}" -eq 6 ]
+  [ "$(_gh_calls)" -eq 6 ]
 }
 
-# ── Re-entrancy ──────────────────────────────────────────────────────────────
+# ── Failure ──────────────────────────────────────────────────────────────────
 
-@test "a second call replaces the map rather than merging into it" {
-  _write_prs <<'JSON'
-[{"headRefName":"feat/gone","state":"MERGED"}]
-JSON
+@test "a failed request is a refusal, not an answer of no PR" {
+  # A throttle or an unreadable repo must not read as "this branch has no PR",
+  # which is the answer that lets an open PR's worktree be removed.
+  export GH_API_FAIL=1
   declare -A states
-  branch_pr_states states
+  run branch_pr_states states feat/a
+  [ "$status" -ne 0 ]
 
-  _write_prs <<'JSON'
-[{"headRefName":"feat/fresh","state":"OPEN"}]
-JSON
-  branch_pr_states states
-
-  [ -z "${states[feat/gone]:-}" ]
-  [ "${states[feat/fresh]}" = "OPEN" ]
+  branch_pr_states states feat/a || true
+  [ "${#states[@]}" -eq 0 ]
 }
 
-# ── Truncation ───────────────────────────────────────────────────────────────
-
-@test "hitting the page limit warns instead of silently undercounting" {
-  _BRANCH_PR_LIMIT=3
+@test "a branch failing after an earlier one answered leaves no partial map" {
+  # Assigning as each answer lands would report the branches reached and
+  # silently deny the rest — indistinguishable from those having no PR.
   _write_prs <<'JSON'
-[{"headRefName":"feat/a","state":"MERGED"},
- {"headRefName":"feat/b","state":"MERGED"},
- {"headRefName":"feat/c","state":"MERGED"}]
+[{"headRefName":"feat/first","state":"open","merged_at":null}]
 JSON
   declare -A states
-  run branch_pr_states states
 
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"hit the 3-entry limit"* ]]
-}
+  # The second branch is the empty name, which _branch_pr_state refuses after
+  # the first has already produced a row.
+  run branch_pr_states states feat/first ""
+  [ "$status" -ne 0 ]
 
-@test "a full page of PRs on one branch still warns" {
-  _BRANCH_PR_LIMIT=3
-  _write_prs <<'JSON'
-[{"headRefName":"feat/retried","state":"CLOSED"},
- {"headRefName":"feat/retried","state":"CLOSED"},
- {"headRefName":"feat/retried","state":"MERGED"}]
-JSON
-  declare -A states
-  run branch_pr_states states
-
-  # Grouping leaves one branch, so counting the map would read as 1 of 3 and
-  # stay quiet on a page that was in fact full.
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"hit the 3-entry limit"* ]]
-}
-
-@test "a list under the page limit warns about nothing" {
-  _BRANCH_PR_LIMIT=3
-  _write_prs <<'JSON'
-[{"headRefName":"feat/a","state":"MERGED"}]
-JSON
-  declare -A states
-  run branch_pr_states states
-
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
+  branch_pr_states states feat/first "" || true
+  [ "${#states[@]}" -eq 0 ]
 }

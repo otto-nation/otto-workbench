@@ -306,12 +306,23 @@ main() {
   default_wt=$(echo "$worktrees" | jq -r '
     .items | map(select(.worktree.main)) | .[0].worktree.path // ""')
 
-  # One lookup for the whole repo, before the loop — asking per worktree cost a
-  # sequential round trip each. Empty when no tracker is reachable, which leaves
-  # every verdict to the git signals wt list already carries.
+  # One lookup for every branch at once, before the loop — asking per worktree
+  # cost a sequential round trip each. Empty when no tracker is reachable, which
+  # leaves every verdict to the git signals wt list already carries.
+  #
+  # Only the branches with a worktree are asked about. The rows `wt list` carries
+  # for branches without one are skipped in the loop below before anything reads
+  # their PR state, so fetching it would be a question about a branch no answer
+  # can change.
+  local -a pr_branches=()
+  while IFS= read -r wt_branch; do
+    [[ -n "$wt_branch" && "$wt_branch" != "null" ]] && pr_branches+=("$wt_branch")
+  done < <(echo "$worktrees" | jq -r '
+    .items[] | select(.worktree.path != null) | .branch // empty')
+
   declare -A pr_states
-  if [[ $count -gt 0 ]]; then
-    branch_pr_states pr_states || true
+  if [[ ${#pr_branches[@]} -gt 0 ]]; then
+    branch_pr_states pr_states "${pr_branches[@]}" || true
   fi
 
   _log "START count=$count dry_run=$dry_run quiet=$quiet max_age=$max_age_days"

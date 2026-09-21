@@ -246,6 +246,19 @@ def _threads_for(repo: str, pr_node: dict) -> list[dict]:
     return thread_nodes
 
 
+def _comment_count(threads: list[dict]) -> int:
+    """How many comments these thread nodes actually carry.
+
+    The comments are what the retro reads — a thread with none contributes
+    nothing to the report — so this rather than the thread count is what says
+    whether one read is richer than another.
+    """
+    return sum(
+        len((thread.get("comments") or {}).get("nodes") or [])
+        for thread in threads
+    )
+
+
 def _richer_of(have: list[dict], repo: str, number: int) -> list[dict]:
     """The refetched threads, or the ones already in hand when it came back worse.
 
@@ -256,16 +269,26 @@ def _richer_of(have: list[dict], repo: str, number: int) -> list[dict]:
     comments the detail query had already paid for and delivered, turning a
     failed second call into a PR the retro reports as having no discussion.
 
-    Compared on length rather than on ``ThreadSet.complete``: an incomplete
-    walk that still found more threads than the truncated page is the better
-    answer, and that is the ordinary outcome here — the refetch is only ever
-    made because the page in hand is known to be short.
+    Richer is counted in *comments*, not threads, because either read can be
+    short in either dimension: the batch is capped on both the thread list and
+    the comments nested in each thread, and the refetch pages both but can fail
+    part-way and return a thread whose comments it could not finish draining.
+    Comparing thread counts alone would accept a refetch that matched on
+    threads while carrying fewer comments in them, which is the same data loss
+    one level down.
+
+    Neither read's ``complete`` flag gates the choice. An incomplete walk that
+    still found more is the better answer, and that is the ordinary outcome
+    here — the refetch is only ever made because the page in hand is known
+    short.
     """
     refetched = fetch_review_threads(repo, number).threads
-    if len(refetched) < len(have):
+    mine, theirs = _comment_count(have), _comment_count(refetched)
+    if theirs < mine or len(refetched) < len(have):
         log.warn(
-            f"{repo}#{number}: refetching threads returned {len(refetched)} where "
-            f"the first read had {len(have)} — keeping the first read")
+            f"{repo}#{number}: refetching threads returned {len(refetched)} thread(s) "
+            f"carrying {theirs} comment(s) where the first read had {len(have)} "
+            f"carrying {mine} — keeping the first read")
         return have
     return refetched
 

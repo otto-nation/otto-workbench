@@ -331,6 +331,38 @@ def test_a_failed_refetch_keeps_the_threads_already_in_hand():
     assert [c["body"] for c in results[0]["comments"]] == ["drop the retry"]
 
 
+def test_a_refetch_with_the_same_threads_but_fewer_comments_is_rejected():
+    """Thread count alone is not what makes one read richer than another.
+
+    Both reads can be short in either dimension — the detail query caps the
+    thread list *and* the comments nested in each thread, and the refetch pages
+    both but can fail part-way through draining one. A refetch that matches on
+    threads while carrying fewer comments in them is the same data loss the
+    empty-refetch case causes, one level down.
+    """
+    deep = json.loads(_detail(1, "2026-08-01T00:00:00Z").stdout)
+    threads = deep["data"]["repository"]["pullRequest"]["reviewThreads"]
+    threads["nodes"][0]["comments"]["nodes"].append(
+        {"author": {"login": "kgn"}, "body": "and the follow-up"})
+    threads["nodes"][0]["comments"]["totalCount"] = 9
+    thinner = [
+        {"path": "handler.go", "line": 42, "comments": {"nodes": [
+            {"author": {"login": "kgn"}, "body": "drop the retry"}]}},
+    ]
+
+    with patch.object(github.gh_client, "graphql") as gql, \
+         patch.object(github, "fetch_review_threads") as refetch:
+        gql.side_effect = [
+            _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
+            CmdResult(0, json.dumps(deep)),
+        ]
+        refetch.return_value = ThreadSet(thinner, complete=True)
+        results = github.fetch_repo_review_data("owner/repo", _JUN)
+
+    bodies = [c["body"] for c in results[0]["comments"]]
+    assert bodies == ["drop the retry", "and the follow-up"]
+
+
 def test_a_refetch_that_found_more_replaces_what_was_in_hand():
     """The ordinary outcome, and the control for the test above.
 

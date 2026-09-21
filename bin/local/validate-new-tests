@@ -298,24 +298,29 @@ def _test_body(path: Path, name: str) -> str:
                   or line.lstrip().startswith(opener)), None)
     if start is None:
         return ""
-    closer = "}" if path.suffix == ".bats" else None
     indent = len(lines[start]) - len(lines[start].lstrip())
-    end = len(lines)
-    for i, line in enumerate(lines[start + 1:], start + 1):
-        if closer:
-            if line == closer:
-                end = i
-                break
-            continue
-        # A sibling at the same or a lesser indent — a method of the same
-        # class, or a top-level def once the class ends — closes the body.
-        # A plain `startswith` would miss every method in a class, since each
-        # is indented and never matches a bare "def " at column 0.
-        stripped = line.lstrip()
-        if stripped.startswith("def ") and (len(line) - len(stripped)) <= indent:
-            end = i
-            break
+    ends = _bats_body_ends if path.suffix == ".bats" else _python_body_ends
+    end = next(
+        (i for i, line in enumerate(lines[start + 1:], start + 1) if ends(line, indent)),
+        len(lines),
+    )
     return "\n".join(lines[start:end + 1])
+
+
+def _bats_body_ends(line: str, _indent: int) -> bool:
+    """A bats body ends at the closing brace in column zero."""
+    return line == "}"
+
+
+def _python_body_ends(line: str, indent: int) -> bool:
+    """A python body ends at the next sibling def.
+
+    Same indent or less — a method of the same class, or a top-level def once
+    the class ends. A bare `startswith("def ")` would miss every method in a
+    class, since each is indented and never matches at column zero.
+    """
+    stripped = line.lstrip()
+    return stripped.startswith("def ") and (len(line) - len(stripped)) <= indent
 
 
 def _findings(

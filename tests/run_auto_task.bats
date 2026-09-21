@@ -66,14 +66,24 @@ teardown() {
   common_teardown
 }
 
-# The script detaches, so every assertion waits for the stub to land.
-_wait_for_argv() {
-  local waited=0
-  while [[ ! -f "$ARGV_LOG" ]] && [[ "$waited" -lt 50 ]]; do
+# _wait_for <predicate-fn> — polls up to 5s (50 x 0.1s) for a predicate
+# function to report success. The script detaches, so every assertion below
+# waits for the stub (or its output) to land rather than for a fixed sleep.
+_wait_for() {
+  local predicate="$1" waited=0
+  while ! "$predicate"; do
+    [[ "$waited" -ge 50 ]] && return 1
     sleep 0.1
     waited=$((waited + 1))
   done
+}
+
+_argv_log_exists() {
   [[ -f "$ARGV_LOG" ]]
+}
+
+_wait_for_argv() {
+  _wait_for _argv_log_exists
 }
 
 # ── The invocation ───────────────────────────────────────────────────────────
@@ -105,9 +115,26 @@ _wait_for_argv() {
 }
 
 @test "run-auto-task: returns immediately without waiting for the session" {
-  # A Stop hook must not block on a multi-minute agent.
+  # A Stop hook must not block on a multi-minute agent. The default stub
+  # returns in milliseconds regardless of backgrounding, so it can't tell a
+  # detached call from a blocking one — swap in a stub that sleeps long
+  # enough for a blocking call to visibly miss the bound below.
+  cat > "$STUB_BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+sleep 3
+EOF
+  chmod +x "$STUB_BIN/claude"
+
+  local start elapsed
+  start="$(date +%s)"
   run "$RUN_AUTO_TASK" retro
+  elapsed=$(( $(date +%s) - start ))
+
   [[ "$status" -eq 0 ]]
+  # Blocking on the 3s stub would put elapsed at 3; a detached call finishes
+  # in well under a second, leaving room for the boundary rounding a
+  # whole-second clock can add.
+  [[ "$elapsed" -le 1 ]]
 }
 
 # ── The outcome nobody was asserting ─────────────────────────────────────────
@@ -122,14 +149,12 @@ _wait_for_argv() {
   # Wait for content, not for the file. The shell redirect creates it empty
   # before the session writes a byte, so breaking on existence greps nothing
   # and the assertion passes against the very output it is meant to catch.
-  local waited=0 log_file=""
-  while [[ "$waited" -lt 50 ]]; do
+  local log_file=""
+  _dream_log_has_content() {
     log_file="$(find "$CLAUDE_LOG_DIR" -name 'dream-*.log' | head -1)"
-    [[ -n "$log_file" && -s "$log_file" ]] && break
-    log_file=""
-    sleep 0.1
-    waited=$((waited + 1))
-  done
+    [[ -n "$log_file" && -s "$log_file" ]]
+  }
+  _wait_for _dream_log_has_content
   [[ -n "$log_file" ]]
 
   # Fails on the pre-fix behaviour, which is the point of having it.

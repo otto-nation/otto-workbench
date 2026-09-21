@@ -706,6 +706,16 @@ _files_issue() {
   [ "$output" = true ]
 }
 
+@test "issue-defer-guard: a filing on a later line still counts" {
+  # A bare `^`/`$` does not cross a literal newline, so a multi-line command —
+  # the sanctioned form for a compound cd, per bash-tool.md § Avoid Compound
+  # `cd` Commands — must not slip past on a raw whole-string match.
+  _files_issue 'cd /tmp/repo
+gh issue create --title x'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
 @test "issue-defer-guard: agrees with the Claude guard command for command" {
   # Two guards enforcing one rule that disagree are worse than one guard: which
   # answer you get would depend on which harness you happen to be in. The

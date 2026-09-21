@@ -235,11 +235,15 @@ fi
 # explanation to the operator, which is the trade for catching the case where
 # the fix pass is committing the same finding as you write the issue.
 # Statement-anchored, so `echo gh issue create` and a grep over a script that
-# mentions the phrase are not matched. Kept in step with ISSUE_CREATE in
-# ai/pi/extensions/issue-defer-guard/detect.ts — tests/pi_extensions.bats holds
-# the two to one set of answers.
+# mentions the phrase are not matched. Reads $stripped rather than $cmd — a
+# bare `^` does not cross a literal newline, so a `cd`-then-filing command
+# spanning two lines (the sanctioned form for a compound cd; see bash-tool.md
+# § Avoid Compound `cd` Commands) would otherwise slip past on a raw scan of
+# $cmd, which $stripped's `; `-joining exists to prevent. Kept in step with
+# ISSUE_CREATE in ai/pi/extensions/issue-defer-guard/detect.ts —
+# tests/pi_extensions.bats holds the two to one set of answers.
 re_issue_create='(^|[;&|][[:space:]]*)gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
-if [[ "$cmd" =~ $re_issue_create ]] && _branch_review_has_open_findings; then
+if [[ "$stripped" =~ $re_issue_create ]] && _branch_review_has_open_findings; then
   block "This branch's self-review has open findings, and filing an issue for one is a deferral that needs my agreement first — read what the fix pass did before acting on any finding yourself. If this issue is unrelated to the review, say so and file it. See general.md § Code Quality and self-review.md § Before PR Creation."
 fi
 

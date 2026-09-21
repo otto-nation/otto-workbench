@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import backend as ai_backend
 from agent import backend_claude as ai_backend_claude
+from agent import backend_pi as ai_backend_pi
 from agent import usage as ai_usage
 
 RESULT_ENVELOPE = {
@@ -573,3 +574,87 @@ class TestOneOwnerForBackendCalls:
     def test_a_call_through_the_owner_is_not_a_backend_call(self):
         tree = ast.parse("agent_invoke.run_prompt(Phase.DESCRIBE, text, cwd=d)")
         assert list(_backend_calls(tree, _SPAWNING)) == []
+
+
+class TestBackendUsageParity:
+    """Whichever backend serves a prompt, the ledger learns the same things.
+
+    Not equal numbers — the two are driven by different recorded transcripts —
+    but the same *shape of measurement*. A backend that reports cost and no
+    tokens, or text and no usage, is one whose rows silently mean less than the
+    other's, and `otto-log stats` cannot tell that apart from cheap work.
+
+    Both sides are fed output captured from the real CLI: the Claude envelope
+    above, and tests/fixtures/pi_prompt_session.jsonl for Pi.
+    """
+
+    def _claude(self, monkeypatch, tmp_path):
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(RESULT_ENVELOPE), "")
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        return ai_backend_claude.prompt("hi", cwd=str(tmp_path))
+
+    def _pi(self, monkeypatch, tmp_path):
+        stream = (
+            Path(__file__).resolve().parent / "fixtures" / "pi_prompt_session.jsonl"
+        ).read_text()
+
+        class _Result:
+            stdout = stream
+            returncode = 0
+
+        monkeypatch.setattr(ai_backend_pi.subprocess, "run", lambda *a, **k: _Result())
+        return ai_backend_pi.prompt("hi", cwd=str(tmp_path))
+
+    def test_both_backends_return_the_measured_triple(self, monkeypatch, tmp_path):
+        for name, run in (("claude", self._claude), ("pi", self._pi)):
+            result = run(monkeypatch, tmp_path)
+            assert len(result) == 3, f"{name} did not return (text, code, usage)"
+            text, code, usage = result
+            assert text, f"{name} returned no reply text"
+            assert code == 0
+            assert usage is not None, f"{name} reported no usage"
+
+    def test_both_backends_report_cost_and_tokens(self, monkeypatch, tmp_path):
+        for name, run in (("claude", self._claude), ("pi", self._pi)):
+            _, _, usage = run(monkeypatch, tmp_path)
+            assert usage.cost > 0, f"{name} reported a free call"
+            assert usage.input_tokens > 0, f"{name} reported no input tokens"
+            assert usage.output_tokens > 0, f"{name} reported no output tokens"
+            assert usage.total_tokens > 0, f"{name} reported no tokens at all"
+
+    def test_both_backends_attribute_cost_to_a_model(self, monkeypatch, tmp_path):
+        # Without this `otto-log stats --by model` is blank for that backend.
+        for name, run in (("claude", self._claude), ("pi", self._pi)):
+            _, _, usage = run(monkeypatch, tmp_path)
+            assert usage.cost_by_model, f"{name} attributed cost to no model"
+            assert sum(usage.cost_by_model.values()) == pytest.approx(usage.cost)
+
+
+class TestPiAgentPathParity:
+    """The agent path is measured too, not only prompts.
+
+    invoke_agent/invoke_fix reach the ledger through a synthesized result
+    record rather than a CLI envelope, so the token columns have their own way
+    of going quietly to zero.
+    """
+
+    def test_a_pi_session_log_parses_like_a_claude_one(self, tmp_path):
+        stats = json.loads(
+            (Path(__file__).resolve().parent / "fixtures" / "pi_rpc_stats_response.json").read_text()
+        )["data"]
+
+        pi_log = tmp_path / "pi.jsonl"
+        ai_backend_pi._write_result_record(
+            str(pi_log), "completed", 2, stats["cost"], 4321, stats, "claude-opus-5",
+        )
+        claude_log = tmp_path / "claude.jsonl"
+        claude_log.write_text(json.dumps(RESULT_ENVELOPE) + "\n")
+
+        pi_usage = ai_usage.parse_session_log(str(pi_log))
+        claude_usage = ai_usage.parse_session_log(str(claude_log))
+
+        for name, usage in (("pi", pi_usage), ("claude", claude_usage)):
+            assert usage.cost > 0, f"{name} session log reported a free run"
+            assert usage.total_tokens > 0, f"{name} session log reported no tokens"
+            assert usage.cost_by_model, f"{name} session log named no model"

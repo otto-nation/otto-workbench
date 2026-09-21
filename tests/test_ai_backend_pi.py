@@ -483,3 +483,179 @@ class TestPreflight:
     def test_always_passes(self):
         """Pi resolves models itself — Vertex quota is not its config surface."""
         assert ai_backend_pi.preflight({"claude-sonnet-5": ["group"]}, None) is True
+
+
+# ── Fixtures captured from a live Pi run ─────────────────────────────────────
+# Hand-written fixtures agree with whatever the code already does, which is how
+# every bug these cover survived: `args` read as `arguments`, session stats read
+# off the response envelope, one prompt's two message costs read as one. See
+# tests/fixtures/README-pi-fixtures.md for the recapture commands.
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def _prompt_stream() -> str:
+    return (FIXTURES / "pi_prompt_session.jsonl").read_text()
+
+
+def _stats_response() -> dict:
+    return json.loads((FIXTURES / "pi_rpc_stats_response.json").read_text())
+
+
+class TestSessionStatsEnvelope:
+    """get_session_stats returns {type, command, success, data} — read the data."""
+
+    def test_stats_are_unwrapped_from_the_response(self):
+        # Reading `tokens` off the envelope yields {} and a record of four
+        # zeroes, which reaches the ledger as a run that cost money and spent
+        # no tokens. Nothing else in the pipeline can tell that apart from a
+        # genuinely cache-free call.
+        response = _stats_response()
+
+        class _Proc:
+            stdin = io.StringIO()
+
+            def __init__(self):
+                self.stdout = io.StringIO(json.dumps(response) + "\n")
+
+        stats = ai_backend_pi._get_stats_after_agent_end(_Proc())
+
+        assert stats["tokens"]["cacheWrite"] == 33710
+        assert stats["cost"] == 0.084319
+        assert "data" not in stats, "the envelope was returned instead of its data"
+
+    def test_result_record_carries_the_real_token_counts(self, tmp_path):
+        from agent import usage as ai_usage
+
+        log = tmp_path / "session.jsonl"
+        ai_backend_pi._write_result_record(
+            str(log), "completed", 1, 0.084319, 1234,
+            _stats_response()["data"], "claude-opus-5",
+        )
+
+        parsed = ai_usage.parse_session_log(str(log))
+        assert parsed.cost == pytest.approx(0.084319)
+        assert parsed.input_tokens == 2
+        assert parsed.output_tokens == 4
+        assert parsed.cache_write_tokens == 33710
+        # The whole point: the session moved 33,716 tokens and the ledger says so.
+        assert parsed.total_tokens == 33716
+
+    def test_result_record_attributes_cost_to_a_model(self, tmp_path):
+        # Without modelUsage every Pi row is blank under `otto-log stats --by model`.
+        from agent import usage as ai_usage
+
+        log = tmp_path / "session.jsonl"
+        ai_backend_pi._write_result_record(
+            str(log), "completed", 1, 0.084319, 1234,
+            _stats_response()["data"], "claude-opus-5",
+        )
+
+        parsed = ai_usage.parse_session_log(str(log))
+        assert parsed.cost_by_model == {"claude-opus-5": pytest.approx(0.084319)}
+
+    def test_an_unnamed_model_still_records_cost(self, tmp_path):
+        from agent import usage as ai_usage
+
+        log = tmp_path / "session.jsonl"
+        ai_backend_pi._write_result_record(
+            str(log), "completed", 1, 0.084319, 1234,
+            _stats_response()["data"], None,
+        )
+
+        parsed = ai_usage.parse_session_log(str(log))
+        assert parsed.cost == pytest.approx(0.084319)
+        assert parsed.cost_by_model == {}
+
+
+class TestPromptUsage:
+    """A prompt call is measured, or it is invisible to the ledger."""
+
+    def test_prompt_command_asks_for_the_json_stream(self):
+        # Bare `-p` emits prose and no usage, which is how 953 prompt-shaped
+        # calls would have gone unrecorded.
+        cmd = ai_backend_pi._build_prompt_cmd(model="haiku")
+        assert "--mode" in cmd and cmd[cmd.index("--mode") + 1] == "json"
+        assert cmd.index("-p") < cmd.index("--mode")
+
+    def test_reply_is_the_final_assistant_text(self):
+        from agent.backend_events import pi_prompt_result
+
+        text, _ = pi_prompt_result(_prompt_stream())
+        assert text == "The contents of `f.txt` are:\n\n```\nhello\n```"
+
+    def test_cost_sums_every_message_not_just_the_last(self):
+        # The fixture is a tool-using prompt: two assistant messages, two costs
+        # (0.0075423 and 0.00470015). Taking the last would report 38% of it.
+        from agent.backend_events import pi_prompt_result
+
+        _, usage = pi_prompt_result(_prompt_stream())
+        assert usage.cost == pytest.approx(0.01224245)
+        assert usage.cost > 0.0075423, "only the last message_end was counted"
+
+    def test_every_token_column_is_populated(self):
+        from agent.backend_events import pi_prompt_result
+
+        _, usage = pi_prompt_result(_prompt_stream())
+        assert usage.input_tokens == 23
+        assert usage.output_tokens == 382
+        assert usage.cache_read_tokens == 78282
+        assert usage.cache_write_tokens == 1985
+
+    def test_prose_stdout_degrades_to_unmeasured(self):
+        # A Pi output-format change should cost the measurement, not the call.
+        from agent.backend_events import pi_prompt_result
+
+        text, usage = pi_prompt_result("just the answer, no JSON here")
+        assert text == "just the answer, no JSON here"
+        assert usage is None
+
+    def test_json_without_message_end_is_unmeasured_not_free(self):
+        # A zero-cost row reads as a call that genuinely cost nothing, which is
+        # a different claim from one nobody measured.
+        from agent.backend_events import pi_prompt_result
+
+        stream = '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"hi"}]}]}'
+        text, usage = pi_prompt_result(stream)
+        assert text == "hi"
+        assert usage is None
+
+    def test_prompt_returns_the_usage_it_parsed(self, monkeypatch):
+        captured = _prompt_stream()
+
+        class _Result:
+            stdout = captured
+            returncode = 0
+
+        monkeypatch.setattr(ai_backend_pi.subprocess, "run", lambda *a, **k: _Result())
+        reply, code, usage = ai_backend_pi.prompt("anything", cwd=".")
+
+        assert code == 0
+        assert reply.endswith("```")
+        assert usage is not None, "prompt dropped the usage it was handed"
+        assert usage.cost == pytest.approx(0.01224245)
+
+
+class TestPiToolLabels:
+    """Labels are built from Pi's own event shape, not Claude's."""
+
+    def test_a_real_tool_event_labels(self):
+        from agent.backend_events import _pi_tool_label
+
+        events = [
+            json.loads(line) for line in _prompt_stream().splitlines() if line.strip()
+        ]
+        starts = [e for e in events if e.get("type") == "tool_execution_start"]
+        assert starts, "fixture carries no tool_execution_start to label"
+
+        # Pi spells the bag `args` and the path `path`. Reading Claude's
+        # `arguments`/`file_path` finds nothing and every label falls back to
+        # the bare tool name, which no hand-written fixture would reveal.
+        assert _pi_tool_label(starts[0]) == "Read f.txt"
+
+    def test_claude_spelling_still_labels(self):
+        from agent.backend_events import _pi_tool_label
+
+        assert _pi_tool_label(
+            {"toolName": "read", "arguments": {"file_path": "/a/b/c.txt"}}
+        ) == "Read c.txt"

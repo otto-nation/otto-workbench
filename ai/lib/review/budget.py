@@ -44,6 +44,10 @@ from review.grouping import classify_tier, format_profiles_section
 # model it was not chosen for.
 MODEL_CONTEXT_TOKENS = {
     "claude-sonnet-5": 1_000_000,
+    # Absent until a review that resolved to it aborted on UnknownModelWindow.
+    # 1M is what the provider catalogue reports (`pi --list-models`), which is
+    # the same place a session log's contextWindow comes from.
+    "claude-opus-5": 1_000_000,
     "claude-sonnet-4-6": 200_000,
     "claude-sonnet-4-5": 200_000,
     "claude-opus-4-6": 200_000,

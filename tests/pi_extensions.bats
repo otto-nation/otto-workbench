@@ -660,3 +660,90 @@ EOF'
     }
   done
 }
+
+# ── issue-defer-guard ────────────────────────────────────────────────────────
+# Same split as the guards above: the predicate is in detect.ts, which imports
+# nothing. Whether a review has open findings is a filesystem question index.ts
+# asks, and the Claude guard's copy of it is covered in claude_settings.bats.
+
+# _files_issue COMMAND — prints true or false for isIssueFiling(COMMAND).
+_files_issue() {
+  run node --input-type=module -e "
+    const { isIssueFiling } = await import('$REPO_ROOT/ai/pi/extensions/issue-defer-guard/detect.ts');
+    process.stdout.write(String(isIssueFiling(process.argv[1])));
+  " -- "$1"
+}
+
+@test "issue-defer-guard: gh issue create is filing" {
+  _files_issue 'gh issue create --title x --body-file /tmp/b.md'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "issue-defer-guard: reads and other subcommands are not filing" {
+  local cmd
+  for cmd in 'gh issue view 1' 'gh issue list --state open' 'gh issue edit 3 --body x' 'gh pr create'; do
+    _files_issue "$cmd"
+    [ "$output" = false ] || {
+      echo "matched a non-filing command: $cmd"
+      return 1
+    }
+  done
+}
+
+@test "issue-defer-guard: the phrase inside another command is not filing" {
+  # A guard that fired on any mention would block reading about itself.
+  _files_issue 'echo gh issue create'
+  [ "$output" = false ]
+
+  _files_issue 'grep -rn "gh issue create" ai/'
+  [ "$output" = false ]
+}
+
+@test "issue-defer-guard: a filing after a cd still counts" {
+  _files_issue 'cd /tmp/repo && gh issue create --title x'
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "issue-defer-guard: agrees with the Claude guard command for command" {
+  # Two guards enforcing one rule that disagree are worse than one guard: which
+  # answer you get would depend on which harness you happen to be in. The
+  # Claude side needs a repo with an open-findings review before its pattern is
+  # reached, so build one and compare the pair on every shape.
+  local sandbox="$BATS_TEST_TMPDIR/parity" dir
+  mkdir -p "$sandbox/repo" "$sandbox/state/reviews"
+  git -C "$sandbox/repo" init -q -b isaac/fix/thing
+  git -C "$sandbox/repo" remote add origin git@github.com:otto-nation/otto-workbench.git
+  git -C "$sandbox/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+  dir="$sandbox/state/reviews/otto-workbench-self-isaac-fix-thing"
+  mkdir -p "$dir"
+  printf '## Should fix\n- [ ] **[S1]** a finding\n' > "$dir/review.md"
+
+  local cmd claude_blocks pi_blocks
+  for cmd in \
+    'gh issue create --title x' \
+    'cd /tmp && gh issue create' \
+    'echo gh issue create' \
+    'grep -rn "gh issue create" ai/' \
+    'gh issue view 1' \
+    'gh issue list'; do
+
+    if echo "{\"tool_input\":{\"command\":\"$cmd\"}}" | (
+      cd "$sandbox/repo" || exit 1
+      WORKBENCH_STATE_DIR="$sandbox/state" "$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+    ) > /dev/null 2>&1; then
+      claude_blocks=false
+    else
+      claude_blocks=true
+    fi
+
+    _files_issue "$cmd"
+    pi_blocks="$output"
+
+    [ "$claude_blocks" = "$pi_blocks" ] || {
+      echo "guards disagree on: $cmd (claude=$claude_blocks pi=$pi_blocks)"
+      return 1
+    }
+  done
+}

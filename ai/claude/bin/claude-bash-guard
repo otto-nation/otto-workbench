@@ -43,6 +43,38 @@ block() {
 # hook does not run in, and tests/pi_extensions.bats holds the two to one value.
 SLEEP_WAIT_THRESHOLD_SECONDS=10
 
+# _branch_review_has_open_findings — true when a self-review for the current
+# branch is sitting on unticked findings.
+#
+# The directory name is the one ai/lib/cli/claude_review.py builds:
+# <repo>-self-<branch with / replaced by ->. Spelled out rather than sourced
+# because this hook runs per Bash call and cannot afford a Python start-up; a
+# rename there makes this find nothing, which fails open.
+#
+# Fails open throughout. No git, no review, no file, or a review whose findings
+# are all ticked all mean silence: a guard that blocked on its own inability to
+# answer would be worse than the mistake it prevents.
+_branch_review_has_open_findings() {
+  local origin branch repo_name review_file
+  # The repo half of the name comes from the remote, not from the directory:
+  # every worktree of one repo has its own basename and they all review into
+  # the same <repo>-self-<branch> name.
+  origin="$(git remote get-url origin 2>/dev/null)" || return 1
+  repo_name="${origin##*/}"
+  repo_name="${repo_name%.git}"
+  [[ -n "$repo_name" ]] || return 1
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 1
+  [[ -n "$branch" && "$branch" != "HEAD" ]] || return 1
+
+  # REVIEWS_DIR from lib/constants.sh, spelled out for the same reason the
+  # directory name is: this hook sources nothing, so it cannot read the
+  # constant. tests/claude_settings.bats holds the two spellings together.
+  review_file="${WORKBENCH_STATE_DIR:-$HOME/.local/state/workbench}/reviews/${repo_name}-self-${branch//\//-}/review.md"
+  [[ -f "$review_file" ]] || return 1
+
+  grep -q '^- \[ \]' "$review_file" 2>/dev/null
+}
+
 # The commands whose exit status is the thing a caller is reading, and the
 # filters that discard it. Kept in step with TEST_RUNNERS in
 # ai/pi/extensions/test-pipe-guard/detect.ts — tests/pi_extensions.bats holds the
@@ -193,6 +225,22 @@ placeheld=$(printf '%s' "$scannable" | sed -e "s/'[^']*'/QUOTEDARG/g" -e 's/"[^"
 
 if [[ "$cmd" == *"gh pr create"* ]]; then
   block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
+fi
+
+# Filing an issue while this branch's self-review still has open findings is a
+# deferral of one of them, and deferring needs agreement. It does not read like
+# one from the inside — filing feels like diligence — so the block is the thing
+# that makes it visible. Narrow on purpose: no review, or none with open
+# findings, and this says nothing. Unrelated filing during a review costs one
+# explanation to the operator, which is the trade for catching the case where
+# the fix pass is committing the same finding as you write the issue.
+# Statement-anchored, so `echo gh issue create` and a grep over a script that
+# mentions the phrase are not matched. Kept in step with ISSUE_CREATE in
+# ai/pi/extensions/issue-defer-guard/detect.ts — tests/pi_extensions.bats holds
+# the two to one set of answers.
+re_issue_create='(^|[;&|][[:space:]]*)gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
+if [[ "$cmd" =~ $re_issue_create ]] && _branch_review_has_open_findings; then
+  block "This branch's self-review has open findings, and filing an issue for one is a deferral that needs my agreement first — read what the fix pass did before acting on any finding yourself. If this issue is unrelated to the review, say so and file it. See general.md § Code Quality and self-review.md § Before PR Creation."
 fi
 
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then

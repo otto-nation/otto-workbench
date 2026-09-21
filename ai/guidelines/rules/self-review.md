@@ -10,6 +10,11 @@ Before creating a PR (via `task pr:create`, `gh pr create`, or any method):
 3. Work through whatever it left open as the user directs
 4. Only proceed to PR creation when the user is satisfied
 
+Do not act on a finding before step 2. The fix pass is working the same list you are,
+and a finding you fix or file while it runs is duplicated work at best — at worst you
+file an issue for something the pass is committing as you write it. Read what it did
+first, then act on the remainder.
+
 `--fix` is part of the command, not an upgrade to it. Reviewing without it produces a
 findings list somebody then has to apply by hand — a slower, sloppier version of the pass
 the fix agent would have run, and a second round trip before the branch is shippable. It

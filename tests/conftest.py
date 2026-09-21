@@ -16,6 +16,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 _LIBS: dict[str, object] = {}

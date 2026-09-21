@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import backend_pi as ai_backend_pi
+from conftest import FIXTURES_DIR
 
 
 class TestBuildFixCmd:
@@ -491,15 +492,38 @@ class TestPreflight:
 # off the response envelope, one prompt's two message costs read as one. See
 # tests/fixtures/README-pi-fixtures.md for the recapture commands.
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
+FIXTURES = FIXTURES_DIR
 
 
 def _prompt_stream() -> str:
     return (FIXTURES / "pi_prompt_session.jsonl").read_text()
 
 
+# The fixture's two message_end costs (0.0075423 + 0.00470015) summed. Shared
+# by every assertion against the fixture's total so a recapture only needs
+# updating here.
+EXPECTED_PROMPT_COST = 0.01224245
+
+
 def _stats_response() -> dict:
     return json.loads((FIXTURES / "pi_rpc_stats_response.json").read_text())
+
+
+def _parsed_result_record(tmp_path, model):
+    """Write a result record for the captured stats fixture and parse it back.
+
+    Shared by the three envelope tests below so a future signature change to
+    _write_result_record — a new positional argument, a renamed field — is a
+    one-place edit instead of three.
+    """
+    from agent import usage as ai_usage
+
+    log = tmp_path / "session.jsonl"
+    ai_backend_pi._write_result_record(
+        str(log), "completed", 1, 0.084319, 1234,
+        _stats_response()["data"], model,
+    )
+    return ai_usage.parse_session_log(str(log))
 
 
 class TestSessionStatsEnvelope:
@@ -524,16 +548,25 @@ class TestSessionStatsEnvelope:
         assert stats["cost"] == 0.084319
         assert "data" not in stats, "the envelope was returned instead of its data"
 
+    def test_a_null_data_field_falls_back_to_the_envelope_not_none(self):
+        # An explicit "data": null (e.g. on success: false) must not surface
+        # as None — _write_result_record would then crash on
+        # stats.get("tokens", {}) instead of degrading gracefully.
+        response = {"type": "response", "command": "get_session_stats", "success": False, "data": None}
+
+        class _Proc:
+            stdin = io.StringIO()
+
+            def __init__(self):
+                self.stdout = io.StringIO(json.dumps(response) + "\n")
+
+        stats = ai_backend_pi._get_stats_after_agent_end(_Proc())
+
+        assert stats is not None
+        assert stats.get("tokens", {}) == {}
+
     def test_result_record_carries_the_real_token_counts(self, tmp_path):
-        from agent import usage as ai_usage
-
-        log = tmp_path / "session.jsonl"
-        ai_backend_pi._write_result_record(
-            str(log), "completed", 1, 0.084319, 1234,
-            _stats_response()["data"], "claude-opus-5",
-        )
-
-        parsed = ai_usage.parse_session_log(str(log))
+        parsed = _parsed_result_record(tmp_path, "claude-opus-5")
         assert parsed.cost == pytest.approx(0.084319)
         assert parsed.input_tokens == 2
         assert parsed.output_tokens == 4
@@ -543,29 +576,43 @@ class TestSessionStatsEnvelope:
 
     def test_result_record_attributes_cost_to_a_model(self, tmp_path):
         # Without modelUsage every Pi row is blank under `otto-log stats --by model`.
-        from agent import usage as ai_usage
-
-        log = tmp_path / "session.jsonl"
-        ai_backend_pi._write_result_record(
-            str(log), "completed", 1, 0.084319, 1234,
-            _stats_response()["data"], "claude-opus-5",
-        )
-
-        parsed = ai_usage.parse_session_log(str(log))
+        parsed = _parsed_result_record(tmp_path, "claude-opus-5")
         assert parsed.cost_by_model == {"claude-opus-5": pytest.approx(0.084319)}
 
     def test_an_unnamed_model_still_records_cost(self, tmp_path):
+        parsed = _parsed_result_record(tmp_path, None)
+        assert parsed.cost == pytest.approx(0.084319)
+        assert parsed.cost_by_model == {}
+
+    def test_invoke_agent_s_model_key_matches_prompt_s_model_key(self, tmp_path):
+        # invoke_agent/invoke_fix write modelUsage keyed on stream.model, which
+        # _consume_stream fills from message_end's own model field. If that
+        # ever drifted back to the caller-requested alias, the same physical
+        # run would land under two different cost_by_model keys depending on
+        # whether it went through prompt() or invoke_agent() — splitting
+        # `otto-log stats --by model` for the same model.
         from agent import usage as ai_usage
+        from agent.backend_events import pi_prompt_result
+
+        class _Proc:
+            stdin = io.StringIO()
+
+            def __init__(self):
+                self.stdout = io.StringIO(_prompt_stream())
+
+        stream = ai_backend_pi._consume_stream(_Proc(), io.StringIO(), "")
 
         log = tmp_path / "session.jsonl"
         ai_backend_pi._write_result_record(
-            str(log), "completed", 1, 0.084319, 1234,
-            _stats_response()["data"], None,
+            str(log), stream.stop_reason, stream.turn_count,
+            stream.accumulated_cost, 1234, {}, stream.model or "claude-opus-5",
         )
-
         parsed = ai_usage.parse_session_log(str(log))
-        assert parsed.cost == pytest.approx(0.084319)
-        assert parsed.cost_by_model == {}
+
+        _, prompt_usage = pi_prompt_result(_prompt_stream())
+
+        assert stream.model == "claude-haiku-4-5@20251001"
+        assert set(parsed.cost_by_model) == set(prompt_usage.cost_by_model)
 
 
 class TestPromptUsage:

@@ -26,6 +26,7 @@ from agent import backend as ai_backend
 from agent import backend_claude as ai_backend_claude
 from agent import backend_pi as ai_backend_pi
 from agent import usage as ai_usage
+from conftest import FIXTURES_DIR
 
 RESULT_ENVELOPE = {
     "type": "result",
@@ -595,9 +596,7 @@ class TestBackendUsageParity:
         return ai_backend_claude.prompt("hi", cwd=str(tmp_path))
 
     def _pi(self, monkeypatch, tmp_path):
-        stream = (
-            Path(__file__).resolve().parent / "fixtures" / "pi_prompt_session.jsonl"
-        ).read_text()
+        stream = (FIXTURES_DIR / "pi_prompt_session.jsonl").read_text()
 
         class _Result:
             stdout = stream
@@ -641,7 +640,7 @@ class TestPiAgentPathParity:
 
     def test_a_pi_session_log_parses_like_a_claude_one(self, tmp_path):
         stats = json.loads(
-            (Path(__file__).resolve().parent / "fixtures" / "pi_rpc_stats_response.json").read_text()
+            (FIXTURES_DIR / "pi_rpc_stats_response.json").read_text()
         )["data"]
 
         pi_log = tmp_path / "pi.jsonl"

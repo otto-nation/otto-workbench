@@ -171,14 +171,31 @@ def cleaned_on_success(review_dir: Path):
 
 
 def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
-    """Return True if every file in *d* is older than *stale_days*."""
+    """Return True if every file in *d* is older than *stale_days*.
+
+    An empty directory is judged on its own mtime rather than vacuously stale.
+    A review run creates its directory and only then writes into it, so between
+    the `mkdir` and the first write there is a window in which the directory
+    holds no files at all — and a sweep that read "no files" as "nothing here is
+    recent" deleted the directory a review was about to write its deliverable
+    into. The run then died on the missing path. `pr gc` runs from scheduled
+    maintenance, so it lands in that window on its own schedule rather than only
+    under a concurrent operator.
+
+    Reading the directory's mtime closes it without a lock: `mkdir` stamps the
+    directory itself, so a just-created one is recent by the same clock every
+    other entry here is measured against.
+    """
     try:
         files = [f for f in d.rglob("*") if f.is_file()]
     except OSError:
         return False
-    if not files:
-        return True
     now = datetime.now().timestamp()
+    if not files:
+        try:
+            return _age_days(d, now) > stale_days
+        except OSError:
+            return False
     return all(_age_days(f, now) > stale_days for f in files)
 
 

@@ -37,7 +37,13 @@ elif [[ "$1" == "api" ]]; then
     shift
   done
 
-  [[ -n "${GH_API_FAIL:-}" ]] && { echo '{"message":"Not Found"}'; exit 1; }
+  # Failures speak on stderr, as gh does — the library classifies on that wording
+  # and a diagnosis delivered on stdout would be read as the answer instead.
+  if [[ "${GH_API_FAIL:-}" == "quota" ]]; then
+    echo "gh: API rate limit exceeded for user ID 1234. (HTTP 403)" >&2
+    exit 1
+  fi
+  [[ -n "${GH_API_FAIL:-}" ]] && { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
 
   # `{owner}:branch`, url-decoded far enough for the characters a branch name
   # can carry. Absent when the caller built the filter wrong.
@@ -327,6 +333,32 @@ JSON
 
   branch_pr_states states feat/a || true
   [ "${#states[@]}" -eq 0 ]
+}
+
+@test "a spent quota returns the refusal code" {
+  # GitHub declining to answer a question it holds the answer to. The caller acts
+  # on the absence of a PR, so it has to tell this from a question that could
+  # never have been put here.
+  export GH_API_FAIL=quota
+  declare -A states
+  run branch_pr_states states feat/a
+  [ "$status" -eq "$BRANCH_PR_REFUSED_RC" ]
+}
+
+@test "a repo gh cannot answer for is a plain failure, not a refusal" {
+  # A 404, a non-GitHub remote, no network. Permanent for this machine, so a
+  # caller that treated it as a refusal would never act on such a repo again.
+  export GH_API_FAIL=1
+  declare -A states
+  run branch_pr_states states feat/a
+  [ "$status" -eq 1 ]
+}
+
+@test "no auth is a plain failure, not a refusal" {
+  export GH_AUTHED=false
+  declare -A states
+  run branch_pr_states states feat/a
+  [ "$status" -eq 1 ]
 }
 
 @test "a branch failing after an earlier one answered leaves no partial map" {

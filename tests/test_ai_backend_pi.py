@@ -565,6 +565,23 @@ class TestSessionStatsEnvelope:
         assert stats is not None
         assert stats.get("tokens", {}) == {}
 
+    def test_an_empty_data_field_is_not_replaced_by_the_envelope(self):
+        # {} is falsy but present — `or` treats it the same as a missing key
+        # and returns the envelope, which then reads `success`/`type` as
+        # if they were stats. Presence, not truthiness, decides the fallback.
+        response = {"type": "response", "command": "get_session_stats", "success": True, "data": {}}
+
+        class _Proc:
+            stdin = io.StringIO()
+
+            def __init__(self):
+                self.stdout = io.StringIO(json.dumps(response) + "\n")
+
+        stats = ai_backend_pi._get_stats_after_agent_end(_Proc())
+
+        assert stats == {}
+        assert "success" not in stats, "the envelope was returned instead of its (empty) data"
+
     def test_result_record_carries_the_real_token_counts(self, tmp_path):
         parsed = _parsed_result_record(tmp_path, "claude-opus-5")
         assert parsed.cost == pytest.approx(0.084319)
@@ -657,7 +674,7 @@ class TestPromptUsage:
         from agent.backend_events import pi_prompt_result
 
         _, usage = pi_prompt_result(_prompt_stream())
-        assert usage.cost == pytest.approx(0.01224245)
+        assert usage.cost == pytest.approx(EXPECTED_PROMPT_COST)
         assert usage.cost > 0.0075423, "only the last message_end was counted"
 
     def test_every_token_column_is_populated(self):
@@ -700,7 +717,7 @@ class TestPromptUsage:
         assert code == 0
         assert reply.endswith("```")
         assert usage is not None, "prompt dropped the usage it was handed"
-        assert usage.cost == pytest.approx(0.01224245)
+        assert usage.cost == pytest.approx(EXPECTED_PROMPT_COST)
 
 
 class TestPiToolLabels:

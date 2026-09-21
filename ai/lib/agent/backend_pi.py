@@ -225,7 +225,8 @@ def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
     """
     _send(proc, {"type": "get_session_stats"})
     resp = _read_rpc_response(proc, "get_session_stats")
-    return resp.get("data") or resp
+    data = resp.get("data")
+    return data if data is not None else resp
 
 
 # ── Stream progress (Pi RPC JSONL) ───────────────────────────────────────────

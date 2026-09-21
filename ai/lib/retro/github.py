@@ -221,26 +221,53 @@ def _flatten_issue_comments(comment_nodes: list[dict]) -> list[dict]:
 
 
 def _threads_for(repo: str, pr_node: dict) -> list[dict]:
-    """Thread nodes for one PR, refetched in full if the batch query truncated.
+    """Thread nodes for one PR, refetched in full if the detail query truncated.
 
-    The batch query asks for 50 PRs at once, so it cannot paginate each PR's
-    threads inline. Oversized PRs are rare, so they earn a second round trip
-    rather than costing every PR one.
+    The detail query asks for one PR but caps its thread list and the comments
+    nested in each thread, so a PR past either cap comes back short. Oversized
+    PRs are rare, so they earn a second round trip rather than costing every PR
+    one.
+
+    A short refetch is still better than the truncated page it replaces, and
+    this feeds a report rather than a ledger: a missed thread costs a rule
+    signal, so an incomplete walk is taken as-is rather than failing the scan.
+    An *empty* one is different, and is the case `_richer_of` exists for.
     """
     threads_data = pr_node.get("reviewThreads", {})
     thread_nodes = threads_data.get("nodes", [])
     if threads_data.get("totalCount", 0) > len(thread_nodes):
-        # A short refetch is still better than the truncated batch it replaces,
-        # and this feeds a report rather than a ledger: a missed thread costs a
-        # rule signal, so the count is taken as-is rather than failing the scan.
-        return fetch_review_threads(repo, pr_node["number"]).threads
+        return _richer_of(thread_nodes, repo, pr_node["number"])
     # Thread *count* is not the only way this comes back short. The page size
     # for comments within a thread is set for the common thread, so a deep one
     # is cut off with the thread list itself intact — which the check above
     # cannot see. Refetching the PR is what pages those comments properly.
     if any(_comments_truncated(t) for t in thread_nodes):
-        return fetch_review_threads(repo, pr_node["number"]).threads
+        return _richer_of(thread_nodes, repo, pr_node["number"])
     return thread_nodes
+
+
+def _richer_of(have: list[dict], repo: str, number: int) -> list[dict]:
+    """The refetched threads, or the ones already in hand when it came back worse.
+
+    The refetch exists to improve on a truncated page, so it must never leave
+    the caller with less than it started with. `fetch_review_threads` answers
+    an empty list for a first page it could not read at all — no auth, no
+    network, a spent budget — and returning that would discard real review
+    comments the detail query had already paid for and delivered, turning a
+    failed second call into a PR the retro reports as having no discussion.
+
+    Compared on length rather than on ``ThreadSet.complete``: an incomplete
+    walk that still found more threads than the truncated page is the better
+    answer, and that is the ordinary outcome here — the refetch is only ever
+    made because the page in hand is known to be short.
+    """
+    refetched = fetch_review_threads(repo, number).threads
+    if len(refetched) < len(have):
+        log.warn(
+            f"{repo}#{number}: refetching threads returned {len(refetched)} where "
+            f"the first read had {len(have)} — keeping the first read")
+        return have
+    return refetched
 
 
 def _comments_truncated(thread: dict) -> bool:

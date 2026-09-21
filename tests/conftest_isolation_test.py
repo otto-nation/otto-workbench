@@ -41,6 +41,37 @@ def test_state_dir_resolves_through_the_sandbox(tmp_path):
     assert workbench_paths.state_dir() == tmp_path / "state"
 
 
+def test_cache_root_is_sandboxed_per_test(tmp_path):
+    """The cache root is sandboxed for the same reason the state root is.
+
+    Easy to read as the harmless one, since `cache_dir` documents its contents
+    as recomputable and safe to delete. That holds for whoever *writes* it and
+    not for whoever reads it next: `agent.vertex_quota` caches model
+    availability there, so an unsandboxed run both writes into the developer's
+    real `~/.cache/workbench` and can answer a test's question from a hit that
+    the test's own stub never saw.
+    """
+    assert os.environ["WORKBENCH_CACHE_DIR"] == str(tmp_path / "cache")
+
+
+def test_cache_dir_resolves_through_the_sandbox(tmp_path):
+    """Resolved per call, so one setenv covers every consumer of the root."""
+    assert workbench_paths.cache_dir() == tmp_path / "cache"
+    assert workbench_paths.cache_dir("vertex-quota") == tmp_path / "cache" / "vertex-quota"
+
+
+def test_the_cache_sandbox_reaches_a_subprocess(tmp_path):
+    """An env var rather than a patched attribute, so a tool run as a
+    subprocess resolves the same root its parent test did.
+    """
+    out = subprocess.run(
+        [sys.executable, "-c",
+         f"import sys; sys.path.insert(0, {str(LIB_DIR)!r});"
+         "from core import workbench_paths; print(workbench_paths.cache_dir())"],
+        capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == str(tmp_path / "cache")
+
+
 # ── git hooks ───────────────────────────────────────────────────────────────
 
 

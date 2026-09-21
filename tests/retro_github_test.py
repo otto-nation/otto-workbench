@@ -306,6 +306,61 @@ def test_a_thread_with_more_comments_than_the_page_is_refetched():
     refetch.assert_called_once()
 
 
+def test_a_failed_refetch_keeps_the_threads_already_in_hand():
+    """The refetch improves on a truncated page; it must never lose to one.
+
+    `fetch_review_threads` answers an empty list for a first page it could not
+    read — no auth, no network, a spent budget. Returning that discards review
+    comments the detail query already paid for and delivered, and the retro
+    then reports a PR with real discussion as having none.
+    """
+    deep = json.loads(_detail(1, "2026-08-01T00:00:00Z").stdout)
+    threads = deep["data"]["repository"]["pullRequest"]["reviewThreads"]
+    threads["totalCount"] = 5
+
+    with patch.object(github.gh_client, "graphql") as gql, \
+         patch.object(github, "fetch_review_threads") as refetch:
+        gql.side_effect = [
+            _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
+            CmdResult(0, json.dumps(deep)),
+        ]
+        refetch.return_value = ThreadSet([], complete=False)
+        results = github.fetch_repo_review_data("owner/repo", _JUN)
+
+    refetch.assert_called_once()
+    assert [c["body"] for c in results[0]["comments"]] == ["drop the retry"]
+
+
+def test_a_refetch_that_found_more_replaces_what_was_in_hand():
+    """The ordinary outcome, and the control for the test above.
+
+    Compared on length rather than on `ThreadSet.complete`: the refetch is only
+    ever made because the page in hand is known short, so an incomplete walk
+    that still found more threads is the better answer.
+    """
+    deep = json.loads(_detail(1, "2026-08-01T00:00:00Z").stdout)
+    threads = deep["data"]["repository"]["pullRequest"]["reviewThreads"]
+    threads["totalCount"] = 5
+    fuller = [
+        {"path": "handler.go", "line": 42, "comments": {"nodes": [
+            {"author": {"login": "kgn"}, "body": "the deeper finding"}]}},
+        {"path": "other.go", "line": 7, "comments": {"nodes": [
+            {"author": {"login": "kgn"}, "body": "a second one"}]}},
+    ]
+
+    with patch.object(github.gh_client, "graphql") as gql, \
+         patch.object(github, "fetch_review_threads") as refetch:
+        gql.side_effect = [
+            _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
+            CmdResult(0, json.dumps(deep)),
+        ]
+        refetch.return_value = ThreadSet(fuller, complete=False)
+        results = github.fetch_repo_review_data("owner/repo", _JUN)
+
+    bodies = [c["body"] for c in results[0]["comments"]]
+    assert bodies == ["the deeper finding", "a second one"]
+
+
 def test_a_thread_within_the_page_is_not_refetched():
     """The control: the common thread must not earn a second round trip."""
     with patch.object(github.gh_client, "graphql") as gql, \

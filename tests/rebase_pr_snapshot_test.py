@@ -10,10 +10,15 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import time
+
+from gh import budget as gh_budget
 from gh import client as gh_client
+from pr.domains import RebaseStatus
 from rebase import pr_snapshot as rebase_pr_snapshot
 from rebase import refusals
 from rebase import target as rebase_target
+from rebase.types import RefusalSignal
 
 
 def _ctx(pr_number=42, branch="isaac/feat/x", repo="acme/widget"):
@@ -120,7 +125,8 @@ class TestItReplacesTheSecondCall:
         ) is None
 
     def test_an_unanswered_snapshot_is_no_refusal(self):
-        # The distinction that keeps a rate-limited gh from stopping a rebase.
+        # A machine with no gh, no auth or no network cannot answer this at any
+        # point, and refusing on it would mean `pr rebase` never runs there.
         assert refusals.tracker_landed_check(
             "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(),
         ) is None
@@ -138,6 +144,102 @@ class TestItReplacesTheSecondCall:
 
         assert from_snapshot.detail == from_its_own_read.detail
         assert from_snapshot.signal == from_its_own_read.signal
+
+
+def _latch_graphql(monkeypatch):
+    """Arm the GraphQL budget latch the way an inherited one arrives."""
+    at = int(time.time()) + 600
+    monkeypatch.setenv(gh_budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
+    assert gh_budget.latched(gh_budget.Resource.GRAPHQL) is not None
+
+
+class TestARefusedRead:
+    """The one unanswered read that stops a rebase rather than letting it run.
+
+    Every other silence is a machine that cannot answer the question. This one
+    is a machine that did not ask, about a PR that is knowable — and the answer
+    it skipped is the only signal that survives a squash merge.
+    """
+
+    def test_the_snapshot_records_that_the_call_was_declined(self, monkeypatch):
+        _latch_graphql(monkeypatch)
+        with _answers({}):
+            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+
+        assert snapshot.refused
+        assert not snapshot.answered
+
+    def test_an_ordinary_failure_is_not_a_refusal(self):
+        """No gh, no auth, no network, no PR — none of them latch."""
+        with _answers({}):
+            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+
+        assert not snapshot.refused
+        assert not snapshot.answered
+
+    def test_a_successful_read_is_never_marked_refused(self, monkeypatch):
+        """A latch armed by some earlier call must not taint an answer we got."""
+        _latch_graphql(monkeypatch)
+        with _answers({"state": "OPEN", "number": 42}):
+            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+
+        assert not snapshot.refused
+        assert snapshot.answered
+
+    def test_it_refuses_the_rebase(self):
+        report = refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        )
+
+        assert report is not None
+        assert report.signal == RefusalSignal.TRACKER_REFUSED.value
+        assert report.status == RebaseStatus.TRACKER_UNREAD.value
+
+    def test_it_does_not_claim_the_branch_landed(self):
+        """The status ALREADY_LANDED asserts the work is in the base. Nothing
+        here established that — the check is refusing because it could not."""
+        report = refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        )
+
+        assert report.status != RebaseStatus.ALREADY_LANDED.value
+        assert "not asked" in report.detail
+
+    def test_the_hint_explains_what_proceeding_would_cost(self):
+        report = refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        )
+        hint = refusals.REFUSAL_HINTS[report.status].format(ref="origin/main")
+
+        assert "squash merge" in hint
+        assert "force-push" in hint
+
+    def test_an_open_pr_is_not_refused_because_some_other_call_latched(
+        self, monkeypatch,
+    ):
+        """The false refusal this design exists to avoid, in its likeliest form.
+
+        The latch is process-wide and armed by whichever call met the quota
+        first. Keying the refusal on the latch alone — rather than on this
+        read having come back empty — would refuse a rebase whose PR we
+        successfully read and found open.
+        """
+        _latch_graphql(monkeypatch)
+        with _answers({"state": "OPEN", "number": 42}):
+            assert refusals.tracker_landed_check("/wt", _ctx()) is None
+
+    def test_the_snapshotless_path_keeps_its_best_effort_contract(
+        self, monkeypatch,
+    ):
+        """Only `fetch` knows its own read was the one refused.
+
+        Reached by `pr rebase --repo-dir` and by invoking `pr-rebase` directly.
+        It has no snapshot to carry the distinction and must not re-derive one
+        from the latch, for the reason the test above pins.
+        """
+        _latch_graphql(monkeypatch)
+        with _answers({}):
+            assert refusals.tracker_landed_check("/wt", _ctx()) is None
 
 
 class TestNameTheOpenPR:

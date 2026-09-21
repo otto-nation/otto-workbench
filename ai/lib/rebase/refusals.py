@@ -13,6 +13,7 @@ from dataclasses import asdict
 
 from core import log
 from core.trail import Trail, terr
+from gh import budget as gh_budget
 from gh import landed as branch_landed
 from git import client as git_client
 from pr import context as pr_context
@@ -65,8 +66,31 @@ def tracker_landed_check(
     Reads *snapshot* when the caller has one, so the state and the PR's base
     come from a single ``gh pr view``. The unanswered snapshot is not a refusal:
     a tracker that said nothing is not a tracker saying the branch landed.
+
+    With one exception, which is the whole reason ``PRSnapshot.refused``
+    exists. A read the budget breaker declined is not the tracker having
+    nothing to say — it is us not asking, about a PR that is knowable, while
+    the one signal that survives a squash merge goes unread. Proceeding there
+    force-pushes on the strength of a question we skipped, so it refuses
+    instead, on its own status: nothing here found the work landed, and the
+    report must not claim otherwise.
+
+    Every other unanswered read still proceeds. A machine with no ``gh``, no
+    auth or no network cannot answer this question at any point, and a refusal
+    keyed on that would mean `pr rebase` never runs there at all.
+
+    Only the snapshot carries that distinction, because only ``fetch`` is
+    positioned to draw it: it knows its own read came back empty. Asking the
+    latch from here instead would refuse on a latch some earlier, unrelated
+    call armed, even where this read succeeded and found the PR open —
+    inventing the false refusal the whole design is arranged to avoid. The
+    snapshotless path below is `pr rebase --repo-dir` and direct `pr-rebase`
+    invocations, which is why it keeps today's behaviour rather than growing a
+    second, weaker version of the check.
     """
     if snapshot is not None:
+        if snapshot.refused:
+            return _refused_report(ctx)
         if not snapshot.merged:
             return None
         return as_refusal(branch_landed.merged_report(
@@ -75,6 +99,17 @@ def tracker_landed_check(
     return as_refusal(branch_landed.by_tracker(
         cwd, branch=ctx.branch, repo=ctx.repo, pr_number=ctx.pr_number,
     ), ctx.branch)
+
+
+def _refused_report(ctx: pr_context.ResolvedContext) -> RefusalReport:
+    """The refusal for a tracker read the budget breaker declined to make."""
+    latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
+    remedy = latch.remedy() if latch else gh_budget.BUDGET_EXHAUSTED_HINT
+    return RefusalReport(
+        branch=ctx.branch, signal=RefusalSignal.TRACKER_REFUSED.value,
+        detail=f"GitHub was not asked whether the PR merged — {remedy}",
+        status=RebaseStatus.TRACKER_UNREAD.value,
+    )
 
 
 def git_landed_check(
@@ -129,6 +164,11 @@ REFUSAL_HINTS = {
         "A branch conflicting this widely with {ref} has usually had its work "
         "land in another shape. Resolving that many conflicts unattended "
         "rewrites files the branch never touched.",
+    RebaseStatus.TRACKER_UNREAD.value:
+        "Whether this branch's PR already merged is the one thing a squash "
+        "merge leaves no trace of in git, and the quota to ask ran out. "
+        "Rebasing now would force-push without it. Wait for the refill, or "
+        "check the PR yourself.",
 }
 
 

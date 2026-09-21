@@ -311,6 +311,9 @@ class RebaseStatus(Enum):
     ALREADY_LANDED = "already_landed"
     UNRELATED_HISTORY = "unrelated_history"
     CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
+    # Distinct from ALREADY_LANDED on purpose: that one asserts the work is in
+    # the base, and this one asserts only that nobody could find out.
+    TRACKER_UNREAD = "tracker_unread"
 
 
 def _verdict_display(verdict: str) -> str:

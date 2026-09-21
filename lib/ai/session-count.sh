@@ -370,22 +370,11 @@ _gate_repo_dir() {
   project_repo_label "$shared"
 }
 
-# _inside_auto_task — true when this gate is running inside a session that
-# run-auto-task spawned, which must not spawn another.
-#
-# The headless session runs the full hook set, so it reaches the same Stop hook
-# that launched it and asks the same gate the same question. The gate would say
-# yes — the stamp is only written when the skill completes — and the cascade is
-# unbounded. run-auto-task exports WORKBENCH_AUTO_TASK before spawning, and the
-# child inherits it.
-#
-# This replaced `claude --bare`, which prevented the cascade by skipping hooks
-# entirely but also broke slash-command resolution, so the spawned session
-# answered `Unknown command: /<skill>` and exited 0. Prefer this: it stops the
-# recursion without disabling the mechanism the skill is delivered by.
-_inside_auto_task() {
-  [[ -n "${WORKBENCH_AUTO_TASK:-}" ]]
-}
+# _inside_auto_task lives in lib/constants.sh, which this file already sources
+# and the generator Stop hooks reach through lib/ui.sh. The gates call it to
+# avoid spawning an auto-task from inside one: the headless session reaches the
+# same Stop hook that launched it and would ask the same gate the same
+# question, which answers yes until the skill completes and writes its stamp.
 
 # _read_stamp FILE — the epoch seconds in FILE, or 0 when it is absent or
 # unreadable. The three gates each read a cooldown stamp the same way.

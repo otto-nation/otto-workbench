@@ -29,7 +29,7 @@ CEILING_SCAN="$AI_SRC_DIR/bin/ceiling-scan"
 # run-auto-task spawns a headless session that reaches this same Stop hook.
 # Unlike the four cadence gates, this scan has no cooldown — it would run in
 # full on every dream/promote/retro/wiki-capture background run otherwise.
-[[ -n "${WORKBENCH_AUTO_TASK:-}" ]] && exit 0
+_inside_auto_task && exit 0
 
 target="${1:-$PWD}"
 

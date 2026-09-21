@@ -4085,6 +4085,14 @@ arrive as ``PRSnapshot()`` with ``answered`` false, which every consumer reads a
 "the tracker has nothing to say" — never as an answer that stops a rebase. The
 git-side signals still get their turn.
 
+One of those causes is different in kind, and ``refused`` separates it. When the
+budget breaker declined to make the call, the silence is one this machine
+imposed on itself a moment ago rather than a property of the environment: the
+PR is knowable, we simply did not ask. Everything else — no gh, no auth, no
+network, no PR — is a machine that cannot answer this question at all, and a
+rebase that refused on it would never run there. `pr rebase` is the one caller
+that acts on the difference, because its "proceed" branch force-pushes.
+
 ### rebase/prepush.py
 
 Repairing the pre-push checks a rebased branch failed, then landing the fix.

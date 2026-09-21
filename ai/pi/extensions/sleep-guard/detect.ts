@@ -1,14 +1,18 @@
+import { statements } from "../_shared/statements.ts";
+
 /**
  * The `sleep`-as-a-wait predicate, kept apart from the extension that uses it.
  *
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
- * file imports nothing, which is what lets tests/pi_extensions.bats run it under
- * plain `node` and assert the shapes it does and does not match.
+ * file pulls in nothing but ../_shared, which imports nothing itself, so
+ * tests/pi_extensions.bats can run it under plain `node` and assert the shapes
+ * it does and does not match.
  *
  * What counts as a sleep here is meant to match ai/claude/bin/claude-bash-guard
  * decision for decision: same threshold, same statement anchoring, same heredoc
- * exemption. Two guards enforcing one rule that disagree about a given command
+ * exemption — the splitting behind the last two is ../_shared/statements.ts,
+ * shared with the other guards for the same reason. Two guards enforcing one rule that disagree about a given command
  * are worse than one guard, because which answer you get depends on which
  * harness you happen to be in.
  */
@@ -39,44 +43,6 @@ export const THRESHOLD_SECONDS = 10;
  * shows up; `sleep <seconds>` is the shape an agent writes.
  */
 const SLEEP_STATEMENT = /^\s*sleep\s+(\d+)(?:\s|$)/;
-
-/** Opens a heredoc, capturing the `-` that allows an indented terminator and the marker. */
-const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
-
-/** Every statement in `command`, with heredoc bodies dropped.
- *
- * A heredoc body is content being written to a file, not commands, so a
- * `sleep 300` inside one is not an invocation — writing a poll script for someone
- * else to run is not the agent sleeping. Claude's guard skips those lines too,
- * and this is the same rule.
- *
- * Only `<<-` lets the terminator be indented. Accepting indentation for a plain
- * `<<` would end the body early on a body line that happens to be the marker
- * word, and scan the rest of it as commands.
- *
- * Statements are split on the separators as well as on newlines, because
- * `sleep 2 && sleep 300` is two statements on one line — and testing only the
- * first match is what let a short leading sleep wave a long one through.
- */
-function statements(command: string): string[] {
-  const found: string[] = [];
-  let terminator: RegExp | null = null;
-
-  for (const line of command.split("\n")) {
-    if (terminator) {
-      if (terminator.test(line)) terminator = null;
-      continue;
-    }
-    found.push(...line.split(/[;&|]/));
-
-    const open = HEREDOC_OPEN.exec(line);
-    if (open) {
-      const indentable = open[1] ? "\\s*" : "";
-      terminator = new RegExp(`^${indentable}${open[2]}\\s*$`);
-    }
-  }
-  return found;
-}
 
 /**
  * The longest bare `sleep <n>` in a command, or null when it holds none.

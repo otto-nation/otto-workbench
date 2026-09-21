@@ -95,8 +95,7 @@ export default function (pi: ExtensionAPI) {
         "before acting on any finding yourself — it works the same list you do, and may " +
         "be committing this one as you write the issue. Having measured the cost and " +
         "found it small argues for doing the work, not for filing it. If this issue is " +
-        "unrelated to the review, say so and file it. See general.md § Code Quality and " +
-        "self-review.md § Before PR Creation.",
+        "unrelated to the review, say so and file it. See general.md § Code Quality.",
     };
   });
 }

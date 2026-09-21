@@ -303,8 +303,22 @@ _run_step_from_worktree() {
 @test "every extension in the real tree has an entry point Pi can load" {
   for dir in "$REPO_ROOT"/ai/pi/extensions/*/; do
     [ -d "$dir" ] || continue
+    # _-prefixed directories are shared modules imported by the extensions, not
+    # extensions themselves. step_pi_extensions skips them with a warning for
+    # want of an entry point, which is the behaviour the next test asserts.
+    [[ "$(basename "$dir")" == _* ]] && continue
     [ -f "${dir}index.ts" ] || [ -f "${dir}index.js" ] || [ -f "${dir}package.json" ]
   done
+}
+
+@test "a shared module is not installed as an extension" {
+  # ../_shared is imported by the guards' detect.ts files. Node resolves it
+  # from the extension's real path rather than its installed symlink, so it
+  # must stay out of ~/.pi/agent/extensions rather than being installed beside
+  # them.
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$PI_EXT_DIR/_shared" ]
 }
 
 # ─── sleep-guard ──────────────────────────────────────────────────────────

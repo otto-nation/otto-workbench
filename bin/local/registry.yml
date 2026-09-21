@@ -109,6 +109,11 @@ tools:
     visibility: brief
     description: "Validates that every ceiling marker names an upgrade trigger or is marked permanent"
 
+  - name: check-new-tests
+    permission: false
+    visibility: brief
+    description: "Runs the tests a change adds against a worktree at the merge base and reports any that pass without the change — the revert check the testing rule prescribes, done once from the diff"
+
   - name: validate-tool-schema
     permission: false
     visibility: brief

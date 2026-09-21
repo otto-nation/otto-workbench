@@ -1,0 +1,1 @@
+{"type":"response","command":"get_session_stats","success":true,"data":{"sessionId":"01a0c55c-d80c-7fa9-bc84-b1f097116d57","tokens":{"input":2,"output":4,"cacheRead":0,"cacheWrite":33710,"total":33716},"cost":0.084319,"contextUsage":{"tokens":33716,"contextWindow":1000000,"percent":3.37}}}

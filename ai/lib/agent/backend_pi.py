@@ -49,6 +49,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from agent import usage as ai_usage
@@ -56,7 +57,8 @@ from core import log
 from core import timeouts
 from agent.backend import AgentInvocation
 from agent.backend_events import (
-    _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_write_tool_used,
+    _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
+    pi_write_tool_used,
 )
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -119,7 +121,10 @@ def _build_prompt_cmd(
     model: str | None = None, provider: str | None = None,
     thinking: str | None = None,
 ) -> list[str]:
-    cmd = ["pi", "-p", "--no-session", "--approve"]
+    # --mode json, not bare -p: print mode emits the reply and nothing else, so
+    # a prompt measured that way lands no ledger row at all. The Claude backend
+    # pairs --print with --output-format for the same reason.
+    cmd = ["pi", "-p", "--mode", "json", "--no-session", "--approve"]
     if provider:
         cmd += ["--provider", provider]
     if model:
@@ -211,10 +216,17 @@ def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
     """Query get_session_stats after the agent has finished.
 
     Safe to call only after agent_end — no event interleaving.
+
+    Returns the response's ``data``, not the response. Pi wraps every RPC reply
+    in ``{type, command, success, data}``, and the caller wants the stats. The
+    unwrap is here rather than at the read site because this function's name
+    promises stats: reading ``tokens`` off the envelope silently yields an empty
+    dict, which reaches the ledger as a run that cost money and spent no tokens.
     """
     _send(proc, {"type": "get_session_stats"})
     resp = _read_rpc_response(proc, "get_session_stats")
-    return resp
+    data = resp.get("data")
+    return data if data is not None else resp
 
 
 # ── Stream progress (Pi RPC JSONL) ───────────────────────────────────────────
@@ -289,14 +301,29 @@ def _check_limits(
     return None, steered
 
 
+@dataclass
+class StreamResult:
+    """Outcome of consuming a Pi RPC event stream.
+
+    ``model`` is the model string Pi itself reports on ``message_end`` events
+    (e.g. ``claude-haiku-4-5@20251001``), not the caller-requested alias —
+    the same spelling ``pi_prompt_result`` keys ``cost_by_model`` on, so a
+    session's cost lands under one key however it was invoked. It is None
+    when the stream ended with no message_end (e.g. an immediate abort).
+    """
+    turn_count: int
+    accumulated_cost: float
+    stop_reason: str
+    model: str | None = None
+
+
 def _consume_stream(
     process: subprocess.Popen, log_file, prefix: str,
     max_turns: int | None = None,
     max_budget: float | None = None,
-) -> tuple[int, float, str]:
+) -> StreamResult:
     """Consume the RPC event stream, enforcing turn and budget limits.
 
-    Returns (turn_count, accumulated_cost, stop_reason).
     stop_reason is one of: "completed", "max_turns", "max_budget".
     """
     prev_tool = ""
@@ -306,6 +333,7 @@ def _consume_stream(
     steered = False
     aborted = False
     wrote_output = False
+    model = None
 
     for raw_line in process.stdout:
         log_file.write(raw_line)
@@ -322,6 +350,7 @@ def _consume_stream(
         msg_cost = parse_pi_cost(data)
         if msg_cost is not None:
             accumulated_cost += msg_cost
+            model = data.get("message", {}).get("model") or model
 
         if event_type == "turn_end":
             turn_count += 1
@@ -331,7 +360,7 @@ def _consume_stream(
         if event_type == "agent_end":
             break
 
-    return turn_count, accumulated_cost, stop_reason
+    return StreamResult(turn_count, accumulated_cost, stop_reason, model)
 
 
 # ── Result record generation ─────────────────────────────────────────────────
@@ -344,19 +373,24 @@ def _write_result_record(
     cost: float,
     duration_ms: int,
     stats: dict,
+    model: str | None = None,
 ):
     """Write a Claude-compatible result record to the session log.
 
     Maps Pi's get_session_stats fields to Claude's result record format
     so _parse_session_cost() and parse_session_usage() work without changes.
+
+    ``stats`` is the ``data`` of a get_session_stats response, which is what
+    _get_stats_after_agent_end returns — not the response envelope.
     """
     tokens = stats.get("tokens", {})
+    total_cost = stats.get("cost", cost)
 
     record = {
         "type": "result",
         "subtype": "success" if stop_reason == "completed" else stop_reason,
         "is_error": False,
-        "total_cost_usd": stats.get("cost", cost),
+        "total_cost_usd": total_cost,
         "num_turns": turn_count,
         "duration_ms": duration_ms,
         "usage": {
@@ -366,6 +400,21 @@ def _write_result_record(
             "cache_creation_input_tokens": tokens.get("cacheWrite", 0),
         },
     }
+
+    # Claude's result record carries per-model costs and the ledger reads them
+    # into cost_by_model; without this every Pi row is blank under
+    # `otto-log stats --by model`. Pi reports one model per session here, so the
+    # whole cost belongs to it.
+    if model:
+        record["modelUsage"] = {
+            model: {
+                "costUSD": total_cost,
+                "inputTokens": tokens.get("input", 0),
+                "outputTokens": tokens.get("output", 0),
+                "cacheReadInputTokens": tokens.get("cacheRead", 0),
+                "cacheCreationInputTokens": tokens.get("cacheWrite", 0),
+            }
+        }
     with open(session_log, "a") as f:
         f.write(json.dumps(record) + "\n")
 
@@ -388,8 +437,11 @@ def prompt(
 ) -> tuple[str, int, ai_usage.SessionUsage | None]:
     """Stateless text-in/text-out via pi -p. Returns (text, exit_code, usage).
 
-    Pi's -p mode reports no usage, so the third element is always None — the
-    ledger records nothing rather than a zeroed row that reads as a free call.
+    Usage is read from the JSON stream — see `pi_prompt_result`. It was reported
+    as None here for as long as the command omitted ``--mode json``, which is
+    what made every prompt call invisible to the ledger; on this machine that
+    would have been 953 rows and $230 of the Claude history had Pi been serving
+    them.
 
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
@@ -397,7 +449,8 @@ def prompt(
     cmd = _build_prompt_cmd(model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=timeouts.UNBOUNDED)
-    return result.stdout, result.returncode, None
+    reply, usage = pi_prompt_result(result.stdout)
+    return reply, result.returncode, usage
 
 
 def invoke_agent(inv: AgentInvocation) -> int:
@@ -436,7 +489,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
 
     # Stream events with budget and turn enforcement
     with open(inv.session_log, "w") as log_fh:
-        turn_count, accumulated_cost, stop_reason = _consume_stream(
+        stream = _consume_stream(
             proc, log_fh, prefix,
             max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
@@ -448,8 +501,8 @@ def invoke_agent(inv: AgentInvocation) -> int:
 
     # Write Claude-compatible result record
     _write_result_record(
-        inv.session_log, stop_reason, turn_count,
-        accumulated_cost, duration_ms, stats,
+        inv.session_log, stream.stop_reason, stream.turn_count,
+        stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
     )
 
     # Close stdin to terminate the RPC process — tolerate early exit
@@ -493,7 +546,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
 
     log_path = inv.session_log if inv.session_log else os.devnull
     with open(log_path, "w") as log_file:
-        turn_count, accumulated_cost, stop_reason = _consume_stream(
+        stream = _consume_stream(
             proc, log_file, "",
             max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
@@ -503,8 +556,8 @@ def invoke_fix(inv: AgentInvocation) -> int:
     if inv.session_log:
         stats = _get_stats_after_agent_end(proc)
         _write_result_record(
-            inv.session_log, stop_reason, turn_count,
-            accumulated_cost, duration_ms, stats,
+            inv.session_log, stream.stop_reason, stream.turn_count,
+            stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
         )
 
     try:

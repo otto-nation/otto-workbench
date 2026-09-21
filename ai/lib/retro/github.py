@@ -45,7 +45,18 @@ NOISE_PATTERNS = re.compile(
     r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?|\U0001f44d)[\s!.]*$", re.IGNORECASE
 )
 
+# One page of the PR list. Not the window's size: the window is a date range
+# and this is how many nodes one round trip asks for, so a window holding more
+# than this is paged through rather than truncated to it.
 GQL_MERGED_PRS_LIMIT = 50
+
+# How many pages of the list `fetch_repo_review_data` will walk before it gives
+# up and reports on what it has. The walk normally stops on its own at the
+# first PR older than the window — see `_in_window_page` — so this bounds only
+# the pathological case: a repo whose merged PRs are all inside the window,
+# where the walk would otherwise page through its entire history. Five pages is
+# 250 PRs in one window, well past any window this scans.
+GQL_MERGED_PRS_MAX_PAGES = 5
 
 # This module's own page sizes, rather than `gh.pr_reads`'s. The two queries
 # have nothing in common but their shape: that one reads a single PR and
@@ -66,17 +77,39 @@ RETRO_THREAD_COMMENTS_LIMIT = 10
 RETRO_ISSUE_COMMENTS_LIMIT = 100
 
 # Phase one: which PRs are in the window. Fifty nodes and nothing nested, so
-# the whole question costs a single point however many comments the repo's PRs
-# turn out to carry. The window filter runs against this, and only the
-# survivors are paid for below.
+# one page costs a single point however many comments the repo's PRs turn out
+# to carry. The window filter runs against this, and only the survivors are
+# paid for below.
+#
+# The filter is client-side because GitHub cannot do it here: `pullRequests`
+# takes `states`, `labels`, `headRefName`, `baseRefName`, `orderBy` and the
+# pagination arguments, and nothing that bounds a date. (`filterBy: {{since}}`
+# exists on `issues`, but GraphQL's `issues` connection returns `Issue` nodes
+# only — a PR is a distinct type there and never appears in it.) The `search`
+# root takes `merged:>=DATE` and would filter server-side, at 1 point a page,
+# but its index is only near-realtime and it caps at 1000 results; a retro that
+# silently missed a PR merged minutes ago would be reporting on a window it did
+# not actually cover.
+#
+# So the ordering does the work instead: UPDATED_AT descending, and a PR merged
+# after the window opened must have been updated at or after it merged. The
+# walk therefore stops at the first node older than the window, and pages until
+# then. `updatedAt` is selected for exactly that test — `mergedAt` cannot make
+# it, since a PR merged inside the window can carry an older merge date than a
+# stale PR's update.
 _RETRO_PRS_QUERY = f"""
-query($owner: String!, $name: String!) {{
+query($owner: String!, $name: String!, $cursor: String) {{
   repository(owner: $owner, name: $name) {{
-    pullRequests(states: MERGED, first: {GQL_MERGED_PRS_LIMIT}, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{
+    pullRequests(states: MERGED, first: {GQL_MERGED_PRS_LIMIT}, after: $cursor, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{
+      pageInfo {{
+        hasNextPage
+        endCursor
+      }}
       nodes {{
         number
         title
         mergedAt
+        updatedAt
         author {{ login }}
       }}
     }}
@@ -267,30 +300,9 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
         if since_ts > 0 else "2020-01-01T00:00:00Z"
     )
     owner, name = repo.split("/", 1)
-    r = gh_client.graphql(_RETRO_PRS_QUERY, variables={"owner": owner, "name": name})
-    if not r.ok:
-        log.warn(f"GraphQL failed for {repo}: {r.detail}")
+    in_window = _in_window_prs(repo, owner, name, since_date)
+    if in_window is None:
         return _fetch_repo_review_data_rest(repo, since_ts)
-    try:
-        data = json.loads(r.stdout)
-    except json.JSONDecodeError as e:
-        log.warn(f"GraphQL error for {repo}: {e}")
-        return _fetch_repo_review_data_rest(repo, since_ts)
-
-    pr_nodes = (
-        data.get("data", {})
-        .get("repository", {})
-        .get("pullRequests", {})
-        .get("nodes", [])
-    )
-
-    # Filtered before the detail query rather than after it: the window is why
-    # most of these PRs are not wanted, and asking about them anyway was most
-    # of what the old single query spent.
-    in_window = [
-        n for n in pr_nodes
-        if n.get("mergedAt") and n["mergedAt"] >= since_date
-    ]
 
     results = []
     for pr_node in in_window:
@@ -301,6 +313,91 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
         if parsed:
             results.append(parsed)
     return results
+
+
+def _in_window_prs(
+    repo: str, owner: str, name: str, since_date: str,
+) -> list[dict] | None:
+    """Every merged PR in the window, paged, or None when GraphQL cannot answer.
+
+    None rather than an empty list, because the caller falls back to REST on it
+    and an empty window is a legitimate answer that must not trigger that.
+
+    Pages until a node older than the window proves the rest are too, since the
+    list is ordered by UPDATED_AT descending. Asking for one page and stopping
+    — which this did — silently dropped every in-window PR past the fiftieth,
+    and a repo busy enough to merge fifty PRs in a window is exactly the one
+    whose review comments the retro most wants to read.
+
+    A page that fails mid-walk falls back whole rather than returning what it
+    has: a partial list is indistinguishable from a quiet window to every
+    caller downstream, and the REST path can still answer completely.
+    """
+    in_window: list[dict] = []
+    cursor = None
+    for _ in range(GQL_MERGED_PRS_MAX_PAGES):
+        page = _prs_page(repo, owner, name, cursor)
+        if page is None:
+            return None
+        kept, done = _in_window_page(page.get("nodes") or [], since_date)
+        in_window.extend(kept)
+        info = page.get("pageInfo") or {}
+        if done or not info.get("hasNextPage"):
+            return in_window
+        cursor = info.get("endCursor")
+        if not cursor:
+            return in_window
+    log.warn(
+        f"{repo}: stopped after {GQL_MERGED_PRS_MAX_PAGES} pages of merged PRs — "
+        "the report may be missing the oldest of them",
+    )
+    return in_window
+
+
+def _in_window_page(nodes: list[dict], since_date: str) -> tuple[list[dict], bool]:
+    """One page's in-window PRs, and whether the walk can stop here.
+
+    Filtered before the detail query rather than after it: the window is why
+    most of these PRs are not wanted, and asking about them anyway was most of
+    what the old single query spent.
+
+    The stop test reads ``updatedAt`` while the keep test reads ``mergedAt``,
+    and they are different questions. Ordering is by update, so the first node
+    updated before the window began is the point past which nothing can have
+    been merged inside it — but a node can be updated inside the window and
+    have merged long before it, which is kept out by the merge date without
+    ending the walk. A node missing ``updatedAt`` cannot prove the walk is
+    done, so it does not end it.
+    """
+    kept = []
+    for node in nodes:
+        updated = node.get("updatedAt")
+        if updated and updated < since_date:
+            return kept, True
+        merged = node.get("mergedAt")
+        if merged and merged >= since_date:
+            kept.append(node)
+    return kept, False
+
+
+def _prs_page(
+    repo: str, owner: str, name: str, cursor: str | None,
+) -> dict | None:
+    """One page of the merged-PR list, or None when GraphQL cannot answer."""
+    r = gh_client.graphql(
+        _RETRO_PRS_QUERY,
+        variables={"owner": owner, "name": name, "cursor": cursor},
+    )
+    if not r.ok:
+        log.warn(f"GraphQL failed for {repo}: {r.detail}")
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        log.warn(f"GraphQL error for {repo}: {e}")
+        return None
+    repository = data.get("data", {}).get("repository") or {}
+    return repository.get("pullRequests") or {}
 
 
 def _fetch_pr_detail(repo: str, owner: str, name: str, number: int) -> dict | None:
@@ -343,6 +440,21 @@ def _fetch_repo_review_data_rest(repo: str, since_ts: int) -> list[dict]:
 
 
 def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
+    """Merged PRs in the window, from REST.
+
+    The window is applied here rather than in the request because the REST
+    endpoint takes no date bound either — `state`, `sort` and `direction` are
+    what it offers.
+    """
+    # ceiling: reads every closed PR the repo has, to keep the few in window.
+    # `_gh_api` passes `--paginate`, which walks the whole result set before it
+    # returns, so no client-side early exit can save a request — they are all
+    # already made by the time the first row is seen. Bounding it means paging
+    # by hand against `&page=N` with the window as the stop condition, which is
+    # a change to the shared helper rather than to this caller.
+    # Upgrade trigger: if the GraphQL path is removed, or once a scanned repo
+    # has more than a few hundred closed PRs. Free today because GraphQL
+    # answers first and this runs only when that fails.
     since_date = datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
     endpoint = "pulls?state=closed&sort=updated&direction=desc&per_page=100"
     prs = _gh_api(endpoint, repo)

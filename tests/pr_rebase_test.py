@@ -2598,9 +2598,12 @@ def test_resolve_target_ref_never_asks_the_default_branch_when_a_pr_answers():
     mock_default.assert_not_called()
 
 
-def _run_tracker_check(merged=None, ctx=None):
+def _run_tracker_check(merged=None, ctx=None, *, looked=True, remedy=""):
     """Run the tracker half of the preflight with gh's answer forced."""
-    with mock.patch.object(branch_landed, "merged_pr", return_value=merged):
+    answer = branch_landed.TrackerAnswer(
+        merged=merged, looked=looked, remedy=remedy,
+    )
+    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
         return refusals.tracker_landed_check("/fake", ctx or _landed_ctx())
 
 
@@ -2656,8 +2659,10 @@ def test_tracker_check_never_reads_head():
     Every HEAD-dependent signal is on the git side, so reaching for one here
     would reintroduce the ordering bug the split fixes.
     """
-    with mock.patch.object(branch_landed, "merged_pr",
-                           return_value=branch_landed.MergedPR(number=_LANDED_PR)), \
+    answer = branch_landed.TrackerAnswer(
+        merged=branch_landed.MergedPR(number=_LANDED_PR),
+    )
+    with mock.patch.object(branch_landed, "merged_pr", return_value=answer), \
          mock.patch.object(git_client, "commits_ahead") as ahead, \
          mock.patch.object(branch_landed, "diff_is_empty") as diff, \
          mock.patch.object(branch_landed, "all_commits_upstream") as cherry:
@@ -2670,6 +2675,21 @@ def test_tracker_check_never_reads_head():
 
 def test_tracker_check_passes_when_github_has_no_answer():
     assert _run_tracker_check(None) is None
+
+
+def test_tracker_check_refuses_a_snapshotless_read_the_breaker_declined():
+    """The path `pr ci --fix` takes, which used to force-push through this.
+
+    No snapshot is passed, so the refusal has to come from `by_tracker`'s own
+    `looked`. Before this, a declined read was indistinguishable from "no
+    merged PR" and the rebase replayed onto a branch that had already landed.
+    """
+    report = _run_tracker_check(None, looked=False, remedy="refills at 16:00")
+
+    assert report is not None
+    assert report.status == pr_domains.RebaseStatus.TRACKER_UNREAD.value
+    assert report.signal == rebase_types.RefusalSignal.TRACKER_REFUSED.value
+    assert "refills at 16:00" in report.detail
 
 
 def test_git_check_never_asks_the_tracker():
@@ -3082,8 +3102,10 @@ def test_fresh_refuses_a_merged_branch_whose_remote_was_pruned(tmp_path, capsys)
         target_dir=tmp_path / "target",
     )
 
-    with mock.patch.object(branch_landed, "merged_pr",
-                           return_value=branch_landed.MergedPR(number=_LANDED_PR)):
+    answer = branch_landed.TrackerAnswer(
+        merged=branch_landed.MergedPR(number=_LANDED_PR),
+    )
+    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
         rc = lifecycle.fresh(
             str(work), ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
         )

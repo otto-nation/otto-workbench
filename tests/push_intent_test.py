@@ -325,8 +325,10 @@ def test_the_tracker_settles_a_squash_the_base_has_moved_past(
     git_in(wt, "fetch", "-q", "origin")
     _record_feature(wt, sha)
 
-    with mock.patch.object(branch_landed, "merged_pr",
-                           return_value=branch_landed.MergedPR(number=1016)):
+    answer = branch_landed.TrackerAnswer(
+        merged=branch_landed.MergedPR(number=1016),
+    )
+    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
         push_intent.reconcile()
 
     assert capsys.readouterr().err == ""
@@ -370,12 +372,41 @@ def test_a_branch_whose_work_reached_nothing_is_still_reported(pushable, capsys)
     git_in(remote, "update-ref", "-d", f"refs/heads/{_FEATURE}")
     _record_feature(wt, sha)
 
-    with mock.patch.object(branch_landed, "merged_pr", return_value=None):
+    answer = branch_landed.TrackerAnswer()
+    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
         push_intent.reconcile()
 
     err = capsys.readouterr().err
     assert "nothing has confirmed" in err
     assert sha[:7] in err
+
+
+def test_a_refused_tracker_read_leaves_the_record_to_be_asked_again(
+        pushable, capsys):
+    """A declined read is not evidence the push was lost.
+
+    Same setup as the test above — pushed, remote ref deleted, nothing local
+    can see the work — but here the one signal that could have found a squash
+    merge was never made. Reporting LOST on that would tell an operator their
+    work vanished because a quota ran out. The record survives instead, and the
+    next sweep asks again.
+    """
+    wt, remote = pushable
+    git_in(wt, "checkout", "-q", "-b", _FEATURE)
+    sha = _commit_file(wt, "f.txt")
+    git_in(wt, "push", "-q", "origin", _FEATURE)
+    git_in(remote, "update-ref", "-d", f"refs/heads/{_FEATURE}")
+    _record_feature(wt, sha)
+
+    answer = branch_landed.TrackerAnswer(looked=False, remedy="refills at 16:00")
+    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
+        push_intent.reconcile()
+
+    assert "nothing has confirmed" not in capsys.readouterr().err
+    assert push_intent.intents_path().exists()
+    (intent,) = _records()
+    assert intent.sha == sha
+    assert intent.attempts == 1
 
 
 def test_a_push_to_the_default_branch_is_never_excused(pushable, capsys):

@@ -3613,9 +3613,19 @@ Three signals, in the order `check` tries them, none of them sufficient alone:
 
 Every one of them answers "no" rather than raising when it cannot ask: a ref
 that does not resolve, a base that was never fetched, a `gh` that is absent,
-unauthenticated or rate-limited. "Landed" is the answer that suppresses
-something — a refusal for one caller, a warning for the other — so a question
-nobody could answer must never be able to produce it.
+unauthenticated or offline. "Landed" is the answer that suppresses something —
+a refusal for one caller, a warning for the other — so a question nobody could
+answer must never be able to produce it.
+
+One "no" is different, and is why `merged_pr` and `by_tracker` return a type
+rather than an optional. When the budget breaker declines the tracker read, no
+call is made at all: the absence of a merged PR is manufactured by this process
+rather than reported by GitHub, and it is indistinguishable from the answer
+that lets a force-push proceed. Both carry ``looked`` so a caller can tell "the
+tracker says no" from "the tracker was never asked", and each decides for
+itself — `pr rebase` refuses rather than replay, `push_intent` leaves the
+record unanswered for a later sweep. Collapsing the two is how a spent budget
+turns into a force-push over merged work.
 
 `check` is that ladder for a caller that wants one answer and would rather not
 spend the round trip. The signals are exported one at a time as well, because

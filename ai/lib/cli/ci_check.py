@@ -178,6 +178,12 @@ def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
     one the rebase's push asks. A draft run therefore rebases locally and drafts
     the force-push, where the subprocess used to perform it — the gate is a
     process-wide flag, and a child process was never told about it.
+
+    No snapshot is passed: this run has no `gh pr view` of its own to hand on,
+    and `refusals.tracker_landed_check` reads the tracker itself when it gets
+    none. That read can be refused — `pr_context.resolve` has already spent
+    GraphQL getting here — and the refusal comes back as `REFUSAL_EXIT`, which
+    is reported apart from a failed rebase below.
     """
     behind = report.behind_main
     if behind <= 0:
@@ -195,6 +201,15 @@ def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
     rc = pr_rebase.cmd_start(
         cwd, ctx, rebase_types.RunMode.FIX, target_ref=target_ref, trail=trail,
     )
+
+    # A refusal is not a failure: the rebase declined on purpose, having found
+    # the work landed or having been unable to ask. Reported on its own so the
+    # operator is not told a rebase broke when it deliberately stopped, and so
+    # the fix pass that follows is known to be running on the un-rebased base.
+    if rc == rebase_types.REFUSAL_EXIT:
+        trail.warn("rebase_refused", "rebase refused its preflight")
+        log.warn("Rebase refused — continuing with CI fixes on current base")
+        return False
 
     if rc != 0:
         trail.warn("rebase_failed", f"rebase failed (exit {rc})")

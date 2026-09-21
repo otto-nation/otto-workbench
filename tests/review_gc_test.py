@@ -552,4 +552,3 @@ def test_prune_outcome_folds_cut_short_across_both_sweeps():
              + review_gc.PruneOutcome(1, cut_short=True))
     assert total.pruned == 3
     assert total.cut_short
-

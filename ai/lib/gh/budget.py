@@ -368,29 +368,43 @@ def _export() -> None:
     a value and is what decides whether the latch still holds, while a reset of
     0 means the probe read no header and nothing should claim a time.
     """
-    # ceiling: the latch spans this process and the children it spawns, so a
-    # second `pr` invocation in the same reset window rediscovers the spent
-    # budget once more. Upgrade trigger: persist it under
-    # cache_dir("gh-budget") keyed on (user id, resource). The condition that
-    # blocked this — a caller somewhere reading a refused call as an
-    # authoritative empty answer — no longer holds: `pr_reads` carries
-    # `PendingReview.looked`, `dedup` carries `BotReviews.looked`, the thread
-    # fetch comes back `complete=False` with `sync_threads` keeping what it
-    # could not see, and `landed.merged_pr` now answers with `TrackerAnswer`,
-    # which `pr rebase` refuses on and `push_intent` leaves unanswered.
+    # ceiling-permanent: the latch spans this process and the children it
+    # spawns, and deliberately goes no further. A process started with no
+    # parent — the launchd `pr gc` — pays one refused call to learn a budget
+    # a sibling already found spent, and that is the whole of what disk
+    # persistence would have saved.
     #
-    # What is left before building it is the mechanism, not the safety case:
-    # a hard TTL clamp of <=3600s against backward clock skew (this laptop's
-    # 12h timer measurably fires at 13.9h-94.2h gaps), wall clock rather than
-    # monotonic, `serde.write_json` for the atomic write, and registration in
-    # a sweep — nothing on this machine collects `cache_dir()` today, so a
-    # latch written there would outlive every process that could clear it.
+    # This was a pending trigger until the four false-refusal paths were
+    # closed (see `ignore/plans/gh-graphql-budget.md`). They are closed. The
+    # gate opened, the benefit was then measured, and it was smaller than the
+    # cost — so the trigger is retired rather than left to be rediscovered.
     #
-    # Deliberately still in front of that work: a persisted latch is a refusal
-    # a *later* process inherits without having met the 403 itself, so each of
-    # those `looked` flags has to survive being read across a process boundary
-    # rather than only within one. `ignore/plans/gh-graphql-budget.md` has the
-    # measurements that justify the change.
+    # Measured over 33 days of trail, 2026-08-14 to 2026-09-21: 97 `pr gc`
+    # runs, of which 2 met a spent budget — 2.1%, both on one day. The 81% of
+    # GC hours that share an hour with a review is real but is not the cost:
+    # sharing an hour is not sharing a reset window, and both prune loops
+    # already ask the latch *before* each call, so a cold sweep spends exactly
+    # one call to discover the refusal and then stops. The 6-7 warnings over
+    # ~21 calls in this module's opening example are already gone; those two
+    # sweeps each ran `dispatch -> gc_cut_short -> finish` in 112ms.
+    #
+    # Against ~2 saved calls a month: a persisted latch is a refusal a later
+    # process inherits without having met the 403 itself, which turns
+    # `landed.merged_pr`'s refusal — and so `pr rebase` and `pr ci --fix` —
+    # from process-tree-scoped into machine-scoped failing-closed, for up to
+    # an hour, on the word of an unrelated command. This module's own rule is
+    # that failing open costs one wasted call while failing closed invents an
+    # outage. It would also need an account key it cannot read for free: the
+    # user id is free only in the 403 text, a fresh process has no 403, and
+    # `GH_TOKEN__<ORG>` means two identities genuinely share this machine.
+    #
+    # Reproduce the measurement before reopening this: count `gc_cut_short`
+    # against `dispatch`+`subcommand=gc` in ~/.local/state/workbench/trail.
+    # If exhaustion stops being a rounding error the arithmetic changes, and
+    # the design that survives review is a `firsthand` flag on `Latch` — disk
+    # latches suppress wasteful calls but are bypassed via `_skip_breaker` by
+    # the safety-critical readers, so a false refusal costs a call rather than
+    # a rebase.
     if not _latched:
         os.environ.pop(LATCH_ENV, None)
         return

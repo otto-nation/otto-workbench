@@ -315,7 +315,12 @@ _run_step_from_worktree() {
   # ../_shared is imported by the guards' detect.ts files. Node resolves it
   # from the extension's real path rather than its installed symlink, so it
   # must stay out of ~/.pi/agent/extensions rather than being installed beside
-  # them.
+  # them. It has no index.ts/index.js/package.json, so step_pi_extensions
+  # skips it the same way it skips any other entry-point-less directory.
+  mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/_shared"
+  printf 'export function helper() {}\n' \
+    > "$FAKE_WORKBENCH/ai/pi/extensions/_shared/util.ts"
+  _make_extension capture
   _run_step
   [ "$status" -eq 0 ]
   [ ! -e "$PI_EXT_DIR/_shared" ]
@@ -739,7 +744,7 @@ gh issue create --title x'
   local sandbox
   sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
 
-  local cmd claude_blocks pi_blocks
+  local cmd payload claude_blocks pi_blocks
   for cmd in \
     'gh issue create --title x' \
     'cd /tmp && gh issue create' \
@@ -748,7 +753,16 @@ gh issue create --title x'
     'gh issue view 1' \
     'gh issue list'; do
 
-    if _guard_in "$sandbox" "{\"tool_input\":{\"command\":\"$cmd\"}}" > /dev/null 2>&1; then
+    # python3 json.dumps, not string interpolation — one of the commands
+    # above carries embedded double quotes, which naive interpolation would
+    # emit as unparseable JSON and jq's `|| exit 0` would then read as an
+    # allow that says nothing about the guard's actual pattern match.
+    payload=$(python3 -c '
+import json, sys
+print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
+' "$cmd")
+
+    if _guard_in "$sandbox" "$payload" > /dev/null 2>&1; then
       claude_blocks=false
     else
       claude_blocks=true
@@ -762,4 +776,68 @@ gh issue create --title x'
       return 1
     }
   done
+}
+
+# _probe SANDBOX — branchReviewHasOpenFindings() as the Pi guard sees it, run
+# from SANDBOX/repo with SANDBOX/state as the state root. The probe reads git
+# and the filesystem, so unlike the predicate helpers above it needs a cwd.
+_probe() {
+  run node --input-type=module -e "
+    process.chdir(process.argv[1] + '/repo');
+    process.env.WORKBENCH_STATE_DIR = process.argv[1] + '/state';
+    const { branchReviewHasOpenFindings } = await import('$REPO_ROOT/ai/pi/extensions/issue-defer-guard/detect.ts');
+    process.stdout.write(String(branchReviewHasOpenFindings()));
+  " -- "$1"
+}
+
+@test "issue-defer-guard: the probe sees open findings on the branch" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  _probe "$sandbox"
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "issue-defer-guard: the probe is quiet once every finding is ticked" {
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" "x")"
+
+  _probe "$sandbox"
+  [ "$output" = false ]
+}
+
+@test "issue-defer-guard: the probe fails open with no review, no branch, or no remote" {
+  # Each is a state the probe cannot answer in. Blocking on any of them would
+  # make the guard fire on repos it knows nothing about, which is worse than
+  # the mistake it exists to prevent.
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing")"
+  _probe "$sandbox"
+  [ "$output" = false ]
+
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+  git -C "$sandbox/repo" checkout -q --detach
+  _probe "$sandbox"
+  [ "$output" = false ]
+
+  git -C "$sandbox/repo" checkout -q "isaac/fix/thing"
+  git -C "$sandbox/repo" remote remove origin
+  _probe "$sandbox"
+  [ "$output" = false ]
+}
+
+@test "issue-defer-guard: both harnesses read the same review for one branch" {
+  # The probe and _branch_review_has_open_findings build the review path
+  # independently — same repo-from-remote, same branch slug, same state root.
+  # A rename on either side makes that guard read an empty directory and fall
+  # silent, so the two are held to one answer here.
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
+
+  _probe "$sandbox"
+  [ "$output" = true ]
+
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  [ "$status" -eq 2 ]
 }

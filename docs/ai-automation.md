@@ -282,7 +282,7 @@ Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in 
 2. **If due** — `run-auto-task <skill>` detaches a headless `claude -p` session, which inherits the exiting session's working directory and logs to `~/.claude/logs/`
 3. **Skill completion** — completion script records a timestamp so the cooldown resets
 
-The headless session runs with `--bare`, so its own Stop hooks do not fire and nothing cascades.
+The headless session runs the full hook set and reaches its own Stop hook, so `run-auto-task` exports `WORKBENCH_AUTO_TASK` and every gate exits 1 when it sees it. That is what stops the cascade. It replaced `--bare`, which skipped hooks but also broke slash-command resolution, so the spawned session answered `Unknown command: /<skill>` and did nothing.
 
 Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
 

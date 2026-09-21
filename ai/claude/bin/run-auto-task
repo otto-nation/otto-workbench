@@ -3,12 +3,18 @@
 #
 # Usage: run-auto-task <skill-name>
 #
-# Spawns `claude -p` in the background with --bare (skips hooks to prevent
-# cascading) and streams output to ~/.claude/logs/<skill>-<timestamp>.log.
+# Spawns `claude -p` in the background and streams output to
+# ~/.claude/logs/<skill>-<timestamp>.log.
 # Designed to be called from Stop hooks instead of setting pending flags.
 #
+# Cascade prevention is WORKBENCH_AUTO_TASK, exported below and checked by the
+# four gates the Stop hook calls. It replaced --bare, which skipped hooks but
+# also broke the slash command this script exists to send: every run from
+# 2026-09-15 on logged `Unknown command: /<skill>` and exited 0.
+#
 # Env:
-#   CLAUDE_LOG_DIR  — override log directory (default: ~/.claude/logs)
+#   CLAUDE_LOG_DIR      — override log directory (default: ~/.claude/logs)
+#   WORKBENCH_AUTO_TASK — set here; gates exit 1 when they see it
 
 set -e
 
@@ -21,8 +27,9 @@ Usage: run-auto-task <skill-name>
 
 Run a Claude Code skill as a headless background session.
 
-Spawns \`claude -p\` with --bare (skips hooks to prevent cascading) and
-streams output to ~/.claude/logs/<skill>-<timestamp>.log.
+Spawns \`claude -p\` and streams output to
+~/.claude/logs/<skill>-<timestamp>.log. The spawned session inherits
+WORKBENCH_AUTO_TASK, which stops its own Stop hook from re-triggering.
 
 Env:
   CLAUDE_LOG_DIR  override log directory (default: ~/.claude/logs)
@@ -39,19 +46,23 @@ timestamp="$(date +%Y%m%d-%H%M%S)"
 log_file="${log_dir}/${skill}-${timestamp}.log"
 raw_file="${log_file%.log}.jsonl"
 
+# The spawned session runs the full hook set, so without this it would reach its
+# own Stop hook, pass the same gate that spawned it, and launch another copy.
+export WORKBENCH_AUTO_TASK="$skill"
+
 # ceiling: bypasses ai_backend so the skill can use slash commands, which
 # _base_cmd() disables; route through the backend once it takes a slash-commands flag.
 # Until then the raw stream is teed here and rendered back to readable text, so the
 # call still lands in the usage ledger without the log turning into JSONL.
 if ! command -v ai-usage-log > /dev/null 2>&1; then
-  nohup claude -p "/$skill" --bare --permission-mode bypassPermissions \
+  nohup claude -p "/$skill" --permission-mode bypassPermissions \
     > "$log_file" 2>&1 & disown
   exit 0
 fi
 
 (
   trap '' HUP
-  claude -p "/$skill" --bare --permission-mode bypassPermissions \
+  claude -p "/$skill" --permission-mode bypassPermissions \
     --output-format stream-json --verbose 2>&1 |
     ai-usage-log render --tee "$raw_file" > "$log_file"
   rc="${PIPESTATUS[0]}"

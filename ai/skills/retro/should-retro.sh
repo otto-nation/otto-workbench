@@ -18,6 +18,8 @@ _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 . "$_WB/lib/ai/session-count.sh"
 unset _WB
 
+_inside_auto_task && exit 1
+
 RETRO_INTERVAL_HOURS=72
 MIN_SESSIONS=5
 

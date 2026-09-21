@@ -1542,9 +1542,31 @@ def test_gc_dir_has_recent_files(cr, tmp_path):
     assert review_gc._dir_is_all_stale(d) is False
 
 
-def test_gc_dir_empty(cr, tmp_path):
+def test_gc_dir_empty_and_just_created(cr, tmp_path):
+    """The race that killed a review mid-run.
+
+    A run creates its directory and only then writes into it, so a sweep can
+    arrive while it holds no files. This used to read as "every file here is
+    stale" vacuously and return True, and the caller deleted the directory the
+    review was about to write review.md into — the run then died on the missing
+    path. `pr gc` runs from scheduled maintenance, so it lands in that window on
+    its own schedule rather than only under a concurrent operator.
+    """
     d = tmp_path / "empty-dir"
     d.mkdir()
+    assert review_gc._dir_is_all_stale(d) is False
+
+
+def test_gc_dir_empty_and_long_abandoned(cr, tmp_path):
+    """The narrowing above does not exempt an empty directory for good.
+
+    One left behind by a run that died before writing anything is real garbage
+    once it is old enough, and is what this branch collected before it started
+    collecting live ones too.
+    """
+    d = tmp_path / "abandoned-dir"
+    d.mkdir()
+    os.utime(str(d), (1622505600, 1622505600))
     assert review_gc._dir_is_all_stale(d) is True
 
 

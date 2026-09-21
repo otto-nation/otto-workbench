@@ -553,32 +553,3 @@ def test_prune_outcome_folds_cut_short_across_both_sweeps():
     assert total.pruned == 3
     assert total.cut_short
 
-
-def test_a_just_created_empty_review_dir_survives_the_sweep(tmp_path):
-    """The race that killed a review mid-run.
-
-    A run creates its directory and only then writes into it, so a sweep can
-    arrive while it holds no files. Reading that as "nothing here is recent"
-    deleted the directory the review was about to write review.md into, and the
-    run died on the missing path. `pr gc` runs from scheduled maintenance, so
-    this needs no concurrent operator to happen.
-    """
-    review_dir = tmp_path / "widget-self-branch"
-    review_dir.mkdir()
-
-    assert not review_gc._dir_is_all_stale(review_dir)
-
-
-def test_a_long_abandoned_empty_review_dir_is_still_collected(tmp_path):
-    """The fix narrows the sweep; it must not exempt an empty dir for good.
-
-    A directory left behind by a run that died before writing anything is real
-    garbage once it is old enough, and is what the empty-directory branch was
-    collecting before it started collecting live ones too.
-    """
-    review_dir = tmp_path / "widget-self-abandoned"
-    review_dir.mkdir()
-    old = time.time() - (review_gc.GC_STALE_DAYS + 1) * 86400
-    os.utime(review_dir, (old, old))
-
-    assert review_gc._dir_is_all_stale(review_dir)

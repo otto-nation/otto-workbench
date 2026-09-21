@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""Report tests added by a change that already pass without it.
+
+Usage: bin/local/validate-new-tests [--base REF] [--quiet] [--list] [--json]
+
+ai/guidelines/rules/testing.md § A Test Must Fail When Its Subject Breaks
+prescribes the check in prose: break the subject, watch the test fail, restore.
+The prose is exhaustive and it still does not get done — in one session six
+tests shipped that could not fail, every one caught later by hand-mutating the
+code. This runs the same check the rule describes, once, from the diff.
+
+The predicate is the honest half of that rule: a test added alongside a change
+should fail without the change. So the tests added in the diff are run against
+a worktree at the merge base, and any that pass there are reported.
+
+**A pass at base is a question, not a verdict.** Measured on this repo's own
+history, roughly one added test in five legitimately passes at base — it covers
+behaviour the change was careful to preserve, or the commit is a refactor with
+no behaviour change to detect. Those take a marker, in the grammar `ceiling:`
+uses, immediately above the test:
+
+    # passes-at-base: asserts behaviour this change was careful not to break
+    @test "a second call replaces the map rather than merging into it" {
+
+A marker with no reason after the colon declares nothing and does not suppress
+the finding, for the same reason a bare `ceiling:` does not satisfy its gate.
+
+**What this cannot catch, and it is half the problem.** A test that fails at
+base for a reason other than the one it was written for looks identical here to
+one that fails for the right reason: a runner reports *that* a test failed, not
+*why*. Of the six that prompted this tool, this catches four. The other two
+failed at base because the function under test did not exist yet, which says
+nothing about whether the assertion constrains it. For those the manual revert
+is still the only answer, and a finding here is the moment to do it.
+
+Exit code: 0 when every added test fails at base or carries a reason,
+1 when one or more pass at base unmarked, 2 when the check could not run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+_WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
+from ansi import DIM, GREEN, NC, RED, YELLOW
+
+# A marker and its reason, in `ceiling:`'s grammar. The reason is required.
+MARKER = re.compile(r"^\s*#\s*passes-at-base:\s*(?P<reason>\S.*?)\s*$")
+BATS_TEST = re.compile(r'^\+@test\s+"(?P<name>.+)"\s*\{')
+PYTEST_TEST = re.compile(r"^\+\s*def\s+(?P<name>test_\w+)\s*\(")
+# Where a test file's own support lives. Everything changed under here travels
+# into the base worktree with the suite: a helper left behind makes the suite
+# fail with `command not found`, which reads as a correct failure and proves
+# nothing.
+TEST_DIR = "tests/"
+
+
+@dataclass(frozen=True)
+class NewTest:
+    file: str
+    name: str
+    line: int
+    marker_reason: str | None
+
+    @property
+    def is_pytest(self) -> bool:
+        return self.file.endswith(".py")
+
+
+@dataclass(frozen=True)
+class Finding:
+    file: str
+    name: str
+    line: int
+    kind: str  # "vacuous" | "passes-at-base" | "stale-marker"
+    subject: str | None = None
+
+
+def _git(args: list[str], cwd: Path) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _added_tests(base_ref: str, repo: Path) -> list[NewTest]:
+    """Every test the diff against `base_ref` adds.
+
+    Read from the diff rather than by comparing two parsed files: a test moved
+    or reindented is not a new test, and the diff already knows that.
+    """
+    diff = _git(["diff", "--unified=1", base_ref, "--", TEST_DIR], repo)
+    found: list[NewTest] = []
+    current_file = ""
+    line_no = 0
+    previous = ""
+
+    for raw in diff.splitlines():
+        if raw.startswith("+++ b/"):
+            current_file = raw[6:]
+            previous = ""
+            continue
+        if raw.startswith("@@"):
+            hunk = re.search(r"\+(\d+)", raw)
+            line_no = int(hunk.group(1)) if hunk else 0
+            previous = ""
+            continue
+        if not current_file or raw.startswith("-"):
+            continue
+
+        match = BATS_TEST.match(raw) or PYTEST_TEST.match(raw)
+        if match:
+            marker = MARKER.match(previous.lstrip("+ "))
+            found.append(NewTest(
+                file=current_file,
+                name=match.group("name"),
+                line=line_no,
+                marker_reason=marker.group("reason") if marker else None,
+            ))
+        previous = raw
+        line_no += 1
+
+    return found
+
+
+def _changed_test_support(base_ref: str, repo: Path) -> list[str]:
+    """Changed paths under tests/ — helpers and fixtures, not just suites.
+
+    Source files are deliberately excluded: staging one would put the change
+    into the base worktree, and then every added test passes there.
+    """
+    names = _git(["diff", "--name-only", base_ref, "--", TEST_DIR], repo)
+    return [line for line in names.splitlines() if line.strip()]
+
+
+@contextmanager
+def _base_worktree(base_ref: str, repo: Path):
+    """A detached worktree at `base_ref`, removed on the way out.
+
+    Under a fresh mktemp rather than a fixed path: two pushes running this at
+    once would otherwise collide on the same directory, and the loser's
+    worktree is removed out from under it.
+    """
+    parent = tempfile.mkdtemp(prefix="validate-new-tests-")
+    path = Path(parent) / "base"
+    add = subprocess.run(
+        ["git", "worktree", "add", "--detach", str(path), base_ref],
+        cwd=str(repo), capture_output=True, text=True, check=False,
+    )
+    if add.returncode != 0:
+        shutil.rmtree(parent, ignore_errors=True)
+        raise RuntimeError(f"could not create a worktree at {base_ref}: {add.stderr.strip()}")
+    try:
+        yield path
+    finally:
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(path)],
+            cwd=str(repo), capture_output=True, check=False,
+        )
+        shutil.rmtree(parent, ignore_errors=True)
+
+
+def _stage_tests(worktree: Path, repo: Path, support: list[str]) -> None:
+    for rel in support:
+        source = repo / rel
+        if not source.is_file():
+            continue
+        target = worktree / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
+def _bats_passes(worktree: Path, suite: str) -> set[str]:
+    """Names of the tests in `suite` that pass in the base worktree."""
+    result = subprocess.run(
+        ["bats", suite, "--formatter", "tap"],
+        cwd=str(worktree), capture_output=True, text=True, check=False,
+    )
+    passed = set()
+    for line in result.stdout.splitlines():
+        match = re.match(r"^ok \d+ (?P<name>.+)$", line)
+        if match:
+            passed.add(match.group("name").strip())
+    return passed
+
+
+def _pytest_passes(worktree: Path, suite: str, names: list[str]) -> set[str]:
+    result = subprocess.run(
+        ["pytest", suite, "-q", "--tb=no", "-rA"],
+        cwd=str(worktree), capture_output=True, text=True, check=False,
+    )
+    passed = set()
+    for line in result.stdout.splitlines():
+        match = re.match(r"^PASSED\s+\S+::(?P<name>\w+)", line)
+        if match and match.group("name") in names:
+            passed.add(match.group("name"))
+    return passed
+
+
+def _passing_at_base(tests: list[NewTest], worktree: Path) -> set[str]:
+    passed: set[str] = set()
+    suites = sorted({t.file for t in tests})
+    for suite in suites:
+        if not (worktree / suite).is_file():
+            # The suite is new in this change, so nothing of it exists at base
+            # and none of its tests can pass there.
+            continue
+        if suite.endswith(".py"):
+            names = [t.name for t in tests if t.file == suite]
+            passed |= _pytest_passes(worktree, suite, names)
+        else:
+            passed |= _bats_passes(worktree, suite)
+    return passed
+
+
+# An absence assertion and the leaf it names: `[ ! -e "$DIR/thing" ]`, or
+# pytest's `not (tmp_path / "thing").exists()`.
+ABSENCE_BATS = re.compile(r'\[\s*!\s*-(e|f|d)\s*"([^"]+)"')
+ABSENCE_PY = re.compile(r'not\s+.*?[/(]\s*["\']([^"\']+)["\']\s*\)?\s*\)?\.exists\(\)')
+# Anything that would bring that leaf into existence.
+# A creating verb somewhere on a line that also names the leaf. Deliberately
+# loose about what sits between them: shell writes it as `> "$DIR/leaf"` and
+# Python as `(tmp / "leaf").write_text(...)`, where the verb follows the name
+# rather than preceding it. Either order counts.
+CREATES = r"(mkdir|touch|cp|printf|echo|ln|write_text|open\(|>)"
+
+
+def _asserts_absence_it_never_created(body: str) -> str | None:
+    """The leaf a test asserts absent without its fixture ever creating it.
+
+    This is the shape of a test that cannot fail: asserting `_shared` is not
+    installed, in a fixture that never puts a `_shared` anywhere for the code
+    to install. It passes on an empty directory, which is what it is actually
+    looking at.
+
+    A legitimate negative — "the ledger stays absent when the repo opted out" —
+    creates the thing and asserts the code left it alone, so it has the leaf in
+    a creating position and is not reported.
+
+    Returns the leaf name, or None when the test either makes no absence
+    assertion or does create what it names.
+    """
+    match = ABSENCE_BATS.search(body) or ABSENCE_PY.search(body)
+    if not match:
+        return None
+    leaf = match.groups()[-1].split("/")[-1].strip()
+    if not leaf or leaf.startswith("$"):
+        return None
+    quoted = re.escape(leaf)
+    for line in body.splitlines():
+        if not re.search(quoted, line):
+            continue
+        if re.search(CREATES, line):
+            return None
+    return leaf
+
+
+def _test_body(path: Path, name: str) -> str:
+    """The source of one test, for the shape checks above."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return ""
+    opener = f'@test "{name}"' if path.suffix == ".bats" else f"def {name}("
+    start = next((i for i, line in enumerate(lines) if line.startswith(opener)
+                  or line.lstrip().startswith(opener)), None)
+    if start is None:
+        return ""
+    closer = "}" if path.suffix == ".bats" else None
+    end = len(lines)
+    for i, line in enumerate(lines[start + 1:], start + 1):
+        if (closer and line == closer) or (not closer and line.startswith("def ")):
+            end = i
+            break
+    return "\n".join(lines[start:end + 1])
+
+
+def _findings(
+    tests: list[NewTest], passed_at_base: set[str], repo: Path | None = None,
+) -> list[Finding]:
+    """Findings, ranked by how likely each is to be a real defect.
+
+    Passing at base is on its own a weak signal: measured against this repo's
+    own history it is right about one time in eight, because a negative or
+    back-compat case passes at base by design. A gate at that precision is one
+    nobody keeps.
+
+    So the strong finding is the conjunction — a test that passes at base *and*
+    asserts something absent that its own fixture never creates. On the commit
+    that prompted this tool, that pair matched the one genuinely vacuous test
+    and cleared all seven legitimate ones.
+    """
+    findings: list[Finding] = []
+    for test in tests:
+        passed = test.name in passed_at_base
+        if passed and not test.marker_reason:
+            findings.append(_rank(test, repo))
+        elif not passed and test.marker_reason:
+            findings.append(Finding(test.file, test.name, test.line, "stale-marker", None))
+    return findings
+
+
+def _rank(test: NewTest, repo: Path | None) -> Finding:
+    """One base-passing test, as either the strong finding or the weak one."""
+    leaf = None
+    if repo is not None:
+        leaf = _asserts_absence_it_never_created(_test_body(repo / test.file, test.name))
+    kind = "vacuous" if leaf else "passes-at-base"
+    return Finding(test.file, test.name, test.line, kind, leaf)
+
+
+def _report(findings: list[Finding], quiet: bool) -> None:
+    vacuous = [f for f in findings if f.kind == "vacuous"]
+    passing = [f for f in findings if f.kind == "passes-at-base"]
+    stale = [f for f in findings if f.kind == "stale-marker"]
+
+    if vacuous:
+        print(f"{RED}✗{NC} {len(vacuous)} added test(s) cannot fail", file=sys.stderr)
+        for f in vacuous:
+            print(f"      {f.file}:{f.line}: {f.name}", file=sys.stderr)
+            print(f"        asserts {f.subject!r} is absent, and never creates one",
+                  file=sys.stderr)
+        print(f"    {DIM}the assertion passes on an empty directory, which is what it is",
+              file=sys.stderr)
+        print(f"    looking at. Create the thing the code should have left alone{NC}",
+              file=sys.stderr)
+
+    if passing and not quiet:
+        print(f"{YELLOW}▲{NC} {len(passing)} added test(s) pass without the change",
+              file=sys.stderr)
+        for f in passing:
+            print(f"      {f.file}:{f.line}: {f.name}", file=sys.stderr)
+        print(f"    {DIM}usually fine — a negative or back-compat case passes at base by",
+              file=sys.stderr)
+        print("    design. Worth one look each; mark the ones that are deliberate:",
+              file=sys.stderr)
+        print(f"    # passes-at-base: <why it passes without the change>{NC}", file=sys.stderr)
+
+    if stale:
+        print(f"{YELLOW}▲{NC} {len(stale)} passes-at-base marker(s) no longer apply",
+              file=sys.stderr)
+        for f in stale:
+            print(f"      {f.file}:{f.line}: {f.name}", file=sys.stderr)
+        print(f"    {DIM}the test fails at base now — drop the marker{NC}", file=sys.stderr)
+
+    if not findings and not quiet:
+        print(f"{GREEN}✓{NC} every added test fails without its change")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Report tests added by a change that already pass without it.",
+    )
+    parser.add_argument("--base", default="", help="Merge base (default: the tracked remote HEAD)")
+    parser.add_argument("--quiet", action="store_true", help="Only show findings")
+    parser.add_argument("--list", action="store_true", help="Print the added tests; run nothing")
+    parser.add_argument("--json", action="store_true", help="Machine-readable findings")
+    args = parser.parse_args()
+
+    repo = Path(_git(["rev-parse", "--show-toplevel"], Path.cwd()).strip() or _WORKBENCH_DIR)
+    base = args.base or "origin/HEAD"
+    merge_base = _git(["merge-base", "HEAD", base], repo).strip()
+    if not merge_base:
+        print(f"{RED}✗{NC} no merge base against {base}", file=sys.stderr)
+        sys.exit(2)
+
+    tests = _added_tests(merge_base, repo)
+    if args.list:
+        for test in tests:
+            mark = f"  # {test.marker_reason}" if test.marker_reason else ""
+            print(f"{test.file}:{test.line}: {test.name}{mark}")
+        sys.exit(0)
+
+    if not tests:
+        if not args.quiet:
+            print(f"{GREEN}✓{NC} no tests added — nothing to check")
+        sys.exit(0)
+
+    try:
+        with _base_worktree(merge_base, repo) as worktree:
+            _stage_tests(worktree, repo, _changed_test_support(merge_base, repo))
+            passed = _passing_at_base(tests, worktree)
+    except RuntimeError as exc:
+        print(f"{RED}✗{NC} {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    findings = _findings(tests, passed, repo)
+
+    if args.json:
+        print(json.dumps([f.__dict__ for f in findings], indent=2))
+        sys.exit(1 if any(f.kind == "vacuous" for f in findings) else 0)
+
+    _report(findings, args.quiet)
+    # Only the conjunction fails. Passing at base alone is reported and
+    # forgiven: at one-in-eight precision it is a prompt to look, not a verdict,
+    # and a gate that fires on seven good tests to catch one bad one is a gate
+    # that gets turned off.
+    sys.exit(1 if any(f.kind == "vacuous" for f in findings) else 0)
+
+
+if __name__ == "__main__":
+    main()

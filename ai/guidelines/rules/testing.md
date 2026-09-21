@@ -43,6 +43,18 @@ A filter is the other way to fool yourself here: `-k`, a `grep`, a subset path.
 A revert whose test was deselected reports no failures and reads as proof. Run
 the whole file.
 
+`bin/local/validate-new-tests` does this from the diff — it runs the tests a
+change adds against a worktree at the merge base and reports the ones that pass
+there. Treat its two findings differently, because they are not equally strong.
+A test that merely passes at base is usually fine: a negative or back-compat
+case passes without the change by design, and on this repo's own history that
+signal alone is right about one time in eight. A test that passes at base *and*
+asserts something absent its own fixture never creates is the shape that cannot
+fail, and that pair is what the check fails on. Neither verdict replaces the
+revert above for a test you have reason to doubt — a test can fail at base for a
+reason other than the one it was written for, and no runner can see the
+difference.
+
 - Do not add tests that simply assert constant values
 - The assertion cannot be satisfied incidentally. An `or` arm that is always true (`assert x in content or " " in text`) makes the whole assertion a tautology, and it passes on any input
 - The patch target is the name the code under test actually looks up. Patching `mod.subprocess.run` proves nothing once the function was migrated to call `gh_client.api` — the test keeps passing against code it no longer touches

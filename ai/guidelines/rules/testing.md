@@ -49,11 +49,20 @@ there. Treat its two findings differently, because they are not equally strong.
 A test that merely passes at base is usually fine: a negative or back-compat
 case passes without the change by design, and on this repo's own history that
 signal alone is right about one time in eight. A test that passes at base *and*
-asserts something absent its own fixture never creates is the shape that cannot
-fail, and that pair is what the check fails on. Neither verdict replaces the
-revert above for a test you have reason to doubt — a test can fail at base for a
-reason other than the one it was written for, and no runner can see the
-difference.
+asserts the absence of something its own fixture never creates is the shape
+that cannot fail, and that pair is what the check fails on. Neither verdict
+replaces the revert above for a test you have reason to doubt — a test can
+fail at base for a reason other than the one it was written for, and no runner
+can see the difference.
+
+A test that legitimately passes at base takes a marker, in the grammar
+`ceiling:` uses, immediately above the test:
+
+    # passes-at-base: asserts behaviour this change was careful not to break
+    @test "a second call replaces the map rather than merging into it" {
+
+A marker with no reason after the colon declares nothing and does not suppress
+the finding, for the same reason a bare `ceiling:` does not satisfy its gate.
 
 - Do not add tests that simply assert constant values
 - The assertion cannot be satisfied incidentally. An `or` arm that is always true (`assert x in content or " " in text`) makes the whole assertion a tautology, and it passes on any input

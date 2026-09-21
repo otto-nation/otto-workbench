@@ -34,7 +34,9 @@ nothing about whether the assertion constrains it. For those the manual revert
 is still the only answer, and a finding here is the moment to do it.
 
 Exit code: 0 when every added test fails at base or carries a reason,
-1 when one or more pass at base unmarked, 2 when the check could not run.
+1 when one or more pass at base *and* assert something absent their own
+fixture never creates (the vacuous shape), 2 when the check could not run.
+A plain, unmarked pass at base is reported but does not fail the run.
 """
 
 from __future__ import annotations
@@ -96,8 +98,12 @@ def _git(args: list[str], cwd: Path) -> str:
 def _added_tests(base_ref: str, repo: Path) -> list[NewTest]:
     """Every test the diff against `base_ref` adds.
 
-    Read from the diff rather than by comparing two parsed files: a test moved
-    or reindented is not a new test, and the diff already knows that.
+    Read from the diff rather than by comparing two parsed files: a test
+    reindented in place shows as unchanged, so it is never picked up here. A
+    plain `git diff` has no move detection, so a test cut from one file and
+    pasted into another still shows as an add — but a moved-unchanged test
+    behaves the same at base as it always did, so the worst that produces is a
+    benign passes-at-base finding, not a false defect.
     """
     diff = _git(["diff", "--unified=1", base_ref, "--", TEST_DIR], repo)
     found: list[NewTest] = []
@@ -182,10 +188,13 @@ def _stage_tests(worktree: Path, repo: Path, support: list[str]) -> None:
 
 def _bats_passes(worktree: Path, suite: str) -> set[str]:
     """Names of the tests in `suite` that pass in the base worktree."""
-    result = subprocess.run(
-        ["bats", suite, "--formatter", "tap"],
-        cwd=str(worktree), capture_output=True, text=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["bats", suite, "--formatter", "tap"],
+            cwd=str(worktree), capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"could not run bats: {exc}") from exc
     passed = set()
     for line in result.stdout.splitlines():
         match = re.match(r"^ok \d+ (?P<name>.+)$", line)
@@ -195,10 +204,13 @@ def _bats_passes(worktree: Path, suite: str) -> set[str]:
 
 
 def _pytest_passes(worktree: Path, suite: str, names: list[str]) -> set[str]:
-    result = subprocess.run(
-        ["pytest", suite, "-q", "--tb=no", "-rA"],
-        cwd=str(worktree), capture_output=True, text=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["pytest", suite, "-q", "--tb=no", "-rA"],
+            cwd=str(worktree), capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"could not run pytest: {exc}") from exc
     passed = set()
     for line in result.stdout.splitlines():
         match = re.match(r"^PASSED\s+\S+::(?P<name>\w+)", line)
@@ -207,19 +219,29 @@ def _pytest_passes(worktree: Path, suite: str, names: list[str]) -> set[str]:
     return passed
 
 
-def _passing_at_base(tests: list[NewTest], worktree: Path) -> set[str]:
-    passed: set[str] = set()
+def _passing_at_base(tests: list[NewTest], worktree: Path) -> set[tuple[str, str]]:
+    """Which added tests pass at base, keyed by (file, name).
+
+    Keyed on the pair rather than the bare name: two suites can share a test
+    name (a common description like "returns an error for a missing
+    argument"), and a flat set of names would let one suite's pass excuse the
+    other suite's genuinely-failing test of the same name.
+    """
+    passed: set[tuple[str, str]] = set()
     suites = sorted({t.file for t in tests})
     for suite in suites:
         if not (worktree / suite).is_file():
-            # The suite is new in this change, so nothing of it exists at base
-            # and none of its tests can pass there.
+            # Unreachable in practice: _stage_tests copies every path this
+            # suite appears at, since _added_tests only reports lines from
+            # files the same diff already lists. Left as a guard against that
+            # invariant breaking.
             continue
-        if suite.endswith(".py"):
-            names = [t.name for t in tests if t.file == suite]
-            passed |= _pytest_passes(worktree, suite, names)
+        suite_tests = [t for t in tests if t.file == suite]
+        if suite_tests[0].is_pytest:
+            names = [t.name for t in suite_tests]
+            passed |= {(suite, name) for name in _pytest_passes(worktree, suite, names)}
         else:
-            passed |= _bats_passes(worktree, suite)
+            passed |= {(suite, name) for name in _bats_passes(worktree, suite)}
     return passed
 
 
@@ -277,16 +299,27 @@ def _test_body(path: Path, name: str) -> str:
     if start is None:
         return ""
     closer = "}" if path.suffix == ".bats" else None
+    indent = len(lines[start]) - len(lines[start].lstrip())
     end = len(lines)
     for i, line in enumerate(lines[start + 1:], start + 1):
-        if (closer and line == closer) or (not closer and line.startswith("def ")):
+        if closer:
+            if line == closer:
+                end = i
+                break
+            continue
+        # A sibling at the same or a lesser indent — a method of the same
+        # class, or a top-level def once the class ends — closes the body.
+        # A plain `startswith` would miss every method in a class, since each
+        # is indented and never matches a bare "def " at column 0.
+        stripped = line.lstrip()
+        if stripped.startswith("def ") and (len(line) - len(stripped)) <= indent:
             end = i
             break
     return "\n".join(lines[start:end + 1])
 
 
 def _findings(
-    tests: list[NewTest], passed_at_base: set[str], repo: Path | None = None,
+    tests: list[NewTest], passed_at_base: set[tuple[str, str]], repo: Path | None = None,
 ) -> list[Finding]:
     """Findings, ranked by how likely each is to be a real defect.
 
@@ -302,7 +335,7 @@ def _findings(
     """
     findings: list[Finding] = []
     for test in tests:
-        passed = test.name in passed_at_base
+        passed = (test.file, test.name) in passed_at_base
         if passed and not test.marker_reason:
             findings.append(_rank(test, repo))
         elif not passed and test.marker_reason:

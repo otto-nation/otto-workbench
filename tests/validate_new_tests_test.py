@@ -68,7 +68,7 @@ def test_an_untouched_test_is_not_reported(tmp_path):
     _commit(repo)
 
     found = vnt._added_tests("main~1", repo)
-    assert "already here" not in [t.name for t in found]
+    assert [t.name for t in found] == ["new one"]
 
 
 def test_a_removed_test_is_not_reported(tmp_path):
@@ -187,9 +187,9 @@ def test_source_changes_are_not_staged(tmp_path):
 
 
 def test_a_test_passing_at_base_is_a_finding():
-    tests = [vnt.NewTest("tests/a.bats", "vacuous", 3, None)]
-    findings = vnt._findings(tests, passed_at_base={"vacuous"})
-    assert [f.name for f in findings] == ["vacuous"]
+    tests = [vnt.NewTest("tests/a.bats", "passes", 3, None)]
+    findings = vnt._findings(tests, passed_at_base={("tests/a.bats", "passes")})
+    assert [f.name for f in findings] == ["passes"]
 
 
 def test_a_test_failing_at_base_is_not_a_finding():
@@ -199,7 +199,24 @@ def test_a_test_failing_at_base_is_not_a_finding():
 
 def test_a_marked_test_passing_at_base_is_not_a_finding():
     tests = [vnt.NewTest("tests/a.bats", "preserved", 3, "behaviour kept")]
-    assert vnt._findings(tests, passed_at_base={"preserved"}) == []
+    assert vnt._findings(tests, passed_at_base={("tests/a.bats", "preserved")}) == []
+
+
+def test_passing_at_base_keys_by_suite_and_name(tmp_path):
+    # Two suites can share a test name (a common description like "returns an
+    # error for a missing argument"). A pass in one suite's copy must not read
+    # as a pass for the other suite's test of the same name.
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "a.bats").write_text('@test "shared name" {\n  true\n}\n')
+    (tmp_path / "tests" / "b.bats").write_text('@test "shared name" {\n  false\n}\n')
+    tests = [
+        vnt.NewTest("tests/a.bats", "shared name", 1, None),
+        vnt.NewTest("tests/b.bats", "shared name", 1, None),
+    ]
+
+    passed = vnt._passing_at_base(tests, tmp_path)
+
+    assert passed == {("tests/a.bats", "shared name")}
 
 
 def test_a_marked_test_that_fails_at_base_is_a_stale_marker():
@@ -302,7 +319,7 @@ def test_a_vacuous_test_outranks_a_plain_base_pass(tmp_path):
     )
     tests = [vnt.NewTest("tests/a.bats", "vacuous", 1, None)]
 
-    findings = vnt._findings(tests, passed_at_base={"vacuous"}, repo=tmp_path)
+    findings = vnt._findings(tests, passed_at_base={("tests/a.bats", "vacuous")}, repo=tmp_path)
     assert [f.kind for f in findings] == ["vacuous"]
     assert findings[0].subject == "never_made"
 
@@ -313,7 +330,7 @@ def test_a_base_pass_without_the_shape_stays_the_weak_finding(tmp_path):
     (suite / "a.bats").write_text('@test "negative" {\n  run x\n  [ "$status" -eq 0 ]\n}\n')
     tests = [vnt.NewTest("tests/a.bats", "negative", 1, None)]
 
-    findings = vnt._findings(tests, passed_at_base={"negative"}, repo=tmp_path)
+    findings = vnt._findings(tests, passed_at_base={("tests/a.bats", "negative")}, repo=tmp_path)
     assert [f.kind for f in findings] == ["passes-at-base"]
 
 

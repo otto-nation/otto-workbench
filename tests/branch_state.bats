@@ -19,7 +19,7 @@ setup_file() {
   # the owner prefix and the empty-name guard matter.
   #
   # Invocations are counted, and the branches asked about recorded, so a test can
-  # asssert the call shape as well as the answer.
+  # assert the call shape as well as the answer.
   cat > "$MOCK_BIN/gh" <<'FAKEGH'
 #!/usr/bin/env bash
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
@@ -159,6 +159,24 @@ JSON
 
   [ -z "${states[feat/never-opened]:-}" ]
   [ "${#states[@]}" -eq 1 ]
+}
+
+@test "a second call replaces the map rather than merging into it" {
+  _write_prs <<'JSON'
+[{"headRefName":"feat/a","state":"open","merged_at":null}]
+JSON
+  declare -A states
+  branch_pr_states states feat/a
+
+  _write_prs <<'JSON'
+[]
+JSON
+  branch_pr_states states feat/b
+
+  # A stale entry from the first call would still be here if the array were
+  # merged into rather than reset at the top of the function.
+  [ -z "${states[feat/a]:-}" ]
+  [ "${#states[@]}" -eq 0 ]
 }
 
 @test "naming no branches succeeds with an empty map and no call" {

@@ -54,7 +54,7 @@ elif [[ "$1" == "api" ]]; then
   branch="$(printf '%b' "${filter#*:}" | sed 's/%2F/\//g; s/%2f/\//g')"
   [[ -n "$branch" ]] || exit 1
 
-  [[ -n "${GH_BRANCH_LOG:-}" ]] && printf '%s\n' "$branch" >> "$GH_BRANCH_LOG"
+  printf '%s\n' "$branch" >> "$GH_BRANCH_LOG"
   _state_of "$branch"
   exit 0
 fi

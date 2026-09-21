@@ -57,7 +57,8 @@ branch_gh_available() {
 }
 
 # _branch_pr_state BRANCH — OPEN, MERGED or CLOSED on stdout, or nothing at all
-# when the branch has no PR. Returns 1 when the question could not be asked.
+# when the branch has no PR. Returns non-zero when the question could not be
+# asked — the exact code is whatever `gh api` returned, unnormalized.
 #
 # A branch can carry several PRs over its life, so they are reduced to the state
 # that decides what may be done to it: an open PR outranks everything, and a

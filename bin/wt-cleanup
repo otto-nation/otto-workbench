@@ -318,7 +318,7 @@ main() {
   while IFS= read -r wt_branch; do
     [[ -n "$wt_branch" && "$wt_branch" != "null" ]] && pr_branches+=("$wt_branch")
   done < <(echo "$worktrees" | jq -r '
-    .items[] | select(.worktree.path != null) | .branch // empty')
+    .items[] | select(.worktree.path != null and .worktree.path != "") | .branch // empty')
 
   declare -A pr_states
   if [[ ${#pr_branches[@]} -gt 0 ]]; then

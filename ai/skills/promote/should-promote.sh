@@ -17,6 +17,8 @@ _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 . "$_WB/lib/ai/session-count.sh"
 unset _WB
 
+_inside_auto_task && exit 1
+
 PROMOTE_INTERVAL_HOURS=168  # 7 days
 MIN_SESSIONS=10
 

@@ -350,3 +350,19 @@ TOOLS_GENERATED_RELPATH="ai/guidelines/rules/tools.generated.md"
 GIT_GENERATED_RELPATH="ai/guidelines/rules/git.generated.md"
 TOOLS_GENERATED_FILE="$WORKBENCH_DIR/$TOOLS_GENERATED_RELPATH"
 GIT_GENERATED_FILE="$WORKBENCH_DIR/$GIT_GENERATED_RELPATH"
+
+# ─── Auto-task sessions ───────────────────────────────────────────────────────
+# run-auto-task exports WORKBENCH_AUTO_TASK before spawning its headless
+# session, which runs the full hook set and so reaches the same Stop hooks that
+# launched it. Every hook that would do work on the way back out checks this.
+#
+# Here rather than in lib/ai/session-count.sh because the callers do not share
+# that file: the four cadence gates source it, the generator hooks source
+# lib/ui.sh. constants.sh is what both reach.
+#
+# It replaced `claude --bare`, which stopped the cascade by skipping hooks
+# altogether but also broke slash-command resolution, so the spawned session
+# answered `Unknown command: /<skill>` and did nothing for six days.
+_inside_auto_task() {
+  [[ -n "${WORKBENCH_AUTO_TASK:-}" ]]
+}

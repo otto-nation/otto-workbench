@@ -106,3 +106,11 @@ _make_container() {
   [ -z "$output" ]
   [ ! -e "$SEED/.claude" ]
 }
+
+@test "skips the scan inside a run-auto-task session" {
+  _make_seed
+
+  WORKBENCH_AUTO_TASK=dream run "$SCRIPT" "$SEED"
+  [ "$status" -eq 0 ]
+  [ ! -e "$SEED/.claude/ceiling-debt.md" ]
+}

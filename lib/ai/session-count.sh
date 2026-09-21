@@ -370,6 +370,12 @@ _gate_repo_dir() {
   project_repo_label "$shared"
 }
 
+# _inside_auto_task lives in lib/constants.sh, which this file already sources
+# and the generator Stop hooks reach through lib/ui.sh. The gates call it to
+# avoid spawning an auto-task from inside one: the headless session reaches the
+# same Stop hook that launched it and would ask the same gate the same
+# question, which answers yes until the skill completes and writes its stamp.
+
 # _read_stamp FILE — the epoch seconds in FILE, or 0 when it is absent or
 # unreadable. The three gates each read a cooldown stamp the same way.
 _read_stamp() {

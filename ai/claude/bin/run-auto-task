@@ -32,7 +32,8 @@ Spawns \`claude -p\` and streams output to
 WORKBENCH_AUTO_TASK, which stops its own Stop hook from re-triggering.
 
 Env:
-  CLAUDE_LOG_DIR  override log directory (default: ~/.claude/logs)
+  CLAUDE_LOG_DIR      override log directory (default: ~/.claude/logs)
+  WORKBENCH_AUTO_TASK set here; gates exit 1 when they see it
 EOF
 }
 

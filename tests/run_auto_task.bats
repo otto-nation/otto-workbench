@@ -150,9 +150,9 @@ _make_due_repo() {
   memory="$(gate_memory "$repo")"
   echo "$stale" > "$memory/.last-dream"
   echo "$stale" > "$memory/.last-promote"
-  echo "$stale" > "$HOME/.claude/.last-retro"
 
   mkdir -p "$WORKBENCH_STATE_DIR/gates"
+  echo "$stale" > "$WORKBENCH_STATE_DIR/gates/last-retro"
   encoded="$(printf '%s' "${repo#/}" | tr -c 'A-Za-z0-9_' '-')"
   echo "$stale" > "$WORKBENCH_STATE_DIR/gates/--${encoded}--.last-wiki-capture"
 

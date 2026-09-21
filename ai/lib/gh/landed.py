@@ -100,6 +100,9 @@ class TrackerAnswer:
     distinction is drawn here rather than by each caller because only this
     layer sees the refusal — `client.pr_view` collapses it into an empty dict
     on its way out.
+
+    `merged_pr`'s budget-refusal branch is the only constructor site that ever
+    passes ``looked=False`` — nothing else in this module should.
     """
 
     merged: MergedPR | None = None
@@ -162,6 +165,14 @@ def merged_pr(
     through anyway.
     """
     target = str(pr_number) if pr_number else branch
+    # Neither is set only when the caller resolved no branch and no number,
+    # which `client.pr_view` would turn into a bare `gh pr view` — answering
+    # about whatever PR the *cwd*'s branch points at. Every caller today
+    # passes a resolved branch, so this is the guard that keeps that true
+    # rather than a case anything reaches; `pr_snapshot.fetch` draws the same
+    # line for the same reason.
+    if not target:
+        return TrackerAnswer()
     data = gh_client.pr_view(target, "state", "number", "url", repo=repo, cwd=cwd)
     if not data:
         latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)

@@ -10,8 +10,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import time
-
+from conftest import latch_graphql  # noqa: E402
 from gh import budget as gh_budget
 from gh import client as gh_client
 from pr.domains import RebaseStatus
@@ -146,13 +145,6 @@ class TestItReplacesTheSecondCall:
         assert from_snapshot.signal == from_its_own_read.signal
 
 
-def _latch_graphql(monkeypatch):
-    """Arm the GraphQL budget latch the way an inherited one arrives."""
-    at = int(time.time()) + 600
-    monkeypatch.setenv(gh_budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
-    assert gh_budget.latched(gh_budget.Resource.GRAPHQL) is not None
-
-
 class TestARefusedRead:
     """The one unanswered read that stops a rebase rather than letting it run.
 
@@ -161,9 +153,8 @@ class TestARefusedRead:
     it skipped is the only signal that survives a squash merge.
     """
 
-    def test_the_snapshot_records_that_the_call_was_declined(self, monkeypatch):
-        _latch_graphql(monkeypatch)
-        with _answers({}):
+    def test_the_snapshot_records_that_the_call_was_declined(self):
+        with latch_graphql(), _answers({}):
             snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
 
         assert snapshot.refused
@@ -177,10 +168,9 @@ class TestARefusedRead:
         assert not snapshot.refused
         assert not snapshot.answered
 
-    def test_a_successful_read_is_never_marked_refused(self, monkeypatch):
+    def test_a_successful_read_is_never_marked_refused(self):
         """A latch armed by some earlier call must not taint an answer we got."""
-        _latch_graphql(monkeypatch)
-        with _answers({"state": "OPEN", "number": 42}):
+        with latch_graphql(), _answers({"state": "OPEN", "number": 42}):
             snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
 
         assert not snapshot.refused
@@ -214,9 +204,7 @@ class TestARefusedRead:
         assert "squash merge" in hint
         assert "force-push" in hint
 
-    def test_an_open_pr_is_not_refused_because_some_other_call_latched(
-        self, monkeypatch,
-    ):
+    def test_an_open_pr_is_not_refused_because_some_other_call_latched(self):
         """The false refusal this design exists to avoid, in its likeliest form.
 
         The latch is process-wide and armed by whichever call met the quota
@@ -224,12 +212,11 @@ class TestARefusedRead:
         read having come back empty — would refuse a rebase whose PR we
         successfully read and found open.
         """
-        _latch_graphql(monkeypatch)
-        with _answers({"state": "OPEN", "number": 42}):
+        with latch_graphql(), _answers({"state": "OPEN", "number": 42}):
             assert refusals.tracker_landed_check("/wt", _ctx()) is None
 
     def test_the_snapshotless_path_refuses_a_read_of_its_own_that_was_declined(
-        self, monkeypatch,
+        self,
     ):
         """The path `pr ci --fix` takes, and the hole this closes.
 
@@ -239,8 +226,7 @@ class TestARefusedRead:
         context through GraphQL before reaching here, so it is the caller most
         likely to meet an armed latch, and it force-pushes.
         """
-        _latch_graphql(monkeypatch)
-        with _answers({}):
+        with latch_graphql(), _answers({}):
             report = refusals.tracker_landed_check("/wt", _ctx())
 
         assert report is not None
@@ -257,7 +243,7 @@ class TestARefusedRead:
             assert refusals.tracker_landed_check("/wt", _ctx()) is None
 
     def test_the_remedy_survives_the_latch_expiring_before_the_report_builds(
-        self, monkeypatch,
+        self,
     ):
         """The remedy comes from the snapshot, not a fresh read of the latch.
 
@@ -266,8 +252,7 @@ class TestARefusedRead:
         would silently lose the reset time to a latch that already expired —
         this pins that the remedy travels with the snapshot instead.
         """
-        _latch_graphql(monkeypatch)
-        with _answers({}):
+        with latch_graphql(), _answers({}):
             snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
         assert "refills at" in snapshot.remedy
 

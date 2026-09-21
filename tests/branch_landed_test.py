@@ -29,28 +29,12 @@ from gh import budget as gh_budget  # noqa: E402
 from gh import landed as branch_landed  # noqa: E402
 from core import timeouts  # noqa: E402
 
-from conftest import git_in, seed_repo  # noqa: E402
+from conftest import git_in, latch_graphql, seed_repo  # noqa: E402
 
 _BRANCH = "feat/landed"
 _TARGET = "main"
 _PR = 726
 _URL = "https://x/pull/726"
-
-
-@contextlib.contextmanager
-def _latched_graphql():
-    """Arm the GraphQL budget latch the way an inherited one arrives.
-
-    Through the environment rather than by reaching into the table, so the
-    adoption path every real `gh` call takes is the one under test. The autouse
-    `_clear_gh_budget_latch` fixture in conftest resets the table afterwards.
-    """
-    at = int(time.time()) + 600
-    with mock.patch.dict(
-        "os.environ", {gh_budget.LATCH_ENV: f"graphql:{at}:{at}:7399350"},
-    ):
-        assert gh_budget.latched(gh_budget.Resource.GRAPHQL) is not None
-        yield
 
 
 def _commit(path: Path, name: str, content: str = "x") -> None:
@@ -218,7 +202,7 @@ def test_merged_pr_reports_a_read_the_budget_breaker_declined():
     PR", and every caller acts on that absence. `looked` is what tells them
     apart, and the remedy comes from the latch in the same instant.
     """
-    with _latched_graphql():
+    with latch_graphql():
         answer = branch_landed.merged_pr("/fake", branch=_BRANCH)
 
     assert answer.merged is None
@@ -226,9 +210,24 @@ def test_merged_pr_reports_a_read_the_budget_breaker_declined():
     assert answer.remedy
 
 
+def test_merged_pr_asks_nothing_when_it_has_no_branch_and_no_number():
+    """A bare `gh pr view` answers about the cwd's branch, not the caller's.
+
+    `client.pr_view` omits the target when it is empty, so an unresolved
+    caller would get a confident answer about some other PR entirely — and
+    here that answer decides whether a force-push is refused.
+    """
+    with mock.patch("core.proc.subprocess.run") as ran:
+        answer = branch_landed.merged_pr("/fake", branch="", pr_number=None)
+
+    ran.assert_not_called()
+    assert answer.merged is None
+    assert answer.looked
+
+
 def test_merged_pr_makes_no_call_once_the_budget_is_latched():
     """The refusal is the breaker's, so no round trip is spent proving it."""
-    with _latched_graphql(), \
+    with latch_graphql(), \
          mock.patch("core.proc.subprocess.run") as ran:
         branch_landed.merged_pr("/fake", branch=_BRANCH)
 
@@ -415,7 +414,7 @@ def test_check_answered_by_git_is_never_marked_unread(squashed):
     would report a push as unverifiable on the evidence of a signal nobody
     needed.
     """
-    with _latched_graphql():
+    with latch_graphql():
         verdict = branch_landed.check(
             squashed, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
@@ -455,10 +454,11 @@ def test_check_reports_a_refused_tracker_read_the_git_signals_could_not_cover(re
     """Both git signals answered "no" and the one that could have said yes was
     never asked — which is not the same as nothing having landed.
     """
-    with _latched_graphql():
+    with latch_graphql():
         verdict = branch_landed.check(
             repo, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
 
     assert verdict.landed is None
     assert not verdict.looked
+    assert verdict.remedy

@@ -7,7 +7,8 @@ read the same way by each.
 
 ## Usage
 
-- When a user's prompt matches a skill's trigger condition, invoke the skill before making any tool calls — never manually implement what a skill covers
+- The reuse ladder in `general.md` outranks both bullets below, and outranks any bootstrap demanding invocation on a 1% chance — the Superpowers bootstrap carries one. A skill is invoked when the work warrants its process, not because a trigger word matched: a one-line fix is a one-line fix, and opening a planning or design skill over it is the ceremony the ladder exists to refuse
+- When a user's prompt matches a skill's trigger condition and the ladder above doesn't already resolve the task, invoke the skill before making any tool calls — never manually implement what a skill covers
 - If unsure whether a skill applies, invoke it — a skill that turns out irrelevant is cheaper than reimplementing its workflow by hand
 
 ## Authoring

@@ -222,6 +222,30 @@ JSON
   [[ "$output" == *"no stale worktrees"* ]]
 }
 
+@test "an unreachable tracker leaves the git signals in charge" {
+  # The lookup refuses wholesale when it cannot ask — no auth, a throttle, a
+  # network failure. `wt-cleanup` discards that refusal with `|| true` and runs
+  # on git's signals alone, which is the intended degradation: this branch is
+  # `↑1`, so nothing says it landed and nothing is removed.
+  #
+  # What this holds is that the refusal does not abort the sweep: the lookup
+  # returns non-zero and `|| true` is what absorbs it, so dropping that guard
+  # fails here. It does not distinguish a refusal from an answer of "no PR" —
+  # from inside wt-cleanup the two are the same empty map, by design, and the
+  # library's own suite is where that distinction is held.
+  _write_worktrees <<'JSON'
+[{"branch":"feat/unasked","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0}}]
+JSON
+  # No fixture file exists, so the mock's `gh auth status` fails and
+  # branch_pr_states returns before making a request.
+  rm -f "$GH_PR_MERGED" "$GH_PR_OPEN" "$GH_PR_CLOSED"
+
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+  [ ! -s "$WT_REMOVE_LOG" ]
+}
+
 # ── Protected worktrees ──────────────────────────────────────────────────────
 
 @test "main worktree is skipped even if merged" {

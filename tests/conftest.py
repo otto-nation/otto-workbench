@@ -1140,6 +1140,27 @@ def _isolate_state_root(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cache_root(tmp_path, monkeypatch):
+    """Point the cache root at a temp dir too, for the reason the state root is.
+
+    `cache_dir` documents its contents as recomputable and safe to delete, which
+    makes it read as the harmless root — and it is, right up until a cache entry
+    is something a later test *reads*. `agent.vertex_quota` already caches model
+    availability under it keyed on project and region, so an unsandboxed run
+    writes into the developer's real `~/.cache/workbench` and a hit there
+    silently answers a question the test meant to ask of its own stub.
+
+    Set here rather than when something needs it: the roots resolve per call, so
+    one setenv sandboxes every present and future consumer, and the alternative
+    is remembering to add it at the point a cache read first matters — which is
+    the point at which forgetting is expensive. `WORKBENCH_CACHE_DIR` is the
+    override `workbench_paths._root` checks before `XDG_CACHE_HOME`, and a
+    subprocess inherits it.
+    """
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path / "cache"))
+
+
 def _last_event() -> dict:
     """The most recent record in the sandboxed trail root."""
     if LIB_DIR not in sys.path:

@@ -10,12 +10,11 @@
  * Imports nothing, so tests/pi_extensions.bats can load it under plain `node`
  * the way it loads each detect.ts.
  *
- * Not an extension itself: the leading underscore keeps it out of the way
- * visually, and step_pi_extensions skips it because it holds no index.ts,
- * index.js or package.json — it warns and moves on. Node resolves `../_shared/`
- * from an extension's real path rather than its installed symlink, so the
- * import reaches this file in the checkout even though only the extension
- * directory is symlinked into ~/.pi/agent/extensions.
+ * Not an extension itself: step_pi_extensions skips a `_`-prefixed directory by
+ * name, so this is never installed and never warned about. Node resolves
+ * `../_shared/` from an extension's real path rather than its installed
+ * symlink, so the import reaches this file in the checkout even though only the
+ * extension directory is symlinked into ~/.pi/agent/extensions.
  */
 
 /** Opens a heredoc, capturing the `-` that allows an indented terminator and the marker. */

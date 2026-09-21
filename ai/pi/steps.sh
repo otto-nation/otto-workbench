@@ -307,6 +307,12 @@ _prune_pi_extensions() {
 #
 # ai/pi/extensions-cli/ is deliberately not installed. What lives there is
 # passed with --extension by one pipeline and must not load in every session.
+#
+# A _-prefixed directory is a shared module the extensions import, not an
+# extension — see ai/pi/extensions/_shared. It is skipped silently, because the
+# entry-point warning below exists to name a *malformed* extension and a
+# warning on every sync for a directory that is correct as it stands is the
+# noise that hides one.
 step_pi_extensions() {
   [[ -d "$PI_EXTENSIONS_SRC_DIR" ]] \
     || { warn "No Pi extensions in $PI_EXTENSIONS_SRC_DIR — skipping"; return; }
@@ -322,6 +328,9 @@ step_pi_extensions() {
   local name source
   for name in "${!layers[@]}"; do
     source="${layers[$name]}"
+
+    # Shared module rather than an extension — never installed, never warned.
+    [[ "$name" == _* ]] && continue
 
     # Pi's own entry-point rule, checked here so a malformed override is named
     # rather than silently discovered as nothing. Pi reads package.json first,

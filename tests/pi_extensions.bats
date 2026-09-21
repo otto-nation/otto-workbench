@@ -304,8 +304,8 @@ _run_step_from_worktree() {
   for dir in "$REPO_ROOT"/ai/pi/extensions/*/; do
     [ -d "$dir" ] || continue
     # _-prefixed directories are shared modules imported by the extensions, not
-    # extensions themselves. step_pi_extensions skips them with a warning for
-    # want of an entry point, which is the behaviour the next test asserts.
+    # extensions themselves. step_pi_extensions skips them outright, which is
+    # the behaviour the next tests assert.
     [[ "$(basename "$dir")" == _* ]] && continue
     [ -f "${dir}index.ts" ] || [ -f "${dir}index.js" ] || [ -f "${dir}package.json" ]
   done
@@ -315,12 +315,36 @@ _run_step_from_worktree() {
   # ../_shared is imported by the guards' detect.ts files. Node resolves it
   # from the extension's real path rather than its installed symlink, so it
   # must stay out of ~/.pi/agent/extensions rather than being installed beside
-  # them. It has no index.ts/index.js/package.json, so step_pi_extensions
-  # skips it the same way it skips any other entry-point-less directory.
+  # them.
   mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/_shared"
   printf 'export function helper() {}\n' \
     > "$FAKE_WORKBENCH/ai/pi/extensions/_shared/util.ts"
   _make_extension capture
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$PI_EXT_DIR/_shared" ]
+  [ -L "$PI_EXT_DIR/capture" ]
+}
+
+@test "a shared module is skipped without a warning" {
+  # The skip is by name, not by absent entry point, so nothing is reported. A
+  # shared module is correct as it stands, and a warning on every sync for a
+  # correct directory is what hides the one naming a malformed extension.
+  mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/_shared"
+  printf 'export function helper() {}\n' \
+    > "$FAKE_WORKBENCH/ai/pi/extensions/_shared/util.ts"
+  _make_extension capture
+  _run_step
+  [[ "$output" != *_shared* ]]
+}
+
+@test "a shared module carrying an entry point is still not installed" {
+  # Skipped for its name, not for what it holds. Without this, a shared module
+  # that grows a package.json for its own dependencies would start loading
+  # into every Pi session as an extension.
+  mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/_shared"
+  printf 'export default function (pi) {}\n' \
+    > "$FAKE_WORKBENCH/ai/pi/extensions/_shared/index.ts"
   _run_step
   [ "$status" -eq 0 ]
   [ ! -e "$PI_EXT_DIR/_shared" ]

@@ -371,17 +371,26 @@ def _export() -> None:
     # ceiling: the latch spans this process and the children it spawns, so a
     # second `pr` invocation in the same reset window rediscovers the spent
     # budget once more. Upgrade trigger: persist it under
-    # cache_dir("gh-budget") keyed on (user id, resource), once no caller reads
-    # a refused call as an authoritative empty answer — `pr rebase`'s
-    # `refusals.tracker_landed_check` still does, and a false refusal there
-    # force-pushes over merged work.
+    # cache_dir("gh-budget") keyed on (user id, resource). The condition that
+    # blocked this — a caller somewhere reading a refused call as an
+    # authoritative empty answer — no longer holds: `pr_reads` carries
+    # `PendingReview.looked`, `dedup` carries `BotReviews.looked`, the thread
+    # fetch comes back `complete=False` with `sync_threads` keeping what it
+    # could not see, and `landed.merged_pr` now answers with `TrackerAnswer`,
+    # which `pr rebase` refuses on and `push_intent` leaves unanswered.
     #
-    # That check reads `PRSnapshot.merged`, which is false both for an open PR
-    # and for a read nobody could make; `PRSnapshot.answered` tells the two
-    # apart and nothing consults it yet. `landed.merged_pr` is the same hazard
-    # one layer down and is reached only when no snapshot was fetched.
-    # The thread fetch is not: a refused page comes back `complete=False` and
-    # `sync_threads` keeps the records it could not see.
+    # What is left before building it is the mechanism, not the safety case:
+    # a hard TTL clamp of <=3600s against backward clock skew (this laptop's
+    # 12h timer measurably fires at 13.9h-94.2h gaps), wall clock rather than
+    # monotonic, `serde.write_json` for the atomic write, and registration in
+    # a sweep — nothing on this machine collects `cache_dir()` today, so a
+    # latch written there would outlive every process that could clear it.
+    #
+    # Deliberately still in front of that work: a persisted latch is a refusal
+    # a *later* process inherits without having met the 403 itself, so each of
+    # those `looked` flags has to survive being read across a process boundary
+    # rather than only within one. `ignore/plans/gh-graphql-budget.md` has the
+    # measurements that justify the change.
     if not _latched:
         os.environ.pop(LATCH_ENV, None)
         return

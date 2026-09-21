@@ -116,6 +116,41 @@ def test_rebase_if_behind_continues_on_failure():
     trail.warn.assert_called()
 
 
+def test_a_refused_rebase_is_reported_apart_from_a_failed_one():
+    """A preflight refusal is a decision, not a breakage.
+
+    This path passes no snapshot, so `tracker_landed_check` reads the tracker
+    itself — and that read can be declined by the budget breaker, which this
+    run has already been spending GraphQL against. Telling the operator the
+    rebase "failed" would send them looking for a broken rebase instead of a
+    spent quota.
+    """
+    trail = MagicMock()
+    with _rebase_returning(ci_check.rebase_types.REFUSAL_EXIT, posting=True):
+        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+                                            _mock_ctx())
+
+    assert result is False
+    assert trail.warn.call_args[0][0] == "rebase_refused"
+
+
+def test_a_refused_rebase_does_not_report_a_moved_head():
+    """The fix pass that follows runs on the un-rebased base.
+
+    Returning True here would tell the caller CI is about to re-run on a new
+    HEAD, when nothing was replayed and nothing was pushed.
+    """
+    trail = MagicMock()
+    with _rebase_returning(ci_check.rebase_types.REFUSAL_EXIT, posting=True):
+        assert ci_check._rebase_if_behind(
+            trail, _report(behind_main=5), _mock_ctx(),
+        ) is False
+
+    assert not any(
+        call[0][0] == "rebase_done" for call in trail.info.call_args_list
+    )
+
+
 def test_rebase_if_behind_without_a_worktree_exits_with_guidance(capsys):
     """A rebase needs somewhere to run — "--repo-dir None" is not it."""
     ctx = make_ctx(branch="feat/auth", worktree_root=None, head_sha="abc1234")

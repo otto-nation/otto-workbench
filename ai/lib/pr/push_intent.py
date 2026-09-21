@@ -285,8 +285,15 @@ def _answer(intent: PushIntent) -> Reconciled:
         return Reconciled(intent, Outcome.UNANSWERED)
     if held == intent.sha or _built_upon(intent, held):
         return Reconciled(intent, Outcome.LANDED, remote_sha=held)
-    if _landed_elsewhere(intent):
+    elsewhere = _landed_elsewhere(intent)
+    if elsewhere.landed:
         return Reconciled(intent, Outcome.LANDED, remote_sha=held)
+    # A tracker read the budget breaker declined is not evidence the push was
+    # lost — the one signal that would have found a squash merge never ran.
+    # UNANSWERED is what this already does for a remote it could not read, and
+    # it retries on the next sweep rather than reporting a push that landed.
+    if not elsewhere.looked:
+        return Reconciled(intent, Outcome.UNANSWERED, remote_sha=held)
     return Reconciled(intent, Outcome.LOST, remote_sha=held)
 
 
@@ -311,7 +318,21 @@ def _built_upon(intent: PushIntent, ref: str) -> bool:
     )
 
 
-def _landed_elsewhere(intent: PushIntent) -> bool:
+@dataclass(frozen=True)
+class _Elsewhere:
+    """Whether the work landed off this branch, and whether every signal ran.
+
+    ``looked`` is False only for a tracker read the budget breaker declined.
+    The three questions refused below leave it True: each is a fact about the
+    repository rather than a call that failed, so there is no unread signal to
+    come back for.
+    """
+
+    landed: bool
+    looked: bool = True
+
+
+def _landed_elsewhere(intent: PushIntent) -> _Elsewhere:
     """Whether the recorded commit's work is already in the default branch.
 
     The branch the record names is not the only place its commits can be. A
@@ -334,6 +355,11 @@ def _landed_elsewhere(intent: PushIntent) -> bool:
     is still near the merge; the tracker is the only one that survives the base
     moving on, and is reached only when they do not.
 
+    Returns the verdict whole rather than a bool, because "no evidence it
+    landed" and "the tracker was never asked" are different answers here and
+    the caller reports them differently — the first is a lost push, the second
+    is a record to ask about again.
+
     Three questions are refused rather than guessed at, all of them in the
     direction that keeps a genuinely lost push reportable:
 
@@ -347,17 +373,18 @@ def _landed_elsewhere(intent: PushIntent) -> bool:
       upstream's trunk answers about the wrong repository.
     """
     if intent.remote != git_remote.GIT_REMOTE:
-        return False
+        return _Elsewhere(landed=False)
     if intent.branch == git_remote.resolve_default_branch(intent.repo):
-        return False
+        return _Elsewhere(landed=False)
     base = git_remote.default_base_ref(intent.repo)
     if base is None:
-        return False
+        return _Elsewhere(landed=False)
     if _built_upon(intent, base):
-        return True
-    return branch_landed.check(
+        return _Elsewhere(landed=True)
+    verdict = branch_landed.check(
         intent.repo, target_ref=base, branch=intent.branch, rev=intent.sha,
-    ) is not None
+    )
+    return _Elsewhere(landed=verdict.landed is not None, looked=verdict.looked)
 
 
 def _exhausted(answer: Reconciled) -> bool:

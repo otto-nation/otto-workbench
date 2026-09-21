@@ -114,6 +114,13 @@ Check the `behind_main` field in the JSON report. If the branch is behind
 
 If `behind_main` is 0, skip this step.
 
+**Exit 4 is a refusal, not a failure.** The rebase declined its preflight — the
+branch's PR already merged, or GitHub could not be asked whether it had because
+the API budget is spent. Nothing was replayed and nothing was pushed. Do not
+retry it and do not pass `--force`: report what it said and let the user decide.
+Fixes applied after a refusal land on the un-rebased base, which is fine, but
+say so rather than reporting the branch as current.
+
 ### 6. Apply fixes and push
 
 **Worktree switch:** If CWD is not the branch's worktree, switch immediately

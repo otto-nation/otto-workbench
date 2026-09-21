@@ -44,9 +44,12 @@ def pr_base_branch(
     branch name on every rebase would spend a round trip to learn nothing when
     no snapshot was already fetched.
 
-    Best effort like ``branch_landed.merged_pr`` — gh may be absent,
-    unauthenticated or rate-limited, and the repo's default branch is the right
-    answer for all but stacked and release-branch PRs.
+    Best effort, unlike ``branch_landed.merged_pr``, which now tells a refused
+    read from an answered one: gh may be absent, unauthenticated or
+    rate-limited, and the repo's default branch is the right answer for all but
+    stacked and release-branch PRs. Falling back to it costs a rebase onto the
+    wrong base at worst, where the tracker check's fallback is a force-push
+    over merged work — which is why only that one refuses.
     """
     if snapshot is not None:
         return snapshot.base_ref or None

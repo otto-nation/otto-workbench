@@ -79,14 +79,19 @@ def tracker_landed_check(
     auth or no network cannot answer this question at any point, and a refusal
     keyed on that would mean `pr rebase` never runs there at all.
 
-    Only the snapshot carries that distinction, because only ``fetch`` is
-    positioned to draw it: it knows its own read came back empty. Asking the
-    latch from here instead would refuse on a latch some earlier, unrelated
-    call armed, even where this read succeeded and found the PR open —
-    inventing the false refusal the whole design is arranged to avoid. The
-    snapshotless path below is `pr rebase --repo-dir` and direct `pr-rebase`
-    invocations, which is why it keeps today's behaviour rather than growing a
-    second, weaker version of the check.
+    Both paths draw that distinction, each from the read that made it. The
+    snapshot carries ``refused`` from ``fetch``; the snapshotless path gets
+    ``looked`` from ``by_tracker``, which consults the latch immediately after
+    its own call. Neither asks the latch from *here*, which would refuse on a
+    latch some earlier, unrelated call armed even where this read succeeded and
+    found the PR open — the false refusal the whole design is arranged to
+    avoid.
+
+    The snapshotless path is `pr ci --fix`, which rebases without fetching a
+    snapshot of its own, and direct `pr-rebase` invocations. It used to keep a
+    best-effort contract on the reading that only `--repo-dir` reached it; `pr
+    ci --fix` spends GraphQL resolving its own context before it gets here, so
+    it is the path most likely to meet an armed latch, and it force-pushes.
     """
     if snapshot is not None:
         if snapshot.refused:
@@ -96,9 +101,12 @@ def tracker_landed_check(
         return as_refusal(branch_landed.merged_report(
             branch_landed.MergedPR(number=snapshot.number, url=snapshot.url),
         ), ctx.branch)
-    return as_refusal(branch_landed.by_tracker(
+    verdict = branch_landed.by_tracker(
         cwd, branch=ctx.branch, repo=ctx.repo, pr_number=ctx.pr_number,
-    ), ctx.branch)
+    )
+    if not verdict.looked:
+        return _refused_report(ctx, verdict.remedy)
+    return as_refusal(verdict.landed, ctx.branch)
 
 
 def _refused_report(ctx: pr_context.ResolvedContext, remedy: str) -> RefusalReport:

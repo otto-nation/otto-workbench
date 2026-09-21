@@ -228,16 +228,31 @@ class TestARefusedRead:
         with _answers({"state": "OPEN", "number": 42}):
             assert refusals.tracker_landed_check("/wt", _ctx()) is None
 
-    def test_the_snapshotless_path_keeps_its_best_effort_contract(
+    def test_the_snapshotless_path_refuses_a_read_of_its_own_that_was_declined(
         self, monkeypatch,
     ):
-        """Only `fetch` knows its own read was the one refused.
+        """The path `pr ci --fix` takes, and the hole this closes.
 
-        Reached by `pr rebase --repo-dir` and by invoking `pr-rebase` directly.
-        It has no snapshot to carry the distinction and must not re-derive one
-        from the latch, for the reason the test above pins.
+        It has no snapshot, so `by_tracker` draws the distinction from its own
+        read instead — not from the latch as seen from `tracker_landed_check`,
+        which is what the test above forbids. `pr ci --fix` resolves its PR
+        context through GraphQL before reaching here, so it is the caller most
+        likely to meet an armed latch, and it force-pushes.
         """
         _latch_graphql(monkeypatch)
+        with _answers({}):
+            report = refusals.tracker_landed_check("/wt", _ctx())
+
+        assert report is not None
+        assert report.status == RebaseStatus.TRACKER_UNREAD.value
+
+    def test_the_snapshotless_path_still_proceeds_when_gh_merely_failed(self):
+        """No latch, no refusal — a machine with no gh still rebases.
+
+        The best-effort contract survives for every silence that is not a
+        budget refusal, which is the whole population of machines without gh,
+        without auth, or offline.
+        """
         with _answers({}):
             assert refusals.tracker_landed_check("/wt", _ctx()) is None
 

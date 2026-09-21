@@ -375,9 +375,9 @@ def _export() -> None:
     # persistence would have saved.
     #
     # This was a pending trigger until the four false-refusal paths were
-    # closed (see `ignore/plans/gh-graphql-budget.md`). They are closed. The
-    # gate opened, the benefit was then measured, and it was smaller than the
-    # cost — so the trigger is retired rather than left to be rediscovered.
+    # closed — #1376, #1399 and #1401 between them. They are closed. The gate
+    # opened, the benefit was then measured, and it was smaller than the cost,
+    # so the trigger is retired rather than left to be rediscovered.
     #
     # Measured over 33 days of trail, 2026-08-14 to 2026-09-21: 97 `pr gc`
     # runs, of which 2 met a spent budget — 2.1%, both on one day. The 81% of

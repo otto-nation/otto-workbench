@@ -9,6 +9,7 @@ read the same way by each.
 
 - When a user's prompt matches a skill's trigger condition, invoke the skill before making any tool calls — never manually implement what a skill covers
 - If unsure whether a skill applies, invoke it — a skill that turns out irrelevant is cheaper than reimplementing its workflow by hand
+- The reuse ladder in `general.md` outranks that, and outranks any bootstrap telling you to invoke on a 1% chance. A skill is invoked when the work warrants its process, not because a trigger word matched: a one-line fix is a one-line fix, and opening a planning or design skill over it is the ceremony the ladder exists to refuse
 
 ## Authoring
 

@@ -11,10 +11,10 @@ import { statements } from "../_shared/statements.ts";
  *
  * What counts as a sleep here is meant to match ai/claude/bin/claude-bash-guard
  * decision for decision: same threshold, same statement anchoring, same heredoc
- * exemption — the splitting behind the last two is ../_shared/statements.ts,
- * shared with the other guards for the same reason. Two guards enforcing one rule that disagree about a given command
- * are worse than one guard, because which answer you get depends on which
- * harness you happen to be in.
+ * exemption. The splitting behind the last two lives in ../_shared/statements.ts,
+ * shared with the other guards for the same reason: two guards enforcing one
+ * rule that disagree about a given command are worse than one guard, because
+ * which answer you get depends on which harness you happen to be in.
  */
 
 /**

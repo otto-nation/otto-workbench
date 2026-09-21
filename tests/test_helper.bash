@@ -445,3 +445,38 @@ gate_sessions() {
   done
   return 0
 }
+
+# _review_sandbox BRANCH [FINDING_STATE] — a repo on BRANCH with a review whose
+# finding is open (' ') or fixed ('x'). Omit FINDING_STATE for no review at all.
+# Printed, for _guard_in. Shared by claude_settings.bats and pi_extensions.bats,
+# which both exercise the branch-review deferral guard against the same
+# on-disk layout — a copy in each would let the two drift apart silently.
+_review_sandbox() {
+  local branch="$1" state="${2:-}" sandbox="$BATS_TEST_TMPDIR/review-sandbox"
+  rm -rf "$sandbox"
+  mkdir -p "$sandbox/repo" "$sandbox/state/reviews"
+
+  git -C "$sandbox/repo" init -q -b "$branch"
+  git -C "$sandbox/repo" remote add origin git@github.com:otto-nation/otto-workbench.git
+  # A branch only exists once something is committed; without this the guard
+  # reads HEAD and fails open, which would pass every test here for the wrong
+  # reason.
+  git -C "$sandbox/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+
+  if [ -n "$state" ]; then
+    local dir="$sandbox/state/reviews/otto-workbench-self-${branch//\//-}"
+    mkdir -p "$dir"
+    printf '## Should fix\n- [%s] **[S1]** a finding\n' "$state" > "$dir/review.md"
+  fi
+
+  printf '%s' "$sandbox"
+}
+
+# _guard_in SANDBOX PAYLOAD — the Claude guard, run from SANDBOX/repo with
+# SANDBOX/state as the state root.
+_guard_in() {
+  echo "$2" | (
+    cd "$1/repo" || exit 1
+    WORKBENCH_STATE_DIR="$1/state" "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
+  )
+}

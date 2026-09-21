@@ -734,15 +734,10 @@ gh issue create --title x'
   # Two guards enforcing one rule that disagree are worse than one guard: which
   # answer you get would depend on which harness you happen to be in. The
   # Claude side needs a repo with an open-findings review before its pattern is
-  # reached, so build one and compare the pair on every shape.
-  local sandbox="$BATS_TEST_TMPDIR/parity" dir
-  mkdir -p "$sandbox/repo" "$sandbox/state/reviews"
-  git -C "$sandbox/repo" init -q -b isaac/fix/thing
-  git -C "$sandbox/repo" remote add origin git@github.com:otto-nation/otto-workbench.git
-  git -C "$sandbox/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-  dir="$sandbox/state/reviews/otto-workbench-self-isaac-fix-thing"
-  mkdir -p "$dir"
-  printf '## Should fix\n- [ ] **[S1]** a finding\n' > "$dir/review.md"
+  # reached, so build one (via the same helper claude_settings.bats uses) and
+  # compare the pair on every shape.
+  local sandbox
+  sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
 
   local cmd claude_blocks pi_blocks
   for cmd in \
@@ -753,10 +748,7 @@ gh issue create --title x'
     'gh issue view 1' \
     'gh issue list'; do
 
-    if echo "{\"tool_input\":{\"command\":\"$cmd\"}}" | (
-      cd "$sandbox/repo" || exit 1
-      WORKBENCH_STATE_DIR="$sandbox/state" "$REPO_ROOT/ai/claude/bin/claude-bash-guard"
-    ) > /dev/null 2>&1; then
+    if _guard_in "$sandbox" "{\"tool_input\":{\"command\":\"$cmd\"}}" > /dev/null 2>&1; then
       claude_blocks=false
     else
       claude_blocks=true

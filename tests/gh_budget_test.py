@@ -11,6 +11,7 @@ times was gh invoked" is the assertion that distinguishes the fix from its
 absence.
 """
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -203,22 +204,48 @@ def test_a_child_process_inherits_the_latch(stub_gh):
     _refusing_gh(stub_gh, reset=int(time.time()) + 600)
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
-    import os
     assert budget.LATCH_ENV in os.environ
     assert "graphql" in os.environ[budget.LATCH_ENV]
 
 
-def test_an_inherited_latch_is_adopted(stub_gh, monkeypatch):
-    """The other half: a child reads what its parent exported and honours it."""
+def test_an_inherited_latch_is_adopted_without_being_asked_to(stub_gh, monkeypatch):
+    """The other half, on the path a delegate actually takes.
+
+    `pr` spawns `pr-rebase`, `review-threads` and four others as fresh
+    interpreters, and the adopt call lived in `ai/bin/pr` alone. So a test that
+    adopted by hand could not fail for the reason this one exists: the export
+    worked, the delegate ignored it, and every one of them re-learned the spent
+    budget from GitHub. Nothing here adopts — `latched` does it.
+    """
     calls = stub_gh('printf "{}\\n"; exit 0')
     at = int(time.time()) + 600
     monkeypatch.setenv(budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
 
-    budget.adopt_inherited()
     r = gh_client.run("pr", "view", "1", "--repo", "o/r")
 
     assert r.returncode == budget.BUDGET_LATCHED_RETURNCODE
     assert _non_probe_calls(calls) == []
+
+
+def test_arming_one_resource_does_not_drop_an_inherited_other(stub_gh, monkeypatch):
+    """`_export` publishes the whole table, so `arm` must adopt before it writes.
+
+    Asked of `arm` directly rather than through `client.run`, which reads the
+    latch before it arms and so has always adopted by this point. That ordering
+    is `client.run`'s to change, and this is the invariant that keeps the module
+    correct if it does: a child handed a REST refusal that then meets a GraphQL
+    one must not republish a table holding only GraphQL, leaving the REST latch
+    its parent paid for gone from both the table and the variable.
+    """
+    at = int(time.time()) + 600
+    monkeypatch.setenv(budget.LATCH_ENV, f"core:{at}:{at}:7399350")
+    _refusing_gh(stub_gh, reset=at)
+
+    budget.arm(f"{EXHAUSTED}\n", budget.Resource.GRAPHQL)
+
+    assert budget.latched(budget.Resource.CORE) is not None
+    assert budget.latched(budget.Resource.GRAPHQL) is not None
+    assert "core" in os.environ[budget.LATCH_ENV]
 
 
 def test_an_expired_inherited_latch_is_ignored(stub_gh, monkeypatch):
@@ -227,7 +254,6 @@ def test_an_expired_inherited_latch_is_ignored(stub_gh, monkeypatch):
     at = int(time.time()) - 10
     monkeypatch.setenv(budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
 
-    budget.adopt_inherited()
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
     assert len(_non_probe_calls(calls)) == 1
@@ -245,7 +271,6 @@ def test_a_malformed_inherited_latch_is_ignored(stub_gh, monkeypatch, raw):
     calls = stub_gh('printf "{}\\n"; exit 0')
     monkeypatch.setenv(budget.LATCH_ENV, raw)
 
-    budget.adopt_inherited()
     gh_client.run("pr", "view", "1", "--repo", "o/r")
 
     assert len(_non_probe_calls(calls)) == 1

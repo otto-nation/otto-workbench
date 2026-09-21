@@ -18,28 +18,44 @@ fi
 FAKEWT
   chmod +x "$MOCK_BIN/wt"
 
-  # `gh pr list` for the whole repo, matching what lib/branch_state.sh calls.
-  # The per-state fixture files stay one branch name per line; only the shape
-  # of the answer changed.
+  # The per-branch REST read lib/branch_state.sh makes. The per-state fixture
+  # files stay one branch name per line; the mock answers for the single branch
+  # named in the endpoint's `head=` filter, which is what lets a case assert that
+  # a branch was never asked about.
+  #
+  # It returns the verdict directly rather than a PR array put through the
+  # library's --jq. The reduction from (state, merged_at) is branch_state.bats'
+  # subject; here the fixtures are already states, and reconstructing REST rows
+  # just to reduce them back would be a second copy of that logic in the mock.
+  #
+  # The branches asked about are recorded so `only branches with a worktree are
+  # asked about` can read them; every other case ignores the log.
   cat > "$MOCK_BIN/gh" <<'FAKEGH'
 #!/usr/bin/env bash
-_emit() {
-  local file="$1" state="$2"
-  [[ -f "$file" ]] || return 0
-  while read -r branch; do
-    [[ -n "$branch" ]] || continue
-    printf '{"headRefName":"%s","state":"%s"}\n' "$branch" "$state"
-  done < "$file"
+_state_of() {
+  local branch="$1"
+  # Precedence matches the library's: OPEN, then MERGED, then CLOSED.
+  grep -qxF "$branch" "$GH_PR_OPEN_FILE"   2>/dev/null && { printf 'OPEN';   return; }
+  grep -qxF "$branch" "$GH_PR_MERGED_FILE" 2>/dev/null && { printf 'MERGED'; return; }
+  grep -qxF "$branch" "$GH_PR_CLOSED_FILE" 2>/dev/null && { printf 'CLOSED'; return; }
 }
 
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
   [[ -f "$GH_PR_MERGED_FILE" || -f "$GH_PR_OPEN_FILE" || -f "$GH_PR_CLOSED_FILE" ]] && exit 0
   exit 1
-elif [[ "$1" == "pr" && "$2" == "list" ]]; then
-  { _emit "$GH_PR_MERGED_FILE" MERGED
-    _emit "$GH_PR_OPEN_FILE" OPEN
-    _emit "$GH_PR_CLOSED_FILE" CLOSED
-  } | jq -s '.'
+elif [[ "$1" == "api" ]]; then
+  endpoint="$2"
+  filter=""
+  [[ "$endpoint" == *"head="* ]] && filter="${endpoint#*head=}" && filter="${filter%%&*}"
+
+  # `{owner}:branch`, url-encoded. A filter the library built without the owner
+  # prefix names no branch, and is answered as such rather than silently.
+  [[ "$filter" == *:* ]] || exit 1
+  branch="$(printf '%b' "${filter#*:}" | sed 's/%2F/\//g; s/%2f/\//g')"
+  [[ -n "$branch" ]] || exit 1
+
+  printf '%s\n' "$branch" >> "$GH_BRANCH_LOG"
+  _state_of "$branch"
   exit 0
 fi
 exit 1
@@ -68,6 +84,8 @@ setup() {
   export GH_PR_MERGED_FILE="$GH_PR_MERGED"
   export GH_PR_OPEN_FILE="$GH_PR_OPEN"
   export GH_PR_CLOSED_FILE="$GH_PR_CLOSED"
+  export GH_BRANCH_LOG="$TMPDIR/gh-branches.log"
+  : > "$GH_BRANCH_LOG"
   export CLEANUP_LOG_DIR="$TMPDIR/logs"
   export NO_COLOR=1
   export WORKBENCH_DIR="$REPO_ROOT"
@@ -202,6 +220,29 @@ JSON
   _run_cleanup
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]
+}
+
+@test "an unreachable tracker leaves the git signals in charge" {
+  # The lookup refuses wholesale when it cannot ask — no auth, a throttle, a
+  # network failure. `wt-cleanup` discards that refusal with `|| true` and runs
+  # on git's signals alone, which is the intended degradation: this branch is
+  # `↑1`, so nothing says it landed and nothing is removed.
+  #
+  # What this holds is that the refusal does not abort the sweep: the lookup
+  # returns non-zero and `|| true` is what absorbs it, so dropping that guard
+  # fails here. It does not distinguish a refusal from an answer of "no PR" —
+  # from inside wt-cleanup the two are the same empty map, by design, and the
+  # library's own suite is where that distinction is held.
+  _write_worktrees <<'JSON'
+[{"branch":"feat/unasked","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0}}]
+JSON
+  # This case writes no PR fixture. The mock reports `gh auth status` as failing
+  # when none of the three exists, and $TMPDIR is per-test, so the tracker is
+  # unreachable here without anything having to remove them.
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+  [ ! -s "$WT_REMOVE_LOG" ]
 }
 
 # ── Protected worktrees ──────────────────────────────────────────────────────
@@ -937,6 +978,33 @@ FAKEWT
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]
   [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+@test "only branches with a worktree are asked about" {
+  # The PR lookup is scoped to the branches the loop can act on. A branch row
+  # `wt list --branches` carries has no worktree to remove, so asking the
+  # tracker about it buys an answer nothing reads — and on a repo with hundreds
+  # of branches, that is the whole cost of the lookup.
+  echo "feat/has-worktree" > "$GH_PR_MERGED"
+  jq -n --argjson schema "$WT_LIST_SCHEMA" '
+    { schema: $schema, repo: {default_branch: "main"}, collected: {},
+      items: [{ branch: "feat/branch-only",
+                head: {committed_at: "2026-01-01T00:00:00Z"},
+                worktree: null,
+                display: {state: "ahead", symbols: "↑3"} },
+              { branch: "feat/has-worktree",
+                head: {committed_at: "2026-01-01T00:00:00Z"},
+                worktree: {path: "/nonexistent/feat/has-worktree", main: false,
+                           current: false,
+                           changes: {staged: false, modified: false,
+                                     untracked: false, renamed: false,
+                                     deleted: false, conflicted: false}},
+                display: {state: "ahead", symbols: "↑3"} }] }' > "$WT_JSON"
+  _run_cleanup
+  [ "$status" -eq 0 ]
+
+  run cat "$GH_BRANCH_LOG"
+  [ "$output" = "feat/has-worktree" ]
 }
 
 @test "an unparseable timestamp is not treated as an ancient worktree" {

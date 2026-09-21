@@ -35,12 +35,28 @@ different root has no merge base with the default branch, so `git cherry` and
 `git branch --merged` have nothing to compare and report it unmerged forever.
 The PR state is the only signal that survives a re-rooted repo.
 
-The lookup is batched — one `gh pr list` for the whole repo, not one `gh pr
-view` per branch, which cost a sequential round trip each.
+The lookup asks about the branches the caller names, not about the repo. It
+used to page the whole PR history with `gh pr list --limit 1000` and index the
+result, which cost a page that grows with every merge to answer about the
+handful of branches a machine has worktrees for — and silently stopped being
+correct once a repo passed 1000 PRs, since the oldest fell off the page and
+read as "no PR at all". A branch nobody asked about is one nobody has to fetch.
+
+One REST request per branch, against the `core` hourly budget. An aliased
+GraphQL query would answer every branch for a single point, which is cheaper
+on paper and worse here: `gh pr view`, `gh pr list` and every read the review
+pipeline makes spend the *graphql* budget, and this runs unattended on every
+session exit. It has been observed asking its question with graphql exhausted
+and core almost untouched, where the batch returns no answer at all — and no
+answer means a squash-merged worktree is kept forever, since git alone cannot
+see that merge. Nothing else in `bin/` or `lib/` spends core.
+
+The per-branch cost that buys is bounded by what the caller can act on: one
+worktree each, a handful per machine.
 
 ```bash
 declare -A states
-branch_pr_states states || echo "no tracker available"
+branch_pr_states states feat/x feat/y || echo "no tracker available"
 echo "${states[feat/x]:-}"   # OPEN | MERGED | CLOSED, or empty
 ```
 
@@ -48,10 +64,16 @@ Bash-only — the state map is an associative array returned through a nameref.
 Sourced directly by scripts that already load `lib/ui.sh` or on its own;
 it depends only on `gh` and `jq`.
 
+`ai/lib/gh/client.py` owns "how to talk to GitHub" for Python, with retries and
+budget accounting this deliberately does not reach for: its rate-limit ladder
+waits up to nine minutes, which inside a `--quiet` janitor is a hang nobody
+sees. Nothing owns that question for bash, and the two `gh` calls below are not
+yet a reason to build an owner — a third caller would be.
+
 | Function | Purpose |
 |----------|---------|
 | `branch_gh_available` | whether gh can answer for the current repo. |
-| `branch_pr_states ASSOC_ARRAY_NAME` | fill an associative array branch → state. |
+| `branch_pr_states ASSOC_ARRAY_NAME BRANCH...` | fill an associative array branch → state for the named branches. |
 
 ### commands.sh
 

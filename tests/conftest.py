@@ -10,7 +10,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -478,6 +480,27 @@ def _clear_gh_budget_latch():
     budget.reset_for_tests()
     yield
     budget.reset_for_tests()
+
+
+@contextlib.contextmanager
+def latch_graphql():
+    """Arm the GraphQL budget latch the way an inherited one arrives.
+
+    Through the environment rather than by reaching into the table, so the
+    adoption path every real `gh` call takes is the one under test. The
+    autouse `_clear_gh_budget_latch` fixture above resets the table
+    afterwards.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from gh import budget
+
+    at = int(time.time()) + 600
+    with mock.patch.dict(
+        "os.environ", {budget.LATCH_ENV: f"graphql:{at}:{at}:7399350"},
+    ):
+        assert budget.latched(budget.Resource.GRAPHQL) is not None
+        yield
 
 
 def _repo_config_path():

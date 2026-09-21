@@ -480,3 +480,17 @@ _guard_in() {
     WORKBENCH_STATE_DIR="$1/state" "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
   )
 }
+
+# _json_command_payload COMMAND — the claude-bash-guard hook payload for
+# COMMAND, printed as JSON. Built with python3's json.dumps rather than string
+# interpolation, since a command under test may carry embedded quotes or
+# newlines that naive interpolation would emit as unparseable JSON — which a
+# guard's `|| exit 0` fallback would then read as an allow that says nothing
+# about the guard's actual pattern match. Shared by pi_extensions.bats, whose
+# parity tests build this same payload for two different guard comparisons.
+_json_command_payload() {
+  python3 -c '
+import json, sys
+print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
+' "$1"
+}

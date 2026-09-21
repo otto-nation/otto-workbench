@@ -52,7 +52,7 @@ export function isIssueFiling(command: string): boolean {
 const OPEN_FINDING = /^- \[ \]/m;
 
 /** A git command's stdout, or "" when git cannot answer. */
-export function git(args: string[]): string {
+export function runGit(args: string[]): string {
   try {
     return execFileSync("git", args, {
       encoding: "utf8",
@@ -74,12 +74,12 @@ export function git(args: string[]): string {
  * The state root default matches WORKBENCH_STATE_DIR in lib/roots.sh.
  */
 export function branchReviewHasOpenFindings(): boolean {
-  const origin = git(["remote", "get-url", "origin"]);
+  const origin = runGit(["remote", "get-url", "origin"]);
   if (!origin) return false;
   const repo = origin.replace(/\.git$/, "").split("/").pop();
   if (!repo) return false;
 
-  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+  const branch = runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
   if (!branch || branch === "HEAD") return false;
 
   const stateDir =

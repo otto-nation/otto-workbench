@@ -639,10 +639,7 @@ pytest tests/ -q | tail -6'
 # "allowed" for every command — including the ones it exists to catch.
 _claude_guard() {
   local payload
-  payload=$(python3 -c '
-import json, sys
-print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
-' "$1")
+  payload=$(_json_command_payload "$1")
   if printf '%s' "$payload" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" > /dev/null 2>&1; then
     echo allowed
   else
@@ -753,14 +750,7 @@ gh issue create --title x'
     'gh issue view 1' \
     'gh issue list'; do
 
-    # python3 json.dumps, not string interpolation — one of the commands
-    # above carries embedded double quotes, which naive interpolation would
-    # emit as unparseable JSON and jq's `|| exit 0` would then read as an
-    # allow that says nothing about the guard's actual pattern match.
-    payload=$(python3 -c '
-import json, sys
-print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
-' "$cmd")
+    payload=$(_json_command_payload "$cmd")
 
     if _guard_in "$sandbox" "$payload" > /dev/null 2>&1; then
       claude_blocks=false

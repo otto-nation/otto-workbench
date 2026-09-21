@@ -58,8 +58,10 @@ can see the difference.
 A test that legitimately passes at base takes a marker, in the grammar
 `ceiling:` uses, immediately above the test:
 
-    # passes-at-base: asserts behaviour this change was careful not to break
-    @test "a second call replaces the map rather than merging into it" {
+```bash
+# passes-at-base: asserts behaviour this change was careful not to break
+@test "a second call replaces the map rather than merging into it" {
+```
 
 A marker with no reason after the colon declares nothing and does not suppress
 the finding, for the same reason a bare `ceiling:` does not satisfy its gate.

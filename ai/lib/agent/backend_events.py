@@ -128,7 +128,11 @@ def _pi_tool_label(data: dict) -> str:
     are accepted so a fixture written either way still labels.
     """
     tool_name = data.get("toolName", "") or data.get("name", "")
-    args = data.get("args") or data.get("arguments") or data.get("input") or {}
+    args = next(
+        (bag for key in ("args", "arguments", "input")
+         if isinstance(bag := data.get(key), dict)),
+        {},
+    )
     if not tool_name:
         return ""
     if args.get("description"):
@@ -211,6 +215,46 @@ def parse_pi_cost(data: dict) -> float | None:
     return None
 
 
+def _pi_assistant_text(message: dict) -> str:
+    """The text blocks of one assistant message, joined."""
+    if message.get("role") != "assistant":
+        return ""
+    blocks = message.get("content", [])
+    if not isinstance(blocks, list):
+        return ""
+    return "".join(
+        b.get("text", "") for b in blocks
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+
+
+def _pi_final_assistant_text(events: list[dict]) -> str:
+    """The last assistant reply in a Pi event stream.
+
+    Read from `agent_end.messages`, which is the finished transcript. A
+    tool-using prompt has several assistant turns and only the last is the
+    answer; accumulating `text_delta` would collect the intermediate ones too.
+    """
+    replies = [
+        _pi_assistant_text(message)
+        for event in events if event.get("type") == "agent_end"
+        for message in event.get("messages", [])
+    ]
+    return next((reply for reply in reversed(replies) if reply), "")
+
+
+def _fold_pi_tokens(usage: dict, totals: dict[str, int]) -> None:
+    """Add one message's token counts into `totals`, in place.
+
+    Pi spells them camelCase — input/output/cacheRead/cacheWrite — against
+    Claude's snake_case, which is why the ledger's own folder cannot be reused.
+    """
+    for key in totals:
+        value = usage.get(key)
+        if isinstance(value, (int, float)):
+            totals[key] += int(value)
+
+
 def pi_prompt_result(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
     """The reply text and the usage from one `pi -p --mode json` run.
 
@@ -249,22 +293,7 @@ def pi_prompt_result(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
     if not events:
         return stdout, None
 
-    text = ""
-    for event in events:
-        if event.get("type") != "agent_end":
-            continue
-        for message in event.get("messages", []):
-            if message.get("role") != "assistant":
-                continue
-            blocks = message.get("content", [])
-            if not isinstance(blocks, list):
-                continue
-            joined = "".join(
-                b.get("text", "") for b in blocks
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
-            if joined:
-                text = joined
+    text = _pi_final_assistant_text(events)
 
     totals = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     cost = 0.0
@@ -277,11 +306,7 @@ def pi_prompt_result(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
         measured = True
         cost += message_cost
         message = event.get("message", {})
-        usage = message.get("usage", {})
-        for key in totals:
-            value = usage.get(key)
-            if isinstance(value, (int, float)):
-                totals[key] += int(value)
+        _fold_pi_tokens(message.get("usage", {}), totals)
         model = message.get("model")
         if model:
             cost_by_model[model] = cost_by_model.get(model, 0.0) + message_cost

@@ -631,6 +631,26 @@ class TestPromptUsage:
         text, _ = pi_prompt_result(_prompt_stream())
         assert text == "The contents of `f.txt` are:\n\n```\nhello\n```"
 
+    def test_an_earlier_assistant_turn_does_not_win(self):
+        # The captured fixture's first assistant message is a tool call with no
+        # text, so it cannot tell first-from-last apart on its own. This stream
+        # gives both turns text: taking the first would answer with the model
+        # thinking aloud before it had the file.
+        from agent.backend_events import pi_prompt_result
+
+        stream = json.dumps({
+            "type": "agent_end",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "read it"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "Let me look."}]},
+                {"role": "toolResult", "content": [{"type": "text", "text": "hello"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "It says hello."}]},
+            ],
+        })
+
+        text, _ = pi_prompt_result(stream)
+        assert text == "It says hello."
+
     def test_cost_sums_every_message_not_just_the_last(self):
         # The fixture is a tool-using prompt: two assistant messages, two costs
         # (0.0075423 and 0.00470015). Taking the last would report 38% of it.
@@ -706,3 +726,17 @@ class TestPiToolLabels:
         assert _pi_tool_label(
             {"toolName": "read", "arguments": {"file_path": "/a/b/c.txt"}}
         ) == "Read c.txt"
+
+    def test_an_empty_arg_bag_is_the_answer_not_a_miss(self):
+        # Pi sent `args: {}` — a tool called with no arguments. Falling through
+        # to Claude's spelling would answer from a bag this event did not have.
+        from agent.backend_events import _pi_tool_label
+
+        assert _pi_tool_label(
+            {"toolName": "read", "args": {}, "arguments": {"file_path": "/a/z.txt"}}
+        ) == "Read "
+
+    def test_a_tool_with_no_arg_bag_still_labels(self):
+        from agent.backend_events import _pi_tool_label
+
+        assert _pi_tool_label({"toolName": "bash"}) == "Bash"

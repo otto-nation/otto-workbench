@@ -2789,6 +2789,7 @@ def test_refuse_renders_the_hint_for_every_refusal_status():
         pr_domains.RebaseStatus.ALREADY_LANDED.value,
         pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
         pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
+        pr_domains.RebaseStatus.TRACKER_UNREAD.value,
     }
     assert set(refusals.REFUSAL_HINTS) == statuses
 

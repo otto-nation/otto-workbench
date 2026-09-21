@@ -905,11 +905,6 @@ def main():
     except Exception as exc:
         log.warn(f"could not reconcile recorded pushes: {exc}")
 
-    # Before anything resolves a context, since that is itself a GitHub read:
-    # a parent that already paid to discover a spent budget passes the fact
-    # down, and this is where we take it up rather than re-learning it.
-    gh_budget.adopt_inherited()
-
     entry = _COMMANDS[args.command]
     if {"-h", "--help"} & set(extra) and "script" in entry:
         cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", []) + ["--help"]

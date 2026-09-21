@@ -18,6 +18,14 @@ unauthenticated, rate-limited, or the branch may have no PR at all. All of those
 arrive as ``PRSnapshot()`` with ``answered`` false, which every consumer reads as
 "the tracker has nothing to say" — never as an answer that stops a rebase. The
 git-side signals still get their turn.
+
+One of those causes is different in kind, and ``refused`` separates it. When the
+budget breaker declined to make the call, the silence is one this machine
+imposed on itself a moment ago rather than a property of the environment: the
+PR is knowable, we simply did not ask. Everything else — no gh, no auth, no
+network, no PR — is a machine that cannot answer this question at all, and a
+rebase that refused on it would never run there. `pr rebase` is the one caller
+that acts on the difference, because its "proceed" branch force-pushes.
 """
 
 # doc-group: platform
@@ -28,6 +36,7 @@ from dataclasses import dataclass
 
 from core import log
 from core.trail import Trail, tinfo
+from gh import budget as gh_budget
 from gh import client as gh_client
 from pr import context as pr_context
 
@@ -50,6 +59,16 @@ class PRSnapshot:
     base_ref: str = ""
     is_draft: bool = False
     review_decision: str = ""
+    # Set only when the budget breaker declined the call. False covers both a
+    # read that succeeded and one that failed for any other reason, so a caller
+    # that does not care about the distinction sees today's behaviour.
+    refused: bool = False
+    # The remedy for the latch this read found armed, captured here rather
+    # than re-derived later. The latch's own window can pass between this read
+    # and whatever builds the refusal message from it, and a re-query at that
+    # later point would silently lose the reset time — or the whole hint — to
+    # a latch that already expired.
+    remedy: str = ""
 
     @property
     def answered(self) -> bool:
@@ -123,7 +142,18 @@ def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:
         return PRSnapshot()
     data = gh_client.pr_view(target, *FIELDS, repo=ctx.repo, cwd=cwd)
     if not data:
-        return PRSnapshot()
+        # Asked after the call, not before: a latch that armed *during* this
+        # read is the case that matters, and one that expires between the two
+        # readings would have let the call through anyway. `gh pr view` spends
+        # the GraphQL budget despite looking like neither `api` nor `graphql`.
+        # The remedy is read from the same latch, in the same instant, rather
+        # than left for a later caller to re-derive from a latch that may have
+        # since expired.
+        latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
+        return PRSnapshot(
+            refused=latch is not None,
+            remedy=latch.remedy() if latch else "",
+        )
     return PRSnapshot(
         state=data.get("state") or "",
         number=data.get("number") or 0,

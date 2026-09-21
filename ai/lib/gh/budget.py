@@ -164,6 +164,13 @@ BUDGET_EXHAUSTED_HINT = (
 _lock = threading.Lock()
 _latched: dict[Resource, Latch] = {}
 
+# Whether this process has taken up what its parent exported. Read on the first
+# question asked of the table rather than at a startup hook, because there is
+# no one startup every process shares: `pr` delegates by spawning `pr-rebase`,
+# `review-threads` and four others as fresh interpreters, and an adopt call
+# placed in each is a list that the seventh entry point silently omits.
+_adopted = False
+
 # gh subcommands that resolve through GraphQL whatever their argv looks like.
 # `gh pr view` is the one that surprises people — it spends the GraphQL budget
 # while reading like neither `api` nor `graphql`, and it is the call the GC
@@ -225,10 +232,17 @@ def latched(resource: Resource | None) -> Latch | None:
 
     Clears the entry once its window passes, so the caller that notices the
     expiry is the one that pays for the next real attempt.
+
+    Adopts what the parent exported before answering, on the first question
+    asked of this process. That is the whole of the inheritance mechanism: the
+    table is only ever consulted through here, so adopting here reaches every
+    reader by construction, and the alternative — an adopt call at each entry
+    point — is a list to keep in step with `ai/bin`.
     """
     if resource is None:
         return None
     with _lock:
+        _adopt_locked()
         latch = _latched.get(resource)
         if latch is None:
             return None
@@ -303,6 +317,12 @@ def arm(said: str, resource: Resource | None) -> None:
     if resource is None:
         return
     with _lock:
+        # Before the table is written to, because `_export` below publishes the
+        # whole of it: arming GraphQL in a process that had not yet read the
+        # variable would otherwise write a table missing the parent's REST
+        # entry, and the child would drop a refusal it was handed. `client.run`
+        # happens to read before it arms, but that is its ordering to change.
+        _adopt_locked()
         if resource in _latched and not _latched[resource].expired:
             return
         # Placeholder first: the probe below re-enters `client.run`, and
@@ -340,7 +360,8 @@ def _export() -> None:
     `pr` delegates to `claude-review`, which spawns `review-orchestrate`, and
     each is a fresh interpreter with its own empty table. Passing the latch
     down the tree is what stops the grandchild re-learning a refusal its parent
-    already met.
+    already met — and `latched` is where the child takes it up, so that holds
+    for every delegate rather than only for one that remembered to ask.
 
     Format is `resource:expires:reset:user_id`, space separated. Expiry and
     reset are both carried because they are different facts: expiry always has
@@ -351,10 +372,16 @@ def _export() -> None:
     # second `pr` invocation in the same reset window rediscovers the spent
     # budget once more. Upgrade trigger: persist it under
     # cache_dir("gh-budget") keyed on (user id, resource), once no caller reads
-    # a refused call as an authoritative empty answer — `landed.merged_pr`
-    # still does, and a false refusal there force-pushes over merged work.
-    # The thread fetch no longer does: a refused page comes back
-    # `complete=False` and `sync_threads` keeps the records it could not see.
+    # a refused call as an authoritative empty answer — `pr rebase`'s
+    # `refusals.tracker_landed_check` still does, and a false refusal there
+    # force-pushes over merged work.
+    #
+    # That check reads `PRSnapshot.merged`, which is false both for an open PR
+    # and for a read nobody could make; `PRSnapshot.answered` tells the two
+    # apart and nothing consults it yet. `landed.merged_pr` is the same hazard
+    # one layer down and is reached only when no snapshot was fetched.
+    # The thread fetch is not: a refused page comes back `complete=False` and
+    # `sync_threads` keeps the records it could not see.
     if not _latched:
         os.environ.pop(LATCH_ENV, None)
         return
@@ -388,15 +415,24 @@ def _parse_entry(entry: str) -> Latch | None:
     return Latch(resource, user_id, at, until)
 
 
-def adopt_inherited() -> None:
-    """Take up the latches our parent process already paid to discover."""
+def _adopt_locked() -> None:
+    """Take up the latches our parent exported, once. Caller holds the lock.
+
+    The `_adopted` flag makes this run once. Correctness does not rest on that
+    — the expiry filter below means a re-read of our own exported table adopts
+    nothing — it is that this sits on the path of every gh call in the process,
+    and re-parsing the variable on each one is work with no possible result.
+    """
+    global _adopted
+    if _adopted:
+        return
+    _adopted = True
     raw = os.environ.get(LATCH_ENV, "")
     if not raw:
         return
     parsed = (_parse_entry(entry) for entry in raw.split())
     live = [latch for latch in parsed if latch is not None and not latch.expired]
-    with _lock:
-        _latched.update({latch.resource: latch for latch in live})
+    _latched.update({latch.resource: latch for latch in live})
 
 
 def reset_for_tests() -> None:
@@ -405,7 +441,14 @@ def reset_for_tests() -> None:
     A latch that outlives its test short-circuits every stubbed gh call in the
     tests that follow, which is a failure that depends on collection order.
     `tests/conftest.py` calls this from an autouse fixture for that reason.
+
+    The adoption flag is reset too. Leaving it set would make every later test
+    skip the inherited read, so a test that sets the variable and expects it
+    honoured would pass or fail on whether an earlier test had already tripped
+    adoption — the same order dependence in the other direction.
     """
+    global _adopted
     with _lock:
         _latched.clear()
+        _adopted = False
         os.environ.pop(LATCH_ENV, None)

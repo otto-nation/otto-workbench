@@ -555,11 +555,12 @@ def test_every_refusal_status_renders_as_a_refusal():
     not name, so a new refusal added to `pr rebase` without a row here would
     report a clean rebase that never ran.
     """
-    refusals = {
-        pr_domains.RebaseStatus.ALREADY_LANDED,
-        pr_domains.RebaseStatus.UNRELATED_HISTORY,
-        pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET,
+    non_refusals = {
+        pr_domains.RebaseStatus.COMPLETED,
+        pr_domains.RebaseStatus.CONFLICTS,
+        pr_domains.RebaseStatus.ABORTED,
     }
+    refusals = set(pr_domains.RebaseStatus) - non_refusals
     for status in refusals:
         r = pr_domains.RebaseSummary(
             status=status.value, updated_at=_REBASE_RUN,

@@ -43,7 +43,7 @@ A filter is the other way to fool yourself here: `-k`, a `grep`, a subset path.
 A revert whose test was deselected reports no failures and reads as proof. Run
 the whole file.
 
-`bin/local/validate-new-tests` does this from the diff — it runs the tests a
+`bin/local/check-new-tests` does this from the diff — it runs the tests a
 change adds against a worktree at the merge base and reports the ones that pass
 there. Treat its two findings differently, because they are not equally strong.
 A test that merely passes at base is usually fine: a negative or back-compat

@@ -1,4 +1,4 @@
-"""Tests for bin/local/validate-new-tests.
+"""Tests for bin/local/check-new-tests.
 
 The diff parsing and the marker grammar are pure and tested directly. The
 runner half — create a base worktree, stage the changed test files, run the
@@ -13,9 +13,9 @@ from pathlib import Path
 from conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "bin" / "local" / "validate-new-tests"
+SCRIPT = REPO_ROOT / "bin" / "local" / "check-new-tests"
 
-vnt = load_script("validate_new_tests", SCRIPT)
+vnt = load_script("check_new_tests", SCRIPT)
 
 
 def _repo(tmp_path):
@@ -202,13 +202,22 @@ def test_a_marked_test_passing_at_base_is_not_a_finding():
     assert vnt._findings(tests, passed_at_base={("tests/a.bats", "preserved")}) == []
 
 
-def test_passing_at_base_keys_by_suite_and_name(tmp_path):
-    # Two suites can share a test name (a common description like "returns an
-    # error for a missing argument"). A pass in one suite's copy must not read
-    # as a pass for the other suite's test of the same name.
+def test_passing_at_base_keys_by_suite_and_name(tmp_path, monkeypatch):
+    # Two suites can share a test name — 19 names are shared across suites in
+    # this repo. A pass in one suite's copy must not read as a pass for the
+    # other suite's test of the same name.
+    #
+    # The runner is stubbed rather than invoked: what this holds is the keying,
+    # and `bats` is not installed on the pytest CI runner, so calling it for
+    # real makes the test a dependency check that fails where the logic is fine.
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "a.bats").write_text('@test "shared name" {\n  true\n}\n')
     (tmp_path / "tests" / "b.bats").write_text('@test "shared name" {\n  false\n}\n')
+
+    monkeypatch.setattr(
+        vnt, "_bats_passes",
+        lambda _wt, suite: {"shared name"} if suite.endswith("a.bats") else set(),
+    )
     tests = [
         vnt.NewTest("tests/a.bats", "shared name", 1, None),
         vnt.NewTest("tests/b.bats", "shared name", 1, None),

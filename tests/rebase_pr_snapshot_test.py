@@ -241,6 +241,40 @@ class TestARefusedRead:
         with _answers({}):
             assert refusals.tracker_landed_check("/wt", _ctx()) is None
 
+    def test_the_remedy_survives_the_latch_expiring_before_the_report_builds(
+        self, monkeypatch,
+    ):
+        """The remedy comes from the snapshot, not a fresh read of the latch.
+
+        `fetch` and the refusal it feeds are two separate calls, and the
+        latch's own window can pass between them. Re-querying at report time
+        would silently lose the reset time to a latch that already expired —
+        this pins that the remedy travels with the snapshot instead.
+        """
+        _latch_graphql(monkeypatch)
+        with _answers({}):
+            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+        assert "refills at" in snapshot.remedy
+
+        # The latch expires before the refusal report is built.
+        gh_budget.reset_for_tests()
+        assert gh_budget.latched(gh_budget.Resource.GRAPHQL) is None
+
+        report = refusals.tracker_landed_check("/wt", _ctx(), snapshot)
+
+        assert "refills at" in report.detail
+
+    def test_the_generic_hint_is_the_fallback_for_a_snapshot_with_no_remedy(
+        self,
+    ):
+        """A snapshot built with `refused=True` alone, as tests upstream do,
+        still gets a usable remedy rather than an empty one."""
+        report = refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        )
+
+        assert gh_budget.BUDGET_EXHAUSTED_HINT in report.detail
+
 
 class TestNameTheOpenPR:
     """The notice, which both force-push sites call."""

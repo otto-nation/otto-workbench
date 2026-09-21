@@ -90,7 +90,7 @@ def tracker_landed_check(
     """
     if snapshot is not None:
         if snapshot.refused:
-            return _refused_report(ctx)
+            return _refused_report(ctx, snapshot.remedy)
         if not snapshot.merged:
             return None
         return as_refusal(branch_landed.merged_report(
@@ -101,10 +101,15 @@ def tracker_landed_check(
     ), ctx.branch)
 
 
-def _refused_report(ctx: pr_context.ResolvedContext) -> RefusalReport:
-    """The refusal for a tracker read the budget breaker declined to make."""
-    latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
-    remedy = latch.remedy() if latch else gh_budget.BUDGET_EXHAUSTED_HINT
+def _refused_report(ctx: pr_context.ResolvedContext, remedy: str) -> RefusalReport:
+    """The refusal for a tracker read the budget breaker declined to make.
+
+    *remedy* is the one `PRSnapshot.fetch` captured from the latch at read
+    time. Falls back to the generic hint only for a snapshot built with no
+    remedy of its own — a live read always carries one, since it is captured
+    in the same instant the latch is observed.
+    """
+    remedy = remedy or gh_budget.BUDGET_EXHAUSTED_HINT
     return RefusalReport(
         branch=ctx.branch, signal=RefusalSignal.TRACKER_REFUSED.value,
         detail=f"GitHub was not asked whether the PR merged — {remedy}",

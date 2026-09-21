@@ -51,9 +51,10 @@ class RefusalSignal(StrEnum):
     """Which check refused the rebase.
 
     The first three found the branch's work already present in the target ref;
-    the rest found the rebase itself unsafe to run against that ref — including
-    ``TRACKER_REFUSED``, which found nothing at all and is the one signal that
-    refuses on an absence rather than on evidence.
+    ``NO_MERGE_BASE`` and ``CONFLICTS_OVER_BUDGET`` found the rebase itself
+    unsafe to run against that ref. ``TRACKER_REFUSED`` found neither — it
+    refuses because whether the branch landed could not be determined at all,
+    the one signal that refuses on an absence rather than on evidence.
 
     The landed three take their wire values from ``branch_landed``, which owns
     both the checks and their names — ``push_intent`` reports on the same three

@@ -504,6 +504,7 @@ _REFUSAL_REASONS = {
     RebaseStatus.ALREADY_LANDED.value: "branch already landed",
     RebaseStatus.UNRELATED_HISTORY.value: "branch shares no history with its base",
     RebaseStatus.CONFLICTS_OVER_BUDGET.value: "too many conflicts to resolve automatically",
+    RebaseStatus.TRACKER_UNREAD.value: "GitHub was not asked whether the PR merged",
 }
 
 

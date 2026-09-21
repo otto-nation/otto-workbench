@@ -63,6 +63,12 @@ class PRSnapshot:
     # read that succeeded and one that failed for any other reason, so a caller
     # that does not care about the distinction sees today's behaviour.
     refused: bool = False
+    # The remedy for the latch this read found armed, captured here rather
+    # than re-derived later. The latch's own window can pass between this read
+    # and whatever builds the refusal message from it, and a re-query at that
+    # later point would silently lose the reset time — or the whole hint — to
+    # a latch that already expired.
+    remedy: str = ""
 
     @property
     def answered(self) -> bool:
@@ -140,8 +146,13 @@ def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:
         # read is the case that matters, and one that expires between the two
         # readings would have let the call through anyway. `gh pr view` spends
         # the GraphQL budget despite looking like neither `api` nor `graphql`.
+        # The remedy is read from the same latch, in the same instant, rather
+        # than left for a later caller to re-derive from a latch that may have
+        # since expired.
+        latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
         return PRSnapshot(
-            refused=gh_budget.latched(gh_budget.Resource.GRAPHQL) is not None,
+            refused=latch is not None,
+            remedy=latch.remedy() if latch else "",
         )
     return PRSnapshot(
         state=data.get("state") or "",

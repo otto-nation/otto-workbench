@@ -404,6 +404,9 @@ def test_a_refused_tracker_read_leaves_the_record_to_be_asked_again(
 
     assert "nothing has confirmed" not in capsys.readouterr().err
     assert push_intent.intents_path().exists()
+    (intent,) = _records()
+    assert intent.sha == sha
+    assert intent.attempts == 1
 
 
 def test_a_push_to_the_default_branch_is_never_excused(pushable, capsys):

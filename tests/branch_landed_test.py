@@ -11,10 +11,8 @@ The tracker signal has no local equivalent, so its transport is stubbed under
 `gh_client` and the argv the client builds stays observable from the call.
 """
 
-import contextlib
 import subprocess
 import sys
-import time
 from pathlib import Path
 from unittest import mock
 
@@ -25,7 +23,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import budget as gh_budget  # noqa: E402
 from gh import landed as branch_landed  # noqa: E402
 from core import timeouts  # noqa: E402
 

@@ -20,64 +20,16 @@
  * prevents. Unrelated filing during a review costs one explanation, which is
  * the trade for catching the case the guard exists for.
  *
- * The predicate lives in ./detect.ts so it can be tested without the SDK — see
- * that file's header.
+ * Both the predicate and the review probe live in ./detect.ts so they can be
+ * tested without the SDK — see that file's header. What stays here is only the
+ * wiring: this file is the part no test can reach.
  */
 
 import {
   isToolCallEventType,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { isIssueFiling } from "./detect.ts";
-import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-
-/** An unticked checkbox, the shape `pr review` writes an unresolved finding in. */
-const OPEN_FINDING = /^- \[ \]/m;
-
-/** A git command's stdout, or "" when git cannot answer. */
-function git(args: string[]): string {
-  try {
-    return execFileSync("git", args, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-
-/**
- * True when a self-review for the current branch is sitting on open findings.
- *
- * The directory name is the one ai/lib/cli/claude_review.py builds:
- * <repo>-self-<branch with / replaced by ->. The repo half comes from the
- * remote rather than the directory, because every worktree of one repo has its
- * own basename and they all review into the same name.
- *
- * The state root default matches WORKBENCH_STATE_DIR in lib/roots.sh.
- */
-function branchReviewHasOpenFindings(): boolean {
-  const origin = git(["remote", "get-url", "origin"]);
-  if (!origin) return false;
-  const repo = origin.replace(/\.git$/, "").split("/").pop();
-  if (!repo) return false;
-
-  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (!branch || branch === "HEAD") return false;
-
-  const stateDir =
-    process.env.WORKBENCH_STATE_DIR ??
-    `${process.env.HOME}/.local/state/workbench`;
-  const reviewFile =
-    `${stateDir}/reviews/${repo}-self-${branch.replaceAll("/", "-")}/review.md`;
-
-  try {
-    return OPEN_FINDING.test(readFileSync(reviewFile, "utf8"));
-  } catch {
-    return false;
-  }
-}
+import { isIssueFiling, branchReviewHasOpenFindings } from "./detect.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {

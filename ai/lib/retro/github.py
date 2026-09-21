@@ -217,7 +217,15 @@ def _comments_truncated(thread: dict) -> bool:
 
 
 def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:
-    """Parse a single GraphQL PR node into the retro-scan format."""
+    """Parse a single GraphQL PR node into the retro-scan format.
+
+    The window is re-checked against *since_date* even though the caller has
+    already applied it. Not redundant: the caller filtered the *list* query's
+    nodes, and this reads the *detail* query's — a second response, fetched
+    separately, whose ``mergedAt`` is its own field and can come back absent.
+    A comparison against the empty string would place such a PR before every
+    window, so the missing case is rejected outright rather than compared.
+    """
     merged_at = pr_node.get("mergedAt", "")
     if not merged_at or merged_at < since_date:
         return None
@@ -245,7 +253,11 @@ def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:
 
 
 def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
-    """Fetch merged PRs with review data in a single GraphQL query.
+    """Merged PRs in the window, with the review comments left on them.
+
+    One cheap query for the PR list, then one detail query per PR that survives
+    the window filter — not the single nested query this used to be, which was
+    scored for every PR it went on to discard. The module docstring has why.
 
     Returns list of dicts with: number, title, author, merged_at, comments.
     Each comment has: author, body, path (optional), line (optional).

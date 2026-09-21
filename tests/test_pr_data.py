@@ -13,9 +13,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core.proc import CmdResult
+from gh import pr_reads
 from gh.pr_reads import (
     PRData, fetch_pr_data, fetch_review_threads, warn_if_truncated,
-    GQL_MAX_THREAD_PAGES, GQL_THREAD_COMMENTS_LIMIT,
+    GQL_MAX_THREAD_PAGES, GQL_THREAD_COMMENTS_LIMIT, GQL_THREAD_REFETCH_LIMIT,
     GQL_REVIEWS_LIMIT, GQL_COMMITS_LIMIT,
 )
 
@@ -594,6 +595,27 @@ class TestFetchPrData:
         pd = fetch_pr_data("owner/repo", "1")
         assert [t["id"] for t in pd.review_threads] == ["PRT_1", "PRT_2"]
         assert mock_gql.call_args_list[1].kwargs["variables"]["endCursor"] == "cur1"
+
+
+# ── Page sizes ──────────────────────────────────────────────────────
+
+class TestPageSizes:
+    def test_the_refetch_asks_for_a_bigger_page_than_the_nested_read(self):
+        """The two limits pull in opposite directions and must not be unified.
+
+        The nested one is multiplied by the thread page size before GitHub
+        scores the query, so it is small. The refetch is scored on its own, for
+        a thread already known to be deep, so it is the largest page allowed —
+        shrinking it to match would turn one extra call into ten.
+        """
+        assert GQL_THREAD_REFETCH_LIMIT > GQL_THREAD_COMMENTS_LIMIT
+        assert f"comments(first: {GQL_THREAD_REFETCH_LIMIT}, after: $endCursor)" \
+            in pr_reads._THREAD_COMMENTS_QUERY
+
+    def test_the_nested_read_is_the_small_page(self):
+        """The control: the connection inside `reviewThreads` stays cheap."""
+        assert f"comments(first: {GQL_THREAD_COMMENTS_LIMIT})" \
+            in pr_reads._THREAD_NODE_FIELDS
 
 
 # ── Truncation detection ────────────────────────────────────────────

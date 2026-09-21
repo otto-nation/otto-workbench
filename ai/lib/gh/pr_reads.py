@@ -64,10 +64,17 @@ GQL_MAX_THREAD_PAGES = 20
 # PR someone might actually open.
 GQL_MAX_ISSUE_COMMENT_PAGES = 10
 
+# The page size for a thread already known to be deep. Deliberately the
+# largest GitHub allows, and deliberately not GQL_THREAD_COMMENTS_LIMIT: that
+# one is small because it is nested under `reviewThreads` and multiplied by
+# 100, where this one is scored on its own for a thread whose comments we
+# already know we want. A second round trip is the thing worth avoiding here.
+GQL_THREAD_REFETCH_LIMIT = 100
+
 # The same guard for a single thread's comments. _drain_thread_comments pages
-# through _THREAD_COMMENTS_QUERY, which hardcodes `first: 100`, so 20 pages is
-# 2000 comments against an observed maximum of 163 per thread — this bounds a
-# misbehaving server rather than any thread someone might actually leave.
+# through _THREAD_COMMENTS_QUERY at GQL_THREAD_REFETCH_LIMIT a page, so 20
+# pages is 2000 comments against an observed maximum of 163 per thread — this
+# bounds a misbehaving server rather than any thread someone might leave.
 GQL_MAX_THREAD_COMMENT_PAGES = 20
 
 
@@ -360,10 +367,6 @@ _THREAD_NODE_FIELDS = f"""
           }}
 """
 
-# One thread's comments, addressed by the thread's own node id. This is what
-# finishes off a thread the page size cut off, so it asks for the largest page
-# GitHub allows: it only runs for a thread already known to be deep, and a
-# second round trip is the thing worth avoiding here.
 # Issue comments past the first page. Separate from the consolidated query so a
 # PR over the 100-comment cap costs one extra call rather than making every PR
 # pay for a second page it does not have.
@@ -386,24 +389,28 @@ query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
 }}
 """
 
-_THREAD_COMMENTS_QUERY = """
-query($threadId: ID!, $endCursor: String) {
-  node(id: $threadId) {
-    ... on PullRequestReviewThread {
-      comments(first: 100, after: $endCursor) {
+# One thread's comments, addressed by the thread's own node id. This is what
+# finishes off a thread the nested page size cut off, so it asks for the
+# largest page GitHub allows — see GQL_THREAD_REFETCH_LIMIT for why that is the
+# opposite choice from the nested one.
+_THREAD_COMMENTS_QUERY = f"""
+query($threadId: ID!, $endCursor: String) {{
+  node(id: $threadId) {{
+    ... on PullRequestReviewThread {{
+      comments(first: {GQL_THREAD_REFETCH_LIMIT}, after: $endCursor) {{
         totalCount
-        pageInfo { hasNextPage endCursor }
-        nodes {
+        pageInfo {{ hasNextPage endCursor }}
+        nodes {{
           id
           databaseId
-          author { login }
+          author {{ login }}
           body
           createdAt
-        }
-      }
-    }
-  }
-}
+        }}
+      }}
+    }}
+  }}
+}}
 """
 
 # The cursor variable is named endCursor so this query stays compatible with

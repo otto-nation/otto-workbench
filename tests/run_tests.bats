@@ -175,6 +175,7 @@ report_for() {
 
 @test "an overridden run credits TEST_JOBS rather than the load" {
   machine 18 9.0
+  # shellcheck disable=SC2034  # read by test_jobs and report_jobs in bin/local/run-tests
   TEST_JOBS=4
   test_jobs
   run report_jobs

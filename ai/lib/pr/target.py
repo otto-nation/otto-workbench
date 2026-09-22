@@ -322,9 +322,9 @@ def forge_base_url(host: str = "") -> str:
     """The ``https://`` base for *host*, or public GitHub when it names none.
 
     One place decides what an empty host means, so a builder that renders a URL
-    never has to. Empty is the answer for a local remote, an ssh alias, and any
-    call that has not been given a host yet — all of which have always rendered
-    public GitHub, and still do.
+    never has to. Empty is the answer for a local remote, an ssh alias, a
+    caller with no context to ask, and any call that has not been given a host
+    yet — all of which have always rendered public GitHub, and still do.
 
     A host carrying its own scheme is returned as given: the value may have come
     from config rather than from a remote, and rewriting it would turn an

@@ -47,11 +47,6 @@ from review import worktree as review_worktree
 from review.completion import ReviewOutcome, finish_review, resolve_prior_review
 from review.paths import FILENAME_PIPELINE_STATE, FILENAME_SESSION
 
-# Public GitHub, for a caller with no context to ask. A resolved run renders
-# `pr_target.forge_base_url(ctx.host)` instead, which answers this for a repo
-# served from an enterprise instance.
-GITHUB_BASE_URL = "https://github.com"
-
 
 @dataclass(frozen=True)
 class ReviewFlags:

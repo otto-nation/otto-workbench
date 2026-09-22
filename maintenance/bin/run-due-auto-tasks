@@ -23,7 +23,7 @@
 #
 # Env:
 #   AUTO_TASK_SKILLS_DIR  — override the skills directory (default: ai/skills)
-#   AUTO_TASK_BIN         — override the run-auto-task path (default: $LOCAL_BIN_DIR)
+#   AUTO_TASK_BIN         — override the run-auto-task path (default: $LOCAL_BIN_DIR/run-auto-task)
 
 set -e
 
@@ -86,7 +86,7 @@ _run_wiki_capture_gate() {
     _gate_due wiki-capture "$leader" || continue
     log "Auto-task due: wiki-capture ($leader)"
     (cd "$leader" && "$AUTO_TASK_BIN" wiki-capture) \
-      || log "WARNING: run-auto-task wiki-capture failed for $leader"
+      || log "WARNING: wiki-capture failed for $leader (cd or run-auto-task)"
     return 0
   done < <(project_repo_leaders)
   return 1

@@ -258,6 +258,10 @@ _run_tasks() {
   # Rendered the way _launchd_install does rather than read raw: the template
   # carries __INTERVAL__ where an integer belongs, so PlistBuddy cannot parse it
   # unsubstituted, and the file launchd loads is the rendered one anyway.
+  #
+  # PlistBuddy is macOS-only; launchd itself only exists there, so this
+  # assertion has nothing to hold on any other OS.
+  if [[ "$OSTYPE" != "darwin"* ]]; then skip "macOS only"; return; fi
   local rendered="$TEST_HOME/rendered.plist"
   sed -e "s|__WORKBENCH_DIR__|/tmp/wb|g" -e "s|__INTERVAL__|43200|g" \
     -e "s|__LOG_DIR__|/tmp/logs|g" \

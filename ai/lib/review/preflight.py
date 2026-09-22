@@ -33,7 +33,7 @@ from core.trail import Trail
 from pr import domains as pr_domains
 from pr import supersession
 from review import recover as review_recover
-from review.collect import base_ref
+from review.collect import base_ref, fetch_base
 from review.state import read_pipeline_status
 
 
@@ -120,7 +120,17 @@ def refuse_unresolvable_base(wt_path: str, override: str, *, trail: Trail) -> No
     every worktree git cannot answer for into a hard failure: the review flows
     are driven in tests and in recovery against trees with no origin, and the
     fallbacks below handle that case deliberately.
+
+    Fetches ``origin/<override>`` first, best-effort, the same way
+    :func:`review.collect.fetch_base` does for the rungs that read it later —
+    this runs ahead of that call, so without a fetch of its own a base pushed
+    moments ago, or simply unfetched in a long-lived clone, resolves to
+    nothing here and is refused as a typo it never was. A base git cannot
+    reach (no network, no such branch) leaves the remote-tracking ref exactly
+    as stale as it was, which `base_ref` then answers as it always has.
     """
+    if override:
+        fetch_base(wt_path, override)
     if not override or base_ref(wt_path, override):
         return
     base = override

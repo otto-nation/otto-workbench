@@ -316,6 +316,31 @@ def test_no_base_is_not_a_refusal(tmp_path):
     review_preflight.refuse_unresolvable_base(str(repo), "", trail=MagicMock())
 
 
+def test_a_base_pushed_after_this_clone_is_fetched_before_being_refused(tmp_path):
+    """The remote-tracking ref this checks is only as fresh as the last fetch,
+    and nothing upstream of this call has made one yet — `fetch_base` in
+    `review.collect` runs later, after the base is already resolved here. A
+    branch pushed to origin by someone else a moment ago is real, and refusing
+    it as a typo because this worktree has not seen it yet is the false
+    positive this check must not produce."""
+    repo = _repo_with_a_pushed_base(tmp_path)
+
+    other_clone = tmp_path / "other-clone"
+    git_in(tmp_path, "clone", "-q", str(repo.parent / "origin.git"), str(other_clone))
+    git_in(other_clone, "checkout", "-b", "newly-pushed", "-q")
+    (other_clone / "other.go").write_text("package main\n")
+    git_in(other_clone, "-c", "user.email=t@t", "-c", "user.name=t",
+           "add", ".")
+    git_in(other_clone, "-c", "user.email=t@t", "-c", "user.name=t",
+           "commit", "-q", "-m", "add other")
+    git_in(other_clone, "push", "-q", "origin", "newly-pushed")
+
+    # `repo` has never fetched `newly-pushed`; only the check's own fetch can
+    # make it resolvable here.
+    review_preflight.refuse_unresolvable_base(
+        str(repo), "newly-pushed", trail=MagicMock())
+
+
 def test_the_supersession_gate_reads_an_unpushed_parent(tmp_path, monkeypatch):
     """Every supersession signal is a git range. Spelled `origin/<base>`, an
     unpushed parent makes them all return nothing — which reports a branch with

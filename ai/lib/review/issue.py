@@ -27,6 +27,10 @@ from config.workbench_config import yaml_dump
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
+# The public instance, as it appears in a ``base_url``. A host equal to this
+# adds nothing to what gh resolves by default, so it is normalised away rather
+# than qualifying every ``--repo`` with it.
+_PUBLIC_GITHUB_HOST = "github.com"
 # The host a provider's issues live under when ``issues.base_url`` has not
 # named one. GitHub has a single public instance to fall back on; Jira is
 # per-tenant and Linear per-workspace, so neither has a default and an
@@ -38,7 +42,7 @@ _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNOR
 # reader checking it against the enum, rather than leaving Jira as the only
 # entry with no default and Linear looking like an oversight.
 _DEFAULT_BASE_URL = {
-    str(workbench_config.IssueProvider.GITHUB): "https://github.com",
+    str(workbench_config.IssueProvider.GITHUB): f"https://{_PUBLIC_GITHUB_HOST}",
     str(workbench_config.IssueProvider.JIRA): "",
     str(workbench_config.IssueProvider.LINEAR): "",
 }
@@ -440,23 +444,60 @@ def _issue_link(provider: str, path: str, opts: dict | None) -> str:
     return f"{base.rstrip('/')}/{path}" if base else ""
 
 
+def _github_host(opts: dict | None) -> str:
+    """The GitHub host ``issues.base_url`` names, bare of scheme and path.
+
+    Empty for github.com, which is what an unset key and the public host both
+    mean — the caller uses that to leave gh's own host resolution alone.
+    """
+    base = (opts or {}).get("base_url", "")
+    host = re.sub(r"^[a-z]+://", "", base.strip(), flags=re.IGNORECASE).strip("/")
+    return "" if host == _PUBLIC_GITHUB_HOST else host
+
+
+def _github_repo_arg(repo: str, opts: dict | None) -> str:
+    """The ``--repo`` value addressing *repo* on this repo's GitHub instance.
+
+    ``gh`` resolves a bare ``OWNER/REPO`` against its own default host, so on a
+    machine authenticated to an enterprise instance *and* github.com, a review
+    of an enterprise repo reads github.com — and gets a 404, or worse, a
+    same-named public repo. The three-part ``HOST/OWNER/REPO`` form routes to
+    the host named in it, which is the one thing here we are entitled to say:
+    which repo we mean, not how gh should be configured.
+
+    A repo already carrying a host keeps it, so a caller that resolved one
+    itself is not overridden.
+    """
+    host = _github_host(opts)
+    return f"{host}/{repo}" if host and repo.count("/") == 1 else repo
+
+
 def _fetch_github(issue_id: str, repo: str, opts: dict | None) -> IssueContext:
     """Fetch a GitHub issue by number and repo.
 
-    ``issues.base_url`` only moves the link. Reaching a GitHub Enterprise API
-    is ``gh``'s own configuration (``GH_HOST``), so the fetch below follows
-    whatever host that CLI is pointed at.
+    ``issues.base_url`` moves both halves: the link, and — via the
+    host-qualified ``--repo`` below — the host gh reads the issue from.
+
+    It does not authenticate that host. ``gh`` needs its own credentials for an
+    enterprise instance (``gh auth login -h HOST``), and setting that up is the
+    CLI's configuration rather than ours; an unauthenticated host arrives here
+    as the same empty context any other failed fetch does.
     """
     link = _issue_link(
         str(workbench_config.IssueProvider.GITHUB), f"{repo}/issues/{issue_id}", opts,
     )
+    target = _github_repo_arg(repo, opts)
     context = gh_client.out(
-        "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments",
+        "issue", "view", issue_id,
+        "--repo", target,
+        "--json", "title,body,comments",
     )
     if context:
         log.ok(f"Found GitHub issue: #{issue_id}")
     else:
-        log.dim(f"GitHub issue #{issue_id} not found in {repo}")
+        # *target*, not *repo*: on an enterprise instance the host is the
+        # likeliest thing to be wrong, and the miss is the only place it shows.
+        log.dim(f"GitHub issue #{issue_id} not found in {target}")
     return IssueContext(link=link, context=context)
 
 

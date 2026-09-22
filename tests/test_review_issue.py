@@ -413,6 +413,94 @@ def test_fetch_issue_context_github_subprocess_failure(capsys):
     assert "GitHub issue #42 not found in owner/repo" in capsys.readouterr().err
 
 
+def test_fetch_issue_context_github_miss_names_the_host_it_tried(capsys):
+    """The miss is the only line a GHE user sees, so it carries the host."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = ""
+    mock_result.stderr = ""
+    opts = {"base_url": "https://ghe.example.com"}
+
+    with patch("subprocess.run", return_value=mock_result):
+        fetch_issue_context("github", "42", repo="owner/repo", opts=opts)
+
+    assert "not found in ghe.example.com/owner/repo" in capsys.readouterr().err
+
+
+def _gh_argv(mock_run):
+    """The argv of the one gh call *mock_run* recorded."""
+    assert mock_run.call_count == 1
+    return mock_run.call_args[0][0]
+
+
+def test_fetch_issue_context_github_reads_the_enterprise_host():
+    """A bare OWNER/REPO resolves against gh's default host, so an enterprise
+    repo would be read from github.com. The host-qualified form routes it."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://ghe.example.com"}
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        fetch_issue_context("github", "42", repo="owner/repo", opts=opts)
+
+    assert "ghe.example.com/owner/repo" in _gh_argv(mock_run)
+
+
+def test_fetch_issue_context_github_leaves_the_public_host_unqualified():
+    """github.com is what gh resolves anyway; qualifying adds nothing."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://github.com"}
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        fetch_issue_context("github", "42", repo="owner/repo", opts=opts)
+
+    assert "owner/repo" in _gh_argv(mock_run)
+    assert "github.com/owner/repo" not in _gh_argv(mock_run)
+
+
+def test_fetch_issue_context_github_without_a_base_url_is_unqualified():
+    """An unconfigured repo leaves gh's own host resolution alone."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        fetch_issue_context("github", "42", repo="owner/repo")
+
+    assert "owner/repo" in _gh_argv(mock_run)
+
+
+def test_fetch_issue_context_github_host_tolerates_a_scheme_and_slash():
+    """gh takes a bare host in HOST/OWNER/REPO, so a pasted URL is stripped."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://ghe.example.com/"}
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        fetch_issue_context("github", "42", repo="owner/repo", opts=opts)
+
+    assert "ghe.example.com/owner/repo" in _gh_argv(mock_run)
+
+
+def test_fetch_issue_context_github_keeps_a_repo_that_names_its_own_host():
+    """A caller that resolved a host itself is not second-guessed."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://ghe.example.com"}
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        fetch_issue_context(
+            "github", "42", repo="other.example.com/owner/repo", opts=opts,
+        )
+
+    assert "other.example.com/owner/repo" in _gh_argv(mock_run)
+
+
 # ── create_issue ──────────────────────────────────────────────────────────
 
 

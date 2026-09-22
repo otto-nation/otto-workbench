@@ -11,7 +11,11 @@ setup() {
   load 'test_helper'
   load 'review_orchestrate_helper'
   common_setup
-  # Model resolution reads these; the developer's own shell usually has them set.
+  # Model resolution reads these; the developer's own shell usually has them
+  # set. Both spellings: AI_* is what ~/.env.local exports and what wins, and
+  # leaving it set let a real shell value beat the one a test had just written
+  # into the legacy name.
+  unset AI_SONNET_MODEL AI_OPUS_MODEL AI_HAIKU_MODEL
   unset ANTHROPIC_DEFAULT_SONNET_MODEL
   unset ANTHROPIC_DEFAULT_OPUS_MODEL
   unset ANTHROPIC_DEFAULT_HAIKU_MODEL
@@ -113,25 +117,51 @@ print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
   [ "$result" = "sonnet" ]
 }
 
-@test "resolve_model: alias resolved via ANTHROPIC_DEFAULT env" {
+@test "resolve_model: alias resolved via AI_<TIER>_MODEL env" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-5'
+os.environ['AI_SONNET_MODEL'] = 'claude-sonnet-5'
 print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+del os.environ['AI_SONNET_MODEL']
+")
+  [ "$result" = "claude-sonnet-5" ]
+}
+
+@test "resolve_model: alias still resolved via the pre-rename env name" {
+  result=$(_py "
+import os
+os.environ.pop('WORKBENCH_AI_MODEL', None)
+os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
+os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-4-5'
+print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
+")
+  [ "$result" = "claude-sonnet-4-5" ]
+}
+
+@test "resolve_model: the current env name beats the pre-rename one" {
+  result=$(_py "
+import os
+os.environ.pop('WORKBENCH_AI_MODEL', None)
+os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
+os.environ['AI_SONNET_MODEL'] = 'claude-sonnet-5'
+os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-4-5'
+print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+del os.environ['AI_SONNET_MODEL']
 del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
 ")
   [ "$result" = "claude-sonnet-5" ]
 }
 
-@test "resolve_model: explicit alias resolved via ANTHROPIC_DEFAULT env" {
+@test "resolve_model: explicit alias resolved via AI_<TIER>_MODEL env" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL'] = 'claude-opus-4-6'
+os.environ['AI_OPUS_MODEL'] = 'claude-opus-4-6'
 print(mod.resolve_model('opus', 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL']
+del os.environ['AI_OPUS_MODEL']
 ")
   [ "$result" = "claude-opus-4-6" ]
 }

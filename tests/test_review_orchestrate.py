@@ -123,6 +123,7 @@ class TestCheckSerialAbort:
 def no_model_env(monkeypatch):
     """A clean slate — the developer's own shell usually has these set."""
     for key in ("WORKBENCH_AI_MODEL", "UNUSED_KEY", "MY_MODEL_KEY",
+                "AI_SONNET_MODEL", "AI_OPUS_MODEL", "AI_HAIKU_MODEL",
                 "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
         monkeypatch.delenv(key, raising=False)
@@ -132,11 +133,70 @@ class TestResolveModel:
     def _clear_alias_envs(self, ro, monkeypatch):
         for alias in ro.ModelAlias:
             monkeypatch.delenv(alias.env_key, raising=False)
+            monkeypatch.delenv(alias.legacy_env_key, raising=False)
 
     def test_alias_env_keys_follow_convention(self, ro):
-        assert ro.ModelAlias.SONNET.env_key == "ANTHROPIC_DEFAULT_SONNET_MODEL"
-        assert ro.ModelAlias.OPUS.env_key == "ANTHROPIC_DEFAULT_OPUS_MODEL"
-        assert ro.ModelAlias.HAIKU.env_key == "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+        assert ro.ModelAlias.SONNET.env_key == "AI_SONNET_MODEL"
+        assert ro.ModelAlias.OPUS.env_key == "AI_OPUS_MODEL"
+        assert ro.ModelAlias.HAIKU.env_key == "AI_HAIKU_MODEL"
+
+    def test_legacy_alias_env_keys_are_the_pre_rename_names(self, ro):
+        assert ro.ModelAlias.SONNET.legacy_env_key == "ANTHROPIC_DEFAULT_SONNET_MODEL"
+        assert ro.ModelAlias.OPUS.legacy_env_key == "ANTHROPIC_DEFAULT_OPUS_MODEL"
+        assert ro.ModelAlias.HAIKU.legacy_env_key == "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+
+    def test_alias_env_keys_match_the_registry(self, ro):
+        """ai/models.env.yml is the SSOT for these names, and this pins them to it.
+
+        The bug this guards was exactly a drift between the two: the 20260908
+        migration renamed the registry's `var` fields and `resolve_alias` kept
+        reading the old spelling, so every tier alias silently stopped
+        resolving and phases dispatched the bare word `sonnet` as a model id.
+        `var` is what ~/.env.local sets; `target` is what the Claude Code
+        settings mirror publishes, which is the fallback.
+        """
+        from config.workbench_config import read_yaml
+
+        registry = Path(__file__).resolve().parent.parent / "ai" / "models.env.yml"
+        entries = read_yaml(registry)["env"]
+        by_var = {e["var"]: e for e in entries if e.get("role") == "model-tier"}
+
+        assert len(by_var) == len(list(ro.ModelAlias)), (
+            "every model-tier registry entry needs a ModelAlias member and vice versa"
+        )
+        for alias in ro.ModelAlias:
+            assert alias.env_key in by_var, f"{alias.env_key} is not a registry var"
+            assert by_var[alias.env_key]["target"] == alias.legacy_env_key
+
+    def test_current_name_resolves_the_alias(self, ro, monkeypatch):
+        """The rename's own name is the one a migrated ~/.env.local sets."""
+        self._clear_alias_envs(ro, monkeypatch)
+        monkeypatch.setenv("AI_SONNET_MODEL", "claude-sonnet-5")
+        assert ro.resolve_alias("sonnet") == "claude-sonnet-5"
+
+    def test_legacy_name_still_resolves_when_it_is_the_only_one(self, ro, monkeypatch):
+        """An un-migrated machine, or one inheriting Claude Code's mirror."""
+        self._clear_alias_envs(ro, monkeypatch)
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-4-5")
+        assert ro.resolve_alias("sonnet") == "claude-sonnet-4-5"
+
+    def test_current_name_wins_over_the_legacy_one(self, ro, monkeypatch):
+        """Both set is the normal post-migration state, and they can disagree.
+
+        The mirror publishes the old name into Claude Code's settings, so a
+        session started from there carries a value that ~/.env.local may have
+        since moved on from. Asserting the new name wins is what makes this
+        fail against a base that reads only the old one — a test that set just
+        one variable would pass either way.
+        """
+        self._clear_alias_envs(ro, monkeypatch)
+        monkeypatch.setenv("AI_SONNET_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-4-5")
+        assert ro.resolve_alias("sonnet") == "claude-sonnet-5"
+
+    def test_unset_everywhere_leaves_the_alias_bare(self, ro, monkeypatch):
+        self._clear_alias_envs(ro, monkeypatch)
+        assert ro.resolve_alias("sonnet") == "sonnet"
 
     def test_parse_rejects_concrete_model_id(self, ro):
         assert ro.ModelAlias.parse("claude-sonnet-5") is None
@@ -282,19 +342,26 @@ class TestPromptBudgetsArePreflighted:
     def test_an_unresolved_alias_runs_on_the_tier_floor_and_says_so(self, ro):
         """The ordinary first-party-API setup: allowed, but not silently.
 
-        `phase_model` returns the literal "sonnet" when
-        ANTHROPIC_DEFAULT_SONNET_MODEL is unset — see `TestPhaseModel`, which
-        asserts exactly that default. Refusing would take out every phase on
-        every machine not using Vertex, so the run continues against the
-        tier's floor; the warning is what stops a smaller review from being
-        the only evidence that happened.
+        `phase_model` returns the literal "sonnet" when AI_SONNET_MODEL is
+        unset — see `TestPhaseModel`, which asserts exactly that default.
+        Refusing would take out every phase on every machine not using Vertex,
+        so the run continues against the tier's floor; the warning is what
+        stops a smaller review from being the only evidence that happened.
+
+        The variable is named through `ModelAlias` rather than spelled out, for
+        the reason the next test gives: a hardcoded copy here is what kept
+        pointing operators at `ANTHROPIC_DEFAULT_SONNET_MODEL` after the
+        migration renamed it, so setting what the warning asked for fixed
+        nothing.
         """
+        from agent.phases import ModelAlias
+
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
             ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, trail)
         assert ok
         assert "tier alias" in err.getvalue()
-        assert "ANTHROPIC_DEFAULT_SONNET_MODEL" in err.getvalue()
+        assert ModelAlias.SONNET.env_key in err.getvalue()
         assert trail.decision.called
 
     def test_the_warning_names_the_variable_that_would_fix_it(self, ro):

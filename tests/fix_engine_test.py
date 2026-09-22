@@ -646,6 +646,75 @@ def _verdicts(*pairs):
     return run_verify
 
 
+def test_a_reasoned_decline_is_put_to_the_gate(tmp_path, landed, head):
+    """A decline is a claim nobody checked, so it goes where claims are checked.
+
+    The failure behind this: a pass fixed a finding, then ticked `declined`
+    describing the tree its own edit had just produced. Staging reads the
+    worktree rather than the boxes, so the edit was committed and the fix
+    shipped recorded as "not a defect".
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, **kwargs):
+        seen["ids"] = [i.id for i in kwargs["items"]]
+        seen["body"] = kwargs["items"][0].body
+        return {}
+
+    _run(adapter, verify=run_verify,
+         run_fix=_answer(adapter, tick="declined",
+                         reason="the code already does this"))
+
+    assert seen["ids"] == ["i0"]
+    assert "rejected this finding" in seen["body"]
+    assert "the code already does this" in seen["body"]
+
+
+def test_a_decline_the_gate_falsifies_becomes_a_person_s_call(tmp_path, landed, head):
+    """A decline disproved is not a decline; it is an item nobody has settled."""
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(
+            ok=False, detail="true only with the pass's own diff applied"))),
+        run_fix=_answer(adapter, tick="declined",
+                        reason="the code already does this"),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.NEEDS_HUMAN
+    assert run.outcomes[0].reason == "true only with the pass's own diff applied"
+
+
+def test_a_decline_the_gate_upholds_stays_declined(tmp_path, landed, head):
+    """The negative control: an honest decline survives the gate unchanged."""
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(ok=True, detail="scope holds"))),
+        run_fix=_answer(adapter, tick="declined", reason="out of scope here"),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.DECLINED
+    assert run.outcomes[0].reason == "out of scope here"
+
+
+def test_a_decline_with_no_reason_is_not_put_to_the_gate(tmp_path, landed, head):
+    """There is no claim to check, and `_record_unevidenced` reports it instead."""
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, **kwargs):
+        seen["ids"] = [i.id for i in kwargs["items"]]
+        return {}
+
+    _run(adapter, verify=run_verify, run_fix=_answer(adapter, tick="declined"))
+
+    assert "ids" not in seen
+
+
 def test_a_fix_the_gate_falsifies_does_not_reach_the_commit(tmp_path, landed, head):
     """The defect this gate exists for: a wrong fix reported as fixed.
 
@@ -945,6 +1014,61 @@ def test_a_fix_claimed_without_evidence_reaches_the_trail(tmp_path, landed, head
     warned = _warned(trail)
     assert len(warned) == 1
     assert warned[0][3]["items"] == ["i0"]
+
+
+def _unreasoned(trail):
+    return [e for e in trail.events if e[0] == "warn" and e[1] == "fix_unreasoned"]
+
+
+def test_a_decline_with_no_reason_reaches_the_trail(tmp_path, landed, head):
+    """The weakest-evidence outcome the vocabulary has, and it said nothing.
+
+    A decline rejects a reviewer's finding on the pass's say-so and leaves no
+    diff to read instead, so the reason is the whole of the record. Ticked with
+    the placeholder standing it renders as a bare `*(declined)*` against a
+    finding nobody acted on — which `_record_unevidenced` did not cover, because
+    it asked only about FIXED.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    trail = _RecordingTrail()
+
+    _run(adapter, trail=trail, run_fix=_answer(adapter, tick="declined"))
+
+    warned = _unreasoned(trail)
+    assert len(warned) == 1
+    assert warned[0][3]["items"] == ["i0"]
+
+
+def test_a_reasoned_decline_is_not_reported_as_unreasoned(tmp_path, landed, head):
+    """The negative control: an ordinary decline must not fire the event."""
+    adapter = StubAdapter(tmp_path, count=1)
+    trail = _RecordingTrail()
+
+    _run(adapter, trail=trail,
+         run_fix=_answer(adapter, tick="declined", reason="out of scope here"))
+
+    assert _unreasoned(trail) == []
+
+
+def test_a_needs_a_person_with_no_reason_reaches_the_trail(tmp_path, landed, head):
+    """The other outcome that closes an item without changing anything."""
+    adapter = StubAdapter(tmp_path, count=1)
+    trail = _RecordingTrail()
+
+    _run(adapter, trail=trail, run_fix=_answer(adapter, tick="needs a person"))
+
+    assert _unreasoned(trail)[0][3]["items"] == ["i0"]
+
+
+def test_an_unevidenced_fix_is_not_reported_as_unreasoned(tmp_path, landed, head):
+    """The two events stay distinct: a fix with no test is not a bare rejection."""
+    adapter = StubAdapter(tmp_path, count=1)
+    trail = _RecordingTrail()
+
+    _run(adapter, trail=trail, run_fix=_answer(adapter))
+
+    assert _warned(trail)
+    assert _unreasoned(trail) == []
 
 
 def test_an_evidenced_fix_is_not_reported_as_unevidenced(tmp_path, landed, head):

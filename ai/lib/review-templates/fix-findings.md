@@ -34,6 +34,31 @@ So for each finding, before editing anything:
 Default to fixing when you cannot tell. Declining is for a premise you
 disproved, not one you doubt: say what you checked in the box either way.
 
+### "Already correct" means correct before you started
+
+You are fixing several findings against one worktree, so by the time you reach
+the fifth you are reading a tree your own first four edits changed. A finding
+checked against that tree can look already-handled when what handled it was you,
+ten minutes ago — and the decline that follows reports your own fix to the
+reviewer as a non-defect. The edit is committed either way: staging reads the
+worktree, not these boxes.
+
+So before ticking `declined` on the grounds that the code already does what the
+finding asks:
+
+- **Check whether the thing making it true is your own edit.** `git diff` in the
+  worktree is exactly what this pass changed, and nothing else. If the finding
+  would still stand against the tree without that diff, it was a fix. Tick
+  `fixed` and name the test.
+- **Do not cite a commit for it.** You have not committed yet, so no SHA on this
+  branch can contain your work. Cite a commit only when you have run
+  `git show` on it and seen the change there — an approximate SHA offered as
+  provenance is a fabricated citation, and it is checked.
+
+A decline resting on scope, house convention, a documented `ceiling:` tradeoff,
+or the finding's own text needs none of this. It is specifically the
+"the code already does X" decline that has to rule out having done X yourself.
+
 ## What earns each box
 
 - **fixed** — a clear, unambiguous change: a wrong value, a missing guard, an

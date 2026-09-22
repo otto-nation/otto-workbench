@@ -131,6 +131,12 @@ _BOX_RE = box_pattern(_BOXES)
 # half of a wrapped aside is worse to read than the whole of one.
 _REASON_LEAD = re.compile(r"^[\s—–:.,;-]+")
 
+# Where a box's reason stops: the next box, or the next section. Everything
+# between is the agent's words, however many lines it took to write them.
+_REASON_END_RE = re.compile(
+    r"^(?:- \[[ xX]\] |## <!-- fix:)", re.MULTILINE,
+)
+
 _LOCATION_RE = re.compile(r"^(?P<file>.+):(?P<line>\d+)$")
 
 _HEADING_SEP = " — "
@@ -221,11 +227,7 @@ def _section_verdict(body: str) -> tuple[bool | None, str] | None:
     `_record_verdict` resolves the fix boxes: an agent that reorders the list
     cannot change what its answer means.
     """
-    ticked = {
-        box.group("label"): _reason(box.group("rest"))
-        for box in _VERIFY_BOX_RE.finditer(body)
-        if box.group("mark") in "xX"
-    }
+    ticked = _ticked_reasons(body, _VERIFY_BOX_RE)
     for box in VERIFY_BOXES:
         if box.label in ticked:
             return _VERDICT_OK[box.label], ticked[box.label]
@@ -295,17 +297,25 @@ def write(
 # `broken` is deliberately the narrow one: it means something was run and it
 # failed, and it is the only verdict that costs the operator a fix. The prompt
 # in verify-fixes.md says to default to `not verified` when uncertain.
+# The gate answers for two kinds of claim — a fix that was applied, and a
+# decline that rejected the {noun} instead — so each contract has to read
+# correctly for both. "the claim" covers them where "the fix" would leave an
+# agent checking a decline with no box that describes what it found.
 VERIFY_BOXES: tuple[_Box, ...] = (
     _Box("verified", FixOutcome.FIXED,
-         "you ran something against the changed path and it did what the "
-         "reviewer asked. Replace `<why>` with what you ran"),
+         "the claim holds. For a fix, you ran something against the changed "
+         "path and it did what the reviewer asked; for a decline, you checked "
+         "the reason against the tree and it is true. Replace `<why>` with what "
+         "you ran or read"),
     _Box("not verified", FixOutcome.DEFERRED,
          "you could not establish it either way — nothing runnable covers this "
          "path, or the only test that does is vacuous. Replace `<why>` with "
          "what stopped you"),
     _Box("broken", FixOutcome.NEEDS_HUMAN,
-         "you ran something and the fix did not hold up. Replace `<why>` with "
-         "what you ran and what happened"),
+         "the claim does not hold. For a fix, you ran something and it did not "
+         "work; for a decline, the reason is false against the tree — it "
+         "describes the pass's own uncommitted edits, or cites a commit that "
+         "does not contain what it claims. Replace `<why>` with what you found"),
 )
 
 _VERIFY_BOX_RE = box_pattern(VERIFY_BOXES)
@@ -404,11 +414,7 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
     `fix.engine._record_unevidenced`, which emits one trail event per pass so
     the claim is still answerable once the terminal has scrolled away.
     """
-    ticked = {
-        box.group("label"): _reason(box.group("rest"))
-        for box in _BOX_RE.finditer(body)
-        if box.group("mark") in "xX"
-    }
+    ticked = _ticked_reasons(body, _BOX_RE)
     for box in _BOXES:
         if box.label not in ticked:
             continue
@@ -419,12 +425,42 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
         return
 
 
+def _ticked_reasons(
+    body: str, pattern: re.Pattern[str],
+) -> dict[str, str]:
+    """Every ticked box in `body`, as label to the whole reason written for it.
+
+    The box pattern is line-anchored, so `rest` is only the reason's first line.
+    An agent writing prose wraps it — the editor it uses wraps it for free — and
+    reading `rest` alone truncated the reason at the wrap, mid-sentence. What
+    was lost was the specific half: a decline's first line says the premise does
+    not hold and the second names the commit that settles it, so the operator
+    was shown the claim with its evidence cut off and no sign anything was
+    missing. The continuation is taken up to the next box or section instead.
+    """
+    reasons: dict[str, str] = {}
+    for box in pattern.finditer(body):
+        if box.group("mark") not in "xX":
+            continue
+        tail = body[box.end():]
+        stop = _REASON_END_RE.search(tail)
+        rest = (box.group("rest") or "") + tail[:stop.start() if stop else None]
+        reasons[box.group("label")] = _reason(rest)
+    return reasons
+
+
 def _reason(rest: str | None) -> str:
     """The agent's words after a ticked box's label, without the separator.
 
     The placeholder the render leaves behind reads as no reason: a box ticked
     without it being replaced said nothing, and reporting `<why>` back to a
     reviewer as the agent's reasoning is worse than reporting none.
+
+    Continuation lines arrive with their indentation and their newlines, and go
+    out as one line: the reason is rendered into a review document and a commit
+    message, both of which are read as prose rather than as the tracking file's
+    layout.
     """
     text = _REASON_LEAD.sub("", (rest or "").strip()).strip()
+    text = " ".join(text.split())
     return "" if text == _WHY else text

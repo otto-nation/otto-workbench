@@ -119,6 +119,54 @@ class TestParse:
         assert outcome.outcome == FixOutcome.DECLINED
         assert outcome.reason == ""
 
+    def test_a_reason_wrapped_onto_a_second_line_is_kept_whole(self, tmp_path):
+        """An agent writing prose wraps it, and the wrap is not a terminator.
+
+        The box pattern is line-anchored, so reading only the label's own line
+        truncated the reason mid-sentence. What it cut was the evidence half: a
+        decline whose first line states the premise and whose second names the
+        commit reached the operator as the claim alone, with nothing marking
+        that the rest had been dropped.
+        """
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A")])
+        path.write_text(path.read_text().replace(
+            "- [ ] declined — <why>",
+            "- [x] declined — the premise no longer holds against current\n"
+            "  HEAD. Commit 2e849df already rewrote this block.",
+        ))
+        outcome = fix_tracking.parse(path)[0]
+        assert outcome.outcome == FixOutcome.DECLINED
+        assert outcome.reason == (
+            "the premise no longer holds against current HEAD. "
+            "Commit 2e849df already rewrote this block."
+        )
+
+    def test_a_wrapped_reason_stops_at_the_next_box(self, tmp_path):
+        """Taking the continuation must not swallow the boxes below it."""
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A")])
+        path.write_text(path.read_text().replace(
+            "- [ ] declined — <why>",
+            "- [x] declined — house convention,\n  argued at length.",
+        ))
+        outcome = fix_tracking.parse(path)[0]
+        assert outcome.reason == "house convention, argued at length."
+        assert "needs a person" not in outcome.reason
+
+    def test_a_wrapped_reason_stops_at_the_next_section(self, tmp_path):
+        """A trailing reason must not absorb the item after it."""
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A"), FixItem(id="B")])
+        path.write_text(path.read_text().replace(
+            "- [ ] needs a person — <why>",
+            "- [x] needs a person — wants a design call,\n  from someone else.",
+            1,
+        ))
+        by_id = {o.id: o for o in fix_tracking.parse(path)}
+        assert by_id["A"].reason == "wants a design call, from someone else."
+        assert by_id["B"].outcome == FixOutcome.DEFERRED
+
     def test_a_box_annotated_the_agent_s_own_way_still_counts(self, tmp_path):
         """The em dash is what the render writes, not what the agent has to write.
 
@@ -312,6 +360,18 @@ class TestVerifyVerdicts:
         ))
         assert fix_tracking.parse_verdicts(path) == {
             "t1": (None, "every test on this path mocks the parser"),
+        }
+
+    def test_a_verdict_wrapped_onto_a_second_line_is_kept_whole(self, tmp_path):
+        """The gate writes prose too, and its evidence is the reason it gives."""
+        path = self._file(tmp_path, (
+            "# Verify\n\n## <!-- fix:t1 --> a.py:1 — x\n\n"
+            "- [x] broken — the reason describes the pass's own diff;\n"
+            "  reverting it makes the finding stand again.\n"
+        ))
+        assert fix_tracking.parse_verdicts(path) == {
+            "t1": (False, "the reason describes the pass's own diff; "
+                          "reverting it makes the finding stand again."),
         }
 
     def test_an_unanswered_section_is_absent_rather_than_none(self, tmp_path):

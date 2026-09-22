@@ -87,6 +87,32 @@ REVIEW_EXTENSION = (
     Path(__file__).resolve().parent.parent.parent
     / "pi" / "extensions-cli" / "review-guard.ts"
 )
+# The names review-guard.ts gates on. It fail-opens when the first is absent, so
+# an invocation that forgets them is an ungated session rather than an error.
+ENV_REVIEW_WORKTREE_DIR = "REVIEW_WORKTREE_DIR"
+ENV_REVIEW_ALLOWED_DIRS = "REVIEW_ALLOWED_DIRS"
+
+
+def _guard_env(inv: AgentInvocation) -> dict[str, str]:
+    """The subprocess environment, with the review guard's roots added.
+
+    Set here rather than in the review pipeline because this is where the
+    extension is attached: every caller that gets the guard gets its bounds with
+    it, including the fix pass and the eval harness.
+
+    ``inv.env`` is a complete mapping when set, so it is extended rather than
+    merged over os.environ — the eval fixtures put recording shims on PATH and
+    inheriting the real environment behind them would defeat that.
+    """
+    env = dict(os.environ if inv.env is None else inv.env)
+    env[ENV_REVIEW_WORKTREE_DIR] = inv.cwd
+    # The review document lives under ~/.local/state/workbench/reviews/, which is
+    # outside the worktree by design. Gating on the worktree alone would refuse
+    # the one write every phase is dispatched to make.
+    extra = [d for d in inv.add_dirs if d]
+    if extra:
+        env[ENV_REVIEW_ALLOWED_DIRS] = os.pathsep.join(extra)
+    return env
 
 
 def _read_agent_prompt(agent: str) -> str | None:
@@ -478,7 +504,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=inv.env,
+        env=_guard_env(inv) if ext else inv.env,
     )
 
     prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
@@ -537,7 +563,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=inv.env,
+        env=_guard_env(inv) if ext else inv.env,
     )
 
     start_time = time.monotonic()

@@ -62,7 +62,7 @@ from pathlib import Path
 from core import serde
 from core import timeouts
 from core import workbench_paths
-from core.phases import Effort, Phase, Thinking
+from core.phases import Backend, Effort, Phase, Thinking
 
 # `git_layout` is a workbench-wide module rather than an `ai/lib` one, because
 # the permission mirror reads the same layout. In a checkout that is one
@@ -234,8 +234,16 @@ class AgentConfig:
     workbench sizes, and the review pipeline is one domain of them. Which model
     a fix pass runs is not a review setting just because reviews were the first
     caller to have one.
+
+    ``backend`` is the file form of AI_BACKEND, and like ``issues.provider`` it
+    has no default. A machine that has never said which CLI serves its AI calls
+    is unknown, not Claude: both are installable, both are plausible, and a
+    silent pick sends every review to whichever one the default named — with
+    different flags, different auth, and no error to say so. The callers that
+    need one ask for it and fail when it is absent.
     """
 
+    backend: Backend | None = None
     model: str | None = None
     thinking: Thinking | None = None
     provider: str | None = None

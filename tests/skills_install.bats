@@ -449,13 +449,13 @@ _run_summary() {
   # Phase 1 asserted this for reviewer alone. The set is what matters: a stub
   # whose agent name is misspelled installs nothing and only warns.
   local name
-  for name in reviewer debugger incident migrate; do
+  for name in reviewer reviewer-lite debugger incident migrate; do
     [ -f "$REPO_ROOT/ai/skills/$name/SKILL.md" ]
     [ -f "$REPO_ROOT/ai/claude/agents/$name.md" ]
   done
 }
 
-@test "the real debugger, incident and migrate stubs splice against their real agent files" {
+@test "the real reviewer-lite, debugger, incident and migrate stubs splice against their real agent files" {
   # Exercises the real _install_agent_skill against the actual repo tree, under
   # a fake HOME, rather than installing into the operator's real discovery
   # roots — that install is the operator's call, not this suite's.
@@ -471,7 +471,7 @@ _run_summary() {
   [ "$status" -eq 0 ]
 
   local name
-  for name in debugger incident migrate; do
+  for name in reviewer-lite debugger incident migrate; do
     [ -f "$HOME/.agents/skills/$name/SKILL.md" ]
     [ ! -e "$HOME/.claude/skills/$name" ]
     run ! grep -q "AGENT_PROTOCOL_PLACEHOLDER" "$HOME/.agents/skills/$name/SKILL.md"

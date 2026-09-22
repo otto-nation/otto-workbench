@@ -1,7 +1,16 @@
 """AI backend abstraction layer.
 
 Dispatches preflight(), prompt(), invoke_agent(), and invoke_fix() to the
-correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
+correct backend (Claude Code CLI or Pi CLI), selected by the AI_BACKEND env var
+or the ``agent.backend`` config key.
+
+There is no default. Both CLIs are installable and either is a plausible choice,
+so a machine that has not said which one it runs is unknown rather than assumed
+— the same reasoning that leaves ``issues.provider`` unset rather than guessing
+Linear. A default here is not a convenience: it silently sends every review, fix
+and rebase-resolve to one vendor's CLI, with its flags, its auth and its billing,
+and the only symptom is that the other one was never called. Dispatch raises
+instead, naming both the env var and the config key.
 
 Every entry point takes a required `cwd`, because a backend CLI inherits the
 launching process's working directory unless it is told otherwise. An agent
@@ -26,28 +35,63 @@ import sys
 import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 
 from agent import usage as ai_usage
-from core.phases import AgentKind
+# Backend is defined in core.phases so the config layer can type agent.backend
+# without importing this module, and re-exported here because this is where
+# callers have always read it from.
+from core.phases import AgentKind, Backend
 
 ENV_AI_BACKEND = "AI_BACKEND"
+CONFIG_KEY_BACKEND = "agent.backend"
 
 
-class Backend(StrEnum):
-    """Which CLI serves AI calls, selected by the AI_BACKEND env var."""
-
-    CLAUDE = "claude"
-    PI = "pi"
+class BackendNotSelected(RuntimeError):
+    """Raised when nothing says which CLI to run."""
 
 
-def _backend() -> Backend:
-    """The selected backend; an unrecognised AI_BACKEND falls back to Claude."""
-    try:
-        return Backend(os.environ.get(ENV_AI_BACKEND, Backend.CLAUDE))
-    except ValueError:
-        return Backend.CLAUDE
+def _configured_backend() -> Backend | None:
+    """The backend named by config, or None when the file does not say.
+
+    Read through load_config_or_default: an unreadable config.yml must not turn
+    every AI call into a parse error when the env var already answers the
+    question.
+    """
+    from config.workbench_config import load_config_or_default
+
+    return load_config_or_default().agent.backend
+
+
+def _backend() -> Backend | None:
+    """The selected backend, or None when neither layer names a valid one.
+
+    Returns rather than raises so the two callers that only *describe* the
+    selection — the usage ledger and the PATH probe in ``is_available`` — do not
+    acquire a new failure mode. Dispatch is where the absence becomes an error.
+
+    An unrecognised value is None, not a fallback: a typo'd AI_BACKEND is a
+    machine that meant something specific and did not get it.
+    """
+    raw = os.environ.get(ENV_AI_BACKEND)
+    if raw:
+        try:
+            return Backend(raw)
+        except ValueError:
+            return None
+    return _configured_backend()
+
+
+def _require_backend() -> Backend:
+    """The selected backend, or a failure naming both ways to set it."""
+    selected = _backend()
+    if selected is None:
+        valid = ", ".join(b.value for b in Backend)
+        raise BackendNotSelected(
+            f"no AI backend selected: set {ENV_AI_BACKEND} or {CONFIG_KEY_BACKEND} "
+            f"to one of {valid}"
+        )
+    return selected
 
 
 def _script_name() -> str:
@@ -64,7 +108,11 @@ def _record(
         return
     try:
         ai_usage.record(
-            script=_script_name(), entry_point=entry_point, backend=_backend().value,
+            script=_script_name(), entry_point=entry_point,
+            # "unknown" rather than a raise: this is inside the swallow-all
+            # below, so raising here would drop the ledger row silently instead
+            # of failing loudly, which is the opposite of the intent.
+            backend=(sel.value if (sel := _backend()) else "unknown"),
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr,
         )
@@ -86,7 +134,7 @@ def _usage_from_log(session_log: str) -> ai_usage.SessionUsage | None:
 
 
 def _get_module() -> types.ModuleType:
-    if _backend() is Backend.PI:
+    if _require_backend() is Backend.PI:
         from agent import backend_pi as mod
     else:
         from agent import backend_claude as mod
@@ -215,5 +263,12 @@ def invoke_fix(inv: AgentInvocation) -> int:
 
 
 def is_available() -> bool:
-    """Check if the selected backend binary exists on PATH."""
-    return shutil.which(_backend()) is not None
+    """Check if the selected backend binary exists on PATH.
+
+    False when nothing selects a backend, rather than raising: the rebase paths
+    call this to decide whether to offer AI conflict resolution at all, and they
+    already handle "no backend" by carrying on without it. An unselected backend
+    is unavailable in exactly the sense they are asking about.
+    """
+    selected = _backend()
+    return selected is not None and shutil.which(selected) is not None

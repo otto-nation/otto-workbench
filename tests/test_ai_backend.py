@@ -75,17 +75,64 @@ def fake_backend(monkeypatch):
 
 
 class TestBackendSelection:
-    def test_defaults_to_claude(self, monkeypatch):
+    """Nothing is assumed. Both CLIs are plausible, so an unselected backend is
+    unknown rather than one vendor's, and dispatch says so instead of picking.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _nothing_selects_a_backend(self, monkeypatch):
+        """Undo conftest's pin: this class is about the selection itself.
+
+        The suite-wide ``_pinned_backend`` sets AI_BACKEND so no other test
+        depends on the machine's config. Here the absence is the subject, so
+        both layers are cleared and each test sets back only what it is about.
+        """
         monkeypatch.delenv("AI_BACKEND", raising=False)
-        assert ai_backend._backend() is ai_backend.Backend.CLAUDE
+        monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
+
+    def test_nothing_selected_is_none(self, monkeypatch):
+        monkeypatch.delenv("AI_BACKEND", raising=False)
+        assert ai_backend._backend() is None
 
     def test_reads_env(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "pi")
         assert ai_backend._backend() is ai_backend.Backend.PI
 
-    def test_unrecognised_backend_falls_back_to_claude(self, monkeypatch):
+    def test_unrecognised_backend_is_not_a_fallback(self, monkeypatch):
+        """A typo meant something specific and did not get it."""
         monkeypatch.setenv("AI_BACKEND", "not-a-backend")
+        assert ai_backend._backend() is None
+
+    def test_empty_string_is_not_a_selection(self, monkeypatch):
+        """`export AI_BACKEND=` is a real shape, and it selects nothing."""
+        monkeypatch.setenv("AI_BACKEND", "")
+        assert ai_backend._backend() is None
+
+    def test_config_supplies_the_backend_when_the_env_is_silent(self, monkeypatch):
+        monkeypatch.delenv("AI_BACKEND", raising=False)
+        monkeypatch.setattr(
+            ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
+        )
+        assert ai_backend._backend() is ai_backend.Backend.PI
+
+    def test_env_beats_config(self, monkeypatch):
+        monkeypatch.setenv("AI_BACKEND", "claude")
+        monkeypatch.setattr(
+            ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
+        )
         assert ai_backend._backend() is ai_backend.Backend.CLAUDE
+
+    def test_dispatch_names_both_ways_to_set_it(self, monkeypatch):
+        monkeypatch.delenv("AI_BACKEND", raising=False)
+        with pytest.raises(ai_backend.BackendNotSelected) as exc:
+            ai_backend._get_module()
+        assert "AI_BACKEND" in str(exc.value)
+        assert "agent.backend" in str(exc.value)
+
+    def test_is_available_is_false_rather_than_raising(self, monkeypatch):
+        """The rebase paths ask this to decide whether to offer AI at all."""
+        monkeypatch.delenv("AI_BACKEND", raising=False)
+        assert ai_backend.is_available() is False
 
 
 class TestPreflightDispatch:
@@ -164,7 +211,12 @@ class TestAgentInvocation:
 
 
 class TestInvokeAgentRecords:
-    def test_records_usage_from_session_log(self, ledger, fake_backend, tmp_path):
+    def test_records_usage_from_session_log(
+        self, ledger, fake_backend, tmp_path, monkeypatch,
+    ):
+        # The ledger stamps whichever backend is selected, so the selection has
+        # to be explicit now that nothing defaults it.
+        monkeypatch.setenv("AI_BACKEND", "claude")
         log = tmp_path / "session.jsonl"
         _session_log(log)
         ai_backend.invoke_agent(ai_backend.AgentInvocation(
@@ -176,6 +228,27 @@ class TestInvokeAgentRecords:
         assert rec["backend"] == "claude"
         assert rec["input_tokens"] == 100
         assert rec["cache_read_tokens"] == 5000
+        assert rec["cost"] == pytest.approx(1.0)
+
+    def test_an_unselected_backend_still_records_the_cost(
+        self, ledger, fake_backend, tmp_path, monkeypatch,
+    ):
+        """The stamp is telemetry, and telemetry must not raise.
+
+        _record swallows everything it throws, so raising on an unselected
+        backend here would drop the ledger row silently rather than failing
+        loudly — the opposite of what the selection change is for. The spend
+        happened; it is recorded against an unknown backend.
+        """
+        monkeypatch.delenv("AI_BACKEND", raising=False)
+        monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
+        rec = _records(ledger)[0]
+        assert rec["backend"] == "unknown"
         assert rec["cost"] == pytest.approx(1.0)
         assert rec["exit_code"] == 0
 
@@ -410,12 +483,15 @@ class TestBackendsGetTheInvocationEnv:
 
     BACKENDS = ["agent.backend_claude", "agent.backend_pi"]
 
-    @pytest.mark.parametrize("backend", BACKENDS)
+    # The Pi backend attaches the review guard to these two entry points and
+    # adds the roots it gates on, so its env is the invocation's plus those.
+    # Claude has no such extension and passes the field through untouched.
+
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
-    def test_agents_get_the_invocation_env(
-        self, monkeypatch, tmp_path, backend, entry_point,
+    def test_claude_gets_the_invocation_env_verbatim(
+        self, monkeypatch, tmp_path, entry_point,
     ):
-        module = importlib.import_module(backend)
+        module = importlib.import_module("agent.backend_claude")
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
         getattr(module, entry_point)(ai_backend.AgentInvocation(
@@ -425,13 +501,33 @@ class TestBackendsGetTheInvocationEnv:
         ))
         assert seen["env"] == {"PATH": "/stub:/usr/bin"}
 
-    @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
-    def test_agents_inherit_when_env_is_unset(
-        self, monkeypatch, tmp_path, backend, entry_point,
+    def test_pi_extends_the_invocation_env_without_replacing_it(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        """The guard's roots are added; the caller's own keys survive.
+
+        Merging over os.environ instead would put the real PATH behind the
+        eval's shims and score every driven case against the live binaries.
+        """
+        module = importlib.import_module("agent.backend_pi")
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(module, entry_point)(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            env={"PATH": "/stub:/usr/bin"},
+        ))
+        assert seen["env"]["PATH"] == "/stub:/usr/bin"
+        assert seen["env"]["REVIEW_WORKTREE_DIR"] == str(tmp_path)
+        assert set(seen["env"]) == {"PATH", "REVIEW_WORKTREE_DIR"}
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_claude_inherits_when_env_is_unset(
+        self, monkeypatch, tmp_path, entry_point,
     ):
         """None means inherit — the field must not turn every call into a scrub."""
-        module = importlib.import_module(backend)
+        module = importlib.import_module("agent.backend_claude")
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
         getattr(module, entry_point)(ai_backend.AgentInvocation(
@@ -439,6 +535,22 @@ class TestBackendsGetTheInvocationEnv:
             session_log=str(tmp_path / "s.jsonl"),
         ))
         assert seen["env"] is None
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_pi_inherits_the_parent_env_when_unset(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        """Unset still inherits: os.environ plus the guard's roots, not a scrub."""
+        monkeypatch.setenv("A_PARENT_VAR", "kept")
+        module = importlib.import_module("agent.backend_pi")
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(module, entry_point)(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert seen["env"]["A_PARENT_VAR"] == "kept"
+        assert seen["env"]["REVIEW_WORKTREE_DIR"] == str(tmp_path)
 
 
 class TestBuildAddDirs:

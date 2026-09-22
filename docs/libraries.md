@@ -168,6 +168,7 @@ Every key any of them accepts:
 |-----|--------|---------|
 | `reuse.level` | `lite`, `full`, `ultra` | — |
 | `reuse.default` | `lite`, `full`, `ultra` | `full` |
+| `agent.backend` | `claude`, `pi` | — |
 | `agent.model` | string | — |
 | `agent.thinking` | `low`, `medium`, `high` | — |
 | `agent.provider` | string | — |

@@ -127,6 +127,20 @@ class Thinking(StrEnum):
     HIGH = "high"
 
 
+class Backend(StrEnum):
+    """Which CLI serves AI calls.
+
+    Here rather than in the agent layer because the config layer needs the type
+    to declare its own backend field, and the agent layer already imports the
+    config one — defining it there would close the cycle. ``agent.backend``
+    re-exports it, so callers that have always read ``Backend`` from there
+    still can.
+    """
+
+    CLAUDE = "claude"
+    PI = "pi"
+
+
 class AgentKind(StrEnum):
     """Which reviewer agent definition a phase runs under.
 

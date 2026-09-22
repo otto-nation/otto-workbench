@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import backend_pi as ai_backend_pi
 from conftest import FIXTURES_DIR
+from test_ai_backend import _recording_popen
 
 
 class TestBuildFixCmd:
@@ -404,6 +406,28 @@ class TestExtensionFlag:
         """
         assert ai_backend_pi.REVIEW_EXTENSION.parent.name == "extensions-cli"
 
+    def test_the_guard_allows_the_dirs_the_invocation_named(self):
+        """Gating on the worktree alone would refuse the review document.
+
+        build_add_dirs returns [artifact_dir, wt_path], and the artifact dir is
+        under ~/.local/state/workbench/reviews/ — outside the worktree by
+        design. A guard armed with cwd alone blocks the one write every phase is
+        dispatched to make, turning a fail-open into a fail-closed.
+        """
+        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        assert "REVIEW_ALLOWED_DIRS" in source
+        assert "allowedDirs.some(" in source
+
+    def test_the_guard_canonicalises_before_comparing(self):
+        """resolve() does not follow symlinks, and /tmp is one on macOS.
+
+        A root spelled /tmp/x against a path spelled /private/tmp/x/f names one
+        directory, and a lexical relative() walks out through `..` and refuses
+        the write.
+        """
+        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        assert "realpathSync" in source
+
     def test_the_guard_matches_pi_s_tool_names_and_input_fields(self):
         """Pi's built-in tools are lowercase and take `path`, not `file_path`.
 
@@ -415,6 +439,49 @@ class TestExtensionFlag:
         assert 'isToolCallEventType("write"' in source
         assert 'isToolCallEventType("bash"' in source
         assert "file_path" not in source
+
+
+class TestGuardEnv:
+    """The guard reads its bounds from the environment, and nothing else sets them.
+
+    review-guard.ts fail-opens when REVIEW_WORKTREE_DIR is absent, so a backend
+    that forgets it produces an ungated session rather than an error — the
+    failure this whole class exists to catch is silent.
+    """
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_the_worktree_is_the_invocation_cwd(self, monkeypatch, tmp_path, entry_point):
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert seen["env"]["REVIEW_WORKTREE_DIR"] == str(tmp_path)
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_add_dirs_reach_the_guard(self, monkeypatch, tmp_path, entry_point):
+        """The artifact dir is outside the worktree, and must still be writable."""
+        artifact = tmp_path / "reviews" / "pr-42"
+        worktree = tmp_path / "wt"
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(worktree), session_log=str(tmp_path / "s.jsonl"),
+            add_dirs=[str(artifact), str(worktree)],
+        ))
+        allowed = seen["env"]["REVIEW_ALLOWED_DIRS"].split(os.pathsep)
+        assert str(artifact) in allowed
+        assert str(worktree) in allowed
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_no_add_dirs_leaves_the_list_unset(self, monkeypatch, tmp_path, entry_point):
+        """An empty value would split to [''] and allow a relative path anywhere."""
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert "REVIEW_ALLOWED_DIRS" not in seen["env"]
 
 
 class TestWriteAwareSteer:

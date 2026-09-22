@@ -276,7 +276,7 @@ Write or change a skill in this workbench — SKILL.md frontmatter, the agent: c
 
 ## Session Lifecycle
 
-Skills with a cadence (shown in the table above) auto-trigger from two places — Claude Code's Stop hooks in `settings.json`, and the maintenance timer:
+Skills with a cadence and a `should-<skill>.sh` gate (shown in the table above) auto-trigger from two places — Claude Code's Stop hooks in `settings.json`, and the maintenance timer:
 
 1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks
 2. **If due** — `run-auto-task <skill>` detaches a headless `claude -p` session, which inherits the exiting session's working directory and logs to `~/.claude/logs/`

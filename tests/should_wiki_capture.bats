@@ -195,6 +195,8 @@ _fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
   [ "$(cat "$TEST_HOME/wiki-asked-about")" = "$REPO" ]
 }
 
+# passes-at-base: back-compat — asserts the Stop hook's argument-less call still
+# behaves as it did, which is behaviour this change was careful to preserve
 @test "no DIR argument still reads the cwd" {
   # The Stop hook passes nothing and depends on this.
   _make_sessions 3

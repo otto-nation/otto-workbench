@@ -146,6 +146,25 @@ _run_tasks() {
   [ "$(cut -d' ' -f2 < "$SPAWN_LOG")" = "$repo" ]
 }
 
+@test "a registry line whose worktree is gone is skipped upstream" {
+  # Not guarded in run-due-auto-tasks, and deliberately so: project_repo_leaders
+  # resolves each line's repo id through git, which drops a directory that is no
+  # longer there — so a stale line never reaches the loop. Asserted rather than
+  # assumed, since a guard written against this in the runner would be
+  # unreachable code that still looked prudent.
+  _stub_gate dream 1
+  _stub_gate promote 1
+  _stub_gate retro 1
+  _stub_gate wiki-capture 0
+  local gone live
+  gone="$(gate_repo "gone-repo")"
+  live="$(gate_repo "live-repo")"
+  rm -rf "$gone"
+  _run_tasks
+  [ "$(wc -l < "$SPAWN_LOG" | tr -d ' ')" = "1" ]
+  [ "$(cut -d' ' -f2 < "$SPAWN_LOG")" = "$live" ]
+}
+
 @test "several repos due still spawn only one capture" {
   _stub_gate dream 1
   _stub_gate promote 1
@@ -185,14 +204,27 @@ _run_tasks() {
   [ "$status" -eq 0 ]
 }
 
-@test "the maintenance script still stamps after the auto-task block" {
-  # The runner is called with `|| true`, so its exit 1 on a machine with no
-  # executor cannot stop the stamp. Asserted against the real script rather
-  # than the runner, since the guard lives at the call site.
-  grep -A2 'run-due-auto-tasks' \
-    "$REPO_ROOT/maintenance/bin/otto-workbench-maintenance" | grep -q '|| true'
-  grep -q "^date '+%s' > \"\$MAINTENANCE_LAST_FILE\"" \
-    "$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
+@test "the maintenance script stamps after the auto-task block, not before" {
+  # Two separate properties, and grepping for each independently would pass on
+  # a file that had them in either order — so compare line numbers. The stamp
+  # has to come after: a runner failure that reached `set -e` before it would
+  # leave `maintenance status` reporting the timer stale forever.
+  local script="$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
+  local call_line stamp_line
+  call_line="$(grep -n 'run-due-auto-tasks\"' "$script" | head -1 | cut -d: -f1)"
+  stamp_line="$(grep -n 'MAINTENANCE_LAST_FILE\"$' "$script" | tail -1 | cut -d: -f1)"
+  [ -n "$call_line" ]
+  [ -n "$stamp_line" ]
+  [ "$call_line" -lt "$stamp_line" ]
+}
+
+@test "an unexpected runner exit is logged rather than swallowed" {
+  # Exit 1 is the documented executor-absent skip. Anything else is a real
+  # regression — a failed source under `set -e`, a future bug — and on an
+  # unattended timer a blanket `|| true` would leave no trace of it anywhere.
+  local script="$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
+  grep -q 'auto_task_status -ne 0 && \$auto_task_status -ne 1' "$script"
+  grep -q 'WARNING: run-due-auto-tasks failed' "$script"
 }
 
 # ── The executor skip ────────────────────────────────────────────────────────

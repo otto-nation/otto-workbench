@@ -103,8 +103,15 @@ fi
 # is a machine that never asked for the ai/claude component rather than a
 # failure — the same silent skip the `pr` block above makes, and for the same
 # reason. The gate logic and the one-spawn-per-cycle cap live in that script;
-# see its header for why they are not inline here.
-"$MAIN_WORKTREE/maintenance/bin/run-due-auto-tasks" || true
+# see its header for why they are not inline here. Any other exit code is a
+# genuine regression (the script runs under `set -e`, so a failed source or
+# an unhandled command surfaces here) and is logged rather than swallowed —
+# mirroring the `pr gc` block's branch on `gc_status` above.
+auto_task_status=0
+"$MAIN_WORKTREE/maintenance/bin/run-due-auto-tasks" || auto_task_status=$?
+if [[ $auto_task_status -ne 0 && $auto_task_status -ne 1 ]]; then
+  log "WARNING: run-due-auto-tasks failed (non-fatal, exit $auto_task_status)"
+fi
 
 date '+%s' > "$MAINTENANCE_LAST_FILE"
 log "Maintenance complete"

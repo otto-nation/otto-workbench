@@ -3380,6 +3380,18 @@ def _answering(adapter_box, *, tick="fixed", reason=""):
 _prompts: list[str] = []
 
 
+def _snapshot_reader(snapshots):
+    """Answer the baseline once, then the post-agent reading for every read after.
+
+    `None` stays `None` — it is the unreadable worktree, which the engine is
+    required to tell apart from an empty set.
+    """
+    baseline, after = snapshots
+    first = iter([set(baseline) if baseline is not None else None])
+    rest = set(after) if after is not None else None
+    return lambda *_a, **_k: next(first, rest)
+
+
 @contextlib.contextmanager
 def _fix_pass(*, tick="fixed", reason="", landed=None, available=True,
               snapshots=(frozenset(), frozenset({"server.go"}))):
@@ -3391,6 +3403,13 @@ def _fix_pass(*, tick="fixed", reason="", landed=None, available=True,
     `snapshots` is the dirty set the engine reads before and after the agent;
     stubbed because `tmp_path` is not a repo, and the default says the agent
     touched the one file these tests hand it.
+
+    Given as (baseline, after) and answered by that shape rather than by a list
+    of one reply per read: the engine reads the worktree once per batch as well
+    as once per pass, so a fixed-length list encodes how many invocations the
+    pass makes and fails these tests for a change to batching or retry rather
+    than to anything they assert. Every reading after the first answers `after`,
+    which describes a worktree the agent edited and then left alone.
     """
     _prompts.clear()
     box: list = [None]
@@ -3406,8 +3425,7 @@ def _fix_pass(*, tick="fixed", reason="", landed=None, available=True,
          mock.patch.object(fix_engine.git_client, "head_sha", return_value="9999999"), \
          mock.patch.object(fix_engine.land, "land", return_value=result) as owner, \
          mock.patch.object(fix_engine.fix_scope, "changed_files",
-                           side_effect=[set(s) if s is not None else None
-                                        for s in snapshots]), \
+                           side_effect=_snapshot_reader(snapshots)), \
          mock.patch.object(fix_engine.agent_invoke, "run_fix",
                            side_effect=_answering(box, tick=tick, reason=reason)):
         yield owner, box

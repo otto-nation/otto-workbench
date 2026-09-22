@@ -1451,3 +1451,26 @@ def test_a_pass_with_no_gate_still_reports_a_contradiction(
     # Reported, not resolved: nothing about the tree says this item is what
     # moved the file, and no gate ran to find out.
     assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+
+
+# passes-at-base: guards against over-firing, and base fires never
+def test_an_item_with_no_file_is_never_contradicted(tmp_path, landed, head, snapshots):
+    """An empty anchor must not match a changed path.
+
+    `FixItem.location` already treats a domain with no path to give as legal, so
+    the reconciler meets empty anchors in normal use. A containment test that
+    counted the empty string as a hit would contradict every such deferral in
+    the pass at once.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+    adapter.items = lambda: [FixItem(id="i0", file="", line=0, label="no anchor",
+                                     body="body")]
+
+    def run_verify(*_a, **_k):
+        raise AssertionError("an item with no file was treated as contradicted")
+
+    run, _ = _run(adapter, verify=run_verify,
+                  run_fix=_answer(adapter, tick="deferred"))
+
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED

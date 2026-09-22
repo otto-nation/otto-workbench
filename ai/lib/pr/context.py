@@ -183,6 +183,14 @@ class ResolvedContext:
     # Consumers pass it to `base_branch()` rather than reading it directly,
     # which is what turns an unknown into a derived or defaulted answer.
     base: str = ""
+    # The forge `repo` is served from, for rendering a link that resolves on it.
+    # Empty means no host was discoverable, which reads as public GitHub — the
+    # behaviour every URL builder had before this field existed, so an
+    # unthreaded caller is unchanged rather than broken.
+    #
+    # Not folded into `repo`: that string is the `--repo` argument and the
+    # GraphQL `owner/name`, and a host in it would reach both.
+    host: str = ""
     # Where the run's bookkeeping lives, as opposed to where git runs. Keyword-
     # only and required: a caller that forgets it would silently get a context
     # whose state and lock point nowhere.
@@ -328,6 +336,10 @@ def resolve(
 
     current = git_topology.current_branch_quiet(cwd) if worktree_root else None
 
+    # One read for both: the key and the host come off the same origin, so this
+    # cannot name one repo's directory and another's forge.
+    identity = _target_identity(cwd)
+
     return ResolvedContext(
         repo=repo,
         branch=branch_name,
@@ -336,7 +348,8 @@ def resolve(
         head_sha=head_sha,
         current_branch=current,
         base=base,
-        target_dir=pr_target.target_dir(_target_repo_key(cwd), branch_name),
+        host=identity.host,
+        target_dir=pr_target.target_dir(identity.key, branch_name),
     )
 
 
@@ -383,6 +396,7 @@ def resolve_local(
         worktree_root=worktree_root,
         head_sha=_head_sha(cwd) if worktree_root else "",
         current_branch=git_topology.current_branch_quiet(cwd) if worktree_root else None,
+        host=identity.host,
         target_dir=pr_target.target_dir(identity.key, branch_name),
     )
 
@@ -467,27 +481,21 @@ def pr_number_if_reachable(repo: str, branch: str) -> BranchPR:
 
 
 def _target_identity(cwd: str | None) -> pr_target.RepoIdentity:
-    """Both names for the target repo from one read of ``origin``, or exit 1.
+    """Every name for the target repo from one read of ``origin``, or exit 1.
 
-    For ``resolve_local``, which shows the repo *and* keys the target on it: one
-    read is what makes the two names provably the same repo, and it is also the
-    only subprocess the shallow rung spends on naming.
+    Both rungs use it. ``resolve_local`` shows the repo *and* keys the target on
+    it; ``resolve`` takes the key and the host while naming the repo through
+    ``detect_repo``, which can consult ``gh``. One read is what makes the names
+    provably the same repo, and on the shallow rung it is also the only
+    subprocess spent on naming.
+
+    Fatal rather than falling back, on both rungs and for the same reason: a run
+    keys its state and lock on the origin, so a checkout without one has no
+    target to hold.
     """
     identity = pr_target.repo_identity_from_origin(cwd)
     if identity:
         return identity
-    _exit_without_an_origin()
-
-
-def _target_repo_key(cwd: str | None) -> str:
-    """The repo half of the target key, or exit 1.
-
-    Fatal rather than falling back, and affordable because it is: detect_repo
-    has already exited 1 above if this is not a repo `gh` can name.
-    """
-    key = pr_target.repo_key_from_origin(cwd)
-    if key:
-        return key
     _exit_without_an_origin()
 
 

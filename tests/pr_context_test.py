@@ -136,7 +136,9 @@ def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "other")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/login", sha="pr-sha"))
-    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
+                        lambda cwd=None: pr_target.RepoIdentity(
+                            label="acme/widget", key="widget", host="github.com"))
 
     ctx = pr_context.resolve(pr="2973")
 
@@ -152,7 +154,9 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
-    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
+                        lambda cwd=None: pr_target.RepoIdentity(
+                            label="acme/widget", key="widget", host="github.com"))
 
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha-a"))
     first = pr_context.resolve(pr="1")
@@ -177,7 +181,9 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "feat/login")
-    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
+                        lambda cwd=None: pr_target.RepoIdentity(
+                            label="acme/widget", key="widget", host="github.com"))
     monkeypatch.setattr(git_topology, "resolve_branch", lambda hint, cwd=None: hint)
     monkeypatch.setattr(pr_context, "_pr_from_branch",
                         lambda repo, branch: pr_context.BranchPR(number=2973))
@@ -206,7 +212,7 @@ def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha"))
-    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
 
     with pytest.raises(SystemExit) as excinfo:
         pr_context.resolve(pr="1")
@@ -267,6 +273,34 @@ def test_resolve_local_reads_the_whole_target_from_git(monkeypatch, tmp_path):
     assert Path(ctx.worktree_root).resolve() == wt.resolve()
     assert ctx.head_sha
     assert [c for c in calls if c[0] == "gh"] == []
+
+
+@pytest.mark.parametrize("origin,expected", [
+    ("git@github.com:acme/widget.git", "github.com"),
+    ("https://ghe.acme.com/acme/widget.git", "ghe.acme.com"),
+    ("/srv/git/widget.git", ""),
+])
+def test_resolve_local_carries_the_forge_host(monkeypatch, tmp_path, origin, expected):
+    """The context knows which forge to render links against, from the same
+    origin read that keyed the target."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    wt = _git_repo(tmp_path / "wt", origin)
+
+    ctx = pr_context.resolve_local(repo_dir=str(wt))
+
+    assert ctx.host == expected
+
+
+def test_resolve_local_host_does_not_move_the_target_dir(monkeypatch, tmp_path):
+    """An enterprise checkout keys exactly where the public one would, so a run
+    already holding that directory keeps holding it."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    wt = _git_repo(tmp_path / "wt", "https://ghe.acme.com/acme/widget.git")
+
+    ctx = pr_context.resolve_local(repo_dir=str(wt))
+
+    assert ctx.target_dir == pr_target.target_dir("acme-widget-b9d71e86", "main")
+    assert ctx.host == "ghe.acme.com"
 
 
 def test_resolve_local_names_the_repo_without_gh(monkeypatch, tmp_path):

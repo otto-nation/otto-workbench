@@ -348,6 +348,20 @@ class TestTheTrackingIssueBody:
         header = next(line for line in body.splitlines() if "Thread" in line)
         assert markdown.row_cells(header) == ["Thread", "File", "Reason"]
 
+    def test_the_pr_link_points_at_the_repos_own_forge(self):
+        """An enterprise repo's tracking issue must not link the PR on
+        github.com, where the number is a different PR or none at all."""
+        body = deferred_issue.build_deferred_issue_body(
+            [_entry()], "owner/repo", 42, {}, "ghe.acme.com")
+        assert "https://ghe.acme.com/owner/repo/pull/42" in body
+        assert "github.com" not in body
+
+    # passes-at-base: an unset host keeps rendering public GitHub, as before the parameter existed
+    def test_the_pr_link_defaults_to_public_github(self):
+        body = deferred_issue.build_deferred_issue_body(
+            [_entry()], "owner/repo", 42, {})
+        assert "https://github.com/owner/repo/pull/42" in body
+
     def test_the_divider_matches_the_header(self):
         """One column count, from `markdown.table_divider`. The two were spelled
         apart and the divider's dash counts did not match its own header."""

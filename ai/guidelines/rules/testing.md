@@ -45,16 +45,19 @@ A revert whose test was deselected reports no failures and reads as proof. Run
 the whole file.
 
 A stale bytecode cache is the same lie told by the toolchain rather than by the
-command. Restoring a file with `cp` from a backup gives it an mtime older than
-the `__pycache__` entry written while the revert was in place, so Python keeps
-serving the reverted module and the suite reports on code that is no longer on
-disk. Reading the source back does not catch it — the source is correct, which
-is what makes it convincing; `dis.get_instructions` on the loaded function is
-what settles it, because the bytecode is what ran. Clear `__pycache__` after
-every revert experiment, and restore by rewriting the file rather than by
-copying one in. Never restore with `git checkout <file>`: it reverts the change
-under test along with the experiment, and the run that follows is green because
-the feature is gone.
+command. CPython invalidates a `__pycache__` entry on any mtime *mismatch*, so
+an ordinary revert-then-restore recompiles correctly — the footgun is
+narrower than that: two writes landing on the same truncated mtime (most
+filesystems only resolve to the second) or a restore that happens to land on
+the exact mtime recorded in the cache leave the stale entry looking valid, and
+Python keeps serving the reverted module while the suite reports on code that
+is no longer on disk. Reading the source back does not catch it — the source
+is correct, which is what makes it convincing; `dis.get_instructions` on the
+loaded function is what settles it, because the bytecode is what ran. Clear
+`__pycache__` after every revert experiment, and restore by rewriting the file
+rather than by copying one in. Never restore with `git checkout <file>`: it
+reverts the change under test along with the experiment, and the run that
+follows is green because the feature is gone.
 
 Revert the line that was actually wrong, which is not always the line the test
 names. A helper can be correct and its caller defeat it: a cache read that a

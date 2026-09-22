@@ -267,6 +267,20 @@ def _display_event(data: dict, prev_tool: str, prefix: str) -> str:
     return event.tool_label
 
 
+def _is_prompt_refusal(data: dict) -> bool:
+    """Whether this record is Pi declining to run the prompt at all.
+
+    Keyed on ``command`` as well as ``success``: replies to ``steer`` and
+    ``get_session_stats`` share the ``response`` type, and a failed steer is
+    not a refused run. Only the reply to ``prompt`` ends the stream.
+    """
+    return (
+        data.get("type") == "response"
+        and data.get("command") == "prompt"
+        and not data.get("success", True)
+    )
+
+
 def _parse_event_type(raw_line: str) -> tuple[str, dict]:
     """Parse a line and return (event_type, parsed_data)."""
     try:
@@ -394,11 +408,12 @@ def _consume_stream(
 
         event_type, data = _parse_event_type(raw_line)
 
+        if _is_prompt_refusal(data):
+            stop_reason = BACKEND_REFUSED
+            error = data.get("error") or "backend refused the prompt"
+            break
+
         if event_type == "response":
-            if data.get("command") == "prompt" and not data.get("success", True):
-                stop_reason = BACKEND_REFUSED
-                error = data.get("error") or "backend refused the prompt"
-                break
             continue
 
         prev_tool = _display_event(data, prev_tool, prefix)

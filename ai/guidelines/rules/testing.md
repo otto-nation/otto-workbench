@@ -57,6 +57,25 @@ A filter is the other way to fool yourself here: `-k`, a `grep`, a subset path.
 A revert whose test was deselected reports no failures and reads as proof. Run
 the whole file.
 
+Restoring the file is part of the revert, and it is where the experiment most
+easily destroys what it was testing. Never restore with `git checkout <file>`:
+it reverts the change under test along with the experiment, and the run that
+follows is green because the feature is gone rather than because the test is
+weak. Rewrite the file back to what it was instead, and confirm the change is
+still there — `grep` for the line the test exists to hold — before believing
+the restored run.
+
+When a revert result contradicts the source in front of you, suspect the
+experiment before the toolchain. A sequence of reverts and restores leaves the
+tree in a state nobody is tracking, and the likeliest explanation for "the
+source says X and the run says Y" is that the file was not what you thought
+when the run started. `git diff` and `git log -1 --format=%ci` on the file
+answer it; a bytecode cache almost never does. CPython invalidates a
+`__pycache__` entry on any mtime mismatch, so an ordinary edit-and-restore
+recompiles — the one shape that does slip through is a write landing on both
+the same mtime *and* the same size as the cached source, which a real edit
+rarely produces.
+
 Revert the line that was actually wrong, which is not always the line the test
 names. A helper can be correct and its caller defeat it: a cache read that a
 caller already invalidated, a flag the caller never passes, a guard the caller

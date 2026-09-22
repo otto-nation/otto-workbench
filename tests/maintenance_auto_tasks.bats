@@ -219,12 +219,28 @@ _run_tasks() {
 }
 
 @test "an unexpected runner exit is logged rather than swallowed" {
-  # Exit 1 is the documented executor-absent skip. Anything else is a real
-  # regression — a failed source under `set -e`, a future bug — and on an
-  # unattended timer a blanket `|| true` would leave no trace of it anywhere.
+  # Exit 69 (EX_UNAVAILABLE) is the documented executor-absent skip. Anything
+  # else is a real regression — a failed source under `set -e` surfaces as
+  # exit 1, a future bug some other code — and on an unattended timer a
+  # blanket `|| true` would leave no trace of it anywhere.
   local script="$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
-  grep -q 'auto_task_status -ne 0 && \$auto_task_status -ne 1' "$script"
+  grep -q 'auto_task_status -ne 0 && \$auto_task_status -ne 69' "$script"
   grep -q 'WARNING: run-due-auto-tasks failed' "$script"
+}
+
+@test "an unhandled runner failure is not mistaken for executor-absent" {
+  # A copy of the real runner in a layout missing lib/constants.sh: the `.` on
+  # its source line fails, and under `set -e` that failure is the script's own
+  # exit status — bash's default of 1, which is a different code from the 69
+  # the executor-absent skip uses on purpose, so the caller's WARNING branch
+  # still fires for it rather than swallowing a broken install as a skip.
+  local fake_wb="$TEST_HOME/fake-wb"
+  mkdir -p "$fake_wb/maintenance/bin"
+  cp "$RUNNER" "$fake_wb/maintenance/bin/run-due-auto-tasks"
+  chmod +x "$fake_wb/maintenance/bin/run-due-auto-tasks"
+  run env -i HOME="$TEST_HOME" PATH="/usr/bin:/bin" \
+    "$fake_wb/maintenance/bin/run-due-auto-tasks"
+  [ "$status" -eq 1 ]
 }
 
 # ── The executor skip ────────────────────────────────────────────────────────
@@ -233,7 +249,7 @@ _run_tasks() {
   _stub_gate dream 0
   rm -f "$TEST_HOME/.local/bin/run-auto-task"
   _run_tasks
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 69 ]
   [ ! -f "$SPAWN_LOG" ]
 }
 
@@ -243,7 +259,7 @@ _run_tasks() {
   _stub_gate dream 0
   rm -f "$STUB_BIN/claude"
   _run_tasks
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 69 ]
   [ ! -f "$SPAWN_LOG" ]
 }
 

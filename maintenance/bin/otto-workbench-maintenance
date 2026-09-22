@@ -99,17 +99,20 @@ if [[ -x "$LOCAL_BIN_DIR/pr" ]]; then
   fi
 fi
 
-# The four AI maintenance cooldowns. Exit 1 means the executor is absent, which
-# is a machine that never asked for the ai/claude component rather than a
-# failure — the same silent skip the `pr` block above makes, and for the same
-# reason. The gate logic and the one-spawn-per-cycle cap live in that script;
-# see its header for why they are not inline here. Any other exit code is a
-# genuine regression (the script runs under `set -e`, so a failed source or
-# an unhandled command surfaces here) and is logged rather than swallowed —
-# mirroring the `pr gc` block's branch on `gc_status` above.
+# The four AI maintenance cooldowns. Exit 69 (EX_UNAVAILABLE) means the
+# executor is absent, which is a machine that never asked for the ai/claude
+# component rather than a failure — the same silent skip the `pr` block above
+# makes, and for the same reason. The gate logic and the one-spawn-per-cycle
+# cap live in that script; see its header for why they are not inline here.
+# Any other exit code is a genuine regression (the script runs under `set -e`,
+# so a failed source or an unhandled command surfaces here as exit 1) and is
+# logged rather than swallowed — mirroring the `pr gc` block's branch on
+# `gc_status` above. 69 rather than 1 is deliberate: 1 is bash's default
+# failure code for an unhandled command, so a broken install would otherwise
+# be indistinguishable from the ordinary "executor absent" skip.
 auto_task_status=0
 "$MAIN_WORKTREE/maintenance/bin/run-due-auto-tasks" || auto_task_status=$?
-if [[ $auto_task_status -ne 0 && $auto_task_status -ne 1 ]]; then
+if [[ $auto_task_status -ne 0 && $auto_task_status -ne 69 ]]; then
   log "WARNING: run-due-auto-tasks failed (non-fatal, exit $auto_task_status)"
 fi
 

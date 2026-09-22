@@ -18,8 +18,14 @@
 # here, and none of that should have to happen to find out which tasks are due.
 #
 # Exit codes:
-#   0  A task was spawned, or none was due (both ordinary)
-#   1  The executor is absent — nothing to run the skills with
+#   0   A task was spawned, or none was due (both ordinary)
+#   69  EX_UNAVAILABLE (sysexits) — the executor is absent, nothing to run
+#       the skills with. Deliberately not 1: that is bash's default failure
+#       code for an unhandled command (a failed `source`, a failed `cd` in
+#       the _WB computation), and the caller tells "executor absent" apart
+#       from "regression" by this exit code alone — sharing it with the
+#       default would make a broken install indistinguishable from a
+#       missing executor and swallow it as the ordinary skip it isn't.
 #
 # Env:
 #   AUTO_TASK_SKILLS_DIR  — override the skills directory (default: ai/skills)
@@ -98,7 +104,7 @@ _run_wiki_capture_gate() {
 # there. The symlink outlives an uninstall, since ai/claude/steps.sh only syncs
 # it when `claude` is already on PATH.
 if [[ ! -x "$AUTO_TASK_BIN" ]] || ! command -v claude > /dev/null 2>&1; then
-  exit 1
+  exit 69  # EX_UNAVAILABLE
 fi
 
 # ceiling: one auto-task per cycle, so a machine with several repos due drains

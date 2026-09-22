@@ -42,6 +42,7 @@ during a review, and a fix pass needs only a finished review file to work from.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -50,8 +51,7 @@ from fix import types as fix_types
 from fix import verify as fix_verify
 from core import log
 from core.phases import Phase
-from pr.fix import FixOutcome, ItemOutcome
-from pr.thread_replies import UNVERIFIED_REPLY_NOTE
+from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path
 from review.document import ReviewDocument, is_skipped
 from review.grammar import FINDING_ID_RE
@@ -77,7 +77,7 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
     """
     lines: list[str] = []
     _block(lines, "Fixed:", [
-        (o.id, _describe(findings.get(o.id), o) + _hedge(o))
+        (o.id, _fixed_entry(findings.get(o.id), o))
         for o in outcomes if o.outcome.counts_as_fixed
     ])
     _block(lines, "Skipped:", [
@@ -105,6 +105,58 @@ def _unverified_detail(outcome: ItemOutcome) -> str | None:
     return outcome.verify_detail
 
 
+# What one summary line may run to. `lib/conventions.sh` sets
+# COMMIT_BODY_MAX_LEN to 100 and these lines land in a commit body, where
+# nothing on this path enforces it — a fix pass is not going to have its own
+# commit rejected by a hook it never runs.
+_SUMMARY_LINE_MAX = 100
+
+# Where a description is clipped before the budget above is applied. Kept as a
+# cap of its own so an unhedged line reads the way it always has: the whole-line
+# budget only bites once a caveat is there to compete with it.
+_DESCRIBE_MAX = 80
+
+
+def _clip(text: str, limit: int) -> str:
+    """`text` no longer than `limit`, ellipsised when it had to give.
+
+    The marker is part of the budget rather than added to it: a clip that
+    overran the limit it was called with would defeat the one caller that has
+    one.
+    """
+    if len(text) <= limit:
+        return text
+    return text[:limit - 1].rstrip() + "\u2026"
+
+
+# The caveat a landed-but-unverifiable fix carries on the review document, in
+# the shape the other two annotations use. Anchored to the tail for the reason
+# `_SKIP` and `_DECLINED` are: matched anywhere, a finding whose prose quotes
+# the annotation — the docs of this module do, verbatim — would read as already
+# carrying one.
+_UNVERIFIED_TAIL_RE = re.compile(r"\*\(unverified(?:\s*[—–-]+\s*.+?)?\)\*\s*$")
+
+
+def _escape_annotation(detail: str) -> str:
+    """`detail` with any annotation it quotes defused.
+
+    `verify_detail` is the gate agent's own prose, and the gate is routinely
+    reasoning about this repo — about, on occasion, this very function. A detail
+    quoting `*(declined — ...)*` otherwise makes the whole finding parse as
+    adjudicated, because `grammar.py`'s decline pattern is unanchored at its
+    head and finds the quotation inside the caveat. `grammar.py` documents that
+    exact class of failure for the annotation it owns; interpolating agent prose
+    unescaped reintroduces it through the back door.
+
+    The opening `*(` is what is broken rather than the closing `)*`: the decline
+    pattern spans whatever sits between the two, so a defused close still leaves
+    a match once prose supplies its own. Breaking the open leaves no annotation
+    for any of the three patterns to find, and costs a space in a line of prose
+    nobody parses.
+    """
+    return detail.replace("*(", "* (")
+
+
 def _fixed_line(line: str, outcome: ItemOutcome) -> str:
     """The finding line a landed fix leaves behind: ticked, and hedged if owed.
 
@@ -112,40 +164,50 @@ def _fixed_line(line: str, outcome: ItemOutcome) -> str:
     in one place — a caller that ticked the box and then asked separately
     whether to annotate it is a caller that can do the first and forget the
     second.
+
+    Only a line whose box this call actually ticked may be annotated. A PR-mode
+    template asks for a finding with no checkbox at all, so the tick is a no-op
+    there and `finding.checked` stays false however many rounds run — the guard
+    upstream that makes this idempotent never engages, and the caveat would
+    compound once per round on a finding that also never leaves `open_findings`.
+    An already-hedged line is left alone for the same reason, which is what a
+    synthesis pass carrying the annotation forward needs.
     """
     ticked = line.replace("- [ ]", "- [x]", 1)
     detail = _unverified_detail(outcome)
-    if detail is None:
+    if detail is None or ticked == line or _UNVERIFIED_TAIL_RE.search(line):
         return ticked
-    caveat = f"unverified — {detail}" if detail else "unverified"
+    caveat = f"unverified — {_escape_annotation(detail)}" if detail else "unverified"
     return f"{ticked.rstrip()} *({caveat})*"
 
 
-def _hedge(outcome: ItemOutcome) -> str:
-    """What a fix the gate could not stand behind carries, or "" when it stood.
+def _fixed_entry(finding: Finding | None, outcome: ItemOutcome) -> str:
+    """One `Fixed:` entry: what was fixed, and the caveat when one is owed.
 
-    A fix pass edits code and then says so; whether the edit works is a separate
-    claim, and one nothing establishes unless the verify gate ran and reached a
-    verdict. Only a falsified fix is demoted out of FIXED, so a gate that ran
-    and could not establish the fix works leaves the item under `Fixed:` — the
-    same line, in the same block, as one something was run against and passed.
-    That line lands verbatim in the commit message under squash-merge, where it
-    reads as a claim the pass never made.
+    Both halves are clipped, because either can overrun the line on its own: a
+    finding's first line runs to `_DESCRIBE_MAX`, and `verify_detail` is agent
+    prose with no length contract at all.
 
-    `verified is None` is a pass that never asked, and says nothing either way.
-    Hedging those would put a caveat on every fix in every commit and teach the
-    reader to skip the ones that mean something.
-
-    The wording is `thread_replies`' rather than a second spelling of it: the
-    two surfaces report the same tri-state about the same gate, and a reader who
-    has learned what the phrase means on a PR reply should not have to learn it
-    again in a commit body.
+    The description gives way first. A truncated description still names the
+    finding — the id beside it is what a reader looks the finding up by — while a
+    caveat cut short is a claim about verification that stops mid-sentence, and
+    the caveat is the part that changes what the reader does next. So the detail
+    is clipped only once the description has given up everything it can.
     """
+    described = _describe(finding, outcome)
     detail = _unverified_detail(outcome)
+    prefix = len(f"  - [{outcome.id}] ")
     if detail is None:
-        return ""
-    note = UNVERIFIED_REPLY_NOTE.lower()
-    return f" ({note} — {detail})" if detail else f" ({note})"
+        return _clip(described, max(_SUMMARY_LINE_MAX - prefix, 0))
+
+    scaffolding = len(f" ({UNVERIFIED_NOTE_INLINE} — )") if detail else len(f" ({UNVERIFIED_NOTE_INLINE})")
+    room = max(_SUMMARY_LINE_MAX - prefix - scaffolding, 0)
+    # The description keeps at most half the room, so a long one cannot starve
+    # the caveat; anything it leaves unused goes to the detail.
+    described = _clip(described, room // 2)
+    detail = _clip(detail, max(room - len(described), 0))
+    caveat = f" ({UNVERIFIED_NOTE_INLINE} — {detail})" if detail else f" ({UNVERIFIED_NOTE_INLINE})"
+    return described + caveat
 
 
 def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> None:
@@ -167,7 +229,7 @@ def _describe(finding: Finding | None, outcome: ItemOutcome) -> str:
     if finding is None:
         return outcome.file or outcome.id
     if finding.body:
-        return finding.body.split("\n", 1)[0][:80]
+        return _clip(finding.body.split("\n", 1)[0], _DESCRIBE_MAX)
     return finding.path
 
 

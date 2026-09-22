@@ -40,7 +40,7 @@ from pr import attribution
 from pr import comments as pc
 from pr import context as pr_context
 from pr import permalinks
-from pr.fix import FixOutcome
+from pr.fix import UNVERIFIED_NOTE, FixOutcome
 from pr.thread_models import THREAD_ANCHOR, CommentItem, ReportThread
 
 
@@ -170,12 +170,12 @@ _GENERATED_FOLLOWUP_RE = re.compile(
     re.DOTALL,
 )
 
-# The hedge an unverified fix carries. A fix pass edits code and then says so;
-# whether the edit works is a separate claim, and one nothing establishes unless
-# the verify gate ran and reached a verdict. Saying "fixed" for both is what
-# turns an ordinary wrong guess into a retraction, because the reviewer closes
-# the thread on the strength of a claim nobody checked.
-UNVERIFIED_REPLY_NOTE = "Not verified automatically"
+# The hedge an unverified fix carries, under the name this module's callers and
+# tests already use. Defined beside `ItemOutcome.verified` in `pr.fix`, which is
+# where the state it describes lives — a reply, a commit body and a review
+# document all say the same thing about the same gate, and only one of them
+# should own the words.
+UNVERIFIED_REPLY_NOTE = UNVERIFIED_NOTE
 
 
 def unverified_note(entry: CommentItem) -> str:

@@ -513,6 +513,7 @@ class TestTheSummary:
         )
         assert summary == "Fixed:\n  - [M1] the guard is missing (not verified automatically)"
 
+    # passes-at-base: asserts the silence this change was careful to preserve
     def test_a_fix_the_gate_confirmed_carries_no_caveat(self):
         summary = review_fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=True,
@@ -521,6 +522,7 @@ class TestTheSummary:
         )
         assert summary == "Fixed:\n  - [M1] the guard is missing"
 
+    # passes-at-base: asserts the silence this change was careful to preserve
     def test_a_pass_that_never_ran_the_gate_reads_as_it_always_did(self):
         """`verified is None` is nobody asking, which is not a caveat to print."""
         summary = review_fix._summary(
@@ -541,6 +543,15 @@ class TestApplyOutcomes:
         "- [ ] **[M2]** `b.py:2` — Retry budget is unbounded\n"
     )
 
+    # What a PR-mode review writes: `review-templates/single-agent.md` asks for a
+    # finding with no checkbox, and `FINDING_ID_RE` makes the box optional so the
+    # line parses either way. A pass that only ever saw `OPEN` cannot see what
+    # this shape does to a tick.
+    NO_CHECKBOX = (
+        "## Must fix\n"
+        "- **[M1]** **`a.py:1`** — Missing nil check\n"
+    )
+
     def test_a_fix_ticks_the_box(self):
         out = review_fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.FIXED)])
         assert "- [x] **[M1]**" in out
@@ -554,16 +565,120 @@ class TestApplyOutcomes:
         ])
         assert out.splitlines()[1].endswith("*(unverified — no runnable check)*")
 
+    # passes-at-base: base writes no caveat, so its lines are short for free
+    def test_a_hedged_summary_line_fits_the_commit_body_limit(self):
+        """These lines land in a commit body, and no hook on this path checks them."""
+        findings = {"M1": _finding("M1", body="x" * 80)}
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="y" * 60)],
+            findings,
+        )
+        assert all(len(line) <= 100 for line in summary.splitlines())
+
+    def test_a_long_detail_alone_cannot_overrun_the_line(self):
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="y" * 90)],
+            {"M1": _finding("M1", body="short")},
+        )
+        assert all(len(line) <= 100 for line in summary.splitlines())
+        assert "not verified automatically" in summary
+
+    def test_the_caveat_survives_a_description_long_enough_to_crowd_it(self):
+        """The description gives way first — a half-printed caveat is the worse loss."""
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="no runnable check")],
+            {"M1": _finding("M1", body="x" * 80)},
+        )
+        assert summary.endswith("(not verified automatically — no runnable check)")
+        assert "…" in summary
+
+    # passes-at-base: base writes no annotation, so the wording assertions hold vacuously there
     def test_an_unverified_tick_is_still_a_fix_to_the_parser(self):
-        """The caveat is for the reader; it must not read back as a skip or decline."""
+        """The caveat is for the reader; it must not read back as a skip or decline.
+
+        Asserted on the wording rather than only on `is_skipped`, which
+        short-circuits on a checked finding and so answers False for any tick
+        however the annotation reads.
+        """
         out = review_fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
+        assert "*(skipped" not in out
+        assert "*(declined" not in out
         finding = review_document.ReviewDocument.parse(out).findings[0]
         assert finding.checked is True
         assert finding.declined is False
         assert review_document.is_skipped(finding) is False
+
+    # passes-at-base: base annotates nothing, so a checkbox-free line is untouched there anyway
+    def test_a_finding_with_no_checkbox_is_not_annotated(self):
+        """A PR-mode line has no box to tick, so there is no landed fix to hedge.
+
+        The tick is a no-op on that shape and `checked` stays false, so the
+        guard that makes this idempotent never engages — annotating anyway
+        appends a caveat per round to a finding that never closes.
+        """
+        out = review_fix._apply_outcomes(self.NO_CHECKBOX, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        assert out == self.NO_CHECKBOX
+
+    # passes-at-base: base annotates nothing, so nothing can compound there
+    def test_a_checkbox_free_finding_is_stable_across_rounds(self):
+        outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
+                           verify_detail="no runnable check")
+        text = self.NO_CHECKBOX
+        for _ in range(3):
+            text = review_fix._apply_outcomes(text, [outcome])
+        assert text == self.NO_CHECKBOX
+
+    # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
+    def test_a_detail_quoting_an_annotation_does_not_become_one(self):
+        """`verify_detail` is agent prose, and the gate reasons about this repo.
+
+        The decline pattern is unanchored at its head, so a quotation inside the
+        caveat is found there and the whole finding reads as adjudicated — which
+        drops it from the next round's work set.
+        """
+        out = review_fix._apply_outcomes(self.OPEN, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="the repro *(declined — see above)*"),
+        ])
+        finding = review_document.ReviewDocument.parse(out).findings[0]
+        assert finding.declined is False
+        assert finding.checked is True
+
+    # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
+    def test_a_detail_quoting_a_skip_does_not_become_one(self):
+        """Asserted against the skip pattern itself, not `is_skipped`.
+
+        `is_skipped` short-circuits on a checked finding, so it answers False
+        for any tick however the annotation reads — it cannot see whether the
+        quotation survived into the document.
+        """
+        out = review_fix._apply_outcomes(self.OPEN, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="see *(skipped — needs design)*"),
+        ])
+        finding = review_document.ReviewDocument.parse(out).findings[0]
+        assert review_document._SKIP_TAIL_RE.search(finding.body) is None
+        assert review_document.is_skipped(finding) is False
+        assert finding.checked is True
+
+    # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own
+    def test_an_already_hedged_line_gains_no_second_caveat(self):
+        """A synthesis pass carries a trailing annotation forward intact."""
+        hedged = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.py:1` — x *(unverified — no runnable check)*\n"
+        )
+        out = review_fix._apply_outcomes(hedged, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        assert out.count("*(unverified") == 1
 
     def test_an_unverified_fix_with_no_detail_is_annotated_bare(self):
         out = review_fix._apply_outcomes(
@@ -571,6 +686,7 @@ class TestApplyOutcomes:
         )
         assert out.splitlines()[1].endswith("*(unverified)*")
 
+    # passes-at-base: base ticks and annotates nothing, idempotent for a reason this must keep
     def test_a_second_round_does_not_annotate_an_unverified_tick_twice(self):
         """A record accumulates across rounds, so the same outcome is re-applied."""
         outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
@@ -578,6 +694,7 @@ class TestApplyOutcomes:
         once = review_fix._apply_outcomes(self.OPEN, [outcome])
         assert review_fix._apply_outcomes(once, [outcome]) == once
 
+    # passes-at-base: asserts the silence this change was careful to preserve
     def test_a_verified_fix_ticks_the_box_and_says_nothing_more(self):
         out = review_fix._apply_outcomes(
             self.OPEN, [_outcome("M1", FixOutcome.FIXED, verified=True)],

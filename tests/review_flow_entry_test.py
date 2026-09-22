@@ -213,6 +213,43 @@ def test_the_pr_path_runs_its_whole_spine_in_one_go(cr, tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("host,expected", [
+    ("ghe.acme.com", "https://ghe.acme.com/acme/widget/pull/42"),
+    ("", "https://github.com/acme/widget/pull/42"),
+])
+def test_the_pr_url_the_run_reports_names_the_repos_forge(
+    cr, tmp_path, monkeypatch, host, expected,
+):
+    """The PR address the finished run hands back to the operator.
+
+    Asserted on what reaches `finish_review` rather than on the helper, because
+    the bug this closes was a correct helper nobody called: the URL came from a
+    module constant that no context could influence.
+    """
+    tape = []
+    seen = {}
+    review_file = written_review(tmp_path / "reviews" / "widget-42")
+    _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
+    monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
+
+    real_finish = review_run.finish_review
+
+    def _capture(request, wall_ms, **kwargs):
+        seen["pr_url"] = kwargs.get("pr_url")
+        return real_finish(request, wall_ms, **kwargs)
+
+    monkeypatch.setattr(review_run, "finish_review", _capture)
+
+    cr._run_review(
+        _pr_args(),
+        make_ctx(repo="acme/widget", pr_number=42, host=host,
+                 target_dir=tmp_path / "t"),
+        "test 1.0",
+    )
+
+    assert seen["pr_url"] == expected
+
+
 def test_a_failed_orchestration_is_not_recorded_on_the_pr_path(
     cr, tmp_path, monkeypatch,
 ):

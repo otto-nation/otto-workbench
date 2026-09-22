@@ -152,6 +152,97 @@ def test_repo_key_vectors(url, expected):
     assert pr_target._repo_key(url) == expected
 
 
+# The URL-to-host contract, which answers a different question from the table
+# above: not which directory a run keys on, but which forge a rendered link
+# has to resolve on. Deliberately a second table over the same forms — a row
+# that agrees with its key row proves nothing, and the rows that disagree (one
+# key, two hosts) are the reason the field exists.
+REMOTE_HOST_VECTORS = [
+    ("git@github.com:acme/widget.git", "github.com"),
+    ("https://github.com/acme/widget.git", "github.com"),
+    ("ssh://git@github.com/acme/widget.git", "github.com"),
+    ("https://ghe.acme.com/acme/widget.git", "ghe.acme.com"),
+    ("git@ghe.acme.com:acme/widget.git", "ghe.acme.com"),
+    # The port is git's transport, not the web UI's: ghe.acme.com:2222 serves
+    # its pages on 443, so a link carrying the port would not resolve.
+    ("ssh://git@ghe.acme.com:2222/acme/widget.git", "ghe.acme.com"),
+    ("git://host.example/acme/widget.git", "host.example"),
+    # Credentials never reach a rendered URL. This one is a secret leak rather
+    # than a broken link, which is why it is pinned rather than left to the
+    # generic authority handling.
+    ("https://user:token@ghe.acme.com/acme/widget", "ghe.acme.com"),
+    ("https://token@ghe.acme.com/acme/widget", "ghe.acme.com"),
+    # An IPv6 literal keeps its brackets: that is how a URL spells one, and how
+    # it has to be written back into a link.
+    ("ssh://git@[2001:db8::1]:22/acme/widget.git", "[2001:db8::1]"),
+    ("https://[2001:db8::1]/acme/widget.git", "[2001:db8::1]"),
+    # No host: a path, a file URL whatever its authority, and an ssh alias.
+    # Each renders public GitHub, which is what it rendered before the field
+    # existed.
+    ("/srv/git/widget.git", ""),
+    ("../widget", ""),
+    ("file:///srv/git/widget.git", ""),
+    ("file://localhost/srv/git/widget.git", ""),
+    ("file://bogushost/srv/git/widget.git", ""),
+    ("gitbox:acme/widget.git", ""),
+    # A single-label name is the ceiling in `_remote_host`: indistinguishable
+    # from an alias without reading ssh config, so it falls back rather than
+    # rendering https://ghe/ into a review body.
+    ("ghe:acme/widget.git", ""),
+    ("", ""),
+]
+
+
+@pytest.mark.parametrize("url,expected", REMOTE_HOST_VECTORS)
+def test_remote_host_vectors(url, expected):
+    assert pr_target._remote_host(url) == expected
+
+
+@pytest.mark.parametrize("url,expected", REPO_KEY_VECTORS)
+def test_reading_the_host_does_not_move_a_single_key(url, expected):
+    """The regression that matters most in this change.
+
+    Every key here names a state directory somebody's run is already holding.
+    The host field is additive precisely so that none of them move; this asserts
+    it over the same table rather than trusting that the parse was kept apart.
+    """
+    pr_target._remote_host(url)
+    assert pr_target._repo_key(url) == expected
+
+
+@pytest.mark.parametrize("a,b", [
+    ("https://github.com/acme/widget.git", "https://ghe.acme.com/acme/widget.git"),
+    ("git@github.com:acme/widget.git", "git@ghe.acme.com:acme/widget.git"),
+])
+def test_one_key_can_carry_two_hosts(a, b):
+    """The ceiling in `_canonical` keeps same-pathed repos on one key, and this
+    change does not revisit that. What it adds is the ability to tell them
+    apart afterwards, which is exactly what a rendered link needs."""
+    assert pr_target._repo_key(a) == pr_target._repo_key(b)
+    assert pr_target._remote_host(a) != pr_target._remote_host(b)
+
+
+@pytest.mark.parametrize("host,expected", [
+    ("ghe.acme.com", "https://ghe.acme.com"),
+    ("ghe.acme.com/", "https://ghe.acme.com"),
+    ("  ghe.acme.com  ", "https://ghe.acme.com"),
+    ("", "https://github.com"),
+    ("   ", "https://github.com"),
+    # A host that carries its own scheme is honoured as given: an operator's
+    # http:// intranet forge does not serve on https, so rewriting it would
+    # produce a URL that fails to connect.
+    ("http://ghe.acme.com", "http://ghe.acme.com"),
+    ("https://ghe.acme.com", "https://ghe.acme.com"),
+])
+def test_forge_base_url(host, expected):
+    assert pr_target.forge_base_url(host) == expected
+
+
+def test_forge_base_url_defaults_to_public_github():
+    """A call site not yet threaded renders what it always rendered."""
+    assert pr_target.forge_base_url() == "https://github.com"
+
+
 @pytest.mark.parametrize("a,b", [
     ("git@github.com:acme/api.git", "git@github.com:other-org/api.git"),
     ("gitbox:acme/api.git", "gitbox:other-org/api.git"),
@@ -358,6 +449,26 @@ def test_repo_identity_labels_the_remote_readably(tmp_path, origin, expected):
     """The readable name, for callers that must not pay for `gh repo view`."""
     identity = pr_target.repo_identity_from_origin(str(_git_repo(tmp_path / "wt", origin)))
     assert identity.label == expected
+
+
+@pytest.mark.parametrize("origin,expected", [
+    ("git@github.com:acme/widget.git", "github.com"),
+    ("https://ghe.acme.com/acme/widget.git", "ghe.acme.com"),
+    ("/srv/git/widget.git", ""),
+])
+def test_repo_identity_carries_the_host(tmp_path, origin, expected):
+    """Read from the same origin as the label and the key, in the same pass."""
+    identity = pr_target.repo_identity_from_origin(str(_git_repo(tmp_path / "wt", origin)))
+    assert identity.host == expected
+
+
+def test_repo_identity_host_does_not_disturb_the_key(tmp_path):
+    """An enterprise remote keys exactly as the public one it shadows."""
+    ghe = _git_repo(tmp_path / "a", "https://ghe.acme.com/acme/widget.git")
+    pub = _git_repo(tmp_path / "b", "https://github.com/acme/widget.git")
+    assert pr_target.repo_key_from_origin(str(ghe)) == \
+        pr_target.repo_key_from_origin(str(pub))
+    assert pr_target.repo_identity_from_origin(str(ghe)).host == "ghe.acme.com"
 
 
 def test_repo_identity_is_none_without_an_origin(tmp_path):

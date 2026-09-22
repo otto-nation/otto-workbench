@@ -37,6 +37,7 @@ from gh import client as gh_client
 from git import client as git_client
 from pr import context as pr_context
 from pr import state as pr_state
+from pr import target as pr_target
 from review import invoke as review_invoke
 from review import issue as review_issue
 from review import preflight as review_preflight
@@ -45,8 +46,6 @@ from review import recover as review_recover
 from review import worktree as review_worktree
 from review.completion import ReviewOutcome, finish_review, resolve_prior_review
 from review.paths import FILENAME_PIPELINE_STATE, FILENAME_SESSION
-
-GITHUB_BASE_URL = "https://github.com"
 
 
 @dataclass(frozen=True)
@@ -129,7 +128,7 @@ def run_pr_review(
         if issue_result.link:
             issue_link = issue_result.link
 
-    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
+    pr_url = f"{pr_target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
 
     # --force absorbs the unattended flags for the prompts below, and only for
     # those: supersession reads the raw flag — see preflight.supersession_override.
@@ -356,7 +355,10 @@ def run_self_review(
     finally:
         review_worktree.cleanup_worktree(pinned_wt, wt_path)
 
-    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}" if pr_number else ""
+    pr_url = (
+        f"{pr_target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
+        if pr_number else ""
+    )
 
     # A self review files no GitHub review, so there is no posting decision to
     # make and no post log to aggregate.

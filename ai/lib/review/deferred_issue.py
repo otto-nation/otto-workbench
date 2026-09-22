@@ -35,6 +35,7 @@ from core.trail import Trail
 from pr import context as pr_context
 from pr import permalinks
 from pr import state as pr_state
+from pr import target as pr_target
 from pr import thread_replies
 from pr.fix import FixOutcome
 from pr.thread_models import CommentItem, ReportThread
@@ -205,6 +206,7 @@ def build_deferred_issue_body(
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
+    host: str = "",
 ) -> str:
     """Build markdown description for the deferred threads tracking issue.
 
@@ -213,8 +215,12 @@ def build_deferred_issue_body(
     contract. The pipe escaping is still load-bearing for an ordinary reason: a
     reason or summary containing one would shift every later cell and render
     the backlog as a broken table.
+
+    *host* is the forge to link the PR on; empty renders public GitHub, which is
+    what this body carried before the parameter existed. The thread cells below
+    are not yet host-aware — see the permalinks phase of the design note.
     """
-    pr_url = f"https://github.com/{repo}/pull/{pr_number}"
+    pr_url = f"{pr_target.forge_base_url(host)}/{repo}/pull/{pr_number}"
     parts = [
         f"## Deferred Review Comments — [PR #{pr_number}]({pr_url})",
         "",
@@ -378,7 +384,9 @@ def create_or_update_deferred_issue(
         )
     provider = provider_info.name
 
-    body = build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)
+    body = build_deferred_issue_body(
+        deferred, repo, pr_number, threads_by_id, ctx.host,
+    )
 
     if existing_issue_id:
         updated = update_deferred_issue(

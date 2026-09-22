@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""Validate that a platform skip does not silence a test about a tracked file.
+
+Usage: bin/local/validate-skip-coverage [--quiet] [file...]
+
+Every job in .github/workflows/ci.yml runs ubuntu-24.04, so a test guarded by
+`[[ "$OSTYPE" != "darwin"* ]]` executes on a developer's machine and on no CI
+runner, ever. That is the correct shape for a case asserting BSD behaviour a
+Linux box does not have. It is the wrong shape for a case asserting the contents
+of a file committed to this repository, which reads the same on every platform:
+there the OS-dependency is in the *tool* the test reached for, not in the thing
+under test, and the skip converts a portability bug in the test into an
+assertion that exists and never runs.
+
+Written after exactly that happened. A review found that a test called
+/usr/libexec/PlistBuddy, which does not exist on Linux, so the test failed in
+CI. The finding was right. The fix added a darwin guard — and the assertion it
+guarded was the only mechanical check on a launchd misconfiguration whose whole
+symptom is that nothing happens. The suite went green, CI went green, and the
+guard was gone. The rule in ai/guidelines/rules/testing.md ("Never disable a
+test as a fix for a failing test") was in the fixing agent's context at the
+time. Prose did not hold it, which is why this is a validator.
+
+What separates the two cases is not the skip. The defect's guard line and the
+legitimate one in tests/install_symlink.bats are byte-identical, so nothing
+keyed on the condition, the reason string, or the line's presence in a diff can
+tell them apart. The discriminator is the body: a test whose subject is a
+repo-tracked path is asserting something platform-independent, whatever tool it
+used to look. The legitimate cases operate on $TMPDIR fixtures and touch no
+tracked file.
+
+A case that genuinely needs an OS *and* reads a tracked file says so, in the
+grammar `ceiling:` and `passes-at-base:` already use:
+
+    # platform-only: launchd's plist loader exists on no other OS
+    @test "the rendered plist is accepted by launchd" {
+
+The reason is required — a bare marker declares nothing and does not suppress,
+for the same reason a bare `ceiling:` does not satisfy its gate. The marker is
+an escape hatch an agent can also reach for; what it buys is that the claim
+becomes one reviewable line in the diff rather than an invisible absence.
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+import argparse
+import os
+import re
+import sys
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+from repo_scan import BASE_SKIP_DIRS  # noqa: E402
+
+TEST_OPEN = re.compile(r'^\s*@test\s+(?P<q>["\'])(?P<name>.+?)(?P=q)\s*\{')
+# A marker and its reason, in `ceiling:`'s grammar. The reason is required.
+MARKER = re.compile(r'^\s*#\s*platform-only:\s*(?P<reason>\S.*?)\s*$')
+# `skip` as a command, not the word inside an identifier or a longer call.
+SKIP_CALL = re.compile(r'(^|[;&|\s(])(skip|bats_skip)(\s|$|;|"|\')')
+# The OS is what the guard turns on. `command -v`, `[[ -f ... ]]` and ${CI:-}
+# guards are absence-of-a-dependency or environment scoping — a different act,
+# and the commonest skip in this repo by a wide margin.
+PLATFORM_GUARD = re.compile(r'OSTYPE|uname|[Dd]arwin|Linux\b|linux-gnu|BSD')
+# Where a test's subject lives when the subject is committed to this repo.
+REPO_ANCHOR = re.compile(r'\$\{?(REPO_ROOT|BATS_TEST_DIRNAME|WORKBENCH_DIR)\b')
+# `$BATS_TEST_FILENAME` names the running test file, not a directory — it only
+# anchors a repo path once `dirname` walks up from it, which is the idiom this
+# repo uses three times over: `dirname "$BATS_TEST_FILENAME")/.."`.
+BATS_TEST_FILENAME_DERIVED = re.compile(r'\bdirname\b.*\$\{?BATS_TEST_FILENAME\b')
+ASSIGNMENT = re.compile(r'^\s*(?:(?:local|export)\s+)?(?P<var>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>.*)$')
+
+
+def _strip_comment(line: str) -> str:
+    """The code half of a line, so a comment mentioning skip is not a skip.
+
+    Quote-aware because a `#` inside a string is data — `grep -A1 '<key>x</key>'`
+    is a real line in the suite this check was written for, and treating its
+    hash as a comment would hide the repo reference beside it.
+    """
+    out, quote = [], None
+    for i, ch in enumerate(line):
+        closes_quote = quote and ch == quote and line[i - 1:i] != '\\'
+        if closes_quote:
+            quote = None
+        elif not quote and ch in '"\'':
+            quote = ch
+        elif not quote and ch == '#':
+            break
+        out.append(ch)
+    return ''.join(out)
+
+
+def _test_blocks(lines: list[str]) -> list[tuple[str, int, int]]:
+    """Every `@test` in the file as (name, first line, last line), 1-indexed.
+
+    Brace-counted rather than closed on a bare `}` at column 0: a case can and
+    does close a subshell or a heredoc-fed block that way, and taking the first
+    of them ends the body early — which would drop the very assertion whose
+    repo reference decides this check.
+
+    Only test bodies are considered. A skip in setup() or a helper skips the
+    whole file, which is a deliberate file-level statement rather than one case
+    quietly losing its assertion.
+
+    A brace inside a quoted string still counts toward depth, since
+    `_strip_comment` strips only comments — a body that echoes a literal `{`
+    or `}` in a string argument can desync the counter. No suite in this repo
+    does that today.
+    """
+    blocks, name, start, depth = [], None, 0, 0
+    for idx, raw in enumerate(lines, 1):
+        code = _strip_comment(raw)
+        opened = TEST_OPEN.match(code) if name is None else None
+        if opened:
+            name, start, depth = opened.group('name'), idx, code.count('{') - code.count('}')
+            continue
+        if name is None:
+            continue
+        depth += code.count('{') - code.count('}')
+        if depth > 0:
+            continue
+        blocks.append((name, start, idx))
+        name = None
+    if name is not None:
+        blocks.append((name, start, len(lines)))
+    return blocks
+
+
+def _reads_var(text: str, var: str) -> bool:
+    """Whether TEXT reads $VAR or ${VAR}, not merely a longer name it prefixes.
+
+    A plain `in` substring check would call `"$targetdir/f"` a read of a
+    tainted `target` — `\\b` requires the character after the name not
+    continue an identifier, which the next char of a longer name always does.
+    """
+    return re.search(rf'\$\{{?{re.escape(var)}\b', text) is not None
+
+
+def _names_repo_path(text: str, tainted: set) -> bool:
+    """Whether TEXT reaches a tracked path, directly or via a tainted name."""
+    if REPO_ANCHOR.search(text) or BATS_TEST_FILENAME_DERIVED.search(text):
+        return True
+    return any(_reads_var(text, t) for t in tainted)
+
+
+def _repo_paths_in(body: list[str]) -> list[str]:
+    """Repo-anchored paths the body reads, directly or through a variable.
+
+    The indirection matters: a suite that assigns `tmpl="$REPO_ROOT/x.template"`
+    and reads `$tmpl` three lines later is reading a tracked file just as much
+    as one that spells it inline. A variable reassigned to something without a
+    repo anchor stops counting — it no longer names a tracked path.
+    """
+    found, tainted = [], set()
+    for raw in body:
+        code = _strip_comment(raw)
+        if not code.strip():
+            continue
+
+        assigned = ASSIGNMENT.match(code)
+        if assigned and _names_repo_path(assigned.group('value'), tainted):
+            tainted.add(assigned.group('var'))
+            continue
+        if assigned:
+            # Reassigned to something with no repo anchor: the name no longer
+            # points at a tracked path. Recorded findings that rest only on
+            # this variable are withdrawn with it, or a line that merely
+            # *derived* a path would convict a test that then went on to read
+            # a temp copy.
+            var = assigned.group('var')
+            tainted.discard(var)
+            found = [f for f in found if not _reads_var(f, var)]
+            continue
+
+        if _names_repo_path(code, tainted):
+            found.append(code.strip())
+    return found
+
+
+def _marked(lines: list[str], test_start: int) -> bool:
+    """Whether a `# platform-only: <reason>` sits above the @test line.
+
+    Above the `@test` rather than above the skip, so this marker and
+    check-new-tests' `passes-at-base:` are read in the same place. Blank lines
+    between are allowed; a comment that is not the marker ends the search, so a
+    marker cannot be claimed from an unrelated comment block further up.
+    """
+    idx = test_start - 2
+    while idx >= 0 and not lines[idx].strip():
+        idx -= 1
+    if idx < 0:
+        return False
+    return MARKER.match(lines[idx]) is not None
+
+
+def check_file(filepath: str) -> list[tuple[int, str, str, str]]:
+    """Findings as (line, test name, the guard line, the repo path it reads)."""
+    try:
+        with open(filepath) as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    findings = []
+    for name, start, end in _test_blocks(lines):
+        body = lines[start:end - 1]
+        guards = [
+            (start + 1 + offset, raw.strip())
+            for offset, raw in enumerate(body)
+            if SKIP_CALL.search(_strip_comment(raw)) and PLATFORM_GUARD.search(_strip_comment(raw))
+        ]
+        if not guards:
+            continue
+        if _marked(lines, start):
+            continue
+        reads = _repo_paths_in(body)
+        if not reads:
+            continue
+        findings.append((guards[0][0], name, guards[0][1], reads[0]))
+    return findings
+
+
+def discover_suites(repo_root: str) -> list[str]:
+    found = []
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in BASE_SKIP_DIRS]
+        found.extend(os.path.join(dirpath, f) for f in filenames if f.endswith('.bats'))
+    return sorted(found)
+
+
+def _report_violation(relpath: str, findings: list[tuple[int, str, str, str]]) -> None:
+    print(f'{RED}✗{NC} {relpath}: a platform skip silences a test about a tracked file',
+          file=sys.stderr)
+    for lineno, name, guard, reads in findings[:5]:
+        print(f'      line {lineno}: {guard}', file=sys.stderr)
+        print(f'        @test "{name}"', file=sys.stderr)
+        print(f'        reads {reads}', file=sys.stderr)
+    if len(findings) > 5:
+        print(f'      … and {len(findings) - 5} more', file=sys.stderr)
+    print(f'    {DIM}every CI job runs ubuntu-24.04, so this never executes there. A file '
+          f'committed to this repo reads the same on every platform — read it portably '
+          f'rather than skipping, or say why the subject needs this OS: '
+          f'# platform-only: <reason>{NC}', file=sys.stderr)
+
+
+def _report_pass(relpath: str, quiet: bool) -> None:
+    if not quiet:
+        print(f'  {GREEN}✓{NC} {relpath}')
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} bats suites checked, no platform skip hides a '
+              f'test about a tracked file')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} bats suites skip a test that would '
+              f'pass on every platform', file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate that a platform skip does not silence a test about a tracked file.')
+    parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    files = args.files if args.files else discover_suites(_WORKBENCH_DIR)
+
+    errors = 0
+    for filepath in files:
+        relpath = os.path.relpath(filepath, _WORKBENCH_DIR)
+        findings = check_file(filepath)
+        if findings:
+            errors += 1
+            _report_violation(relpath, findings)
+            continue
+        _report_pass(relpath, args.quiet)
+
+    _print_summary(len(files), errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

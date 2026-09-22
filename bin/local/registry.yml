@@ -99,6 +99,11 @@ tools:
     visibility: brief
     description: "Validates that only tests/conftest.py executes a module out of a file, so one script never has two module objects"
 
+  - name: validate-skip-coverage
+    permission: false
+    visibility: brief
+    description: "Validates that a platform skip does not silence a test whose subject is a tracked file — CI is Linux-only, so a darwin guard over a repo file is an assertion that never runs"
+
   - name: validate-permissions
     permission: false
     visibility: brief

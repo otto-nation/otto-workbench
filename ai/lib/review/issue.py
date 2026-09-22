@@ -27,7 +27,21 @@ from config.workbench_config import yaml_dump
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
-_GITHUB_BASE_URL = "https://github.com"
+# The host a provider's issues live under when ``issues.base_url`` has not
+# named one. GitHub has a single public instance to fall back on; Jira is
+# per-tenant and Linear per-workspace, so neither has a default and an
+# unconfigured repo gets no link rather than a wrong one.
+#
+# The Linear entry is never looked up through ``_issue_link`` — Linear's link
+# comes from ``_get_linear_issue_url`` instead, since the tracker itself hands
+# one back. It stays here so this map is complete over ``IssueProvider`` for a
+# reader checking it against the enum, rather than leaving Jira as the only
+# entry with no default and Linear looking like an oversight.
+_DEFAULT_BASE_URL = {
+    str(workbench_config.IssueProvider.GITHUB): "https://github.com",
+    str(workbench_config.IssueProvider.JIRA): "",
+    str(workbench_config.IssueProvider.LINEAR): "",
+}
 
 _LEGACY_CONFIG_DIR = ".claude"
 _LEGACY_CONFIG_FILE = "review.yml"
@@ -413,9 +427,29 @@ def _fetch_linear(issue_id: str) -> IssueContext:
     return IssueContext(context=context)
 
 
-def _fetch_github(issue_id: str, repo: str) -> IssueContext:
-    """Fetch a GitHub issue by number and repo."""
-    link = f"{_GITHUB_BASE_URL}/{repo}/issues/{issue_id}"
+def _issue_link(provider: str, path: str, opts: dict | None) -> str:
+    """The URL of one issue under this repo's instance of *provider*.
+
+    ``path`` is how the provider addresses an issue beneath its host, which is
+    the provider's own fixed shape rather than anything a repo chooses — so it
+    is passed by the caller that knows the provider, and only the host comes
+    from config. An instance nobody has named and no public default leaves the
+    link empty: a review says less, rather than linking somewhere wrong.
+    """
+    base = (opts or {}).get("base_url", "") or _DEFAULT_BASE_URL.get(provider, "")
+    return f"{base.rstrip('/')}/{path}" if base else ""
+
+
+def _fetch_github(issue_id: str, repo: str, opts: dict | None) -> IssueContext:
+    """Fetch a GitHub issue by number and repo.
+
+    ``issues.base_url`` only moves the link. Reaching a GitHub Enterprise API
+    is ``gh``'s own configuration (``GH_HOST``), so the fetch below follows
+    whatever host that CLI is pointed at.
+    """
+    link = _issue_link(
+        str(workbench_config.IssueProvider.GITHUB), f"{repo}/issues/{issue_id}", opts,
+    )
     context = gh_client.out(
         "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments",
     )
@@ -427,9 +461,11 @@ def _fetch_github(issue_id: str, repo: str) -> IssueContext:
 
 
 def _fetch_jira(issue_id: str, opts: dict | None) -> IssueContext:
-    """Build a Jira issue context from opts."""
-    jira_url = (opts or {}).get("jira_url", "")
-    link = f"{jira_url}/browse/{issue_id}" if jira_url else ""
+    """Build a Jira issue context from opts.
+
+    No Jira CLI ships with this workbench, so the link is the whole context.
+    """
+    link = _issue_link(str(workbench_config.IssueProvider.JIRA), f"browse/{issue_id}", opts)
     log.ok(f"Found Jira issue: {issue_id}")
     return IssueContext(link=link)
 
@@ -447,7 +483,7 @@ def fetch_issue_context(
         return _fetch_linear(issue_id)
 
     if provider == "github":
-        return _fetch_github(issue_id, repo)
+        return _fetch_github(issue_id, repo, opts)
 
     if provider == "jira":
         return _fetch_jira(issue_id, opts)

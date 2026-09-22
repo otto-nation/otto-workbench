@@ -2166,3 +2166,121 @@ warn_project_in_fake() {
   [ "$status" -eq 3 ]
   [ -z "$output" ]
 }
+
+# ─── issues.jira_url renamed to issues.base_url ──────────────────────────────
+
+rename_jira_url_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$REPO_ROOT/lib/constants.sh"
+    # For the status names the migration body returns, as in lift_in_fake above.
+    . "$REPO_ROOT/lib/migrations.sh"
+    . "$REPO_ROOT/bin/migrations/20260922-rename-issues-jira-url.sh"
+    migration_20260922_rename_issues_jira_url
+  )
+}
+
+@test "jira_url rename defers while there is no config.yml" {
+  run rename_jira_url_in_fake
+  [ "$status" -eq 4 ]
+  [ ! -f "$FAKE_CONFIG/config.yml" ]
+}
+
+@test "jira_url rename is a no-op when the key is already base_url" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issues:\n  provider: jira\n  base_url: https://j.example\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_jira_url_in_fake
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.issues.base_url' "$FAKE_CONFIG/config.yml")" = "https://j.example" ]
+}
+
+@test "jira_url rename carries the host across unchanged" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issues:\n  provider: jira\n  jira_url: https://j.example\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_jira_url_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issues.base_url' "$FAKE_CONFIG/config.yml")" = "https://j.example" ]
+  [ "$(yq -r '.issues.jira_url // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+  [ "$(yq -r '.issues.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
+}
+
+@test "jira_url rename keeps a value already written against the new schema" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issues:\n  jira_url: https://old.example\n  base_url: https://new.example\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_jira_url_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issues.base_url' "$FAKE_CONFIG/config.yml")" = "https://new.example" ]
+  [ "$(yq -r '.issues.jira_url // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "jira_url rename leaves the other issues keys alone" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  level: ultra\nissues:\n  provider: jira\n  team: ENG\n  jira_url: https://j.example\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run rename_jira_url_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ "$(yq -r '.issues.team' "$FAKE_CONFIG/config.yml")" = "ENG" ]
+}
+
+@test "jira_url rename re-run after a move is a no-op" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issues:\n  jira_url: https://j.example\n' > "$FAKE_CONFIG/config.yml"
+
+  run rename_jira_url_in_fake
+  [ "$status" -eq 0 ]
+  run rename_jira_url_in_fake
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.issues.base_url' "$FAKE_CONFIG/config.yml")" = "https://j.example" ]
+}
+
+# ─── jira_url rename: the repo file is reported, not rewritten ───────────────
+
+warn_jira_url_project_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$REPO_ROOT/lib/constants.sh"
+    . "$REPO_ROOT/lib/migrations.sh"
+    . "$REPO_ROOT/bin/migrations/20260922-warn-issues-jira-url-project.sh"
+    migration_20260922_warn_issues_jira_url_project "$1"
+  )
+}
+
+@test "a repo config holding jira_url is reported and left untouched" {
+  mkdir -p "$TMPDIR/repo"
+  printf 'issues:\n  provider: jira\n  jira_url: https://j.example\n' \
+    > "$TMPDIR/repo/.workbench.yml"
+
+  run warn_jira_url_project_in_fake "$TMPDIR/repo"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"still names issues.jira_url"* ]]
+  # Untouched is the point — the fix belongs in a commit its owner makes.
+  [ "$(yq -r '.issues.jira_url' "$TMPDIR/repo/.workbench.yml")" = "https://j.example" ]
+  [ "$(yq -r '.issues.base_url // "absent"' "$TMPDIR/repo/.workbench.yml")" = "absent" ]
+}
+
+@test "a repo config already on base_url says nothing" {
+  mkdir -p "$TMPDIR/repo"
+  printf 'issues:\n  base_url: https://j.example\n' > "$TMPDIR/repo/.workbench.yml"
+
+  run warn_jira_url_project_in_fake "$TMPDIR/repo"
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+}
+
+@test "a repo with no config at all says nothing about jira_url" {
+  mkdir -p "$TMPDIR/repo"
+
+  run warn_jira_url_project_in_fake "$TMPDIR/repo"
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+}

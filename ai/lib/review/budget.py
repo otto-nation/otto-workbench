@@ -127,7 +127,23 @@ RENDER_MARKUP_RESERVE_BYTES = 16_000
 
 MIN_DIFF_BYTES = 20_000
 
+# How little of a file a change may touch before its contents are the first
+# thing a collection over budget gives up. Not a reason to withhold the file
+# from a collection that fits: below this ratio the diff is a smaller share of
+# the file, not a sufficient substitute for it — three lines of hunk context do
+# not say whether a change holds the invariant twenty lines above it. Withholding
+# a file that would have fit saves nothing either way, since the agent reads it
+# back in its own turns and the same bytes reach the same context window.
+#
+# ceiling: density is (additions + deletions) / post-image lines, so a pure
+# deletion reads denser than it is and a rename reads as wholly changed. Both
+# err toward keeping the file, which is the safe direction now that this only
+# orders a shortfall. Upgrade to per-hunk coverage if hunk ranges are ever
+# computed at collection time.
 FILE_CONTENT_DENSITY_THRESHOLD = 0.15
+
+# Below this a file is never sparse whatever its density: the bytes a shortfall
+# would recover are smaller than the turn the agent spends reading it back.
 FILE_CONTENT_MIN_SIZE = 5120
 
 # How much of somebody else's prose a prompt quotes back: a prior review's body,

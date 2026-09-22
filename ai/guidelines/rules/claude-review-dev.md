@@ -166,7 +166,7 @@ what the failing command printed is in
 its tail, and both age out on the same six-month horizon.
 
 **Diagnosing max-turns failures:**
-1. Read `prompt-stats.json` — check `utilization_pct` and `file_contents.omitted` for prompt bloat
+1. Read `prompt-stats.json` — check `utilization_pct` and `file_contents.omitted` for prompt bloat. A non-empty `omitted` is also the signal that shedding happened under real budget pressure, which is the condition for teaching collection to send hunk windows instead of dropping a file whole
 2. Read `session.jsonl` — count `tool_use` records to see how the agent spent its turns
 3. Check `prompt-*.md` (preserved on failure) — look for oversized sections
 
@@ -175,7 +175,7 @@ its tail, and both age out on the same six-month horizon.
 - `prompt-stats.json` → `file_contents.included` shows which files were injected and their sizes
 - `prompt-stats.json` → `unaccounted_bytes` is what the render cost that no budget lever measured. A few KB is the template's own text and the block markup; tens of KB means a section reaches the prompt outside the budget — usually a variable registered after `fit`
 - `prompt-stats.json` → `allowance_bytes - accounted_bytes` is the room the ladder handed out and the render did not spend, mostly the diff's unused cap. Large is ordinary and says nothing about bloat
-- Large files with small diffs are automatically skipped by the density filter (`FILE_CONTENT_DENSITY_THRESHOLD`)
+- A collection that overflows its budget sheds sparse large files first (`FILE_CONTENT_DENSITY_THRESHOLD`), largest-first and only as far as the overflow requires; one that fits pre-collects every changed file whatever its density. Omitting a file that would have fit saves nothing — the agent reads it back in its own turns, into the same context window, having also spent a tool call and the `OMITTED_FILE_TURNS` bump
 - `prompt-stats.json` → `budget_model` and `budget_window_tokens` say which model the ceiling was derived from. A density is only comparable against the same tokenizer, so a figure without its model is not interpretable
 - The ceiling is per-model, not a constant: `prompt_budget_bytes(model)` is the model's window less `COMPLETION_RESERVE_TOKENS` and `OVERHEAD_RESERVE_TOKENS`, priced at `BYTES_PER_TOKEN_FLOOR`, capped by `MAX_SPEND_BYTES` and less `RENDER_MARKUP_RESERVE_BYTES`. An unresolved tier alias (`AI_SONNET_MODEL` unset) budgets against `ALIAS_FLOOR_TOKENS` and warns; an unknown concrete model aborts the review at preflight rather than defaulting
 - Other budget constants: `TEMPLATE_OVERHEAD_BYTES` (20KB), `FILE_CONTENT_MIN_SIZE` (5KB)

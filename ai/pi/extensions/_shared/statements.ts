@@ -49,7 +49,7 @@ function splitOnControlOperators(line: string): string[] {
       continue;
     }
     if (ch === "&") {
-      if (current.endsWith(">")) {
+      if (current.endsWith(">") || line[i + 1] === ">") {
         current += ch;
         continue;
       }

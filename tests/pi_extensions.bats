@@ -899,6 +899,10 @@ _masks() {
   [ "$output" = pytest ]
   _masks 'bats tests/x.bats; printf "EXIT=%d\n" $? 2>&1' false
   [ "$output" = bats ]
+  # The reverse order — `&` before `>` — is the same redirect and must stay
+  # attached too, or the split shatters the statement the same way.
+  _masks 'pytest tests/; echo "EXIT=$?" &>out.txt' false
+  [ "$output" = pytest ]
 }
 
 @test "exit-status-guard: the runner alone is fine" {

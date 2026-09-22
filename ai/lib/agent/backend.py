@@ -63,6 +63,31 @@ def _configured_backend() -> Backend | None:
     return load_config_or_default().agent.backend
 
 
+def _raw_configured_backend() -> str | None:
+    """The unvalidated ``agent.backend`` value from config, or None when
+    absent or the config could not be read at all.
+
+    ``_configured_backend()`` goes through ``load_config_or_default()``,
+    whose type coercion treats an unrecognised enum value the same as a
+    missing key — both come back as the bare-default config, so a typo'd
+    ``backend: cluade`` reaches ``_require_backend()`` looking identical to a
+    config that never mentioned ``backend``. This reads the merged dict
+    directly, before serde's enum coercion has a chance to discard the raw
+    string, so the invalid value can be named in the error the same way an
+    invalid ``AI_BACKEND`` already is.
+    """
+    from config.workbench_config import ConfigError, config_scopes, deep_merge, read_yaml
+
+    merged: dict = {}
+    try:
+        for scope in config_scopes():
+            merged = deep_merge(merged, read_yaml(scope.path))
+    except ConfigError:
+        return None
+    agent = merged.get("agent")
+    return agent.get("backend") if isinstance(agent, dict) else None
+
+
 def _backend() -> Backend | None:
     """The selected backend, or None when neither layer names a valid one.
 
@@ -87,7 +112,9 @@ def _require_backend() -> Backend:
 
     An AI_BACKEND set to an unrecognised value is not the same as one left
     unset: the operator did configure something, just not one of the valid
-    names, and the raw value is what tells them what to fix.
+    names, and the raw value is what tells them what to fix. The same holds
+    for agent.backend in config.yml, which _configured_backend() cannot
+    surface on its own — see _raw_configured_backend().
     """
     selected = _backend()
     if selected is None:
@@ -96,6 +123,12 @@ def _require_backend() -> Backend:
         if raw:
             raise BackendNotSelected(
                 f"{ENV_AI_BACKEND}={raw!r} is not a valid backend "
+                f"(expected one of {valid})"
+            )
+        raw_config = _raw_configured_backend()
+        if raw_config:
+            raise BackendNotSelected(
+                f"{CONFIG_KEY_BACKEND}={raw_config!r} is not a valid backend "
                 f"(expected one of {valid})"
             )
         raise BackendNotSelected(

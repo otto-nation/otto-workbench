@@ -142,6 +142,20 @@ class TestBackendSelection:
         with pytest.raises(ai_backend.BackendNotSelected, match="cluade"):
             ai_backend._get_module()
 
+    def test_dispatch_names_the_invalid_value_from_config(self, tmp_path, monkeypatch):
+        """A typo'd agent.backend is configured, just wrong — say what was set.
+
+        load_config_or_default() cannot tell this apart from a config that
+        never mentioned backend at all: serde's enum coercion raises on
+        "cluade", load_config wraps that in ConfigError, and
+        load_config_or_default swallows it into a bare-default config. The
+        message has to come from the raw config dict instead.
+        """
+        monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "config.yml").write_text("agent:\n  backend: cluade\n")
+        with pytest.raises(ai_backend.BackendNotSelected, match="cluade"):
+            ai_backend._get_module()
+
     def test_is_available_is_false_rather_than_raising(self, monkeypatch):
         """The rebase paths ask this to decide whether to offer AI at all."""
         monkeypatch.delenv("AI_BACKEND", raising=False)

@@ -714,6 +714,12 @@ def _fit_to_budget(
     The heuristic only bites when something genuinely has to give, which is the
     case it was written for — a small change to a huge file, alongside other
     files that would otherwise be crowded out.
+
+    Ranked in one pass by `(classify_tier, is_low_density, size)` — tier always
+    outranks density, so a small Tier 1 file is never crowded out by a large
+    Tier 3 one just because the Tier 3 file happens to be dense. Density only
+    breaks a tie within a tier, which is the scarcity case the heuristic exists
+    for.
     """
     low_density = {
         p for p, c in all_contents.items()
@@ -722,8 +728,6 @@ def _fit_to_budget(
     dense = {p: c for p, c in all_contents.items() if p not in low_density}
     sparse = {p: c for p, c in all_contents.items() if p in low_density}
 
-    # Dense files first so that if the budget binds, what it drops is the file
-    # the diff already explains rather than the one it does not.
     fit = fit_files(dense, all_permissions, budget_bytes - base_size)
     spent = base_size + sum(len(c.encode()) for c in fit.included.values())
     sparse_fit = fit_files(sparse, all_permissions, budget_bytes - spent)

@@ -418,6 +418,40 @@ class TestDensitySkipping:
         assert "dense.py" in data.file_contents
         assert "sparse.py" in data.omitted_files
 
+    def test_tier_outranks_density_across_the_whole_budget(
+        self, tmp_path, monkeypatch,
+    ):
+        """A low-density Tier 1 file must not be crowded out by a dense Tier 3 one.
+
+        Ranking dense files against the *entire* remaining budget before sparse
+        files see any of it (rather than ranking every candidate together by
+        `(classify_tier, is_low_density, size)`) would let a large, dense Tier 3
+        file exhaust the budget first — even though a small, sparse Tier 1 file
+        would easily fit if tier were consulted before density.
+        """
+        # Tier 1 (path segment "auth"), low density: big enough to trigger the
+        # density heuristic, but only a sliver of it changed.
+        (tmp_path / "auth").mkdir()
+        (tmp_path / "auth" / "config.go").write_text("line\n" * 1200)  # 6000 bytes
+        # Tier 3 (path segment "gen"), dense: most of it changed.
+        (tmp_path / "gen").mkdir()
+        (tmp_path / "gen" / "big.go").write_text("line\n" * 1800)  # 9000 bytes
+        # Room for either file alone, not both.
+        monkeypatch.setattr(
+            rc, "collection_budget_bytes",
+            lambda *a, **k: rc.TEMPLATE_OVERHEAD_BYTES + 10000,
+        )
+        job = _job(tmp_path, [
+            {"path": "auth/config.go", "additions": 2, "deletions": 1},
+            {"path": "gen/big.go", "additions": 1500, "deletions": 1500},
+        ])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = rc.collect_preflight_data(job)
+
+        assert "auth/config.go" in data.file_contents
+        assert "gen/big.go" in data.omitted_files
+
     def test_small_file_always_included(self, tmp_path):
         (tmp_path / "small.py").write_text("x = 1\n")
         job = _job(tmp_path, [{"path": "small.py", "additions": 1, "deletions": 0}])

@@ -66,6 +66,7 @@ Applies only when the resolved provider is `github`.
 - Assign with `--assignee @me`
 - Pass `--closes <number>` to `pr:create` to auto-close a numeric issue on merge — it appends `Closes #<number>` to the body. Jira-style keys (`PROJ-123`) do not auto-close on GitHub and the flag refuses them
 - Pass `--repo <owner>/<repo>` *after* the subcommand — `gh issue view --repo x/y`, never `gh --repo x/y issue view`. Both parse, but the flag reads as the subcommand's everywhere it is documented, and under Claude Code the leading form also costs a permission prompt (`bash-tool.md` § Avoid Compound `cd` Commands)
+- On GitHub Enterprise, set `issues.base_url` to the instance host so issue links point at it rather than github.com. That key only moves the links — `gh` reaches the API through its own `GH_HOST`, so set that too or the CLI still talks to github.com
 
 | Command | Notes |
 |---------|-------|
@@ -81,5 +82,5 @@ Applies only when the resolved provider is `github`.
 
 Applies only when the resolved provider is `jira`.
 
-- No Jira CLI ships with this workbench. Issue links are built from `issues.jira_url`, and issue IDs are `PROJ-123` shaped — the same pattern Linear uses
+- No Jira CLI ships with this workbench. Issue links are built from `issues.base_url`, the host of this repo's Jira tenant — there is no public default, so a repo that has not set it gets no link at all. Issue IDs are `PROJ-123` shaped, the same pattern Linear uses
 - Creating and updating issues is not automated for Jira. Report what would have been filed and let the user file it

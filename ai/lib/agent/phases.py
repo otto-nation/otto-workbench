@@ -10,8 +10,11 @@ One precedence chain, most specific first, for every knob a phase has:
     explicit argument  >  WORKBENCH_AI_<PHASE>_*  >  WORKBENCH_AI_*
                        >  agent.phases.<phase>.*  >  agent.*  >  built-in
 
-The effort preset sits between the config and the built-in for thinking level
-only, because it is the one knob a review's depth setting flattens.
+The effort preset sits between the config and the built-in for thinking level,
+the one knob a review's depth setting flattens. It also scales the turn budget,
+but multiplicatively rather than as a layer in that chain: a deeper review buys
+turns on top of whatever the winning layer said, where a level it flattened
+would discard a per-phase override.
 
 **Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
 ``opus``, ``haiku``) is then resolved through ``AI_SONNET_MODEL`` /
@@ -313,14 +316,25 @@ def phase_turns(
 ) -> int:
     """A phase's turn budget: its registry default, scaled by the work it faces.
 
-    Two scalings, and no phase takes both. ``omitted_files`` is what a review's
-    preflight left out of the prompt, which a phase that reads branch source has
-    to open itself. ``items`` is the length of the checklist a fix pass is
-    handed: each item costs ``turns_per_item``, clamped between the phase's flat
-    default as a floor and ``turns_cap`` as the most one agent gets.
+    Three scalings. ``effort`` is how deep a review was asked to go, and its
+    preset's ``turn_multiplier`` moves every phase's registry default together —
+    a deeper review buys turns, not only thinking level and dollars.
+    ``omitted_files`` is what a review's preflight left out of the prompt, which
+    a phase that reads branch source has to open itself. ``items`` is the length
+    of the checklist a fix pass is handed: each item costs ``turns_per_item``,
+    clamped between the phase's flat default as a floor and ``turns_cap`` as the
+    most one agent gets.
+
+    The multiplier lands on the registry default before the item clamp, so
+    ``turns_cap`` still bounds a fix pass however deep the review around it —
+    the cap is what one agent can finish inside, which effort does not change.
+    No phase takes both scalings today: the item-scaled phases are the fix
+    passes, which run outside a review and so arrive with ``effort=None``.
     """
     spec = PHASES[phase]
     base = spec.max_turns
+    if effort is not None:
+        base = round(base * EFFORT_PRESETS[effort].turn_multiplier)
     if spec.scaling.turns_per_item:
         base = min(
             max(base, items * spec.scaling.turns_per_item), spec.scaling.turns_cap,

@@ -24,7 +24,9 @@ from agent.session import CONSECUTIVE_FAIL_THRESHOLD, _is_model_error
 _has_output = agent_retry.has_output
 
 _RETRY_HINT = agent_retry.RETRY_HINT
-_NO_WRITE_HINT = agent_retry.NO_WRITE_HINT
+# A function rather than the constant it aliased: the hint names the write tool
+# the selected backend actually has, so it cannot be resolved at import time.
+_no_write_hint = agent_retry.no_write_hint
 
 _retry_hint_for = agent_retry.hint_for
 _retry_turns_for = agent_retry.turns_for

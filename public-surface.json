@@ -58,7 +58,7 @@
     "config:github",
     "config:github.ssh_over_443",
     "config:issues",
-    "config:issues.jira_url",
+    "config:issues.base_url",
     "config:issues.labels",
     "config:issues.provider",
     "config:issues.provider=github",

@@ -213,11 +213,19 @@ class IssuesConfig:
     label is the tracker's answer, resolved when an issue is filed. Config
     that cached it would go stale the moment someone deleted the label, and
     both CLIs refuse to file at all against a label they cannot resolve.
+
+    ``base_url`` is the tracker instance this repo files to, for the providers
+    that have no single public one — a Jira tenant, a GitHub Enterprise host.
+    Only the host belongs here: how a provider addresses one issue underneath
+    it is fixed by the provider, so the path lives beside that provider's
+    lookup in ``review/issue.py`` rather than being restated per repo. Empty
+    means the provider's own default host, and a provider with no default
+    builds no link at all.
     """
 
     provider: IssueProvider | None = None
     team: str = ""
-    jira_url: str = ""
+    base_url: str = ""
     labels: list[str] = field(default_factory=lambda: [FOLLOW_UP_LABEL])
 
 
@@ -255,8 +263,9 @@ class ReviewConfig:
     """Review pipeline settings.
 
     ``effort`` is the only knob left here: it selects a depth preset that skips
-    phases and moves thresholds, and no other domain has one. Everything a
-    single invocation is sized by lives under ``agent``.
+    phases, moves thresholds, and scales every phase's turn and dollar budget,
+    and no other domain has one. What a single invocation is sized by otherwise
+    lives under ``agent``.
     """
 
     effort: Effort | None = None

@@ -490,7 +490,12 @@ class TestBackendsRunInTheGivenDirectory:
 
 
 def _recording_popen(seen):
-    """A Popen stand-in that records its kwargs and streams nothing back."""
+    """A Popen stand-in that records its kwargs and streams nothing back.
+
+    ``wait`` takes Popen's own ``timeout`` because a backend is entitled to
+    bound it; a fake that accepts only the bare call fails every caller that
+    does, for a reason about the fake rather than about the backend.
+    """
 
     class FakeProc:
         returncode = 0
@@ -498,7 +503,7 @@ def _recording_popen(seen):
         stdout = io.StringIO("")
         stderr = io.StringIO("")
 
-        def wait(self):
+        def wait(self, timeout=None):
             return 0
 
         def poll(self):

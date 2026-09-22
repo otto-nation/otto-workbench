@@ -7,6 +7,8 @@ invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
   - Clean abort via {"type": "abort"} instead of SIGTERM
   - Claude-compatible result records written to session logs
+  - A response with success:false on prompt or parse ends the run and is
+    reported, instead of being waited out
 
 prompt() uses print mode (pi -p) for simplicity.
 
@@ -219,41 +221,6 @@ def _send(proc: subprocess.Popen, command: dict):
     proc.stdin.flush()
 
 
-def _send_prompt(proc: subprocess.Popen, message: str) -> str | None:
-    """Send the opening prompt. Returns the backend's error if it never read it.
-
-    Pi rejects some invocations before it reads stdin at all — an unroutable
-    model is the common one: ``Error: Model "x" not found`` on stderr, exit 1,
-    no RPC reply, nothing on stdout.
-
-    The write itself does not fail. A first ``_send`` into a pipe whose reader
-    has already gone is buffered by the kernel and returns cleanly; only the
-    *second* write raises ``BrokenPipeError`` — which landed in
-    ``_get_stats_after_agent_end`` and escaped ``invoke_agent`` as a traceback,
-    a page of stack for a mistyped model name. So the send is still guarded,
-    but the detection that matters is the one below: stdout at EOF with the
-    process gone.
-    """
-    try:
-        _send(proc, {"type": "prompt", "message": message})
-    except (BrokenPipeError, ValueError):
-        # ValueError: stdin already closed by a fast-exiting child.
-        return _died_before_reading(proc)
-    return None
-
-
-def _died_before_reading(proc: subprocess.Popen) -> str:
-    """Why the backend exited without speaking the protocol.
-
-    stderr rather than stdout: a failure this early precedes the RPC stream, so
-    pi writes a plain message and exits. Reported as a refusal, because that is
-    what it is — the backend declined the run before it began.
-    """
-    proc.wait()
-    stderr = proc.stderr.read().strip() if proc.stderr else ""
-    return stderr or f"backend exited {proc.returncode} without reading the prompt"
-
-
 def _read_rpc_response(proc: subprocess.Popen, command_type: str) -> dict:
     """Read lines until we get a response for the given command type.
 
@@ -271,6 +238,68 @@ def _read_rpc_response(proc: subprocess.Popen, command_type: str) -> dict:
         if data.get("type") == "response" and data.get("command") == command_type:
             return data
     return {}
+
+
+# Pi wraps every RPC reply in {type, command, success, data}. Only these two
+# commands make a failure fatal to the run. Per Pi's RPC protocol a `prompt`
+# reply with success:false means the prompt was rejected before acceptance, so
+# no agent_start, no turn_end and no agent_end will ever follow, and a reader
+# waiting for them waits out the whole timeout. `parse` is the same fault one
+# step earlier: Pi could not read the command line at all. A failed `steer`,
+# `follow_up` or `abort` is not fatal — _check_limits sends those mid-run, the
+# agent that rejected one is still streaming, and the run still ends in
+# agent_end. Ending the run there would discard the work of a healthy agent
+# over a steering message it no longer needed.
+_FATAL_RPC_COMMANDS = frozenset({"prompt", "parse"})
+
+# Enough of a provider or auth error to act on. The text is a message meant for
+# a human, not a payload, and a runaway one would otherwise land whole in the
+# session log and in every ledger row that quotes it.
+_RPC_ERROR_MAX_CHARS = 2000
+
+# What a run Pi refused exits with when Pi's own status does not say so. A
+# clean RPC shutdown after a rejected prompt is exit 0, and a caller reading
+# only the status would take that for a successful run.
+_RPC_ERROR_EXIT_CODE = 1
+
+
+def _rpc_response_error(data: dict) -> str | None:
+    """The error text of an RPC response that ends the run, or None.
+
+    A non-fatal failure is warned about rather than returned: the run is still
+    streaming and its work is worth more than the command Pi declined. Nothing
+    is dropped in silence either way — the unconditional skip that preceded
+    this is what let an auth failure consume a whole timeout with no output.
+
+    ``success`` is compared against False by identity: a response that carries
+    no ``success`` key is not a failure, and a truthiness test would read an
+    absent key, a 0 or an empty string as one.
+    """
+    if data.get("success") is not False:
+        return None
+    command = data.get("command", "")
+    detail = str(data.get("error") or f"pi rejected {command or 'a command'}")
+    detail = detail[:_RPC_ERROR_MAX_CHARS]
+    if command in _FATAL_RPC_COMMANDS:
+        return detail
+    log.warn(f"pi rpc {command or 'command'} failed: {detail}")
+    return None
+
+
+def _wait_for_exit(proc: subprocess.Popen) -> None:
+    """Wait for Pi to exit after its stdin was closed, killing it if it will not.
+
+    Closing stdin is how RPC mode is told to stop, and a healthy Pi exits at
+    once. A run abandoned on a fatal response leaves the event loop before
+    stdout reached EOF, so the child can still be alive with an unread pipe —
+    and an unbounded wait there is the same silent hang this path exists to
+    end, one line further down.
+    """
+    try:
+        proc.wait(timeout=timeouts.LOCAL)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=timeouts.QUICK)
 
 
 def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
@@ -302,20 +331,6 @@ def _display_event(data: dict, prev_tool: str, prefix: str) -> str:
     return event.tool_label
 
 
-def _is_prompt_refusal(data: dict) -> bool:
-    """Whether this record is Pi declining to run the prompt at all.
-
-    Keyed on ``command`` as well as ``success``: replies to ``steer`` and
-    ``get_session_stats`` share the ``response`` type, and a failed steer is
-    not a refused run. Only the reply to ``prompt`` ends the stream.
-    """
-    return (
-        data.get("type") == "response"
-        and data.get("command") == "prompt"
-        and not data.get("success", True)
-    )
-
-
 def _parse_event_type(raw_line: str) -> tuple[str, dict]:
     """Parse a line and return (event_type, parsed_data)."""
     try:
@@ -324,16 +339,6 @@ def _parse_event_type(raw_line: str) -> tuple[str, dict]:
         return "", {}
     return data.get("type", ""), data
 
-
-# stop_reason for a prompt the backend would not run: no API key, an
-# unroutable model, a provider that declined. Distinct from "completed" and
-# from the limit stops, because those are runs that happened.
-BACKEND_REFUSED = "backend_refused"
-
-# Exit code invoke_agent/invoke_fix return for BACKEND_REFUSED. Pi exits 0
-# after refusing, so there is no upstream status to pass through and callers
-# that branch on the exit code would read the refusal as a success.
-BACKEND_REFUSED_EXIT = 70
 
 BUDGET_WARN_THRESHOLD = 0.8
 
@@ -400,10 +405,10 @@ class StreamResult:
     session's cost lands under one key however it was invoked. It is None
     when the stream ended with no message_end (e.g. an immediate abort).
 
-    ``error`` carries the backend's own refusal text when ``stop_reason`` is
-    ``BACKEND_REFUSED``, and is None otherwise. It is the only record of why a
-    run produced nothing: Pi exits 0 after refusing a prompt, so the exit code
-    cannot carry it.
+    ``error`` is the text of the RPC response that ended the run, and None for
+    a run that ended any other way. It is the only evidence a rejected prompt
+    leaves: Pi answers the command and then waits, so nothing downstream can
+    infer the failure from the events or from the exit status.
     """
     turn_count: int
     accumulated_cost: float
@@ -419,17 +424,7 @@ def _consume_stream(
 ) -> StreamResult:
     """Consume the RPC event stream, enforcing turn and budget limits.
 
-    stop_reason is one of: "completed", "max_turns", "max_budget",
-    ``BACKEND_REFUSED``.
-
-    A refused prompt is the one outcome that arrives as a ``response`` rather
-    than as an event: Pi answers ``{"command": "prompt", "success": false}``,
-    emits no ``agent_end``, and exits 0. Skipping every ``response`` therefore
-    read a refusal as a stream that simply ended — ``stop_reason`` stayed
-    "completed" and the caller saw a clean exit for a run the model never
-    answered. Only the reply to ``prompt`` is examined; ``steer`` and
-    ``get_session_stats`` replies are still passed over, which is what the
-    unconditional skip was for.
+    stop_reason is one of: "completed", "max_turns", "max_budget", "error".
     """
     prev_tool = ""
     turn_count = 0
@@ -447,11 +442,15 @@ def _consume_stream(
 
         event_type, data = _parse_event_type(raw_line)
 
-        if _is_prompt_refusal(data):
-            stop_reason = BACKEND_REFUSED
-            error = data.get("error") or "backend refused the prompt"
+        # Checked after the raw line is logged, so the one message explaining
+        # the failure is in the session log, and before every parser below,
+        # which the unconditional skip this replaces also kept response events
+        # away from.
+        response_error = _rpc_response_error(data) if event_type == "response" else None
+        if response_error:
+            log.error(f"{prefix}pi refused the run: {response_error}")
+            stop_reason, error = "error", response_error
             break
-
         if event_type == "response":
             continue
 
@@ -474,72 +473,6 @@ def _consume_stream(
     return StreamResult(turn_count, accumulated_cost, stop_reason, model, error)
 
 
-def _never_spoke(stream: StreamResult, proc: subprocess.Popen) -> bool:
-    """Whether the backend produced no protocol output at all.
-
-    An empty stdout with the process already gone means pi exited before the
-    RPC conversation started — the unroutable-model case. Distinguished from a
-    refusal (which does send a ``response``) and from a real run by the total
-    absence of events: no turns, no cost, no stop reason but the default.
-
-    Checked after the stream rather than at the send, because a first write
-    into a dead pipe succeeds and tells us nothing.
-    """
-    if stream.stop_reason != "completed" or stream.turn_count:
-        return False
-    return proc.poll() is not None
-
-
-def _refused_stream(error: str) -> StreamResult:
-    """The stream result for a run that never started — same shape as a refusal.
-
-    A backend that died before reading the prompt and one that read it and said
-    no are the same outcome to every caller: nothing ran, and here is why.
-    Giving them one StreamResult means one exit code and one diagnosis path.
-    """
-    return StreamResult(0, 0.0, BACKEND_REFUSED, None, error)
-
-
-def _stats_unless_refused(stream: StreamResult, proc: subprocess.Popen) -> dict:
-    """Session stats, or an empty dict for a run the backend refused.
-
-    Measured against pi 0.84.4: after a refusal the RPC process stays alive and
-    answers ``get_session_stats`` immediately, with every token count and the
-    cost at zero. So this is an optimisation, not a guard against a hang — the
-    round trip buys a payload identical to ``{}`` once ``_write_result_record``
-    has read it.
-
-    Said plainly because the obvious guess is the opposite. An earlier version
-    of this comment claimed the query would block on a reply that never comes,
-    which is false and disprovable in one experiment — and a false rationale is
-    worse than none, because disproving it argues for deleting the branch.
-    """
-    if stream.stop_reason == BACKEND_REFUSED:
-        return {}
-    return _get_stats_after_agent_end(proc)
-
-
-def _exit_code(stream: StreamResult, returncode: int) -> int:
-    """The status a refusal deserves, or the process's own.
-
-    Pi exits 0 when it refuses a prompt — no API key, an unroutable model — so
-    passing its status through reports a run the model never answered as a
-    success. Every caller here branches on the exit code, and a review whose
-    agent never spoke returns a 0-byte review file with nothing saying why.
-
-    The refusal text goes to stderr because the exit code cannot carry it, and
-    the operator's next question is which provider declined and why.
-    """
-    if stream.stop_reason != BACKEND_REFUSED:
-        return returncode
-    # log.error rather than a bare print: it holds the same _print_lock every
-    # other message here does, and group-phase agents run concurrently. A
-    # refusal is five lines of provider text, so an unlocked write interleaves
-    # with other agents' tool labels.
-    log.error(f"backend refused the prompt: {stream.error}")
-    return returncode or BACKEND_REFUSED_EXIT
-
-
 # ── Result record generation ─────────────────────────────────────────────────
 
 
@@ -551,6 +484,7 @@ def _write_result_record(
     duration_ms: int,
     stats: dict,
     model: str | None = None,
+    *,
     error: str | None = None,
 ):
     """Write a Claude-compatible result record to the session log.
@@ -560,19 +494,22 @@ def _write_result_record(
 
     ``stats`` is the ``data`` of a get_session_stats response, which is what
     _get_stats_after_agent_end returns — not the response envelope.
+
+    ``error`` is the RPC error that ended the run, and is what makes the record
+    an error record: `agent.session._diagnose_result_type` reads ``is_error``
+    first and the text second, so without both an auth failure reads as a clean
+    run that happened to write nothing.
     """
     tokens = stats.get("tokens", {})
     total_cost = stats.get("cost", cost)
 
-    # `is_error` is what `session._diagnose_result_type` branches on. A refused
-    # run left with the default False is diagnosed COMPLETED — the same false
-    # green the exit code carried, one layer up.
-    refused = stop_reason == BACKEND_REFUSED
-
     record = {
         "type": "result",
         "subtype": "success" if stop_reason == "completed" else stop_reason,
-        "is_error": refused,
+        # Derived from the error text rather than from stop_reason: max_turns
+        # and max_budget are classified from the subtype and must keep a false
+        # flag, or every turn-exhausted run reads as a crash.
+        "is_error": error is not None,
         "total_cost_usd": total_cost,
         "num_turns": turn_count,
         "duration_ms": duration_ms,
@@ -583,9 +520,6 @@ def _write_result_record(
             "cache_creation_input_tokens": tokens.get("cacheWrite", 0),
         },
     }
-    if refused and error:
-        # The key _diagnose_result_type reads for its detail when is_error.
-        record["error"] = error
 
     # Claude's result record carries per-model costs and the ledger reads them
     # into cost_by_model; without this every Pi row is blank under
@@ -601,8 +535,22 @@ def _write_result_record(
                 "cacheCreationInputTokens": tokens.get("cacheWrite", 0),
             }
         }
+    if error is not None:
+        record["error"] = error
     with open(session_log, "a") as f:
         f.write(json.dumps(record) + "\n")
+
+
+def _exit_code(proc: subprocess.Popen, stream: StreamResult) -> int:
+    """The status a caller should see for this run.
+
+    Pi shuts down cleanly after refusing a prompt, so its own status is 0 for a
+    run that never started. Its status still wins when it reported one — that
+    is the more specific answer — and the substitute only covers the zero.
+    """
+    if stream.error and not proc.returncode:
+        return _RPC_ERROR_EXIT_CODE
+    return proc.returncode
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
@@ -671,25 +619,28 @@ def invoke_agent(inv: AgentInvocation) -> int:
     start_time = time.monotonic()
 
     # Send the prompt via RPC
-    unsent = _send_prompt(proc, full_prompt)
+    _send(proc, {"type": "prompt", "message": full_prompt})
 
     # Stream events with budget and turn enforcement
     with open(inv.session_log, "w") as log_fh:
-        stream = _refused_stream(unsent) if unsent else _consume_stream(
+        stream = _consume_stream(
             proc, log_fh, prefix,
             max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
-    stream = _refused_stream(_died_before_reading(proc)) if _never_spoke(stream, proc) else stream
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
-    stats = _stats_unless_refused(stream, proc)
+    # Query authoritative stats after agent is done. A run Pi refused spent
+    # nothing, so the query would buy a round trip for four zeroes — and it is
+    # the one thing on this path that writes to a child that may already be
+    # gone, then reads until a reply that will never come.
+    stats = {} if stream.error else _get_stats_after_agent_end(proc)
 
     # Write Claude-compatible result record
     _write_result_record(
         inv.session_log, stream.stop_reason, stream.turn_count,
         stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
-        stream.error,
+        error=stream.error,
     )
 
     # Close stdin to terminate the RPC process — tolerate early exit
@@ -697,9 +648,10 @@ def invoke_agent(inv: AgentInvocation) -> int:
         proc.stdin.close()
     except BrokenPipeError:
         pass
-    proc.wait()
+    # Before reading stderr, which blocks until the child closes it.
+    _wait_for_exit(proc)
     _log_stderr_on_failure(proc, inv.session_log)
-    return _exit_code(stream, proc.returncode)
+    return _exit_code(proc, stream)
 
 
 def invoke_fix(inv: AgentInvocation) -> int:
@@ -729,30 +681,30 @@ def invoke_fix(inv: AgentInvocation) -> int:
 
     start_time = time.monotonic()
 
-    unsent = _send_prompt(proc, full_prompt)
+    _send(proc, {"type": "prompt", "message": full_prompt})
 
     log_path = inv.session_log if inv.session_log else os.devnull
     with open(log_path, "w") as log_file:
-        stream = _refused_stream(unsent) if unsent else _consume_stream(
+        stream = _consume_stream(
             proc, log_file, "",
             max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
-    stream = _refused_stream(_died_before_reading(proc)) if _never_spoke(stream, proc) else stream
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
     if inv.session_log:
-        stats = _stats_unless_refused(stream, proc)
+        stats = {} if stream.error else _get_stats_after_agent_end(proc)
         _write_result_record(
             inv.session_log, stream.stop_reason, stream.turn_count,
             stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
-            stream.error,
+            error=stream.error,
         )
 
     try:
         proc.stdin.close()
     except BrokenPipeError:
         pass
-    proc.wait()
+    # Before reading stderr, which blocks until the child closes it.
+    _wait_for_exit(proc)
     _log_stderr_on_failure(proc, inv.session_log)
-    return _exit_code(stream, proc.returncode)
+    return _exit_code(proc, stream)

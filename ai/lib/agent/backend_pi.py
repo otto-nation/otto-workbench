@@ -50,7 +50,8 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -287,15 +288,30 @@ def _rpc_response_error(data: dict) -> str | None:
     return None
 
 
-def _wait_for_exit(proc: subprocess.Popen) -> None:
-    """Wait for Pi to exit after its stdin was closed, killing it if it will not.
+def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> None:
+    """Wait for Pi to exit after its stdin was closed.
 
-    Closing stdin is how RPC mode is told to stop, and a healthy Pi exits at
-    once. A run abandoned on a fatal response leaves the event loop before
-    stdout reached EOF, so the child can still be alive with an unread pipe —
-    and an unbounded wait there is the same silent hang this path exists to
-    end, one line further down.
+    Bounded only for a run this module abandoned. Breaking out of the event
+    loop on a fatal response leaves a child that is still alive with an unread
+    stdout pipe, and waiting on that forever is the same silent hang the break
+    exists to end, one line further down.
+
+    A run that reached agent_end is waited for as long as it takes, which is
+    what the code did before there was an error path at all. Pi's shutdown does
+    real work — flushing its log, tearing down extensions — and this machine's
+    own test runner documents subprocesses losing the scheduler for seconds
+    under load. A bound here would kill a healthy run that had already written
+    its output and report the whole thing as a failure, which is a worse
+    outcome than the wait it would be shortening.
+
+    The whole group is signalled, not the direct child: Pi leads a session of
+    its own and the tools it spawned outlive a kill aimed at it alone. A second
+    expiry is swallowed because SIGKILL is already the last resort — raising
+    here would replace a reported failure with a traceback no caller handles.
     """
+    if not abandoned:
+        proc.wait(timeout=timeouts.UNBOUNDED)
+        return
     try:
         proc.wait(timeout=timeouts.LOCAL)
     except subprocess.TimeoutExpired:
@@ -303,7 +319,27 @@ def _wait_for_exit(proc: subprocess.Popen) -> None:
         try:
             proc.wait(timeout=timeouts.QUICK)
         except subprocess.TimeoutExpired:
-            pass
+            log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
+
+
+@contextmanager
+def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
+    """Start Pi in its own process session, killing the group on the way out.
+
+    ``start_new_session`` is what makes the child a group leader, so that
+    `_wait_for_exit` can reach the tools it spawned rather than only Pi itself.
+    It also takes the child out of the terminal's foreground group, which means
+    a Ctrl-C no longer reaches it — the interrupt lands on this process alone
+    and would otherwise leave a detached agent running against the account with
+    nothing holding a handle to it. The kill on the way out is the other half
+    of that flag, and `core.proc._run_in_own_group` pairs the two the same way.
+    """
+    proc = subprocess.Popen(cmd, start_new_session=True, **spawn)
+    try:
+        yield proc
+    except BaseException:
+        _kill_group(proc)
+        raise
 
 
 def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
@@ -545,6 +581,18 @@ def _write_result_record(
         f.write(json.dumps(record) + "\n")
 
 
+def _prompt_with_dirs(inv: AgentInvocation) -> str:
+    """The prompt text, with the readable directories named in it.
+
+    Pi has no --add-dir flag, so the directories an agent may read outside its
+    cwd reach it as prose or not at all.
+    """
+    if not inv.add_dirs:
+        return inv.prompt
+    dir_lines = "\n".join(f"  - {d}" for d in inv.add_dirs)
+    return f"\nAccessible directories:\n{dir_lines}\n\n{inv.prompt}"
+
+
 def _exit_code(proc: subprocess.Popen, stream: StreamResult) -> int:
     """The status a caller should see for this run.
 
@@ -600,26 +648,24 @@ def invoke_agent(inv: AgentInvocation) -> int:
     - max_budget is enforced by accumulating message_end costs and sending abort
     - A Claude-compatible result record is written at the end for cost tracking
     """
-    dir_context = ""
-    if inv.add_dirs:
-        dir_lines = "\n".join(f"  - {d}" for d in inv.add_dirs)
-        dir_context = f"\nAccessible directories:\n{dir_lines}\n\n"
-
-    full_prompt = dir_context + inv.prompt if dir_context else inv.prompt
-
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(inv, extension=ext)
-    proc = subprocess.Popen(
-        cmd,
+    spawn = dict(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
         env=_guard_env(inv) if ext else inv.env,
-        start_new_session=True,
     )
 
+    with _rpc_process(cmd, **spawn) as proc:
+        return _drive_agent(inv, proc)
+
+
+def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
+    """Prompt Pi, consume its stream, and record what the run cost."""
+    full_prompt = _prompt_with_dirs(inv)
     prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
     start_time = time.monotonic()
 
@@ -654,7 +700,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
     except BrokenPipeError:
         pass
     # Before reading stderr, which blocks until the child closes it.
-    _wait_for_exit(proc)
+    _wait_for_exit(proc, abandoned=stream.error is not None)
     _log_stderr_on_failure(proc, inv.session_log)
     return _exit_code(proc, stream)
 
@@ -665,29 +711,26 @@ def invoke_fix(inv: AgentInvocation) -> int:
     Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
     If session_log is empty, events are consumed but not persisted.
     """
-    dir_context = ""
-    if inv.add_dirs:
-        dir_lines = "\n".join(f"  - {d}" for d in inv.add_dirs)
-        dir_context = f"\nAccessible directories:\n{dir_lines}\n\n"
-
-    full_prompt = dir_context + inv.prompt if dir_context else inv.prompt
-
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(inv, extension=ext)
-    proc = subprocess.Popen(
-        cmd,
+    spawn = dict(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
         env=_guard_env(inv) if ext else inv.env,
-        start_new_session=True,
     )
 
+    with _rpc_process(cmd, **spawn) as proc:
+        return _drive_fix(inv, proc)
+
+
+def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
+    """Prompt Pi and consume its stream, persisting the run only if asked to."""
     start_time = time.monotonic()
 
-    _send(proc, {"type": "prompt", "message": full_prompt})
+    _send(proc, {"type": "prompt", "message": _prompt_with_dirs(inv)})
 
     log_path = inv.session_log if inv.session_log else os.devnull
     with open(log_path, "w") as log_file:
@@ -711,6 +754,6 @@ def invoke_fix(inv: AgentInvocation) -> int:
     except BrokenPipeError:
         pass
     # Before reading stderr, which blocks until the child closes it.
-    _wait_for_exit(proc)
+    _wait_for_exit(proc, abandoned=stream.error is not None)
     _log_stderr_on_failure(proc, inv.session_log)
     return _exit_code(proc, stream)

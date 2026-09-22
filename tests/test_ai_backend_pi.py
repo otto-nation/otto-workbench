@@ -785,6 +785,20 @@ class TestRefusalReachesTheCaller:
         self._run(monkeypatch, tmp_path, proc)
         assert [c for c in proc.stdin.commands if c["type"] == "get_session_stats"]
 
+    # passes-at-base: pins the unbounded wait this change scoped rather than took
+    def test_a_completed_run_is_waited_for_however_long_it_takes(
+        self, monkeypatch, tmp_path,
+    ):
+        # A bound on this path kills a healthy Pi that is merely slow to flush
+        # under load, turning a run that already wrote its output into a
+        # SIGKILL and a non-zero exit — worse than the wait it would shorten.
+        proc = _RefusingProc([
+            _event("agent_end"),
+            json.dumps(_stats_response()) + "\n",
+        ])
+        self._run(monkeypatch, tmp_path, proc)
+        assert proc.waits == [None], "the completed run's wait was bounded"
+
     def test_a_wedged_pi_is_killed_rather_than_waited_out(self, monkeypatch, tmp_path):
         proc = _RefusingProc(
             [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
@@ -817,6 +831,82 @@ class TestRefusalReachesTheCaller:
         proc.wait = _always_hangs
         code = self._run(monkeypatch, tmp_path, proc)
         assert code != 0
+
+
+class TestPiRunsInItsOwnGroup:
+    """Pi leads its own session, and nothing escapes when the caller is cut off.
+
+    `_wait_for_exit` signals the whole group so the tools Pi spawned die with
+    it. That flag also takes Pi out of the terminal's foreground group, so a
+    Ctrl-C no longer reaches it: the interrupt lands on this process alone, and
+    without a kill on the way out the agent keeps running against the account
+    with nothing holding a handle to it.
+    """
+
+    def test_pi_is_started_as_a_group_leader(self, monkeypatch, tmp_path):
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert seen["start_new_session"] is True
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_an_interrupt_kills_the_group_before_propagating(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        # Without the kill the interrupt unwinds this process and leaves Pi
+        # detached and billing — the harm `start_new_session` newly makes
+        # possible, since a Ctrl-C no longer reaches a child in its own group.
+        proc = _RefusingProc([])
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
+        killpg_calls = []
+        monkeypatch.setattr(
+            "core.proc.os.killpg",
+            lambda pid, sig: killpg_calls.append((pid, sig)),
+        )
+
+        def _interrupted(*a, **kw):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(ai_backend_pi, "_consume_stream", _interrupted)
+
+        with pytest.raises(KeyboardInterrupt):
+            getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+                prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+            ))
+        assert killpg_calls == [(proc.pid, signal.SIGKILL)]
+
+
+class TestPromptCarriesReadableDirs:
+    """Pi has no --add-dir, so the directories reach it in the prompt or not."""
+
+    def _sent_prompt(self, monkeypatch, tmp_path, entry_point, add_dirs):
+        proc = _RefusingProc([_response("prompt", False, _AUTH_ERROR)])
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="review this", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"), add_dirs=add_dirs,
+        ))
+        return proc.stdin.commands[0]["message"]
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    # passes-at-base: pins prompt text the _prompt_with_dirs extraction preserves
+    def test_the_dirs_and_the_prompt_both_reach_pi(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        message = self._sent_prompt(
+            monkeypatch, tmp_path, entry_point, ["/tmp/artifacts"],
+        )
+        assert "/tmp/artifacts" in message
+        assert message.endswith("review this")
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    # passes-at-base: as above, for the no-directories case
+    def test_no_dirs_sends_the_prompt_alone(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        assert self._sent_prompt(monkeypatch, tmp_path, entry_point, []) == "review this"
 
 
 class TestRefusalDiagnosis:

@@ -57,6 +57,7 @@ from pathlib import Path
 from agent import usage as ai_usage
 from core import log
 from core import timeouts
+from core.proc import _kill_group
 from agent.backend import AgentInvocation
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
@@ -298,8 +299,11 @@ def _wait_for_exit(proc: subprocess.Popen) -> None:
     try:
         proc.wait(timeout=timeouts.LOCAL)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=timeouts.QUICK)
+        _kill_group(proc)
+        try:
+            proc.wait(timeout=timeouts.QUICK)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
@@ -613,6 +617,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         text=True,
         cwd=inv.cwd,
         env=_guard_env(inv) if ext else inv.env,
+        start_new_session=True,
     )
 
     prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
@@ -677,6 +682,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         text=True,
         cwd=inv.cwd,
         env=_guard_env(inv) if ext else inv.env,
+        start_new_session=True,
     )
 
     start_time = time.monotonic()

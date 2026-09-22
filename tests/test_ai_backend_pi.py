@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -731,6 +732,10 @@ class _RefusingProc:
         self.wait_hangs = wait_hangs
         self.killed = False
         self.waits = []
+        # A real Popen's pid; _kill_group signals this as a process group id
+        # under start_new_session, which os.killpg is monkeypatched to record
+        # rather than actually signal.
+        self.pid = 424242
 
     def wait(self, timeout=None):
         self.waits.append(timeout)
@@ -784,9 +789,34 @@ class TestRefusalReachesTheCaller:
         proc = _RefusingProc(
             [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
         )
+        killpg_calls = []
+        monkeypatch.setattr(
+            "core.proc.os.killpg",
+            lambda pid, sig: killpg_calls.append((pid, sig)),
+        )
         self._run(monkeypatch, tmp_path, proc)
-        assert proc.killed
+        assert killpg_calls == [(proc.pid, signal.SIGKILL)]
         assert proc.waits[0] is not None, "the wait was unbounded"
+
+    def test_a_wedged_pi_whose_group_will_not_reap_does_not_crash_the_caller(
+        self, monkeypatch, tmp_path,
+    ):
+        # SIGKILL almost always reaps promptly, but a process stuck in an
+        # uninterruptible state can still fail to be reaped within QUICK. The
+        # second wait's TimeoutExpired must not propagate — nothing further to
+        # retry, and the caller has no handler for it.
+        proc = _RefusingProc(
+            [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
+        )
+        monkeypatch.setattr("core.proc.os.killpg", lambda pid, sig: None)
+
+        def _always_hangs(timeout=None):
+            proc.waits.append(timeout)
+            raise subprocess.TimeoutExpired("pi", timeout)
+
+        proc.wait = _always_hangs
+        code = self._run(monkeypatch, tmp_path, proc)
+        assert code != 0
 
 
 class TestRefusalDiagnosis:

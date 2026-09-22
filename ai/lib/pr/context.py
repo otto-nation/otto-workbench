@@ -664,15 +664,28 @@ def _pr_from_current(cwd: str | None = None) -> BranchPR:
 
 
 def _pr_from_branch(repo: str, branch: str) -> BranchPR:
-    said = gh_client.out(
+    """The open PR for *branch*, both fields off one call.
+
+    The list is read as JSON rather than flattened by a `--jq` interpolation:
+    `.[0] | "\\(.number) \\(.baseRefName)"` against an empty list prints the
+    literal ``"null null"`` and exits 0, which is two fields and passes any
+    arity check. The base then reads as the branch name "null", every range
+    resolves to nothing, and a branch with no PR yet — the ordinary case for
+    `--self` — is reviewed against a ref that does not exist.
+    """
+    found = gh_client.json_out(
         "pr", "list", "--repo", repo, "--head", branch,
-        "--json", "number,baseRefName",
-        "--jq", '.[0] | "\\(.number) \\(.baseRefName)"',
+        "--json", "number,baseRefName", default=[],
     )
-    parts = said.split()
-    if len(parts) != 2:
+    if not isinstance(found, list) or not found:
         return BranchPR()
-    return BranchPR(number=_as_pr_number(parts[0]), base=parts[1])
+    first = found[0]
+    if not isinstance(first, dict):
+        return BranchPR()
+    return BranchPR(
+        number=_as_pr_number(str(first.get("number", ""))),
+        base=first.get("baseRefName") or "",
+    )
 
 
 def _pr_head(repo: str, pr_number: int) -> PRHead:

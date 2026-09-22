@@ -626,6 +626,38 @@ def test_pr_lookup_is_skipped_without_a_branch():
     assert pr_context.pr_number_if_reachable("acme/widget", "") == pr_context.BranchPR()
 
 
+def test_a_branch_with_no_pr_yields_no_base(monkeypatch):
+    """Regression: the lookup read `gh pr list` through a `--jq` interpolation,
+    and `.[0] | "\\(.number) \\(.baseRefName)"` against an empty list prints the
+    literal "null null" and exits 0. That is two fields, so it passed the arity
+    check, and the base came back as the branch name "null" — which resolves to
+    no ref, so a branch with no PR yet reviewed nothing at all."""
+    monkeypatch.setattr(pr_context.gh_client, "json_out", lambda *a, **kw: [])
+
+    assert pr_context._pr_from_branch("acme/widget", "feat/x") == pr_context.BranchPR()
+
+
+def test_a_branch_lookup_reads_both_fields_off_the_json(monkeypatch):
+    monkeypatch.setattr(
+        pr_context.gh_client, "json_out",
+        lambda *a, **kw: [{"number": 7, "baseRefName": "feat/parent"}],
+    )
+
+    found = pr_context._pr_from_branch("acme/widget", "feat/child")
+
+    assert found == pr_context.BranchPR(number=7, base="feat/parent")
+
+
+def test_a_pr_reporting_no_base_is_not_given_one(monkeypatch):
+    """An absent base falls through the ladder; a placeholder would stop it."""
+    monkeypatch.setattr(
+        pr_context.gh_client, "json_out",
+        lambda *a, **kw: [{"number": 7, "baseRefName": None}],
+    )
+
+    assert pr_context._pr_from_branch("acme/widget", "feat/x").base == ""
+
+
 # ── the shared base ladder ──────────────────────────────────────────────────
 
 

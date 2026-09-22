@@ -149,9 +149,11 @@ Parse the JSON output. Top-level fields:
 | `issue_comments` | Raw issue-level discussion comments (for fallback when items aren't available) |
 | `review_body_comments` | Raw review-level body comments (for fallback when items aren't available) |
 
-The `fix_pass` object's own JSON keys are exactly the fields below marked
-**(field)**. `declined`, `skipped`, and `settled_elsewhere` are outcome
-kinds, not keys of this object — each row says where it actually surfaces.
+Every row below marked **(field)** is a real JSON key of `fix_pass`. The rows
+marked otherwise are not keys of it — `declined`, `skipped` and
+`settled_elsewhere` are outcome kinds, and each row says where it actually
+surfaces. `batches`, `max_turns` and `max_budget` are keys too, covered above
+rather than in this table.
 
 | Field | Contents |
 |-------|----------|

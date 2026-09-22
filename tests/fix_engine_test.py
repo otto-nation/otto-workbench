@@ -667,7 +667,8 @@ def test_a_reasoned_decline_is_put_to_the_gate(tmp_path, landed, head):
                          reason="the code already does this"))
 
     assert seen["ids"] == ["i0"]
-    assert "rejected this finding" in seen["body"]
+    assert f"rejected this {adapter.item_noun}" in seen["body"]
+    assert "rejected this finding" not in seen["body"]
     assert "the code already does this" in seen["body"]
 
 
@@ -934,7 +935,7 @@ def test_an_id_the_pass_never_handed_out_still_carries_its_claim():
     outcome = ItemOutcome(id="x", file="a.py", line=2,
                           outcome=FixOutcome.FIXED, reason="test_orphan")
 
-    item = fix_engine._verify_item(outcome, None)
+    item = fix_engine._verify_item(outcome, None, StubAdapter.item_noun)
 
     assert "test_orphan" in item.body
     assert fix_engine._CLAIM_HEADING in item.body

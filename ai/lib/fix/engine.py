@@ -533,24 +533,24 @@ _NO_CLAIM = (
 # gate — but a gate handed a decline under the fix wording looks for a change
 # that was never made and reports every one of them broken.
 _DECLINE_HEADING = (
-    "**The fix pass rejected this finding rather than acting on it, saying:**"
+    "**The fix pass rejected this {noun} rather than acting on it, saying:**"
 )
 
 _DECLINE_ASK = (
     "Check that reason against the tree, and judge only whether it holds.\n\n"
     "Two ways it commonly does not, both of which read as sound prose:\n\n"
     "1. **It describes the tree after the pass's own edits.** A pass that fixed "
-    "the finding and then declined it reports the fix as a non-defect, and the "
+    "the {noun} and then declined it reports the fix as a non-defect, and the "
     "reason is true when you read the file precisely because the pass made it "
     "true. The uncommitted edits are in the worktree — `git diff` is exactly "
     "what this pass changed. If the reason is true only with that diff applied, "
-    "the finding was fixed, not declined: answer **broken** and say so.\n"
+    "the {noun} was fixed, not declined: answer **broken** and say so.\n"
     "2. **It cites a commit that does not contain what it claims.** A reason "
     "naming a SHA is checkable: `git show <sha>` it. A pass cannot cite its own "
     "commit here, because it has not committed yet — so a SHA that does not "
     "carry the change described is a reason with nothing behind it.\n\n"
     "A decline resting on scope, house convention, a documented tradeoff, or the "
-    "finding's own text is not any of the above. Judge it as written and answer "
+    "{noun}'s own text is not any of the above. Judge it as written and answer "
     "**verified** when it holds."
 )
 
@@ -565,12 +565,14 @@ def _claim_block(reason: str) -> str:
     return f"{_CLAIM_HEADING} {reason}" if reason else _NO_CLAIM
 
 
-def _decline_block(reason: str) -> str:
-    """A decline as the gate is asked to check it."""
-    return f"{_DECLINE_HEADING} {reason}\n\n{_DECLINE_ASK}"
+def _decline_block(reason: str, noun: str) -> str:
+    """A decline as the gate is asked to check it, worded for the domain's own noun."""
+    heading = _DECLINE_HEADING.format(noun=noun)
+    ask = _DECLINE_ASK.format(noun=noun)
+    return f"{heading} {reason}\n\n{ask}"
 
 
-def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
+def _verify_item(outcome: ItemOutcome, source: FixItem | None, noun: str) -> FixItem:
     """One claimed fix as the gate is asked about it.
 
     The body is two things joined: the domain's own rendering of what the
@@ -586,7 +588,7 @@ def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
     since that half comes from the outcome.
     """
     claim = (
-        _decline_block(outcome.reason)
+        _decline_block(outcome.reason, noun)
         if outcome.outcome is FixOutcome.DECLINED
         else _claim_block(outcome.reason)
     )
@@ -668,7 +670,7 @@ def _verify(
     if not claimed:
         return
 
-    items = [_verify_item(o, by_id.get(o.id)) for o in claimed]
+    items = [_verify_item(o, by_id.get(o.id), adapter.item_noun) for o in claimed]
     # The gate's own phase where the domain declared one. Falling back to the
     # fix pass's phase keeps a domain that has not declared one working, but it
     # prompts the gate with the fix pass's template — so a domain running a gate

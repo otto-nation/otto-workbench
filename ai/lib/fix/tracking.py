@@ -131,11 +131,12 @@ _BOX_RE = box_pattern(_BOXES)
 # half of a wrapped aside is worse to read than the whole of one.
 _REASON_LEAD = re.compile(r"^[\s—–:.,;-]+")
 
-# Where a box's reason stops: the next box, or the next section. Everything
-# between is the agent's words, however many lines it took to write them.
-_REASON_END_RE = re.compile(
-    r"^(?:- \[[ xX]\] |## <!-- fix:)", re.MULTILINE,
-)
+# Where a box's reason stops: the next box. The next section never appears in
+# the text this is searched against — both call sites already slice `body`
+# down to one section (`text[match.end():end]`, `end` being the next match's
+# start) before handing it to `_ticked_reasons` — so matching a section heading
+# here would be unreachable.
+_REASON_END_RE = re.compile(r"^- \[[ xX]\] ", re.MULTILINE)
 
 _LOCATION_RE = re.compile(r"^(?P<file>.+):(?P<line>\d+)$")
 

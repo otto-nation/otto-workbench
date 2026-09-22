@@ -100,6 +100,8 @@ busy_cores() {
 # substitution (`JOBS=$(test_jobs)`) would run it in a subshell, so any global
 # it set would vanish with that subshell — report_jobs() would then have
 # nothing to read and would have to take its own, independently-timed sample.
+#
+# side effect: sets JOBS, JOBS_CORES, JOBS_BUSY globals; does not echo a value.
 test_jobs() {
   if [[ -n "${TEST_JOBS:-}" ]]; then
     JOBS="$TEST_JOBS"

@@ -71,9 +71,9 @@ def no_write_hint(backend: Backend | None = None) -> str:
     does, and falls back to Claude's recipe when nothing names one.
     """
     if backend is None:
-        from agent.backend import selected_backend
+        from agent.backend import selected_backend_or_claude
 
-        backend = selected_backend() or Backend.CLAUDE
+        backend = selected_backend_or_claude()
     return (
         "IMPORTANT: A previous attempt finished without ever calling a "
         "file-writing tool. Write your output file FIRST, before any further "

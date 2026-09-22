@@ -111,6 +111,18 @@ def selected_backend() -> Backend | None:
     return _configured_backend()
 
 
+def selected_backend_or_claude() -> Backend:
+    """``selected_backend()``, falling back to Claude when nothing names one.
+
+    For the callers that describe a write mechanism rather than dispatch one —
+    ``agent.templates.build_output_block`` and ``agent.retry.no_write_hint`` —
+    and so cannot raise on an unselected backend the way dispatch does. Both
+    used to inline this fallback and its lazy import; kept here once so the
+    two write-recipe callers cannot drift on which backend an unset one means.
+    """
+    return selected_backend() or Backend.CLAUDE
+
+
 def _require_backend() -> Backend:
     """The selected backend, or a failure naming both ways to set it.
 

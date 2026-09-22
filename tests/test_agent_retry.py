@@ -430,5 +430,6 @@ class TestWriteRecipesMatchTheBackend:
         """Dispatch raises on that run; prompt assembly must not raise first."""
         monkeypatch.delenv("AI_BACKEND", raising=False)
         monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
-        assert agent_templates.build_output_block("/tmp/out.md")
-        assert agent_retry.no_write_hint()
+        # The documented fallback is Claude's recipe, not merely any recipe.
+        assert "old_string" in agent_templates.build_output_block("/tmp/out.md")
+        assert "old_string" in agent_retry.no_write_hint()

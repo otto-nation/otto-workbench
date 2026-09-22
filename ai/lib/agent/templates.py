@@ -14,9 +14,12 @@ described identically wherever the prompt came from.
 
 Stdlib plus the backend selection, like ``phases`` and for nearly the same
 reason: a prompt is the last thing that should need the PR state machine to
-render. It reaches for the selected backend because the tools an agent has are
-the backend's answer, and a write instruction naming the other CLI's tools is
-not advice an agent can decline — it is a call that cannot succeed.
+render. ``phases`` needs the config and environment layers to answer which
+knob an invocation runs with; this needs only the backend selector, to know
+which CLI's tools the write recipe should name. It reaches for the selected
+backend because the tools an agent has are the backend's answer, and a write
+instruction naming the other CLI's tools is not advice an agent can decline —
+it is a call that cannot succeed.
 """
 
 # doc-group: pipeline
@@ -103,15 +106,17 @@ def build_output_block(
 
     Falls back to the Claude recipe when nothing names a backend. Dispatch will
     raise on that run anyway, and a prompt-builder that raised first would turn
-    a clear "no backend selected" into a failure inside prompt assembly.
+    a clear "no backend selected" into a failure inside prompt assembly. A
+    caller that renders a prompt without going on to dispatch it — a dry run,
+    a prompt-preview — gets the Claude recipe with no such raise to follow it.
     """
     if backend is None:
         # Imported here rather than at module scope: `agent.backend` pulls in
         # the usage ledger and the config layer, and a template render is not a
         # reason to load either.
-        from agent.backend import selected_backend
+        from agent.backend import selected_backend_or_claude
 
-        backend = selected_backend() or Backend.CLAUDE
+        backend = selected_backend_or_claude()
     stdout_line = (
         "\nDo NOT print the output to stdout — it only counts if it lands in the file."
         if stdout_warning else ""

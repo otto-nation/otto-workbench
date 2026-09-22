@@ -161,6 +161,15 @@ class TestBackendSelection:
         monkeypatch.delenv("AI_BACKEND", raising=False)
         assert ai_backend.is_available() is False
 
+    def test_or_claude_passes_through_a_real_selection(self, monkeypatch):
+        """The fallback only applies when nothing is selected."""
+        monkeypatch.setenv("AI_BACKEND", "pi")
+        assert ai_backend.selected_backend_or_claude() is ai_backend.Backend.PI
+
+    def test_or_claude_falls_back_when_nothing_is_selected(self):
+        """The shared fallback ``agent.templates`` and ``agent.retry`` both use."""
+        assert ai_backend.selected_backend_or_claude() is ai_backend.Backend.CLAUDE
+
 
 class TestPreflightDispatch:
     def test_routes_to_claude_backend(self, monkeypatch):

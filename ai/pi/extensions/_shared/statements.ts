@@ -23,13 +23,15 @@ const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
 /**
  * Split one line on the control operators that end a statement — `;`, `&&`,
  * `||`, a standalone backgrounding `&`, and `|` — without breaking on an `&`
- * that belongs to a redirect (`2>&1`, `>&2`) instead.
+ * that belongs to a redirect (`2>&1`, `>&2`, `&>file`, `&>>file`) instead.
  *
- * A naive `/[;&|]/` split cuts a redirect's `&` apart from the `>` in front
- * of it, so a trailing `2>&1` shatters the statement it sits inside into
- * fragments no longer than a couple of characters. Scanning char-by-char and
- * treating `&` right after `>` as part of the redirect keeps that statement
- * whole while still splitting on every other occurrence of the separators.
+ * A naive `/[;&|]/` split cuts a redirect's `&` apart from the `>` next to
+ * it, so a trailing `2>&1` shatters the statement it sits inside into
+ * fragments no longer than a couple of characters, and a leading `&>file`
+ * would do the same in the other direction. Scanning char-by-char and
+ * treating `&` right after or right before `>` as part of the redirect keeps
+ * that statement whole while still splitting on every other occurrence of
+ * the separators.
  */
 function splitOnControlOperators(line: string): string[] {
   const parts: string[] = [];

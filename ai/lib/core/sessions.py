@@ -168,7 +168,7 @@ AUTOMATION_PREFIXES: tuple[str, ...] = (
     "You are completing the final review",
     "You are doing a holistic scan",
     "You are a lead scout",
-    "You are verifying fixes",
+    "You are verifying what another agent claims",
     # ai/lib/rebase — per-commit conflict resolution
     "You are resolving",
     # pr review --self, pr comments --fix, pr ci --fix

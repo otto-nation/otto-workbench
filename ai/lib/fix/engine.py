@@ -75,6 +75,11 @@ _RESUME_HINT = (
     "from it. Work efficiently.\n\n"
 )
 
+# The outcomes that reject a finding without changing anything. Both close an
+# item on the pass's say-so alone, so a reason is the only thing an operator can
+# weigh them by — see `_record_unevidenced`.
+_OWES_A_REASON = frozenset({FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN})
+
 
 @dataclass(frozen=True)
 class LandSpec:
@@ -416,6 +421,12 @@ def _record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> Non
     Emitted here rather than from the parse because this is where the trail is,
     and because the question is about the pass rather than about any one box:
     `tracking._record_verdict` decides a single verdict and is kept to that.
+
+    A decline and a `needs a person` are recorded the same way and for a
+    stronger reason. Every box in the vocabulary asks for the agent's words, but
+    only FIXED leaves a diff an operator can read instead: an unreasoned decline
+    renders as a bare `*(declined)*` against a finding nobody acted on, which is
+    the pass rejecting a reviewer's claim and declining to say why.
     """
     if not trail:
         return
@@ -423,13 +434,22 @@ def _record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> Non
         o.id for o in outcomes
         if o.outcome.counts_as_fixed and not o.reason
     ]
-    if not unevidenced:
-        return
-    trail.warn(
-        "fix_unevidenced",
-        f"{len(unevidenced)} fix(es) ticked with no test evidence",
-        data={"items": unevidenced},
-    )
+    if unevidenced:
+        trail.warn(
+            "fix_unevidenced",
+            f"{len(unevidenced)} fix(es) ticked with no test evidence",
+            data={"items": unevidenced},
+        )
+    unreasoned = [
+        o.id for o in outcomes
+        if o.outcome in _OWES_A_REASON and not o.reason
+    ]
+    if unreasoned:
+        trail.warn(
+            "fix_unreasoned",
+            f"{len(unreasoned)} finding(s) rejected with no reason given",
+            data={"items": unreasoned},
+        )
 
 
 def _settle(
@@ -506,6 +526,35 @@ _NO_CLAIM = (
 )
 
 
+# A decline asks the gate a different question from a fix. A fix says "I changed
+# this" and is checked by running it; a decline says "this finding is wrong about
+# the code" and is checked by reading the tree the decline describes. Both are
+# claims the pass made about work nobody else watched, which is why they share a
+# gate — but a gate handed a decline under the fix wording looks for a change
+# that was never made and reports every one of them broken.
+_DECLINE_HEADING = (
+    "**The fix pass rejected this {noun} rather than acting on it, saying:**"
+)
+
+_DECLINE_ASK = (
+    "Check that reason against the tree, and judge only whether it holds.\n\n"
+    "Two ways it commonly does not, both of which read as sound prose:\n\n"
+    "1. **It describes the tree after the pass's own edits.** A pass that fixed "
+    "the {noun} and then declined it reports the fix as a non-defect, and the "
+    "reason is true when you read the file precisely because the pass made it "
+    "true. The uncommitted edits are in the worktree — `git diff` is exactly "
+    "what this pass changed. If the reason is true only with that diff applied, "
+    "the {noun} was fixed, not declined: answer **broken** and say so.\n"
+    "2. **It cites a commit that does not contain what it claims.** A reason "
+    "naming a SHA is checkable: `git show <sha>` it. A pass cannot cite its own "
+    "commit here, because it has not committed yet — so a SHA that does not "
+    "carry the change described is a reason with nothing behind it.\n\n"
+    "A decline resting on scope, house convention, a documented tradeoff, or the "
+    "{noun}'s own text is not any of the above. Judge it as written and answer "
+    "**verified** when it holds."
+)
+
+
 def _claim_block(reason: str) -> str:
     """What the fix pass said holds this change, framed as a claim to check.
 
@@ -516,7 +565,14 @@ def _claim_block(reason: str) -> str:
     return f"{_CLAIM_HEADING} {reason}" if reason else _NO_CLAIM
 
 
-def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
+def _decline_block(reason: str, noun: str) -> str:
+    """A decline as the gate is asked to check it, worded for the domain's own noun."""
+    heading = _DECLINE_HEADING.format(noun=noun)
+    ask = _DECLINE_ASK.format(noun=noun)
+    return f"{heading} {reason}\n\n{ask}"
+
+
+def _verify_item(outcome: ItemOutcome, source: FixItem | None, noun: str) -> FixItem:
     """One claimed fix as the gate is asked about it.
 
     The body is two things joined: the domain's own rendering of what the
@@ -531,7 +587,11 @@ def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
     an id the pass answered but never handed out — the claim still reaches it,
     since that half comes from the outcome.
     """
-    claim = _claim_block(outcome.reason)
+    claim = (
+        _decline_block(outcome.reason, noun)
+        if outcome.outcome is FixOutcome.DECLINED
+        else _claim_block(outcome.reason)
+    )
     if source is None:
         return FixItem(id=outcome.id, file=outcome.file, line=outcome.line,
                        label=outcome.summary, body=claim)
@@ -547,16 +607,42 @@ def _verify_item(outcome: ItemOutcome, source: FixItem | None) -> FixItem:
     )
 
 
+def _gated_decline(outcome: ItemOutcome) -> bool:
+    """Whether this decline is one the gate can check.
+
+    Every decline with a reason is, and the predicate is deliberately no
+    cleverer than that. The tempting alternative is to gate only the ones whose
+    wording asserts something about the tree — "already", "not present",
+    "current HEAD" — but a decline is prose, the phrasings are unbounded, and a
+    keyword list quietly exempts the rewording it does not know. The failure it
+    would miss is the one worth catching, so the cost of gating the honest
+    declines too is accepted.
+
+    A decline with no reason is skipped because there is no claim to check.
+    `_record_unevidenced` reports that one instead.
+    """
+    return outcome.outcome is FixOutcome.DECLINED and bool(outcome.reason)
+
+
 def _verify(
     outcomes: list[ItemOutcome], verify: VerifyFn | None, adapter: FixAdapter,
     by_id: dict[str, FixItem], trail: Trail | None,
 ) -> None:
-    """Hold each claimed fix against what actually runs, before anything lands.
+    """Hold each claim against what actually runs, before anything lands.
 
     A ticked `fixed` box is the agent saying it applied an edit. That is not the
     same claim as the edit working, and the two are indistinguishable in a fix
     pass's output: both produce a ticked box, a commit, and a summary row. This
     is where they stop being indistinguishable.
+
+    A decline with a reason comes here too, and for the same argument. It is the
+    pass closing a reviewer's finding on its own say-so, with no diff anyone can
+    read to check it — the weakest-evidence outcome the vocabulary has, and
+    until this it was the only one nothing checked. The failure that motivated
+    it: a pass fixed a finding, then ticked `declined` describing the tree its
+    own edit had just produced, and cited a commit that did not contain the
+    change. The edit was committed anyway, because staging reads the worktree
+    diff and not the boxes, so the fix shipped recorded as "not a defect".
 
     Only falsification demotes. A verdict of None, and an id the gate never
     answered at all, both leave the outcome FIXED and unverified — silence is
@@ -577,11 +663,14 @@ def _verify(
     """
     if verify is None:
         return
-    claimed = [o for o in outcomes if o.outcome.counts_as_fixed]
+    claimed = [
+        o for o in outcomes
+        if o.outcome.counts_as_fixed or _gated_decline(o)
+    ]
     if not claimed:
         return
 
-    items = [_verify_item(o, by_id.get(o.id)) for o in claimed]
+    items = [_verify_item(o, by_id.get(o.id), adapter.item_noun) for o in claimed]
     # The gate's own phase where the domain declared one. Falling back to the
     # fix pass's phase keeps a domain that has not declared one working, but it
     # prompts the gate with the fix pass's template — so a domain running a gate
@@ -610,16 +699,20 @@ def _verify(
         # retry, and an edit that is present but wrong is not work the next
         # identical attempt gets right — it is a call for a person, and the
         # reason carries what the gate saw so they do not start from nothing.
+        was_declined = outcome.outcome is FixOutcome.DECLINED
         outcome.outcome = FixOutcome.NEEDS_HUMAN
-        outcome.reason = verdict.detail or "the fix did not hold up when run"
+        outcome.reason = verdict.detail or (
+            "the reason given for declining this did not hold up"
+            if was_declined else "the fix did not hold up when run"
+        )
         outcome.verified = False
         falsified += 1
 
     if falsified:
         log.warn(
             f"Verify gate: {falsified} of {len(claimed)} claimed "
-            f"fix{'es' if len(claimed) != 1 else ''} did not hold up — "
-            "demoted, not committed as fixed"
+            f"item{'s' if len(claimed) != 1 else ''} did not hold up — "
+            "demoted, not recorded as the pass claimed them"
         )
     if trail:
         trail.info(

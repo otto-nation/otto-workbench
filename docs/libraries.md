@@ -177,7 +177,7 @@ Every key any of them accepts:
 | `review.effort` | `low`, `medium`, `high` | — |
 | `issues.provider` | `linear`, `github`, `jira` | — |
 | `issues.team` | string | — |
-| `issues.jira_url` | string | — |
+| `issues.base_url` | string | — |
 | `issues.labels` | list of string | `[follow-up]` |
 | `github.ssh_over_443` | boolean | `false` |
 | `rebase.regenerate` | list of string | `[]` |

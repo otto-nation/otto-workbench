@@ -109,11 +109,11 @@ def test_load_issue_provider_falls_back_to_the_global_config(tmp_path, monkeypat
     config_dir.mkdir()
     monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
     (config_dir / "config.yml").write_text(
-        "issues:\n  provider: jira\n  jira_url: https://j.example\n",
+        "issues:\n  provider: jira\n  base_url: https://j.example\n",
     )
     result = load_issue_provider(str(tmp_path / "elsewhere"))
     assert result.name == "jira"
-    assert result.options["jira_url"] == "https://j.example"
+    assert result.options["base_url"] == "https://j.example"
 
 
 # ── needs_team_key ──────────────────────────────────────────────────────────
@@ -315,13 +315,41 @@ def test_fetch_issue_context_github(capsys):
 
 
 def test_fetch_issue_context_jira(capsys):
-    opts = {"jira_url": "https://jira.example.com"}
+    opts = {"base_url": "https://jira.example.com"}
     result = fetch_issue_context("jira", "PROJ-42", opts=opts)
 
     assert result.link == "https://jira.example.com/browse/PROJ-42"
     assert result.context == ""
     captured = capsys.readouterr()
     assert "Found Jira issue: PROJ-42" in captured.err
+
+
+def test_fetch_issue_context_jira_tolerates_a_trailing_slash():
+    """A host pasted from a browser keeps its slash; the link must not double it."""
+    opts = {"base_url": "https://jira.example.com/"}
+    result = fetch_issue_context("jira", "PROJ-42", opts=opts)
+
+    assert result.link == "https://jira.example.com/browse/PROJ-42"
+
+
+def test_fetch_issue_context_jira_without_a_base_url_has_no_link():
+    """Jira is per-tenant, so an unconfigured host has no default to fall back to."""
+    result = fetch_issue_context("jira", "PROJ-42", opts={})
+
+    assert result.link == ""
+
+
+def test_fetch_issue_context_github_honours_a_base_url():
+    """GitHub Enterprise links point at the instance, not github.com."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://ghe.example.com"}
+
+    with patch("subprocess.run", return_value=mock_result):
+        result = fetch_issue_context("github", "42", repo="owner/repo", opts=opts)
+
+    assert result.link == "https://ghe.example.com/owner/repo/issues/42"
 
 
 def test_fetch_issue_context_none_returns_empty():

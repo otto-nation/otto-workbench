@@ -164,12 +164,12 @@ kinds, not keys of this object — each row says where it actually surfaces.
 | `skipped` (not a field) | Never attempted — the pass excludes items of this kind on sight before `fix_pass` is built, so no key here records them |
 | `settled_elsewhere` (not a field) | Resolved on GitHub with no reply of ours naming a verdict. Nothing is owed and nothing is claimed; it is a reconciliation result reported after `--finish`, not a key of this object |
 | `commit_sha` **(field)** | Short SHA of the fix commit, or null |
-| `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
-| `replies_posted` | Count of per-thread replies posted to GitHub |
-| `summary_url` | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
-| `summary_deferred` | `true` when the round rendered a summary that did not go out — a draft run, a commit still off the remote, `needs_human` threads holding it back, or a post the API refused. The rows it covers are not only `fixed`: a round settled entirely as `already_addressed` renders a full table and owes it the same way. Together with `replies_pending` this is what `pr status` reads to report `⚠ closeout owed` and block merge readiness until `--finish --post` drains it |
-| `pr_body_pending` | `true` when a comment was answered by rewriting the PR description but the gate was shut. The replacement waits in `pr-description.md` in the pass's artifact directory, under the workbench state root rather than in the worktree; it is owed in `⚠ closeout owed` and sent by `--finish --post` |
-| `comment_items` | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
+| `commit_status` **(field)** | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
+| `replies_posted` **(field)** | Count of per-thread replies posted to GitHub |
+| `summary_url` **(field)** | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
+| `summary_deferred` **(field)** | `true` when the round rendered a summary that did not go out — a draft run, a commit still off the remote, `needs_human` threads holding it back, or a post the API refused. The rows it covers are not only `fixed`: a round settled entirely as `already_addressed` renders a full table and owes it the same way. Together with `replies_pending` this is what `pr status` reads to report `⚠ closeout owed` and block merge readiness until `--finish --post` drains it |
+| `pr_body_pending` (state field, not fix_pass) | `true` when a comment was answered by rewriting the PR description but the gate was shut. The replacement waits in `pr-description.md` in the pass's artifact directory, under the workbench state root rather than in the worktree; it is owed in `⚠ closeout owed` and sent by `--finish --post` |
+| `comment_items` (top-level field, listed above) | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
 
 **Comment items** (`comment_items` array at the top level): when top-level PR
 comments (issue comments or review body comments) contain multiple actionable

@@ -133,7 +133,7 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 ```
 
 **Output:** `memory/ topic files`
-**Auto-trigger:** 24h (via Stop hook)
+**Auto-trigger:** 24h (via Stop hook, or the maintenance timer)
 **Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers once 24h and 5 sessions have both passed since the last run.
 **Skip:** Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead).
 
@@ -190,7 +190,7 @@ Reviews accumulated Claude Code memories for promotion into durable workbench ar
 ```
 
 **Output:** `ai/memory/PROMOTE.md`
-**Auto-trigger:** 7 days (via Stop hook)
+**Auto-trigger:** 7 days (via Stop hook, or the maintenance timer)
 **Trigger:** Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers once 7 days and 10 sessions have both passed since the last run.
 **Skip:** Do not use when the user wants to directly edit a rule or script — just edit it. Do not use for memory consolidation (use dream instead).
 
@@ -215,7 +215,7 @@ Analyze PR review comments to identify gaps in coding rules. Fetches comments fr
 ```
 
 **Output:** `ai/memory/RETRO.md`
-**Auto-trigger:** 72h (via Stop hook)
+**Auto-trigger:** 72h (via Stop hook, or the maintenance timer)
 **Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers once 72h and 5 sessions have both passed since the last run.
 **Skip:** Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead).
 
@@ -260,7 +260,7 @@ Reviews the session that just ended for anything worth keeping and logs it to th
 ```
 
 **Output:** `SESSION_OBSERVATION entries appended to the knowledge base's _log.md`
-**Auto-trigger:** 24h (via Stop hook)
+**Auto-trigger:** 24h (via Stop hook, or the maintenance timer)
 **Trigger:** Auto-triggers at session end in repos that have a knowledge base, once 24h and 3 sessions have both passed since the last capture.
 **Skip:** Never writes or edits an article — /wiki compile processes what this logs, deliberately.
 
@@ -276,13 +276,15 @@ Write or change a skill in this workbench — SKILL.md frontmatter, the agent: c
 
 ## Session Lifecycle
 
-Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:
+Skills with a cadence and a `should-<skill>.sh` gate (shown in the table above) auto-trigger from two places — Claude Code's Stop hooks in `settings.json`, and the maintenance timer:
 
 1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks
 2. **If due** — `run-auto-task <skill>` detaches a headless `claude -p` session, which inherits the exiting session's working directory and logs to `~/.claude/logs/`
 3. **Skill completion** — completion script records a timestamp so the cooldown resets
 
 The headless session runs the full hook set and reaches its own Stop hook, so `run-auto-task` exports `WORKBENCH_AUTO_TASK` and every gate exits 1 when it sees it. That is what stops the cascade. It replaced `--bare`, which skipped hooks but also broke slash-command resolution, so the spawned session answered `Unknown command: /<skill>` and did nothing.
+
+The Stop hook only fires under Claude Code, so the same gates are asked again by `maintenance/bin/run-due-auto-tasks` on the 12h maintenance timer — otherwise a machine working in another harness trips nothing. The gates are cooldowns over file mtimes rather than events, so the timer is a true second caller and not an approximation of one. It spawns at most one task per cycle, longest cooldown first, and skips silently where Claude Code is not installed.
 
 Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
 

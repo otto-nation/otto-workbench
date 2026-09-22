@@ -5,3 +5,7 @@ Description=otto-workbench maintenance — pull, sync, and cleanup
 Type=oneshot
 ExecStart=__WORKBENCH_DIR__/maintenance/bin/otto-workbench-maintenance
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# The default control-group kill mode would take the headless agents the
+# auto-task block spawns down with the oneshot, the same way launchd's process
+# group does — see AbandonProcessGroup in maintenance.plist.template.
+KillMode=process

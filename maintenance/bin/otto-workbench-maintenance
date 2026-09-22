@@ -18,6 +18,15 @@ WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck source=../../lib/constants.sh
 . "$WORKBENCH_DIR/lib/constants.sh"
 
+# launchd and systemd both hand this script a PATH without ~/.local/bin, where
+# every workbench symlink lives. What this script calls, it calls by absolute
+# path; this is for what its children look up by name — should-wiki-capture.sh
+# resolves `wiki`, and a 127 there is swallowed by its `|| exit 1` and reads as
+# "this repo has no knowledge base", so the gate never fires and looks right.
+# Ordering matters beyond the symlinks: lib/roots.sh uses `declare -g`, so the
+# Homebrew bash ahead of /bin on the plist PATH is load-bearing too.
+export PATH="$LOCAL_BIN_DIR:$PATH"
+
 mkdir -p "$WORKBENCH_STATE_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -88,6 +97,23 @@ if [[ -x "$LOCAL_BIN_DIR/pr" ]]; then
   else
     log "WARNING: pr gc failed (non-fatal, exit $gc_status)"
   fi
+fi
+
+# The four AI maintenance cooldowns. Exit 69 (EX_UNAVAILABLE) means the
+# executor is absent, which is a machine that never asked for the ai/claude
+# component rather than a failure — the same silent skip the `pr` block above
+# makes, and for the same reason. The gate logic and the one-spawn-per-cycle
+# cap live in that script; see its header for why they are not inline here.
+# Any other exit code is a genuine regression (the script runs under `set -e`,
+# so a failed source or an unhandled command surfaces here as exit 1) and is
+# logged rather than swallowed — mirroring the `pr gc` block's branch on
+# `gc_status` above. 69 rather than 1 is deliberate: 1 is bash's default
+# failure code for an unhandled command, so a broken install would otherwise
+# be indistinguishable from the ordinary "executor absent" skip.
+auto_task_status=0
+"$MAIN_WORKTREE/maintenance/bin/run-due-auto-tasks" || auto_task_status=$?
+if [[ $auto_task_status -ne 0 && $auto_task_status -ne 69 ]]; then
+  log "WARNING: run-due-auto-tasks failed (non-fatal, exit $auto_task_status)"
 fi
 
 date '+%s' > "$MAINTENANCE_LAST_FILE"

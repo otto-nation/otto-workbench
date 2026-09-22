@@ -163,6 +163,51 @@ _fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
   [ "$status" -eq 1 ]
 }
 
+@test "a DIR argument makes the gate answer for that repo from a foreign cwd" {
+  # What the maintenance timer needs: under launchd the cwd is `/`, which is no
+  # repo at all, so the sweep names the checkout outright.
+  _make_sessions 3
+  run bash -c "cd / && '$SHOULD_CAPTURE' '$REPO'"
+  [ "$status" -eq 0 ]
+}
+
+@test "the DIR argument wins over the cwd when they disagree" {
+  # The named repo is due; the cwd's repo is not. Without the argument being
+  # read, the gate would answer about `other` and say no.
+  local other
+  other="$(gate_repo "other-repo")"
+  _make_sessions 3
+  run bash -c "cd '$other' && '$SHOULD_CAPTURE' '$REPO'"
+  [ "$status" -eq 0 ]
+}
+
+@test "the wiki lookup follows the DIR argument, not the cwd" {
+  # `wiki path` walks up from where it is told. Handed nothing it would ask
+  # about `/` under launchd, find no knowledge base, and the gate would report
+  # "not due" for every repo forever — which reads exactly like a quiet machine.
+  _make_sessions 3
+  # $1 is the subcommand (`path`), $2 the directory it was asked about.
+  printf '#!/usr/bin/env bash\nprintf "%%s" "$2" > "%s/wiki-asked-about"\nexit 0\n' \
+    "$TEST_HOME" > "$STUB_BIN/wiki"
+  chmod +x "$STUB_BIN/wiki"
+  run bash -c "cd / && '$SHOULD_CAPTURE' '$REPO'"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_HOME/wiki-asked-about")" = "$REPO" ]
+}
+
+@test "no DIR argument still reads the cwd" {
+  # The Stop hook passes nothing and depends on this.
+  _make_sessions 3
+  run bash -c "cd '$REPO' && '$SHOULD_CAPTURE'"
+  [ "$status" -eq 0 ]
+
+  # And from a cwd whose repo is not due, the same bare call says no.
+  local other
+  other="$(gate_repo "other-repo")"
+  run bash -c "cd '$other' && '$SHOULD_CAPTURE'"
+  [ "$status" -eq 1 ]
+}
+
 @test "the gate reads the stamp for the repo it was run from" {
   _make_sessions 10 "$(_stale_ts)"
   # A fresh stamp on a different repo must not suppress this one.

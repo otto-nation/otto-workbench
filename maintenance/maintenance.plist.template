@@ -10,6 +10,12 @@
 	<integer>__INTERVAL__</integer>
 	<key>RunAtLoad</key>
 	<true/>
+	<!-- launchd kills every process sharing the job's process group when the job
+	     exits (launchd.plist(5)). The auto-task block spawns headless agents with
+	     `& disown`, which leaves them in that group: without this key they are
+	     reaped the moment maintenance finishes, having logged that they started. -->
+	<key>AbandonProcessGroup</key>
+	<true/>
 	<key>StandardOutPath</key>
 	<string>__LOG_DIR__/maintenance.log</string>
 	<key>StandardErrorPath</key>

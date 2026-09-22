@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Ask the four AI maintenance cooldowns and spawn at most one task that is due.
+#
+# Usage: run-due-auto-tasks
+#
+# Called by otto-workbench-maintenance on the timer. Claude Code's Stop hook
+# asks the same four gates on every session exit, so a machine that lives in
+# Claude sees no change from this; it is the only thing that asks them on a
+# machine that lives in Pi, where they have never fired at all.
+#
+# The gates are cooldowns over file mtimes — "N hours since the last one AND M
+# sessions since" — rather than events, so a timer is a truer fit for them than
+# a session hook. 12h of latency against a 24h floor costs nothing, and the work
+# starts while the machine is idle rather than while someone waits to quit.
+#
+# Separate from otto-workbench-maintenance so it can be run and tested on its
+# own: the maintenance script fetches, syncs and sweeps worktrees before it gets
+# here, and none of that should have to happen to find out which tasks are due.
+#
+# Exit codes:
+#   0  A task was spawned, or none was due (both ordinary)
+#   1  The executor is absent — nothing to run the skills with
+#
+# Env:
+#   AUTO_TASK_SKILLS_DIR  — override the skills directory (default: ai/skills)
+#   AUTO_TASK_BIN         — override the run-auto-task path (default: $LOCAL_BIN_DIR)
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_WB="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=../../lib/constants.sh
+. "$_WB/lib/constants.sh"
+# project_repo_leaders, for the per-repo half. It pulls git_layout.sh itself and
+# needs nothing from ui.sh, which this deliberately avoids: there is no terminal
+# on the timer and ui.sh drags in the whole interactive framework.
+# shellcheck source=../../lib/projects.sh
+. "$_WB/lib/projects.sh"
+
+SKILLS_DIR="${AUTO_TASK_SKILLS_DIR:-$_WB/ai/skills}"
+AUTO_TASK_BIN="${AUTO_TASK_BIN:-$LOCAL_BIN_DIR/run-auto-task}"
+unset _WB
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+# _gate_due SKILL [DIR] — whether SKILL's cooldown has elapsed. Exit 1 is the
+# ordinary answer rather than a failure, so the status is captured and returned
+# instead of being left to reach `set -e`.
+_gate_due() {
+  local skill="$1" dir="${2:-}" status=0
+  local gate="$SKILLS_DIR/$skill/should-$skill.sh"
+  [[ -x "$gate" ]] || return 1
+  if [[ -n "$dir" ]]; then
+    bash "$gate" "$dir" > /dev/null 2>&1 || status=$?
+  else
+    bash "$gate" > /dev/null 2>&1 || status=$?
+  fi
+  return "$status"
+}
+
+# The three registry-wide gates, longest cooldown first: at one spawn per cycle,
+# a 24h gate asked ahead of a 168h one would starve it. Returns 0 having
+# spawned, which stops the caller's chain.
+_run_global_gates() {
+  local skill
+  for skill in promote retro dream; do
+    _gate_due "$skill" || continue
+    log "Auto-task due: $skill"
+    "$AUTO_TASK_BIN" "$skill" || log "WARNING: run-auto-task $skill failed (non-fatal)"
+    return 0
+  done
+  return 1
+}
+
+# wiki-capture is per repo, so this is a sweep rather than one question. The
+# spawn inherits the leader worktree as its cwd, which is how the headless
+# session resolves the right knowledge base and settles the right cooldown.
+_run_wiki_capture_gate() {
+  # `id` is written by the split and deliberately not read — the path is what a
+  # spawn runs in, and the stamp is keyed off the repo behind it downstream.
+  # shellcheck disable=SC2034
+  local line id leader
+  while IFS= read -r line; do
+    _split_repo_worktree_line "$line" id leader
+    [[ -n "$leader" ]] || continue
+    _gate_due wiki-capture "$leader" || continue
+    log "Auto-task due: wiki-capture ($leader)"
+    (cd "$leader" && "$AUTO_TASK_BIN" wiki-capture) \
+      || log "WARNING: run-auto-task wiki-capture failed for $leader"
+    return 0
+  done < <(project_repo_leaders)
+  return 1
+}
+
+# Skipped whole when the executor is absent, the way the maintenance script's
+# `pr` block is. The gates are harness-neutral by design, but run-auto-task
+# spawns `claude -p` — so both the symlink and Claude Code itself have to be
+# there. The symlink outlives an uninstall, since ai/claude/steps.sh only syncs
+# it when `claude` is already on PATH.
+if [[ ! -x "$AUTO_TASK_BIN" ]] || ! command -v claude > /dev/null 2>&1; then
+  exit 1
+fi
+
+# ceiling: one auto-task per cycle, so a machine with several repos due drains
+# its backlog over several cycles rather than spawning an agent per repo at
+# once. The timer fires every 12h against cooldowns of 24h and up, so there is
+# idle capacity to drain into, and a deferred gate stays due — the stamp only
+# moves on completion. Upgrade to a bounded parallel fan-out if a gate is
+# observed still due after three consecutive cycles.
+_run_global_gates || _run_wiki_capture_gate || log "No auto-task due"

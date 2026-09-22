@@ -416,7 +416,7 @@ _emit_ai_installs() {
 _emit_lifecycle() {
   printf '## Session Lifecycle\n\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
-  printf 'Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:\n\n'
+  printf 'Skills with a cadence (shown in the table above) auto-trigger from two places — Claude Code'"'"'s Stop hooks in `settings.json`, and the maintenance timer:\n\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf '1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks\n'
   # The '"'"' dance closes the single-quoted string, emits a literal
@@ -427,6 +427,9 @@ _emit_lifecycle() {
   printf '3. **Skill completion** — completion script records a timestamp so the cooldown resets\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf '\nThe headless session runs the full hook set and reaches its own Stop hook, so `run-auto-task` exports `WORKBENCH_AUTO_TASK` and every gate exits 1 when it sees it. That is what stops the cascade. It replaced `--bare`, which skipped hooks but also broke slash-command resolution, so the spawned session answered `Unknown command: /<skill>` and did nothing.\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf '\nThe Stop hook only fires under Claude Code, so the same gates are asked again by `maintenance/bin/run-due-auto-tasks` on the 12h maintenance timer — otherwise a machine working in another harness trips nothing. The gates are cooldowns over file mtimes rather than events, so the timer is a true second caller and not an approximation of one. It spawns at most one task per cycle, longest cooldown first, and skips silently where Claude Code is not installed.\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf '\nAdditionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.\n'
   printf '\n### Manual triggers\n\n'
@@ -486,8 +489,13 @@ _emit_skill_reference() {
       # shellcheck disable=SC2016  # backticks are markdown literals
       printf '**Output schema:** `%s --tool-schema` (MCP tool: `%s`)\n' "$output_tool" "$output_tool"
     fi
+    # A skill with a should-<name>.sh gate is asked by the maintenance timer as
+    # well as by the Stop hook — read off the gate rather than listed here, so a
+    # skill that gains or loses one cannot leave this line claiming otherwise.
+    local _fired_by="via Stop hook"
+    [[ -x "$d/should-$name.sh" ]] && _fired_by="via Stop hook, or the maintenance timer"
     if [[ -n "$cadence" ]]; then
-      printf '**Auto-trigger:** %s (via Stop hook)\n' "$cadence"
+      printf '**Auto-trigger:** %s (%s)\n' "$cadence" "$_fired_by"
     fi
     if [[ -n "$trigger" ]]; then
       printf '**Trigger:** %s\n' "$trigger"

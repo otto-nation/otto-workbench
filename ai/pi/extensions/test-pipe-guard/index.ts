@@ -38,7 +38,10 @@ export default function (pi: ExtensionAPI) {
         `Piping \`${runner}\` into a filter reports the filter's exit status, not the ` +
         `suite's — \`false | tail -1\` exits 0, so a failing run reads as a pass and a ` +
         `\`$?\` read after the pipe is the filter's. Redirect to a file and read the ` +
-        `status, then grep the file: \`${runner} ... > /tmp/out.txt 2>&1; echo $?\`. ` +
+        `status, then grep the file: \`${runner} ... > /tmp/out.txt 2>&1\`, then read ` +
+        `/tmp/out.txt. Do not append \`; echo $?\` to that — a trailing report becomes ` +
+        `the command's own exit status, which is the same masking one statement later, ` +
+        `and under job_start it is announced as success. exit-status-guard refuses it. ` +
         `\`set -o pipefail\` is accepted where a pipe is genuinely wanted. ` +
         `See testing.md § Reading a Suite Result.`,
     };

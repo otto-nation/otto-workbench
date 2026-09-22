@@ -19,7 +19,20 @@
 - `set -o pipefail` makes the pipeline report the first failing stage, which is the
   one narrow way a pipe is safe here. Prefer the redirect anyway: the status is the
   thing being checked, and a file leaves the whole run to read afterwards
-- Enforced by `ai/pi/extensions/test-pipe-guard` under Pi and by
+- Do not finish the command with `; echo $?` either. A trailing statement becomes
+  the command's own exit status, so `npm test > out.txt 2>&1; echo "EXIT=$?"` exits
+  0 whatever the suite did — the same masking as the pipe, one statement later. The
+  printed line is truthful and a foreground caller reads it, which is what makes the
+  habit feel safe
+- It stops being cosmetic the moment the command is handed to a background job. The
+  job facility reports the *process's* exit code as its pass/fail notice, so a
+  masked status is announced as "succeeded" for a suite that failed, and the real
+  result is in output nobody re-reads. Three such notices in one session are why
+  this is written down. Let the runner be the last thing the command does and read
+  the output afterwards; where a status must be captured mid-command, end with an
+  honest `exit "$status"`
+- Enforced by `ai/pi/extensions/test-pipe-guard` and
+  `ai/pi/extensions/exit-status-guard` under Pi, and by
   `ai/claude/bin/claude-bash-guard` under Claude Code
 
 ## A Test Must Fail When Its Subject Breaks

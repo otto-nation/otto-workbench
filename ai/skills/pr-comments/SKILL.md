@@ -149,19 +149,21 @@ Parse the JSON output. Top-level fields:
 | `issue_comments` | Raw issue-level discussion comments (for fallback when items aren't available) |
 | `review_body_comments` | Raw review-level body comments (for fallback when items aren't available) |
 
-The `fix_pass` object contains:
+The `fix_pass` object's own JSON keys are exactly the fields below marked
+**(field)**. `declined`, `skipped`, and `settled_elsewhere` are outcome
+kinds, not keys of this object — each row says where it actually surfaces.
 
 | Field | Contents |
 |-------|----------|
-| `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
-| `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason |
-| `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
-| `declined` | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict, and it travels with `needs_human` at every reviewer-facing surface |
-| `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection. Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
-| `deferred` | Threads the agent could not auto-fix in the current pass |
-| `skipped` | Never attempted — the pass excludes items of this kind on sight |
-| `settled_elsewhere` | Resolved on GitHub with no reply of ours naming a verdict. Nothing is owed and nothing is claimed; it is a reconciliation result, so it appears after `--finish` rather than in this object |
-| `commit_sha` | Short SHA of the fix commit, or null |
+| `fixed` **(field)** | Threads and items the agent auto-fixed (committed + pushed) |
+| `needs_human` **(field)** | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason, and where a `declined` outcome (below) travels |
+| `dismissed` **(field)** | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
+| `declined` (not a field) | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict. It has no key of its own — it is folded into `needs_human` above, and travels with it at every reviewer-facing surface |
+| `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
+| `deferred` **(field)** | Threads the agent could not auto-fix in the current pass |
+| `skipped` (not a field) | Never attempted — the pass excludes items of this kind on sight before `fix_pass` is built, so no key here records them |
+| `settled_elsewhere` (not a field) | Resolved on GitHub with no reply of ours naming a verdict. Nothing is owed and nothing is claimed; it is a reconciliation result reported after `--finish`, not a key of this object |
+| `commit_sha` **(field)** | Short SHA of the fix commit, or null |
 | `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |

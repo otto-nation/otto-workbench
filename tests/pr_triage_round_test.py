@@ -618,6 +618,21 @@ class TestHoldAfterVerify:
         data = trail.decision.call_args.kwargs["data"]
         assert data["falsified"] == 1
 
+    def test_a_mixed_round_names_only_the_falsified_count(self, publishing_on):
+        """A falsified fix beside a plain handback must not inflate the count.
+
+        Before this, the message read "2 fix(es) falsified by the verify
+        gate" for one falsified fix plus one handback — overstating how many
+        the gate itself caught.
+        """
+        from core import publishing
+        triage_round.hold_after_verify([
+            self._outcome(FixOutcome.NEEDS_HUMAN, id="x", verified=False),
+            self._outcome(FixOutcome.NEEDS_HUMAN, id="y"),
+        ])
+        assert "1 fix(es) falsified by the verify gate" in publishing.held()
+        assert "2 fix(es) falsified" not in publishing.held()
+
     def test_no_outcomes_is_not_a_hold(self, publishing_on):
         from core import publishing
         triage_round.hold_after_verify([])

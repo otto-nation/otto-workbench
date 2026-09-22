@@ -236,13 +236,23 @@ def hold_after_verify(
         return
     # Falsification is the one an operator is least expecting: the pass ticked
     # the box itself and the gate took it back. Named first for that reason.
+    # A round can mix a falsified fix with a plain handback or decline, so
+    # the count in the message is the falsified count, not the whole `held`
+    # set — otherwise a mixed round overstates how many the gate itself caught.
     falsified = [o for o in held if o.verified is False]
-    kind = "falsified by the verify gate" if falsified else "needing a person"
-    publishing.hold(f"{len(held)} fix(es) {kind}")
+    other = len(held) - len(falsified)
+    if falsified:
+        count = len(falsified)
+        kind = ("falsified by the verify gate" if not other else
+                f"falsified by the verify gate, {other} otherwise needing a person")
+    else:
+        count = len(held)
+        kind = "needing a person"
+    publishing.hold(f"{count} fix(es) {kind}")
     if trail:
         trail.decision(
             "publishing_hold",
-            f"held publishing — {len(held)} fix(es) {kind}",
+            f"held publishing — {count} fix(es) {kind}",
             reason="a fix the gate falsified must not be reported to a reviewer as done",
             data={
                 "falsified": len(falsified),

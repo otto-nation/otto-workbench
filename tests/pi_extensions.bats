@@ -855,3 +855,147 @@ _probe() {
   run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
   [ "$status" -eq 2 ]
 }
+
+# ─── exit-status-guard ────────────────────────────────────────────────────
+# The trailing-report half of the no-masked-status rule. Same split as the
+# other guards: the predicate is in detect.ts, which pulls in only ../_shared.
+#
+# Both arities are exercised. `reportsToCaller` true is the foreground bash
+# call, where a redirect to a file is honest; false is job_start, where the
+# harness reads the process's exit code and nothing redeems a masked one.
+
+# _masks COMMAND [REPORTS_TO_CALLER] — prints the masked runner, or null.
+_masks() {
+  run node --input-type=module -e "
+    const { maskedRunner } = await import('$REPO_ROOT/ai/pi/extensions/exit-status-guard/detect.ts');
+    const { TEST_RUNNERS } = await import('$REPO_ROOT/ai/pi/extensions/test-pipe-guard/detect.ts');
+    const reports = process.argv[2] === 'true';
+    process.stdout.write(String(maskedRunner(process.argv[1], TEST_RUNNERS, reports)));
+  " -- "$1" "${2:-false}"
+}
+
+@test "exit-status-guard: a job ending in echo \$? masks the suite status" {
+  # The shape that produced three false "succeeded" notices in one session.
+  _masks 'npm test > /tmp/out.txt 2>&1; echo "EXIT=$?"'
+  [ "$status" -eq 0 ]
+  [ "$output" = npm ]
+}
+
+@test "exit-status-guard: a bare echo \$? masks it too" {
+  _masks 'pytest tests/ ; echo $?'
+  [ "$output" = pytest ]
+}
+
+@test "exit-status-guard: a printf reporting the status is the same shape" {
+  _masks 'bats tests/x.bats; printf "EXIT=%d\n" $?'
+  [ "$output" = bats ]
+}
+
+@test "exit-status-guard: a trailing redirect after \$? does not hide the report" {
+  # A naive split on every literal `&` breaks `2>&1` apart from the `>` in
+  # front of it, shattering the last statement into fragments too short to
+  # match REPORTS_STATUS — the redirect must stay attached to its statement.
+  _masks 'pytest tests/; echo "EXIT=$?" 2>&1' false
+  [ "$output" = pytest ]
+  _masks 'bats tests/x.bats; printf "EXIT=%d\n" $? 2>&1' false
+  [ "$output" = bats ]
+  # The reverse order — `&` before `>` — is the same redirect and must stay
+  # attached too, or the split shatters the statement the same way.
+  _masks 'pytest tests/; echo "EXIT=$?" &>out.txt' false
+  [ "$output" = pytest ]
+}
+
+@test "exit-status-guard: the runner alone is fine" {
+  # The remedy the refusal names: let the runner be the last thing that runs.
+  _masks 'npm test > /tmp/out.txt 2>&1'
+  [ "$output" = null ]
+}
+
+@test "exit-status-guard: a trailing progress line is not a status claim" {
+  # `echo done` masks a status too, but reads as progress rather than a report.
+  # Blocking it would make this guard noise.
+  _masks 'npm test; echo done'
+  [ "$output" = null ]
+}
+
+@test "exit-status-guard: a non-runner command reporting its status is fine" {
+  # The rule is about a test/validator status being discarded, not about every
+  # use of `$?`.
+  _masks 'curl -sI localhost:8931; echo "EXIT=$?"'
+  [ "$output" = null ]
+}
+
+@test "exit-status-guard: persisting the status is honest in the foreground only" {
+  # `echo $? >> out.txt` keeps the status for something else to read, which is
+  # a real pattern in a bash call. Under job_start it still leaves the job's
+  # own exit code masked, and that code is what the completion notice reports.
+  _masks 'npm test > /tmp/out.txt 2>&1; echo $? >> /tmp/out.txt' true
+  [ "$output" = null ]
+  _masks 'npm test > /tmp/out.txt 2>&1; echo $? >> /tmp/out.txt' false
+  [ "$output" = npm ]
+}
+
+@test "exit-status-guard: a report inside a heredoc body is not a finding" {
+  # Content written to a file, not commands being run — the same exemption the
+  # other guards make, via the shared statement splitter.
+  _masks 'cat > /tmp/run.sh <<EOF
+npm test
+echo "EXIT=$?"
+EOF'
+  [ "$output" = null ]
+}
+
+@test "exit-status-guard: a leading env assignment does not hide the runner" {
+  _masks 'CI=1 npm test; echo "EXIT=$?"'
+  [ "$output" = npm ]
+}
+
+@test "exit-status-guard: a path-qualified runner is named by its basename" {
+  _masks 'bin/local/run-tests; echo "EXIT=$?"'
+  [ "$output" = run-tests ]
+}
+
+@test "exit-status-guard: the runner list is test-pipe-guard's, not a copy" {
+  # A second runner list here would drift from the one Claude's hook is held
+  # to, and nothing else in the tree would report it. The assertion is about a
+  # *declaration*: both files name TEST_RUNNERS in prose, so a bare grep for
+  # the word passes whatever the code does.
+  run grep -rE '^\s*(export\s+)?const\s+TEST_RUNNERS\s*=' \
+    "$REPO_ROOT/ai/pi/extensions/exit-status-guard/"
+  [ "$status" -ne 0 ]
+  run grep -q 'TEST_RUNNERS } from "../test-pipe-guard/detect.ts"' \
+    "$REPO_ROOT/ai/pi/extensions/exit-status-guard/index.ts"
+  [ "$status" -eq 0 ]
+}
+
+@test "exit-status-guard: job_start is the tool whose status is a process code" {
+  # The mapping the guard turns on, and the one thing index.ts cannot be tested
+  # for directly — it imports the SDK. Backwards, the job_start case would be
+  # exempt whenever the command redirects, which is nearly always, and the
+  # false-green shape this guard exists for would sail through.
+  run node --input-type=module -e "
+    const { readsPrintedStatus } = await import('$REPO_ROOT/ai/pi/extensions/exit-status-guard/detect.ts');
+    process.stdout.write([
+      readsPrintedStatus('bash'),
+      readsPrintedStatus('job_start'),
+    ].join(','));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = 'true,false' ]
+}
+
+@test "exit-status-guard: index.ts passes each tool its own status model" {
+  # A literal true/false at either call site would pass the test above while
+  # the wiring said the opposite. Both call sites must go through the mapping.
+  run grep -q 'readsPrintedStatus("bash")' \
+    "$REPO_ROOT/ai/pi/extensions/exit-status-guard/index.ts"
+  [ "$status" -eq 0 ]
+  run grep -q 'readsPrintedStatus("job_start")' \
+    "$REPO_ROOT/ai/pi/extensions/exit-status-guard/index.ts"
+  [ "$status" -eq 0 ]
+  # A literal at either call site would satisfy both greps above while the
+  # wiring said the opposite of the mapping.
+  run grep -nE 'maskedRunner\([^)]*,\s*(true|false)\s*\)' \
+    "$REPO_ROOT/ai/pi/extensions/exit-status-guard/index.ts"
+  [ "$status" -ne 0 ]
+}

@@ -59,6 +59,8 @@ Reuse ladder — stop at the first rung that solves the problem:
 - After starting background work, do other work or end the turn. Doing nothing is a valid turn, and there is no need to announce the wait
 - To *bound* how long something may run, pass the bound to the call that starts it — whichever timeout parameter the harness's own job and shell tools document, in whichever unit they document it in. Check the unit rather than assuming: harnesses differ on seconds versus minutes versus milliseconds for the same-named field, and a bound off by 60x either kills the work early or never fires. A bound passed to the call kills the work; a sleep beside it only delays you, and the two drift apart the moment the work runs long
 - A short `sleep` a pipeline genuinely needs — letting a server bind its port before the first request — is not this, and is below the threshold the guards enforce
+- A job's completion notice is only as honest as the command's exit status. `npm test > out.txt 2>&1; echo "EXIT=$?"` exits with echo's status, so the notice reads "succeeded" for a suite that failed and the true result is in a file nobody re-reads — a green that is worse than no signal, because it is acted on. Let the runner be the last thing the command does. Enforced by the `exit-status-guard` extension under Pi; see testing.md § Reading a Suite Result
+- Believe the notice over your own summary of it. Reporting a run as passing on the strength of a masked status is how a false green reaches the user, and the fix is to re-read the status rather than to caveat the claim
 - When nothing reports completion, say so rather than guessing a duration from outside. A tool that finishes silently is a gap in the tool, and the fix is to make it report
 
 ## Debugging

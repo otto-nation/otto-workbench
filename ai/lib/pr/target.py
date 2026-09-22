@@ -128,6 +128,9 @@ _SLASHES_RE = re.compile(r"/+")
 # wearing a scheme) — no host means no namespace to qualify the key with, so such
 # a remote keeps its single trailing segment.
 _SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.-]*)://", re.IGNORECASE)
+# The forge every URL builder falls back to. A remote that names no host has
+# always rendered public GitHub, and an unthreaded call site still does.
+PUBLIC_GITHUB_HOST = "github.com"
 # The one scheme that names no host. git parses a file URL's authority and then
 # discards it: `git clone file://bogushost/srv/git/widget.git` clones
 # /srv/git/widget.git, and records the URL verbatim in remote.origin.url.
@@ -171,6 +174,57 @@ def _remote_path(url: str) -> tuple[str, bool]:
         return path, scheme.group(1).lower() != _LOCAL_SCHEME
     scp = _SCP_RE.match(url)
     return (url[scp.end():], True) if scp else (url, False)
+
+
+def _remote_host(url: str) -> str:
+    """The forge host *url* is served from, or ``""`` when it names none.
+
+    Beside ``_remote_path`` and deliberately not inside it: the path decides the
+    key and must keep collapsing every spelling of one repo, while the host is
+    what a rendered URL needs. Two answers from one string, kept apart so a
+    change to either cannot move the other.
+
+    Any ``user:password@`` prefix is dropped. A token in a remote URL would
+    otherwise be rendered into a review body, which is a secret leak rather than
+    a wrong link. The port goes too: it belongs to git's transport, not to the
+    forge's web UI, and ``ssh://git@host:2222/`` serves its pages on 443.
+
+    ``""`` for a path, for ``file://``, and for an scp-style authority that
+    names no domain:
+
+    # ceiling: a dotless scp authority is read as an ~/.ssh/config alias and
+    # yields no host, so a single-label intranet host (ghe:acme/widget) falls
+    # back to public GitHub rather than being honoured. An alias and a
+    # single-label host are the same string here, and only ssh config tells
+    # them apart. Upgrade trigger: anyone whose forge is reachable only by a
+    # single-label name, at which point resolve it with `ssh -G <alias>` and
+    # cache the answer per identity.
+    """
+    scheme = _SCHEME_RE.match(url)
+    if scheme:
+        if scheme.group(1).lower() == _LOCAL_SCHEME:
+            return ""
+        authority, _, _path = url[scheme.end():].partition("/")
+        return _bare_host(authority)
+    if not _SCP_RE.match(url):
+        return ""
+    authority, _, _path = url.partition(":")
+    host = _bare_host(authority)
+    # A dotted name is a domain; a bare word is an ssh alias. See the ceiling.
+    return host if "." in host else ""
+
+
+def _bare_host(authority: str) -> str:
+    """An authority reduced to its hostname — no credentials, no port.
+
+    Bracketed IPv6 literals keep their brackets, which is how a URL spells them
+    and how one has to be written back into a link.
+    """
+    host = authority.rpartition("@")[2]
+    if host.startswith("["):
+        bracket = host.find("]")
+        return host[: bracket + 1] if bracket != -1 else host
+    return host.partition(":")[0]
 
 
 def _fold_case(text: str) -> str:
@@ -264,6 +318,24 @@ def _key_for(canonical: str) -> str:
     return f"{readable}-{digest}" if readable else digest
 
 
+def forge_base_url(host: str = "") -> str:
+    """The ``https://`` base for *host*, or public GitHub when it names none.
+
+    One place decides what an empty host means, so a builder that renders a URL
+    never has to. Empty is the answer for a local remote, an ssh alias, and any
+    call that has not been given a host yet — all of which have always rendered
+    public GitHub, and still do.
+
+    A host carrying its own scheme is returned as given: the value may have come
+    from config rather than from a remote, and rewriting it would turn an
+    operator's ``http://`` intranet host into an https URL that does not serve.
+    """
+    host = host.strip().rstrip("/")
+    if not host:
+        return f"https://{PUBLIC_GITHUB_HOST}"
+    return host if _SCHEME_RE.match(host) else f"https://{host}"
+
+
 def _repo_key(url: str) -> str | None:
     """An origin URL as one path component naming the repo, or None."""
     canonical = _canonical(url)
@@ -291,10 +363,19 @@ class RepoIdentity:
     One type rather than two lookups because both come from one canonical form:
     a label and a key that reach a caller together cannot name different repos,
     and reading the remote once is what makes that true rather than likely.
+
+    ``host`` is the forge the remote names, for rendering a URL that resolves
+    on the instance the repo is really served from. It is *not* part of the key
+    and never will be — see the ceiling in ``_canonical``, whose reasoning it
+    leaves untouched: two spellings of one repo still take one lock, and this
+    field is what lets a caller tell them apart afterwards without the key
+    having to. Empty when the remote names no host, which reads as public
+    GitHub downstream.
     """
 
     label: str
     key: str
+    host: str = ""
 
 
 def repo_identity_from_origin(cwd: str | None = None) -> RepoIdentity | None:
@@ -307,7 +388,9 @@ def repo_identity_from_origin(cwd: str | None = None) -> RepoIdentity | None:
     canonical = _canonical(url) if url else ""
     if not canonical:
         return None
-    return RepoIdentity(label=canonical, key=_key_for(canonical))
+    return RepoIdentity(
+        label=canonical, key=_key_for(canonical), host=_remote_host(url or ""),
+    )
 
 
 def repo_key_from_origin(cwd: str | None = None) -> str | None:

@@ -32,6 +32,7 @@ import pytest  # noqa: E402
 
 from pr import triage_round  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
+from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.domains import SupersessionKind  # noqa: E402
 from pr.thread_models import (  # noqa: E402
     Classification, ClassificationResult, CommentItem, PRReport, ReplyOutcome,
@@ -542,3 +543,82 @@ class TestAnUnroutableEntryIsDroppedAndSaid:
         """`trail` is optional everywhere else in this module; keep it so."""
         entries = [CommentItem(id="t1", classification=Classification.APPROVAL)]
         assert not triage_round.classify_entries(entries).any_entry
+
+
+class TestHoldAfterVerify:
+    """What triage could not know: the gate's verdict and the agent's own.
+
+    `hold_while_contested` runs before the agent does, so three dispositions
+    reach no hold of their own — a falsified fix, an item the agent handed
+    back, and one it declined. Each is a round that would otherwise push and
+    reply that everything landed.
+    """
+
+    @staticmethod
+    def _outcome(outcome, *, id="x", verified=None, detail=""):
+        return ItemOutcome(id=id, file="a.py", line=2, outcome=outcome,
+                           verified=verified, verify_detail=detail)
+
+    def test_a_falsified_fix_shuts_the_gate(self, publishing_on):
+        """The sharpest case: something ran and the fix did not hold."""
+        from core import publishing
+        triage_round.hold_after_verify([
+            self._outcome(FixOutcome.NEEDS_HUMAN, verified=False,
+                          detail="the repro still fails"),
+        ])
+        assert publishing.enabled() is False
+        assert "falsified" in publishing.held()
+
+    def test_an_agent_handback_shuts_the_gate(self, publishing_on):
+        from core import publishing
+        triage_round.hold_after_verify([self._outcome(FixOutcome.NEEDS_HUMAN)])
+        assert publishing.enabled() is False
+        assert "needing a person" in publishing.held()
+
+    def test_a_declined_item_shuts_the_gate(self, publishing_on):
+        """DECLINED travels with NEEDS_HUMAN to every reviewer-facing surface."""
+        from core import publishing
+        triage_round.hold_after_verify([self._outcome(FixOutcome.DECLINED)])
+        assert publishing.enabled() is False
+
+    def test_a_clean_round_is_left_alone(self, publishing_on):
+        """The guard against a hook that holds unconditionally.
+
+        Every other case here passes under one, so without this the hold could
+        be `publishing.hold(...)` with no condition at all.
+        """
+        from core import publishing
+        triage_round.hold_after_verify([
+            self._outcome(FixOutcome.FIXED, verified=True),
+            self._outcome(FixOutcome.FIXED, id="y", verified=False),
+            self._outcome(FixOutcome.DEFERRED, id="z"),
+        ])
+        assert publishing.enabled() is True
+        assert publishing.held() == ""
+
+    def test_an_unverified_fix_alone_does_not_hold(self, publishing_on):
+        """`verified is False` on a FIXED row is a hedge, not a halt.
+
+        A fix nobody could exercise still publishes, carrying its caveat. Only
+        a falsified one — demoted out of FIXED by the gate — holds.
+        """
+        from core import publishing
+        triage_round.hold_after_verify([
+            self._outcome(FixOutcome.FIXED, verified=False,
+                          detail="no runnable check"),
+        ])
+        assert publishing.enabled() is True
+
+    def test_the_hold_is_recorded_on_the_trail(self, publishing_on):
+        trail = MagicMock()
+        triage_round.hold_after_verify(
+            [self._outcome(FixOutcome.NEEDS_HUMAN, verified=False)], trail,
+        )
+        trail.decision.assert_called_once()
+        data = trail.decision.call_args.kwargs["data"]
+        assert data["falsified"] == 1
+
+    def test_no_outcomes_is_not_a_hold(self, publishing_on):
+        from core import publishing
+        triage_round.hold_after_verify([])
+        assert publishing.enabled() is True

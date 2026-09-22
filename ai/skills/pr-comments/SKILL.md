@@ -22,6 +22,25 @@ publishes them, and it is only ever passed after the user has read the drafts.
 that work leaves the machine. Neither implies the other, so `--finish --post` is
 not saying "publish" twice.
 
+**You are not the only thing between a draft and a reviewer.** The pass places
+its own publishing holds, and a held round publishes nothing however it was
+invoked — `--post` included. Three conditions close it:
+
+| Hold | When |
+|---|---|
+| Superseded branch | supersession signals say the branch is already overtaken |
+| Contested round | triage put any thread or item in `needs_human` |
+| Unsettled after the pass | the verify gate falsified a fix, or the agent declined an item or handed it back |
+
+The hold is monotonic and covers the whole round, not the offending thread:
+one contested finding can invalidate the premise of every other fix, so the
+pass declines to assert any of them. The fixes are still applied and still
+committed locally — only the outward acts wait. A held round reports
+`commit_status: push_held`.
+
+That makes `--finish --post` two things at once: the drain for a drafted queue,
+and the clearance for a hold once the person has settled what held it.
+
 Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_name>`.
 
 ---
@@ -135,10 +154,13 @@ The `fix_pass` object contains:
 | Field | Contents |
 |-------|----------|
 | `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
-| `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) |
-| `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong |
-| `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
+| `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason |
+| `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
+| `declined` | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict, and it travels with `needs_human` at every reviewer-facing surface |
+| `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection. Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
 | `deferred` | Threads the agent could not auto-fix in the current pass |
+| `skipped` | Never attempted — the pass excludes items of this kind on sight |
+| `settled_elsewhere` | Resolved on GitHub with no reply of ours naming a verdict. Nothing is owed and nothing is claimed; it is a reconciliation result, so it appears after `--finish` rather than in this object |
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
@@ -171,11 +193,18 @@ or `rb-`) are comment items; regular thread IDs are inline review threads.
 
 **If `commit_status` is `push_held`:** the fixes are committed locally and
 nothing has been published, because something in the run judged the branch not
-safe to assert progress on. Say so plainly and do not report the fixes as landed
-on the PR. The stderr output states the reason the hold carries — read it back
-to the user rather than guessing, since new hold sources are added over time.
-Settle that reason with the user, and only then run `--finish --post`, which
-pushes the commit and drains the replies and the summary.
+safe to assert progress on — one of the three holds above. Say so plainly and
+do not report the fixes as landed on the PR. The stderr output states the reason
+the hold carries — read it back to the user rather than guessing, since new hold
+sources are added over time. Settle that reason with the user, and only then run
+`--finish --post`, which pushes the commit and drains the replies and the
+summary.
+
+A hold reading `falsified by the verify gate` is the one to slow down on: the
+pass ticked the fix itself and the gate then took it back, so the item is in
+`needs_human` with the gate's own detail as its reason. Read that detail before
+proposing anything — it says what was run and what happened, which is usually
+enough to tell a wrong fix from a fix the check could not exercise.
 
 A rebase between the two runs is expected and is not a problem: `--finish`
 follows the recorded SHA to the commit that replaced it — matched on patch id,
@@ -225,6 +254,12 @@ current baseline. Find it via `wt switch main --no-cd --format json --no-hooks`.
 
 **Do not** attempt to fix `dismissed` threads — the agent already determined
 the reviewer's premise was factually wrong.
+
+**If `declined` is non-empty:** present each with the agent's argument. These
+are not failures to fix — the agent read the item and made a case against it,
+and that case is going to a reviewer under the author's name. Treat it as a
+claim to check rather than a verdict to relay: if the argument does not hold,
+say so and fix the item instead.
 
 **Fallback for raw comments**: if `comment_items` is empty but unseen
 `issue_comments` or `review_body_comments` exist (e.g., when running without

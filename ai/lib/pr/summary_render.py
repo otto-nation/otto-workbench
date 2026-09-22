@@ -186,7 +186,11 @@ def build_summary_body(
     # link_sha, not the addressing commit: the file cell's line number was read
     # at HEAD, and the commit answers "when", not "where".
     addressed_shown = [
-        (framing, emit(e, summary_row.addressed_status_for(framing, repo), link_sha))
+        (framing, emit(
+            e,
+            summary_row.addressed_status_for(framing, repo, verified=e.verified),
+            link_sha,
+        ))
         for e, framing in zip(already_addressed, addressed_framings, strict=True)
     ]
     # A satisfied row a commit made true after the review is a fix, and counts

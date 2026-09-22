@@ -430,6 +430,15 @@ def post_already_addressed_replies(
             commit_url = permalinks.commit_permalink(repo, sha)
             lead = "Fixed in" if framing.in_response else "Addressed in"
             parts.append(f"{lead} [`{git_client.abbrev(sha)}`]({commit_url}).")
+        # Only on the `acted` path: that half landed a change and is making the
+        # same claim `post_fix_replies` makes, so it owes the same hedge. A true
+        # already-addressed reply asserts the code was already right and the
+        # reviewer can read it at the link above — the gate never ran on it and
+        # has nothing to hedge.
+        if acted:
+            note = unverified_note(entry)
+            if note:
+                parts.append(note)
         if len(parts) == 1 and not framing.in_response:
             return (
                 f"{ADDRESSED_REPLY_PREFIX} in the current implementation: "

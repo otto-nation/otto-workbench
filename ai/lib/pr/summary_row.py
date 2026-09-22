@@ -112,16 +112,25 @@ def fixed_status_for(
     return ActionCell.UNATTRIBUTED
 
 
-def addressed_status_for(framing: attribution.AddressedFraming, repo: str) -> str:
+def addressed_status_for(
+    framing: attribution.AddressedFraming, repo: str,
+    *, verified: bool | None = None,
+) -> str:
     """Status cell for one satisfied row, in the framing its history earned.
 
     A row whose commit postdates the review comment reports as a fix, because
     that is what it was — the same question the thread reply asks, read through
     the same resolver so the table and the reply cannot say different things
     about one thread.
+
+    `verified` travels for the same reason: a row reporting as a fix carries the
+    same hedge the fixed rows carry, or the table would claim plainly what the
+    reply beside it hedges. It reaches no other branch — a row whose code
+    predates the comment is not a claim the gate could check, and
+    `ActionCell.fixed_in` ignores anything but an explicit False anyway.
     """
     if framing.in_response and framing.cited:
-        return ActionCell.fixed_in(framing.sha, repo)
+        return ActionCell.fixed_in(framing.sha, repo, verified=verified)
     return ActionCell.ALREADY_ADDRESSED
 
 

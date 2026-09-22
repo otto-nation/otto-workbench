@@ -23,6 +23,7 @@ predates its own holds.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace as dataclass_replace
+from typing import TYPE_CHECKING
 
 from core import publishing
 from core.trail import Trail
@@ -35,6 +36,14 @@ from pr.thread_models import (
     Classification, ClassificationResult, CommentItem, Complexity, Disposition,
     PRReport, ReplyOutcome, TrackingResult, TriageResult, Verification,
 )
+
+if TYPE_CHECKING:
+    # Only under the type checker. `ItemOutcome` is the fix pipeline's type and
+    # this module is the triage half of the round, which otherwise knows
+    # nothing about that pipeline — `hold_after_verify` is called by
+    # `fix.engine` and takes what it owns, so the name is needed for the
+    # annotation and for nothing at runtime.
+    from pr.fix import ItemOutcome
 
 
 _HUMAN_CLASSIFICATIONS = {
@@ -193,6 +202,52 @@ def hold_while_contested(
             f"held publishing — {len(needs_human)} thread(s) awaiting discussion",
             reason="a contested thread can invalidate the premise of every other fix",
             data={"reasons": sorted({t.reason for t in needs_human if t.reason})},
+        )
+
+
+def hold_after_verify(
+    outcomes: list["ItemOutcome"], trail: Trail | None = None,
+) -> None:
+    """The same halt as `hold_while_contested`, for what triage could not know.
+
+    `hold_while_contested` runs on triage's verdicts, which are formed before
+    the agent or the verify gate has said anything. Three dispositions arrive
+    after it and reach no hold of their own: a fix the gate falsified
+    (`fix.engine` demotes it to NEEDS_HUMAN), an item the agent ticked `needs a
+    person`, and one it declined. Each is a thread whose call belongs to an
+    operator, on a round that would otherwise push, reply `Fixed in <sha>` to
+    everything else, and resolve those threads.
+
+    That is the failure its sibling's docstring describes, on the outcomes that
+    sibling cannot see. A falsified fix is the sharpest case: something ran and
+    the fix did not hold, which is the strongest evidence the pass produces,
+    and it currently changes nothing about what leaves the machine.
+
+    Blunt for the same reason and at the same cost: one falsified fix holds the
+    whole round's replies until a person settles it and re-runs `--finish
+    --post`. A wrong call costs a local commit rather than a pushed one.
+
+    The reason names which kind arrived, because the operator's next step
+    differs — a falsified fix wants the gate's own detail read, a declined item
+    wants the agent's argument read.
+    """
+    held = [o for o in outcomes if o.outcome in summary_model.NEEDS_A_PERSON]
+    if not held:
+        return
+    # Falsification is the one an operator is least expecting: the pass ticked
+    # the box itself and the gate took it back. Named first for that reason.
+    falsified = [o for o in held if o.verified is False]
+    kind = "falsified by the verify gate" if falsified else "needing a person"
+    publishing.hold(f"{len(held)} fix(es) {kind}")
+    if trail:
+        trail.decision(
+            "publishing_hold",
+            f"held publishing — {len(held)} fix(es) {kind}",
+            reason="a fix the gate falsified must not be reported to a reviewer as done",
+            data={
+                "falsified": len(falsified),
+                "outcomes": sorted({str(o.outcome) for o in held}),
+            },
         )
 
 

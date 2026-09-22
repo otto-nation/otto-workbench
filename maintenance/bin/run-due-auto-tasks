@@ -47,6 +47,29 @@ SKILLS_DIR="${AUTO_TASK_SKILLS_DIR:-$_WB/ai/skills}"
 AUTO_TASK_BIN="${AUTO_TASK_BIN:-$LOCAL_BIN_DIR/run-auto-task}"
 unset _WB
 
+usage() {
+  cat <<EOF
+Usage: run-due-auto-tasks
+
+Ask the four AI maintenance cooldown gates and spawn at most one task that is
+due. Called by otto-workbench-maintenance on the 12h timer; the Stop hook asks
+the same gates on every Claude Code session exit.
+
+Spawns the rarest cooldown first (promote 168h, retro 72h, dream 24h), then
+sweeps the registry for a repo whose wiki-capture is due.
+
+Exit codes:
+  0   A task was spawned, or none was due
+  69  EX_UNAVAILABLE — no executor (run-auto-task or Claude Code is absent)
+
+Env:
+  AUTO_TASK_SKILLS_DIR  override the skills directory (default: ai/skills)
+  AUTO_TASK_BIN         override the run-auto-task path
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # _gate_due SKILL [DIR] — whether SKILL's cooldown has elapsed. Exit 1 is the

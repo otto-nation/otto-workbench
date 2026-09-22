@@ -123,7 +123,14 @@ def _clip(text: str, limit: int) -> str:
     The marker is part of the budget rather than added to it: a clip that
     overran the limit it was called with would defeat the one caller that has
     one.
+
+    A limit of zero or less returns nothing rather than slicing to it. `text[:n]`
+    with a non-positive `n` counts from the end, so the clip would hand back
+    most of the string — longest output where the budget was tightest, which is
+    the opposite of what every caller is asking for.
     """
+    if limit <= 0:
+        return ""
     if len(text) <= limit:
         return text
     return text[:limit - 1].rstrip() + "\u2026"

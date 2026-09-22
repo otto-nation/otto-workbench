@@ -565,6 +565,19 @@ class TestApplyOutcomes:
         ])
         assert out.splitlines()[1].endswith("*(unverified — no runnable check)*")
 
+    def test_a_clip_with_no_room_yields_nothing(self):
+        """`text[:n]` with a non-positive n counts from the end.
+
+        The slice would hand back most of the string where the budget was
+        tightest — longest output exactly where the caller had least room.
+        """
+        assert review_fix._clip("abcdefgh", 0) == ""
+        assert review_fix._clip("abcdefgh", -5) == ""
+
+    def test_a_clip_never_exceeds_the_limit_it_was_given(self):
+        for limit in range(-2, 12):
+            assert len(review_fix._clip("abcdefgh", limit)) <= max(limit, 0)
+
     # passes-at-base: base writes no caveat, so its lines are short for free
     def test_a_hedged_summary_line_fits_the_commit_body_limit(self):
         """These lines land in a commit body, and no hook on this path checks them."""

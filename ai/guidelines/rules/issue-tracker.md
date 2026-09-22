@@ -37,7 +37,7 @@ Applies only when the resolved provider is `linear`.
 
 - Create the issue before creating the branch — the branch naming convention requires the issue ID prefix, so the issue must exist first
 - Assign with `--assignee self`
-- Search with `linear issue query --search "<term>"`. `linear issue list` is an alias for `issue mine` and takes no search flag at all — `--query` on it prints that subcommand's usage to *stdout* and exits 2, so a duplicate check written that way reads as a search that matched nothing. Never conclude an issue does not exist from a command whose output looked like help text
+- Search with `linear issue query --search "term"`. `linear issue list` is an alias for `issue mine` and takes no search flag at all — `--query` on it prints that subcommand's usage to *stdout* and exits 2, so a duplicate check written that way reads as a search that matched nothing. Never conclude an issue does not exist from a command whose output looked like help text
 - `issue view --json` has no `relations` key — the schema is assignee, attachments, branchName, children, comments, cycle, description, documents, identifier, labels, parent, priority, project, projectMilestone, state, team, title, url. Relations are only visible through `linear issue relation list <ID>`, so absence in the JSON is the field never being returned, not the relation being missing
 - Pass `--closes ENG-123` to `pr:create` to auto-close on merge — Linear acts on the same keywords GitHub does, so the key goes in the PR body. The flag accepts a tracker key only where `issues.provider` is `linear`, and refuses it elsewhere rather than opening a PR with a link that will never fire
 - Team key is always the prefix of the issue identifier. Pass it explicitly where required:

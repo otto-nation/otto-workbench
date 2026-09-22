@@ -2595,14 +2595,14 @@ def test_resolve_target_ref_replays_a_stacked_branch_onto_its_parent():
     branch's own — which is what produces conflicts against work already
     landed on the parent."""
     assert _resolve_target(
-        stack_parent="feat/parent", default_branch="main",
+        parent_branch="feat/parent", default_branch="main",
     ) == "origin/feat/parent"
 
 
 def test_resolve_target_ref_prefers_a_pr_base_over_a_derived_parent():
     """An open PR states its base; ancestry only infers one."""
     assert _resolve_target(
-        pr_base=_OTHER_BASE, stack_parent="feat/parent",
+        pr_base=_OTHER_BASE, parent_branch="feat/parent",
     ) == _OTHER_TARGET
 
 

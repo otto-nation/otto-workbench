@@ -35,6 +35,20 @@
     "agent": {
       "type": "object",
       "properties": {
+        "backend": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "claude",
+                "pi"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "model": {
           "oneOf": [
             {

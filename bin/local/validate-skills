@@ -59,10 +59,15 @@ FOUND=0
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
-# Agents invoked by task automation and by the review pipeline, never by a
-# situation match. A description-triggered skill for one of these would be a
-# surface no human ever wants hit, so they are exempt from needing a skill.
-PROGRAMMATIC_AGENTS=(changelog ci-cd explain reviewer-lite)
+# Agents invoked by task automation, never by a situation match. A
+# description-triggered skill for one of these would be a surface no human ever
+# wants hit, so they are exempt from needing a skill.
+#
+# reviewer-lite is not among them despite being dispatched by code: the Pi
+# backend resolves a phase's protocol from ~/.agents/skills first and only falls
+# back to ~/.claude/agents, so without a stub every default-effort review reaches
+# into a Claude Code directory a Pi-only machine has no reason to carry.
+PROGRAMMATIC_AGENTS=(changelog ci-cd explain)
 
 # _agent_is_programmatic NAME — whether NAME is dispatched by code rather than
 # matched to a situation.

@@ -241,6 +241,23 @@ def _backend_binaries() -> set[str]:
 
 
 @pytest.fixture(autouse=True)
+def _pinned_backend(monkeypatch):
+    """Run every test against a known backend, whatever the machine says.
+
+    The selection reads AI_BACKEND and then ``agent.backend`` from the operator's
+    own config.yml. Without this floor a developer who has set either one answers
+    these tests' assertions from their machine, and the suite passes or fails by
+    whose laptop it runs on — the same reasoning as ``_clear_agent_env`` above.
+
+    Claude, because that is what the suite assumed for as long as the selection
+    had a default, and pinning it here is what let that default be removed
+    without rewriting every test that never cared which backend it ran.
+    A test about the selection itself overrides this — see TestBackendSelection.
+    """
+    monkeypatch.setenv("AI_BACKEND", "claude")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_backend(monkeypatch):
     """Never let a test spawn a real agent CLI.
 

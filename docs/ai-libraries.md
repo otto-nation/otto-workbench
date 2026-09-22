@@ -2449,7 +2449,16 @@ The provider plumbing every AI call goes through — backend selection, streamed
 AI backend abstraction layer.
 
 Dispatches preflight(), prompt(), invoke_agent(), and invoke_fix() to the
-correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
+correct backend (Claude Code CLI or Pi CLI), selected by the AI_BACKEND env var
+or the ``agent.backend`` config key.
+
+There is no default. Both CLIs are installable and either is a plausible choice,
+so a machine that has not said which one it runs is unknown rather than assumed
+— the same reasoning that leaves ``issues.provider`` unset rather than guessing
+Linear. A default here is not a convenience: it silently sends every review, fix
+and rebase-resolve to one vendor's CLI, with its flags, its auth and its billing,
+and the only symptom is that the other one was never called. Dispatch raises
+instead, naming both the env var and the config key.
 
 Every entry point takes a required `cwd`, because a backend CLI inherits the
 launching process's working directory unless it is told otherwise. An agent

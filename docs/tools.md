@@ -381,6 +381,8 @@ The gate is fail-open: it only stops runs it can prove are misconfigured. It pro
 
 Requires application-default credentials (`gcloud auth application-default login`) with read access to `serviceusage.googleapis.com`. The check is skipped entirely on non-Claude backends (`AI_BACKEND=pi`).
 
+Which backend serves AI calls is set by `AI_BACKEND` or by the `agent.backend` config key, and has no default — a machine that has not chosen gets an error naming both, not a silent pick. The env var wins where both are set, so a one-off run can override the machine's standing choice without editing config.
+
 ### `workbench-rules`
 
 Manages this machine's own coding-rule layers — the local additions and overrides that no harness ships. Installing the merged set is each harness's own sync step (`step_claude_rules` symlinks it into `~/.claude/rules/`, `step_pi_guidelines` concatenates it into `~/.pi/agent/AGENTS.md`), so a machine running either harness alone gets the same rules.

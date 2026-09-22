@@ -335,14 +335,21 @@ def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
     nothing holding a handle to it. The kill on the way out is the other half
     of that flag, and `core.proc._run_in_own_group` pairs the two the same way.
 
-    Popen is entered as a context manager for the same reason it is there: its
-    __exit__ closes the three pipes and reaps the child, so an interrupt leaves
-    neither open descriptors nor a zombie behind the kill.
+    Popen is entered as a context manager only around the kill, for the same
+    reason it is there: its __exit__ closes the three pipes and reaps the
+    child, so an interrupt leaves neither open descriptors nor a zombie behind
+    the kill. The success path does not go through it. `_wait_for_exit` has
+    already reaped the process by the time this returns, or reported and left
+    a group that will not reap even after SIGKILL — and routing that return
+    back through `Popen.__exit__` would call its unbounded `self.wait()` right
+    after, turning "left" into the exact silent hang this module exists to
+    avoid, one level up.
     """
-    with subprocess.Popen(cmd, start_new_session=True, **spawn) as proc:
-        try:
-            yield proc
-        except BaseException:
+    proc = subprocess.Popen(cmd, start_new_session=True, **spawn)
+    try:
+        yield proc
+    except BaseException:
+        with proc:
             _kill_group(proc)
             raise
 

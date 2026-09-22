@@ -840,6 +840,37 @@ class TestRefusalReachesTheCaller:
         code = self._run(monkeypatch, tmp_path, proc)
         assert code != 0
 
+    def test_the_success_path_does_not_route_through_popen_exit(
+        self, monkeypatch, tmp_path,
+    ):
+        # A real Popen.__exit__ calls self.wait() with no timeout on any exit
+        # that isn't a KeyboardInterrupt. If the normal return path re-entered
+        # that context manager, a group _wait_for_exit already gave up on
+        # (reported and left after SIGKILL still would not reap) would hang
+        # this call forever right after the warning — the same silent hang
+        # this module exists to end, moved one level up. This double's
+        # __exit__ mirrors that real behavior; the fix must never call it.
+        class _ExitingProc(_RefusingProc):
+            def __exit__(self, *exc_info):
+                self.wait()
+                return False
+
+        proc = _ExitingProc(
+            [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
+        )
+        monkeypatch.setattr("core.proc.os.killpg", lambda pid, sig: None)
+
+        def _always_hangs(timeout=None):
+            proc.waits.append(timeout)
+            raise subprocess.TimeoutExpired("pi", timeout)
+
+        proc.wait = _always_hangs
+        code = self._run(monkeypatch, tmp_path, proc)
+        assert code != 0
+        # Two bounded waits from _wait_for_exit (LOCAL, then QUICK after the
+        # kill). A third entry means Popen.__exit__ ran its own self.wait().
+        assert len(proc.waits) == 2, "the success path re-entered Popen as a context manager"
+
 
 class TestPiRunsInItsOwnGroup:
     """Pi leads its own session, and nothing escapes when the caller is cut off.

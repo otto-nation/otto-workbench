@@ -1055,9 +1055,11 @@ def _resolve_contradiction(
     *claimed fix* — writing it onto a row that claims no fix at all would
     caveat a deferral for failing to prove work it never said it did.
     """
-    if verdict is None or verdict.ok is None:
+    if verdict is None:
         return 0
     outcome.verify_detail = verdict.detail
+    if verdict.ok is None:
+        return 0
     if verdict.ok is True:
         outcome.outcome = FixOutcome.FIXED
         outcome.verified = True

@@ -150,6 +150,10 @@ def _reads(baseline, *rest):
 
     The last answer given is repeated to fill, so a test naming two readings
     gets its second one at the position the commit scope is taken from.
+
+    Sized to `PASS_READS`, which is a one-batch pass's own read count — a
+    multi-batch or retried pass reads the tree more times than this pads for,
+    and needs `_settles_at` instead.
     """
     answers = [baseline, *rest]
     return [*answers[:-1], *([answers[-1]] * (PASS_READS - len(answers) + 1))]
@@ -1278,6 +1282,10 @@ def test_a_deferral_the_gate_cannot_settle_stands_as_recorded(
     # Not False. The surfaces print that as a hedge beside a claimed fix, and
     # this row claims nothing to hedge.
     assert run.outcomes[0].verified is None
+    # The gate's own explanation for why it couldn't settle this is recorded,
+    # the same as the main verify loop does for an uncontradicted item the
+    # gate could not verify.
+    assert run.outcomes[0].verify_detail == "belongs to i1"
 
 
 def test_a_deferral_the_gate_finds_half_applied_goes_to_a_person(

@@ -23,7 +23,7 @@ committing everything is how unreviewed content reaches a branch.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from core import log, proc

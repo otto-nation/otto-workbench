@@ -31,6 +31,12 @@ _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNOR
 # named one. GitHub has a single public instance to fall back on; Jira is
 # per-tenant and Linear per-workspace, so neither has a default and an
 # unconfigured repo gets no link rather than a wrong one.
+#
+# The Linear entry is never looked up through ``_issue_link`` — Linear's link
+# comes from ``_get_linear_issue_url`` instead, since the tracker itself hands
+# one back. It stays here so this map is complete over ``IssueProvider`` for a
+# reader checking it against the enum, rather than leaving Jira as the only
+# entry with no default and Linear looking like an oversight.
 _DEFAULT_BASE_URL = {
     str(workbench_config.IssueProvider.GITHUB): "https://github.com",
     str(workbench_config.IssueProvider.JIRA): "",
@@ -441,7 +447,9 @@ def _fetch_github(issue_id: str, repo: str, opts: dict | None) -> IssueContext:
     is ``gh``'s own configuration (``GH_HOST``), so the fetch below follows
     whatever host that CLI is pointed at.
     """
-    link = _issue_link(str(workbench_config.IssueProvider.GITHUB), f"{repo}/issues/{issue_id}", opts)
+    link = _issue_link(
+        str(workbench_config.IssueProvider.GITHUB), f"{repo}/issues/{issue_id}", opts,
+    )
     context = gh_client.out(
         "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments",
     )

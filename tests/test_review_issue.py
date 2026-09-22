@@ -352,6 +352,19 @@ def test_fetch_issue_context_github_honours_a_base_url():
     assert result.link == "https://ghe.example.com/owner/repo/issues/42"
 
 
+def test_fetch_issue_context_github_base_url_tolerates_a_trailing_slash():
+    """A GHE host pasted from a browser keeps its slash; the link must not double it."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://ghe.example.com/"}
+
+    with patch("subprocess.run", return_value=mock_result):
+        result = fetch_issue_context("github", "42", repo="owner/repo", opts=opts)
+
+    assert result.link == "https://ghe.example.com/owner/repo/issues/42"
+
+
 def test_fetch_issue_context_none_returns_empty():
     result = fetch_issue_context("none", "ABC-123")
     assert result.link == ""

@@ -118,11 +118,16 @@ _seed_legacy() {
 
 @test "a container whose default branch has no worktree is still renamed" {
   # resolve-worktree answers 1 here rather than 0 — the container holds the
-  # config either way, so 1 must not be read as "not a container".
+  # config either way, so 1 must not be read as "not a container". Asserted
+  # directly below, so a future change to that exit code fails here rather
+  # than leaving this comment's claim unverified.
   local container="$TMPDIR/c"
   make_empty_container "$container" "$SEED"
   git -C "$container" worktree add -q "$container/feat" feat
   _seed_legacy "$container"
+
+  run "$REPO_ROOT/bin/resolve-worktree" "$container"
+  [ "$status" -eq 1 ]
 
   run _run_migration "$container/feat"
   [ "$status" -eq 0 ]

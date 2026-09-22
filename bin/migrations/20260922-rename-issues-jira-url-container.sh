@@ -19,8 +19,8 @@
 # registered work trees, which is all this needs — it resolves the container
 # from there.
 
-# _jira_url_container DIR — the bare-repo container DIR sits in, or a non-zero
-# status when DIR is not in that layout.
+# _rename_jira_url_container DIR — the bare-repo container DIR sits in, or a
+# non-zero status when DIR is not in that layout.
 #
 # The shared git dir comes from lib/git_layout.sh, which owns that lookup and
 # clears the git environment inside its own subshell. The clear is repeated here
@@ -28,7 +28,7 @@
 # sync run from inside a git hook has GIT_DIR exported — which git reads ahead of
 # any directory, so the answer would be the hook's repository. Called through a
 # command substitution, which is what scopes the clear to the lookup.
-_jira_url_container() {
+_rename_jira_url_container() {
   local dir="$1" common container rc=0
 
   git_env_clear
@@ -51,7 +51,7 @@ _jira_url_container() {
 migration_20260922_rename_issues_jira_url_container() {
   local project_dir="$1" container file legacy existing
 
-  container="$(_jira_url_container "$project_dir")" || return "$MIGRATION_NOOP"
+  container="$(_rename_jira_url_container "$project_dir")" || return "$MIGRATION_NOOP"
 
   file="$container/$WORKBENCH_PROJECT_CONFIG_NAME"
   # NOOP rather than deferred: a plain clone has no container at all, and a

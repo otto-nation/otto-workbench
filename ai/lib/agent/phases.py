@@ -67,8 +67,8 @@ class ModelAlias(StrEnum):
         """The variable ~/.env.local sets for this tier.
 
         Mirrors the ``var`` field of the matching ``ai/models.env.yml`` entry,
-        which is the SSOT for model env var names; ``alias_env_keys_match_registry``
-        in tests/phases_test.py fails if the two spellings drift apart again.
+        which is the SSOT for model env var names; ``test_alias_env_keys_match_the_registry``
+        in tests/test_review_orchestrate.py fails if the two spellings drift apart again.
         """
         return f"AI_{self.upper()}_MODEL"
 

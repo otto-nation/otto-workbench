@@ -736,19 +736,30 @@ def _label_names(raw: str, tracker: str) -> frozenset[str]:
 
 
 def _create_github(
-    repo: str, title: str, description: str, labels: list[str] | None = None,
+    repo: str,
+    title: str,
+    description: str,
+    labels: list[str] | None = None,
+    opts: dict | None = None,
 ) -> CreatedIssue | None:
+    """File an issue on the GitHub instance ``issues.base_url`` names.
+
+    A write, so the host matters more here than on a read: a bare
+    ``OWNER/REPO`` resolves against gh's default host, which would file the
+    issue on the wrong instance rather than merely read from it.
+    """
+    target = _github_repo_arg(repo, opts)
     with _description_file(description) as desc_file:
         cmd = [
             "issue", "create",
-            "--repo", repo,
+            "--repo", target,
             "--title", title,
             "--body-file", desc_file,
             # Linear's creator has always self-assigned; this one had not, so
             # every issue the workbench filed into GitHub arrived unowned.
             "--assignee", "@me",
         ]
-        for label in _ensure_github_labels(labels or [], repo):
+        for label in _ensure_github_labels(labels or [], target):
             cmd.extend(["--label", label])
         output = gh_client.out(*cmd)
         if not output:
@@ -760,10 +771,16 @@ def _create_github(
         return CreatedIssue(id=issue_id, url=url)
 
 
-def _update_github(repo: str, issue_id: str, description: str) -> bool:
+def _update_github(
+    repo: str, issue_id: str, description: str, opts: dict | None = None,
+) -> bool:
+    """Rewrite an issue's body on the instance ``issues.base_url`` names."""
     num = issue_id.lstrip("#")
+    target = _github_repo_arg(repo, opts)
     with _description_file(description) as desc_file:
-        ok = gh_client.ok("issue", "edit", num, "--repo", repo, "--body-file", desc_file)
+        ok = gh_client.ok(
+            "issue", "edit", num, "--repo", target, "--body-file", desc_file,
+        )
     if ok:
         log.ok(f"Updated GitHub issue: {issue_id}")
     return ok
@@ -813,7 +830,8 @@ def create_issue(
         return _creation_result(
             _create_linear(team, title, description, parent_id, labels))
     if provider == "github":
-        return _creation_result(_create_github(repo, title, description, labels))
+        return _creation_result(
+            _create_github(repo, title, description, labels, opts))
     log.dim(f"Issue creation not supported for provider: {provider}")
     return IssueResult(IssueDelivery.UNDELIVERED)
 
@@ -839,6 +857,6 @@ def update_issue(
     if provider == "linear":
         return _update_linear(issue_id, description)
     if provider == "github":
-        return _update_github(repo, issue_id, description)
+        return _update_github(repo, issue_id, description, opts)
     log.dim(f"Issue update not supported for provider: {provider}")
     return False

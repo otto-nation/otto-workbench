@@ -583,6 +583,57 @@ def test_create_issue_github():
     assert result.issue.url == "https://github.com/owner/repo/issues/42"
 
 
+def test_create_issue_github_files_on_the_enterprise_host():
+    """A write on the wrong host files the issue on the wrong instance, so the
+    create carries the host the same way the read does."""
+    r = MagicMock()
+    r.returncode = 0
+    r.stdout = "https://ghe.example.com/owner/repo/issues/42\n"
+    opts = {"base_url": "https://ghe.example.com"}
+
+    with patch("subprocess.run", return_value=r) as mock_run:
+        create_issue(
+            "github", "", "title", "description", repo="owner/repo", opts=opts,
+        )
+
+    argv = mock_run.call_args[0][0]
+    assert "ghe.example.com/owner/repo" in argv
+
+
+def test_create_issue_github_labels_are_resolved_on_the_same_host():
+    """The label lookup precedes the filing and must not read github.com's
+    labels to decide what the enterprise repo can be filed against."""
+    r = MagicMock()
+    r.returncode = 0
+    r.stdout = '[{"name":"follow-up"}]'
+    opts = {"base_url": "https://ghe.example.com", "labels": ["follow-up"]}
+
+    with patch("subprocess.run", return_value=r) as mock_run:
+        create_issue(
+            "github", "", "title", "description", repo="owner/repo", opts=opts,
+        )
+
+    label_calls = [
+        c[0][0] for c in mock_run.call_args_list if "label" in c[0][0]
+    ]
+    assert label_calls, "expected a label lookup before filing"
+    assert all("ghe.example.com/owner/repo" in argv for argv in label_calls)
+
+
+def test_update_issue_github_edits_on_the_enterprise_host():
+    """An edit against the default host rewrites a body on the wrong instance."""
+    r = MagicMock()
+    r.returncode = 0
+    r.stdout = ""
+    opts = {"base_url": "https://ghe.example.com"}
+
+    with patch("subprocess.run", return_value=r) as mock_run:
+        update_issue("github", "#42", "new body", repo="owner/repo", opts=opts)
+
+    argv = mock_run.call_args[0][0]
+    assert "ghe.example.com/owner/repo" in argv
+
+
 def test_create_issue_unsupported_provider():
     """A provider that cannot create issues still owes the issue it did not file."""
     result = create_issue("jira", "PROJ", "title", "description")

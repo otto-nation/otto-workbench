@@ -700,11 +700,11 @@ def _fit_to_budget(
 ) -> FileFit:
     """Which of `all_contents` a review can afford, at collection time.
 
-    Deprioritises low-density files — large ones `file_changes` shows only a
-    sliver of, where the diff already carries what changed — then ranks
-    whatever is left by `(classify_tier, size)` and keeps what fits in
-    `budget_bytes` once `base_size` (the diff, the commit log, and the
-    rest of the fixed overhead) is spent.
+    Ranks every candidate together and keeps what fits in `budget_bytes` once
+    `base_size` (the diff, the commit log, and the rest of the fixed overhead)
+    is spent. Low-density files — large ones `file_changes` shows only a sliver
+    of, where the diff already carries what changed — rank last within their
+    tier.
 
     Density is a tie-break under scarcity, not a veto. Every path here is a
     file the diff touches, so a skipped one is a file the agent is about to be
@@ -715,33 +715,29 @@ def _fit_to_budget(
     case it was written for — a small change to a huge file, alongside other
     files that would otherwise be crowded out.
 
-    Ranked in one pass by `(classify_tier, is_low_density, size)` — tier always
-    outranks density, so a small Tier 1 file is never crowded out by a large
-    Tier 3 one just because the Tier 3 file happens to be dense. Density only
-    breaks a tie within a tier, which is the scarcity case the heuristic exists
-    for.
+    Density reaches `fit_files` as its `deprioritise` set, which ranks below
+    tier: a low-density file yields to a dense one of the same tier, and never
+    to a less valuable file of a lower one. So the file dropped under scarcity
+    is the one the diff already explains, without that preference ever costing
+    a Tier 1 file its place.
     """
     low_density = {
         p for p, c in all_contents.items()
         if _is_low_density(p, c, file_changes)
     }
-    dense = {p: c for p, c in all_contents.items() if p not in low_density}
-    sparse = {p: c for p, c in all_contents.items() if p in low_density}
+    fit = fit_files(
+        all_contents, all_permissions, budget_bytes - base_size,
+        deprioritise=low_density,
+    )
+    included, permissions, omitted = fit.included, fit.permissions, fit.omitted
 
-    fit = fit_files(dense, all_permissions, budget_bytes - base_size)
-    spent = base_size + sum(len(c.encode()) for c in fit.included.values())
-    sparse_fit = fit_files(sparse, all_permissions, budget_bytes - spent)
-
-    included = {**fit.included, **sparse_fit.included}
-    permissions = {**fit.permissions, **sparse_fit.permissions}
-    omitted = fit.omitted + sparse_fit.omitted
-
-    if sparse_fit.omitted:
+    skipped_sparse = [p for p in omitted if p in low_density]
+    if skipped_sparse:
         density_kb = sum(
-            len(all_contents[p].encode()) for p in sparse_fit.omitted
+            len(all_contents[p].encode()) for p in skipped_sparse
         ) // 1024
         log.info(
-            f"Skipped {len(sparse_fit.omitted)} low-density files "
+            f"Skipped {len(skipped_sparse)} low-density files "
             f"(~{density_kb}KB) — diff sufficient, budget short"
         )
     if omitted:

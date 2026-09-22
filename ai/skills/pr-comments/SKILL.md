@@ -197,7 +197,11 @@ round. Say the push is unconfirmed rather than failed, and have the user re-run
 it — a second push of a commit the remote already holds is a no-op.
 
 **If `needs_human` and `deferred` are both empty and no unseen comments:**
-done — no further action needed.
+there is nothing left to decide, but the round is not finished. The fix pass
+drafted replies and a summary and published neither, so `summary_deferred` is
+true, `pr status` reports `⚠ closeout owed`, and that blocks merge readiness
+until something drains it. Go to Step 4 and close the round out — do not stop
+here.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:

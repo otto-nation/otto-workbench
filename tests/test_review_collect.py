@@ -284,6 +284,10 @@ class TestFormatPreflightData:
         )
         assert "- big.go (29KB)" in rc.format_preflight_data(data).text
 
+    # The bare-path rendering this replaces also named the file. The case pins
+    # that adding sizes did not make the name conditional on having one, and it
+    # fails if the absent size is rendered as "(0KB)".
+    # passes-at-base: naming the file is behaviour the size suffix preserves
     def test_an_omitted_file_with_no_recorded_size_is_still_named(self):
         data = PreflightData(
             diff="--- a/a.go\n+++ b/a.go",
@@ -459,6 +463,10 @@ class TestSparseFileShedding:
 
         assert "refactored.py" in data.file_contents
 
+    # The old gate dropped the sparse file too, by a different route. This case
+    # holds the shed *ordering* the change keeps rather than the overflow guard
+    # it adds, and fails if the ordering is inverted.
+    # passes-at-base: pins the shed ordering, which this change preserves
     def test_the_budget_sheds_the_sparse_file_before_the_dense_one(
         self, tmp_path, monkeypatch,
     ):

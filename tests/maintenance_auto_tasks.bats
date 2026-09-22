@@ -256,20 +256,20 @@ _run_tasks() {
   # There is no runtime symptom, so this assertion is the only thing holding it.
   #
   # Rendered the way _launchd_install does rather than read raw: the template
-  # carries __INTERVAL__ where an integer belongs, so PlistBuddy cannot parse it
-  # unsubstituted, and the file launchd loads is the rendered one anyway.
+  # carries __INTERVAL__ where an integer belongs, so a plist parser cannot read
+  # it unsubstituted, and the file launchd loads is the rendered one anyway.
   #
-  # PlistBuddy is macOS-only; launchd itself only exists there, so this
-  # assertion has nothing to hold on any other OS.
-  if [[ "$OSTYPE" != "darwin"* ]]; then skip "macOS only"; return; fi
+  # Read with grep rather than PlistBuddy, which is macOS-only. Skipping on
+  # Linux would put the one mechanical guard on a silent, invisible failure
+  # behind an `if` that is false on every CI runner this repo has — the
+  # assertion would exist and never once run. The key and its value are
+  # adjacent lines of XML, so checking the pair needs no parser.
   local rendered="$TEST_HOME/rendered.plist"
   sed -e "s|__WORKBENCH_DIR__|/tmp/wb|g" -e "s|__INTERVAL__|43200|g" \
     -e "s|__LOG_DIR__|/tmp/logs|g" \
     "$REPO_ROOT/maintenance/maintenance.plist.template" > "$rendered"
 
-  run /usr/libexec/PlistBuddy -c "Print :AbandonProcessGroup" "$rendered"
-  [ "$status" -eq 0 ]
-  [ "$output" = "true" ]
+  grep -A1 '<key>AbandonProcessGroup</key>' "$rendered" | grep -q '<true/>'
 }
 
 @test "the systemd unit does not kill the control group" {

@@ -155,10 +155,10 @@ class TestResolveModel:
         `var` is what ~/.env.local sets; `target` is what the Claude Code
         settings mirror publishes, which is the fallback.
         """
-        import yaml
+        from config.workbench_config import read_yaml
 
         registry = Path(__file__).resolve().parent.parent / "ai" / "models.env.yml"
-        entries = yaml.safe_load(registry.read_text())["env"]
+        entries = read_yaml(registry)["env"]
         by_var = {e["var"]: e for e in entries if e.get("role") == "model-tier"}
 
         assert len(by_var) == len(list(ro.ModelAlias)), (

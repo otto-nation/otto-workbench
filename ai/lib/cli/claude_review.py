@@ -26,6 +26,7 @@ import argparse
 import os
 import signal
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
@@ -80,6 +81,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disprove", action="store_true", default=None)
     parser.add_argument("--json-summary", action="store_true")
     parser.add_argument("--issue")
+    # `--onto` is accepted for symmetry with `pr rebase`, which spells the same
+    # question that way. The value differs in kind from that one, though: this
+    # is a bare branch name resolved as `origin/<name>`, where rebase takes any
+    # ref verbatim. A review's every range is anchored to the remote-tracking
+    # ref, so accepting an arbitrary ref here would silently anchor half of them
+    # somewhere else.
+    parser.add_argument("--base", "--onto", dest="base", default="",
+                        help="Branch to review against, as a bare name. Default: "
+                             "the PR's base, else the branch this one is stacked "
+                             "on, else the repo's default branch")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
     parser.add_argument("--max-cost", type=float)
     parser.add_argument("--model")
@@ -103,6 +114,7 @@ def _flags(args, generator_version: str) -> review_run.ReviewFlags:
         bin_dir=BIN_DIR,
         generator_version=generator_version,
         command=" ".join([SCRIPT] + sys.argv[1:]),
+        base=args.base or "",
         issue_link=args.issue or "",
         max_parallel=args.max_parallel,
         max_cost=args.max_cost,
@@ -212,10 +224,20 @@ def _run_self_review(args, generator_version: str = "") -> review_run.ReviewOutc
     # needed: when the branch already has an open PR, the number is what fetches
     # the reply threads that keep a re-review from repeating findings already
     # answered there — the `--self --fix --push` flow in self-review.md. When
-    # GitHub cannot be reached the lookup yields None and the run proceeds as a
-    # pre-PR self-review, which is the whole point of resolving locally first.
-    resolved_pr = ctx.pr_number or pr_context.pr_number_if_reachable(repo, ctx.branch)
-    pr_number = str(resolved_pr) if resolved_pr else ""
+    # GitHub cannot be reached the lookup yields nothing and the run proceeds as
+    # a pre-PR self-review, which is the whole point of resolving locally first.
+    #
+    # The same call carries the PR's base, which is what a stacked branch is
+    # measured against. Folded back onto the context rather than carried
+    # alongside it, so everything downstream reads one resolved value — the
+    # number reaching `run_self_review` through `ctx.pr_number` is what makes
+    # the PR-aware metadata path reachable from a plain `--self` at all.
+    found = (
+        pr_context.BranchPR(number=ctx.pr_number, base=ctx.base) if ctx.pr_number
+        else pr_context.pr_number_if_reachable(repo, ctx.branch)
+    )
+    ctx = replace(ctx, pr_number=found.number, base=found.base)
+    pr_number = str(found.number) if found.number else ""
 
     # Before the checkout is switched or a --fix pass edits it: two `--self`
     # runs on one branch are two processes committing to it. A no-op when `pr`

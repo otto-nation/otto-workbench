@@ -2521,54 +2521,53 @@ def _landed_ctx(**overrides):
 # ── target ref resolution ───────────────────────────────────────────────────
 
 
-def test_pr_base_branch_reads_the_base_github_reports():
-    ctx = _landed_ctx(repo="owner/repo")
+def test_pr_base_branch_reads_the_base_the_context_resolved():
+    """`pr_context.resolve` already read `baseRefName` off whichever call found
+    the PR, so by the time a rebase asks, the answer is in hand."""
+    ctx = _landed_ctx(repo="owner/repo", base=_OTHER_BASE)
 
-    with _gh_response(f'{{"baseRefName": "{_OTHER_BASE}"}}') as mock_try:
-        assert rebase_target.pr_base_branch("/fake", ctx) == _OTHER_BASE
-
-    cmd = mock_try.call_args[0][0]
-    assert cmd[:4] == ["gh", "pr", "view", str(_LANDED_PR)]
-    assert cmd[4:6] == ["--repo", "owner/repo"]
+    assert rebase_target.pr_base_branch("/fake", ctx) == _OTHER_BASE
 
 
-def test_pr_base_branch_omits_repo_when_the_context_has_none():
-    """gh infers the repo from the remote — an empty --repo value would not."""
-    ctx = _landed_ctx(repo="")
+def test_pr_base_branch_spends_no_round_trip_of_its_own():
+    """The read it used to make is the one the context already paid for."""
+    ctx = _landed_ctx(repo="owner/repo", base=_OTHER_BASE)
 
-    with _gh_response(f'{{"baseRefName": "{_OTHER_BASE}"}}') as mock_try:
-        assert rebase_target.pr_base_branch("/fake", ctx) == _OTHER_BASE
-
-    assert "--repo" not in mock_try.call_args[0][0]
-
-
-def test_pr_base_branch_stays_quiet_without_a_pr_number():
-    """Probing by branch name would spend a round trip to learn nothing."""
     with mock.patch("core.proc.subprocess.run") as mock_gh:
-        assert rebase_target.pr_base_branch("/fake", _landed_ctx(pr_number=None)) is None
+        rebase_target.pr_base_branch("/fake", ctx)
 
     mock_gh.assert_not_called()
 
 
-@pytest.mark.parametrize("payload,returncode", [
-    ("not json at all", 0),
-    ("{}", 0),
-    ('{"baseRefName": ""}', 0),
-    ("no such pull request", 1),
-])
-def test_pr_base_branch_degrades_when_gh_cannot_answer(payload, returncode):
-    with _gh_response(payload, returncode=returncode):
-        assert rebase_target.pr_base_branch("/fake", _landed_ctx()) is None
+def test_pr_base_branch_stays_quiet_when_the_context_has_no_base():
+    """Empty is "gh could not say" — no PR, no auth, no network alike. Asking
+    again here would be the same refusal a second time."""
+    with mock.patch("core.proc.subprocess.run") as mock_gh:
+        assert rebase_target.pr_base_branch("/fake", _landed_ctx(base="")) is None
+
+    mock_gh.assert_not_called()
 
 
-def test_pr_base_branch_survives_gh_being_absent():
-    with mock.patch("core.proc.subprocess.run", side_effect=FileNotFoundError):
-        assert rebase_target.pr_base_branch("/fake", _landed_ctx()) is None
+def test_pr_base_branch_prefers_a_snapshot_the_caller_already_fetched():
+    """The snapshot read six fields in one call; its base is the same fact."""
+    snapshot = rebase_pr_snapshot.PRSnapshot(base_ref=_OTHER_BASE)
+
+    assert rebase_target.pr_base_branch(
+        "/fake", _landed_ctx(base="stale"), snapshot) == _OTHER_BASE
 
 
-def _resolve_target(onto=None, *, pr_base=None, default_branch="main"):
-    """Resolve the target ref with both probes forced."""
+def _resolve_target(onto=None, *, pr_base=None, default_branch="main",
+                    parent_branch=""):
+    """Resolve the target ref with every probe forced.
+
+    `parent_branch` pins what `git_topology.stack_parent` returns: left live
+    it walks the ancestry of whatever repo the suite is running inside, so
+    the rung under test would be decided by the checkout rather than by the
+    case. Named apart from the patched attribute so the two are not
+    conflated on a fast read.
+    """
     with mock.patch.object(rebase_target, "pr_base_branch", return_value=pr_base), \
+         mock.patch.object(git_topology, "stack_parent", return_value=parent_branch), \
          mock.patch.object(git_topology, "default_branch",
                            return_value=default_branch):
         return rebase_target.resolve_target_ref("/fake", _landed_ctx(), onto)
@@ -2588,6 +2587,23 @@ def test_resolve_target_ref_prefers_the_pr_base_over_the_default_branch():
 def test_resolve_target_ref_falls_back_to_the_default_branch():
     """Regression: a repo on master was rebased onto a ref it does not have."""
     assert _resolve_target(default_branch="master") == "origin/master"
+
+
+def test_resolve_target_ref_replays_a_stacked_branch_onto_its_parent():
+    """A stack whose parent has no PR yet: GitHub has no base to report, and
+    rebasing onto the trunk replays the parent's commits along with this
+    branch's own — which is what produces conflicts against work already
+    landed on the parent."""
+    assert _resolve_target(
+        parent_branch="feat/parent", default_branch="main",
+    ) == "origin/feat/parent"
+
+
+def test_resolve_target_ref_prefers_a_pr_base_over_a_derived_parent():
+    """An open PR states its base; ancestry only infers one."""
+    assert _resolve_target(
+        pr_base=_OTHER_BASE, parent_branch="feat/parent",
+    ) == _OTHER_TARGET
 
 
 def test_resolve_target_ref_never_asks_the_default_branch_when_a_pr_answers():

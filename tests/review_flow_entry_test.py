@@ -187,7 +187,7 @@ def _pr_args(**overrides):
         force=False, disprove=None, max_cost=None, model=None, repo_dir="",
         effort=None, max_groups=None, generated=False, recover=False,
         debug=False, push=False, fix=False, no_holistic=False, no_scout=False,
-        skip_user_verification=False,
+        skip_user_verification=False, base="",
     )
     base.update(overrides)
     return SimpleNamespace(**base)

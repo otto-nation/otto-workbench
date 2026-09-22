@@ -37,6 +37,10 @@ import git_remote  # noqa: E402
 
 RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent.parent / "bin" / "resolve-branch"
 
+# Where remote-tracking refs live, spelled once. `stack_parent` both filters on
+# this prefix and strips it, and the two have to agree.
+REMOTE_REF_PREFIX = f"refs/remotes/{git_remote.GIT_REMOTE}/"
+
 
 @dataclass(frozen=True)
 class WorktreeEntry:
@@ -212,6 +216,124 @@ def default_branch(cwd: str | Path | None = None) -> str:
     :func:`default_branch_cached`.
     """
     return git_remote.resolve_default_branch(str(cwd) if cwd is not None else None)
+
+
+def _rank_ancestor(ref: str, head: str, cwd: str | None) -> tuple[int, int, str] | None:
+    """Sort key for one stack-parent candidate, or None when it cannot be one.
+
+    The first element is the distance from the fork point to HEAD, so the
+    nearest ancestor sorts first. The other two break a tie that the distance
+    cannot: two refs at the same commit describe the same diff, so which one is
+    named is cosmetic — but it has to be the *same* cosmetic answer on every
+    machine, and ``for-each-ref`` order is not that. A remote-tracking ref wins
+    over a local one because it is the ref the ranges are anchored to anyway,
+    and the name settles the rest.
+
+    *head* is passed in rather than read here: it is the same commit for every
+    candidate, and resolving it per ref spends a subprocess per branch to learn
+    one answer.
+    """
+    merge_base = _git_out(["merge-base", ref, "HEAD"], cwd)
+    if not merge_base:
+        return None
+    # A candidate containing HEAD is a descendant, not a parent: the branch
+    # stacked on *this* one, or this one's own ref under another name. Diffing
+    # against it yields nothing, which reads as a review with no changes.
+    if merge_base == head:
+        return None
+    distance = _git_out(["rev-list", "--count", f"{merge_base}..HEAD"], cwd)
+    if not distance:
+        return None
+    return (int(distance), 0 if ref.startswith(REMOTE_REF_PREFIX) else 1, ref)
+
+
+def stack_parent(cwd: str | None = None, default: str = "") -> str:
+    """The branch HEAD is stacked on, or "" when it is stacked on the trunk.
+
+    For a branch whose parent is another feature branch, which the trunk-shaped
+    default is wrong about: a review, a rebase or a diff measured against the
+    trunk covers the parent's commits as well as this branch's own, so the
+    parent's changes are reported as if this branch had made them.
+
+    The answer is a *name*. Callers resolve it to a commit themselves, normally
+    as ``origin/<name>``, so a local ref sitting at a stale position can
+    nominate a base without being the thing measured against.
+
+    ``--no-merged <default>`` is what keeps this from having a special case for
+    the ordinary branch: a branch off the trunk has no ancestor the trunk does
+    not already contain, so the candidate set is empty and the caller keeps its
+    own default. Only a genuine stack yields anything here.
+
+    Best effort like every other topology read: an unresolvable default, a
+    detached HEAD or a git that will not answer all give "", and the caller
+    falls back to the base it would have used before asking.
+    """
+    default = default or default_branch(cwd)
+    # An unfetched clone has no such ref, and `for-each-ref` rejects the whole
+    # query as a malformed object name rather than ignoring the exclusion — so
+    # the empty listing below is also the answer for a repo with no trunk to
+    # measure against, which is the right one: without the exclusion every
+    # ancestor of HEAD is a candidate and the nearest local branch would win.
+    trunk = f"{REMOTE_REF_PREFIX}{default}"
+
+    listing = _git_out(
+        ["for-each-ref", "--merged", "HEAD", "--no-merged", trunk,
+         "--format=%(refname)", "refs/heads", REMOTE_REF_PREFIX.rstrip("/")],
+        cwd,
+    )
+    if not listing:
+        return ""
+
+    # Compared after shortening, which drops `origin/<current>` as well as the
+    # local ref. That is the case that matters: a branch with unpushed commits
+    # has its own remote-tracking ref sitting closer than its real parent, so
+    # ranking it would silently narrow the base to "whatever I have not pushed".
+    current = current_branch_quiet(cwd)
+    head = _git_out(["rev-parse", "HEAD"], cwd)
+    if not head:
+        return ""
+
+    ranked = []
+    for ref in listing.splitlines():
+        short = _short_ref(ref)
+        if not short or short == current:
+            continue
+        rank = _rank_ancestor(ref, head, cwd)
+        if rank:
+            ranked.append((rank, short))
+    if not ranked:
+        return ""
+    return min(ranked)[1]
+
+
+def _short_ref(ref: str) -> str:
+    """``refs/heads/x`` and ``refs/remotes/origin/x`` alike as ``x``.
+
+    Stripped here rather than asked of ``%(refname:short)``, which abbreviates a
+    remote-tracking ref to ``origin/x``: the caller wants a branch name it can
+    spell as ``origin/<name>`` itself, and one already carrying the remote would
+    come back out as ``origin/origin/x``.
+    """
+    if ref.startswith(REMOTE_REF_PREFIX):
+        return ref.removeprefix(REMOTE_REF_PREFIX)
+    return ref.removeprefix("refs/heads/")
+
+
+def _git_out(args: list[str], cwd: str | None = None) -> str:
+    """Stripped stdout of a local read, or "" when git did not answer.
+
+    `git.client` is the usual transport for this, but it sits at the same layer
+    as this module and the two may not import each other — see the module
+    docstring on why the reads here are plain `subprocess`.
+    """
+    try:
+        r = subprocess.run(
+            ["git", *args],
+            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 @functools.cache

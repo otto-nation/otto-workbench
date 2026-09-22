@@ -409,6 +409,38 @@ class TestDensitySkipping:
 
 
 class TestCollectPreflightData:
+    def test_a_pr_against_an_unpushed_base_still_sees_its_commits(self, tmp_path):
+        """The PR path reads its diff and commit log through the same resolver.
+        A base with no remote-tracking ref makes both ranges name a ref that
+        does not exist — `git` exits non-zero and `git_client.out` reports that
+        as empty, so the review is handed no diff and no log at all."""
+        origin = tmp_path / "origin.git"
+        git_out(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        git_out(repo, "remote", "add", "origin", str(origin))
+        git_out(repo, "push", "-q", "origin", "main")
+        git_out(repo, "checkout", "-b", "parent", "-q")
+        (repo / "parent.go").write_text("package main\n")
+        commit_all(repo, "add parent")
+        git_out(repo, "checkout", "-b", "child", "-q")
+        (repo / "child.go").write_text("package main\nfunc child() {}\n")
+        commit_all(repo, "the child commit")
+
+        job = _job(
+            tmp_path, [{"path": "child.go", "additions": 2, "deletions": 0}],
+            wt_path=str(repo),
+            pr=replace(_job(tmp_path, []).pr, base="parent"),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = rc.collect_preflight_data(job)
+
+        assert "func child" in data.diff
+        assert "package main\n+func parent" not in data.diff
+        assert "the child commit" in data.commit_log
+        assert "add parent" not in data.commit_log
+
     def test_oversized_file_in_diff_but_omitted_from_contents(self, tmp_path):
         repo = init_repo(tmp_path / "repo")
         (repo / "big.txt").write_text("x" * 600_000)
@@ -1208,6 +1240,99 @@ class TestFetchBranchMetadata:
         pr = fetch_branch_metadata(str(repo), "develop")
         assert [f["path"] for f in pr.files] == ["feat.go"]
         assert pr.base == "develop"
+
+    def test_an_unpushed_stack_parent_anchors_on_the_local_branch(self, tmp_path):
+        """A stack whose parent exists only locally. `origin/<parent>` resolves
+        to nothing, and without the local fallback every range collapses: the
+        fork point degrades to HEAD and the review covers no commits at all —
+        silently, since an empty diff reads as a branch that changed nothing.
+
+        Origin is a real second repository rather than `add_self_origin`: with
+        the repo as its own remote, `fetch_base` creates `origin/parent` out of
+        the local branch and the case under test cannot arise.
+        """
+        origin = tmp_path / "origin.git"
+        git_out(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        git_out(repo, "remote", "add", "origin", str(origin))
+        git_out(repo, "push", "-q", "origin", "main")
+        git_out(repo, "checkout", "-b", "parent", "-q")
+        (repo / "parent.go").write_text("package main\n")
+        commit_all(repo, "add parent")
+        git_out(repo, "checkout", "-b", "child", "-q")
+        (repo / "child.go").write_text("package main\n")
+        commit_all(repo, "add child")
+
+        pr = fetch_branch_metadata(str(repo), "parent")
+
+        assert [f["path"] for f in pr.files] == ["child.go"]
+
+    def test_a_pushed_base_is_measured_against_the_remote_not_the_local_ref(
+        self, tmp_path,
+    ):
+        """The two name different commits whenever the local branch is behind,
+        and the review must not depend on a fetch it does not control.
+
+        Built so the answer is observable rather than cosmetic: the local
+        `main` is left an ancestor of HEAD — so the narrowed local fallback
+        would accept it — while `origin/main` sits further back. Anchoring on
+        the local ref would drop `moved.go` from the review.
+        """
+        origin = tmp_path / "origin.git"
+        git_out(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        git_out(repo, "remote", "add", "origin", str(origin))
+        git_out(repo, "push", "-q", "origin", "main")
+        # main moves on locally, and is never pushed
+        (repo / "moved.go").write_text("package main\n")
+        commit_all(repo, "move main")
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "feat.go").write_text("package main\n")
+        commit_all(repo, "add feat")
+
+        assert rc.base_ref(str(repo), "main") == "origin/main"
+
+        pr = fetch_branch_metadata(str(repo), "main")
+        assert [f["path"] for f in pr.files] == ["feat.go", "moved.go"]
+
+    def test_the_commit_log_spans_the_same_range_as_the_diff(self, tmp_path):
+        """The log and the file list are read separately and must agree. An
+        unpushed stack parent is where they come apart: a log range spelled
+        `origin/<parent>` against a ref that does not exist exits non-zero and
+        reports nothing, beside a file list that found the commits."""
+        origin = tmp_path / "origin.git"
+        git_out(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        git_out(repo, "remote", "add", "origin", str(origin))
+        git_out(repo, "push", "-q", "origin", "main")
+        git_out(repo, "checkout", "-b", "parent", "-q")
+        (repo / "parent.go").write_text("package main\n")
+        commit_all(repo, "add parent")
+        git_out(repo, "checkout", "-b", "child", "-q")
+        (repo / "child.go").write_text("package main\n")
+        commit_all(repo, "the child commit")
+
+        pr = fetch_branch_metadata(str(repo), "parent")
+
+        # The title comes off the log range: empty output falls back to the
+        # branch name, so the subject proves the log saw the same commits.
+        assert pr.title == "the child commit"
+
+    def test_a_local_ref_at_head_is_not_a_base(self, tmp_path):
+        """An unfetched clone sitting on its own base branch. Anchoring there
+        makes every range empty — the diff spans two names for one commit, and
+        the delta's ancestry walk excludes the commits it is asking about."""
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+
+        assert rc.base_ref(str(repo), "main") == ""
 
     def test_an_omitted_base_resolves_the_trunk_instead_of_assuming_main(
         self, tmp_path,

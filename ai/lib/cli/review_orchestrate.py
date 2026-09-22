@@ -324,7 +324,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     if not _budgets_are_derivable(phase_models, trail):
         return 1
     run_ctx = fetch_metadata(
-        repo, args.pr, args.mode, args.repo_dir, args.recover_sha,
+        repo, args.pr, args.mode, args.repo_dir, args.recover_sha, base=args.base,
     )
     pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
@@ -413,6 +413,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Version string to embed in review metadata")
     parser.add_argument("--mode", type=enum_arg(Mode), choices=list(Mode), default=Mode.PR,
                         help="Review mode: pr (default) or self")
+    parser.add_argument("--base", default="",
+                        help="Branch to measure the diff against, as a bare name "
+                             "(resolved as origin/<name>). Default: the PR's base, "
+                             "else the branch this one is stacked on, else the "
+                             "repo's default branch")
     parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",

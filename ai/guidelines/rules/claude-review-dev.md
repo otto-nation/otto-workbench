@@ -22,6 +22,33 @@ When adding or modifying a review phase, verify these integration points:
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
 
+## Which base a review measures against
+
+One resolver answers this for the whole subsystem: `pr.context.base_branch`,
+whose rungs are an explicit `--base`, then GitHub's `baseRefName` off
+`ctx.base`, then `git.topology.stack_parent` (nearest ancestor of HEAD the
+trunk does not contain), then the repo's default branch. Both review flows call
+it once at entry and thread the answer down; nothing below re-derives a base.
+
+Two consequences worth keeping:
+
+- The base reaches `review-orchestrate` on its argv (`OrchestrateRequest.base`
+  → `--base` → `fetch_metadata`). That process rebuilds its metadata from the
+  repo and PR number alone, so a base resolved on the near side and not put on
+  the argv is one the pipeline never sees.
+- The same value goes to `preflight.refuse_if_superseded`. A run whose
+  supersession gate and diff name different bases refuses over commits it then
+  declines to review, which is worse than either answer alone.
+
+A base *name* becomes a *ref* in exactly one place, `review.collect.base_ref`:
+`origin/<base>`, falling back to the local branch only when no remote-tracking
+ref exists and the local one is a strict ancestor of HEAD — an unpushed stack
+parent. Every range (`fork_point`, the file list, the diff, the commit log, the
+delta's ancestry exclusion) resolves through it, which is what keeps them all
+measured from one commit. A new range spelling `origin/{base}` by hand is the
+bug this consolidated: an unpushed parent made it resolve to nothing, and a
+review covering no commits reads exactly like a branch that changed nothing.
+
 ## Re-review reconciliation
 
 A re-review accounts for every prior finding in a `## Prior findings` ledger —

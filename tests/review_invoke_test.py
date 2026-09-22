@@ -62,6 +62,7 @@ def test_the_self_review_argv_carries_mode_fix_and_publish(tmp_path):
     """
     argv = review_invoke.build_argv(_request(
         tmp_path, mode="self", fix_pass=True, may_publish=True,
+        base="feat/parent",
         model="sonnet", max_cost=12.5, effort="high", max_groups=3,
         generated=True, recover_sha="abc1234",
     ))
@@ -75,6 +76,7 @@ def test_the_self_review_argv_carries_mode_fix_and_publish(tmp_path):
         "--session-log", "/log",
         "--pr", "42",
         "--mode", "self",
+        "--base", "feat/parent",
         "--max-parallel", "1",
         "--generator-version", "claude-review 1.2.3",
         "--fix",
@@ -180,3 +182,21 @@ def test_a_successful_run_returns_its_wall_clock(tmp_path, monkeypatch):
 
     assert isinstance(wall_ms, int)
     assert wall_ms >= 0
+
+
+def test_the_base_crosses_the_spawn(tmp_path):
+    """review-orchestrate is a separate process that rebuilds its metadata from
+    the repo and PR number alone. A base resolved on this side and not put on
+    the argv is one the pipeline never sees — it would re-derive the trunk and
+    review a stacked branch against the wrong thing."""
+    argv = review_invoke.build_argv(_request(tmp_path, base="feat/parent"))
+
+    assert "--base" in argv
+    assert argv[argv.index("--base") + 1] == "feat/parent"
+
+
+# passes-at-base: no such field there, so the assertion is vacuous rather than satisfied — against the change, emitting `--base` unconditionally fails it
+def test_an_unresolved_base_is_left_off_the_argv(tmp_path):
+    """Absent rather than empty: review-orchestrate defaults it, and `--base ""`
+    would override that default with nothing."""
+    assert "--base" not in review_invoke.build_argv(_request(tmp_path))

@@ -16,9 +16,7 @@ from __future__ import annotations
 
 from core import log
 from core.trail import Trail, tdecision, terr, tfail
-from gh import client as gh_client
 from git import client as git_client
-from git import topology as git_topology
 from pr import context as pr_context
 
 from . import inspect as rebase_inspect
@@ -39,25 +37,24 @@ def pr_base_branch(
     that type exists — the base and the already-landed state come out of a
     single ``gh pr view`` that ``pr_snapshot.fetch`` asks by branch name when
     no PR number is resolved yet, so a branch with an open PR still surfaces a
-    base here even before its number is known. Without a snapshot, this falls
-    back to its own read, which *is* gated on a resolved PR number: probing by
-    branch name on every rebase would spend a round trip to learn nothing when
-    no snapshot was already fetched.
+    base here even before its number is known.
+
+    Without one, ``ctx.base`` answers: ``pr_context.resolve`` reads the base off
+    whichever call found the PR, so by the time a rebase asks, the field is
+    already filled and no second round trip is owed. It is empty only when that
+    call could not answer either — no ``gh``, no auth, no PR — and a read here
+    would be the same refusal a second time.
 
     Best effort, unlike ``branch_landed.merged_pr``, which now tells a refused
     read from an answered one: gh may be absent, unauthenticated or
-    rate-limited, and the repo's default branch is the right answer for all but
-    stacked and release-branch PRs. Falling back to it costs a rebase onto the
-    wrong base at worst, where the tracker check's fallback is a force-push
-    over merged work — which is why only that one refuses.
+    rate-limited. Where it cannot say, :func:`pr_context.base_branch` derives a
+    stack parent from local ancestry before falling back to the trunk, so the
+    cost of this returning None is no longer a rebase onto the wrong base for
+    every stacked branch — only for one whose parent git cannot see either.
     """
     if snapshot is not None:
         return snapshot.base_ref or None
-    if not ctx.pr_number:
-        return None
-
-    data = gh_client.pr_view(ctx.pr_number, "baseRefName", repo=ctx.repo, cwd=cwd)
-    return data.get("baseRefName") or None
+    return ctx.base or None
 
 
 def resolve_target_ref(
@@ -77,17 +74,19 @@ def resolve_target_ref(
         tdecision(trail, "target_ref", f"rebasing onto {ref}", reason=reason)
         return ref
 
+    # Above the shared ladder, and taken verbatim, because this flag is a *ref*
+    # where every rung below yields a branch name: `--onto upstream/trunk`
+    # rebases onto that ref and must not become `origin/upstream/trunk`.
     if onto:
         return decide(onto, "--onto flag set")
 
-    base = pr_base_branch(cwd, ctx, snapshot)
-    if base:
-        return decide(f"origin/{base}", f"PR #{ctx.pr_number} targets {base}")
-
-    return decide(
-        f"origin/{git_topology.default_branch(cwd)}",
-        "no PR base to read — falling back to the repo's default branch",
+    # Passed as `known` rather than folded onto the context: the snapshot's base
+    # is the same GitHub fact `ctx.base` carries, read by a different call, and
+    # this is the caller the parameter exists for.
+    base = pr_context.base_branch(
+        ctx, known=pr_base_branch(cwd, ctx, snapshot) or "", cwd=cwd, trail=trail,
     )
+    return decide(f"origin/{base}", f"resolved base branch {base}")
 
 
 def resume_target_ref(

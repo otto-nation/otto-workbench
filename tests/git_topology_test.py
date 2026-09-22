@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from git import topology as git_topology  # noqa: E402
 
+from conftest import commit_all, git_in, init_repo  # noqa: E402
+
 
 def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str:
     """``git worktree list --porcelain`` output for (path, branch) entries.
@@ -553,3 +555,114 @@ def test_wt_switch_stays_quiet_when_it_lands_on_a_worktree(monkeypatch, capsys):
 
     assert git_topology.wt_switch("feat/x") == "/repo/feat-x"
     assert capsys.readouterr().err == ""
+
+
+# ── stack parent derivation ─────────────────────────────────────────────────
+#
+# Against real repos rather than a mocked `for-each-ref`: the question is what
+# git's ancestry actually reports for a given shape, so a fixture that returns
+# a hand-written ref listing would be asserting this test's idea of git.
+
+
+def _stack_repo(path) -> Path:
+    """`main -> parent -> child`, with origin refs for main and parent.
+
+    The trunk is deliberately *ahead* of the fork point, which is the ordinary
+    state of a stack that has sat for a day and the one where a naive "nearest
+    branch" walk goes wrong.
+    """
+    repo = init_repo(path)
+    _commit(repo, "m1")
+    git_in(repo, "checkout", "-qb", "parent")
+    _commit(repo, "p1")
+    _commit(repo, "p2")
+    git_in(repo, "checkout", "-qb", "child")
+    _commit(repo, "c1")
+    git_in(repo, "checkout", "-q", "main")
+    _commit(repo, "m2")
+    git_in(repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
+    git_in(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    git_in(repo, "update-ref", "refs/remotes/origin/parent", "refs/heads/parent")
+    git_in(repo, "checkout", "-q", "child")
+    return repo
+
+
+def _commit(repo, name: str) -> None:
+    (Path(repo) / f"{name}.txt").write_text(name)
+    commit_all(repo, name)
+
+
+def test_stack_parent_names_the_branch_this_one_is_stacked_on(tmp_path):
+    repo = _stack_repo(tmp_path / "repo")
+
+    assert git_topology.stack_parent(str(repo)) == "parent"
+
+
+def test_stack_parent_takes_the_nearest_of_several_ancestors(tmp_path):
+    """A three-deep stack, where the nearest ancestor is not the first one git
+    lists: `aaa-base` sorts ahead of `middle` in ref order but is two commits
+    further back. Taking ref order instead of distance would measure this
+    branch against its grandparent and report the middle branch's commits as
+    its own."""
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "branch", "aaa-base", "parent")
+    git_in(repo, "checkout", "-qb", "middle")
+    _commit(repo, "mid1")
+    git_in(repo, "checkout", "-qb", "leaf")
+    _commit(repo, "leaf1")
+
+    assert git_topology.stack_parent(str(repo)) == "middle"
+
+
+def test_stack_parent_is_empty_for_an_ordinary_branch_off_the_trunk(tmp_path):
+    """The common case, and the reason there is no special case for it: a branch
+    with no ancestor the trunk lacks yields nothing, so the caller keeps its
+    default rather than being handed some unrelated branch."""
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "checkout", "-q", "main")
+    git_in(repo, "checkout", "-qb", "solo")
+    _commit(repo, "z")
+
+    assert git_topology.stack_parent(str(repo)) == ""
+
+
+def test_stack_parent_ignores_another_ref_sitting_at_head(tmp_path):
+    """A backup or duplicate branch left at HEAD is an ancestor at distance
+    zero, so it would win every ranking. Diffing against it yields an empty
+    range, which reads as a review of a branch that changed nothing."""
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "branch", "backup-child", "child")
+
+    assert git_topology.stack_parent(str(repo)) == "parent"
+
+
+def test_stack_parent_ignores_this_branch_s_own_remote_ref(tmp_path):
+    """A branch with unpushed commits has `origin/<itself>` sitting closer than
+    its real parent. Ranking it would narrow the base to "whatever I have not
+    pushed yet" — a review of the last two commits, silently."""
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "update-ref", "refs/remotes/origin/child", "refs/heads/child")
+    _commit(repo, "c2")
+    _commit(repo, "c3")
+
+    assert git_topology.stack_parent(str(repo)) == "parent"
+
+
+def test_stack_parent_declines_without_a_trunk_to_exclude(tmp_path):
+    """On an unfetched clone every ancestor is a candidate and the nearest local
+    branch wins — an answer worse than the default the caller already had."""
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "symbolic-ref", "-d", "refs/remotes/origin/HEAD")
+    git_in(repo, "update-ref", "-d", "refs/remotes/origin/main")
+
+    assert git_topology.stack_parent(str(repo)) == ""
+
+
+def test_stack_parent_reports_a_bare_branch_name_for_a_remote_only_parent(tmp_path):
+    """The caller spells `origin/<name>` itself, so a remote-tracking ref must
+    come back as `parent` rather than `origin/parent` — which would otherwise be
+    resolved as `origin/origin/parent` and match nothing."""
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "branch", "-q", "-D", "parent")
+
+    assert git_topology.stack_parent(str(repo)) == "parent"

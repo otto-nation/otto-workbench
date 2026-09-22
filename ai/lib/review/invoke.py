@@ -51,6 +51,11 @@ class OrchestrateRequest:
     bin_dir: Path
     generator_version: str
     mode: str = ""
+    # The branch this review measures against, already resolved by the caller.
+    # Passed explicitly because review-orchestrate is a separate process that
+    # rebuilds its metadata from `repo` and `pr_number` alone: without it on the
+    # argv, a base derived here is invisible on the other side of the spawn.
+    base: str = ""
     prior_review_path: str = ""
     issue_link: str = ""
     issue_context: str = ""
@@ -87,6 +92,8 @@ def build_argv(request: OrchestrateRequest) -> list[str]:
         args += ["--pr", request.pr_number]
     if request.mode:
         args += ["--mode", request.mode]
+    if request.base:
+        args += ["--base", request.base]
     if request.prior_review_path and Path(request.prior_review_path).is_file():
         args += ["--prior-review", request.prior_review_path]
     if request.issue_link:

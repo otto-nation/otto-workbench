@@ -288,6 +288,14 @@ def stack_parent(cwd: str | None = None, default: str = "") -> str:
     # local ref. That is the case that matters: a branch with unpushed commits
     # has its own remote-tracking ref sitting closer than its real parent, so
     # ranking it would silently narrow the base to "whatever I have not pushed".
+    #
+    # None on a detached HEAD, which is not a state to bail out of: the review
+    # pins one deliberately for `--recover` and for a PR whose branch is gone.
+    # Only `_rank_ancestor`'s at-HEAD check holds there, so a stale ref parked
+    # mid-branch can win on distance — the same stale-neighbour limitation an
+    # attached HEAD has, minus the one guard that usually hides it. `--base` is
+    # the remedy in both cases; a distance floor here would reject the
+    # one-commit parent a real stack legitimately has.
     current = current_branch_quiet(cwd)
     head = _git_out(["rev-parse", "HEAD"], cwd)
     if not head:

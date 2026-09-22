@@ -197,6 +197,7 @@ def run_pr_review(
         # operator stood in is on another branch entirely. Normally rung 2
         # answers from GitHub's base and nothing local is consulted — the
         # derivation is what a PR whose base `gh` could not report falls to.
+        review_preflight.refuse_unresolvable_base(wt_path, flags.base, trail=trail)
         base = pr_context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
 
         # Inside the try, so a refusal still cleans up the worktree it read.
@@ -284,6 +285,7 @@ def run_self_review(
     # stacked branch measured against the trunk by one of them and its parent
     # by another would be refused over the parent's commits and then reviewed
     # without them.
+    review_preflight.refuse_unresolvable_base(wt_path, flags.base, trail=trail)
     base = pr_context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
 
     trail.info("resolve_context", f"self-review in {repo}",

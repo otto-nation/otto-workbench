@@ -377,7 +377,9 @@ A parent that has not been pushed has no `origin/` ref, and every range would re
 
 Measuring a stacked branch against the trunk is wrong in a way nothing reports: the parent's commits read as this branch's own, and every finding about them is a finding about code the author did not write here. The same base also feeds the supersession gate, which would otherwise refuse the branch — before spending anything — over skew it measured against the wrong trunk.
 
-Where derivation guesses wrong, `--base` is the override. The case that calls for it is a stale branch parked between you and your real parent — a `wip`, a backup, a bisect leftover — which is nearer and therefore wins. The run says which rung answered and why, so a bad guess is visible rather than silent.
+Where derivation guesses wrong, `--base` is the override. The case that calls for it is a stale branch parked between you and your real parent — a `wip`, a backup, a bisect leftover — which is nearer and therefore wins. The same applies on a detached HEAD whose own branch ref is gone (a `--recover` pin, or a PR whose branch was deleted): the guard that normally skips the current branch has no name to match, so a stale neighbour can win on distance alone. The run says which rung answered and why, so a bad guess is visible rather than silent.
+
+A `--base` naming a branch that exists in neither `origin/` nor locally is refused before the review runs. This is the one rung that can name something that does not exist — the derived ones read refs out of git — and the failure it prevents is the quiet kind: every range would anchor to a ref git cannot resolve, the diff would come back empty, and the review would report no findings for a branch it never read. A *derived* base that does not resolve is not refused, since that is a gap in the derivation rather than a typo, and the range fallbacks handle it.
 
 #### Model selection
 

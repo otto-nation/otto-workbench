@@ -33,6 +33,7 @@ from core.trail import Trail
 from pr import domains as pr_domains
 from pr import supersession
 from review import recover as review_recover
+from review.collect import base_ref
 from review.state import read_pipeline_status
 
 
@@ -102,6 +103,42 @@ def check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool
             f"({git_client.abbrev(review_sha)}..{git_client.abbrev(pr_head_sha)})")
 
 
+def refuse_unresolvable_base(wt_path: str, override: str, *, trail: Trail) -> None:
+    """Stop before a review measured against a ref the operator misnamed.
+
+    Every range a review reads is anchored to the base, and git reports an
+    unknown ref by exiting non-zero — which `git_client.out` returns as empty
+    output. The review then runs to completion over an empty diff and reports
+    no findings, which is indistinguishable from a branch that is genuinely
+    clean. That is the worst failure this code has: it costs the full model
+    spend and hands back a false all-clear.
+
+    Scoped to the operator's own ``--base``, which is the only rung that can
+    name a branch that does not exist — the derived rungs read refs out of git,
+    so they cannot invent one. A *derived* base that fails to resolve is a gap
+    in this tool rather than a typo to correct, and refusing there would turn
+    every worktree git cannot answer for into a hard failure: the review flows
+    are driven in tests and in recovery against trees with no origin, and the
+    fallbacks below handle that case deliberately.
+    """
+    if not override or base_ref(wt_path, override):
+        return
+    base = override
+
+    log.error(f"Refusing to review against {base!r} — no such branch.")
+    log.dim(f"Neither origin/{base} nor a local {base} resolves to a commit in "
+            f"this worktree, so every range would be empty and the review "
+            f"would report no findings for a branch it never read.")
+    log.dim("Check the spelling, or drop --base to derive the branch's own base.")
+    trail.decision(
+        "unresolvable_base",
+        f"refused review — {base!r} names no ref",
+        reason="a base that resolves to nothing yields an empty diff, which reads as a clean branch",
+        data={"base": base},
+    )
+    sys.exit(1)
+
+
 def supersession_override(user_force: bool, recover: bool) -> bool:
     """Whether this run is exempt from the supersession refusal, and why.
 
@@ -142,12 +179,18 @@ def refuse_if_superseded(
     the refusal costs the whole review before an agent has run. Empty leaves
     `supersession` resolving the default branch, as it does for its other
     callers.
+
+    Resolved through `collect.base_ref` rather than spelled `origin/<base>`
+    here: an unpushed stack parent has no remote-tracking ref, and every one of
+    these signals is a git range. A ref that does not resolve makes them all
+    return nothing, which reads as a branch with no supersession signals rather
+    than as a check that never ran.
     """
     if override:
         return
     verdict = supersession.detect_cached(
         Path(wt_path), repo, target_dir,
-        base=f"origin/{base}" if base else "",
+        base=base_ref(wt_path, base) if base else "",
         trail=trail,
     )
     supersession.report(verdict)

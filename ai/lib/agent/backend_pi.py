@@ -451,6 +451,7 @@ def _write_result_record(
     duration_ms: int,
     stats: dict,
     model: str | None = None,
+    error: str | None = None,
 ):
     """Write a Claude-compatible result record to the session log.
 
@@ -463,10 +464,15 @@ def _write_result_record(
     tokens = stats.get("tokens", {})
     total_cost = stats.get("cost", cost)
 
+    # `is_error` is what `session._diagnose_result_type` branches on. A refused
+    # run left with the default False is diagnosed COMPLETED — the same false
+    # green the exit code carried, one layer up.
+    refused = stop_reason == BACKEND_REFUSED
+
     record = {
         "type": "result",
         "subtype": "success" if stop_reason == "completed" else stop_reason,
-        "is_error": False,
+        "is_error": refused,
         "total_cost_usd": total_cost,
         "num_turns": turn_count,
         "duration_ms": duration_ms,
@@ -477,6 +483,9 @@ def _write_result_record(
             "cache_creation_input_tokens": tokens.get("cacheWrite", 0),
         },
     }
+    if refused and error:
+        # The key _diagnose_result_type reads for its detail when is_error.
+        record["error"] = error
 
     # Claude's result record carries per-model costs and the ledger reads them
     # into cost_by_model; without this every Pi row is blank under
@@ -582,6 +591,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
     _write_result_record(
         inv.session_log, stream.stop_reason, stream.turn_count,
         stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
+        stream.error,
     )
 
     # Close stdin to terminate the RPC process — tolerate early exit
@@ -637,6 +647,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         _write_result_record(
             inv.session_log, stream.stop_reason, stream.turn_count,
             stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
+            stream.error,
         )
 
     try:

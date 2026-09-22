@@ -619,6 +619,56 @@ class TestBackendRefusal:
         stream = self._consume([{"type": "agent_end"}])
         assert ai_backend_pi._exit_code(stream, 0) == 0
 
+    def _refused_record(self, tmp_path):
+        log = tmp_path / "session.jsonl"
+        stream = self._consume([self.REFUSAL])
+        ai_backend_pi._write_result_record(
+            str(log), stream.stop_reason, stream.turn_count,
+            stream.accumulated_cost, 10, {}, "sonnet", stream.error,
+        )
+        return log, [
+            json.loads(l) for l in log.read_text().splitlines()
+            if json.loads(l).get("type") == "result"
+        ][0]
+
+    def test_the_result_record_is_marked_an_error(self, tmp_path):
+        """`is_error` is what `session._diagnose_result_type` branches on.
+
+        Left at its default False, a refused run is diagnosed COMPLETED — the
+        exit code is fixed and the layer above still reads success.
+        """
+        _, record = self._refused_record(tmp_path)
+        assert record["is_error"] is True
+        assert record["subtype"] == ai_backend_pi.BACKEND_REFUSED
+
+    def test_the_result_record_carries_the_reason(self, tmp_path):
+        _, record = self._refused_record(tmp_path)
+        assert "No API key found" in record["error"]
+
+    def test_a_refusal_diagnoses_as_an_error_not_a_completed_run(self, tmp_path):
+        """End of the chain: what the operator is actually told."""
+        from agent.session import diagnose_missing_output
+
+        log, _ = self._refused_record(tmp_path)
+        diagnosis = diagnose_missing_output(str(log))
+        assert diagnosis.kind.value == "agent_error"
+        assert "No API key found" in diagnosis.detail
+
+    def test_a_completed_run_is_still_not_an_error(self, tmp_path):
+        log = tmp_path / "ok.jsonl"
+        stream = self._consume([{"type": "agent_end"}])
+        ai_backend_pi._write_result_record(
+            str(log), stream.stop_reason, stream.turn_count,
+            stream.accumulated_cost, 10, {}, "sonnet", stream.error,
+        )
+        record = [
+            json.loads(l) for l in log.read_text().splitlines()
+            if json.loads(l).get("type") == "result"
+        ][0]
+        assert record["is_error"] is False
+        assert record["subtype"] == "success"
+        assert "error" not in record
+
 
 class TestPreflight:
     def test_always_passes(self):

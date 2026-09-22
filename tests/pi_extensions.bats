@@ -891,6 +891,16 @@ _masks() {
   [ "$output" = bats ]
 }
 
+@test "exit-status-guard: a trailing redirect after \$? does not hide the report" {
+  # A naive split on every literal `&` breaks `2>&1` apart from the `>` in
+  # front of it, shattering the last statement into fragments too short to
+  # match REPORTS_STATUS — the redirect must stay attached to its statement.
+  _masks 'pytest tests/; echo "EXIT=$?" 2>&1' false
+  [ "$output" = pytest ]
+  _masks 'bats tests/x.bats; printf "EXIT=%d\n" $? 2>&1' false
+  [ "$output" = bats ]
+}
+
 @test "exit-status-guard: the runner alone is fine" {
   # The remedy the refusal names: let the runner be the last thing that runs.
   _masks 'npm test > /tmp/out.txt 2>&1'

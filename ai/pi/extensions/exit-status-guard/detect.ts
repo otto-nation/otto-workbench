@@ -50,7 +50,7 @@ const REPORTS_STATUS = /^\s*(echo|printf)\b[^|]*\$\?/;
  * process's own status, so it is only exempt when the caller is a foreground
  * bash call; isMaskedExitStatus takes `reportsToCaller` for that.
  */
-const REDIRECTS = /[0-9]*>>?\s*\S/;
+const REDIRECTS = />>?\s*\S/;
 
 /** The last path segment of a token, so `bin/local/run-tests` reads as `run-tests`. */
 function basename(token: string): string {
@@ -70,11 +70,8 @@ function basename(token: string): string {
  */
 function invokesRunner(statement: string, runners: readonly string[]): boolean {
   const tokens = statement.trim().split(/\s+/).filter(Boolean);
-  for (const token of tokens) {
-    if (token.includes("=")) continue;
-    return runners.includes(basename(token));
-  }
-  return false;
+  const name = tokens.find((t) => !t.includes("="));
+  return name !== undefined && runners.includes(basename(name));
 }
 
 /**

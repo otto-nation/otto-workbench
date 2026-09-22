@@ -52,13 +52,6 @@ the wiring, so the bug ships under a green suite. When a change adds a function
 argument, restore the old call, put the wrong order back — and a test that
 survives that is testing the unit, not the behaviour.
 
-A test that fails only because the symbol is missing has not been checked yet.
-Against a base without the change, `is not a function` and a real assertion
-failure are the same red, and only one of them means the test constrains
-anything. Get the new code in place, then break its *behaviour* — pin the
-return, neuter the branch, leave the signature alone — and watch the assertion
-fail on the value. This is the case `check-new-tests` says it cannot see.
-
 A test whose subject is a periodic or conditional path must pin the condition
 that selects it. Shared counters, clocks and module state decide which branch a
 test exercises, and the default is rarely the one it is named for: a tick
@@ -68,6 +61,13 @@ the same value either way. Set the selector explicitly, and confirm from the
 code's own output — a log line, a spy, a counter — that the branch you meant is
 the branch that ran. A seam that can only reset to the default cannot express
 this: make it take the value.
+
+A test that fails only because the symbol is missing has not been checked yet.
+Against a base without the change, `is not a function` and a real assertion
+failure are the same red, and only one of them means the test constrains
+anything. Get the new code in place, then break its *behaviour* — pin the
+return, neuter the branch, leave the signature alone — and watch the assertion
+fail on the value. This is the case `check-new-tests` says it cannot see.
 
 `bin/local/check-new-tests` does this from the diff — it runs the tests a
 change adds against a worktree at the merge base and reports the ones that pass

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report tests added by a change that already pass without it.
 
-Usage: bin/local/validate-new-tests [--base REF] [--quiet] [--list] [--json]
+Usage: bin/local/check-new-tests [--base REF] [--quiet] [--list] [--json]
 
 ai/guidelines/rules/testing.md § A Test Must Fail When Its Subject Breaks
 prescribes the check in prose: break the subject, watch the test fail, restore.
@@ -157,7 +157,7 @@ def _base_worktree(base_ref: str, repo: Path):
     once would otherwise collide on the same directory, and the loser's
     worktree is removed out from under it.
     """
-    parent = tempfile.mkdtemp(prefix="validate-new-tests-")
+    parent = tempfile.mkdtemp(prefix="check-new-tests-")
     path = Path(parent) / "base"
     add = subprocess.run(
         ["git", "worktree", "add", "--detach", str(path), base_ref],

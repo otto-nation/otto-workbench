@@ -43,6 +43,7 @@ from agent import invoke as agent_invoke
 from agent import phases as agent_phases
 from agent import retry as agent_retry
 from agent import templates as agent_templates
+from fix import reconcile as fix_reconcile
 from fix import scope as fix_scope
 from fix import tracking as fix_tracking
 from git import client as git_client
@@ -302,6 +303,12 @@ class _Batch:
     exit_code: int
     max_turns: int
     max_budget: float
+    # What the worktree showed while this invocation ran, against which its
+    # answers are reconciled. Defaulted to the unknown scope so a batch
+    # assembled without one carries "nobody looked" rather than "nothing
+    # changed" — the two differ in whether they can be held against the agent,
+    # and only one of them is safe as a default.
+    scope: fix_scope.BatchScope = fix_scope.UNKNOWN_SCOPE
 
 
 @dataclass(frozen=True)
@@ -310,6 +317,21 @@ class _Settled:
 
     outcomes: list[ItemOutcome]
     exit_code: int
+    # Which invocation's observation answers for each id. Keyed by id rather
+    # than carried on the outcome because an outcome is persisted state and a
+    # file list is not: the scope is evidence for a decision taken during the
+    # pass, and what survives into the record is the decision.
+    scopes: dict[str, fix_scope.BatchScope] = field(default_factory=dict)
+
+    def scope_for(self, outcome: ItemOutcome) -> fix_scope.BatchScope:
+        """The observation behind one answer, or the unknown scope.
+
+        Unknown for an id no batch claims — an answer the agent invented, or one
+        carried from a state file — which is the right default twice over: there
+        is genuinely no observation, and the consumers all treat unknown as
+        "draw no conclusion".
+        """
+        return self.scopes.get(outcome.id, fix_scope.UNKNOWN_SCOPE)
 
 
 def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
@@ -346,13 +368,37 @@ def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
 def _invoke(
     adapter: FixAdapter, items: list[FixItem], *,
     label: str, turns: int, budget: float | None, resume: bool = False,
+    before: set[str] | None = None,
 ) -> _Batch:
     """Write the tracking file for `items`, run the agent, read back its answers.
 
     The file is rebuilt per invocation so the agent is handed only the items its
     budget covers — inlining the whole list is what let a 169 KB checklist reach
     a single 60-turn pass.
+
+    The worktree is read either side of the agent, and the difference is this
+    batch's own doing. Per invocation rather than once around the pass because
+    attribution is by path: a thirty-item pass observed once can only say a file
+    belongs to one of thirty items, where the same observation taken per batch
+    narrows it to the ten the batch carried. The retry is an invocation too and
+    is observed on the same terms, which matters because its items are exactly
+    the ones whose first answer was `deferred`.
+
+    `before` is the reading the caller already holds, for the first batch — the
+    pass's own baseline is taken moments earlier with nothing in between, and
+    reading it twice would be two names for one fact. A caller with nothing to
+    offer passes None and this brackets itself.
+
+    None is therefore overloaded: it is both "no reading supplied" and the
+    failed reading `changed_files` returns. Conflating them is safe in exactly
+    one direction — a caller whose baseline failed has already stopped the pass
+    (`run` refuses without one), and a re-read that fails in turn produces the
+    unknown scope, which contradicts nothing and is rendered as nothing. Both
+    roads lead to "draw no conclusion", which is the answer an unreadable
+    worktree should produce.
     """
+    if before is None:
+        before = fix_scope.changed_files(adapter.workdir)
     fix_tracking.write(adapter.tracking_path, adapter.title, items)
     log.info(f"{label} — {adapter.action}...")
     result = agent_invoke.run_fix(
@@ -378,10 +424,56 @@ def _invoke(
         exit_code=result.exit_code,
         max_turns=turns,
         max_budget=budget or 0.0,
+        scope=_batch_scope(adapter, before),
     )
 
 
-def _run_batch(adapter: FixAdapter, items: list[FixItem], label: str) -> _Batch:
+def _batch_scope(
+    adapter: FixAdapter, before: set[str] | None,
+) -> fix_scope.BatchScope:
+    """This batch's difference, with the pass's own artifacts taken back out.
+
+    Defence in depth rather than a live fix: every adapter today puts its
+    artifact directory outside the worktree, and two of them carry a docstring
+    saying that is deliberate and why. The subtraction is here because the
+    tracking file is the one path the agent is *required* to edit every run, so
+    an adapter that ever sited its artifacts inside the worktree would not
+    merely dirty the commit — it would make every batch look like it changed
+    something and let an item anchored at the checklist contradict itself. The
+    cost of holding that closed is one set difference.
+
+    Filtered by resolved path rather than by name, so a domain whose items
+    legitimately live in a file called `fix-tracking.md` somewhere else in the
+    tree keeps its observation.
+    """
+    scope = fix_scope.batch_scope(adapter.workdir, before)
+    if not scope.known or not scope.files:
+        return scope
+    artifacts = {
+        _relative_to(adapter.workdir, path)
+        for path in (adapter.tracking_path, adapter.verify_tracking_path)
+    }
+    return fix_scope.BatchScope(files=scope.files - {a for a in artifacts if a})
+
+
+def _relative_to(workdir: Path, path: Path) -> str:
+    """`path` as git would name it inside `workdir`, or empty when it is outside.
+
+    Empty rather than an absolute path for the outside case, because the caller
+    is building a set to subtract from git's own output: a path git would never
+    print cannot match one, and an absolute string sitting in that set reads as
+    a filter that does nothing.
+    """
+    try:
+        return str(Path(path).resolve().relative_to(Path(workdir).resolve()))
+    except (ValueError, OSError):
+        return ""
+
+
+def _run_batch(
+    adapter: FixAdapter, items: list[FixItem], label: str,
+    before: set[str] | None = None,
+) -> _Batch:
     """Run one batch at the budget the phase gives work of that size."""
     return _invoke(
         adapter, items, label=label,
@@ -389,6 +481,7 @@ def _run_batch(adapter: FixAdapter, items: list[FixItem], label: str) -> _Batch:
         budget=agent_phases.phase_budget(
             adapter.phase, adapter.effort, items=len(items),
         ),
+        before=before,
     )
 
 
@@ -483,10 +576,11 @@ def _settle(
     deferred = [o for o in live if o.outcome is FixOutcome.DEFERRED]
     settled = [o for o in live if o.outcome is not FixOutcome.DEFERRED]
     worst = max((b.exit_code for b in batches), default=0)
+    scopes = _scopes(batches)
 
     again = [by_id[o.id] for o in deferred if o.id in by_id]
     if not again:
-        return _Settled(stalled + settled + deferred, worst)
+        return _Settled(stalled + settled + deferred, worst, scopes)
     # An id the pass never handed out cannot be re-asked — there is no item
     # behind it to render. It is still an answer the file gave, so it is
     # carried rather than dropped: every entry the pass parsed reaches the
@@ -498,7 +592,55 @@ def _settle(
     return _Settled(
         stalled + settled + unknown + retried.outcomes,
         max(worst, retried.exit_code),
+        _merge_scopes(scopes, _scopes([retried])),
     )
+
+
+def _scopes(batches: list[_Batch]) -> dict[str, fix_scope.BatchScope]:
+    """Each answered id mapped to the observation of the run that answered it."""
+    return {o.id: b.scope for b in batches for o in b.outcomes}
+
+
+def _merge_scopes(
+    first: dict[str, fix_scope.BatchScope],
+    retry: dict[str, fix_scope.BatchScope],
+) -> dict[str, fix_scope.BatchScope]:
+    """One observation per id, accumulated across the runs that answered it.
+
+    The union, not the later reading. A retried item's outcomes supersede — the
+    retry re-decided them — but its *observations* must not, because the
+    question reconciliation asks spans the whole pass: was this item's file
+    changed at any point while the pass was recording that no work was done?
+
+    Superseding loses exactly the case this exists for. An item edited in the
+    first batch and deferred there, then deferred again by a retry that touched
+    nothing, has an empty retry scope — attribution is by path and the file was
+    already dirty when the retry began, so the retry cannot see the edit that
+    the first batch made. Keeping only the retry's reading would report that
+    item as an honest deferral and commit its edit anyway, which is the original
+    defect surviving in the one path most likely to produce it.
+
+    The union cannot manufacture a contradiction against a retry that worked: an
+    item the retry actually fixed comes back FIXED, and a fixed item is not a
+    claim that no work was done, so no amount of accumulated observation
+    contradicts it.
+
+    An unknown reading on either side makes the union unknown. Half an
+    observation is not a smaller observation — the missing half is where the
+    file would have been.
+    """
+    merged = dict(first)
+    for item_id, scope in retry.items():
+        prior = merged.get(item_id)
+        if prior is None:
+            merged[item_id] = scope
+            continue
+        merged[item_id] = (
+            fix_scope.UNKNOWN_SCOPE
+            if not (prior.known and scope.known)
+            else fix_scope.BatchScope(files=prior.files | scope.files)
+        )
+    return merged
 
 
 @dataclass(frozen=True)
@@ -588,14 +730,74 @@ def _decline_block(reason: str, noun: str) -> str:
     return f"{heading} {reason}\n\n{ask}"
 
 
-def _verify_item(outcome: ItemOutcome, source: FixItem | None, noun: str) -> FixItem:
+# A contradicted deferral asks the gate the inverse of every other item here.
+# The rest say "I changed this, check it works"; this one says "I changed
+# nothing" while its own file moved in the same run. Handing it over under the
+# fix wording would ask the gate to verify a fix the pass never claimed, and the
+# honest answer to that is always "broken" — which is the wrong answer, since
+# the question is whether the work is there at all.
+_UNDONE_HEADING = (
+    "**The fix pass recorded this {noun} as work it did not do**, but this "
+    "{noun}'s own file changed while that answer was being written. One of the "
+    "two is wrong."
+)
+
+_UNDONE_ASK = (
+    "Establish which. The pass may have done the work and mis-recorded it; it "
+    "may have edited the file for a different {noun} answered in the same run; "
+    "or it may have left something half-applied.\n\n"
+    "Answer for *this* {noun} only:\n\n"
+    "- **verified** — the work this {noun} asks for is present in the tree and "
+    "does what was asked. The recorded answer was wrong and will be corrected "
+    "to fixed.\n"
+    "- **broken** — something for this {noun} is present but does not do what "
+    "was asked. It goes to a person rather than back to the pass.\n"
+    "- **not verified** — the change belongs to something else, or you cannot "
+    "tell. The recorded answer stands untouched, which is the right outcome "
+    "whenever the file moved for a reason other than this {noun}.\n\n"
+    "`git diff` is the pass's uncommitted work. Nothing here is committed yet, "
+    "so a reason citing a SHA cannot be citing this pass's own work."
+)
+
+
+def _undone_block(reason: str, noun: str) -> str:
+    """A contradicted "not done" as the gate is asked to settle it.
+
+    The agent's own reason is included when it gave one — a pass that said *why*
+    it could not do the work is offering the gate the most direct thing to check
+    the tree against.
+    """
+    heading = _UNDONE_HEADING.format(noun=noun)
+    said = f" It said: {reason}" if reason else ""
+    return f"{heading}{said}\n\n{_UNDONE_ASK.format(noun=noun)}"
+
+
+def _verify_item(
+    outcome: ItemOutcome, source: FixItem | None, noun: str,
+    scope: fix_scope.BatchScope = fix_scope.UNKNOWN_SCOPE,
+) -> FixItem:
     """One claimed fix as the gate is asked about it.
 
-    The body is two things joined: the domain's own rendering of what the
-    reviewer said, carried over verbatim, and the fix pass's claim about what
-    now holds the change. The gate judges the fix against the ask, and the ask
-    is not recoverable from the outcome; it also checks the claim, and the claim
-    is not recoverable from the source item.
+    The body is three things joined: the domain's own rendering of what the
+    reviewer said, carried over verbatim; the fix pass's claim about what now
+    holds the change; and what the worktree showed while that claim was being
+    made. The gate judges the fix against the ask, and the ask is not
+    recoverable from the outcome; it also checks the claim, and the claim is not
+    recoverable from the source item.
+
+    The observation is the half that was missing, and it is why a reason
+    describing work the pass did not do used to survive this gate. The claim is
+    prose written by the agent being checked, so a gate holding it up against
+    nothing could only ask whether it *sounded* like a fix — and a fluent
+    sentence about an unrelated change reads exactly like a fluent sentence
+    about a real one. Naming the files that actually moved gives the gate
+    something the agent's prose has to agree with.
+
+    It is evidence and not a verdict: the list is per batch, the block says so,
+    and a fix landing in a caller rather than at the reviewer's line is normal
+    enough that concluding from a path miss alone would be wrong more often than
+    right. The gate is the reader equipped to weigh that; this only makes sure
+    it is not weighing it blind.
 
     The claim goes last so the ask is read first, and so it sits immediately
     above the verdict boxes answering it. Falling back to the outcome alone
@@ -606,8 +808,13 @@ def _verify_item(outcome: ItemOutcome, source: FixItem | None, noun: str) -> Fix
     claim = (
         _decline_block(outcome.reason, noun)
         if outcome.outcome is FixOutcome.DECLINED
+        else _undone_block(outcome.reason, noun)
+        if outcome.outcome in fix_reconcile.CLAIMS_NO_WORK
         else _claim_block(outcome.reason)
     )
+    seen = fix_reconcile.observed(outcome, scope)
+    if seen:
+        claim = f"{claim}\n\n{seen}"
     if source is None:
         return FixItem(id=outcome.id, file=outcome.file, line=outcome.line,
                        label=outcome.summary, body=claim)
@@ -643,6 +850,7 @@ def _gated_decline(outcome: ItemOutcome) -> bool:
 def _verify(
     outcomes: list[ItemOutcome], verify: VerifyFn | None, adapter: FixAdapter,
     by_id: dict[str, FixItem], trail: Trail | None,
+    settled: _Settled | None = None,
 ) -> None:
     """Hold each claim against what actually runs, before anything lands.
 
@@ -677,16 +885,44 @@ def _verify(
     prompt's first instruction is to run the reviewer's repro; this is what
     puts that repro in front of it.
     """
+    scope_for = settled.scope_for if settled else _no_scope
+    contradicted = {
+        o.id for o in outcomes
+        if fix_reconcile.contradiction(o, scope_for(o)) is not None
+    }
     if verify is None:
+        # A domain that runs no gate still gets the observation reported. The
+        # contradiction is a fact about the tree and is established without
+        # asking anything — it is only the *resolution* that needs an agent —
+        # so staying silent here would hide a known discrepancy from the two
+        # passes (CI, pre-push) that never opted into a gate. Nothing is
+        # demoted or promoted on it: with no verdict available the recorded
+        # answer stands, which is the same rule the gated path follows when the
+        # gate reaches no verdict.
+        _report_ungated(contradicted, trail)
         return
     claimed = [
         o for o in outcomes
-        if o.outcome.counts_as_fixed or _gated_decline(o)
+        if o.outcome.counts_as_fixed or _gated_decline(o) or o.id in contradicted
     ]
     if not claimed:
         return
+    if contradicted:
+        log.warn(
+            f"{len(contradicted)} item(s) recorded as work not done, in a batch "
+            "that changed the item's own file — sent to the verify gate"
+        )
+        if trail:
+            trail.warn(
+                "fix_contradicted",
+                f"{len(contradicted)} item(s) contradicted by the observed tree",
+                data={"items": sorted(contradicted)},
+            )
 
-    items = [_verify_item(o, by_id.get(o.id), adapter.item_noun) for o in claimed]
+    items = [
+        _verify_item(o, by_id.get(o.id), adapter.item_noun, scope_for(o))
+        for o in claimed
+    ]
     # The gate's own phase where the domain declared one. Falling back to the
     # fix pass's phase keeps a domain that has not declared one working, but it
     # prompts the gate with the fix pass's template — so a domain running a gate
@@ -696,8 +932,12 @@ def _verify(
     ) or {}
 
     falsified = 0
+    promoted = 0
     for outcome in claimed:
         verdict = verdicts.get(outcome.id)
+        if outcome.id in contradicted:
+            promoted += _resolve_contradiction(outcome, verdict)
+            continue
         if verdict is None:
             # The gate ran and this id was not in its answer. That is a fix
             # nothing established, which is what False means — distinct from the
@@ -730,15 +970,108 @@ def _verify(
             f"item{'s' if len(claimed) != 1 else ''} did not hold up — "
             "demoted, not recorded as the pass claimed them"
         )
+    if promoted:
+        log.warn(
+            f"Verify gate: {promoted} item(s) recorded as not done were "
+            "confirmed fixed against the tree — recorded as fixed, not as the "
+            "pass claimed them"
+        )
     if trail:
         trail.info(
             "fix_verify", "verify gate complete",
             data={
                 "claimed": len(claimed),
                 "falsified": falsified,
+                "promoted": promoted,
                 "verified": sum(1 for o in claimed if o.verified),
             },
         )
+
+
+def _report_ungated(contradicted: set[str], trail: Trail | None) -> None:
+    """Say that the tree disagrees with the record, for a pass with no gate.
+
+    A warning rather than a change of outcome. The observation is too coarse to
+    settle an item on its own — that argument is `fix.reconcile`'s and does not
+    weaken because no gate is configured — so what an operator gets here is the
+    discrepancy and the ids behind it, which is strictly more than the silence
+    that preceded this.
+    """
+    if not contradicted:
+        return
+    log.warn(
+        f"{len(contradicted)} item(s) recorded as work not done, in a batch "
+        "that changed the item's own file. No verify gate is configured for "
+        "this pass, so the recorded answer stands — check these by hand: "
+        + ", ".join(sorted(contradicted))
+    )
+    if trail:
+        trail.warn(
+            "fix_contradicted_ungated",
+            f"{len(contradicted)} item(s) contradicted by the observed tree, "
+            "with no gate to settle them",
+            data={"items": sorted(contradicted)},
+        )
+
+
+def _no_scope(_outcome: ItemOutcome) -> fix_scope.BatchScope:
+    """The scope lookup for a caller that supplied no observations.
+
+    Keeps `_verify` callable without a `_Settled` — which the tests do, and
+    which a domain calling the gate directly would — by answering the way an
+    unobserved pass genuinely should: nothing is known, so nothing is
+    contradicted and no observation block is rendered.
+    """
+    return fix_scope.UNKNOWN_SCOPE
+
+
+def _resolve_contradiction(
+    outcome: ItemOutcome, verdict: Verdict | None,
+) -> int:
+    """Settle an item whose "nothing was done" the tree disagrees with.
+
+    Returns 1 when the item was promoted to FIXED, so the caller can report how
+    many answers the tree overturned.
+
+    The gate is asked the inverse of its usual question here, and the three
+    answers mean correspondingly inverted things. **verified** is the gate
+    confirming the work is present and correct, which makes the recorded
+    deferral simply wrong: the item becomes FIXED, and it is the one path in the
+    engine that promotes rather than demotes. **broken** is the gate finding the
+    edit present but not doing what was asked — not a deferral either, and not
+    something a further identical retry fixes, so it goes to NEEDS_HUMAN on the
+    same argument the falsified branch makes. **not verified**, and a gate that
+    never answered, leave the deferral exactly as the agent recorded it.
+
+    That last case is why this cannot demote on the observation alone. A file
+    moving in a batch is evidence that *something* happened, never that this
+    item is what happened — several items share a batch and a fix routinely
+    touches a neighbour's file — so with no verdict behind it the honest record
+    is the one the pass wrote, and the contradiction survives in the trail
+    rather than in an outcome nobody established.
+
+    `verified` is left alone throughout. It means "something ran against this
+    fix and passed", and the surfaces read `False` as a hedge to print beside a
+    *claimed fix* — writing it onto a row that claims no fix at all would
+    caveat a deferral for failing to prove work it never said it did.
+    """
+    if verdict is None or verdict.ok is None:
+        return 0
+    outcome.verify_detail = verdict.detail
+    if verdict.ok is True:
+        outcome.outcome = FixOutcome.FIXED
+        outcome.verified = True
+        outcome.reason = verdict.detail or (
+            "recorded as not done, but the change is present in the tree and "
+            "the gate confirmed it does what was asked"
+        )
+        return 1
+    outcome.outcome = FixOutcome.NEEDS_HUMAN
+    outcome.reason = verdict.detail or (
+        "recorded as not done, but this item's file was changed in the same "
+        "run and the change does not do what was asked"
+    )
+    return 0
 
 
 def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
@@ -805,6 +1138,10 @@ def run(
         _run_batch(
             adapter, chunk,
             name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})",
+            # The pass baseline is the first batch's baseline: it was read just
+            # above and nothing has run since. Every later batch reads its own,
+            # because the batch before it has been editing.
+            before=dirty_before if n == 1 else None,
         )
         for n, chunk in enumerate(batched, start=1)
     ]
@@ -825,7 +1162,7 @@ def run(
     # Before the scope is read and before anything is committed: a fix the gate
     # falsifies must not reach `landing` as a fix, or the commit and the record
     # would disagree about what the pass did.
-    _verify(settled.outcomes, verify, adapter, by_id, trail)
+    _verify(settled.outcomes, verify, adapter, by_id, trail, settled)
 
     # Between the gate and the push, which is the only window that works: the
     # outcomes are final here, and `land` below reads the publishing gate a

@@ -132,6 +132,45 @@ def snapshots():
         yield m
 
 
+# How many times a one-batch pass reads the worktree: the shared baseline, the
+# reading that closes the batch's own observation, and the final one the commit
+# scope is taken from. Named because the tests below drive `changed_files` by a
+# list of answers, and a list the wrong length fails as a StopIteration inside
+# mock rather than as anything about fix passes.
+PASS_READS = 3
+
+
+def _reads(baseline, *rest):
+    """Snapshot answers for a one-batch pass, padded to the reads it makes.
+
+    A test cares about the baseline and the final reading — the difference
+    between them is the commit scope. The batch-level reading in between is the
+    engine's own bookkeeping, and every test here would otherwise have to
+    restate it to keep the list long enough.
+
+    The last answer given is repeated to fill, so a test naming two readings
+    gets its second one at the position the commit scope is taken from.
+    """
+    answers = [baseline, *rest]
+    return [*answers[:-1], *([answers[-1]] * (PASS_READS - len(answers) + 1))]
+
+
+def _settles_at(baseline, final):
+    """A snapshot stub that answers `baseline` once and `final` ever after.
+
+    For a pass whose read count is not fixed in advance. A deferral triggers the
+    retry, which is a second invocation with two readings of its own, so a test
+    about deferrals cannot state a list of the right length without encoding how
+    many times the engine retries — which is not what those tests are about, and
+    would fail them for a change to the retry rather than to reconciliation.
+
+    The worktree it describes is one an agent edited once and then left alone:
+    every reading after the first shows the same difference from the baseline.
+    """
+    answers = iter([baseline])
+    return lambda *_a, **_k: next(answers, final)
+
+
 def _run(adapter, **kwargs):
     with patch.object(fix_engine.agent_invoke, "run_fix",
                       side_effect=kwargs.pop("run_fix", _answer(adapter))) as inv:
@@ -375,7 +414,7 @@ def test_the_engine_hands_the_domain_what_the_agent_changed(
     two moments that bracket the agent — a domain taking its own baseline can
     take it late and attribute somebody else's dirt to its agent.
     """
-    snapshots.side_effect = [{"theirs.py"}, {"theirs.py", "ours.py"}]
+    snapshots.side_effect = _reads({"theirs.py"}, {"theirs.py", "ours.py"})
     adapter = StubAdapter(tmp_path)
     _run(adapter)
 
@@ -386,7 +425,7 @@ def test_an_unreadable_second_snapshot_reaches_the_domain_as_none(
     tmp_path, landed, head, snapshots,
 ):
     """None is not an empty set, and only the domain can say what to do with it."""
-    snapshots.side_effect = [set(), None]
+    snapshots.side_effect = _reads(set(), None)
     adapter = StubAdapter(tmp_path)
     _run(adapter)
 
@@ -402,7 +441,7 @@ def test_the_engine_says_where_unattributable_work_was_left(
     says so. Leaving it to each domain is four chances for the next one to be
     the adapter that stays quiet.
     """
-    snapshots.side_effect = [set(), None]
+    snapshots.side_effect = _reads(set(), None)
     _run(StubAdapter(tmp_path))
 
     assert "could not read what the fix pass changed" in capsys.readouterr().err
@@ -411,7 +450,7 @@ def test_the_engine_says_where_unattributable_work_was_left(
 def test_an_attributable_pass_reports_nothing_of_the_kind(
     tmp_path, landed, head, snapshots, capsys,
 ):
-    snapshots.side_effect = [set(), {"a.py"}]
+    snapshots.side_effect = _reads(set(), {"a.py"})
     _run(StubAdapter(tmp_path))
 
     assert "could not read what the fix pass changed" not in capsys.readouterr().err
@@ -1158,3 +1197,257 @@ class TestAfterVerifyRunsBeforeTheCommit:
         _run(adapter)
         assert adapter.recorded is not None
 
+
+
+# ── reconciling the boxes against the tree ──────────────────────────────────
+#
+# The pass has two accounts of itself: what the agent ticked, and what the
+# worktree shows. Both were computed before this and compared nowhere, so an
+# agent that edited a file and recorded `deferred` had its edit committed and
+# reported as work still owed.
+
+
+def test_a_deferral_whose_own_file_changed_is_put_to_the_gate(
+    tmp_path, landed, head, snapshots,
+):
+    """The contradiction that reached a real run: applied, recorded as not done.
+
+    `deferred` is not a claim the gate saw before this — it is the outcome that
+    asks for nothing and so was never checked — and that is exactly why the
+    edit rode into the commit under a row saying no work was done.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, **kwargs):
+        seen["ids"] = [i.id for i in kwargs["items"]]
+        seen["body"] = kwargs["items"][0].body
+        return {}
+
+    _run(adapter, verify=run_verify, run_fix=_answer(adapter, tick="deferred"))
+
+    assert seen["ids"] == ["i0"]
+    # Worded as the inverse question. Asked under the fix wording, the gate
+    # would be checking a fix the pass never claimed and would rightly call it
+    # broken — the wrong answer to "is the work there at all?".
+    assert "recorded this item as work it did not do" in seen["body"]
+    assert "`a.py`" in seen["body"]
+
+
+def test_a_deferral_the_gate_confirms_becomes_a_fix(tmp_path, landed, head, snapshots):
+    """The only promotion in the engine, and it takes a verdict to get it.
+
+    The observation alone cannot do this: a file moving says something happened
+    in that batch, never that this item is what happened.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(ok=True, detail="the repro passes"))),
+        run_fix=_answer(adapter, tick="deferred"),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.FIXED
+    assert run.outcomes[0].verified is True
+    assert "the repro passes" in run.outcomes[0].reason
+
+
+# passes-at-base: asserts a deferral is left alone, which is all base ever did
+def test_a_deferral_the_gate_cannot_settle_stands_as_recorded(
+    tmp_path, landed, head, snapshots,
+):
+    """No verdict, no change — the file moved for a reason nobody established.
+
+    The common honest case: two items share a batch and the edit belongs to the
+    other one. Demoting or promoting on the observation alone would rewrite a
+    correct answer every time that happens.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(ok=None, detail="belongs to i1"))),
+        run_fix=_answer(adapter, tick="deferred"),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+    # Not False. The surfaces print that as a hedge beside a claimed fix, and
+    # this row claims nothing to hedge.
+    assert run.outcomes[0].verified is None
+
+
+def test_a_deferral_the_gate_finds_half_applied_goes_to_a_person(
+    tmp_path, landed, head, snapshots,
+):
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(ok=False, detail="half applied"))),
+        run_fix=_answer(adapter, tick="deferred"),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.NEEDS_HUMAN
+    assert "half applied" in run.outcomes[0].reason
+
+
+# passes-at-base: guards against over-firing, and base fires never
+def test_a_deferral_in_a_batch_that_changed_nothing_is_left_alone(
+    tmp_path, landed, head, snapshots,
+):
+    """An honest deferral must not be dragged in front of the gate.
+
+    Every pass defers something, and gating all of them would spend the gate's
+    budget on the outcome least likely to be wrong.
+    """
+    snapshots.side_effect = _settles_at(set(), set())
+    adapter = StubAdapter(tmp_path, count=1)
+
+    def run_verify(*_a, **_k):
+        raise AssertionError("the gate was asked about an uncontradicted deferral")
+
+    run, _ = _run(adapter, verify=run_verify,
+                  run_fix=_answer(adapter, tick="deferred"))
+
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+
+
+# passes-at-base: guards against over-firing, and base fires never
+def test_a_deferral_is_not_contradicted_by_another_item_s_file(
+    tmp_path, landed, head, snapshots,
+):
+    """Anchored on the item's own path, not on the batch having done anything."""
+    snapshots.side_effect = _settles_at(set(), {"somewhere/else.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+
+    def run_verify(*_a, **_k):
+        raise AssertionError("the gate was asked about an unrelated file")
+
+    run, _ = _run(adapter, verify=run_verify,
+                  run_fix=_answer(adapter, tick="deferred"))
+
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+
+
+# passes-at-base: guards against over-firing, and base fires never
+def test_an_unreadable_worktree_contradicts_nothing(
+    tmp_path, landed, head, snapshots,
+):
+    """A failed git call must not become an accusation against the agent.
+
+    Unknown is the state in which every item looks untouched, so reading it as
+    "nothing changed" would contradict every deferral in the pass at once.
+    """
+    snapshots.side_effect = _settles_at(set(), None)
+    adapter = StubAdapter(tmp_path, count=1)
+
+    def run_verify(*_a, **_k):
+        raise AssertionError("the gate was asked on the strength of a failed read")
+
+    run, _ = _run(adapter, verify=run_verify,
+                  run_fix=_answer(adapter, tick="deferred"))
+
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+
+
+def test_the_gate_is_told_what_the_tree_shows_for_a_claimed_fix(
+    tmp_path, landed, head, snapshots,
+):
+    """The half that was missing when a fix's stated reason described other work.
+
+    The claim is prose written by the agent being checked. Held against nothing,
+    the gate can only ask whether it reads like a fix — and a fluent sentence
+    about an unrelated change reads exactly like a fluent sentence about a real
+    one. The file list is what the prose now has to agree with.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py", "a_test.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, **kwargs):
+        seen["body"] = kwargs["items"][0].body
+        return {}
+
+    _run(adapter, verify=run_verify,
+         run_fix=_answer(adapter, tick="fixed", reason="added a regression test"))
+
+    assert "`a_test.py`" in seen["body"]
+    assert "added a regression test" in seen["body"]
+    # Evidence, not a verdict: the list is per batch and says so, because a
+    # reader told otherwise would convict on a shared file.
+    assert "per batch" in seen["body"]
+
+
+def test_a_claimed_fix_off_its_anchor_is_reported_without_a_verdict(
+    tmp_path, landed, head, snapshots,
+):
+    """A fix landing in a caller is normal, so the block informs and concludes nothing.
+
+    This is the case a mechanical "claimed a fix, changed nothing" rule would
+    get wrong more often than right, which is why the engine does not have one.
+    """
+    snapshots.side_effect = _settles_at(set(), {"caller.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, **kwargs):
+        seen["body"] = kwargs["items"][0].body
+        return {}
+
+    run, _ = _run(adapter, verify=run_verify, run_fix=_answer(adapter, tick="fixed"))
+
+    assert "is **not** among them" in seen["body"]
+    assert "not on its own wrong" in seen["body"]
+    assert run.outcomes[0].outcome is FixOutcome.FIXED
+
+
+def test_an_edit_the_first_batch_made_survives_a_retry_that_touched_nothing(
+    tmp_path, landed, head, snapshots,
+):
+    """The reported shape: edited, deferred, retried, and the evidence vanished.
+
+    Attribution is by path against a baseline, so a file already dirty when the
+    retry starts is not in the retry's own difference. An implementation that
+    kept only the most recent reading — which is what superseding the outcomes
+    suggests — would see an empty scope here and report an honest deferral,
+    committing the edit underneath it. That is the original defect, reappearing
+    in the path most likely to produce it.
+    """
+    # The first batch dirties a.py; the retry adds nothing of its own.
+    readings = iter([set(), {"a.py"}, {"a.py"}, {"a.py"}])
+    snapshots.side_effect = lambda *_a, **_k: next(readings, {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, **kwargs):
+        seen["ids"] = [i.id for i in kwargs["items"]]
+        return {}
+
+    _run(adapter, verify=run_verify, run_fix=_answer(adapter, tick="deferred"))
+
+    assert seen["ids"] == ["i0"]
+
+
+def test_a_pass_with_no_gate_still_reports_a_contradiction(
+    tmp_path, landed, head, snapshots, capsys,
+):
+    """CI and pre-push run no gate, and silence there is what the bug looked like.
+
+    The contradiction is established from the tree alone; only settling it needs
+    an agent. A domain that opted out of the gate has opted out of the
+    resolution, not out of being told.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(adapter, run_fix=_answer(adapter, tick="deferred"))
+
+    assert "check these by hand: i0" in capsys.readouterr().err
+    # Reported, not resolved: nothing about the tree says this item is what
+    # moved the file, and no gate ran to find out.
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED

@@ -51,6 +51,7 @@ from fix import verify as fix_verify
 from core import log
 from core.phases import Phase
 from pr.fix import FixOutcome, ItemOutcome
+from pr.thread_replies import UNVERIFIED_REPLY_NOTE
 from review.paths import phase_log_path
 from review.document import ReviewDocument, is_skipped
 from review.grammar import FINDING_ID_RE
@@ -76,7 +77,7 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
     """
     lines: list[str] = []
     _block(lines, "Fixed:", [
-        (o.id, _describe(findings.get(o.id), o))
+        (o.id, _describe(findings.get(o.id), o) + _hedge(o))
         for o in outcomes if o.outcome.counts_as_fixed
     ])
     _block(lines, "Skipped:", [
@@ -88,6 +89,63 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
         for o in outcomes if o.outcome is FixOutcome.DECLINED
     ])
     return "\n".join(lines)
+
+
+def _unverified_detail(outcome: ItemOutcome) -> str | None:
+    """Why the gate could not stand behind this fix, or None when it stood.
+
+    Three states collapse to two answers here. None is a pass that never asked
+    the gate, True is one it answered, and both mean the surfaces say nothing:
+    only `False` — the gate ran and could not establish the fix works — earns a
+    caveat. The empty string is that case with no detail to give, which is still
+    a caveat and is why this returns None rather than "" for the quiet one.
+    """
+    if outcome.verified is not False:
+        return None
+    return outcome.verify_detail
+
+
+def _fixed_line(line: str, outcome: ItemOutcome) -> str:
+    """The finding line a landed fix leaves behind: ticked, and hedged if owed.
+
+    The tick and the caveat are one decision rather than two, so they are made
+    in one place — a caller that ticked the box and then asked separately
+    whether to annotate it is a caller that can do the first and forget the
+    second.
+    """
+    ticked = line.replace("- [ ]", "- [x]", 1)
+    detail = _unverified_detail(outcome)
+    if detail is None:
+        return ticked
+    caveat = f"unverified — {detail}" if detail else "unverified"
+    return f"{ticked.rstrip()} *({caveat})*"
+
+
+def _hedge(outcome: ItemOutcome) -> str:
+    """What a fix the gate could not stand behind carries, or "" when it stood.
+
+    A fix pass edits code and then says so; whether the edit works is a separate
+    claim, and one nothing establishes unless the verify gate ran and reached a
+    verdict. Only a falsified fix is demoted out of FIXED, so a gate that ran
+    and could not establish the fix works leaves the item under `Fixed:` — the
+    same line, in the same block, as one something was run against and passed.
+    That line lands verbatim in the commit message under squash-merge, where it
+    reads as a claim the pass never made.
+
+    `verified is None` is a pass that never asked, and says nothing either way.
+    Hedging those would put a caveat on every fix in every commit and teach the
+    reader to skip the ones that mean something.
+
+    The wording is `thread_replies`' rather than a second spelling of it: the
+    two surfaces report the same tri-state about the same gate, and a reader who
+    has learned what the phrase means on a PR reply should not have to learn it
+    again in a commit body.
+    """
+    detail = _unverified_detail(outcome)
+    if detail is None:
+        return ""
+    note = UNVERIFIED_REPLY_NOTE.lower()
+    return f" ({note} — {detail})" if detail else f" ({note})"
 
 
 def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> None:
@@ -139,6 +197,14 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     and anything else leaves the line alone — which is what hands a finding the
     pass never answered to the next round unchanged.
 
+    A fix the gate could not stand behind ticks the box and says so beside it.
+    The tick is honest — an edit was made, and the pass committed it — but the
+    document is what a reviewer reads and what the next round reconciles
+    against, and a bare tick there is the pass vouching for an edit nothing
+    exercised. The annotation is not a verdict the parsers read back, so the
+    finding stays fixed to every reader that matters and carries the caveat for
+    the one who is deciding whether to trust it.
+
     A finding the review had already checked, declined or skipped keeps what it
     has: those verdicts were reached before the agent ran and outrank it, and
     appending a second annotation to a line that carries one leaves the document
@@ -161,7 +227,7 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
         if finding.checked or finding.declined or is_skipped(finding):
             continue
         if outcome.outcome.counts_as_fixed:
-            lines[n] = line.replace("- [ ]", "- [x]", 1)
+            lines[n] = _fixed_line(line, outcome)
             continue
         note = _annotation(outcome)
         if note:

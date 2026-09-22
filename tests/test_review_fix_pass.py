@@ -183,8 +183,8 @@ def _run(
     return inv
 
 
-def _outcome(item_id: str, outcome: FixOutcome, reason: str = "") -> ItemOutcome:
-    return ItemOutcome(id=item_id, outcome=outcome, reason=reason)
+def _outcome(item_id: str, outcome: FixOutcome, reason: str = "", **kwargs) -> ItemOutcome:
+    return ItemOutcome(id=item_id, outcome=outcome, reason=reason, **kwargs)
 
 
 def _finding(fid: str, path: str = "a.py", body: str = "body", **kwargs) -> Finding:
@@ -495,6 +495,39 @@ class TestTheSummary:
     def test_a_pass_that_settled_nothing_summarises_nothing(self):
         assert review_fix._summary([], {}) == ""
 
+    def test_a_fix_the_gate_could_not_stand_behind_says_so(self):
+        """Only a falsified fix is demoted, so an unverifiable one stays under Fixed."""
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED, verified=False,
+                      verify_detail="no runnable check")],
+            self.FINDINGS,
+        )
+        assert summary == (
+            "Fixed:\n  - [M1] the guard is missing "
+            "(not verified automatically — no runnable check)"
+        )
+
+    def test_an_unverified_fix_with_no_detail_still_carries_the_caveat(self):
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED, verified=False)], self.FINDINGS,
+        )
+        assert summary == "Fixed:\n  - [M1] the guard is missing (not verified automatically)"
+
+    def test_a_fix_the_gate_confirmed_carries_no_caveat(self):
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED, verified=True,
+                      verify_detail="pytest tests/a_test.py passed")],
+            self.FINDINGS,
+        )
+        assert summary == "Fixed:\n  - [M1] the guard is missing"
+
+    def test_a_pass_that_never_ran_the_gate_reads_as_it_always_did(self):
+        """`verified is None` is nobody asking, which is not a caveat to print."""
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED, verify_detail="ignored")], self.FINDINGS,
+        )
+        assert summary == "Fixed:\n  - [M1] the guard is missing"
+
 
 # ── what the review document ends up saying ─────────────────────────────────
 
@@ -512,6 +545,44 @@ class TestApplyOutcomes:
         out = review_fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.FIXED)])
         assert "- [x] **[M1]**" in out
         assert "- [ ] **[M2]**" in out
+
+    def test_an_unverified_fix_ticks_the_box_and_says_so(self):
+        """The tick is honest — an edit landed — but nothing exercised it."""
+        out = review_fix._apply_outcomes(self.OPEN, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        assert out.splitlines()[1].endswith("*(unverified — no runnable check)*")
+
+    def test_an_unverified_tick_is_still_a_fix_to_the_parser(self):
+        """The caveat is for the reader; it must not read back as a skip or decline."""
+        out = review_fix._apply_outcomes(self.OPEN, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        finding = review_document.ReviewDocument.parse(out).findings[0]
+        assert finding.checked is True
+        assert finding.declined is False
+        assert review_document.is_skipped(finding) is False
+
+    def test_an_unverified_fix_with_no_detail_is_annotated_bare(self):
+        out = review_fix._apply_outcomes(
+            self.OPEN, [_outcome("M1", FixOutcome.FIXED, verified=False)],
+        )
+        assert out.splitlines()[1].endswith("*(unverified)*")
+
+    def test_a_second_round_does_not_annotate_an_unverified_tick_twice(self):
+        """A record accumulates across rounds, so the same outcome is re-applied."""
+        outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
+                           verify_detail="no runnable check")
+        once = review_fix._apply_outcomes(self.OPEN, [outcome])
+        assert review_fix._apply_outcomes(once, [outcome]) == once
+
+    def test_a_verified_fix_ticks_the_box_and_says_nothing_more(self):
+        out = review_fix._apply_outcomes(
+            self.OPEN, [_outcome("M1", FixOutcome.FIXED, verified=True)],
+        )
+        assert out.splitlines()[1] == "- [x] **[M1]** `a.py:1` — Missing nil check"
 
     def test_a_needs_a_person_is_annotated_as_a_skip(self):
         """`*(skipped — reason)*` is the vocabulary the review's parser reads."""

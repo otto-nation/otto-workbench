@@ -417,14 +417,20 @@ class TestWriteRecipesMatchTheBackend:
         assert "`write` tool" in pi and "old_string" not in pi
         assert "old_string" in claude
 
-    def test_both_recipes_resolve_from_the_selected_backend(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "env_value,expected",
+        [
+            pytest.param("pi", "`write` tool", id="pi"),
+            pytest.param("claude", "old_string", id="claude"),
+        ],
+    )
+    def test_both_recipes_resolve_from_the_selected_backend(
+        self, monkeypatch, env_value, expected,
+    ):
         """No argument means ask the backend layer, not assume one."""
-        monkeypatch.setenv("AI_BACKEND", "pi")
-        assert "`write` tool" in agent_templates.build_output_block("/tmp/out.md")
-        assert "`write` tool" in agent_retry.no_write_hint()
-        monkeypatch.setenv("AI_BACKEND", "claude")
-        assert "old_string" in agent_templates.build_output_block("/tmp/out.md")
-        assert "old_string" in agent_retry.no_write_hint()
+        monkeypatch.setenv("AI_BACKEND", env_value)
+        assert expected in agent_templates.build_output_block("/tmp/out.md")
+        assert expected in agent_retry.no_write_hint()
 
     def test_an_unselected_backend_still_renders_a_prompt(self, monkeypatch):
         """Dispatch raises on that run; prompt assembly must not raise first."""

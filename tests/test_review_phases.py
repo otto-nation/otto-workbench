@@ -194,7 +194,10 @@ class TestPhaseRunnerInvocation:
         assert inv.agent is AgentKind.REVIEWER_LITE
         assert inv.thinking is Thinking.HIGH
         assert inv.max_budget == 8.0
-        assert inv.max_turns == 15
+        # Read from the resolver rather than pinned: the subject here is that
+        # PhaseRunner forwards the resolved budget, not what the arithmetic
+        # makes it. `phase_turns` owns that, and test_agent_phases asserts it.
+        assert inv.max_turns == agent_phases.phase_turns(Phase.GROUP, Effort.HIGH)
         assert inv.label == "grp"
 
     def test_max_turns_override(self, tmp_path):
@@ -274,7 +277,9 @@ class TestPhaseRunnerReachesBackend:
         assert inv.model == "sonnet"
         assert inv.thinking is Thinking.HIGH
         assert inv.max_budget == 8.0
-        assert inv.max_turns == 15
+        # As above: the seam under test is what reaches the backend, and the
+        # turn budget it carries is `phase_turns`' answer for this effort.
+        assert inv.max_turns == agent_phases.phase_turns(Phase.GROUP, Effort.HIGH)
 
     def test_invoke_matches_the_retry_callback_shape(self, tmp_path, monkeypatch):
         """`retry_missing_output` calls its callback as `invoke(prompt, turns)`."""

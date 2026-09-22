@@ -22,10 +22,12 @@ log, and the pair exists so both attempts' result records survive it.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 from core import log
+from core.phases import Backend
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import DEFAULT_RETRY_CEILING
 from agent.session import diagnose_missing_output, try_recover_output
@@ -45,13 +47,39 @@ RETRY_HINT = (
     "Write your findings file IMMEDIATELY as your first action, then verify.\n\n"
 )
 
-NO_WRITE_HINT = (
-    "IMPORTANT: A previous attempt finished without ever calling a "
-    "file-writing tool. Write your output file FIRST, before any further "
-    "investigation: Read it — it already exists and is empty — then Edit it "
-    "with an empty `old_string` to insert the complete document. Refine it "
-    "with further edits only if turns remain.\n\n"
-)
+# The mechanism half of NO_WRITE_HINT, per backend. A retry hint that names the
+# other CLI's tools re-issues the recipe that produced the empty file it is
+# retrying — see `_WRITE_RECIPES` in `agent.templates`, which this mirrors for
+# the shorter hint form.
+_NO_WRITE_MECHANISM: Mapping[Backend, str] = MappingProxyType({
+    Backend.CLAUDE: (
+        "Read it — it already exists and is empty — then Edit it with an empty "
+        "`old_string` to insert the complete document. Refine it with further "
+        "edits only if turns remain."
+    ),
+    Backend.PI: (
+        "Use the `write` tool to put the complete document into it in one "
+        "call. Refine it with `edit` only if turns remain."
+    ),
+})
+
+
+def no_write_hint(backend: Backend | None = None) -> str:
+    """The retry hint for a run that never called a write tool.
+
+    ``backend=None`` asks the backend layer, the way ``build_output_block``
+    does, and falls back to Claude's recipe when nothing names one.
+    """
+    if backend is None:
+        from agent.backend import selected_backend_or_claude
+
+        backend = selected_backend_or_claude()
+    return (
+        "IMPORTANT: A previous attempt finished without ever calling a "
+        "file-writing tool. Write your output file FIRST, before any further "
+        f"investigation: {_NO_WRITE_MECHANISM[backend]}\n\n"
+    )
+
 
 FIX_RETRY_HINT = (
     "IMPORTANT: A previous attempt ran out of turns reading files without applying any fixes. "
@@ -118,7 +146,7 @@ def hint_for(diagnosis: Diagnosis) -> str:
     telling the agent to hurry.
     """
     if diagnosis.no_write_tool:
-        return NO_WRITE_HINT
+        return no_write_hint()
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
         return RETRY_HINT
     return ""

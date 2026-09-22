@@ -282,10 +282,14 @@ BUDGET_WARN_THRESHOLD = 0.8
 # has not is about to run out with nothing to show, so name the mechanism
 # rather than telling it to hurry.
 _WRAP_UP = "Wrap up your current analysis and write your output."
+# Names Pi's own tools, because this module only ever steers a Pi run. The
+# `old_string` Edit this used to prescribe is Claude's recipe: Pi's edit takes
+# `edits[].oldText` and rejects an empty one, so the steer spent the agent's
+# last turns on a call that could not succeed.
 _WRITE_FIRST = (
-    "You have NOT written your output file yet. Do that now: Read it — it "
-    "exists and is empty — then Edit it with an empty `old_string` to insert "
-    "your complete output. Refine it afterwards only if turns remain."
+    "You have NOT written your output file yet. Do that now: use the `write` "
+    "tool to put your complete output into it in one call. Refine it with "
+    "`edit` afterwards only if turns remain."
 )
 
 

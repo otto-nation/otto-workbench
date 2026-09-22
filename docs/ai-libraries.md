@@ -74,8 +74,11 @@ One precedence chain, most specific first, for every knob a phase has:
     explicit argument  >  WORKBENCH_AI_<PHASE>_*  >  WORKBENCH_AI_*
                        >  agent.phases.<phase>.*  >  agent.*  >  built-in
 
-The effort preset sits between the config and the built-in for thinking level
-only, because it is the one knob a review's depth setting flattens.
+The effort preset sits between the config and the built-in for thinking level,
+the one knob a review's depth setting flattens. It also scales the turn budget,
+but multiplicatively rather than as a layer in that chain: a deeper review buys
+turns on top of whatever the winning layer said, where a level it flattened
+would discard a per-phase override.
 
 **Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
 ``opus``, ``haiku``) is then resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL``
@@ -163,8 +166,14 @@ renders the same way, owned here rather than hand-copied into each one, so an
 agent's write mechanism, its worktree, and what it owes a generated file are
 described identically wherever the prompt came from.
 
-Stdlib only, like ``phases`` and for the same reason: a prompt is the last
-thing that should need the PR state machine to render.
+Stdlib plus the backend selection, like ``phases`` and for nearly the same
+reason: a prompt is the last thing that should need the PR state machine to
+render. ``phases`` needs the config and environment layers to answer which
+knob an invocation runs with; this needs only the backend selector, to know
+which CLI's tools the write recipe should name. It reaches for the selected
+backend because the tools an agent has are the backend's answer, and a write
+instruction naming the other CLI's tools is not advice an agent can decline —
+it is a call that cannot succeed.
 
 ### agent/types.py
 

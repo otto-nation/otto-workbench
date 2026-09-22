@@ -70,7 +70,7 @@ class _Invoke:
 
 class TestRetryHintFor:
     def test_no_write_diagnosis_names_the_write_mechanism(self):
-        assert review_retry._retry_hint_for(_NO_WRITE) == review_retry._NO_WRITE_HINT
+        assert review_retry._retry_hint_for(_NO_WRITE) == review_retry._no_write_hint()
 
     def test_plain_max_turns_gets_the_generic_hint(self):
         assert review_retry._retry_hint_for(_MAX_TURNS) == review_retry._RETRY_HINT
@@ -91,7 +91,7 @@ class TestIsRetryable:
             DiagnosisKind.COMPLETED, detail="success", no_write_tool=True,
         )
         assert review_retry._is_retryable(diagnosis)
-        assert review_retry._retry_hint_for(diagnosis) == review_retry._NO_WRITE_HINT
+        assert review_retry._retry_hint_for(diagnosis) == review_retry._no_write_hint()
 
     def test_clean_completion_that_wrote_nothing_observable_is_not_retryable(self):
         """Without the no-write flag there is no reason to expect a difference."""
@@ -168,7 +168,7 @@ class TestRetryMissingOutput:
         output = tmp_path / "out.md"
         invoke = _Invoke(str(output), write_on=1, log_path=log_path)
         self._run(invoke, log_path, str(output))
-        assert invoke.calls[0][0].startswith(review_retry._NO_WRITE_HINT)
+        assert invoke.calls[0][0].startswith(review_retry._no_write_hint())
 
     def test_retry_runs_once_and_reports_its_own_failure(self, tmp_path):
         log_path = _write_log(tmp_path, _result())

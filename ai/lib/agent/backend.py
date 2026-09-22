@@ -88,12 +88,16 @@ def _raw_configured_backend() -> str | None:
     return agent.get("backend") if isinstance(agent, dict) else None
 
 
-def _backend() -> Backend | None:
+def selected_backend() -> Backend | None:
     """The selected backend, or None when neither layer names a valid one.
 
-    Returns rather than raises so the two callers that only *describe* the
-    selection — the usage ledger and the PATH probe in ``is_available`` — do not
-    acquire a new failure mode. Dispatch is where the absence becomes an error.
+    Returns rather than raises so the callers that only *describe* the
+    selection — the usage ledger, the PATH probe in ``is_available``, and the
+    prompt builder choosing a write recipe — do not acquire a new failure mode.
+    Dispatch is where the absence becomes an error.
+
+    Public because that third caller is outside this module: ``agent.templates``
+    has to know which CLI's tools an agent will actually have.
 
     An unrecognised value is None, not a fallback: a typo'd AI_BACKEND is a
     machine that meant something specific and did not get it.
@@ -107,6 +111,18 @@ def _backend() -> Backend | None:
     return _configured_backend()
 
 
+def selected_backend_or_claude() -> Backend:
+    """``selected_backend()``, falling back to Claude when nothing names one.
+
+    For the callers that describe a write mechanism rather than dispatch one —
+    ``agent.templates.build_output_block`` and ``agent.retry.no_write_hint`` —
+    and so cannot raise on an unselected backend the way dispatch does. Both
+    used to inline this fallback and its lazy import; kept here once so the
+    two write-recipe callers cannot drift on which backend an unset one means.
+    """
+    return selected_backend() or Backend.CLAUDE
+
+
 def _require_backend() -> Backend:
     """The selected backend, or a failure naming both ways to set it.
 
@@ -116,7 +132,7 @@ def _require_backend() -> Backend:
     for agent.backend in config.yml, which _configured_backend() cannot
     surface on its own — see _raw_configured_backend().
     """
-    selected = _backend()
+    selected = selected_backend()
     if selected is None:
         valid = ", ".join(b.value for b in Backend)
         raw = os.environ.get(ENV_AI_BACKEND)
@@ -156,7 +172,7 @@ def _record(
             # "unknown" rather than a raise: this is inside the swallow-all
             # below, so raising here would drop the ledger row silently instead
             # of failing loudly, which is the opposite of the intent.
-            backend=(sel.value if (sel := _backend()) else "unknown"),
+            backend=(sel.value if (sel := selected_backend()) else "unknown"),
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr,
         )
@@ -314,5 +330,5 @@ def is_available() -> bool:
     already handle "no backend" by carrying on without it. An unselected backend
     is unavailable in exactly the sense they are asking about.
     """
-    selected = _backend()
+    selected = selected_backend()
     return selected is not None and shutil.which(selected) is not None

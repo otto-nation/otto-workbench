@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import phases as agent_phases
-from agent.registry import PHASES
+from agent.registry import PHASES, REVIEW_PHASES
 from core.phases import Effort, Phase
 
 
@@ -44,6 +44,56 @@ class TestPhaseTurns:
             scaling = PHASES[phase].scaling
             chunk = agent_phases.phase_chunk_size(phase)
             assert agent_phases.phase_turns(phase, items=chunk) <= scaling.turns_cap
+
+
+class TestEffortBuysTurns:
+    """``--effort`` has to move the resource a deep review runs out of.
+
+    The regression: a preset carried a thinking level and a dollar budget and
+    nothing else, so a review that exhausted its turns was answered by a deeper
+    preset with the same 15 turns — and a higher thinking level burning the
+    larger dollar budget faster. Raising effort could not fix the failure it
+    was reached for.
+    """
+
+    def test_high_effort_gives_a_phase_more_turns_than_medium(self):
+        medium = agent_phases.phase_turns(Phase.SINGLE, Effort.MEDIUM)
+        high = agent_phases.phase_turns(Phase.SINGLE, Effort.HIGH)
+        assert high > medium
+
+    def test_every_review_phase_gains_turns_at_high_effort(self):
+        """Not just the one phase the regression was found on."""
+        for phase in REVIEW_PHASES:
+            medium = agent_phases.phase_turns(phase, Effort.MEDIUM)
+            high = agent_phases.phase_turns(phase, Effort.HIGH)
+            assert high > medium, phase
+
+    # passes-at-base: pins the baseline the multiplier must leave alone
+    def test_medium_is_the_registry_default_unscaled(self):
+        """The baseline every registry number is written against."""
+        assert (agent_phases.phase_turns(Phase.SINGLE, Effort.MEDIUM)
+                == PHASES[Phase.SINGLE].max_turns)
+
+    # passes-at-base: asserts the multiplier was not used to shrink low effort
+    def test_low_effort_does_not_cut_below_the_registry_minimum(self):
+        """A shallower review still has to write its file."""
+        assert (agent_phases.phase_turns(Phase.SINGLE, Effort.LOW)
+                >= PHASES[Phase.SINGLE].max_turns)
+
+    # passes-at-base: back-compat, that the new scaling did not displace the old
+    def test_the_omitted_file_bump_survives_the_multiplier(self):
+        """Both scalings apply — the multiplier must not replace the bump."""
+        flat = agent_phases.phase_turns(Phase.SINGLE, Effort.HIGH)
+        bumped = agent_phases.phase_turns(Phase.SINGLE, Effort.HIGH, omitted_files=2)
+        assert bumped == flat + agent_phases.omitted_turns(Effort.HIGH, 2)
+
+    # passes-at-base: back-compat, that effort cannot lift a fix pass's cap
+    def test_an_item_scaled_phase_still_stops_at_its_cap(self):
+        """Effort must not lift the ceiling one agent can finish inside."""
+        cap = PHASES[Phase.FIX].scaling.turns_cap
+        assert agent_phases.phase_turns(
+            Phase.FIX, Effort.HIGH, items=100,
+        ) == cap
 
 
 class TestPhaseBudget:

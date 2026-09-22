@@ -75,10 +75,19 @@ class EffortPreset:
     that becomes skippable should not need a field added to all three presets
     before it can be. Only a phase whose spec is ``optional`` belongs in here —
     ``test_agent_registry`` holds the presets to that.
+
+    ``turn_multiplier`` scales every phase's registry turn budget. Without it a
+    preset bought thinking level and dollars only, so ``--effort high`` answered
+    a phase that exhausted its turns with more of the two resources that were
+    not the constraint — and a higher thinking level spends the larger dollar
+    budget faster, which made the deeper preset strictly worse for the failure
+    it was reached for. Turns are what a review reading unfamiliar code runs
+    out of, so the preset has to move them.
     """
 
     thinking: Thinking | None
     agent_budget: float
+    turn_multiplier: float
     max_groups: int
     multi_phase_line_threshold: int
     multi_phase_file_threshold: int
@@ -94,6 +103,10 @@ EFFORT_PRESETS: dict[Effort, EffortPreset] = {
     Effort.LOW: EffortPreset(
         thinking=Thinking.LOW,
         agent_budget=3.0,
+        # A shallower review, not a hobbled one: the phases low keeps still have
+        # to write their file, and a fraction here would cut the turn budget a
+        # phase's registry default already calls its minimum.
+        turn_multiplier=1.0,
         max_groups=6,
         multi_phase_line_threshold=1000,
         multi_phase_file_threshold=15,
@@ -108,6 +121,8 @@ EFFORT_PRESETS: dict[Effort, EffortPreset] = {
     Effort.MEDIUM: EffortPreset(
         thinking=None,
         agent_budget=DEFAULT_MAX_BUDGET_PER_AGENT,
+        # The baseline every registry default is written against.
+        turn_multiplier=1.0,
         max_groups=8,
         multi_phase_line_threshold=500,
         multi_phase_file_threshold=10,
@@ -118,6 +133,10 @@ EFFORT_PRESETS: dict[Effort, EffortPreset] = {
     Effort.HIGH: EffortPreset(
         thinking=Thinking.HIGH,
         agent_budget=8.0,
+        # Matches the dollar budget's own step from medium (5.0 -> 8.0): the two
+        # resources are spent together, so raising one without the other just
+        # moves which limit stops the agent.
+        turn_multiplier=1.6,
         max_groups=16,
         multi_phase_line_threshold=500,
         multi_phase_file_threshold=10,

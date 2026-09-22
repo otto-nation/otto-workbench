@@ -518,6 +518,18 @@ class TestWriteAwareSteer:
         """Callers that cannot observe tool calls get the safe message."""
         assert ai_backend_pi._WRITE_FIRST in self._steer_text(8, 2.0, 10, 5.0)
 
+    def test_the_steer_names_a_tool_pi_actually_has(self):
+        """Regression: this steer used to prescribe Claude's Edit recipe.
+
+        `old_string` is not a parameter Pi's edit tool accepts, and an empty
+        `oldText` is rejected outright — so the steer spent an agent's last
+        turns on a call that could not succeed. It must name `write`, which is
+        in the tool list this module passes.
+        """
+        assert "old_string" not in ai_backend_pi._WRITE_FIRST
+        assert "`write`" in ai_backend_pi._WRITE_FIRST
+        assert "write" in ai_backend_pi.PI_TOOLS.split(",")
+
 
 class TestConsumeStreamTracksWrites:
     """_consume_stream is what tells _check_limits whether a write happened."""

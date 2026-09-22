@@ -276,6 +276,16 @@ def _parse_event_type(raw_line: str) -> tuple[str, dict]:
     return data.get("type", ""), data
 
 
+# stop_reason for a prompt the backend would not run: no API key, an
+# unroutable model, a provider that declined. Distinct from "completed" and
+# from the limit stops, because those are runs that happened.
+BACKEND_REFUSED = "backend_refused"
+
+# Exit code invoke_agent/invoke_fix return for BACKEND_REFUSED. Pi exits 0
+# after refusing, so there is no upstream status to pass through and callers
+# that branch on the exit code would read the refusal as a success.
+BACKEND_REFUSED_EXIT = 70
+
 BUDGET_WARN_THRESHOLD = 0.8
 
 # An agent that has already written its file just needs to finish. One that
@@ -336,11 +346,17 @@ class StreamResult:
     the same spelling ``pi_prompt_result`` keys ``cost_by_model`` on, so a
     session's cost lands under one key however it was invoked. It is None
     when the stream ended with no message_end (e.g. an immediate abort).
+
+    ``error`` carries the backend's own refusal text when ``stop_reason`` is
+    ``BACKEND_REFUSED``, and is None otherwise. It is the only record of why a
+    run produced nothing: Pi exits 0 after refusing a prompt, so the exit code
+    cannot carry it.
     """
     turn_count: int
     accumulated_cost: float
     stop_reason: str
     model: str | None = None
+    error: str | None = None
 
 
 def _consume_stream(
@@ -350,7 +366,17 @@ def _consume_stream(
 ) -> StreamResult:
     """Consume the RPC event stream, enforcing turn and budget limits.
 
-    stop_reason is one of: "completed", "max_turns", "max_budget".
+    stop_reason is one of: "completed", "max_turns", "max_budget",
+    ``BACKEND_REFUSED``.
+
+    A refused prompt is the one outcome that arrives as a ``response`` rather
+    than as an event: Pi answers ``{"command": "prompt", "success": false}``,
+    emits no ``agent_end``, and exits 0. Skipping every ``response`` therefore
+    read a refusal as a stream that simply ended — ``stop_reason`` stayed
+    "completed" and the caller saw a clean exit for a run the model never
+    answered. Only the reply to ``prompt`` is examined; ``steer`` and
+    ``get_session_stats`` replies are still passed over, which is what the
+    unconditional skip was for.
     """
     prev_tool = ""
     turn_count = 0
@@ -360,6 +386,7 @@ def _consume_stream(
     aborted = False
     wrote_output = False
     model = None
+    error = None
 
     for raw_line in process.stdout:
         log_file.write(raw_line)
@@ -368,6 +395,10 @@ def _consume_stream(
         event_type, data = _parse_event_type(raw_line)
 
         if event_type == "response":
+            if data.get("command") == "prompt" and not data.get("success", True):
+                stop_reason = BACKEND_REFUSED
+                error = data.get("error") or "backend refused the prompt"
+                break
             continue
 
         prev_tool = _display_event(data, prev_tool, prefix)
@@ -386,7 +417,27 @@ def _consume_stream(
         if event_type == "agent_end":
             break
 
-    return StreamResult(turn_count, accumulated_cost, stop_reason, model)
+    return StreamResult(turn_count, accumulated_cost, stop_reason, model, error)
+
+
+def _exit_code(stream: StreamResult, returncode: int) -> int:
+    """The status a refusal deserves, or the process's own.
+
+    Pi exits 0 when it refuses a prompt — no API key, an unroutable model — so
+    passing its status through reports a run the model never answered as a
+    success. Every caller here branches on the exit code, and a review whose
+    agent never spoke returns a 0-byte review file with nothing saying why.
+
+    The refusal text goes to stderr because the exit code cannot carry it, and
+    the operator's next question is which provider declined and why.
+    """
+    if stream.stop_reason != BACKEND_REFUSED:
+        return returncode
+    print(
+        f"{ANSI_DIM}✗ backend refused the prompt:{ANSI_RESET} {stream.error}",
+        file=sys.stderr, flush=True,
+    )
+    return returncode or BACKEND_REFUSED_EXIT
 
 
 # ── Result record generation ─────────────────────────────────────────────────
@@ -522,8 +573,10 @@ def invoke_agent(inv: AgentInvocation) -> int:
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
-    # Query authoritative stats after agent is done
-    stats = _get_stats_after_agent_end(proc)
+    # Stats are only askable of a session that ran. A refused prompt leaves the
+    # RPC process with no agent_end and nothing to report, so the query would
+    # block on a reply that is never coming.
+    stats = {} if stream.stop_reason == BACKEND_REFUSED else _get_stats_after_agent_end(proc)
 
     # Write Claude-compatible result record
     _write_result_record(
@@ -538,7 +591,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         pass
     proc.wait()
     _log_stderr_on_failure(proc, inv.session_log)
-    return proc.returncode
+    return _exit_code(stream, proc.returncode)
 
 
 def invoke_fix(inv: AgentInvocation) -> int:
@@ -580,7 +633,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
     if inv.session_log:
-        stats = _get_stats_after_agent_end(proc)
+        stats = {} if stream.stop_reason == BACKEND_REFUSED else _get_stats_after_agent_end(proc)
         _write_result_record(
             inv.session_log, stream.stop_reason, stream.turn_count,
             stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
@@ -592,4 +645,4 @@ def invoke_fix(inv: AgentInvocation) -> int:
         pass
     proc.wait()
     _log_stderr_on_failure(proc, inv.session_log)
-    return proc.returncode
+    return _exit_code(stream, proc.returncode)

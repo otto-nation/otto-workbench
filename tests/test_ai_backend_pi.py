@@ -547,6 +547,79 @@ class TestConsumeStreamTracksWrites:
         assert ai_backend_pi._WRITE_FIRST in self._steer_message("read")
 
 
+class TestBackendRefusal:
+    """A prompt the backend would not run must not read as a completed run.
+
+    Pi answers a refusal with `{"command": "prompt", "success": false}`, emits
+    no `agent_end`, and exits 0 — verified against pi 0.84.4 with both an
+    unroutable model and an unresolved tier alias. Every signal the workbench
+    reads therefore said the run succeeded: `stop_reason` stayed "completed"
+    and the exit code was the process's own 0.
+    """
+
+    class MockProc:
+        def __init__(self, lines):
+            self.stdout = iter(lines)
+            self.stdin = TestCheckLimits.MockStdin()
+            self.returncode = 0
+
+    REFUSAL = {
+        "type": "response", "command": "prompt", "success": False,
+        "error": "No API key found for amazon-bedrock.",
+    }
+
+    def _consume(self, events):
+        proc = self.MockProc([json.dumps(e) + "\n" for e in events])
+        return ai_backend_pi._consume_stream(proc, io.StringIO(), "")
+
+    def test_a_refused_prompt_is_not_a_completed_run(self):
+        assert self._consume([self.REFUSAL]).stop_reason == ai_backend_pi.BACKEND_REFUSED
+
+    def test_the_refusal_text_is_kept(self):
+        """The exit code cannot say which provider declined, so the text must."""
+        assert "No API key found" in self._consume([self.REFUSAL]).error
+
+    def test_a_refusal_stops_the_stream(self):
+        """No agent_end is coming, and events after it belong to no run."""
+        stream = self._consume([self.REFUSAL, {"type": "turn_end"}])
+        assert stream.turn_count == 0
+
+    def test_a_successful_prompt_reply_is_still_skipped(self):
+        stream = self._consume([
+            {"type": "response", "command": "prompt", "success": True},
+            {"type": "turn_end"}, {"type": "agent_end"},
+        ])
+        assert stream.stop_reason == "completed"
+        assert stream.error is None
+
+    def test_other_command_replies_are_not_refusals(self):
+        """steer and get_session_stats replies share the `response` type.
+
+        This is why the skip was unconditional, and why the check keys on
+        `command` rather than on `success` alone — a failed steer is not a
+        refused run.
+        """
+        stream = self._consume([
+            {"type": "response", "command": "steer", "success": False},
+            {"type": "turn_end"}, {"type": "agent_end"},
+        ])
+        assert stream.stop_reason == "completed"
+
+    def test_a_refusal_exits_non_zero_despite_pi_exiting_zero(self):
+        """The whole bug in one assertion: pi's own status is 0 here."""
+        stream = self._consume([self.REFUSAL])
+        assert ai_backend_pi._exit_code(stream, 0) == ai_backend_pi.BACKEND_REFUSED_EXIT
+
+    def test_a_real_failure_status_is_preserved(self):
+        """A backend that did exit non-zero keeps its own code."""
+        stream = self._consume([self.REFUSAL])
+        assert ai_backend_pi._exit_code(stream, 2) == 2
+
+    def test_a_completed_run_keeps_its_exit_code(self):
+        stream = self._consume([{"type": "agent_end"}])
+        assert ai_backend_pi._exit_code(stream, 0) == 0
+
+
 class TestPreflight:
     def test_always_passes(self):
         """Pi resolves models itself — Vertex quota is not its config surface."""

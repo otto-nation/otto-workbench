@@ -559,6 +559,288 @@ class TestConsumeStreamTracksWrites:
         assert ai_backend_pi._WRITE_FIRST in self._steer_message("read")
 
 
+class TestBackendRefusal:
+    """A prompt the backend would not run must not read as a completed run.
+
+    Pi answers a refusal with `{"command": "prompt", "success": false}`, emits
+    no `agent_end`, and exits 0 — verified against pi 0.84.4 with both an
+    unroutable model and an unresolved tier alias. Every signal the workbench
+    reads therefore said the run succeeded: `stop_reason` stayed "completed"
+    and the exit code was the process's own 0.
+    """
+
+    class MockProc:
+        def __init__(self, lines):
+            self.stdout = iter(lines)
+            self.stdin = TestCheckLimits.MockStdin()
+            self.returncode = 0
+
+    REFUSAL = {
+        "type": "response", "command": "prompt", "success": False,
+        "error": "No API key found for amazon-bedrock.",
+    }
+
+    def _consume(self, events):
+        proc = self.MockProc([json.dumps(e) + "\n" for e in events])
+        return ai_backend_pi._consume_stream(proc, io.StringIO(), "")
+
+    def test_a_refused_prompt_is_not_a_completed_run(self):
+        assert self._consume([self.REFUSAL]).stop_reason == ai_backend_pi.BACKEND_REFUSED
+
+    def test_the_refusal_text_is_kept(self):
+        """The exit code cannot say which provider declined, so the text must."""
+        assert "No API key found" in self._consume([self.REFUSAL]).error
+
+    def test_a_refusal_stops_the_stream(self):
+        """No agent_end is coming, and events after it belong to no run."""
+        stream = self._consume([self.REFUSAL, {"type": "turn_end"}])
+        assert stream.turn_count == 0
+
+    def test_a_successful_prompt_reply_is_still_skipped(self):
+        stream = self._consume([
+            {"type": "response", "command": "prompt", "success": True},
+            {"type": "turn_end"}, {"type": "agent_end"},
+        ])
+        assert stream.stop_reason == "completed"
+        assert stream.error is None
+
+    # passes-at-base: asserts the non-prompt replies this change was careful to
+    # keep skipping, which the unconditional skip at base also did
+    def test_other_command_replies_are_not_refusals(self):
+        """steer and get_session_stats replies share the `response` type.
+
+        This is why the skip was unconditional, and why the check keys on
+        `command` rather than on `success` alone — a failed steer is not a
+        refused run.
+        """
+        stream = self._consume([
+            {"type": "response", "command": "steer", "success": False},
+            {"type": "turn_end"}, {"type": "agent_end"},
+        ])
+        assert stream.stop_reason == "completed"
+
+    def test_the_refusal_exit_code_is_not_success(self):
+        """Pinned to a literal, not to the constant the function returns.
+
+        Asserting `_exit_code(...) == BACKEND_REFUSED_EXIT` compares the output
+        to the same symbol the code returns, so it holds for any value of the
+        constant — including 0, the one value the whole change exists to avoid.
+        Setting the constant to 0 left all 98 tests green.
+        """
+        assert ai_backend_pi.BACKEND_REFUSED_EXIT == 70
+
+    def test_a_refusal_exits_non_zero_despite_pi_exiting_zero(self):
+        """The whole bug in one assertion: pi's own status is 0 here."""
+        stream = self._consume([self.REFUSAL])
+        assert ai_backend_pi._exit_code(stream, 0) == 70
+
+    def test_a_refusal_with_no_error_key_still_stops_the_run(self):
+        """The `or` fallback in _consume_stream, which nothing else exercises."""
+        stream = self._consume([
+            {"type": "response", "command": "prompt", "success": False},
+        ])
+        assert stream.stop_reason == ai_backend_pi.BACKEND_REFUSED
+        assert stream.error == "backend refused the prompt"
+
+    # passes-at-base: a malformed record is a non-refusal at base too, where
+    # every response was skipped
+    def test_a_response_with_no_success_key_is_not_a_refusal(self):
+        """`get("success", True)` treats a malformed record as non-refusal."""
+        stream = self._consume([
+            {"type": "response", "command": "prompt"},
+            {"type": "agent_end"},
+        ])
+        assert stream.stop_reason == "completed"
+
+    def test_a_real_failure_status_is_preserved(self):
+        """A backend that did exit non-zero keeps its own code."""
+        stream = self._consume([self.REFUSAL])
+        assert ai_backend_pi._exit_code(stream, 2) == 2
+
+    def test_a_completed_run_keeps_its_exit_code(self):
+        stream = self._consume([{"type": "agent_end"}])
+        assert ai_backend_pi._exit_code(stream, 0) == 0
+
+    def _refused_record(self, tmp_path):
+        log = tmp_path / "session.jsonl"
+        stream = self._consume([self.REFUSAL])
+        ai_backend_pi._write_result_record(
+            str(log), stream.stop_reason, stream.turn_count,
+            stream.accumulated_cost, 10, {}, "sonnet", stream.error,
+        )
+        return log, [
+            json.loads(l) for l in log.read_text().splitlines()
+            if json.loads(l).get("type") == "result"
+        ][0]
+
+    def test_the_result_record_is_marked_an_error(self, tmp_path):
+        """`is_error` is what `session._diagnose_result_type` branches on.
+
+        Left at its default False, a refused run is diagnosed COMPLETED — the
+        exit code is fixed and the layer above still reads success.
+        """
+        _, record = self._refused_record(tmp_path)
+        assert record["is_error"] is True
+        assert record["subtype"] == ai_backend_pi.BACKEND_REFUSED
+
+    def test_the_result_record_carries_the_reason(self, tmp_path):
+        _, record = self._refused_record(tmp_path)
+        assert "No API key found" in record["error"]
+
+    def test_a_refusal_diagnoses_as_an_error_not_a_completed_run(self, tmp_path):
+        """End of the chain: what the operator is actually told."""
+        from agent.session import diagnose_missing_output
+
+        log, _ = self._refused_record(tmp_path)
+        diagnosis = diagnose_missing_output(str(log))
+        assert diagnosis.kind.value == "agent_error"
+        assert "No API key found" in diagnosis.detail
+
+    def test_a_completed_run_is_still_not_an_error(self, tmp_path):
+        log = tmp_path / "ok.jsonl"
+        stream = self._consume([{"type": "agent_end"}])
+        ai_backend_pi._write_result_record(
+            str(log), stream.stop_reason, stream.turn_count,
+            stream.accumulated_cost, 10, {}, "sonnet", stream.error,
+        )
+        record = [
+            json.loads(l) for l in log.read_text().splitlines()
+            if json.loads(l).get("type") == "result"
+        ][0]
+        assert record["is_error"] is False
+        assert record["subtype"] == "success"
+        assert "error" not in record
+
+
+def _refusing_popen(returncode=0, stdout_lines=None, stderr=""):
+    """A Popen stand-in that refuses the prompt the way pi 0.84.4 does."""
+    if stdout_lines is None:
+        stdout_lines = [json.dumps({
+            "type": "response", "command": "prompt", "success": False,
+            "error": "No API key found for amazon-bedrock.",
+        }) + "\n"]
+
+    class FakeProc:
+        def __init__(self):
+            self.returncode = returncode
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("".join(stdout_lines))
+            self.stderr = io.StringIO(stderr)
+
+        def wait(self):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    return lambda cmd, **kwargs: FakeProc()
+
+
+class TestRefusalReachesTheEntryPoints:
+    """The refusal must change what invoke_agent/invoke_fix *return*.
+
+    Every other test in TestBackendRefusal calls `_exit_code` directly, so
+    reverting both call sites to `return proc.returncode` left the whole suite
+    green — the fix could be deleted and nothing noticed. These drive the entry
+    points end to end against a fake pi that refuses and exits 0, which is the
+    revert `testing.md` says to make at the call site.
+    """
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_a_refused_run_returns_the_refusal_code(self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.setattr(subprocess, "Popen", _refusing_popen())
+        rc = getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert rc == 70
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_a_refused_run_writes_an_error_result_record(self, monkeypatch, tmp_path, entry_point):
+        log = tmp_path / "s.jsonl"
+        monkeypatch.setattr(subprocess, "Popen", _refusing_popen())
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
+        record = [
+            json.loads(l) for l in log.read_text().splitlines()
+            if json.loads(l).get("type") == "result"
+        ][0]
+        assert record["is_error"] is True
+        assert record["subtype"] == ai_backend_pi.BACKEND_REFUSED
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_a_refusal_does_not_query_session_stats(self, monkeypatch, tmp_path, entry_point):
+        """The stats skip: removing the guard left the suite green.
+
+        The fake's stdout holds only the refusal, so a stats query would read
+        past the end and get "" rather than a reply — this asserts the call is
+        never made at all.
+        """
+        called = []
+        monkeypatch.setattr(subprocess, "Popen", _refusing_popen())
+        monkeypatch.setattr(
+            ai_backend_pi, "_get_stats_after_agent_end",
+            lambda proc: called.append(1) or {},
+        )
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert called == []
+
+
+class TestBackendDiedBeforeReading:
+    """pi rejecting the invocation before it reads stdin at all.
+
+    An unroutable model does this: `Error: Model "x" not found` on stderr,
+    exit 1, nothing on stdout. The first write into the dead pipe is buffered
+    and succeeds, so the failure surfaced two writes later inside
+    `_get_stats_after_agent_end` and escaped invoke_agent as a BrokenPipeError
+    traceback — a page of stack for a mistyped model name.
+    """
+
+    # passes-at-base: the fake's returncode is already 1, so base returns 1 by
+    # passthrough rather than by handling the case. The assertion that fails at
+    # base is test_the_stderr_message_reaches_the_diagnosis below, which is why
+    # this pair exists rather than this case alone.
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_an_early_exit_is_reported_not_raised(self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.setattr(subprocess, "Popen", _refusing_popen(
+            returncode=1, stdout_lines=[],
+            stderr='Error: Model "bogus/x" not found.\n',
+        ))
+        rc = getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert rc == 1
+
+    def test_the_stderr_message_reaches_the_diagnosis(self, monkeypatch, tmp_path):
+        """Without this the operator gets a traceback naming no model."""
+        from agent.session import diagnose_missing_output
+
+        log = tmp_path / "s.jsonl"
+        monkeypatch.setattr(subprocess, "Popen", _refusing_popen(
+            returncode=1, stdout_lines=[],
+            stderr='Error: Model "bogus/x" not found.\n',
+        ))
+        ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
+        diagnosis = diagnose_missing_output(str(log))
+        assert diagnosis.kind.value == "agent_error"
+        assert 'bogus/x' in diagnosis.detail
+
+    def test_a_live_process_with_an_empty_stream_is_not_a_refusal(self):
+        """poll() is what separates 'died early' from 'produced nothing yet'."""
+        class LiveProc:
+            returncode = None
+
+            def poll(self):
+                return None
+
+        stream = ai_backend_pi.StreamResult(0, 0.0, "completed", None, None)
+        assert not ai_backend_pi._never_spoke(stream, LiveProc())
+
+
 class TestPreflight:
     def test_always_passes(self):
         """Pi resolves models itself — Vertex quota is not its config surface."""

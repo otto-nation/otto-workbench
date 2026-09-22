@@ -501,6 +501,12 @@ def _recording_popen(seen):
         def wait(self):
             return 0
 
+        def poll(self):
+            # None means still running, which is what keeps these cases on the
+            # ordinary path: an exited process with an empty stream is how the
+            # backend recognises one that died before speaking the protocol.
+            return None
+
     def popen(cmd, **kwargs):
         seen.update(kwargs)
         return FakeProc()

@@ -179,7 +179,7 @@
         "team": {
           "type": "string"
         },
-        "jira_url": {
+        "base_url": {
           "type": "string"
         },
         "labels": {

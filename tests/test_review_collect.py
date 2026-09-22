@@ -374,15 +374,83 @@ class TestTheBlockReportsWhatItsDiffCost:
 
 
 class TestDensitySkipping:
-    def test_large_file_small_diff_omitted(self, tmp_path):
+    def test_large_file_small_diff_inlined_when_it_fits(self, tmp_path):
+        """Density alone must not withhold a file the budget could afford.
+
+        Omitting it does not save the bytes: it is a file the diff touches, so
+        the prompt goes on to tell the agent to read it, and the same content
+        arrives through a tool call inside the turn budget instead.
+        """
         (tmp_path / "big.py").write_text("x = 1\n" * 2000)
         job = _job(tmp_path, [{"path": "big.py", "additions": 2, "deletions": 1}])
 
         with contextlib.redirect_stdout(io.StringIO()):
             data = rc.collect_preflight_data(job)
 
-        assert "big.py" not in data.file_contents
-        assert "big.py" in data.omitted_files
+        assert "big.py" in data.file_contents
+        assert "big.py" not in data.omitted_files
+
+    def test_a_low_density_file_yields_to_a_dense_one_under_scarcity(
+        self, tmp_path, monkeypatch,
+    ):
+        """What the heuristic is actually for, once it is a tie-break.
+
+        With a budget too small for both, the file the diff already explains is
+        the one that goes, and the one it does not explain is kept.
+        """
+        (tmp_path / "sparse.py").write_text("x = 1\n" * 2000)  # 12000 bytes
+        (tmp_path / "dense.py").write_text("line\n" * 800)  # 4000 bytes
+        # Room for the fixed overhead and the dense file, but not for both
+        # files — so the fit has to choose, which is the only time density
+        # should decide anything.
+        monkeypatch.setattr(
+            rc, "collection_budget_bytes",
+            lambda *a, **k: rc.TEMPLATE_OVERHEAD_BYTES + 6000,
+        )
+        job = _job(tmp_path, [
+            {"path": "sparse.py", "additions": 2, "deletions": 1},
+            {"path": "dense.py", "additions": 700, "deletions": 600},
+        ])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = rc.collect_preflight_data(job)
+
+        assert "dense.py" in data.file_contents
+        assert "sparse.py" in data.omitted_files
+
+    def test_tier_outranks_density_across_the_whole_budget(
+        self, tmp_path, monkeypatch,
+    ):
+        """A low-density Tier 1 file must not be crowded out by a dense Tier 3 one.
+
+        Ranking dense files against the *entire* remaining budget before sparse
+        files see any of it (rather than ranking every candidate together by
+        `(classify_tier, is_low_density, size)`) would let a large, dense Tier 3
+        file exhaust the budget first — even though a small, sparse Tier 1 file
+        would easily fit if tier were consulted before density.
+        """
+        # Tier 1 (path segment "auth"), low density: big enough to trigger the
+        # density heuristic, but only a sliver of it changed.
+        (tmp_path / "auth").mkdir()
+        (tmp_path / "auth" / "config.go").write_text("line\n" * 1200)  # 6000 bytes
+        # Tier 3 (path segment "gen"), dense: most of it changed.
+        (tmp_path / "gen").mkdir()
+        (tmp_path / "gen" / "big.go").write_text("line\n" * 1800)  # 9000 bytes
+        # Room for either file alone, not both.
+        monkeypatch.setattr(
+            rc, "collection_budget_bytes",
+            lambda *a, **k: rc.TEMPLATE_OVERHEAD_BYTES + 10000,
+        )
+        job = _job(tmp_path, [
+            {"path": "auth/config.go", "additions": 2, "deletions": 1},
+            {"path": "gen/big.go", "additions": 1500, "deletions": 1500},
+        ])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = rc.collect_preflight_data(job)
+
+        assert "auth/config.go" in data.file_contents
+        assert "gen/big.go" in data.omitted_files
 
     def test_small_file_always_included(self, tmp_path):
         (tmp_path / "small.py").write_text("x = 1\n")
@@ -607,7 +675,13 @@ class TestCollectPreflightData:
         assert "func uncommitted" not in data.diff
         assert "func untracked" not in data.diff
 
-    def test_low_density_large_file_omitted_from_contents(self, tmp_path):
+    def test_the_only_file_a_diff_touches_is_never_withheld(self, tmp_path):
+        """The regression: a small change to a big file, and nothing else.
+
+        Preflight used to send zero of the one file under review and then order
+        the agent to go and read it, spending turns on what collection had just
+        declined to include.
+        """
         repo = init_repo(tmp_path / "repo")
         (repo / "big.py").write_text("x = 1\n" * 2000)
         commit_all(repo, "init")
@@ -624,8 +698,8 @@ class TestCollectPreflightData:
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = rc.collect_preflight_data(job)
-        assert "big.py" not in data.file_contents
-        assert "big.py" in data.omitted_files
+        assert "big.py" in data.file_contents
+        assert data.omitted_files == []
 
     def test_tier1_files_prioritized_over_tier2_when_budget_tight(
         self, tmp_path, monkeypatch,

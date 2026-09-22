@@ -88,7 +88,10 @@ _SPECS: tuple[PhaseSpec, ...] = (
         shape=PhaseShape.FIX,
         scales_with_omitted=False,
         scaling=ItemScaling(turns_per_item=2, turns_cap=60),
-        retry=RetryBudget(ceiling=60, turns_min=40, bump=20),
+        # Ceiling above `turns_cap`, not equal to it: a pass that scaled all the
+        # way to 60 and still ran out would otherwise retry at exactly the 60
+        # that just failed, which is the one case the bump exists to cover.
+        retry=RetryBudget(ceiling=80, turns_min=40, bump=20),
     ),
     # The review fix pass's verify gate, and the same phase as the comments
     # gate in everything but its budget: a review has an `--effort` behind it,
@@ -163,6 +166,11 @@ _SPECS: tuple[PhaseSpec, ...] = (
         scales_with_omitted=False,
         scaling=ItemScaling(turns_per_item=2, turns_cap=20,
                             budget_per_item=0.25, budget_cap=3.0),
+        # Both numbers sit above the flat 20 this phase is capped at, so the
+        # retry of a maxed pass is the only thing they change: a failure at 20
+        # gets 30 rather than the 20 it just exhausted. The dollar cap is
+        # unchanged and still binds first on a pass that is failing expensively.
+        retry=RetryBudget(ceiling=30, turns_min=30, bump=10),
     ),
     # The prompt-shaped phases below are one stateless call each: no agent
     # loop, so no turn budget, no dollar cap and no agent persona to pick.
@@ -197,6 +205,9 @@ _SPECS: tuple[PhaseSpec, ...] = (
         scales_with_omitted=False,
         scaling=ItemScaling(turns_per_item=2, turns_cap=20,
                             budget_per_item=0.25, budget_cap=3.0),
+        # Sized as CI's fix pass here too, for the reason the comment above
+        # gives: the same flat 20, so the same retry above it.
+        retry=RetryBudget(ceiling=30, turns_min=30, bump=10),
     ),
     PhaseSpec(
         Phase.DESCRIBE, PhaseDomain.DESCRIBE, "Describe",
@@ -212,6 +223,27 @@ PHASES: dict[Phase, PhaseSpec] = {s.phase: s for s in _SPECS}
 # domain so a phase added for another entry point joins neither by accident.
 REVIEW_PHASES: tuple[Phase, ...] = tuple(
     p for p, s in PHASES.items() if s.domain is PhaseDomain.REVIEW
+)
+
+# The fix-shaped phases that are a gate rather than a pass. An adapter names
+# one as its `verify_phase`, so `fix.verify` sizes it with `phase_turns` and
+# `fix.engine._retry` never sees it. Listed rather than derived for the reason
+# `SCAN_PHASES` is: nothing on a `PhaseSpec` says "gate", and the field that
+# would say so is declared on the adapter, which this module sits beneath.
+_VERIFY_PHASES: frozenset[Phase] = frozenset(
+    {Phase.FIX_VERIFY, Phase.COMMENTS_VERIFY}
+)
+
+# The phases whose retry budget `agent.phases.phase_retry_turns` actually
+# decides: a fix-shaped phase is the only thing a `FixAdapter` names as its own,
+# and `fix.engine._retry` is that function's one caller. Derived from the shape
+# so a fix pass added later inherits the retry invariant its tests assert
+# instead of being a fifth entry somebody has to remember to list — and a gate
+# added later fails that invariant loudly until it joins `_VERIFY_PHASES`,
+# which is the safe direction for this to break in.
+RETRYABLE_FIX_PHASES: tuple[Phase, ...] = tuple(
+    p for p, s in PHASES.items()
+    if s.shape is PhaseShape.FIX and p not in _VERIFY_PHASES
 )
 
 # A review's phase 1 is one scan chosen from these two, so every question about

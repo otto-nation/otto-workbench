@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import phases as agent_phases
-from agent.registry import PHASES, REVIEW_PHASES
+from agent.registry import PHASES, RETRYABLE_FIX_PHASES, REVIEW_PHASES
 from core.phases import Effort, Phase
 
 
@@ -143,11 +143,28 @@ class TestPhaseRetryTurns:
         assert agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, cap) > cap
 
     def test_the_ceiling_binds(self):
-        assert agent_phases.phase_retry_turns(Phase.FIX, 500) == 60
+        assert agent_phases.phase_retry_turns(Phase.FIX, 500) == 80
         assert agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, 500) == 120
 
-    def test_a_phase_with_no_retry_budget_keeps_what_it_had(self):
-        assert agent_phases.phase_retry_turns(Phase.CI_FIX, 20) == 20
+    def test_every_retryable_phase_outgrows_a_maxed_first_pass(self):
+        """The invariant the whole function exists for, over each phase reaching it.
+
+        A pass that scaled to its `turns_cap` and still ran out is exactly when
+        a retry matters, and it is the case a ceiling set at the cap silently
+        broke: `min(cap + bump, cap)` is `cap`, so the retry re-ran at the
+        budget that had just failed.
+        """
+        for phase in RETRYABLE_FIX_PHASES:
+            spec = PHASES[phase]
+            cap = spec.scaling.turns_cap or spec.max_turns
+            assert agent_phases.phase_retry_turns(phase, cap) > cap, phase
+
+    def test_a_ceiling_never_sits_at_or_below_the_cap_it_must_clear(self):
+        """Guards the shape of the defect rather than one arithmetic result."""
+        for phase in RETRYABLE_FIX_PHASES:
+            spec = PHASES[phase]
+            cap = spec.scaling.turns_cap or spec.max_turns
+            assert spec.retry.ceiling > cap, phase
 
 
 class TestPhaseChunkSize:

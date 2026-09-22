@@ -700,28 +700,51 @@ def _fit_to_budget(
 ) -> FileFit:
     """Which of `all_contents` a review can afford, at collection time.
 
-    Drops low-density files first — large ones `file_changes` shows only a
-    sliver of, where the diff already carries what changed — then ranks
-    whatever is left by `(classify_tier, size)` and keeps what fits in
-    `budget_bytes` once `base_size` (the diff, the commit log, and the
-    rest of the fixed overhead) is spent.
+    Ranks every candidate together and keeps what fits in `budget_bytes` once
+    `base_size` (the diff, the commit log, and the rest of the fixed overhead)
+    is spent. Low-density files — large ones `file_changes` shows only a sliver
+    of, where the diff already carries what changed — rank last within their
+    tier.
+
+    Density is a tie-break under scarcity, not a veto. Every path here is a
+    file the diff touches, so a skipped one is a file the agent is about to be
+    told to read anyway: withholding it does not save the bytes, it moves them
+    out of a cheap bulk collection and into the agent's own turns, at one tool
+    call and a full-file result each. When the leftovers fit, they are inlined.
+    The heuristic only bites when something genuinely has to give, which is the
+    case it was written for — a small change to a huge file, alongside other
+    files that would otherwise be crowded out.
+
+    Density reaches `fit_files` as its `deprioritise` set, which ranks below
+    tier: a low-density file yields to a dense one of the same tier, and never
+    to a less valuable file of a lower one. So the file dropped under scarcity
+    is the one the diff already explains, without that preference ever costing
+    a Tier 1 file its place.
     """
-    density_skipped = [
+    low_density = {
         p for p, c in all_contents.items()
         if _is_low_density(p, c, file_changes)
-    ]
-    candidates = {p: c for p, c in all_contents.items() if p not in set(density_skipped)}
-    fit = fit_files(candidates, all_permissions, budget_bytes - base_size)
-    omitted = density_skipped + fit.omitted
+    }
+    fit = fit_files(
+        all_contents, all_permissions, budget_bytes - base_size,
+        deprioritise=low_density,
+    )
+    included, permissions, omitted = fit.included, fit.permissions, fit.omitted
 
-    if density_skipped:
-        density_kb = sum(len(all_contents[p].encode()) for p in density_skipped) // 1024
-        log.info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
+    skipped_sparse = [p for p in omitted if p in low_density]
+    if skipped_sparse:
+        density_kb = sum(
+            len(all_contents[p].encode()) for p in skipped_sparse
+        ) // 1024
+        log.info(
+            f"Skipped {len(skipped_sparse)} low-density files "
+            f"(~{density_kb}KB) — diff sufficient, budget short"
+        )
     if omitted:
         omitted_kb = sum(len(all_contents.get(p, "").encode()) for p in omitted) // 1024
-        log.info(f"Pre-collected {len(fit.included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
+        log.info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
-    return FileFit(fit.included, fit.permissions, omitted)
+    return FileFit(included, permissions, omitted)
 
 
 def collect_preflight_data(job: ReviewJob) -> PreflightData:

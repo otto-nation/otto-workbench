@@ -370,6 +370,14 @@ def phase_retry_turns(phase: Phase, original: int) -> int:
     minimum, then capped by the retry ceiling rather than the first pass's cap:
     clamping a retry to the budget that just ran out guarantees the same
     failure, which is what made the bump dead precisely when it was warranted.
+
+    Only the four phases a `FixAdapter` names as its own reach here, through
+    `fix.engine._retry`: `fix`, `comments_fix`, `ci_fix` and `prepush_fix`. The
+    two verify gates are a `verify_phase`, sized by `phase_turns` in
+    `fix.verify` and never retried, and the review phases escalate through
+    `agent.retry.turns_for` instead. A ceiling at or below a phase's
+    `turns_cap` therefore silently disables the bump for that phase, which is
+    why every spec that reaches here sets one above its cap.
     """
     retry = PHASES[phase].retry
     return min(max(retry.turns_min, original + retry.bump), retry.ceiling)

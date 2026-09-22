@@ -128,9 +128,9 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
 
     An unresolved tier alias is not a failure — it is what `AI_SONNET_MODEL`
     being unset looks like, which is the ordinary first-party-API setup — but
-    it does mean the budget is the
-    tier's conservative floor rather than the model's real window, so it is
-    said out loud rather than left to be inferred from a smaller review.
+    it does mean the budget is the tier's conservative floor rather than the
+    model's real window, so it is said out loud rather than left to be
+    inferred from a smaller review.
     """
     for model, phases in sorted(phase_models.items()):
         named = ", ".join(str(p) for p in phases)

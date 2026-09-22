@@ -6,6 +6,10 @@
 # `getconf` and `load_average` are shadowed per test, which is the only way to
 # ask what the machine's own core count and load would produce.
 
+# `run --separate-stderr` is a 1.5.0 flag, and bats silently treats flags it
+# does not know as the command to run.
+bats_require_minimum_version 1.5.0
+
 setup() {
   load 'test_helper'
   common_setup
@@ -115,6 +119,90 @@ machine() {
   machine 8 7.50
   CI=true run busy_cores
   [ "$output" -eq 0 ]
+}
+
+# report_jobs writes to stderr, so `run` needs both streams merged to see it.
+# JOBS is what main() resolves before either suite starts; the tests set it the
+# same way rather than calling the suites.
+report_for() {
+  machine "$1" "$2"
+  JOBS=$(test_jobs)
+  report_jobs 2>&1
+}
+
+@test "a run says how parallel it is before it starts" {
+  run report_for 8 0.42
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"8 job(s)"* ]]
+}
+
+@test "a floored run says the machine is busy and the run will be slow" {
+  # The case worth reading: a suite sized down by another worktree's run is
+  # otherwise indistinguishable from one that is simply slow.
+  run report_for 18 17.0
+  [[ "$output" == *"2 job(s)"* ]]
+  [[ "$output" == *"floored"* ]]
+  [[ "$output" == *"expect a slow run"* ]]
+}
+
+@test "a capped run says so rather than implying the machine was empty" {
+  run report_for 32 0.10
+  [[ "$output" == *"12 job(s)"* ]]
+  [[ "$output" == *"capped at 12"* ]]
+}
+
+@test "an ordinary run reports the load it was sized from" {
+  run report_for 18 9.0
+  [[ "$output" == *"9 job(s)"* ]]
+  [[ "$output" == *"18 cores less ~9 in use"* ]]
+  [[ "$output" != *"floored"* ]]
+  [[ "$output" != *"capped"* ]]
+}
+
+@test "an overridden run credits TEST_JOBS rather than the load" {
+  machine 18 9.0
+  TEST_JOBS=4
+  JOBS=$(test_jobs)
+  run report_jobs
+  [[ "$output" == *"4 job(s)"* ]]
+  [[ "$output" == *"TEST_JOBS"* ]]
+  [[ "$output" != *"cores less"* ]]
+}
+
+@test "the report stays off stdout, which the pre-push hook parses" {
+  # The hook counts passes out of this script's stdout; a line there would be
+  # read as a test result. `--separate-stderr` is what splits the two streams
+  # — bats merges them into $output otherwise, which would pass either way.
+  machine 8 0.42
+  JOBS=$(test_jobs)
+  run --separate-stderr report_jobs
+  [ -z "$output" ]
+  [[ "$stderr" == *"8 job(s)"* ]]
+}
+
+@test "main reports the parallelism it resolved" {
+  # The helper above is called directly by every other test here, so none of
+  # them would notice main() losing the call. Asserted against the source for
+  # the same reason the lock-ordering tests are: running main() starts a suite.
+  local jobs_line report_line
+  jobs_line=$(grep -n '^  JOBS=$(test_jobs)$' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  report_line=$(grep -n '^  report_jobs$' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  [ -n "$jobs_line" ]
+  [ -n "$report_line" ]
+  # After the resolve: the report names the number JOBS ends up holding.
+  [ "$report_line" -gt "$jobs_line" ]
+}
+
+@test "the report is written after the lock re-exec, so it prints once" {
+  # The pre-lock process execs away. Anything it printed is printed again by
+  # the process that replaces it, which is how this first shipped: the line
+  # appeared twice on every real run.
+  local exec_line report_line
+  exec_line=$(grep -n 'exec "$WORKBENCH_DIR/bin/local/with-tree-lock"' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  report_line=$(grep -n '^  report_jobs$' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  [ -n "$exec_line" ]
+  [ -n "$report_line" ]
+  [ "$report_line" -gt "$exec_line" ]
 }
 
 @test "the help text names the floor and the cap it will apply" {

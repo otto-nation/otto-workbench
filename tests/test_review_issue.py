@@ -447,6 +447,7 @@ def test_fetch_issue_context_github_reads_the_enterprise_host():
     assert "ghe.example.com/owner/repo" in _gh_argv(mock_run)
 
 
+# passes-at-base: pins the path this change leaves alone, so github.com does not start being qualified
 def test_fetch_issue_context_github_leaves_the_public_host_unqualified():
     """github.com is what gh resolves anyway; qualifying adds nothing."""
     mock_result = MagicMock()
@@ -461,6 +462,7 @@ def test_fetch_issue_context_github_leaves_the_public_host_unqualified():
     assert "github.com/owner/repo" not in _gh_argv(mock_run)
 
 
+# passes-at-base: an unconfigured repo keeps gh's own host resolution, before this change and after
 def test_fetch_issue_context_github_without_a_base_url_is_unqualified():
     """An unconfigured repo leaves gh's own host resolution alone."""
     mock_result = MagicMock()
@@ -486,6 +488,7 @@ def test_fetch_issue_context_github_host_tolerates_a_scheme_and_slash():
     assert "ghe.example.com/owner/repo" in _gh_argv(mock_run)
 
 
+# passes-at-base: guards the new qualifying step against double-prefixing; at base there is no step
 def test_fetch_issue_context_github_keeps_a_repo_that_names_its_own_host():
     """A caller that resolved a host itself is not second-guessed."""
     mock_result = MagicMock()

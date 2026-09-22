@@ -746,6 +746,14 @@ class _RefusingProc:
     def kill(self):
         self.killed = True
 
+    # A real Popen is a context manager, and the backend enters it so the pipes
+    # are closed and the child reaped on the way out.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
 
 class TestRefusalReachesTheCaller:
     """invoke_agent turns a refusal into a failure a caller can see."""
@@ -876,6 +884,34 @@ class TestPiRunsInItsOwnGroup:
                 prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
             ))
         assert killpg_calls == [(proc.pid, signal.SIGKILL)]
+
+    def test_an_interrupt_closes_the_pipes_and_reaps_the_child(
+        self, monkeypatch, tmp_path,
+    ):
+        # Entering Popen is what closes the three pipes and reaps the child.
+        # Without it an interrupt leaks all three descriptors and leaves a
+        # zombie behind the kill, which the SIGKILL alone does not collect.
+        exits = []
+
+        class _Reaping(_RefusingProc):
+            def __exit__(self, *exc_info):
+                exits.append(exc_info[0])
+                return False
+
+        proc = _Reaping([])
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
+        monkeypatch.setattr("core.proc.os.killpg", lambda pid, sig: None)
+
+        def _interrupted(*a, **kw):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(ai_backend_pi, "_consume_stream", _interrupted)
+
+        with pytest.raises(KeyboardInterrupt):
+            ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
+                prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+            ))
+        assert exits == [KeyboardInterrupt], "Popen was never entered"
 
 
 class TestPromptCarriesReadableDirs:

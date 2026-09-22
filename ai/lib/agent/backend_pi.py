@@ -305,9 +305,10 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> None:
     outcome than the wait it would be shortening.
 
     The whole group is signalled, not the direct child: Pi leads a session of
-    its own and the tools it spawned outlive a kill aimed at it alone. A second
-    expiry is swallowed because SIGKILL is already the last resort — raising
-    here would replace a reported failure with a traceback no caller handles.
+    its own and the tools it spawned outlive a kill aimed at it alone. A group
+    that will not reap even after SIGKILL is reported and then left: raising
+    would replace a failure the caller can act on with a traceback none of them
+    handles, and there is no further signal to try.
     """
     if not abandoned:
         proc.wait(timeout=timeouts.UNBOUNDED)
@@ -333,13 +334,17 @@ def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
     and would otherwise leave a detached agent running against the account with
     nothing holding a handle to it. The kill on the way out is the other half
     of that flag, and `core.proc._run_in_own_group` pairs the two the same way.
+
+    Popen is entered as a context manager for the same reason it is there: its
+    __exit__ closes the three pipes and reaps the child, so an interrupt leaves
+    neither open descriptors nor a zombie behind the kill.
     """
-    proc = subprocess.Popen(cmd, start_new_session=True, **spawn)
-    try:
-        yield proc
-    except BaseException:
-        _kill_group(proc)
-        raise
+    with subprocess.Popen(cmd, start_new_session=True, **spawn) as proc:
+        try:
+            yield proc
+        except BaseException:
+            _kill_group(proc)
+            raise
 
 
 def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:

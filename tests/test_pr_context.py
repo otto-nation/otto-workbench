@@ -45,7 +45,8 @@ def test_pr_only_resolves(mock_head, mock_sha, mock_repo, mock_current, mock_top
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(git_topology, "resolve_branch", return_value="feat/baz")
-@patch.object(pr_context, "_pr_from_branch", return_value=99)
+@patch.object(pr_context, "_pr_from_branch",
+              return_value=pr_context.BranchPR(number=99))
 def test_branch_only_resolves(mock_pr, mock_resolve, mock_sha, mock_repo,
                               mock_find_wt, mock_current, mock_top,
                               mock_repo_name):
@@ -66,7 +67,7 @@ def test_branch_only_resolves(mock_pr, mock_resolve, mock_sha, mock_repo,
 @patch.object(pr_context, "_head_sha", return_value="def456")
 @patch.object(git_topology, "current_branch_quiet", return_value="main")
 @patch.object(git_topology, "current_branch", return_value="main")
-@patch.object(pr_context, "_pr_from_current", return_value=None)
+@patch.object(pr_context, "_pr_from_current", return_value=pr_context.BranchPR())
 def test_bare_repo_finds_worktree(mock_pr, mock_branch, mock_quiet, mock_sha, mock_repo,
                                   mock_resolve_wt, mock_bare, mock_top, mock_repo_name):
     ctx = pr_context.resolve()
@@ -91,7 +92,8 @@ def test_bare_repo_no_worktree_no_args_exits(mock_resolve_wt, mock_bare, mock_to
 @patch.object(git_topology, "resolve_bare_repo_worktree", return_value=None)
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(git_topology, "resolve_branch", return_value="feat/thing")
-@patch.object(pr_context, "_pr_from_branch", return_value=42)
+@patch.object(pr_context, "_pr_from_branch",
+              return_value=pr_context.BranchPR(number=42))
 def test_bare_repo_with_branch_continues(mock_pr, mock_resolve, mock_repo,
                                          mock_resolve_wt, mock_bare, mock_top,
                                          mock_repo_name):
@@ -110,7 +112,8 @@ def test_bare_repo_with_branch_continues(mock_pr, mock_resolve, mock_repo,
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(git_topology, "current_branch_quiet", return_value="isaac/improve-ci-failures-skill")
 @patch.object(git_topology, "resolve_branch", return_value="isaac/improve-ci-failures-skill")
-@patch.object(pr_context, "_pr_from_branch", return_value=42)
+@patch.object(pr_context, "_pr_from_branch",
+              return_value=pr_context.BranchPR(number=42))
 def test_bare_repo_fuzzy_branch_resolves_worktree(
     mock_pr, mock_resolve, mock_quiet, mock_sha, mock_repo,
     mock_find_wt, mock_bare, mock_top, mock_repo_name,
@@ -154,7 +157,8 @@ def test_resolve_sets_current_branch_none_on_detached_head(
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(git_topology, "resolve_branch", return_value="feat/branch")
-@patch.object(pr_context, "_pr_from_branch", return_value=42)
+@patch.object(pr_context, "_pr_from_branch",
+              return_value=pr_context.BranchPR(number=42))
 def test_branch_redirects_to_correct_worktree(
     mock_pr, mock_resolve, mock_sha, mock_repo,
     mock_find_wt, mock_current, mock_top, mock_repo_name,
@@ -171,7 +175,8 @@ def test_branch_redirects_to_correct_worktree(
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(git_topology, "resolve_branch", return_value="feat/branch")
-@patch.object(pr_context, "_pr_from_branch", return_value=42)
+@patch.object(pr_context, "_pr_from_branch",
+              return_value=pr_context.BranchPR(number=42))
 def test_branch_matching_cwd_stays_in_place(
     mock_pr, mock_resolve, mock_sha, mock_repo, mock_current, mock_top, mock_repo_name,
 ):
@@ -187,7 +192,7 @@ def test_branch_matching_cwd_stays_in_place(
 @patch.object(git_topology, "resolve_branch", return_value="feat/branch")
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_pr_from_branch", return_value=None)
+@patch.object(pr_context, "_pr_from_branch", return_value=pr_context.BranchPR())
 def test_branch_no_worktree_falls_back_to_cwd(
     mock_pr, mock_sha_unused, mock_repo, mock_resolve, mock_find_wt,
     mock_current, mock_top, mock_repo_name,
@@ -204,7 +209,7 @@ def test_branch_no_worktree_falls_back_to_cwd(
 @patch.object(git_topology, "resolve_branch", return_value="feat/resolved")
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_pr_from_branch", return_value=None)
+@patch.object(pr_context, "_pr_from_branch", return_value=pr_context.BranchPR())
 def test_branch_fuzzy_resolved_finds_worktree(
     mock_pr, mock_sha, mock_repo, mock_resolve, mock_find_wt,
     mock_current, mock_top, mock_repo_name,
@@ -223,7 +228,7 @@ def test_branch_fuzzy_resolved_finds_worktree(
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(git_topology, "resolve_branch", return_value="feat/branch")
-@patch.object(pr_context, "_pr_from_branch", return_value=None)
+@patch.object(pr_context, "_pr_from_branch", return_value=pr_context.BranchPR())
 def test_detached_head_skips_worktree_redirect(
     mock_pr, mock_resolve, mock_sha, mock_repo, mock_current, mock_top, mock_repo_name,
 ):

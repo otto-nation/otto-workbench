@@ -48,10 +48,17 @@ def _repo_on_main(tmp_path):
     return repo
 
 
-def _ctx(branch=_BRANCH, pr_number=None):
+def _ctx(branch=_BRANCH, pr_number=None, base=""):
+    """A context for the resolver.
+
+    `base` is explicit rather than left to the MagicMock: it is what the
+    resolver reads for GitHub's answer, and an auto-attribute is a truthy
+    object that would short-circuit every rung below it.
+    """
     ctx = mock.MagicMock()
     ctx.branch = branch
     ctx.pr_number = pr_number
+    ctx.base = base
     return ctx
 
 
@@ -70,14 +77,24 @@ class TestResolveTargetRef:
 
     def test_the_prs_base_beats_the_repo_default(self):
         """A stacked or release-targeted PR is replayed onto its own base."""
-        with mock.patch.object(gh_client, "pr_view",
-                               return_value={"baseRefName": "release/1.2"}), \
+        with mock.patch.object(git_topology, "stack_parent", return_value=""), \
              mock.patch.object(git_topology, "default_branch", return_value="main"):
             assert rebase_target.resolve_target_ref(
-                "/fake", _ctx(pr_number=7), None) == "origin/release/1.2"
+                "/fake", _ctx(pr_number=7, base="release/1.2"), None,
+            ) == "origin/release/1.2"
 
-    def test_no_pr_falls_back_to_the_repo_default(self):
+    def test_a_stack_parent_beats_the_repo_default(self):
+        """No PR to state a base, but git can see what this branch forked from.
+        Replaying onto the trunk would carry the parent's commits along."""
+        with mock.patch.object(git_topology, "stack_parent",
+                               return_value="feat/parent"), \
+             mock.patch.object(git_topology, "default_branch", return_value="main"):
+            assert rebase_target.resolve_target_ref(
+                "/fake", _ctx(), None) == "origin/feat/parent"
+
+    def test_no_pr_and_no_stack_falls_back_to_the_repo_default(self):
         with mock.patch.object(gh_client, "pr_view") as view, \
+             mock.patch.object(git_topology, "stack_parent", return_value=""), \
              mock.patch.object(git_topology, "default_branch", return_value="trunk"):
             assert rebase_target.resolve_target_ref(
                 "/fake", _ctx(), None) == "origin/trunk"
@@ -85,7 +102,7 @@ class TestResolveTargetRef:
 
     def test_a_tracker_that_cannot_say_falls_back(self):
         """gh may be absent, unauthenticated or rate-limited — not a failure."""
-        with mock.patch.object(gh_client, "pr_view", return_value={}), \
+        with mock.patch.object(git_topology, "stack_parent", return_value=""), \
              mock.patch.object(git_topology, "default_branch", return_value="main"):
             assert rebase_target.resolve_target_ref(
                 "/fake", _ctx(pr_number=7), None) == _TARGET

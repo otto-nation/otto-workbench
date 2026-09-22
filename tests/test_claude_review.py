@@ -1761,14 +1761,15 @@ def test_self_review_recover_reads_head_after_worktree_switch(
     cr, tmp_path, reviews_dir, monkeypatch,
 ):
     """Checking out the target moves HEAD — the recover sha must come from the new worktree."""
-    ctx = SimpleNamespace(
+    ctx = make_ctx(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
         worktree_root=tmp_path, target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
     )
     monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
     monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
     monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
+                        lambda repo, branch: pr_context.BranchPR())
     monkeypatch.setattr(
         review_worktree, "switch_to_branch",
         lambda branch, wt: review_worktree.WorktreeResult(
@@ -1786,7 +1787,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
-        generated=False, recover=True, debug=False,
+        generated=False, recover=True, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
     ), "test 1.0")
 
@@ -1827,7 +1828,7 @@ def test_pr_review_reads_the_tracker_from_the_repo_config(tmp_path, monkeypatch)
 
 def _self_ctx(tmp_path, branch="feat/x"):
     """The identity a --self run resolves once and threads down."""
-    return SimpleNamespace(
+    return make_ctx(
         repo="owner/repo", pr_number=None, branch=branch, head_sha="abc1234",
         worktree_root=tmp_path, target_dir=tmp_path / "state",
     )
@@ -2135,7 +2136,7 @@ def _self_review_args(**overrides):
         positional=[], issue=None, max_parallel=1, skip_user_verification=True,
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=True, effort="medium", max_groups=None,
-        generated=False, recover=False, debug=False,
+        generated=False, recover=False, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
     )
     base.update(overrides)
@@ -2150,13 +2151,14 @@ def _stub_self_review(cr, monkeypatch, target, reviews_dir):
     different directories in a real run, and sharing one here would hide a
     confusion between them.
     """
-    ctx = SimpleNamespace(
+    ctx = make_ctx(
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
         worktree_root=target.parent / "wt", target_dir=target,
     )
     monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
     monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
+                        lambda repo, branch: pr_context.BranchPR())
     monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(review_run, "run_self_review", MagicMock())
     return ctx
@@ -2216,14 +2218,15 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
     switched = tmp_path / "switched-wt"
     switched.mkdir()
 
-    ctx = SimpleNamespace(
+    ctx = make_ctx(
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
         worktree_root=tmp_path / "launch-wt", target_dir=target,
     )
     monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
     monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
     monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
+                        lambda repo, branch: pr_context.BranchPR())
     monkeypatch.setattr(
         review_worktree, "switch_to_branch",
         lambda branch, wt: review_worktree.WorktreeResult(
@@ -2239,7 +2242,7 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
-        generated=False, recover=False, debug=False,
+        generated=False, recover=False, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
     ), "test 1.0")
 
@@ -2262,7 +2265,7 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
     already_checked_out = tmp_path / "already-checked-out"
     already_checked_out.mkdir()
 
-    ctx = SimpleNamespace(
+    ctx = make_ctx(
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
         worktree_root=tmp_path / "launch-wt", target_dir=target,
     )
@@ -2272,7 +2275,8 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
     )
     monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
     monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
+                        lambda repo, branch: pr_context.BranchPR())
     monkeypatch.setattr(review_worktree, "switch_to_branch", lambda branch, wt: None)
     monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(review_run, "run_self_review", MagicMock())
@@ -2284,7 +2288,7 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
-        generated=False, recover=False, debug=False,
+        generated=False, recover=False, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
     ), "test 1.0")
 
@@ -2346,8 +2350,8 @@ def test_self_review_resolves_locally(cr, tmp_path, reviews_dir, monkeypatch):
     """
     seen = {}
     target = tmp_path / "pr" / "target"
-    ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
-                          head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
+    ctx = make_ctx(repo="acme/widget", pr_number=None, branch="feat/x",
+                   head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
 
     def record(depth, **kw):
         seen["depth"] = depth
@@ -2355,7 +2359,8 @@ def test_self_review_resolves_locally(cr, tmp_path, reviews_dir, monkeypatch):
 
     monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
     monkeypatch.setattr(cr.pr_context, "resolve_at", record)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable",
+                        lambda repo, branch: pr_context.BranchPR())
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
 
@@ -2373,13 +2378,14 @@ def test_self_review_still_finds_an_open_pr(cr, tmp_path, reviews_dir, monkeypat
     dropped with the REMOTE rung.
     """
     target = tmp_path / "pr" / "target"
-    ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
-                          head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
+    ctx = make_ctx(repo="acme/widget", pr_number=None, branch="feat/x",
+                   head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
     body = MagicMock()
 
     monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
     monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: 2973)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable",
+                        lambda repo, branch: pr_context.BranchPR(number=2973))
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
@@ -2389,17 +2395,45 @@ def test_self_review_still_finds_an_open_pr(cr, tmp_path, reviews_dir, monkeypat
     assert body.call_args.args[1] == "2973"
 
 
-def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir, monkeypatch):
-    """The pre-PR case, and the unreachable-API case, are the same case here:
-    no number, and the run goes ahead regardless."""
+def test_self_review_carries_the_open_prs_base_into_the_run(
+    cr, tmp_path, reviews_dir, monkeypatch,
+):
+    """The number and the base come off one call, and both have to survive the
+    hop into the body: the context resolved at LOCAL carries neither, so a base
+    dropped here leaves a stacked branch measured against the trunk."""
     target = tmp_path / "pr" / "target"
-    ctx = SimpleNamespace(repo="acme/widget", pr_number=None, branch="feat/x",
-                          head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
+    ctx = make_ctx(repo="acme/widget", pr_number=None, branch="feat/child",
+                   head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
     body = MagicMock()
 
     monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
     monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable", lambda repo, branch: None)
+    monkeypatch.setattr(
+        cr.pr_context, "pr_number_if_reachable",
+        lambda repo, branch: pr_context.BranchPR(number=2973, base="feat/parent"),
+    )
+    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_run_self_review_body", body)
+
+    cr._run_self_review(_self_review_args())
+
+    # ctx is the first positional of _run_self_review_body.
+    assert body.call_args.args[0].base == "feat/parent"
+    assert body.call_args.args[0].pr_number == 2973
+
+
+def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir, monkeypatch):
+    """The pre-PR case, and the unreachable-API case, are the same case here:
+    no number, and the run goes ahead regardless."""
+    target = tmp_path / "pr" / "target"
+    ctx = make_ctx(repo="acme/widget", pr_number=None, branch="feat/x",
+                   head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
+    body = MagicMock()
+
+    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable",
+                        lambda repo, branch: pr_context.BranchPR())
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
@@ -2486,3 +2520,61 @@ def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, mon
     )
 
     assert claim.call_args.kwargs["command"] == "claude-review 42 --fix --push"
+
+
+def test_a_stacked_self_review_measures_against_its_parent(tmp_path, monkeypatch):
+    """End to end through `run_self_review`: the base the ladder resolves is the
+    one that reaches the pipeline, and the supersession gate that runs before
+    it. Without this the two disagree — the branch is refused over commits its
+    parent made, and if it survives, reviewed against the wrong base."""
+    seen = {}
+    monkeypatch.setattr(
+        review_preflight, "refuse_if_superseded",
+        lambda *a, **kw: seen.__setitem__("gate_base", kw.get("base")),
+    )
+    monkeypatch.setattr(review_issue, "load_issue_provider",
+                        lambda wt: SimpleNamespace(name="none", options={}))
+    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
+                        lambda *a: SimpleNamespace(link="", context=""))
+    monkeypatch.setattr(review_invoke, "run",
+                        lambda request: seen.__setitem__("sent_base", request.base) or 0)
+    monkeypatch.setattr(review_run, "finish_review", lambda *a, **kw: None)
+
+    ctx = make_ctx(repo="owner/repo", pr_number=None, branch="feat/child",
+                   head_sha="abc1234", worktree_root=tmp_path,
+                   target_dir=tmp_path / "state", base="feat/parent")
+
+    review_run.run_self_review(
+        ctx, _self_flags(), tmp_path, str(tmp_path),
+        recover_head_sha="", trail=MagicMock(),
+    )
+
+    assert seen["sent_base"] == "feat/parent"
+    assert seen["gate_base"] == "feat/parent"
+
+
+def test_an_explicit_base_overrides_the_one_github_reports(tmp_path, monkeypatch):
+    """The escape hatch: derivation picks a stale branch parked between this one
+    and its real parent, and `--base` is how an operator says otherwise."""
+    seen = {}
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_issue, "load_issue_provider",
+                        lambda wt: SimpleNamespace(name="none", options={}))
+    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
+                        lambda *a: SimpleNamespace(link="", context=""))
+    monkeypatch.setattr(review_invoke, "run",
+                        lambda request: seen.__setitem__("sent_base", request.base) or 0)
+    monkeypatch.setattr(review_run, "finish_review", lambda *a, **kw: None)
+
+    ctx = make_ctx(repo="owner/repo", pr_number=None, branch="feat/child",
+                   head_sha="abc1234", worktree_root=tmp_path,
+                   target_dir=tmp_path / "state", base="feat/wrong")
+
+    review_run.run_self_review(
+        ctx, _self_flags(base="feat/right"), tmp_path, str(tmp_path),
+        recover_head_sha="", trail=MagicMock(),
+    )
+
+    assert seen["sent_base"] == "feat/right"

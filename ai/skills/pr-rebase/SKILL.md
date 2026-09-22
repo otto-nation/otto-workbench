@@ -16,9 +16,15 @@ everything: fetch, rebase, AI-assisted conflict resolution (via `claude -p`),
 and force-push.
 
 The base is resolved per run, most authoritative source first: `--onto` when
-given, then the branch's PR base branch as GitHub reports it, then the repo's
-default branch. A stacked or release-branch PR is replayed onto its own base,
-and a repo whose trunk is not `main` onto its own trunk.
+given, then the branch's PR base branch as GitHub reports it, then the branch
+this one is stacked on per local ancestry, then the repo's default branch. A
+stacked or release-branch PR is replayed onto its own base, a stack whose
+parent has no PR yet onto that parent, and a repo whose trunk is not `main`
+onto its own trunk.
+
+`--onto` is taken verbatim, so it may name any ref — `upstream/trunk`, a tag, a
+SHA. The rungs below it yield a branch name that is resolved as
+`origin/<name>`.
 
 Run with `/pr-rebase` or `/pr-rebase <branch>`.
 

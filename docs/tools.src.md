@@ -246,6 +246,25 @@ The `--effort` preset drops phases the same way — `low` skips the phase-1 scan
 
 Re-reviews narrow to what changed since the prior review, and that delta follows the same rule — uncommitted work done since the last `--self` run is picked up. PR mode is unaffected: it reviews the pushed commits only.
 
+#### Which base a review measures against
+
+Every range a review reads is anchored to `origin/<base>`, and the base is resolved once per run, most authoritative source first:
+
+| Rung | Source | When it answers |
+|------|--------|-----------------|
+| 1 | `--base` / `--onto` | The operator passed one |
+| 2 | The PR's `baseRefName` | The branch has an open PR that GitHub will report |
+| 3 | Nearest local ancestor of HEAD | The branch is stacked on another branch that has no PR yet |
+| 4 | The repo's default branch | Everything else — the ordinary branch off trunk |
+
+Rung 3 is what makes a stacked branch reviewable before its parent has a PR. It asks git for the branches that are ancestors of HEAD but not of the trunk, and takes the nearest; an ordinary branch off trunk has none, so the common case falls to rung 4 with no special case for it. The rung yields a *name*, which is then resolved as `origin/<name>` — so a local ref sitting at a stale position can nominate a base without being the commit anything is measured against.
+
+A parent that has not been pushed has no `origin/` ref, and every range would resolve to nothing — which is not an error but an empty review, since a diff that spans no commits looks exactly like a branch that changed nothing. So the base resolves to the local branch when, and only when, there is no remote-tracking ref *and* it is a strict ancestor of HEAD. A pushed base is always measured against the remote: the two disagree whenever the local branch is behind, and a review must not depend on a fetch it does not control.
+
+Measuring a stacked branch against the trunk is wrong in a way nothing reports: the parent's commits read as this branch's own, and every finding about them is a finding about code the author did not write here. The same base also feeds the supersession gate, which would otherwise refuse the branch — before spending anything — over skew it measured against the wrong trunk.
+
+Where derivation guesses wrong, `--base` is the override. The case that calls for it is a stale branch parked between you and your real parent — a `wip`, a backup, a bisect leftover — which is nearer and therefore wins. The run says which rung answered and why, so a bad guess is visible rather than silent.
+
 #### Model selection
 
 Each pipeline phase resolves its model as **`--model` flag > `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` > phase default**. The phase names and their defaults live in `PHASES` ([`ai/lib/agent/registry.py`](../ai/lib/agent/registry.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
@@ -315,7 +334,7 @@ pr [global flags] <command> [flags]
 | `review [--self] [--fix] [--push] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
 | `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post] [--settle <id> --as <outcome>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
-| `rebase [--fix] [--push] [--abort] [--onto <ref>]` | Rebase onto the branch's base — `--onto`, else the PR's base branch, else the repo's default branch |
+| `rebase [--fix] [--push] [--abort] [--onto <ref>]` | Rebase onto the branch's base — `--onto`, else the PR's base branch, else the branch this one is stacked on, else the repo's default branch |
 | `describe [--force] [--dry-run] [--post]` | Revise the PR description against the repo's PR template; `--post` applies it (default: drafts) |
 | `gc` | Clean up stale PR review artifacts and cached state |
 

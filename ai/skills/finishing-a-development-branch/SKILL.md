@@ -88,6 +88,12 @@ pr review --self --fix
 
 From another directory, add `--repo-dir /path/to/worktree`.
 
+The review measures against the branch's real base, which it derives: the PR's
+base where there is one, else the branch this one is stacked on, else the
+trunk. On a stacked branch that means the parent's commits are not read as this
+branch's own. Pass `--base <branch>` when the derivation picks wrong — a stale
+branch parked between this one and its real parent is the case that does it.
+
 `--fix` is part of the command. Without it you get a findings list somebody then
 applies by hand — slower and sloppier than the pass the fix agent runs, and a
 round trip before the branch is shippable. Leave it off only when you want the

@@ -120,7 +120,7 @@ def supersession_override(user_force: bool, recover: bool) -> bool:
 
 def refuse_if_superseded(
     wt_path: str, repo: str, target_dir: Path, branch: str, *,
-    override: bool, trail: Trail,
+    override: bool, trail: Trail, base: str = "",
 ) -> None:
     """Stop before the review spends anything on a branch that may be superseded.
 
@@ -134,11 +134,21 @@ def refuse_if_superseded(
     Findings about code the default branch has already deleted are worse than
     no findings: they read as ordinary review comments, so acting on them
     means fixing code that no longer exists.
+
+    `base` is the branch the signals are measured against, which for a stacked
+    branch is its parent rather than the trunk. Measuring against the trunk
+    there reads the parent's commits as this branch's own, so the rebase-skew
+    and removed-helper signals both fire on work this branch never did — and
+    the refusal costs the whole review before an agent has run. Empty leaves
+    `supersession` resolving the default branch, as it does for its other
+    callers.
     """
     if override:
         return
     verdict = supersession.detect_cached(
-        Path(wt_path), repo, target_dir, trail=trail,
+        Path(wt_path), repo, target_dir,
+        base=f"origin/{base}" if base else "",
+        trail=trail,
     )
     supersession.report(verdict)
     if not verdict.superseded:

@@ -62,6 +62,11 @@ class ReviewFlags:
     bin_dir: Path
     generator_version: str
     command: str = ""
+    # An operator's `--base`, empty when they did not pass one. The top rung of
+    # `pr.context.base_branch`, not the resolved answer: the flows hand it to
+    # that ladder rather than using it directly, so a run with no flag still
+    # gets the PR's base or the derived stack parent.
+    base: str = ""
     issue_link: str = ""
     max_parallel: int = 1
     max_cost: float | None = None
@@ -188,12 +193,20 @@ def run_pr_review(
             worktree=Path(wt_path),
         )
 
+        # Resolved against the PR's own checkout rather than the operator's:
+        # the ladder's derivation rung reads HEAD's ancestry, and the tree the
+        # operator stood in is on another branch entirely. Normally rung 2
+        # answers from GitHub's base and nothing local is consulted — the
+        # derivation is what a PR whose base `gh` could not report falls to.
+        base = pr_context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
+
         # Inside the try, so a refusal still cleans up the worktree it read.
         # Its own flag rather than force_prompts, which has absorbed
         # --post/--no-post — see review_preflight.supersession_override.
         review_preflight.refuse_if_superseded(
             wt_path, repo, ctx.target_dir, ctx.branch,
             override=review_preflight.supersession_override(flags.force, flags.recover),
+            base=base,
             trail=trail,
         )
 
@@ -219,6 +232,7 @@ def run_pr_review(
             repo=repo, pr_number=pr_number, review_file=review_file,
             wt_path=wt_path, target_dir=ctx.target_dir, session_log=session_log,
             bin_dir=flags.bin_dir, generator_version=flags.generator_version,
+            base=base,
             prior_review_path=prior_review_path, issue_link=issue_link,
             issue_context=issue_context, max_parallel=flags.max_parallel,
             max_cost=flags.max_cost, model=flags.model, effort=flags.effort,
@@ -266,15 +280,23 @@ def run_self_review(
     review_file = review_dir / "review.md"
     session_log = str(review_dir / FILENAME_SESSION)
 
+    # Resolved once here and threaded through the run, so the supersession
+    # check, the diff range and the commit log all name the same branch. A
+    # stacked branch measured against the trunk by one of them and its parent
+    # by another would be refused over the parent's commits and then reviewed
+    # without them.
+    base = pr_context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
+
     trail.info("resolve_context", f"self-review in {repo}",
                data={"pr": pr_number, "repo": repo, "branch": branch_name,
-                     "wt_path": wt_path})
+                     "wt_path": wt_path, "base": base})
 
     # First, ahead of the issue fetch below: this is the cheapest point at which
     # the run can still cost nothing.
     review_preflight.refuse_if_superseded(
         wt_path, repo, ctx.target_dir, branch_name,
         override=review_preflight.supersession_override(flags.force, flags.recover),
+        base=base,
         trail=trail,
     )
 
@@ -314,7 +336,7 @@ def run_self_review(
         repo=repo, pr_number=pr_number, review_file=review_file,
         wt_path=review_wt_path, target_dir=ctx.target_dir,
         session_log=session_log, bin_dir=flags.bin_dir,
-        generator_version=flags.generator_version, mode="self",
+        generator_version=flags.generator_version, mode="self", base=base,
         prior_review_path=prior_review_path, issue_link=issue_link,
         issue_context=issue_context, max_parallel=flags.max_parallel,
         max_cost=flags.max_cost, model=flags.model, effort=flags.effort,

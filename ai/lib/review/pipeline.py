@@ -305,20 +305,33 @@ class RunContext:
 
 def fetch_metadata(
     repo: str, pr_number: str, mode: Mode, wt_path: str, pin_sha: str = "",
+    base: str = "",
 ) -> RunContext:
     """Everything a review run needs to know about what it is reviewing.
 
     `mode` decides where that comes from: a self-review of an unopened branch
     reads the work tree at `wt_path` alone, and every other case reads the PR
     `repo`/`pr_number` names, pinned to `pin_sha` when one is given.
+
+    `base` is the branch to measure against, already resolved by the caller
+    through `pr.context.base_branch`, and it wins over the `baseRefName` read
+    here. Normally the two agree: the ladder's second rung *is* GitHub's base,
+    read by whichever call resolved the context. Where they differ, the
+    caller's is the one the supersession gate already measured against, and a
+    run whose gate and diff disagree about the base is worse than either answer
+    on its own — it refuses over commits it then declines to review.
+
+    Empty means the caller resolved nothing, and each path falls back to what
+    it did before there was a ladder to consult.
     """
     if mode == Mode.SELF and not pr_number:
         log.info("Gathering branch metadata...")
-        return RunContext(fetch_branch_metadata(wt_path), PRContext(), None)
+        return RunContext(fetch_branch_metadata(wt_path, base or None), PRContext(), None)
     log.info("Fetching PR data...")
     if mode == Mode.SELF:
         # Sequential: the local read needs the PR's base branch to pick its range.
         pr = fetch_pr_metadata(repo, pr_number)
+        pr = replace(pr, base=base) if base else pr
         return RunContext(
             _with_local_diff(pr, fetch_branch_metadata(wt_path, pr.base)), PRContext(), None,
         )
@@ -327,4 +340,5 @@ def fetch_metadata(
         pd_future = pool.submit(fetch_pr_data, repo, pr_number)
         pr_data = pd_future.result()
         ctx = fetch_pr_context(repo, pr_number, pr_data)
-        return RunContext(pr_future.result(), ctx, pr_data)
+        pr = pr_future.result()
+        return RunContext(replace(pr, base=base) if base else pr, ctx, pr_data)

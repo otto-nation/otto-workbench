@@ -82,6 +82,7 @@ from typing import NoReturn
 from gh import client as gh_client
 from git import topology as git_topology
 from core import log
+from core.trail import Trail, tdecision
 from pr import target as pr_target
 from core import timeouts
 # Re-exported rather than called through the module: this file's own call sites
@@ -110,15 +111,39 @@ def classify_target(target: str) -> tuple[str | None, str | None]:
 
 
 @dataclass(frozen=True)
+class BranchPR:
+    """The open PR for a branch, as far as ``gh`` would say.
+
+    Both fields come from one call. They are returned together rather than as a
+    number alone because every caller that wants to know a branch's PR also
+    wants to know what it targets, and asking twice is a second round trip for
+    a field the first response already carried.
+
+    All-empty is the routine answer: no PR, no ``gh``, no auth, no network. A
+    caller reads it as "the tracker has nothing to say", never as "there is no
+    PR" — see :func:`pr_number_if_reachable`.
+    """
+
+    number: int | None = None
+    base: str = ""
+
+
+@dataclass(frozen=True)
 class PRHead:
     """A PR's head branch and SHA, or the reason ``gh`` could not report them.
 
     Both halves come from one API call because the SHA is what a PR target's
     state must be stamped with — reading it from the caller's HEAD stamps the
-    state with the repo root's SHA instead.
+    state with the repo root's SHA instead. The base rides along on the same
+    call for the branch this PR targets, which is what a stacked branch's diff
+    has to be measured against.
     """
     branch: str = ""
     sha: str = ""
+    # What the PR targets per GitHub, or "" when the read did not carry it.
+    # Not part of `resolved`: a caller needs the head to proceed at all, where
+    # an unknown base has a fallback ladder behind it.
+    base: str = ""
     # Ready-to-print reason the call did not answer, quoting gh's stderr. The
     # caller decides an unresolved head is fatal, so the caller is the one that
     # has to be able to say why. Empty when the head resolved.
@@ -126,7 +151,12 @@ class PRHead:
 
     @property
     def resolved(self) -> bool:
-        """True only with both halves in hand — a partial answer is a failure."""
+        """True only with the head in hand — a partial answer is a failure.
+
+        The base is deliberately not required: it has a fallback ladder behind
+        it, and refusing a PR whose head both fields' callers can use would
+        turn a degraded answer into a fatal one.
+        """
         return bool(self.branch and self.sha)
 
 
@@ -144,6 +174,15 @@ class ResolvedContext:
     worktree_root: Path | None
     head_sha: str
     current_branch: str | None = None
+    # The branch GitHub says this PR targets, or "" when it did not say. Read
+    # off the same call that found the PR number, so it costs nothing extra.
+    #
+    # Empty means "unknown", never "there is no base" — the same contract
+    # `pr_number` carries, and for the same reason: an absent, unauthenticated
+    # or rate-limited `gh` is indistinguishable here from a branch with no PR.
+    # Consumers pass it to `base_branch()` rather than reading it directly,
+    # which is what turns an unknown into a derived or defaulted answer.
+    base: str = ""
     # Where the run's bookkeeping lives, as opposed to where git runs. Keyword-
     # only and required: a caller that forgets it would silently get a context
     # whose state and lock point nowhere.
@@ -274,12 +313,15 @@ def resolve(
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
         head_sha = head.sha
+        base = head.base
     elif branch:
         branch_name = git_topology.resolve_branch(branch, cwd)
-        pr_number = _pr_from_branch(repo, branch_name)
+        found = _pr_from_branch(repo, branch_name)
+        pr_number, base = found.number, found.base
     else:
         branch_name = git_topology.current_branch(cwd)
-        pr_number = _pr_from_current(cwd)
+        found = _pr_from_current(cwd)
+        pr_number, base = found.number, found.base
 
     if not pr:
         head_sha = _head_sha(cwd) if worktree_root else ""
@@ -293,6 +335,7 @@ def resolve(
         worktree_root=worktree_root,
         head_sha=head_sha,
         current_branch=current,
+        base=base,
         target_dir=pr_target.target_dir(_target_repo_key(cwd), branch_name),
     )
 
@@ -344,8 +387,62 @@ def resolve_local(
     )
 
 
-def pr_number_if_reachable(repo: str, branch: str) -> int | None:
-    """The branch's open PR when GitHub will say, None when it will not.
+def base_branch(
+    ctx: ResolvedContext,
+    *,
+    override: str = "",
+    known: str | None = None,
+    cwd: str | None = None,
+    trail: Trail | None = None,
+) -> str:
+    """The branch *ctx*'s branch should be measured against, most authoritative first.
+
+    One ladder, so a review, a rebase and a supersession check on the same
+    branch all name the same base. A branch stacked on another feature branch
+    is measured against that parent rather than against the trunk, which is
+    otherwise wrong in a way nothing reports: the parent's commits are read as
+    this branch's own, and every finding about them is a finding about code the
+    author did not write here.
+
+    The rungs, and why they are in this order:
+
+    1. *override* — the operator said so, and no derivation outranks that.
+    2. GitHub's ``baseRefName``, normally ``ctx.base``. An open PR states its
+       base as a fact; the rungs below only infer one. A caller that read the
+       same fact from somewhere else — ``pr rebase`` has it on a snapshot that
+       collected six fields in one call — passes it as *known* rather than
+       forging a context to carry it. ``known=""`` is "that source had nothing
+       to say", which falls through; the default of None reads ``ctx.base``.
+    3. :func:`git.topology.stack_parent` — local ancestry, for the stack whose
+       parent has no PR yet. Answers "" for an ordinary branch off the trunk,
+       which is what makes rung 4 the common path rather than a fallback.
+    4. the repo's default branch — what every caller used before this existed.
+
+    Returns a bare branch name, never a ref: callers spell ``origin/<name>``
+    themselves. That is deliberate at rung 3, where the name is derived from a
+    local ref whose position may be stale — it nominates a base without being
+    the commit anything is measured against.
+    """
+    def decide(base: str, reason: str) -> str:
+        tdecision(trail, "base_branch", f"measuring against origin/{base}", reason=reason)
+        return base
+
+    if override:
+        return decide(override, "explicitly set")
+    stated = ctx.base if known is None else known
+    if stated:
+        return decide(stated, f"PR #{ctx.pr_number} targets {stated}")
+
+    where = cwd or (str(ctx.worktree_root) if ctx.worktree_root else None)
+    default = git_topology.default_branch(where)
+    parent = git_topology.stack_parent(where, default=default)
+    if parent:
+        return decide(parent, "nearest local ancestor of HEAD — this branch is stacked")
+    return decide(default, "no stack parent and no PR base — the repo's default branch")
+
+
+def pr_number_if_reachable(repo: str, branch: str) -> BranchPR:
+    """The branch's open PR when GitHub will say, an empty answer when it will not.
 
     Deliberately *not* folded into ``resolve_local``: that rung promises no
     network at all, and ``pr status`` is built on the promise — it renders a
@@ -353,18 +450,19 @@ def pr_number_if_reachable(repo: str, branch: str) -> int | None:
     wait on ``gh`` to find a PR it does not display would be a plain regression.
     So the lookup is opt-in, and the caller that wants it says so.
 
-    ``claude-review --self`` is that caller. A self-review on a branch whose PR
-    is already open uses the number to fetch reply threads and skip findings
-    already answered there, so losing it silently turns a re-review into one
-    that repeats itself.
+    ``claude-review --self`` is that caller, and it wants both halves. The
+    number fetches the reply threads that keep a re-review from repeating
+    findings already answered there; the base is what a stacked branch's diff
+    is measured against, and without it the review covers the parent's commits
+    as well as its own. Both come off one call — see :class:`BranchPR`.
 
     Best-effort by construction — ``gh_client.out`` returns "" for a failed
     call, so an unreachable or exhausted API is indistinguishable here from a
-    branch with no PR, and both give None. Callers must read None as "no PR
-    known", never as "no PR exists".
+    branch with no PR, and both give an empty ``BranchPR``. Callers must read
+    that as "no PR known", never as "no PR exists".
     """
     if not branch:
-        return None
+        return BranchPR()
     return _pr_from_branch(repo, branch)
 
 
@@ -557,28 +655,43 @@ def _as_pr_number(said: str) -> int | None:
         return None
 
 
-def _pr_from_current(cwd: str | None = None) -> int | None:
-    return _as_pr_number(gh_client.out("pr", "view", "--json", "number", "-q", ".number", cwd=cwd))
+def _pr_from_current(cwd: str | None = None) -> BranchPR:
+    data = gh_client.pr_view("", "number", "baseRefName", cwd=cwd)
+    return BranchPR(
+        number=_as_pr_number(str(data.get("number", ""))),
+        base=data.get("baseRefName") or "",
+    )
 
 
-def _pr_from_branch(repo: str, branch: str) -> int | None:
-    return _as_pr_number(gh_client.out(
+def _pr_from_branch(repo: str, branch: str) -> BranchPR:
+    said = gh_client.out(
         "pr", "list", "--repo", repo, "--head", branch,
-        "--json", "number", "--jq", ".[0].number",
-    ))
+        "--json", "number,baseRefName",
+        "--jq", '.[0] | "\\(.number) \\(.baseRefName)"',
+    )
+    parts = said.split()
+    if len(parts) != 2:
+        return BranchPR()
+    return BranchPR(number=_as_pr_number(parts[0]), base=parts[1])
 
 
 def _pr_head(repo: str, pr_number: int) -> PRHead:
-    """The PR's head branch and head SHA, in one API call."""
+    """The PR's head branch, head SHA and base branch, in one API call."""
     r = gh_client.run(
         "pr", "view", str(pr_number), "--repo", repo,
-        "--json", "headRefName,headRefOid",
-        "-q", '.headRefName + " " + .headRefOid',
+        "--json", "headRefName,headRefOid,baseRefName",
+        "-q", '.headRefName + " " + .headRefOid + " " + .baseRefName',
     )
     parts = r.stdout.split()
-    if not r.ok or len(parts) != 2:
+    # The base is the one field a partial answer may lack without the read
+    # having failed: `resolved` gates on the head, which is what the caller
+    # cannot continue without, and an empty base falls through the same ladder
+    # as a `gh` that could not be reached at all.
+    if not r.ok or len(parts) < 2:
         return PRHead(reason=failure_message(
             f"`gh pr view` could not read the head of {repo}#{pr_number}", r))
-    return PRHead(branch=parts[0], sha=parts[1])
+    return PRHead(
+        branch=parts[0], sha=parts[1], base=parts[2] if len(parts) > 2 else "",
+    )
 
 

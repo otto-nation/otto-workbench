@@ -2233,6 +2233,61 @@ class TestFetchMetadataSelfMode:
         assert pr.title == "feat: thing"
         assert pr_data is None
 
+    def test_an_explicit_base_outranks_the_one_github_reports(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The caller resolved a base through the shared ladder and the two
+        disagree. The caller's wins: it is the one the supersession gate already
+        measured against, and a run whose gate and diff name different bases
+        refuses over commits it then declines to review."""
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "develop", "-q")
+        (repo / "dev.go").write_text("package main\n")
+        commit_all(repo, "add dev")
+        git_out(repo, "fetch", "-q", "origin", "develop")
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "feat.go").write_text("package main\n")
+        commit_all(repo, "add feat")
+
+        monkeypatch.setattr(
+            ro._rpl, "fetch_pr_metadata",
+            lambda repo_name, pr_number: _pr_metadata(ro, base="main"),
+        )
+
+        run_ctx = ro.fetch_metadata(
+            "o/r", "1", ro.Mode.SELF, str(repo), base="develop",
+        )
+
+        assert run_ctx.pr.base == "develop"
+        assert [f["path"] for f in run_ctx.pr.files] == ["feat.go"]
+
+    def test_an_explicit_base_reaches_a_self_review_with_no_pr(
+        self, ro, tmp_path,
+    ):
+        """The stacked branch that has no PR yet: nothing upstream states a
+        base, so `--base` is the only thing that can name the parent."""
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "parent", "-q")
+        (repo / "parent.go").write_text("package main\n")
+        commit_all(repo, "add parent")
+        git_out(repo, "fetch", "-q", "origin", "parent")
+        git_out(repo, "checkout", "-b", "child", "-q")
+        (repo / "child.go").write_text("package main\n")
+        commit_all(repo, "add child")
+
+        run_ctx = ro.fetch_metadata(
+            "o/r", "", ro.Mode.SELF, str(repo), base="parent",
+        )
+
+        assert run_ctx.pr.base == "parent"
+        assert [f["path"] for f in run_ctx.pr.files] == ["child.go"]
+
 
 class TestStaticAnalysisIntegration:
     def test_static_analysis_injected_into_review(self, ro, tmp_path):
@@ -2683,7 +2738,7 @@ class TestCleanupScope:
             "max_cost": 20.0, "max_groups": None,
             "no_holistic": False, "no_scout": False, "no_group": False,
             "no_synthesis": False, "no_disprove": True, "disprove": None,
-            "generated": False, "fix": False,
+            "generated": False, "fix": False, "base": "",
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)

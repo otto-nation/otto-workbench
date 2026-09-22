@@ -57,8 +57,68 @@ def fetch_base(wt_path: str, base: str) -> None:
     Every range in a review is anchored to that ref, so each entry point
     refreshes it before reading. A stale ref would otherwise put the file list
     and the diff on two different fork points.
+
+    A base with no remote-tracking ref — an unpushed stack parent — makes this
+    fail, which is left to :func:`base_ref` to notice rather than reported
+    here: the fetch is best-effort on every path, and an offline run reaching a
+    ref it already has must not be stopped.
     """
     git_client.run("fetch", "origin", base, cwd=wt_path)
+
+
+def base_ref(wt_path: str, base: str) -> str:
+    """The ref naming *base* here — ``origin/<base>``, else the local branch.
+
+    The single place a base name becomes a ref. Every range in a review is
+    anchored through this, so the file list, the diff, the commit log and the
+    delta cannot end up measured from different commits.
+
+    ``origin/<base>`` first, and for a pushed base it is the only answer: a
+    local branch and its remote copy name different commits whenever the local
+    one is behind, and preferring whichever exists would make the review depend
+    on a fetch nobody in this path controls.
+
+    The local fallback is reached only when there is no remote-tracking ref at
+    all, which is a stack parent that has not been pushed yet. There is no
+    remote copy to disagree with, so the hazard above cannot arise — and the
+    alternative is worse than a stale answer: without it every range resolves
+    to nothing, ``fork_point`` degrades to ``HEAD``, and the review silently
+    covers no commits at all.
+
+    That fallback is narrowed to a strict ancestor of HEAD, which is what an
+    unpushed stack parent is. A local branch at HEAD is the commonest thing it
+    would otherwise match — an unfetched clone whose base branch is the one
+    checked out — and it makes every range empty: the diff has nothing between
+    two names for one commit, and the delta's ``--not <ref>`` excludes the very
+    commits it is asking about. Refusing is the honest answer there, and the
+    one every caller already handles.
+
+    Empty when neither qualifies, which callers must tell from a resolved ref:
+    ``git log ... --not <missing>`` exits 128, and `git_client.out` reports
+    that as empty output — indistinguishable from an author who changed nothing.
+    """
+    remote = f"origin/{base}"
+    if git_client.ok("rev-parse", "--verify", "--quiet", f"{remote}^{{commit}}",
+                     cwd=wt_path):
+        return remote
+    if _is_strict_ancestor(wt_path, base):
+        return base
+    return ""
+
+
+def _is_strict_ancestor(wt_path: str, ref: str) -> bool:
+    """Whether *ref* names a commit HEAD descends from, and is not HEAD itself.
+
+    Strict on purpose — see :func:`base_ref`. ``merge-base --is-ancestor`` is
+    reflexive, so the equality check is what excludes a ref sitting at HEAD.
+    """
+    if not git_client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}",
+                         cwd=wt_path):
+        return False
+    if not git_client.ok("merge-base", "--is-ancestor", ref, "HEAD", cwd=wt_path):
+        return False
+    resolved = git_client.out("rev-parse", f"{ref}^{{commit}}", cwd=wt_path)
+    return bool(resolved) and resolved != git_client.out("rev-parse", "HEAD", cwd=wt_path)
 
 
 def fork_point(wt_path: str, base: str) -> str:
@@ -68,7 +128,10 @@ def fork_point(wt_path: str, base: str) -> str:
     of the review surface. Falling back to ``HEAD`` narrows that to the
     uncommitted edits alone rather than reviewing nothing.
     """
-    return git_client.out("merge-base", f"origin/{base}", "HEAD", cwd=wt_path) or "HEAD"
+    ref = base_ref(wt_path, base)
+    if not ref:
+        return "HEAD"
+    return git_client.out("merge-base", ref, "HEAD", cwd=wt_path) or "HEAD"
 
 
 def _untracked_files(wt_path: str) -> list[str]:
@@ -133,7 +196,11 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     fetch_base(wt_path, base)
     head_sha = git_client.head_sha(cwd=wt_path)
     branch = git_client.current_branch(cwd=wt_path)
-    log_range = f"origin/{base}..HEAD"
+    # Through `base_ref`, not spelled here: a derived stack parent that has not
+    # been pushed has no `origin/` ref, and the literal range would list every
+    # commit on the branch as this one's own.
+    ref = base_ref(wt_path, base)
+    log_range = f"{ref}..HEAD" if ref else "HEAD"
 
     log_output = git_client.out("log", log_range, "--oneline", cwd=wt_path)
     first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
@@ -375,25 +442,6 @@ class DeltaScope:
 _QUOTE_PATH_OFF = {"core.quotePath": "false"}
 
 
-def _base_ref(wt_path: str, base: str) -> str:
-    """``origin/<base>`` if it resolves to a commit here, else empty.
-
-    Checked rather than assumed because the ancestry walk excludes this ref by
-    name: `git log ... --not origin/main` against a repo without that ref exits
-    128, which `git_client.out` reports as empty output — indistinguishable
-    from an author who changed nothing. A caller that cannot get an answer has
-    to know it did not get one.
-
-    Only `origin/<base>`, never a local `main`: the two name different commits
-    whenever the local branch is behind, so falling back to whichever exists
-    would make the delta depend on a fetch nobody in this path controls.
-    """
-    ref = f"origin/{base}"
-    if git_client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=wt_path):
-        return ref
-    return ""
-
-
 def _author_delta(
     wt_path: str, prior_sha: str, base_ref: str,
 ) -> numstat.Numstat | None:
@@ -526,15 +574,15 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         return DeltaScope()
 
     base = job.pr.base or git_topology.default_branch(Path(job.wt_path))
-    base_ref = _base_ref(job.wt_path, base) if job.mode != Mode.SELF else ""
-    delta_diff, delta_log = _delta_diff_and_log(job, prior_sha, base_ref)
+    ref = base_ref(job.wt_path, base) if job.mode != Mode.SELF else ""
+    delta_diff, delta_log = _delta_diff_and_log(job, prior_sha, ref)
 
-    if not base_ref:
+    if not ref:
         # Attributing the range needs a base to exclude. Without one the whole
         # range stands, over-reporting rather than reporting nothing.
         if job.mode != Mode.SELF:
             log.warn(
-                f"origin/{base} not resolvable — the delta covers every commit "
+                f"No ref resolves {base} — the delta covers every commit "
                 "since the prior review, the base's included")
         files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
         return DeltaScope(
@@ -542,7 +590,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
             DeltaAttribution.UNATTRIBUTED,
         )
 
-    authored = _author_delta(job.wt_path, prior_sha, base_ref)
+    authored = _author_delta(job.wt_path, prior_sha, ref)
     if authored is None:
         log.warn(
             "Could not attribute the commits since the prior review — the delta "
@@ -577,15 +625,18 @@ def _collect_git_data(
     wt_path: str, base: str, pr_files: list[dict], include_worktree: bool = False,
 ) -> tuple[str, str]:
     fetch_base(wt_path, base)
+    # One resolution for both ranges below, so the log and the diff cannot end
+    # up measured from different commits.
+    ref = base_ref(wt_path, base) or "HEAD"
     commit_log = git_client.out(
-        "log", "--stat", "--reverse", f"origin/{base}..HEAD", cwd=wt_path,
+        "log", "--stat", "--reverse", f"{ref}..HEAD", cwd=wt_path,
     )
     commit_log = _truncate_log(commit_log, MAX_COMMIT_LOG_BYTES)
 
     if include_worktree:
         return worktree_diff(wt_path, fork_point(wt_path, base)), commit_log
 
-    diff = git_client.out("diff", f"origin/{base}...HEAD", cwd=wt_path)
+    diff = git_client.out("diff", f"{ref}...HEAD", cwd=wt_path)
     if not diff and pr_files:
         diff = git_client.out("diff", "HEAD", cwd=wt_path)
     return diff, commit_log

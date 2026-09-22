@@ -179,7 +179,8 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "feat/login")
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
     monkeypatch.setattr(git_topology, "resolve_branch", lambda hint, cwd=None: hint)
-    monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: 2973)
+    monkeypatch.setattr(pr_context, "_pr_from_branch",
+                        lambda repo, branch: pr_context.BranchPR(number=2973))
 
     monkeypatch.setattr(pr_context, "_resolve_worktree",
                         lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
@@ -471,12 +472,31 @@ def test_detect_repo_rejects_an_empty_name_from_a_zero_exit(monkeypatch, capsys)
 
 
 def test_pr_head_resolves_both_halves(monkeypatch):
+    _stub_run(monkeypatch, 0, stdout="feat/login abc123 main\n")
+
+    head = pr_context._pr_head("acme/widget", 42)
+
+    assert head == PRHead(branch="feat/login", sha="abc123", base="main")
+    assert head.resolved
+
+
+def test_pr_head_carries_a_stacked_pr_s_own_base(monkeypatch):
+    """The base rides on the head read, so a stacked PR is measured against its
+    parent without a second call to learn what that parent is."""
+    _stub_run(monkeypatch, 0, stdout="feat/child abc123 feat/parent\n")
+
+    assert pr_context._pr_head("acme/widget", 42).base == "feat/parent"
+
+
+def test_pr_head_resolves_without_a_base(monkeypatch):
+    """An absent base is degraded, not fatal: it has a fallback ladder behind it
+    where the head has none, so refusing the whole read would be worse."""
     _stub_run(monkeypatch, 0, stdout="feat/login abc123\n")
 
     head = pr_context._pr_head("acme/widget", 42)
 
-    assert head == PRHead(branch="feat/login", sha="abc123")
     assert head.resolved
+    assert head.base == ""
 
 
 def test_pr_head_carries_the_reason_gh_gave(monkeypatch):
@@ -492,7 +512,7 @@ def test_pr_head_carries_the_reason_gh_gave(monkeypatch):
 
 
 def test_pr_head_reports_a_partial_answer_from_a_zero_exit(monkeypatch):
-    """gh answered, but not with both fields — say so rather than going quiet."""
+    """gh answered, but without the head SHA — say so rather than going quiet."""
     _stub_run(monkeypatch, 0, stdout="feat/x\n")
 
     head = pr_context._pr_head("acme/widget", 42)
@@ -576,17 +596,98 @@ def test_detect_repo_exits_when_neither_can_name_the_repo(monkeypatch, capsys):
 def test_pr_number_if_reachable_reports_an_open_pr(monkeypatch):
     """A self-review on a branch whose PR is open uses the number to fetch
     reply threads and skip findings already answered there."""
-    monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: 2973)
-    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x") == 2973
+    monkeypatch.setattr(pr_context, "_pr_from_branch",
+                        lambda repo, branch: pr_context.BranchPR(number=2973))
+    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x").number == 2973
+
+
+def test_pr_number_if_reachable_carries_the_base_off_the_same_call(monkeypatch):
+    """The base is what a stacked branch's diff is measured against, and it rides
+    on the call that found the number rather than costing a second round trip."""
+    monkeypatch.setattr(
+        pr_context, "_pr_from_branch",
+        lambda repo, branch: pr_context.BranchPR(number=2973, base="feat/parent"),
+    )
+    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x").base == "feat/parent"
 
 
 def test_pr_number_if_reachable_degrades_when_github_is_unreachable(monkeypatch):
     """Best-effort by construction: an exhausted budget is indistinguishable
     here from a branch with no PR, and neither may end the run."""
-    monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: None)
-    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x") is None
+    monkeypatch.setattr(pr_context, "_pr_from_branch",
+                        lambda repo, branch: pr_context.BranchPR())
+    found = pr_context.pr_number_if_reachable("acme/widget", "feat/x")
+    assert found.number is None
+    assert found.base == ""
 
 
 def test_pr_lookup_is_skipped_without_a_branch():
     """Nothing to ask about, so nothing is asked."""
-    assert pr_context.pr_number_if_reachable("acme/widget", "") is None
+    assert pr_context.pr_number_if_reachable("acme/widget", "") == pr_context.BranchPR()
+
+
+# ── the shared base ladder ──────────────────────────────────────────────────
+
+
+def test_base_branch_prefers_an_explicit_override(monkeypatch):
+    """No derivation outranks the operator saying so."""
+    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
+    monkeypatch.setattr(git_topology, "stack_parent",
+                        lambda cwd=None, default="": "derived")
+
+    ctx = make_ctx(base="from-github")
+
+    assert pr_context.base_branch(ctx, override="mine", cwd="/wt") == "mine"
+
+
+def test_base_branch_takes_githubs_base_over_a_derived_one(monkeypatch):
+    """An open PR states its base as a fact; local ancestry only infers one."""
+    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
+    monkeypatch.setattr(git_topology, "stack_parent",
+                        lambda cwd=None, default="": "derived")
+
+    ctx = make_ctx(base="release/2.1")
+
+    assert pr_context.base_branch(ctx, cwd="/wt") == "release/2.1"
+
+
+def test_base_branch_derives_a_stack_parent_when_github_cannot_say(monkeypatch):
+    """The case this ladder exists for: a branch stacked on another feature
+    branch that has no PR yet. Measuring against the trunk would report the
+    parent's commits as this branch's own."""
+    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
+    monkeypatch.setattr(git_topology, "stack_parent",
+                        lambda cwd=None, default="": "feat/parent")
+
+    ctx = make_ctx(base="")
+
+    assert pr_context.base_branch(ctx, cwd="/wt") == "feat/parent"
+
+
+def test_base_branch_falls_back_to_the_default_branch(monkeypatch):
+    """An ordinary branch off the trunk derives nothing, and must keep the
+    behaviour every caller had before the ladder existed."""
+    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "trunk")
+    monkeypatch.setattr(git_topology, "stack_parent", lambda cwd=None, default="": "")
+
+    ctx = make_ctx(base="")
+
+    assert pr_context.base_branch(ctx, cwd="/wt") == "trunk"
+
+
+def test_base_branch_derives_against_the_worktree_when_given_no_cwd(monkeypatch):
+    """The ancestry walk reads HEAD, so it has to run in the branch's own
+    checkout — asking in the directory the operator happened to stand in
+    resolves some other branch's parent."""
+    seen = {}
+    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
+
+    def _parent(cwd=None, default=""):
+        seen["cwd"] = cwd
+        return ""
+
+    monkeypatch.setattr(git_topology, "stack_parent", _parent)
+
+    pr_context.base_branch(make_ctx(base="", worktree_root=Path("/checkout")))
+
+    assert seen["cwd"] == "/checkout"

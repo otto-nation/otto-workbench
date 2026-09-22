@@ -83,10 +83,21 @@ def _backend() -> Backend | None:
 
 
 def _require_backend() -> Backend:
-    """The selected backend, or a failure naming both ways to set it."""
+    """The selected backend, or a failure naming both ways to set it.
+
+    An AI_BACKEND set to an unrecognised value is not the same as one left
+    unset: the operator did configure something, just not one of the valid
+    names, and the raw value is what tells them what to fix.
+    """
     selected = _backend()
     if selected is None:
         valid = ", ".join(b.value for b in Backend)
+        raw = os.environ.get(ENV_AI_BACKEND)
+        if raw:
+            raise BackendNotSelected(
+                f"{ENV_AI_BACKEND}={raw!r} is not a valid backend "
+                f"(expected one of {valid})"
+            )
         raise BackendNotSelected(
             f"no AI backend selected: set {ENV_AI_BACKEND} or {CONFIG_KEY_BACKEND} "
             f"to one of {valid}"

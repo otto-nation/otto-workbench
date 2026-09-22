@@ -90,8 +90,7 @@ class TestBackendSelection:
         monkeypatch.delenv("AI_BACKEND", raising=False)
         monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
 
-    def test_nothing_selected_is_none(self, monkeypatch):
-        monkeypatch.delenv("AI_BACKEND", raising=False)
+    def test_nothing_selected_is_none(self):
         assert ai_backend._backend() is None
 
     def test_reads_env(self, monkeypatch):
@@ -107,6 +106,14 @@ class TestBackendSelection:
         """`export AI_BACKEND=` is a real shape, and it selects nothing."""
         monkeypatch.setenv("AI_BACKEND", "")
         assert ai_backend._backend() is None
+
+    def test_empty_string_falls_through_to_config(self, monkeypatch):
+        """Empty is falsy, unlike an unrecognised value: config still gets asked."""
+        monkeypatch.setenv("AI_BACKEND", "")
+        monkeypatch.setattr(
+            ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
+        )
+        assert ai_backend._backend() is ai_backend.Backend.PI
 
     def test_config_supplies_the_backend_when_the_env_is_silent(self, monkeypatch):
         monkeypatch.delenv("AI_BACKEND", raising=False)
@@ -128,6 +135,12 @@ class TestBackendSelection:
             ai_backend._get_module()
         assert "AI_BACKEND" in str(exc.value)
         assert "agent.backend" in str(exc.value)
+
+    def test_dispatch_names_the_invalid_value_on_a_typo(self, monkeypatch):
+        """A typo'd AI_BACKEND is configured, just wrong — say what was set."""
+        monkeypatch.setenv("AI_BACKEND", "cluade")
+        with pytest.raises(ai_backend.BackendNotSelected, match="cluade"):
+            ai_backend._get_module()
 
     def test_is_available_is_false_rather_than_raising(self, monkeypatch):
         """The rebase paths ask this to decide whether to offer AI at all."""
@@ -480,8 +493,6 @@ class TestBackendsGetTheInvocationEnv:
     session against the real binaries: nothing is traced, and the case scores
     zero for a reason its own trace cannot explain.
     """
-
-    BACKENDS = ["agent.backend_claude", "agent.backend_pi"]
 
     # The Pi backend attaches the review guard to these two entry points and
     # adds the roots it gates on, so its env is the invocation's plus those.

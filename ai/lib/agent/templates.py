@@ -12,16 +12,23 @@ renders the same way, owned here rather than hand-copied into each one, so an
 agent's write mechanism, its worktree, and what it owes a generated file are
 described identically wherever the prompt came from.
 
-Stdlib only, like ``phases`` and for the same reason: a prompt is the last
-thing that should need the PR state machine to render.
+Stdlib plus the backend selection, like ``phases`` and for nearly the same
+reason: a prompt is the last thing that should need the PR state machine to
+render. It reaches for the selected backend because the tools an agent has are
+the backend's answer, and a write instruction naming the other CLI's tools is
+not advice an agent can decline — it is a call that cannot succeed.
 """
 
 # doc-group: pipeline
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from string import Template
+from types import MappingProxyType
+
+from core.phases import Backend
 
 # The directory every template is read from, relative to the repo's `ai/`. Named
 # for the review pipeline that first owned it; the fix passes of the comments
@@ -50,25 +57,68 @@ def render(name: str, **kwargs) -> str:
     return Template((template_dir() / name).read_text()).safe_substitute(**kwargs)
 
 
-def build_output_block(output_path: str, *, stdout_warning: bool = False) -> str:
-    """How an agent saves its output file.
+# How an agent puts a whole document into its pre-created, empty output file.
+# One per backend, because the two CLIs expose different tools and a recipe
+# naming the wrong one is not merely suboptimal — it cannot succeed.
+#
+# Claude runs under `--bare`, which exposes only Bash, Edit and Read. With no
+# Write tool, an Edit with an empty old_string is the only single-call insert.
+#
+# Pi has a real `write` tool (`PI_TOOLS` in `agent.backend_pi`), and its edit
+# tool refuses the Claude recipe twice over: the parameter is `edits[].oldText`
+# rather than `old_string`, and an empty `oldText` is rejected outright. An
+# agent handed the Claude block on Pi spends its turns failing to write and
+# finishes with an empty file, which is what this split exists to stop.
+_WRITE_RECIPES: Mapping[Backend, str] = MappingProxyType({
+    Backend.CLAUDE: (
+        "The file already exists and is empty — Read it, then use the Edit tool "
+        "with an empty `old_string` to insert the complete contents. That Read "
+        "plus one Edit is the entire write; do not build the file up in pieces.\n"
+        "The Write tool is NOT available in this environment — do not attempt it, "
+        "and do not fall back to Bash (`cat`, heredoc, python). Do NOT create "
+        "directories or empty files."
+    ),
+    Backend.PI: (
+        "The file already exists and is empty — use the `write` tool to put the "
+        "complete contents into it in one call. That single write is the entire "
+        "write; do not build the file up in pieces.\n"
+        "Do not use `edit` to populate the empty file — its `oldText` must match "
+        "existing text and must not be empty, so it cannot insert into an empty "
+        "file. Do not fall back to Bash (`cat`, heredoc, python). Do NOT create "
+        "directories or empty files."
+    ),
+})
 
-    Agents run under `claude --bare`, which exposes only Bash, Edit and Read —
-    there is no Write tool. The pipeline pre-creates the output file empty, so
-    an Edit with an empty old_string inserts the whole document in one call.
+
+def build_output_block(
+    output_path: str, *, stdout_warning: bool = False,
+    backend: Backend | None = None,
+) -> str:
+    """How an agent saves its output file, in the selected backend's tools.
+
+    ``backend=None`` asks the backend layer, which is what every caller in the
+    pipeline wants — the prompt is built in the same process that will run the
+    agent. It is a parameter at all so a test can render both without reaching
+    for the environment.
+
+    Falls back to the Claude recipe when nothing names a backend. Dispatch will
+    raise on that run anyway, and a prompt-builder that raised first would turn
+    a clear "no backend selected" into a failure inside prompt assembly.
     """
+    if backend is None:
+        # Imported here rather than at module scope: `agent.backend` pulls in
+        # the usage ledger and the config layer, and a template render is not a
+        # reason to load either.
+        from agent.backend import selected_backend
+
+        backend = selected_backend() or Backend.CLAUDE
     stdout_line = (
         "\nDo NOT print the output to stdout — it only counts if it lands in the file."
         if stdout_warning else ""
     )
     return (
         f"Write your output to: {output_path}\n"
-        "The file already exists and is empty — Read it, then use the Edit tool "
-        "with an empty `old_string` to insert the complete contents. That Read "
-        "plus one Edit is the entire write; do not build the file up in pieces.\n"
-        "The Write tool is NOT available in this environment — do not attempt it, "
-        "and do not fall back to Bash (`cat`, heredoc, python). Do NOT create "
-        f"directories or empty files.{stdout_line}"
+        f"{_WRITE_RECIPES[backend]}{stdout_line}"
     )
 
 

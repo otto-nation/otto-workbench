@@ -14,11 +14,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
+from agent import backend as ai_backend
 from agent import retry as agent_retry
+from agent import templates as agent_templates
 from agent import usage as ai_usage
 from agent.registry import PHASES
 from agent.types import DEFAULT_RETRY_CEILING
-from core.phases import Phase
+from core.phases import Backend, Phase
 from review import phases as review_phases
 from review import retry as review_retry
 from agent.diagnosis import Diagnosis, DiagnosisKind
@@ -45,7 +47,7 @@ class TestPipelineDelegatesToSharedGuard:
         assert review_retry._retry_missing_output is agent_retry.retry_missing_output
 
     def test_hints_are_the_same_strings(self):
-        assert review_retry._NO_WRITE_HINT is agent_retry.NO_WRITE_HINT
+        assert review_retry._no_write_hint is agent_retry.no_write_hint
         assert review_retry._RETRY_HINT is agent_retry.RETRY_HINT
 
     def test_group_retry_ceiling_comes_from_the_group_spec(self):
@@ -268,7 +270,7 @@ class TestSharedRetryability:
 
     def test_no_write_hint_beats_the_max_turns_hint(self):
         both = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True)
-        assert agent_retry.hint_for(both) == agent_retry.NO_WRITE_HINT
+        assert agent_retry.hint_for(both) == agent_retry.no_write_hint()
 
     def test_the_no_write_hint_does_not_cost_the_doubled_budget(self):
         """Regression: a flat NO_WRITE_TOOL kind would have lost the turn bump.
@@ -299,7 +301,7 @@ class TestCIFixRetryHint:
     def test_a_diagnosed_reason_still_wins(self):
         """The fallback must not mask a hint that names the actual mechanism."""
         assert self._select(_MAX_TURNS) == agent_retry.RETRY_HINT
-        assert self._select(_NO_WRITE) == agent_retry.NO_WRITE_HINT
+        assert self._select(_NO_WRITE) == agent_retry.no_write_hint()
 
     def test_an_undiagnosed_reason_falls_back_to_the_ci_wording(self):
         assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) == agent_retry.CI_FIX_RETRY_HINT
@@ -377,3 +379,56 @@ class TestPreserveLog:
         log.write_text(content)
         agent_retry.restore_preserved(str(log), "")
         assert log.read_text() == content
+
+
+class TestWriteRecipesMatchTheBackend:
+    """Both write instructions must name a tool the selected backend has.
+
+    The regression both halves share: the recipes were written for
+    `claude --bare`, which has Edit and Read but no Write, and were handed
+    unchanged to Pi. Pi's edit tool takes `edits[].oldText` rather than
+    `old_string` and rejects an empty one, while `write` — which the Claude
+    wording explicitly forbids — is in the tool list Pi is launched with. An
+    agent following the wrong recipe cannot write its file at all.
+    """
+
+    @pytest.mark.parametrize("backend", list(Backend))
+    def test_every_backend_has_a_recipe(self, backend):
+        """A new backend must not silently inherit another's tools."""
+        assert backend in agent_templates._WRITE_RECIPES
+        assert backend in agent_retry._NO_WRITE_MECHANISM
+
+    def test_pi_is_told_to_write_and_claude_to_edit(self):
+        pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
+        claude = agent_templates.build_output_block("/tmp/out.md", backend=Backend.CLAUDE)
+        assert "`write` tool" in pi and "old_string" not in pi
+        assert "old_string" in claude
+
+    def test_the_pi_recipe_avoids_the_call_pi_rejects(self):
+        """An empty `oldText` is refused by Pi's edit tool, so nothing may ask."""
+        pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
+        assert "empty `old_string`" not in pi
+        assert "Write tool is NOT available" not in pi
+
+    def test_the_retry_hint_follows_the_same_split(self):
+        """A hint naming the other CLI re-issues the recipe that just failed."""
+        pi = agent_retry.no_write_hint(Backend.PI)
+        claude = agent_retry.no_write_hint(Backend.CLAUDE)
+        assert "`write` tool" in pi and "old_string" not in pi
+        assert "old_string" in claude
+
+    def test_both_recipes_resolve_from_the_selected_backend(self, monkeypatch):
+        """No argument means ask the backend layer, not assume one."""
+        monkeypatch.setenv("AI_BACKEND", "pi")
+        assert "`write` tool" in agent_templates.build_output_block("/tmp/out.md")
+        assert "`write` tool" in agent_retry.no_write_hint()
+        monkeypatch.setenv("AI_BACKEND", "claude")
+        assert "old_string" in agent_templates.build_output_block("/tmp/out.md")
+        assert "old_string" in agent_retry.no_write_hint()
+
+    def test_an_unselected_backend_still_renders_a_prompt(self, monkeypatch):
+        """Dispatch raises on that run; prompt assembly must not raise first."""
+        monkeypatch.delenv("AI_BACKEND", raising=False)
+        monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
+        assert agent_templates.build_output_block("/tmp/out.md")
+        assert agent_retry.no_write_hint()

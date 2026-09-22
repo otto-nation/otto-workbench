@@ -91,21 +91,21 @@ class TestBackendSelection:
         monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
 
     def test_nothing_selected_is_none(self):
-        assert ai_backend._backend() is None
+        assert ai_backend.selected_backend() is None
 
     def test_reads_env(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "pi")
-        assert ai_backend._backend() is ai_backend.Backend.PI
+        assert ai_backend.selected_backend() is ai_backend.Backend.PI
 
     def test_unrecognised_backend_is_not_a_fallback(self, monkeypatch):
         """A typo meant something specific and did not get it."""
         monkeypatch.setenv("AI_BACKEND", "not-a-backend")
-        assert ai_backend._backend() is None
+        assert ai_backend.selected_backend() is None
 
     def test_empty_string_is_not_a_selection(self, monkeypatch):
         """`export AI_BACKEND=` is a real shape, and it selects nothing."""
         monkeypatch.setenv("AI_BACKEND", "")
-        assert ai_backend._backend() is None
+        assert ai_backend.selected_backend() is None
 
     def test_empty_string_falls_through_to_config(self, monkeypatch):
         """Empty is falsy, unlike an unrecognised value: config still gets asked."""
@@ -113,21 +113,21 @@ class TestBackendSelection:
         monkeypatch.setattr(
             ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
         )
-        assert ai_backend._backend() is ai_backend.Backend.PI
+        assert ai_backend.selected_backend() is ai_backend.Backend.PI
 
     def test_config_supplies_the_backend_when_the_env_is_silent(self, monkeypatch):
         monkeypatch.delenv("AI_BACKEND", raising=False)
         monkeypatch.setattr(
             ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
         )
-        assert ai_backend._backend() is ai_backend.Backend.PI
+        assert ai_backend.selected_backend() is ai_backend.Backend.PI
 
     def test_env_beats_config(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "claude")
         monkeypatch.setattr(
             ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
         )
-        assert ai_backend._backend() is ai_backend.Backend.CLAUDE
+        assert ai_backend.selected_backend() is ai_backend.Backend.CLAUDE
 
     def test_dispatch_names_both_ways_to_set_it(self, monkeypatch):
         monkeypatch.delenv("AI_BACKEND", raising=False)

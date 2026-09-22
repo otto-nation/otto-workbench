@@ -255,8 +255,9 @@ class ReviewConfig:
     """Review pipeline settings.
 
     ``effort`` is the only knob left here: it selects a depth preset that skips
-    phases and moves thresholds, and no other domain has one. Everything a
-    single invocation is sized by lives under ``agent``.
+    phases, moves thresholds, and scales every phase's turn and dollar budget,
+    and no other domain has one. What a single invocation is sized by otherwise
+    lives under ``agent``.
     """
 
     effort: Effort | None = None

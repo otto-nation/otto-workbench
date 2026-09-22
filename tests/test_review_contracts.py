@@ -871,6 +871,22 @@ class TestOutputBlockContract:
         )
         assert expected in rendered
 
+    def test_the_rendered_recipe_follows_the_selected_backend(self, monkeypatch):
+        """A prompt built under Pi must not carry Claude's Edit recipe.
+
+        The regression this closes: `build_output_block` was written for
+        `claude --bare` and hardcoded its recipe, so every Pi review was told
+        to Edit with an empty `old_string` and that the Write tool did not
+        exist. Pi's edit takes `edits[].oldText` and rejects an empty one, and
+        Pi does have `write` — so the instruction could not be followed and the
+        fallbacks were forbidden. Agents spent their turns and wrote nothing.
+        """
+        monkeypatch.setenv("AI_BACKEND", "pi")
+        rendered = _render_via_build_prompt((Phase.SINGLE, Mode.SELF))
+        assert "old_string" not in rendered
+        assert "The Write tool is NOT available" not in rendered
+        assert "`write` tool" in rendered
+
     def test_every_output_writing_template_is_checked(self):
         checked = {key for key, _, _ in self._OUTPUT_BLOCKS}
         expected = {

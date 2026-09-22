@@ -126,9 +126,9 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
     discovering it once per phase after the review has already paid for
     metadata and preflight collection.
 
-    An unresolved tier alias is not a failure — it is what
-    `ANTHROPIC_DEFAULT_SONNET_MODEL` being unset looks like, which is the
-    ordinary first-party-API setup — but it does mean the budget is the
+    An unresolved tier alias is not a failure — it is what `AI_SONNET_MODEL`
+    being unset looks like, which is the ordinary first-party-API setup — but
+    it does mean the budget is the
     tier's conservative floor rather than the model's real window, so it is
     said out loud rather than left to be inferred from a smaller review.
     """

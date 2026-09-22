@@ -302,13 +302,17 @@ def _no_live_backend(monkeypatch):
 def _unresolved_model_aliases(monkeypatch):
     """Run every test with the tier aliases unresolved, as CI does.
 
-    `ANTHROPIC_DEFAULT_SONNET_MODEL` and its siblings decide whether
-    `phase_model` returns a concrete id or the bare alias, and the alias now
-    picks a different prompt budget — the tier floor rather than the model's
-    own window. A developer's shell exports them and CI does not, so without
-    this the same assertion is made against two different ceilings and a test
-    can only fail in one of the two places. Both CI failures on this file's
-    branch were that.
+    `AI_SONNET_MODEL` and its siblings decide whether `phase_model` returns a
+    concrete id or the bare alias, and the alias now picks a different prompt
+    budget — the tier floor rather than the model's own window. A developer's
+    shell exports them and CI does not, so without this the same assertion is
+    made against two different ceilings and a test can only fail in one of the
+    two places. Both CI failures on this file's branch were that.
+
+    Both spellings are cleared: the pre-rename `ANTHROPIC_DEFAULT_*_MODEL`
+    names are still read as a fallback, and a shell that exports only those
+    (as one inheriting Claude Code's settings mirror does) resolves aliases
+    just as effectively as one exporting the new names.
 
     Unset is the floor because it is what CI has and what a first-party-API
     machine has. A test whose subject is a resolved model sets the variable
@@ -318,6 +322,7 @@ def _unresolved_model_aliases(monkeypatch):
     `WORKBENCH_AI_` prefix it owns.
     """
     for tier in ("SONNET", "OPUS", "HAIKU"):
+        monkeypatch.delenv(f"AI_{tier}_MODEL", raising=False)
         monkeypatch.delenv(f"ANTHROPIC_DEFAULT_{tier}_MODEL", raising=False)
 
 

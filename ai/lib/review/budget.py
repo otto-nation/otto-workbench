@@ -12,7 +12,7 @@ and prices the remainder in bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
 them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
 takes its tier's floor rather than failing, because an unset
-`ANTHROPIC_DEFAULT_*_MODEL` is the ordinary first-party-API setup; only a
+`AI_*_MODEL` is the ordinary first-party-API setup; only a
 concrete model nobody has measured raises `UnknownModelWindow`.
 
 The byte figure can only ever be conservative: no byte count bounds a token
@@ -55,7 +55,7 @@ MODEL_CONTEXT_TOKENS = {
 }
 
 # What an unresolved tier alias is worth. `agent.phases.phase_model` returns the
-# literal "sonnet" when ANTHROPIC_DEFAULT_SONNET_MODEL is unset, which is the
+# literal "sonnet" when AI_SONNET_MODEL is unset, which is the
 # ordinary first-party-API setup rather than a misconfiguration — so this is a
 # case to budget conservatively for, not one to refuse. The figure is the
 # narrowest window any model in that tier has: assuming the smallest is safe

@@ -14,9 +14,10 @@ The effort preset sits between the config and the built-in for thinking level
 only, because it is the one knob a review's depth setting flattens.
 
 **Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
-``opus``, ``haiku``) is then resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL``
-/ ``ANTHROPIC_DEFAULT_OPUS_MODEL`` / ``ANTHROPIC_DEFAULT_HAIKU_MODEL``. An alias
-names a tier, not a deployment — on Vertex and Bedrock the account provisions a
+``opus``, ``haiku``) is then resolved through ``AI_SONNET_MODEL`` /
+``AI_OPUS_MODEL`` / ``AI_HAIKU_MODEL``, falling back to the
+``ANTHROPIC_DEFAULT_*_MODEL`` names those were renamed from. An alias names a
+tier, not a deployment — on Vertex and Bedrock the account provisions a
 specific model ID, and that is where it lives. A concrete model ID anywhere in
 the chain passes through untouched. The Claude CLI does this resolution itself;
 the Pi backend does not, so it happens here before dispatch and both backends
@@ -63,6 +64,25 @@ class ModelAlias(StrEnum):
 
     @property
     def env_key(self) -> str:
+        """The variable ~/.env.local sets for this tier.
+
+        Mirrors the ``var`` field of the matching ``ai/models.env.yml`` entry,
+        which is the SSOT for model env var names; ``alias_env_keys_match_registry``
+        in tests/phases_test.py fails if the two spellings drift apart again.
+        """
+        return f"AI_{self.upper()}_MODEL"
+
+    @property
+    def legacy_env_key(self) -> str:
+        """The pre-rename name, still read so an un-migrated machine resolves.
+
+        The 20260908 migration renamed these in ~/.env.local but nothing taught
+        the reader the new spelling, so every alias silently stopped resolving
+        and each phase dispatched the bare word ``sonnet`` as a model id. This
+        is the registry's ``target`` field: the name the Claude Code settings
+        mirror still publishes, so a machine that has only ever had the old
+        export keeps working.
+        """
         return f"ANTHROPIC_DEFAULT_{self.upper()}_MODEL"
 
     @classmethod
@@ -74,11 +94,20 @@ class ModelAlias(StrEnum):
 
 
 def resolve_alias(model: str) -> str:
-    """Swap a tier alias for the provisioned model ID. Concrete IDs pass through."""
+    """Swap a tier alias for the provisioned model ID. Concrete IDs pass through.
+
+    The current name wins over the pre-rename one, so a machine carrying both
+    (the migration leaves the old export in place under Claude Code's settings
+    mirror) resolves against the value its ~/.env.local actually sets.
+    """
     alias = ModelAlias.parse(model)
     if alias is None:
         return model
-    return os.environ.get(alias.env_key) or model
+    for key in (alias.env_key, alias.legacy_env_key):
+        provisioned = os.environ.get(key)
+        if provisioned:
+            return provisioned
+    return model
 
 
 # ── Environment layers ───────────────────────────────────────────────────────
@@ -101,7 +130,7 @@ def resolve_model(explicit: str | None, env_key: str, default: str) -> str:
     """Pick the model for a phase, then map any tier alias to its provisioned ID.
 
     Precedence: explicit argument, the phase's own key, WORKBENCH_AI_MODEL, the
-    caller's default. Whichever wins is resolved through ANTHROPIC_DEFAULT_* — so
+    caller's default. Whichever wins is resolved through AI_<TIER>_MODEL — so
     naming a tier anywhere in the chain honors the deployment configured for it.
     """
     return resolve_alias(_select_model(explicit, env_key, default))

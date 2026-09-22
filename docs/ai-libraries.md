@@ -78,9 +78,10 @@ The effort preset sits between the config and the built-in for thinking level
 only, because it is the one knob a review's depth setting flattens.
 
 **Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
-``opus``, ``haiku``) is then resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL``
-/ ``ANTHROPIC_DEFAULT_OPUS_MODEL`` / ``ANTHROPIC_DEFAULT_HAIKU_MODEL``. An alias
-names a tier, not a deployment — on Vertex and Bedrock the account provisions a
+``opus``, ``haiku``) is then resolved through ``AI_SONNET_MODEL`` /
+``AI_OPUS_MODEL`` / ``AI_HAIKU_MODEL``, falling back to the
+``ANTHROPIC_DEFAULT_*_MODEL`` names those were renamed from. An alias names a
+tier, not a deployment — on Vertex and Bedrock the account provisions a
 specific model ID, and that is where it lives. A concrete model ID anywhere in
 the chain passes through untouched. The Claude CLI does this resolution itself;
 the Pi backend does not, so it happens here before dispatch and both backends
@@ -388,7 +389,7 @@ and prices the remainder in bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
 them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
 takes its tier's floor rather than failing, because an unset
-`ANTHROPIC_DEFAULT_*_MODEL` is the ordinary first-party-API setup; only a
+`AI_*_MODEL` is the ordinary first-party-API setup; only a
 concrete model nobody has measured raises `UnknownModelWindow`.
 
 The byte figure can only ever be conservative: no byte count bounds a token

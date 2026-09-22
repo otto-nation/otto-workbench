@@ -44,6 +44,18 @@ A filter is the other way to fool yourself here: `-k`, a `grep`, a subset path.
 A revert whose test was deselected reports no failures and reads as proof. Run
 the whole file.
 
+A stale bytecode cache is the same lie told by the toolchain rather than by the
+command. Restoring a file with `cp` from a backup gives it an mtime older than
+the `__pycache__` entry written while the revert was in place, so Python keeps
+serving the reverted module and the suite reports on code that is no longer on
+disk. Reading the source back does not catch it — the source is correct, which
+is what makes it convincing; `dis.get_instructions` on the loaded function is
+what settles it, because the bytecode is what ran. Clear `__pycache__` after
+every revert experiment, and restore by rewriting the file rather than by
+copying one in. Never restore with `git checkout <file>`: it reverts the change
+under test along with the experiment, and the run that follows is green because
+the feature is gone.
+
 Revert the line that was actually wrong, which is not always the line the test
 names. A helper can be correct and its caller defeat it: a cache read that a
 caller already invalidated, a flag the caller never passes, a guard the caller

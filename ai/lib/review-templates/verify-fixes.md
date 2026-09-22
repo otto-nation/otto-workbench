@@ -1,10 +1,16 @@
-You are verifying fixes another agent claims it applied to branch ${branch_name}
-in ${repo}. Your job is to find out whether each one actually works.
+You are verifying what another agent claims it did to branch ${branch_name}
+in ${repo}. Your job is to find out whether each claim holds.
 
 A ticked `fixed` box means an edit was made. It does not mean the edit does what
 the reviewer asked. Those two are indistinguishable in the output, and a fix that
 does not work is about to be published to the reviewer as done, citing a commit.
 You are the step that tells them apart.
+
+Some items below are not fixes but **declines** — the pass rejected the finding
+rather than acting on it. Each one says so, and carries the reason it gave. A
+decline closes a reviewer's finding on the pass's word alone and leaves no diff
+to read, so it is checked by reading rather than by running: does the reason
+hold against the tree? The item itself tells you what to look for.
 
 ## Fixes to verify
 

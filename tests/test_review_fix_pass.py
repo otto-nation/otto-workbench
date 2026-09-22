@@ -565,6 +565,51 @@ class TestApplyOutcomes:
         ])
         assert out.splitlines()[1].endswith("*(unverified — no runnable check)*")
 
+    def test_a_skip_appended_to_prose_quoting_a_decline_stays_a_skip(self):
+        """The verdict path has the same hazard and cannot answer it by refusing.
+
+        A caveat withheld costs a caveat. A skip withheld costs the outcome: the
+        finding parses as declined and `run_fix_pass` drops a declined finding
+        from the work set, so no later round picks it up either.
+        """
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.py:1` — the `*(declined — x)*` annotation is read "
+            "anywhere\n"
+        )
+        out = review_fix._apply_outcomes(
+            text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
+        )
+        doc = review_document.ReviewDocument.parse(out)
+        assert doc.findings[0].declined is False
+        assert review_document.is_skipped(doc.findings[0]) is True
+        assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
+
+    def test_a_reason_carrying_a_newline_does_not_fabricate_a_finding(self):
+        """A split line's remainder is parsed as whatever it happens to look like.
+
+        `fix.tracking` collapses whitespace on the engine's path, but an
+        `ItemOutcome` built anywhere else does not pass through it.
+        """
+        out = review_fix._apply_outcomes(self.OPEN, [
+            _outcome("M1", FixOutcome.NEEDS_HUMAN,
+                     "one\n- [ ] **[M9]** `b.py:2` — injected"),
+        ])
+        assert [f.id for f in review_document.ReviewDocument.parse(out).findings] == [
+            "M1", "M2",
+        ]
+
+    # passes-at-base: base writes no caveat, so no detail reaches the document
+    def test_a_verify_detail_carrying_a_newline_does_not_fabricate_a_finding(self):
+        out = review_fix._apply_outcomes(self.OPEN, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="one\n- [ ] **[S9]** `b.py:2` — injected"),
+        ])
+        assert [f.id for f in review_document.ReviewDocument.parse(out).findings] == [
+            "M1", "M2",
+        ]
+
+    # passes-at-base: base appends nothing after the quotation, so it stays mid-line
     # passes-at-base: base appends nothing after the quotation, so it stays mid-line
     def test_prose_quoting_an_annotation_is_not_turned_into_one(self):
         """The decline pattern runs from any `*(` to the last `)*` on the line.
@@ -751,7 +796,13 @@ class TestApplyOutcomes:
 
     # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own
     def test_an_already_hedged_line_gains_no_second_caveat(self):
-        """A synthesis pass carries a trailing annotation forward intact."""
+        """A synthesis pass carries a trailing annotation forward intact.
+
+        Asserted on the whole line, not on a count of the opening: the append
+        path defuses a `*(` it finds in the line, so a second caveat arrives
+        beside a first one that has been broken to `* (` — which a count of
+        `*(unverified` reports as one, the same answer as leaving it alone.
+        """
         hedged = (
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — x *(unverified — no runnable check)*\n"
@@ -760,7 +811,9 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        assert out.count("*(unverified") == 1
+        assert out.splitlines()[1] == (
+            "- [x] **[M1]** `a.py:1` — x *(unverified — no runnable check)*"
+        )
 
     def test_an_unverified_fix_with_no_detail_is_annotated_bare(self):
         out = review_fix._apply_outcomes(

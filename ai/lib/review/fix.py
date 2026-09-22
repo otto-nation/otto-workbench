@@ -144,27 +144,31 @@ def _clip(text: str, limit: int) -> str:
 _UNVERIFIED_TAIL_RE = re.compile(r"\*\(unverified(?:\s*[—–-]+\s*.+?)?\)\*\s*$")
 
 
-def _annotatable(line: str) -> bool:
-    """Whether an annotation appended to `line` would read as the line's own.
+def _annotated(line: str, note: str) -> str:
+    """`line` with `note` appended, and nothing on it left to misread.
 
-    The patterns that read an annotation back are anchored to the end of the
-    line but not to its start, so they match from wherever a `*(` appears to
-    whatever `)*` comes last. A line whose prose merely *quotes* an annotation
-    — the docs and tests of this module do, verbatim — is safe on its own,
-    because the quotation is not at the end. Appending anything puts a `)*`
-    after it and the pattern spans the whole span between, so a finding
-    describing the decline annotation becomes a declined one.
+    Every annotation this module writes goes through here, because the hazard
+    belongs to the append and not to any one caller. The patterns that read an
+    annotation back are anchored to the end of the line but not to its start,
+    so they match from wherever a `*(` appears to whatever `)*` comes last. A
+    line whose prose merely *quotes* an annotation — the docs and tests of this
+    module do, verbatim — is safe until something is appended after it: the
+    append supplies the close, and the pattern spans the distance between.
 
-    Escaping what we append cannot reach this: the quotation is in the line,
-    and the line is not ours to rewrite. So a line whose prose already contains
-    the opening of an annotation takes none of ours. It keeps its tick, which
-    is the part that matters, and loses only the caveat.
+    So the quotation in the line is defused before ours is added, which costs a
+    space in someone's prose and keeps the annotation readable. Refusing to
+    append instead would be the cheaper answer for the advisory caveat, and the
+    wrong one here: a decline or a skip is a verdict the next round reads back,
+    and a line that silently did not get one is a finding whose outcome was
+    dropped. One rule for both, because two rules is how the second append site
+    came to have no rule at all.
 
-    Checked on the bare `*(` rather than on each vocabulary, because the risk
-    is the pattern's shape and not any one word in it — a vocabulary added later
-    is covered here without this function having to learn about it.
+    `note` arrives already escaped and is not touched here. It is the one thing
+    on the finished line that is *meant* to read as an annotation, so running it
+    through the same defusing would break the annotation being written — the
+    value interpolated into it is each caller's to escape, and both do.
     """
-    return "*(" not in line
+    return f"{_escape_annotation(line.rstrip())} {note}"
 
 
 def _escape_annotation(detail: str) -> str:
@@ -183,8 +187,14 @@ def _escape_annotation(detail: str) -> str:
     a match once prose supplies its own. Breaking the open leaves no annotation
     for any of the three patterns to find, and costs a space in a line of prose
     nobody parses.
+
+    Newlines go too. A value carrying one splits the finding line in two, and
+    the remainder — agent prose, on a line of its own — is parsed as whatever it
+    happens to look like: text shaped like a finding declaration becomes one.
+    `fix.tracking` collapses whitespace on the engine's path, but an
+    `ItemOutcome` built anywhere else does not pass through it.
     """
-    return detail.replace("*(", "* (")
+    return " ".join(detail.replace("*(", "* (").split())
 
 
 def _fixed_line(line: str, outcome: ItemOutcome) -> str:
@@ -203,19 +213,21 @@ def _fixed_line(line: str, outcome: ItemOutcome) -> str:
     An already-hedged line is left alone for the same reason, which is what a
     synthesis pass carrying the annotation forward needs.
     """
-    box = FINDING_ID_RE.match(line.strip())
     # The box the declaration carries, not the first `- [ ]` anywhere on the
     # line: a finding quoting the empty box in its own prose — a review of a
     # template does — would otherwise have that quotation ticked instead, which
     # corrupts the prose and annotates a finding that stays open.
-    ticked = line.replace("- [ ]", "- [x]", 1) if box and box.group(1) == " " else line
+    box = FINDING_ID_RE.match(line.strip())
+    if not (box and box.group(1) == " "):
+        return line
+    ticked = line.replace("- [ ]", "- [x]", 1)
     detail = _unverified_detail(outcome)
-    if detail is None or ticked == line:
-        return ticked
-    if _UNVERIFIED_TAIL_RE.search(line) or not _annotatable(line):
+    # Read before the defusing in `_annotated`, which would otherwise break the
+    # caveat a synthesis pass carried forward and let a second one in beside it.
+    if detail is None or _UNVERIFIED_TAIL_RE.search(line):
         return ticked
     caveat = f"unverified — {_escape_annotation(detail)}" if detail else "unverified"
-    return f"{ticked.rstrip()} *({caveat})*"
+    return _annotated(ticked, f"*({caveat})*")
 
 
 def _fixed_entry(finding: Finding | None, outcome: ItemOutcome) -> str:
@@ -293,6 +305,11 @@ def _annotation(outcome: ItemOutcome) -> str:
     return f"*({word} — {reason})*" if reason else f"*({word})*"
 
 
+# `_escape_annotation` is applied to the interpolated value here and to the whole
+# line in `_annotated`. Both are needed: one closes a quotation the agent wrote,
+# the other a quotation the reviewer did.
+
+
 def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     """The review document with each finding's line rewritten to its outcome.
 
@@ -334,7 +351,7 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
             continue
         note = _annotation(outcome)
         if note:
-            lines[n] = f"{line.rstrip()} {note}"
+            lines[n] = _annotated(line, note)
     return "\n".join(lines)
 
 

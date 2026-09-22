@@ -219,6 +219,41 @@ def _send(proc: subprocess.Popen, command: dict):
     proc.stdin.flush()
 
 
+def _send_prompt(proc: subprocess.Popen, message: str) -> str | None:
+    """Send the opening prompt. Returns the backend's error if it never read it.
+
+    Pi rejects some invocations before it reads stdin at all — an unroutable
+    model is the common one: ``Error: Model "x" not found`` on stderr, exit 1,
+    no RPC reply, nothing on stdout.
+
+    The write itself does not fail. A first ``_send`` into a pipe whose reader
+    has already gone is buffered by the kernel and returns cleanly; only the
+    *second* write raises ``BrokenPipeError`` — which landed in
+    ``_get_stats_after_agent_end`` and escaped ``invoke_agent`` as a traceback,
+    a page of stack for a mistyped model name. So the send is still guarded,
+    but the detection that matters is the one below: stdout at EOF with the
+    process gone.
+    """
+    try:
+        _send(proc, {"type": "prompt", "message": message})
+    except (BrokenPipeError, ValueError):
+        # ValueError: stdin already closed by a fast-exiting child.
+        return _died_before_reading(proc)
+    return None
+
+
+def _died_before_reading(proc: subprocess.Popen) -> str:
+    """Why the backend exited without speaking the protocol.
+
+    stderr rather than stdout: a failure this early precedes the RPC stream, so
+    pi writes a plain message and exits. Reported as a refusal, because that is
+    what it is — the backend declined the run before it began.
+    """
+    proc.wait()
+    stderr = proc.stderr.read().strip() if proc.stderr else ""
+    return stderr or f"backend exited {proc.returncode} without reading the prompt"
+
+
 def _read_rpc_response(proc: subprocess.Popen, command_type: str) -> dict:
     """Read lines until we get a response for the given command type.
 
@@ -435,6 +470,51 @@ def _consume_stream(
     return StreamResult(turn_count, accumulated_cost, stop_reason, model, error)
 
 
+def _never_spoke(stream: StreamResult, proc: subprocess.Popen) -> bool:
+    """Whether the backend produced no protocol output at all.
+
+    An empty stdout with the process already gone means pi exited before the
+    RPC conversation started — the unroutable-model case. Distinguished from a
+    refusal (which does send a ``response``) and from a real run by the total
+    absence of events: no turns, no cost, no stop reason but the default.
+
+    Checked after the stream rather than at the send, because a first write
+    into a dead pipe succeeds and tells us nothing.
+    """
+    if stream.stop_reason != "completed" or stream.turn_count:
+        return False
+    return proc.poll() is not None
+
+
+def _refused_stream(error: str) -> StreamResult:
+    """The stream result for a run that never started — same shape as a refusal.
+
+    A backend that died before reading the prompt and one that read it and said
+    no are the same outcome to every caller: nothing ran, and here is why.
+    Giving them one StreamResult means one exit code and one diagnosis path.
+    """
+    return StreamResult(0, 0.0, BACKEND_REFUSED, None, error)
+
+
+def _stats_unless_refused(stream: StreamResult, proc: subprocess.Popen) -> dict:
+    """Session stats, or an empty dict for a run the backend refused.
+
+    Measured against pi 0.84.4: after a refusal the RPC process stays alive and
+    answers ``get_session_stats`` immediately, with every token count and the
+    cost at zero. So this is an optimisation, not a guard against a hang — the
+    round trip buys a payload identical to ``{}`` once ``_write_result_record``
+    has read it.
+
+    Said plainly because the obvious guess is the opposite. An earlier version
+    of this comment claimed the query would block on a reply that never comes,
+    which is false and disprovable in one experiment — and a false rationale is
+    worse than none, because disproving it argues for deleting the branch.
+    """
+    if stream.stop_reason == BACKEND_REFUSED:
+        return {}
+    return _get_stats_after_agent_end(proc)
+
+
 def _exit_code(stream: StreamResult, returncode: int) -> int:
     """The status a refusal deserves, or the process's own.
 
@@ -448,10 +528,11 @@ def _exit_code(stream: StreamResult, returncode: int) -> int:
     """
     if stream.stop_reason != BACKEND_REFUSED:
         return returncode
-    print(
-        f"{ANSI_DIM}✗ backend refused the prompt:{ANSI_RESET} {stream.error}",
-        file=sys.stderr, flush=True,
-    )
+    # log.error rather than a bare print: it holds the same _print_lock every
+    # other message here does, and group-phase agents run concurrently. A
+    # refusal is five lines of provider text, so an unlocked write interleaves
+    # with other agents' tool labels.
+    log.error(f"backend refused the prompt: {stream.error}")
     return returncode or BACKEND_REFUSED_EXIT
 
 
@@ -586,21 +667,19 @@ def invoke_agent(inv: AgentInvocation) -> int:
     start_time = time.monotonic()
 
     # Send the prompt via RPC
-    _send(proc, {"type": "prompt", "message": full_prompt})
+    unsent = _send_prompt(proc, full_prompt)
 
     # Stream events with budget and turn enforcement
     with open(inv.session_log, "w") as log_fh:
-        stream = _consume_stream(
+        stream = _refused_stream(unsent) if unsent else _consume_stream(
             proc, log_fh, prefix,
             max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
+    stream = _refused_stream(_died_before_reading(proc)) if _never_spoke(stream, proc) else stream
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
-    # Stats are only askable of a session that ran. A refused prompt leaves the
-    # RPC process with no agent_end and nothing to report, so the query would
-    # block on a reply that is never coming.
-    stats = {} if stream.stop_reason == BACKEND_REFUSED else _get_stats_after_agent_end(proc)
+    stats = _stats_unless_refused(stream, proc)
 
     # Write Claude-compatible result record
     _write_result_record(
@@ -646,19 +725,20 @@ def invoke_fix(inv: AgentInvocation) -> int:
 
     start_time = time.monotonic()
 
-    _send(proc, {"type": "prompt", "message": full_prompt})
+    unsent = _send_prompt(proc, full_prompt)
 
     log_path = inv.session_log if inv.session_log else os.devnull
     with open(log_path, "w") as log_file:
-        stream = _consume_stream(
+        stream = _refused_stream(unsent) if unsent else _consume_stream(
             proc, log_file, "",
             max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
+    stream = _refused_stream(_died_before_reading(proc)) if _never_spoke(stream, proc) else stream
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
     if inv.session_log:
-        stats = {} if stream.stop_reason == BACKEND_REFUSED else _get_stats_after_agent_end(proc)
+        stats = _stats_unless_refused(stream, proc)
         _write_result_record(
             inv.session_log, stream.stop_reason, stream.turn_count,
             stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,

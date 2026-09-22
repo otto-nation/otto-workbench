@@ -78,6 +78,24 @@ _discover_scripts() {
 
 # ─── Help flags ──────────────────────────────────────────────────────────────
 
+# _help_run SCRIPT FLAG — SCRIPT's help output, asked the way a stranger would.
+#
+# The PATH is cut back to the system directories on purpose. A help flag must be
+# answered before the script reaches for anything, and these suites otherwise
+# report on the developer's install rather than on the script: run-due-auto-tasks
+# shipped with no handler at all, so `-h` fell through to a live run, found
+# `claude` on the author's PATH, logged a line and exited 0 — which satisfied
+# both cases below. CI has no `claude`, the identical path exited 69 with an
+# empty stdout, and the suite failed there and only there.
+#
+# Homebrew's bin stays on the list because lib/roots.sh uses `declare -g` and
+# macOS ships bash 3.2 at /bin/bash: dropping it tests the OS's bash, not the
+# script. HOME is kept for the same reason a real invocation has one.
+_help_run() {
+  env -i HOME="$HOME" PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin \
+    "$1" "$2" 2>&1
+}
+
 @test "all bash bin scripts produce help and exit 0 with -h" {
   local failures=()
 
@@ -85,7 +103,7 @@ _discover_scripts() {
     local name output rc
     name=$(basename "$f")
     rc=0
-    output=$("$f" -h 2>&1) || rc=$?
+    output=$(_help_run "$f" -h) || rc=$?
     if [[ -z "$output" ]]; then
       failures+=("$name: -h produced no output")
     fi
@@ -107,7 +125,7 @@ _discover_scripts() {
   while IFS= read -r f; do
     local name output
     name=$(basename "$f")
-    output=$("$f" --help 2>&1) || true
+    output=$(_help_run "$f" --help) || true
     if [[ -z "$output" ]]; then
       failures+=("$name: --help produced no output")
     fi

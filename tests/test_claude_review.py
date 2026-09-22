@@ -37,6 +37,7 @@ from review import run as review_run
 from review import worktree as review_worktree
 
 from conftest import (
+    commit_all, git_in, init_repo,
     make_ctx, run_checked, supersession_evidence, supersession_verdict,
 )
 
@@ -2482,6 +2483,41 @@ def test_a_pr_review_locks_the_worktree_it_actually_writes_to(tmp_path, monkeypa
     assert claim.call_args[0][0] == ctx.target_dir
 
 
+def test_a_pr_review_refuses_a_mistyped_base_too(tmp_path, monkeypatch):
+    """The PR path takes the same override and anchors the same ranges, so it
+    needs the same refusal — and it resolves against the PR's own checkout, not
+    the tree the operator was standing in."""
+    review_file = tmp_path / "review" / "review.md"
+    review_file.parent.mkdir()
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+
+    reviewed = init_repo(tmp_path / "pr-worktree")
+    (reviewed / "a.txt").write_text("a\n")
+    commit_all(reviewed, "init")
+
+    _stub_pr_flow(monkeypatch, tmp_path)
+    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+                        lambda *a, **kw: SimpleNamespace(path=str(reviewed),
+                                                         is_fallback=False))
+    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(reviewed), None))
+    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+    monkeypatch.setattr(
+        review_invoke, "run",
+        MagicMock(side_effect=AssertionError("spent a review on an unresolvable base")),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        review_run.run_pr_review(
+            make_ctx(target_dir=tmp_path / "t"),
+            review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
+                                   base="relase/1.2"),
+            review_file, trail=MagicMock(),
+        )
+
+    assert exc.value.code == 1
+
+
 def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, monkeypatch):
     """The checkout lock and the target lock report the same holder.
 
@@ -2568,13 +2604,74 @@ def test_an_explicit_base_overrides_the_one_github_reports(tmp_path, monkeypatch
                         lambda request: seen.__setitem__("sent_base", request.base) or 0)
     monkeypatch.setattr(review_run, "finish_review", lambda *a, **kw: None)
 
+    # A real repo holding the branch `--base` names: an override that resolves
+    # to nothing is refused before it gets here, which is its own test.
+    repo = init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("a\n")
+    commit_all(repo, "init")
+    git_in(repo, "branch", "feat/right")
+    git_in(repo, "checkout", "-b", "feat/child", "-q")
+    (repo / "b.txt").write_text("b\n")
+    commit_all(repo, "child")
+
     ctx = make_ctx(repo="owner/repo", pr_number=None, branch="feat/child",
-                   head_sha="abc1234", worktree_root=tmp_path,
+                   head_sha="abc1234", worktree_root=repo,
                    target_dir=tmp_path / "state", base="feat/wrong")
 
     review_run.run_self_review(
-        ctx, _self_flags(base="feat/right"), tmp_path, str(tmp_path),
+        ctx, _self_flags(base="feat/right"), tmp_path, str(repo),
         recover_head_sha="", trail=MagicMock(),
     )
 
     assert seen["sent_base"] == "feat/right"
+
+
+def test_a_mistyped_base_stops_the_run_before_it_spends_anything(tmp_path, monkeypatch):
+    """End to end: a typo'd `--base` must not reach the pipeline. Every range
+    would anchor to a ref that does not exist, the diff would come back empty,
+    and the review would report no findings for a branch it never read."""
+    monkeypatch.setattr(
+        review_invoke, "run",
+        MagicMock(side_effect=AssertionError("spent a review on an unresolvable base")),
+    )
+    repo = init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("a\n")
+    commit_all(repo, "init")
+
+    ctx = make_ctx(repo="owner/repo", pr_number=None, branch="feat/child",
+                   worktree_root=repo, target_dir=tmp_path / "state")
+
+    with pytest.raises(SystemExit) as exc:
+        review_run.run_self_review(
+            ctx, _self_flags(base="feat/parnet"), tmp_path, str(repo),
+            recover_head_sha="", trail=MagicMock(),
+        )
+
+    assert exc.value.code == 1
+
+
+def test_a_derived_base_that_does_not_resolve_is_not_refused(tmp_path, monkeypatch):
+    """The refusal is scoped to the operator's own `--base`. A derived base git
+    cannot answer for is a gap in the tool, not a typo — refusing there would
+    fail every worktree with no origin, which the range fallbacks handle."""
+    seen = {}
+    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review_issue, "load_issue_provider",
+                        lambda wt: SimpleNamespace(name="none", options={}))
+    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review_issue, "fetch_issue_context",
+                        lambda *a: SimpleNamespace(link="", context=""))
+    monkeypatch.setattr(review_invoke, "run",
+                        lambda request: seen.__setitem__("ran", True) or 0)
+    monkeypatch.setattr(review_run, "finish_review", lambda *a, **kw: None)
+
+    ctx = make_ctx(repo="owner/repo", pr_number=None, branch="feat/child",
+                   worktree_root=tmp_path, target_dir=tmp_path / "state",
+                   base="a-branch-that-is-not-here")
+
+    review_run.run_self_review(
+        ctx, _self_flags(), tmp_path, str(tmp_path),
+        recover_head_sha="", trail=MagicMock(),
+    )
+
+    assert seen["ran"] is True

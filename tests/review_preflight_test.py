@@ -16,6 +16,7 @@ if LIB_DIR not in sys.path:
 from review import preflight as review_preflight
 
 from conftest import (
+    commit_all, git_in, init_repo,
     supersession_context, supersession_evidence, supersession_verdict,
 )
 
@@ -249,3 +250,119 @@ def test_only_the_users_own_force_overrides_the_refusal():
 def test_recover_overrides_the_refusal_on_both_paths():
     """Recovery finishes a run whose spend was already made."""
     assert review_preflight.supersession_override(False, True) is True
+
+
+# ── an unresolvable base ─────────────────────────────────────────────────────
+#
+# Against real repos: the question is whether a name resolves to a commit here,
+# which is git's answer to give.
+
+
+def _repo_with_a_pushed_base(tmp_path) -> Path:
+    """A clone whose `main` is on a real origin, with a feature branch on top."""
+    origin = tmp_path / "origin.git"
+    git_in(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    repo = init_repo(tmp_path / "repo")
+    (repo / "main.go").write_text("package main\n")
+    commit_all(repo, "init")
+    git_in(repo, "remote", "add", "origin", str(origin))
+    git_in(repo, "push", "-q", "origin", "main")
+    git_in(repo, "checkout", "-b", "feat", "-q")
+    (repo / "feat.go").write_text("package main\n")
+    commit_all(repo, "add feat")
+    return repo
+
+
+def test_a_mistyped_base_is_refused_before_the_review_is_spent(tmp_path, capsys):
+    """The worst failure this code has: every range anchors to the base, and git
+    reports an unknown ref by exiting non-zero — which reads as empty output. The
+    review then completes over an empty diff and reports no findings, which is
+    indistinguishable from a branch that is genuinely clean. A false all-clear,
+    at the cost of a full review."""
+    repo = _repo_with_a_pushed_base(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        review_preflight.refuse_unresolvable_base(
+            str(repo), "mian", trail=MagicMock())
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "mian" in err
+    assert "--base" in err
+
+
+def test_a_base_that_resolves_is_left_alone(tmp_path):
+    repo = _repo_with_a_pushed_base(tmp_path)
+
+    review_preflight.refuse_unresolvable_base(str(repo), "main", trail=MagicMock())
+
+
+def test_an_unpushed_stack_parent_is_not_refused(tmp_path):
+    """The local fallback is a resolution, not an absence — refusing here would
+    reject exactly the stacked branch this whole path exists to serve."""
+    repo = _repo_with_a_pushed_base(tmp_path)
+    git_in(repo, "checkout", "-b", "child", "-q")
+    (repo / "child.go").write_text("package main\n")
+    commit_all(repo, "add child")
+
+    review_preflight.refuse_unresolvable_base(str(repo), "feat", trail=MagicMock())
+
+
+def test_no_base_is_not_a_refusal(tmp_path):
+    """Empty means the ladder resolved nothing and each range falls back on its
+    own. That is the pre-existing path, not an operator error."""
+    repo = _repo_with_a_pushed_base(tmp_path)
+
+    review_preflight.refuse_unresolvable_base(str(repo), "", trail=MagicMock())
+
+
+def test_a_base_pushed_after_this_clone_is_fetched_before_being_refused(tmp_path):
+    """The remote-tracking ref this checks is only as fresh as the last fetch,
+    and nothing upstream of this call has made one yet — `fetch_base` in
+    `review.collect` runs later, after the base is already resolved here. A
+    branch pushed to origin by someone else a moment ago is real, and refusing
+    it as a typo because this worktree has not seen it yet is the false
+    positive this check must not produce."""
+    repo = _repo_with_a_pushed_base(tmp_path)
+
+    other_clone = tmp_path / "other-clone"
+    git_in(tmp_path, "clone", "-q", str(repo.parent / "origin.git"), str(other_clone))
+    git_in(other_clone, "checkout", "-b", "newly-pushed", "-q")
+    (other_clone / "other.go").write_text("package main\n")
+    git_in(other_clone, "-c", "user.email=t@t", "-c", "user.name=t",
+           "add", ".")
+    git_in(other_clone, "-c", "user.email=t@t", "-c", "user.name=t",
+           "commit", "-q", "-m", "add other")
+    git_in(other_clone, "push", "-q", "origin", "newly-pushed")
+
+    # `repo` has never fetched `newly-pushed`; only the check's own fetch can
+    # make it resolvable here.
+    review_preflight.refuse_unresolvable_base(
+        str(repo), "newly-pushed", trail=MagicMock())
+
+
+def test_the_supersession_gate_reads_an_unpushed_parent(tmp_path, monkeypatch):
+    """Every supersession signal is a git range. Spelled `origin/<base>`, an
+    unpushed parent makes them all return nothing — which reports a branch with
+    no supersession signals rather than a check that never ran."""
+    repo = _repo_with_a_pushed_base(tmp_path)
+    git_in(repo, "checkout", "-b", "child", "-q")
+    (repo / "child.go").write_text("package main\n")
+    commit_all(repo, "add child")
+
+    seen = {}
+    monkeypatch.setattr(
+        review_preflight.supersession, "detect_cached",
+        lambda wt, repo_name, target, base="", trail=None: (
+            seen.__setitem__("base", base) or supersession_verdict()
+        ),
+    )
+    monkeypatch.setattr(review_preflight.supersession, "report", lambda v: None)
+
+    review_preflight.refuse_if_superseded(
+        str(repo), "acme/widget", tmp_path, "child",
+        override=False, base="feat", trail=MagicMock(),
+    )
+
+    # The local ref, because `origin/feat` does not exist in this clone.
+    assert seen["base"] == "feat"

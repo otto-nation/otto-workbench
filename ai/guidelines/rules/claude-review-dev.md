@@ -40,6 +40,12 @@ Two consequences worth keeping:
   supersession gate and diff name different bases refuses over commits it then
   declines to review, which is worse than either answer alone.
 
+An operator's `--base` is validated before the run spends anything
+(`preflight.refuse_unresolvable_base`) — it is the only rung that can name a
+branch that does not exist, and an unresolvable base yields an empty diff that
+reads as a clean branch. The derived rungs are deliberately not validated: a
+name git cannot resolve there is a gap in the derivation, not a typo.
+
 A base *name* becomes a *ref* in exactly one place, `review.collect.base_ref`:
 `origin/<base>`, falling back to the local branch only when no remote-tracking
 ref exists and the local one is a strict ancestor of HEAD — an unpushed stack

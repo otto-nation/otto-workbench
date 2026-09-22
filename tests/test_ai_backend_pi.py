@@ -840,6 +840,35 @@ class TestRefusalReachesTheCaller:
         code = self._run(monkeypatch, tmp_path, proc)
         assert code != 0
 
+    def test_an_unreapable_group_does_not_block_on_its_stderr(
+        self, monkeypatch, tmp_path,
+    ):
+        # Reading stderr blocks until the child closes it, and a group that
+        # survived SIGKILL never does. Bounding the wait only moved the hang
+        # two lines down unless the stderr read is skipped with it.
+        reads = []
+
+        class _BlockingStderr:
+            def read(self):
+                reads.append(True)
+                raise AssertionError("read the stderr of a process still alive")
+
+        proc = _RefusingProc(
+            [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
+        )
+        # Non-zero, so _log_stderr_on_failure would reach the read if called.
+        proc.returncode = -9
+        proc.stderr = _BlockingStderr()
+        monkeypatch.setattr("core.proc.os.killpg", lambda pid, sig: None)
+
+        def _always_hangs(timeout=None):
+            proc.waits.append(timeout)
+            raise subprocess.TimeoutExpired("pi", timeout)
+
+        proc.wait = _always_hangs
+        assert self._run(monkeypatch, tmp_path, proc) != 0
+        assert reads == []
+
     def test_the_success_path_does_not_route_through_popen_exit(
         self, monkeypatch, tmp_path,
     ):

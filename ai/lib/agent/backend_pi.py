@@ -288,8 +288,8 @@ def _rpc_response_error(data: dict) -> str | None:
     return None
 
 
-def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> None:
-    """Wait for Pi to exit after its stdin was closed.
+def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> bool:
+    """Wait for Pi to exit after its stdin was closed. True when it is gone.
 
     Bounded only for a run this module abandoned. Breaking out of the event
     loop on a fatal response leaves a child that is still alive with an unread
@@ -309,10 +309,16 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> None:
     that will not reap even after SIGKILL is reported and then left: raising
     would replace a failure the caller can act on with a traceback none of them
     handles, and there is no further signal to try.
+
+    False is that last case, and it is the whole reason this returns anything.
+    A caller that reads the child's stderr afterwards blocks until the child
+    closes it, which a process that would not die for SIGKILL never does — so
+    "reported and left" becomes a silent hang two lines later unless the caller
+    is told to skip it.
     """
     if not abandoned:
         proc.wait(timeout=timeouts.UNBOUNDED)
-        return
+        return True
     try:
         proc.wait(timeout=timeouts.LOCAL)
     except subprocess.TimeoutExpired:
@@ -321,6 +327,8 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> None:
             proc.wait(timeout=timeouts.QUICK)
         except subprocess.TimeoutExpired:
             log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
+            return False
+    return True
 
 
 @contextmanager
@@ -711,9 +719,10 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
         proc.stdin.close()
     except BrokenPipeError:
         pass
-    # Before reading stderr, which blocks until the child closes it.
-    _wait_for_exit(proc, abandoned=stream.error is not None)
-    _log_stderr_on_failure(proc, inv.session_log)
+    # Reading stderr blocks until the child closes it, so it is only safe once
+    # the child is gone. A group that survived SIGKILL never closes it.
+    if _wait_for_exit(proc, abandoned=stream.error is not None):
+        _log_stderr_on_failure(proc, inv.session_log)
     return _exit_code(proc, stream)
 
 
@@ -765,7 +774,8 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
         proc.stdin.close()
     except BrokenPipeError:
         pass
-    # Before reading stderr, which blocks until the child closes it.
-    _wait_for_exit(proc, abandoned=stream.error is not None)
-    _log_stderr_on_failure(proc, inv.session_log)
+    # Reading stderr blocks until the child closes it, so it is only safe once
+    # the child is gone. A group that survived SIGKILL never closes it.
+    if _wait_for_exit(proc, abandoned=stream.error is not None):
+        _log_stderr_on_failure(proc, inv.session_log)
     return _exit_code(proc, stream)

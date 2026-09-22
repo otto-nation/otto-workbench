@@ -41,9 +41,24 @@ _state_of() {
 }
 
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  # A spent quota and a repo gh cannot resolve both leave auth working — the
+  # refusal comes from the request, not from the login.
+  [[ -n "${GH_THROTTLED:-}${GH_UNANSWERABLE:-}" ]] && exit 0
   [[ -f "$GH_PR_MERGED_FILE" || -f "$GH_PR_OPEN_FILE" || -f "$GH_PR_CLOSED_FILE" ]] && exit 0
   exit 1
 elif [[ "$1" == "api" ]]; then
+  # GitHub declining to answer a knowable question. Its wording is what the
+  # library classifies on, and it goes to stderr as the real one does.
+  if [[ -n "${GH_THROTTLED:-}" ]]; then
+    echo "gh: API rate limit exceeded for user ID 1234. (HTTP 403)" >&2
+    exit 1
+  fi
+  # A question this repo could never answer — no GitHub remote, or a repo the
+  # token cannot see. Permanent, and must stay best-effort.
+  if [[ -n "${GH_UNANSWERABLE:-}" ]]; then
+    echo "gh: Not Found (HTTP 404)" >&2
+    exit 1
+  fi
   endpoint="$2"
   filter=""
   [[ "$endpoint" == *"head="* ]] && filter="${endpoint#*head=}" && filter="${filter%%&*}"
@@ -86,6 +101,7 @@ setup() {
   export GH_PR_CLOSED_FILE="$GH_PR_CLOSED"
   export GH_BRANCH_LOG="$TMPDIR/gh-branches.log"
   : > "$GH_BRANCH_LOG"
+  unset GH_THROTTLED GH_UNANSWERABLE
   export CLEANUP_LOG_DIR="$TMPDIR/logs"
   export NO_COLOR=1
   export WORKBENCH_DIR="$REPO_ROOT"
@@ -223,16 +239,12 @@ JSON
 }
 
 @test "an unreachable tracker leaves the git signals in charge" {
-  # The lookup refuses wholesale when it cannot ask — no auth, a throttle, a
-  # network failure. `wt-cleanup` discards that refusal with `|| true` and runs
-  # on git's signals alone, which is the intended degradation: this branch is
-  # `↑1`, so nothing says it landed and nothing is removed.
+  # A machine with no tracker at all — no auth here, and equally no gh, no
+  # network, or a remote that is not GitHub. The sweep runs on git's signals,
+  # which is the intended degradation rather than a gap: refusing on these would
+  # mean never cleaning up a worktree on such a machine at any point.
   #
-  # What this holds is that the refusal does not abort the sweep: the lookup
-  # returns non-zero and `|| true` is what absorbs it, so dropping that guard
-  # fails here. It does not distinguish a refusal from an answer of "no PR" —
-  # from inside wt-cleanup the two are the same empty map, by design, and the
-  # library's own suite is where that distinction is held.
+  # Distinct from a tracker that declined to answer, which is the case below.
   _write_worktrees <<'JSON'
 [{"branch":"feat/unasked","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0}}]
 JSON
@@ -243,6 +255,102 @@ JSON
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]
   [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+@test "a branch git calls integrated is not deleted when the tracker was refused" {
+  # The hole this closes. git marks a branch `⊂` the moment the default branch is
+  # merged *into* it, which an open PR does routinely — so `⊂` alone is only safe
+  # because the open-PR guard ran first. A refused lookup means it never did, and
+  # removal here takes the branch with the worktree.
+  _write_worktrees <<'JSON'
+[{"branch":"feat/integrated","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  echo "feat/integrated" > "$GH_PR_OPEN"
+  export GH_THROTTLED=1
+
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+@test "a refused lookup is reported rather than passing for no PR" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/integrated","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  export GH_THROTTLED=1
+
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  # Silence would leave the operator reading "no stale worktrees" as a clean
+  # sweep, when it is a sweep that could not ask.
+  [[ "$output" == *"would not say whether these branches merged"* ]]
+}
+
+@test "a refused lookup warns that --age may still remove worktrees" {
+  # "no branch will be deleted this run" reads as "nothing happens" on its own,
+  # but an --age removal still takes the worktree while keeping the branch — see
+  # "a refused lookup keeps the branch on an age removal" below. The warning has
+  # to say so, or an operator relying on it alone is surprised by a vanished
+  # worktree.
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[{"branch":"feat/stale","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":$old_timestamp}}]
+JSON
+  export GH_THROTTLED=1
+
+  _run_cleanup --age 30 --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no branch will be deleted this run"* ]]
+  [[ "$output" == *"--age may still remove their worktrees"* ]]
+}
+
+@test "a refused lookup keeps the branch on an age removal" {
+  # The worktree still goes — inactivity is a local fact and needs no tracker —
+  # but the branch stays. Withholding --force-delete is not enough on its own:
+  # `wt remove` deletes the branch on its own ancestry check unless told not to.
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[{"branch":"feat/stale","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":$old_timestamp}}]
+JSON
+  export GH_THROTTLED=1
+
+  _run_cleanup --age 30 --no-grace-period
+  [ "$status" -eq 0 ]
+  grep -q "feat/stale" "$WT_REMOVE_LOG"
+  grep -q -- "--no-delete-branch" "$WT_REMOVE_LOG"
+  ! grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+}
+
+@test "a refused lookup keeps a dirty worktree out of the merged summary" {
+  # The dirty path reaches _is_merged by its other call site. Naming the worktree
+  # "merged, holding changes" invites the operator to discard work on the
+  # strength of a read that never happened.
+  _write_worktrees <<'JSON'
+[{"branch":"feat/dirty","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"modified":true}}]
+JSON
+  export GH_THROTTLED=1
+
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"uncommitted"* ]]
+  [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+@test "a repo the tracker cannot answer for at all is still cleaned up" {
+  # A 404 is permanent for this token and repo, as is a non-GitHub remote. Both
+  # must stay best-effort: refusing on them would strand every worktree on a
+  # GitLab repo forever, which is the failure mode the refusal must not cause.
+  _write_worktrees <<'JSON'
+[{"branch":"feat/merged","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  export GH_UNANSWERABLE=1
+
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  grep -q "feat/merged" "$WT_REMOVE_LOG"
+  [[ "$output" != *"would not say whether"* ]]
 }
 
 # ── Protected worktrees ──────────────────────────────────────────────────────

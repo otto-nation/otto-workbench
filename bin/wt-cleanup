@@ -210,14 +210,44 @@ _live_changes() {
   echo "$ordered"
 }
 
+# The state for a branch the tracker refused to answer about. Distinct from the
+# empty string, which is the tracker's own answer of "this branch has no PR" —
+# see lib/branch_state.sh. No state GitHub reports collides with it.
+PR_STATE_UNKNOWN="UNKNOWN"
+
+# _pr_state BRANCH — what the tracker said about BRANCH: OPEN, MERGED, CLOSED,
+# $PR_STATE_UNKNOWN when the lookup was refused, or nothing when it answered that
+# BRANCH has no PR.
+#
+# The refusal is per-run rather than per-branch because the lookup empties its
+# whole map when it cannot answer: there is no branch it got further with.
 _pr_state() {
   local branch="$1"
+  if [[ "$pr_lookup_refused" == "true" ]]; then
+    echo "$PR_STATE_UNKNOWN"
+    return 0
+  fi
   echo "${pr_states[$branch]:-}"
+}
+
+# _git_signals_merged MAIN_STATE SYMBOLS — true when git's own read of the
+# worktree (not the PR tracker) marks the branch merged into the default
+# branch. The sole owner of that check: _is_merged and _detect_reason both
+# call it rather than each carrying its own copy, so the two cannot drift
+# apart and disagree about which signal fired.
+_git_signals_merged() {
+  local main_state="$1" symbols="$2"
+  [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]
 }
 
 _is_merged() {
   local main_state="$1" symbols="$2" pr_state="$3"
-  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]; then
+  # git calls a branch integrated the moment the default branch is merged *into*
+  # it, which an open PR does routinely. That reading is only safe because the
+  # open-PR guard runs first — and on a refused lookup that guard never ran, so
+  # there is nothing here to trust.
+  [[ "$pr_state" == "$PR_STATE_UNKNOWN" ]] && return 1
+  if _git_signals_merged "$main_state" "$symbols"; then
     return 0
   elif [[ "$pr_state" == "MERGED" ]]; then
     return 0
@@ -235,7 +265,13 @@ _within_grace_period() {
 
 _detect_reason() {
   local main_state="$1" symbols="$2" pr_state="$3" timestamp="$4"
-  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]; then
+  # Gated on _is_merged rather than acting on _git_signals_merged alone, so the
+  # reason cannot contradict the verdict: under a refused lookup this would
+  # otherwise print "merged" for a worktree being kept for an --age reason.
+  # Both this check and _is_merged's call the same predicate, so a future
+  # change to what counts as a git-signal merge only has one place to make it.
+  if _is_merged "$main_state" "$symbols" "$pr_state" \
+     && _git_signals_merged "$main_state" "$symbols"; then
     echo "merged"
   elif [[ "$pr_state" == "MERGED" ]]; then
     echo "pr merged"
@@ -320,9 +356,21 @@ main() {
   done < <(echo "$worktrees" | jq -r '
     .items[] | select(.worktree.path != null and .worktree.path != "") | .branch // empty')
 
+  # A refusal is carried into the loop rather than discarded. `|| true` alone
+  # made "GitHub would not answer" and "no branch here has a PR" the same empty
+  # map, and the second is what lets a branch be deleted on git's word.
   declare -A pr_states
+  pr_lookup_refused=false
   if [[ ${#pr_branches[@]} -gt 0 ]]; then
-    branch_pr_states pr_states "${pr_branches[@]}" || true
+    branch_pr_states pr_states "${pr_branches[@]}" \
+      || [[ $? -ne $BRANCH_PR_REFUSED_RC ]] || pr_lookup_refused=true
+  fi
+
+  if [[ "$pr_lookup_refused" == "true" ]]; then
+    _log "TRACKER-REFUSED branches=${#pr_branches[@]}"
+    if [[ "$quiet" != "true" ]]; then
+      warn "GitHub would not say whether these branches merged — no branch will be deleted this run, though --age may still remove their worktrees"
+    fi
   fi
 
   _log "START count=$count dry_run=$dry_run quiet=$quiet max_age=$max_age_days"
@@ -400,6 +448,11 @@ main() {
     if _is_merged "$main_state" "$symbols" "$pr_state"; then
       delete_branch=true
       remove_flags+=(--force-delete)
+    elif [[ "$pr_state" == "$PR_STATE_UNKNOWN" ]]; then
+      # Withholding --force-delete is not enough on a refused read: `wt remove`
+      # deletes the branch on its own ancestry check unless told otherwise, and
+      # that check is the very signal the open-PR guard exists to second-guess.
+      remove_flags+=(--no-delete-branch)
     fi
 
     removed=$((removed + 1))

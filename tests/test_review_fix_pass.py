@@ -565,6 +565,75 @@ class TestApplyOutcomes:
         ])
         assert out.splitlines()[1].endswith("*(unverified — no runnable check)*")
 
+    # passes-at-base: base appends nothing after the quotation, so it stays mid-line
+    def test_prose_quoting_an_annotation_is_not_turned_into_one(self):
+        """The decline pattern runs from any `*(` to the last `)*` on the line.
+
+        A quotation mid-line is safe until something is appended after it — the
+        append supplies the close and the pattern spans the whole distance. The
+        docs and tests of this module quote the annotation verbatim, so this is
+        the shape a review of this very file takes.
+        """
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.py:1` — The `*(declined — reason)*` annotation "
+            "is matched anywhere\n"
+        )
+        out = review_fix._apply_outcomes(text, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        finding = review_document.ReviewDocument.parse(out).findings[0]
+        assert finding.declined is False
+        assert finding.checked is True
+
+    # passes-at-base: base appends nothing after the quotation, so it stays mid-line
+    def test_prose_quoting_a_skip_is_not_turned_into_one(self):
+        """Asserted against the skip pattern, which `is_skipped` cannot answer.
+
+        `is_skipped` short-circuits on a checked finding, so it reports False
+        for any tick however the body reads — including one this append just
+        turned into a skip annotation.
+        """
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.py:1` — prose about `*(skipped — x)*` here\n"
+        )
+        out = review_fix._apply_outcomes(text, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        finding = review_document.ReviewDocument.parse(out).findings[0]
+        assert review_document._SKIP_TAIL_RE.search(finding.body) is None
+        assert finding.checked is True
+
+    def test_a_box_quoted_in_prose_is_not_the_one_that_gets_ticked(self):
+        """A finding about a template quotes the empty box in its own body.
+
+        Ticking that occurrence corrupts the prose and annotates a line whose
+        own declaration stays unchecked, so the finding never closes.
+        """
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.py:1`** — the template writes `- [ ] **[M1]**` "
+            "with no box\n"
+        )
+        out = review_fix._apply_outcomes(text, [
+            _outcome("M1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        assert out == text
+
+    def test_a_skip_reason_quoting_a_decline_stays_a_skip(self):
+        """`reason` is the gate's own prose, by way of the engine's verdict."""
+        out = review_fix._apply_outcomes(self.OPEN, [
+            _outcome("M1", FixOutcome.NEEDS_HUMAN,
+                     "as the docs say *(declined — adjudicated)*"),
+        ])
+        finding = review_document.ReviewDocument.parse(out).findings[0]
+        assert finding.declined is False
+        assert review_document.is_skipped(finding) is True
+
     def test_a_clip_with_no_room_yields_nothing(self):
         """`text[:n]` with a non-positive n counts from the end.
 

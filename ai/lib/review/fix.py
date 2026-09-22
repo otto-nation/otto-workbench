@@ -144,6 +144,29 @@ def _clip(text: str, limit: int) -> str:
 _UNVERIFIED_TAIL_RE = re.compile(r"\*\(unverified(?:\s*[—–-]+\s*.+?)?\)\*\s*$")
 
 
+def _annotatable(line: str) -> bool:
+    """Whether an annotation appended to `line` would read as the line's own.
+
+    The patterns that read an annotation back are anchored to the end of the
+    line but not to its start, so they match from wherever a `*(` appears to
+    whatever `)*` comes last. A line whose prose merely *quotes* an annotation
+    — the docs and tests of this module do, verbatim — is safe on its own,
+    because the quotation is not at the end. Appending anything puts a `)*`
+    after it and the pattern spans the whole span between, so a finding
+    describing the decline annotation becomes a declined one.
+
+    Escaping what we append cannot reach this: the quotation is in the line,
+    and the line is not ours to rewrite. So a line whose prose already contains
+    the opening of an annotation takes none of ours. It keeps its tick, which
+    is the part that matters, and loses only the caveat.
+
+    Checked on the bare `*(` rather than on each vocabulary, because the risk
+    is the pattern's shape and not any one word in it — a vocabulary added later
+    is covered here without this function having to learn about it.
+    """
+    return "*(" not in line
+
+
 def _escape_annotation(detail: str) -> str:
     """`detail` with any annotation it quotes defused.
 
@@ -180,9 +203,16 @@ def _fixed_line(line: str, outcome: ItemOutcome) -> str:
     An already-hedged line is left alone for the same reason, which is what a
     synthesis pass carrying the annotation forward needs.
     """
-    ticked = line.replace("- [ ]", "- [x]", 1)
+    box = FINDING_ID_RE.match(line.strip())
+    # The box the declaration carries, not the first `- [ ]` anywhere on the
+    # line: a finding quoting the empty box in its own prose — a review of a
+    # template does — would otherwise have that quotation ticked instead, which
+    # corrupts the prose and annotates a finding that stays open.
+    ticked = line.replace("- [ ]", "- [x]", 1) if box and box.group(1) == " " else line
     detail = _unverified_detail(outcome)
-    if detail is None or ticked == line or _UNVERIFIED_TAIL_RE.search(line):
+    if detail is None or ticked == line:
+        return ticked
+    if _UNVERIFIED_TAIL_RE.search(line) or not _annotatable(line):
         return ticked
     caveat = f"unverified — {_escape_annotation(detail)}" if detail else "unverified"
     return f"{ticked.rstrip()} *({caveat})*"
@@ -256,7 +286,11 @@ def _annotation(outcome: ItemOutcome) -> str:
         word = "skipped"
     else:
         return ""
-    return f"*({word} — {outcome.reason})*" if outcome.reason else f"*({word})*"
+    # `reason` is the gate's own prose by way of `engine`'s verdict detail, so a
+    # reason quoting an annotation would otherwise nest one inside this one and
+    # hand the inner word to the parsers — a skip written as a decline.
+    reason = _escape_annotation(outcome.reason)
+    return f"*({word} — {reason})*" if reason else f"*({word})*"
 
 
 def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:

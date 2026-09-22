@@ -68,7 +68,7 @@ Applies only when the resolved provider is `github`.
 - Pass `--repo <owner>/<repo>` *after* the subcommand — `gh issue view --repo x/y`, never `gh --repo x/y issue view`. Both parse, but the flag reads as the subcommand's everywhere it is documented, and under Claude Code the leading form also costs a permission prompt (`bash-tool.md` § Avoid Compound `cd` Commands)
 - On GitHub Enterprise, set `issues.base_url` to the instance host. It moves the issue links, and the workbench passes the host to `gh` as `--repo HOST/OWNER/REPO` on every issue read and write — a bare `OWNER/REPO` resolves against gh's *default* host, which on a machine logged into both instances is whichever gh picked, not the one the repo lives on. Unset it and a filing lands on github.com
 - Use the same three-part form in any `gh` command you run by hand against an enterprise repo, for the same reason
-- The key does not authenticate that host. Run `gh auth login -h HOST` once per instance, or the read fails and the review carries the link with no issue context behind it
+- The key does not authenticate that host. Run `gh auth login -h HOST` once per instance, or every `gh` call against it fails — the read leaves the review carrying the link with no issue context behind it, and `gh issue create`/`gh issue edit` fail the same way, reported as a separate `UNDELIVERED` result by the caller
 
 | Command | Notes |
 |---------|-------|

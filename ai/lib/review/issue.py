@@ -452,7 +452,7 @@ def _github_host(opts: dict | None) -> str:
     """
     base = (opts or {}).get("base_url", "")
     host = re.sub(r"^[a-z]+://", "", base.strip(), flags=re.IGNORECASE).strip("/")
-    return "" if host == _PUBLIC_GITHUB_HOST else host
+    return "" if host.lower() == _PUBLIC_GITHUB_HOST else host
 
 
 def _github_repo_arg(repo: str, opts: dict | None) -> str:

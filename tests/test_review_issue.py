@@ -462,6 +462,20 @@ def test_fetch_issue_context_github_leaves_the_public_host_unqualified():
     assert "github.com/owner/repo" not in _gh_argv(mock_run)
 
 
+def test_fetch_issue_context_github_leaves_a_mixed_case_public_host_unqualified():
+    """github.com typed in any case is still the public host, not an enterprise one."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://GitHub.com"}
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        fetch_issue_context("github", "42", repo="owner/repo", opts=opts)
+
+    assert "owner/repo" in _gh_argv(mock_run)
+    assert "GitHub.com/owner/repo" not in _gh_argv(mock_run)
+
+
 # passes-at-base: an unconfigured repo keeps gh's own host resolution, before this change and after
 def test_fetch_issue_context_github_without_a_base_url_is_unqualified():
     """An unconfigured repo leaves gh's own host resolution alone."""

@@ -56,6 +56,14 @@ TEST_JOBS_FLOOR=2
 # JOBS — the resolved parallelism, set once by main() before either suite runs.
 JOBS=""
 
+# JOBS_CORES / JOBS_BUSY — the readings test_jobs() used to resolve JOBS.
+# report_jobs() reads these rather than recomputing them: load_average() reads
+# live kernel state, so a second call can disagree with the first — precisely
+# on a machine whose load is fluctuating, which is the scenario this feature
+# exists to explain. Left unset when TEST_JOBS overrides the calculation.
+JOBS_CORES=""
+JOBS_BUSY=""
+
 # busy_cores — cores the rest of the machine is already using, rounded down.
 #
 # Zero under CI: a hosted runner is dedicated to this job, so its load average
@@ -86,17 +94,23 @@ busy_cores() {
 # share that suite left behind. TEST_JOBS overrides the whole calculation for a
 # caller that knows better — a shared runner that should not take the whole box,
 # or a bisect that wants the serial ordering back with TEST_JOBS=1.
+#
+# Sets JOBS (and the JOBS_CORES/JOBS_BUSY readings behind it) as a side effect
+# rather than only echoing the result. Calling this through command
+# substitution (`JOBS=$(test_jobs)`) would run it in a subshell, so any global
+# it set would vanish with that subshell — report_jobs() would then have
+# nothing to read and would have to take its own, independently-timed sample.
 test_jobs() {
   if [[ -n "${TEST_JOBS:-}" ]]; then
-    echo "$TEST_JOBS"
+    JOBS="$TEST_JOBS"
     return 0
   fi
-  local cores busy free jobs
-  cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || cores=1
-  busy=$(busy_cores)
-  free=$(( cores - busy ))
+  local free jobs
+  JOBS_CORES=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || JOBS_CORES=1
+  JOBS_BUSY=$(busy_cores)
+  free=$(( JOBS_CORES - JOBS_BUSY ))
   jobs=$(( free > TEST_JOBS_FLOOR ? free : TEST_JOBS_FLOOR ))
-  echo "$(( jobs < TEST_JOBS_CAP ? jobs : TEST_JOBS_CAP ))"
+  JOBS=$(( jobs < TEST_JOBS_CAP ? jobs : TEST_JOBS_CAP ))
 }
 
 # report_jobs — say how parallel this run is, and why, before it starts.
@@ -111,19 +125,15 @@ test_jobs() {
 # To stderr, because the pre-push hook captures this script's stdout to count
 # passes out of it — a line on stdout would be parsed as a test result.
 report_jobs() {
-  local cores
-  cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || cores=1
   if [[ -n "${TEST_JOBS:-}" ]]; then
     info "Test parallelism: ${JOBS} job(s) — set by TEST_JOBS" >&2
     return 0
   fi
-  local busy
-  busy=$(busy_cores)
   # Only the clamped cases need explaining; the ordinary one is just the sum.
-  local why="${cores} cores less ~${busy} in use"
-  if (( cores - busy >= TEST_JOBS_CAP )); then
+  local why="${JOBS_CORES} cores less ~${JOBS_BUSY} in use"
+  if (( JOBS_CORES - JOBS_BUSY >= TEST_JOBS_CAP )); then
     why="${why}, capped at ${TEST_JOBS_CAP}"
-  elif (( cores - busy <= TEST_JOBS_FLOOR )); then
+  elif (( JOBS_CORES - JOBS_BUSY <= TEST_JOBS_FLOOR )); then
     why="${why}, floored at ${TEST_JOBS_FLOOR} — machine is busy, expect a slow run"
   fi
   info "Test parallelism: ${JOBS} job(s) (${why})" >&2
@@ -358,7 +368,12 @@ main() {
   # Resolved once, before either suite starts. The load average is a
   # one-minute figure, so sizing pytest after bats has finished would size it
   # from the load our own bats run just produced and floor every second suite.
-  JOBS=$(test_jobs)
+  #
+  # Called directly rather than through `JOBS=$(test_jobs)`: a command
+  # substitution runs the function in a subshell, which would discard the
+  # JOBS_CORES/JOBS_BUSY globals it sets before report_jobs() below gets to
+  # read them.
+  test_jobs
 
   # Declare the tree under validation for the length of the run, so an agent
   # editing mid-suite is refused rather than silently invalidating it.

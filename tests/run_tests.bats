@@ -38,44 +38,43 @@ machine() {
 
 @test "an idle machine gets one job per core" {
   machine 8 0.42
-  run test_jobs
-  [ "$status" -eq 0 ]
-  [ "$output" -eq 8 ]
+  test_jobs
+  [ "$JOBS" -eq 8 ]
 }
 
 @test "cores already busy are not handed to the suite" {
   machine 8 3.70
-  run test_jobs
-  [ "$output" -eq 5 ]
+  test_jobs
+  [ "$JOBS" -eq 5 ]
 }
 
 @test "a fractional load is truncated, not rounded up" {
   # A one-minute average already lags the load it reports; rounding up would
   # count that lag twice and give away a core the machine may have back.
   machine 8 3.99
-  run test_jobs
-  [ "$output" -eq 5 ]
+  test_jobs
+  [ "$JOBS" -eq 5 ]
 }
 
 @test "a machine with more cores than the cap still stops at the cap" {
   machine 64 0.10
-  run test_jobs
-  [ "$output" -eq "$TEST_JOBS_CAP" ]
+  test_jobs
+  [ "$JOBS" -eq "$TEST_JOBS_CAP" ]
 }
 
 @test "a saturated machine falls back to the floor rather than to zero" {
   # Free capacity is negative here: the load exceeds the core count, which is
   # exactly the three-concurrent-suites case. The suite must still progress.
   machine 8 20.00
-  run test_jobs
-  [ "$output" -eq "$TEST_JOBS_FLOOR" ]
-  [ "$output" -gt 0 ]
+  test_jobs
+  [ "$JOBS" -eq "$TEST_JOBS_FLOOR" ]
+  [ "$JOBS" -gt 0 ]
 }
 
 @test "an oversubscribed single-core machine still gets the floor" {
   machine 1 4.00
-  run test_jobs
-  [ "$output" -eq "$TEST_JOBS_FLOOR" ]
+  test_jobs
+  [ "$JOBS" -eq "$TEST_JOBS_FLOOR" ]
 }
 
 @test "an unreadable load average reads as an idle machine" {
@@ -83,36 +82,36 @@ machine() {
   # count the sizing used before load entered it.
   machine 8 0
   load_average() { return 1; }
-  run test_jobs
-  [ "$output" -eq 8 ]
+  test_jobs
+  [ "$JOBS" -eq 8 ]
 }
 
 @test "a load average of an unexpected shape reads as an idle machine" {
   machine 8 "not-a-number"
-  run test_jobs
-  [ "$output" -eq 8 ]
+  test_jobs
+  [ "$JOBS" -eq 8 ]
 }
 
 @test "TEST_JOBS wins over the sizing, the cap and the floor" {
   machine 8 3.70
-  TEST_JOBS=32 run test_jobs
-  [ "$output" -eq 32 ]
+  TEST_JOBS=32 test_jobs
+  [ "$JOBS" -eq 32 ]
 }
 
 @test "TEST_JOBS=1 restores the serial ordering" {
   # The bisect path: a test that only fails under concurrency needs one worker
   # even on a machine with capacity for twelve.
   machine 8 0.10
-  TEST_JOBS=1 run test_jobs
-  [ "$output" -eq 1 ]
+  TEST_JOBS=1 test_jobs
+  [ "$JOBS" -eq 1 ]
 }
 
 @test "CI ignores the load average and sizes from the core count" {
   # A hosted runner is dedicated to the job, so its load average reports the
   # checkout and pipx installs that just finished rather than competing work.
   machine 4 3.90
-  CI=true run test_jobs
-  [ "$output" -eq 4 ]
+  CI=true test_jobs
+  [ "$JOBS" -eq 4 ]
 }
 
 @test "busy_cores reports nothing busy under CI" {
@@ -126,7 +125,7 @@ machine() {
 # same way rather than calling the suites.
 report_for() {
   machine "$1" "$2"
-  JOBS=$(test_jobs)
+  test_jobs
   report_jobs 2>&1
 }
 
@@ -159,10 +158,25 @@ report_for() {
   [[ "$output" != *"capped"* ]]
 }
 
+@test "the report describes the reading test_jobs used, not a fresh one" {
+  # load_average reads live kernel state on every call, so a machine whose
+  # load is fluctuating between the two calls main() makes — test_jobs() to
+  # resolve JOBS, then report_jobs() to explain it — must not have the second
+  # call silently re-derive a different "why" than the JOBS value it is
+  # attached to.
+  machine 18 17.0
+  test_jobs
+  machine 18 0.10
+  run report_jobs 2>&1
+  [[ "$output" == *"2 job(s)"* ]]
+  [[ "$output" == *"18 cores less ~17 in use"* ]]
+  [[ "$output" == *"floored"* ]]
+}
+
 @test "an overridden run credits TEST_JOBS rather than the load" {
   machine 18 9.0
   TEST_JOBS=4
-  JOBS=$(test_jobs)
+  test_jobs
   run report_jobs
   [[ "$output" == *"4 job(s)"* ]]
   [[ "$output" == *"TEST_JOBS"* ]]
@@ -174,7 +188,7 @@ report_for() {
   # read as a test result. `--separate-stderr` is what splits the two streams
   # — bats merges them into $output otherwise, which would pass either way.
   machine 8 0.42
-  JOBS=$(test_jobs)
+  test_jobs
   run --separate-stderr report_jobs
   [ -z "$output" ]
   [[ "$stderr" == *"8 job(s)"* ]]
@@ -185,7 +199,7 @@ report_for() {
   # them would notice main() losing the call. Asserted against the source for
   # the same reason the lock-ordering tests are: running main() starts a suite.
   local jobs_line report_line
-  jobs_line=$(grep -n '^  JOBS=$(test_jobs)$' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  jobs_line=$(grep -n '^  test_jobs$' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
   report_line=$(grep -n '^  report_jobs$' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
   [ -n "$jobs_line" ]
   [ -n "$report_line" ]

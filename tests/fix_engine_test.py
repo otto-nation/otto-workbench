@@ -1102,3 +1102,59 @@ def test_a_pass_with_no_trail_still_runs(tmp_path, landed, head):
     run, _ = _run(adapter, run_fix=_answer(adapter))
 
     assert [o.outcome for o in run.outcomes] == [FixOutcome.FIXED]
+
+
+class TestAfterVerifyRunsBeforeTheCommit:
+    """The hook's whole value is where it sits in the order.
+
+    A domain uses it to close the publishing gate on what the verify gate just
+    decided. `land` reads that gate, so a hook called after the landing would
+    be a hook that changed nothing — the push would already have gone.
+    """
+
+    def test_the_hook_sees_the_final_outcomes(self, tmp_path, landed, head):
+        adapter = StubAdapter(tmp_path)
+        seen = []
+        adapter.after_verify = lambda outcomes: seen.append(list(outcomes))
+
+        _run(adapter)
+
+        assert len(seen) == 1
+        assert [o.outcome for o in seen[0]] == [FixOutcome.FIXED]
+
+    def test_the_hook_precedes_the_landing(self, tmp_path, landed, head):
+        """Ordering asserted directly, not inferred from a side effect."""
+        adapter = StubAdapter(tmp_path)
+        calls = []
+        adapter.after_verify = lambda outcomes: calls.append("after_verify")
+        landed.side_effect = lambda *a, **k: (
+            calls.append("land")
+            or land.LandResult(CommitStatus.PUSHED, "abc1234")
+        )
+
+        _run(adapter)
+
+        assert calls == ["after_verify", "land"]
+
+    def test_the_hook_sees_a_falsified_fix_as_needs_human(self, tmp_path, landed, head):
+        """The case the comments domain holds on.
+
+        The gate demotes a falsified fix out of FIXED before this runs, which
+        is what the domain's hold reads. A hook placed before `_verify` would
+        see FIXED here and hold nothing.
+        """
+        adapter = StubAdapter(tmp_path)
+        seen = []
+        adapter.after_verify = lambda outcomes: seen.append(list(outcomes))
+
+        _run(adapter, verify=_verdicts(
+            ("i0", fix_engine.Verdict(ok=False, detail="the repro fails"))))
+
+        assert [o.outcome for o in seen[0]] == [FixOutcome.NEEDS_HUMAN]
+
+    def test_the_default_hook_is_a_no_op(self, tmp_path, landed, head):
+        """Every other domain runs the same engine and must be unaffected."""
+        adapter = StubAdapter(tmp_path)
+        _run(adapter)
+        assert adapter.recorded is not None
+

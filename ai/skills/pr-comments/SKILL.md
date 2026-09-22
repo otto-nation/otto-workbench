@@ -22,6 +22,25 @@ publishes them, and it is only ever passed after the user has read the drafts.
 that work leaves the machine. Neither implies the other, so `--finish --post` is
 not saying "publish" twice.
 
+**You are not the only thing between a draft and a reviewer.** The pass places
+its own publishing holds, and a held round publishes nothing however it was
+invoked — `--post` included. Three conditions close it:
+
+| Hold | When |
+|---|---|
+| Superseded branch | supersession signals say the branch is already overtaken |
+| Contested round | triage put any thread or item in `needs_human` |
+| Unsettled after the pass | the verify gate falsified a fix, or the agent declined an item or handed it back |
+
+The hold is monotonic and covers the whole round, not the offending thread:
+one contested finding can invalidate the premise of every other fix, so the
+pass declines to assert any of them. The fixes are still applied and still
+committed locally — only the outward acts wait. A held round reports
+`commit_status: push_held`.
+
+That makes `--finish --post` two things at once: the drain for a drafted queue,
+and the clearance for a hold once the person has settled what held it.
+
 Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_name>`.
 
 ---
@@ -130,22 +149,29 @@ Parse the JSON output. Top-level fields:
 | `issue_comments` | Raw issue-level discussion comments (for fallback when items aren't available) |
 | `review_body_comments` | Raw review-level body comments (for fallback when items aren't available) |
 
-The `fix_pass` object contains:
+Every row below marked **(field)** is a real JSON key of `fix_pass`. The rows
+marked otherwise are not keys of it — `declined`, `skipped` and
+`settled_elsewhere` are outcome kinds, and each row says where it actually
+surfaces. `batches`, `max_turns` and `max_budget` are keys too, covered above
+rather than in this table.
 
 | Field | Contents |
 |-------|----------|
-| `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
-| `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) |
-| `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong |
-| `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
-| `deferred` | Threads the agent could not auto-fix in the current pass |
-| `commit_sha` | Short SHA of the fix commit, or null |
-| `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
-| `replies_posted` | Count of per-thread replies posted to GitHub |
-| `summary_url` | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
-| `summary_deferred` | `true` when the round rendered a summary that did not go out — a draft run, a commit still off the remote, `needs_human` threads holding it back, or a post the API refused. The rows it covers are not only `fixed`: a round settled entirely as `already_addressed` renders a full table and owes it the same way. Together with `replies_pending` this is what `pr status` reads to report `⚠ closeout owed` and block merge readiness until `--finish --post` drains it |
-| `pr_body_pending` | `true` when a comment was answered by rewriting the PR description but the gate was shut. The replacement waits in `pr-description.md` in the pass's artifact directory, under the workbench state root rather than in the worktree; it is owed in `⚠ closeout owed` and sent by `--finish --post` |
-| `comment_items` | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
+| `fixed` **(field)** | Threads and items the agent auto-fixed (committed + pushed) |
+| `needs_human` **(field)** | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason, and where a `declined` outcome (below) travels |
+| `dismissed` **(field)** | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
+| `declined` (not a field) | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict. It has no key of its own — it is folded into `needs_human` above, and travels with it at every reviewer-facing surface |
+| `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
+| `deferred` **(field)** | Threads the agent could not auto-fix in the current pass |
+| `skipped` (not a field) | Never attempted — the pass excludes items of this kind on sight before `fix_pass` is built, so no key here records them |
+| `settled_elsewhere` (not a field) | Resolved on GitHub with no reply of ours naming a verdict. Nothing is owed and nothing is claimed; it is a reconciliation result reported after `--finish`, not a key of this object |
+| `commit_sha` **(field)** | Short SHA of the fix commit, or null |
+| `commit_status` **(field)** | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
+| `replies_posted` **(field)** | Count of per-thread replies posted to GitHub |
+| `summary_url` **(field)** | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
+| `summary_deferred` **(field)** | `true` when the round rendered a summary that did not go out — a draft run, a commit still off the remote, `needs_human` threads holding it back, or a post the API refused. The rows it covers are not only `fixed`: a round settled entirely as `already_addressed` renders a full table and owes it the same way. Together with `replies_pending` this is what `pr status` reads to report `⚠ closeout owed` and block merge readiness until `--finish --post` drains it |
+| `pr_body_pending` (state field, not fix_pass) | `true` when a comment was answered by rewriting the PR description but the gate was shut. The replacement waits in `pr-description.md` in the pass's artifact directory, under the workbench state root rather than in the worktree; it is owed in `⚠ closeout owed` and sent by `--finish --post` |
+| `comment_items` (top-level field, listed above) | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
 
 **Comment items** (`comment_items` array at the top level): when top-level PR
 comments (issue comments or review body comments) contain multiple actionable
@@ -171,11 +197,18 @@ or `rb-`) are comment items; regular thread IDs are inline review threads.
 
 **If `commit_status` is `push_held`:** the fixes are committed locally and
 nothing has been published, because something in the run judged the branch not
-safe to assert progress on. Say so plainly and do not report the fixes as landed
-on the PR. The stderr output states the reason the hold carries — read it back
-to the user rather than guessing, since new hold sources are added over time.
-Settle that reason with the user, and only then run `--finish --post`, which
-pushes the commit and drains the replies and the summary.
+safe to assert progress on — one of the three holds above. Say so plainly and
+do not report the fixes as landed on the PR. The stderr output states the reason
+the hold carries — read it back to the user rather than guessing, since new hold
+sources are added over time. Settle that reason with the user, and only then run
+`--finish --post`, which pushes the commit and drains the replies and the
+summary.
+
+A hold reading `falsified by the verify gate` is the one to slow down on: the
+pass ticked the fix itself and the gate then took it back, so the item is in
+`needs_human` with the gate's own detail as its reason. Read that detail before
+proposing anything — it says what was run and what happened, which is usually
+enough to tell a wrong fix from a fix the check could not exercise.
 
 A rebase between the two runs is expected and is not a problem: `--finish`
 follows the recorded SHA to the commit that replaced it — matched on patch id,
@@ -197,7 +230,11 @@ round. Say the push is unconfirmed rather than failed, and have the user re-run
 it — a second push of a commit the remote already holds is a no-op.
 
 **If `needs_human` and `deferred` are both empty and no unseen comments:**
-done — no further action needed.
+there is nothing left to decide, but the round is not finished. The fix pass
+drafted replies and a summary and published neither, so `summary_deferred` is
+true, `pr status` reports `⚠ closeout owed`, and that blocks merge readiness
+until something drains it. Go to Step 4 and close the round out — do not stop
+here.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:
@@ -221,6 +258,12 @@ current baseline. Find it via `wt switch main --no-cd --format json --no-hooks`.
 
 **Do not** attempt to fix `dismissed` threads — the agent already determined
 the reviewer's premise was factually wrong.
+
+**If `declined` is non-empty:** present each with the agent's argument. These
+are not failures to fix — the agent read the item and made a case against it,
+and that case is going to a reviewer under the author's name. Treat it as a
+claim to check rather than a verdict to relay: if the argument does not hold,
+say so and fix the item instead.
 
 **Fallback for raw comments**: if `comment_items` is empty but unseen
 `issue_comments` or `review_body_comments` exist (e.g., when running without

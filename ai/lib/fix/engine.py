@@ -275,6 +275,22 @@ class FixAdapter(ABC):
         """The directories the agent may read. The worktree alone, by default."""
         return [self.workdir]
 
+    def after_verify(self, outcomes: list[ItemOutcome]) -> None:
+        """A domain's last word before the commit is landed and pushed.
+
+        Called once the gate has spoken and the outcomes are final, and before
+        `landing`. The window matters: a domain that wants to stop the pass
+        asserting anything outward — because the gate falsified a fix, or the
+        agent handed an item back — has to say so before the push reads the
+        publishing gate, and `record` is too late for that.
+
+        A no-op by default. What a falsified fix means is the domain's call,
+        not the pipeline's: the comments pass owes a reviewer a reply and must
+        not send one it cannot stand behind, while `pr ci` and `pr review` owe
+        nobody anything mid-pass and hold nothing.
+        """
+        return None
+
 
 @dataclass(frozen=True)
 class _Batch:
@@ -810,6 +826,11 @@ def run(
     # falsifies must not reach `landing` as a fix, or the commit and the record
     # would disagree about what the pass did.
     _verify(settled.outcomes, verify, adapter, by_id, trail)
+
+    # Between the gate and the push, which is the only window that works: the
+    # outcomes are final here, and `land` below reads the publishing gate a
+    # domain may want to close on the strength of them.
+    adapter.after_verify(settled.outcomes)
 
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.

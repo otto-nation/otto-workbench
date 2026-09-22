@@ -146,6 +146,17 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             default_branch=git_topology.default_branch_cached(self.workdir),
         )
 
+    def after_verify(self, outcomes: list[ItemOutcome]) -> None:
+        """Hold publishing over what the gate and the agent decided.
+
+        The comments pass is the one domain with a reviewer waiting on the
+        other end, so it is the one that must not report a round as done while
+        part of it needs a person. Triage placed the same hold over its own
+        verdicts before the agent ran; this covers the three that arrive after
+        — see `pr.triage_round.hold_after_verify`.
+        """
+        triage_round.hold_after_verify(outcomes, self.trail)
+
     def template_vars(self) -> dict[str, str]:
         return {
             "pr_body_file": str(pc.pr_body_draft(self.artifacts)),

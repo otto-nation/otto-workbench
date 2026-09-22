@@ -4872,6 +4872,47 @@ class TestPostAlreadyAddressedReplies:
         assert count == 0
         mock_reply.assert_not_called()
 
+    def test_an_acted_reply_carries_the_unverified_hedge(self, tmp_path):
+        """The unattributed half of `reply_to_fixed` claims a fix and owes the
+        same caveat the attributed half carries.
+
+        `acted` is what says the caller landed the change itself. Without the
+        hedge here, a fix that could be neither verified nor attributed reaches
+        the reviewer as a plain claim.
+        """
+        fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py",
+                             verified=False, verify_detail="no runnable check")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(attribution, "find_addressing_commit", return_value=None),
+        ):
+            thread_replies.post_already_addressed_replies(
+                fixed, threads_by_id, "owner/repo", 42, tmp_path, acted=True,
+            )
+        body = mock_reply.call_args[0][3]
+        assert thread_replies.UNVERIFIED_REPLY_NOTE in body
+        assert "no runnable check" in body
+
+    def test_a_satisfied_reply_carries_no_hedge(self, tmp_path):
+        """Not acted: the code was already right and no gate ran on it.
+
+        Hedging here would caveat a claim the reviewer can check at the link in
+        the same reply, and would put the note on rows that never earned one.
+        """
+        fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py",
+                             verified=False, verify_detail="no runnable check")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(attribution, "find_addressing_commit", return_value=None),
+        ):
+            thread_replies.post_already_addressed_replies(
+                fixed, threads_by_id, "owner/repo", 42, tmp_path,
+            )
+        body = mock_reply.call_args[0][3]
+        assert thread_replies.UNVERIFIED_REPLY_NOTE not in body
+
 
 # ── reply upsert ─────────────────────────────────────────────────────────
 
@@ -6493,6 +6534,33 @@ class TestActionCellOutcome:
         stale = [c for c in cells
                  if not isinstance(summary_model._ActionVocabulary.matching(c), ActionCell)]
         assert stale == []
+
+    def test_a_satisfied_row_reported_as_a_fix_carries_the_hedge(self):
+        """The table and the reply beside it must not disagree.
+
+        A satisfied row whose commit postdates the comment reports as a fix and
+        counts as one, so an unverified one owes the same `(unverified)` suffix
+        the fixed rows carry. Without the kwarg the cell claims the fix plainly
+        while the reply hedges it.
+        """
+        cell = summary_row.addressed_status_for(
+            attribution.AddressedFraming(in_response=True, sha="9f2e1a0"),
+            "owner/repo", verified=False,
+        )
+        assert "(unverified)" in cell
+
+    def test_a_row_whose_code_predates_the_comment_never_hedges(self):
+        """Not a fix and not a claim the gate could check.
+
+        `ALREADY_ADDRESSED` is the reviewer's own observation confirmed; there
+        is nothing for a hedge to weaken, and adding one would caveat rows that
+        never ran a gate.
+        """
+        cell = summary_row.addressed_status_for(
+            attribution.AddressedFraming(in_response=False, sha="9f2e1a0"),
+            "owner/repo", verified=False,
+        )
+        assert "(unverified)" not in cell
 
     def test_no_live_wording_is_unreachable_from_the_builders(self):
         """A member nobody emits is a retired wording still filed as live.

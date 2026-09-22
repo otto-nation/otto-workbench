@@ -682,6 +682,9 @@ def _pr_from_branch(repo: str, branch: str) -> BranchPR:
     first = found[0]
     if not isinstance(first, dict):
         return BranchPR()
+    # Both forms coerce a missing/null field to the same falsy default:
+    # `_as_pr_number` turns `int("")` into `None`, and `or ""` turns `None`
+    # into `""` directly — they just take different routes to get there.
     return BranchPR(
         number=_as_pr_number(str(first.get("number", ""))),
         base=first.get("baseRefName") or "",

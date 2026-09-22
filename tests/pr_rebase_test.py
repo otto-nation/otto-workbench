@@ -2557,15 +2557,17 @@ def test_pr_base_branch_prefers_a_snapshot_the_caller_already_fetched():
 
 
 def _resolve_target(onto=None, *, pr_base=None, default_branch="main",
-                    stack_parent=""):
+                    parent_branch=""):
     """Resolve the target ref with every probe forced.
 
-    `stack_parent` is pinned along with the rest: left live it walks the
-    ancestry of whatever repo the suite is running inside, so the rung under
-    test would be decided by the checkout rather than by the case.
+    `parent_branch` pins what `git_topology.stack_parent` returns: left live
+    it walks the ancestry of whatever repo the suite is running inside, so
+    the rung under test would be decided by the checkout rather than by the
+    case. Named apart from the patched attribute so the two are not
+    conflated on a fast read.
     """
     with mock.patch.object(rebase_target, "pr_base_branch", return_value=pr_base), \
-         mock.patch.object(git_topology, "stack_parent", return_value=stack_parent), \
+         mock.patch.object(git_topology, "stack_parent", return_value=parent_branch), \
          mock.patch.object(git_topology, "default_branch",
                            return_value=default_branch):
         return rebase_target.resolve_target_ref("/fake", _landed_ctx(), onto)

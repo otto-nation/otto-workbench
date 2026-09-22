@@ -221,6 +221,7 @@ claude-review post <pr_url_or_number>
 | `--disprove` | Run the disprove gate even when the effort preset drops it | effort-based |
 | `--json-summary` | Suppress human output; emit JSON summary to stdout | — |
 | `--issue <link>` | Attach an issue link for reviewer context | — |
+| `--base <branch>`, `--onto <branch>` | Branch to review against, as a bare name — see "Which base a review measures against" below | derived |
 | `--max-parallel <N>` | Max concurrent group reviews | `4` |
 | `--max-cost <USD>` | Max total review cost in USD | `20` |
 | `--model <name>` | Override model for all agents (e.g., `sonnet`, `opus`) | — |
@@ -253,7 +254,7 @@ Every range a review reads is anchored to `origin/<base>`, and the base is resol
 | Rung | Source | When it answers |
 |------|--------|-----------------|
 | 1 | `--base` / `--onto` | The operator passed one |
-| 2 | The PR's `baseRefName` | The branch has an open PR that GitHub will report |
+| 2 | The PR's `baseRefName` | The branch has an open PR that GitHub will report (`gh pr list` defaults to open PRs) |
 | 3 | Nearest local ancestor of HEAD | The branch is stacked on another branch that has no PR yet |
 | 4 | The repo's default branch | Everything else — the ordinary branch off trunk |
 

@@ -27,7 +27,6 @@ from agent import invoke as agent_invoke
 from agent.registry import PHASES
 from fix import engine as fix_engine
 from git import land
-from pr import attribution
 from git import push
 from review import document as review_document
 from review import fix as review_fix
@@ -36,6 +35,7 @@ from review import paths as review_paths
 from review import types as review_types
 from core.proc import TIMEOUT_RETURNCODE, CmdResult
 from core.phases import Effort, Phase
+from pr import attribution
 from pr.fix import FixOutcome, ItemOutcome
 from gh.types import PRContext, PRMetadata
 from review.types import Finding, ReviewJob
@@ -1054,7 +1054,7 @@ class TestTheHeldCommitIsRecorded:
     """
 
     @staticmethod
-    def _run(status, sha="abc1234", resume=""):
+    def _landing(status, sha="abc1234", resume=""):
         return fix_engine.FixRun(
             landed=land.LandResult(status=status, sha=sha, resume=resume),
         )
@@ -1084,7 +1084,7 @@ class TestTheHeldCommitIsRecorded:
     def test_a_held_commit_is_recorded_as_owed(self, git_wt, tmp_path):
         job = _make_job(git_wt, tmp_path)
         review_dir = Path(job.artifact_dir)
-        review_fix._record_commit(job, self._run(land.CommitStatus.PUSH_HELD))
+        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
 
         meta = review_paths.read_review_meta(review_dir)
         assert meta.fix_commit_sha == "abc1234"
@@ -1092,7 +1092,7 @@ class TestTheHeldCommitIsRecorded:
 
     def test_a_pushed_commit_owes_nothing(self, git_wt, tmp_path):
         job = _make_job(git_wt, tmp_path)
-        review_fix._record_commit(job, self._run(land.CommitStatus.PUSHED))
+        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSHED))
 
         meta = review_paths.read_review_meta(Path(job.artifact_dir))
         assert meta.fix_commit_sha == "abc1234"
@@ -1108,7 +1108,7 @@ class TestTheHeldCommitIsRecorded:
         """
         job = _make_job(git_wt, tmp_path)
         for status in land.CommitStatus:
-            review_fix._record_commit(job, self._run(status))
+            review_fix._record_commit(job, self._landing(status))
             meta = review_paths.read_review_meta(Path(job.artifact_dir))
             expected = "abc1234" if attribution.commit_unpushed(status) else ""
             assert meta.unpushed_fix_commit == expected, status
@@ -1120,7 +1120,7 @@ class TestTheHeldCommitIsRecorded:
         review_paths.write_review_meta(
             review_dir, review_types.ReviewMeta(repo="o/r", head_sha="deadbeef"),
         )
-        review_fix._record_commit(job, self._run(land.CommitStatus.PUSH_HELD))
+        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
 
         meta = review_paths.read_review_meta(review_dir)
         assert (meta.repo, meta.head_sha) == ("o/r", "deadbeef")
@@ -1130,10 +1130,29 @@ class TestTheHeldCommitIsRecorded:
         """Nothing to commit is not a retraction of what an earlier round said."""
         job = _make_job(git_wt, tmp_path)
         review_dir = Path(job.artifact_dir)
-        review_fix._record_commit(job, self._run(land.CommitStatus.PUSH_HELD))
+        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
         review_fix._record_commit(job, fix_engine.FixRun(landed=None))
 
         assert review_paths.read_review_meta(review_dir).unpushed_fix_commit == "abc1234"
+
+    def test_a_pass_that_landed_nothing_new_leaves_the_record_alone(self, git_wt, tmp_path):
+        """`NO_CHANGES`/`COMMIT_FAILED` carry no new sha and must not overwrite one.
+
+        A round that defers or declines every open finding still calls `land`
+        with an empty scope, which answers `NO_CHANGES` rather than `None` —
+        and a `COMMIT_FAILED` round leaves the same empty sha behind. Neither
+        is a retraction of the commit an earlier round actually made.
+        """
+        job = _make_job(git_wt, tmp_path)
+        review_dir = Path(job.artifact_dir)
+        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
+        for status in (land.CommitStatus.NO_CHANGES, land.CommitStatus.COMMIT_FAILED):
+            review_fix._record_commit(
+                job, fix_engine.FixRun(landed=land.LandResult(status=status, sha="")),
+            )
+            meta = review_paths.read_review_meta(review_dir)
+            assert meta.fix_commit_sha == "abc1234", status
+            assert meta.unpushed_fix_commit == "abc1234", status
 
     def test_an_unrecordable_commit_does_not_take_the_sidecar_with_it(self, git_wt, tmp_path):
         """Every review lookup on the machine walks these files.

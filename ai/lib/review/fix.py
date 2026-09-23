@@ -534,8 +534,12 @@ def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:
     A pass with no landing — no items, nothing to commit — records nothing and
     leaves any earlier round's record alone, which is the difference between a
     round that had nothing to say and one that retracted what the last said.
+    The same holds for a landing that ran but produced no new commit: `land`
+    reports that as `NO_CHANGES` or `COMMIT_FAILED`, never as `None`, and both
+    carry an empty `sha` — the tell that nothing here should overwrite an
+    earlier round's real commit.
     """
-    if run.landed is None:
+    if run.landed is None or not run.landed.sha:
         return
     sha, status = run.landed.sha, run.landed.status
     # Both must be the strings the sidecar's schema says they are. Every review

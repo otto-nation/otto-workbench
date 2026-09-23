@@ -678,12 +678,7 @@ def _collect_file_data(
         p = wt / f["path"]
         contents[f["path"]] = _read_file_safe(p)
         permissions[f["path"]] = _file_permissions(p)
-        # No key at all when neither count is reported, rather than a zero.
-        # Zero reads as "nothing changed", which is the densest possible claim
-        # of sparseness; absent lets `_is_sparse` fall back to treating the
-        # file as wholly changed, which is the safe direction for an unknown.
-        if "additions" in f or "deletions" in f:
-            changes[f["path"]] = f.get("additions", 0) + f.get("deletions", 0)
+        changes[f["path"]] = f.get("additions", 0) + f.get("deletions", 0)
     return contents, permissions, changes
 
 
@@ -697,8 +692,12 @@ def _is_sparse(path: str, content: str, file_changes: dict[str, int]) -> bool:
     gives three lines of context, and whether a change is correct is a
     question about the code around it.
 
-    A file with no entry in ``file_changes`` counts as wholly changed rather
-    than sparse: an unknown is not evidence of sparseness.
+    Both producers of ``pr.files`` report every path's counts — `gh.pr_reads`
+    from the API payload and `git.numstat` from `--numstat` — so the fallback
+    below is for a caller that supplies neither, not a case either of them
+    reaches. A pure rename reports an explicit zero rather than no entry, and
+    so reads as maximally sparse: correct here, since a file with nothing
+    changed inside it is the cheapest thing a shortfall can take.
     """
     size = len(content.encode())
     if size <= FILE_CONTENT_MIN_SIZE:

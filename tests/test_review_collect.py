@@ -542,36 +542,6 @@ class TestSparseFileShedding:
         assert len(data.omitted_files) == 1
         assert len(data.file_contents) == 2
 
-    def test_a_file_with_no_change_count_is_not_treated_as_sparse(
-        self, tmp_path, monkeypatch,
-    ):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "unknown.py").write_text("x = 1\n" * 2000)
-        (repo / "sparse.py").write_text("y = 1\n" * 2000)
-        commit_all(repo, "init")
-        add_self_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "unknown.py").write_text("x = 1\n" * 1999 + "x = 2\n")
-        (repo / "sparse.py").write_text("y = 1\n" * 1999 + "y = 2\n")
-        commit_all(repo, "change")
-
-        job = _job(
-            tmp_path,
-            [
-                {"path": "unknown.py"},
-                {"path": "sparse.py", "additions": 1, "deletions": 1},
-            ],
-            wt_path=str(repo),
-        )
-        # Room for one of the two. The file with no counts is wholly changed as
-        # far as the heuristic knows, so the one with known-sparse counts goes.
-        _ceiling_for(repo, monkeypatch, 14_000)
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = rc.collect_preflight_data(job)
-
-        assert "unknown.py" in data.file_contents
-        assert "sparse.py" in data.omitted_files
-
 
 # ── collect_preflight_data (git repo tests) ─────────────────────────────────
 

@@ -17,6 +17,7 @@ from review.issue import (
     IssueContext, IssueDelivery, IssueProviderInfo, CreatedIssue,
     load_issue_provider, ensure_issue_provider, extract_issue_id,
     needs_team_key, fetch_issue_context, create_issue, update_issue,
+    warn_on_host_mismatch,
 )
 from config import workbench_config
 
@@ -929,3 +930,55 @@ def test_update_issue_github():
 def test_update_issue_unsupported_provider():
     ok = update_issue("jira", "PROJ-42", "description")
     assert ok is False
+
+
+# ── warn_on_host_mismatch ───────────────────────────────────────────────────
+
+
+class TestWarnOnHostMismatch:
+    """Two GitHubs that disagree, and every arrangement that legitimately does not."""
+
+    def test_two_different_github_instances_are_reported(self):
+        msg = warn_on_host_mismatch(
+            "github", {"base_url": "https://ghe.acme.com"}, "other.acme.com")
+        assert "other.acme.com" in msg
+        assert "ghe.acme.com" in msg
+
+    def test_matching_hosts_say_nothing(self):
+        assert warn_on_host_mismatch(
+            "github", {"base_url": "https://ghe.acme.com"}, "ghe.acme.com") == ""
+
+    def test_the_comparison_ignores_case_and_scheme(self):
+        """`base_url` is a pasted URL and a remote host is free-cased.
+
+        Compared raw, an operator who typed the host correctly in a different
+        case gets a warning about a disagreement that does not exist — and a
+        warning that fires when nothing is wrong is one nobody reads.
+        """
+        assert warn_on_host_mismatch(
+            "github", {"base_url": "https://GHE.Acme.com/"}, "ghe.acme.com") == ""
+
+    def test_an_unset_tracker_host_says_nothing(self):
+        """No `base_url` is gh's own resolution, not a claim that contradicts origin."""
+        assert warn_on_host_mismatch("github", {}, "ghe.acme.com") == ""
+
+    def test_public_github_on_both_sides_is_not_a_mismatch(self):
+        """Both spellings of the public instance normalise to the same answer."""
+        assert warn_on_host_mismatch(
+            "github", {"base_url": "https://github.com"}, "github.com") == ""
+
+    def test_a_non_github_tracker_is_never_reported(self):
+        """Code on an enterprise forge with a Linear or Jira tracker is ordinary.
+
+        The two hosts answer different questions there, so a difference between
+        them is the configuration working rather than a mistake.
+        """
+        assert warn_on_host_mismatch(
+            "linear", {"base_url": "https://linear.app"}, "ghe.acme.com") == ""
+        assert warn_on_host_mismatch(
+            "jira", {"base_url": "https://acme.atlassian.net"}, "ghe.acme.com") == ""
+
+    def test_no_origin_host_says_nothing(self):
+        """A local remote or ssh alias names no host to disagree with."""
+        assert warn_on_host_mismatch(
+            "github", {"base_url": "https://ghe.acme.com"}, "") == ""

@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from pr import target as pr_target
 from pr.domains import VERDICT_PROSE_PREFIX_RE
 from review.grammar import finding_tag, posted_finding_tag, sid_marker
 from review.sections import ReviewSections, SectionConfig
@@ -421,10 +422,15 @@ _PERMALINK_REF_RE = re.compile(
 )
 
 
-def _build_permalink(repo: str, ref: str, m: re.Match) -> str:
-    """Build a GitHub permalink from a source reference match."""
+def _build_permalink(repo: str, ref: str, m: re.Match, host: str = "") -> str:
+    """Build a permalink from a source reference match, on *host*'s forge.
+
+    ``host`` is defaulted because the empty value is meaningful rather than
+    missing: ``forge_base_url`` reads it as public GitHub, which is what a
+    review whose sidecar predates the field correctly means.
+    """
     path, start, end = m.group(1), m.group(2), m.group(3)
-    url = f"https://github.com/{repo}/blob/{ref}/{path}#L{start}"
+    url = f"{pr_target.forge_base_url(host)}/{repo}/blob/{ref}/{path}#L{start}"
     if end:
         url += f"-L{end}"
     display = f"`{path}:{start}{f'-{end}' if end else ''}`"
@@ -433,12 +439,16 @@ def _build_permalink(repo: str, ref: str, m: re.Match) -> str:
 
 def resolve_permalinks(
     findings: list[Finding], repo: str, diff_text: str,
-    head_ref: str, base_ref: str,
+    head_ref: str, base_ref: str, host: str = "",
 ) -> list[Finding]:
-    """Convert source references to GitHub permalink URLs.
+    """Convert source references to permalink URLs on *host*'s forge.
 
     Uses base_ref for files unchanged by the PR and head_ref for
     files that are new or modified in the PR diff.
+
+    ``host`` comes from the review's sidecar rather than from a resolved
+    target: this runs in `review-post`, which is spawned with a review file and
+    never reads a remote of its own.
     """
     if not head_ref or not base_ref:
         return findings
@@ -449,7 +459,7 @@ def resolve_permalinks(
         path = m.group(1)
         resolved = _resolve_path(path, hunks)
         ref = head_ref if resolved else base_ref
-        return _build_permalink(repo, ref, m)
+        return _build_permalink(repo, ref, m, host)
 
     for f in findings:
         f.body = _PERMALINK_REF_RE.sub(replacer, f.body)

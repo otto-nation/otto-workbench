@@ -24,13 +24,15 @@ from core import timeouts
 from config import workbench_config
 from config import workbench_config_write
 from config.workbench_config import yaml_dump
+# One fact, one owner. `pr.target` names the public instance for the URL
+# builders and this module needs the same answer: a host equal to it adds
+# nothing to what gh resolves by default, so it is normalised away rather than
+# qualifying every ``--repo`` with it. Spelled twice, the two are a pair to keep
+# in step for no reason either file states.
+from pr.target import PUBLIC_GITHUB_HOST
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
-# The public instance, as it appears in a ``base_url``. A host equal to this
-# adds nothing to what gh resolves by default, so it is normalised away rather
-# than qualifying every ``--repo`` with it.
-_PUBLIC_GITHUB_HOST = "github.com"
 # The host a provider's issues live under when ``issues.base_url`` has not
 # named one. GitHub has a single public instance to fall back on; Jira is
 # per-tenant and Linear per-workspace, so neither has a default and an
@@ -42,7 +44,7 @@ _PUBLIC_GITHUB_HOST = "github.com"
 # reader checking it against the enum, rather than leaving Jira as the only
 # entry with no default and Linear looking like an oversight.
 _DEFAULT_BASE_URL = {
-    str(workbench_config.IssueProvider.GITHUB): f"https://{_PUBLIC_GITHUB_HOST}",
+    str(workbench_config.IssueProvider.GITHUB): f"https://{PUBLIC_GITHUB_HOST}",
     str(workbench_config.IssueProvider.JIRA): "",
     str(workbench_config.IssueProvider.LINEAR): "",
 }
@@ -452,7 +454,41 @@ def _github_host(opts: dict | None) -> str:
     """
     base = (opts or {}).get("base_url", "")
     host = re.sub(r"^[a-z]+://", "", base.strip(), flags=re.IGNORECASE).strip("/")
-    return "" if host.lower() == _PUBLIC_GITHUB_HOST else host
+    return "" if host.lower() == PUBLIC_GITHUB_HOST else host
+
+
+def warn_on_host_mismatch(
+    provider: str, opts: dict | None, origin_host: str,
+) -> str:
+    """Report an origin and a GitHub tracker that name different instances.
+
+    The two hosts are derived separately and are *allowed* to differ: code on an
+    enterprise instance with a Jira or Linear tracker is an ordinary setup, and
+    collapsing them into one value would break it. The case worth reporting is
+    narrower — the tracker is GitHub too, and it is a different GitHub. Then
+    every rendered link points at one instance while every issue is filed to
+    another, and both halves look right on their own.
+
+    Only a warning. Either host may be the correct one and this cannot tell
+    which, so refusing would block a run over a disagreement it cannot resolve.
+    Returns the message it logged, for a caller that wants to record it too.
+    """
+    if provider != str(workbench_config.IssueProvider.GITHUB):
+        return ""
+    tracker_host = _github_host(opts)
+    # Both are normalised to "" for the public instance, so this compares like
+    # with like: an unset base_url and an explicit https://github.com are the
+    # same answer, and neither disagrees with an origin on github.com.
+    origin = "" if origin_host.lower() == PUBLIC_GITHUB_HOST else origin_host.lower()
+    if not origin or not tracker_host or origin == tracker_host.lower():
+        return ""
+    message = (
+        f"origin is on {origin_host} but issues.base_url names "
+        f"{tracker_host} — links will point at one instance and issues "
+        f"will be filed to the other"
+    )
+    log.warn(message)
+    return message
 
 
 def _github_repo_arg(repo: str, opts: dict | None) -> str:

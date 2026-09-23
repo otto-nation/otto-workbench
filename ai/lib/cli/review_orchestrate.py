@@ -54,6 +54,7 @@ from pr import state as pr_state
 from core import proc
 from core import publishing
 
+from pr import target as pr_target
 from pr.context import detect_repo
 from agent.registry import add_phase_skip_flags, phase_skips
 from core.phases import Effort, Mode
@@ -94,7 +95,7 @@ SCRIPT = "review-orchestrate"
 _SUBMODULES = (
     _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc,
     _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
-    ai_backend, log, module_proxy, pr_state, proc, publishing,
+    ai_backend, log, module_proxy, pr_state, pr_target, proc, publishing,
 )
 
 module_proxy.install(__name__, _SUBMODULES)
@@ -332,8 +333,15 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     if args.prior_review and Path(args.prior_review).exists():
         prior_review = Path(args.prior_review).read_text()
 
+    # Read separately from `repo` because `--repo` may name a repo the cwd is
+    # not: the slug can be handed in, the host can only be read off the remote.
+    # A run whose `--repo` disagrees with `--repo-dir`'s origin gets the empty
+    # host and renders public GitHub, which is the answer it gave before the
+    # host existed.
+    origin = pr_target.repo_identity_from_origin(args.repo_dir)
+
     job = ReviewJob(
-        repo=repo, pr_number=args.pr, pr=pr, ctx=ctx,
+        repo=repo, host=origin.host if origin else "", pr_number=args.pr, pr=pr, ctx=ctx,
         wt_path=args.repo_dir, review_file=args.review_file,
         session_log=session_log,
         issue_link=args.issue, issue_context=args.issue_context,

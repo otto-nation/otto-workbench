@@ -1908,6 +1908,18 @@ class TestWriteReviewSidecar:
         ro._write_review_sidecar(job)
         assert ro.read_review_meta(tmp_path) == ro._job_meta(job)
 
+    def test_the_job_host_reaches_the_sidecar(self, ro, tmp_path):
+        """The stamp `review-post` depends on.
+
+        It is spawned with a review file and never reads a remote, so a host the
+        job knew and the sidecar did not is a host that reaches no permalink.
+        """
+        job = self._make_job(ro, tmp_path)
+        job.host = "ghe.acme.com"
+        ro._write_review_sidecar(job)
+        assert json.loads((tmp_path / "meta.json").read_text())["host"] == "ghe.acme.com"
+        assert ro.read_review_meta(tmp_path).host == "ghe.acme.com"
+
     def test_an_incremental_run_records_what_it_is_a_delta_against(self, ro, tmp_path):
         job = self._make_job(ro, tmp_path)
         job.preflight = ro.PreflightData(

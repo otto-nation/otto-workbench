@@ -946,6 +946,18 @@ class TestBuildPermalink:
         assert result.startswith("[")
         assert "](https://github.com/org/repo/blob/sha123/pkg/handler.go#L5)" in result
 
+    def test_an_enterprise_host_replaces_public_github(self, rp):
+        m = rp._PERMALINK_REF_RE.search("see file.go:42")
+        result = rp._build_permalink("owner/repo", "abc123", m, "ghe.acme.com")
+        assert "https://ghe.acme.com/owner/repo/blob/abc123/file.go#L42" in result
+        assert "github.com" not in result
+
+    def test_an_enterprise_host_carries_through_a_line_range(self, rp):
+        m = rp._PERMALINK_REF_RE.search("see file.go:10-20")
+        result = rp._build_permalink("owner/repo", "def456", m, "ghe.acme.com")
+        assert "https://ghe.acme.com/owner/repo/blob/def456/file.go#L10-L20" in result
+        assert "github.com" not in result
+
 
 class TestResolvePermalinks:
     DIFF = (
@@ -964,6 +976,16 @@ class TestResolvePermalinks:
         rp.resolve_permalinks([f], "org/repo", self.DIFF, "head-sha", "base-sha")
         assert "head-sha" in f.body
         assert "base-sha" not in f.body
+
+    def test_findings_render_on_the_enterprise_host(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="handler.go", line=5,
+            end_line=None, body="see pkg/handler.go:42",
+        )
+        rp.resolve_permalinks(
+            [f], "org/repo", self.DIFF, "head-sha", "base-sha", "ghe.acme.com")
+        assert "https://ghe.acme.com/org/repo/blob/head-sha/pkg/handler.go#L42" in f.body
+        assert "github.com" not in f.body
 
     def test_reference_to_file_not_in_diff_uses_base_ref(self, rp):
         f = rp.Finding(
@@ -1565,6 +1587,36 @@ class TestDryRunIntegration:
             review_file, tmp_path, extra_args=["--expect-ref", "isaac/feat/mine"])
 
         assert result.returncode == 0
+
+    def test_a_sidecar_naming_a_forge_renders_links_on_it(self, tmp_path):
+        """End to end, through the process that actually posts.
+
+        `review-post` is spawned with a review file and never reads a remote, so
+        the sidecar is the only thing that can tell it a link belongs on an
+        enterprise host. Asserted here rather than on the builder alone because
+        it is the wiring — sidecar to `args` to renderer — that this closes.
+        """
+        review_dir = tmp_path / "ghe-review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        # A prose reference is what `resolve_permalinks` rewrites, and it only
+        # runs with both refs in hand — the stock fixture has neither, so it
+        # renders no permalink at all and could not see a wrong forge.
+        review_file.write_text(self.REVIEW_MD.replace(
+            "- **[M1]** **`handler.go:11`** — missing error check",
+            "- **[M1]** **`handler.go:11`** — missing error check, see handler.go:11",
+        ))
+        (review_dir / "meta.json").write_text(json.dumps({
+            "repo": "test/repo", "head_sha": "abc123def456",
+            "head_ref": "feat/x", "base_ref": "main",
+            "host": "ghe.acme.com",
+        }))
+
+        result = self._run_dry_run(review_file, tmp_path)
+
+        assert result.returncode == 0
+        assert "https://ghe.acme.com/test/repo/blob/" in result.stdout
+        assert "https://github.com/test/repo/blob/" not in result.stdout
 
     def test_a_sidecar_naming_no_branch_is_posted(self, tmp_path):
         """A review written before the field existed still publishes.

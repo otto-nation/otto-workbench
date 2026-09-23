@@ -34,6 +34,7 @@ _KINDS = [k for k in CommentSourceKind if k is not CommentSourceKind.UNSET]
 
 _REPO = "owner/repo"
 _SHA = "abc1234"
+_HOST = "ghe.acme.com"
 
 
 class TestBlobPermalink:
@@ -51,11 +52,22 @@ class TestBlobPermalink:
         assert f"/blob/{_SHA}/" in url
         assert "/blob/main/" not in url
 
+    def test_an_enterprise_host_replaces_public_github(self):
+        """A pinned URL on the wrong forge is a 404 the reviewer reads as a lie."""
+        url = permalinks.blob_permalink(_REPO, _SHA, "a/b.py", 7, _HOST)
+        assert url == f"https://{_HOST}/{_REPO}/blob/{_SHA}/a/b.py#L7"
+        assert "github.com" not in url
+
 
 class TestCommitPermalink:
     def test_it_names_the_commit(self):
         assert permalinks.commit_permalink(_REPO, _SHA) == (
             f"https://github.com/{_REPO}/commit/{_SHA}")
+
+    def test_an_enterprise_host_replaces_public_github(self):
+        url = permalinks.commit_permalink(_REPO, _SHA, _HOST)
+        assert url == f"https://{_HOST}/{_REPO}/commit/{_SHA}"
+        assert "github.com" not in url
 
     def test_no_caller_still_builds_the_url_by_hand(self):
         """The summary cell, the fixed reply and the addressed reply.
@@ -207,6 +219,12 @@ class TestCommentSource:
         source = permalinks.CommentSource("something_else", "902")
         assert source.permalink(_REPO, 42) is None
 
+    def test_an_enterprise_host_replaces_public_github(self):
+        source = permalinks.CommentSource("issue_comment", "900")
+        url = source.permalink(_REPO, 42, _HOST)
+        assert url == f"https://{_HOST}/{_REPO}/pull/42#issuecomment-900"
+        assert "github.com" not in url
+
 
 class TestCommentItemSource:
     def test_declared_fields_are_used_as_given(self):
@@ -259,6 +277,25 @@ class TestThreadPermalink:
     def test_an_unknown_entry_has_no_permalink(self):
         assert permalinks.thread_permalink(
             CommentItem(id="t9"), {}, _REPO, 42) is None
+
+    def test_an_enterprise_host_replaces_public_github(self):
+        threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        url = permalinks.thread_permalink(
+            CommentItem(id="t1"), threads, _REPO, 42, _HOST)
+        assert url == f"https://{_HOST}/{_REPO}/pull/42#discussion_r111"
+        assert "github.com" not in url
+
+    def test_the_host_reaches_the_comment_item_fallback(self):
+        """The fallback is a second builder, and it took the host separately.
+
+        A thread with no database id falls through to the source comment's
+        anchor, so a host threaded only as far as the thread branch would leave
+        exactly the entries that missed it pointing at public GitHub.
+        """
+        url = permalinks.thread_permalink(
+            CommentItem(id="ic-900-0"), {}, _REPO, 42, _HOST)
+        assert url == f"https://{_HOST}/{_REPO}/pull/42#issuecomment-900"
+        assert "github.com" not in url
 
 
 class TestTheAnchorSpellingsAreGitHubs:

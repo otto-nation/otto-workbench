@@ -308,6 +308,13 @@ class ReviewMeta:
     """
 
     repo: str = ""
+    # The forge the repo is served from, carried because the process that renders
+    # this review's permalinks cannot ask. `review-post` is spawned with a review
+    # file and a PR number and nothing else — it never resolves a target and never
+    # reads a remote — so the sidecar is the only thing that can tell it a link
+    # belongs on an enterprise host. Empty is public GitHub, which is what a
+    # meta.json written before this field existed correctly means.
+    host: str = ""
     pr_number: int | None = None
     head_sha: str = ""
     head_ref: str = ""
@@ -599,6 +606,11 @@ class ReviewJob:
     wt_path: str
     review_file: str
     session_log: str
+    # Beside `repo` rather than folded into it: that string is the `--repo`
+    # argument and the GraphQL `owner/name`, and a host in it would reach both.
+    # In memory only — the job is never serialised; it reaches disk through
+    # `ReviewMeta`, which carries its own copy.
+    host: str = ""
     issue_link: str = ""
     issue_context: str = ""
     prior_review: str = ""

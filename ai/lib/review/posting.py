@@ -243,6 +243,9 @@ def _post_as_comment(
         return
 
     diff_text = review_github._get_diff(args.repo, args.pr)
+    # No host: this path has no sidecar to read one from, so it renders public
+    # GitHub. Harmless while nothing calls this function, and the thing to fix
+    # before anything does — `_run_post` passes `sidecar.host` for the reason.
     review_format.resolve_permalinks(findings, args.repo, diff_text, head_ref, base_ref)
 
     drift = review_github._count_new_commits(args.repo, args.pr, review_sha, pr_data)

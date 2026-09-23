@@ -41,6 +41,7 @@ from fix import tracking as fix_tracking  # noqa: E402
 from fix import types as fix_types  # noqa: E402
 from fix import verify as fix_verify  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
+from core import serde  # noqa: E402
 from core.phases import Mode, Phase, PhaseShape  # noqa: E402
 from rebase import prepush as rebase_prepush  # noqa: E402
 from review import fix as review_fix  # noqa: E402
@@ -173,6 +174,31 @@ class TestReviewMeta:
         })
         assert meta.started_at == "2026-08-18T13:47:03+00:00"
         assert meta.reviewed_at == "2026-08-18T14:02:11+00:00"
+
+    def test_the_host_is_read_from_the_file(self):
+        meta = review_types.review_meta_from_dict({"host": "ghe.acme.com"})
+        assert meta.host == "ghe.acme.com"
+
+    # passes-at-base: pins the back-compat read this change was careful not to break
+    def test_a_sidecar_predating_the_host_still_names_its_repo(self):
+        """The field is additive: an older meta.json loses nothing by lacking it.
+
+        `serde` drops a value whose shape does not match its hint, so a field
+        added in the wrong shape would take the whole record's `repo` down with
+        it and silently unattribute every review already on disk.
+        """
+        meta = review_types.review_meta_from_dict(
+            {"repo": "acme/widget", "pr_number": "7", "head_sha": "abc123"})
+        assert meta.host == ""
+        assert meta.repo == "acme/widget"
+        assert meta.pr_number == 7
+
+    def test_the_host_survives_a_write_and_read(self):
+        """What `review-post` depends on: the host reaches it through the file."""
+        written = serde.to_dict(
+            review_types.ReviewMeta(repo="acme/widget", host="ghe.acme.com"))
+        assert written["host"] == "ghe.acme.com"
+        assert serde.from_dict(review_types.ReviewMeta, written).host == "ghe.acme.com"
 
 
 # ── 1c. TestPhaseSkipFlags ───────────────────────────────────────────────────

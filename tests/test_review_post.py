@@ -946,6 +946,18 @@ class TestBuildPermalink:
         assert result.startswith("[")
         assert "](https://github.com/org/repo/blob/sha123/pkg/handler.go#L5)" in result
 
+    def test_an_enterprise_host_replaces_public_github(self, rp):
+        m = rp._PERMALINK_REF_RE.search("see file.go:42")
+        result = rp._build_permalink("owner/repo", "abc123", m, "ghe.acme.com")
+        assert "https://ghe.acme.com/owner/repo/blob/abc123/file.go#L42" in result
+        assert "github.com" not in result
+
+    def test_an_enterprise_host_carries_through_a_line_range(self, rp):
+        m = rp._PERMALINK_REF_RE.search("see file.go:10-20")
+        result = rp._build_permalink("owner/repo", "def456", m, "ghe.acme.com")
+        assert "https://ghe.acme.com/owner/repo/blob/def456/file.go#L10-L20" in result
+        assert "github.com" not in result
+
 
 class TestResolvePermalinks:
     DIFF = (
@@ -964,6 +976,16 @@ class TestResolvePermalinks:
         rp.resolve_permalinks([f], "org/repo", self.DIFF, "head-sha", "base-sha")
         assert "head-sha" in f.body
         assert "base-sha" not in f.body
+
+    def test_findings_render_on_the_enterprise_host(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="handler.go", line=5,
+            end_line=None, body="see pkg/handler.go:42",
+        )
+        rp.resolve_permalinks(
+            [f], "org/repo", self.DIFF, "head-sha", "base-sha", "ghe.acme.com")
+        assert "https://ghe.acme.com/org/repo/blob/head-sha/pkg/handler.go#L42" in f.body
+        assert "github.com" not in f.body
 
     def test_reference_to_file_not_in_diff_uses_base_ref(self, rp):
         f = rp.Finding(

@@ -53,6 +53,7 @@ def _job_meta(job: ReviewJob) -> ReviewMeta:
     pf = job.preflight
     return ReviewMeta(
         repo=job.repo,
+        host=job.host,
         pr_number=int(job.pr_number) if str(job.pr_number).isdigit() else None,
         head_sha=job.pr.head_sha,
         head_ref=job.pr.head,

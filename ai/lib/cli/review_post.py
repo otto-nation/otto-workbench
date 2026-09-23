@@ -175,7 +175,8 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     body_findings = file_level + skipped
 
     findings_for_links = inline + body_findings
-    resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref)
+    resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref,
+                       sidecar.host)
 
     inline, body_findings = renumber_for_posting(inline, body_findings)
 

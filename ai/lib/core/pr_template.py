@@ -38,7 +38,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Every location GitHub resolves a PR template from. All four directories it
+# Every location GitHub resolves a PR template from. All three directories it
 # documents — the repo root, `docs/`, and `.github/` — in both the lowercase
 # and uppercase spellings that repos in the wild actually use.
 #
@@ -104,7 +104,10 @@ def load(root: Path) -> PRTemplate:
     An unreadable file is treated as absent rather than raised. The callers are
     a PR description generator and a context line; neither is improved by
     failing over a template whose permissions are wrong, and both degrade to the
-    fallback the same way a repo with no template does.
+    fallback the same way a repo with no template does. A file that exists and
+    is readable but is not valid UTF-8 — a binary file mistakenly named like a
+    template — degrades the same way: ``read_text`` raises ``UnicodeDecodeError``
+    rather than ``OSError`` for that case, so both are caught here.
     """
     for candidate in TEMPLATE_PATHS:
         path = root / candidate
@@ -112,7 +115,7 @@ def load(root: Path) -> PRTemplate:
             continue
         try:
             return PRTemplate(text=path.read_text(), path=candidate)
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
     return PRTemplate(text=FALLBACK_TEMPLATE, path="")
 
@@ -145,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     root = Path(ns.root)
+    if not root.exists():
+        print(f"no such directory: {root}", file=sys.stderr)
+        return 1
     if not root.is_dir():
         print(f"not a directory: {root}", file=sys.stderr)
         return 1

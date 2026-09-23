@@ -117,6 +117,19 @@ def test_an_unreadable_template_reads_as_absent(tmp_path):
 # ── the headers a body owes ─────────────────────────────────────────────────
 
 
+def test_a_non_utf8_template_reads_as_absent(tmp_path):
+    """A binary file mistakenly named like a template degrades like a missing one.
+
+    ``read_text`` raises ``UnicodeDecodeError``, not ``OSError``, for a file
+    that exists and is readable but is not valid UTF-8 — the same degrade the
+    permissions case above gets, on a different exception type.
+    """
+    path = tmp_path / ".github" / "pull_request_template.md"
+    path.parent.mkdir()
+    path.write_bytes(b"\xff\xfe\x00\x01")
+    assert not pr_template.load(tmp_path).found
+
+
 def test_headers_are_the_sections_a_body_must_carry(tmp_path):
     _write(tmp_path, ".github/pull_request_template.md",
            "## What\n\nsome prose\n\n## Why\n")
@@ -188,13 +201,22 @@ def test_the_fallback_can_be_asked_for_alone(tmp_path):
     assert result.stdout == pr_template.FALLBACK_TEMPLATE + "\n"
 
 
-def test_a_root_that_is_not_a_directory_is_an_error(tmp_path):
+def test_a_root_that_does_not_exist_is_an_error(tmp_path):
     """A caller bug, distinguished from a repo that ships no template.
 
     Both would otherwise print an empty path and exit 0, so a mistyped root
     would read as the fallback and the PR body would be built against it.
     """
     result = _cli("--root", str(tmp_path / "nope"))
+    assert result.returncode == 1
+    assert "no such directory" in result.stderr
+
+
+def test_a_root_that_is_a_file_is_a_different_error(tmp_path):
+    """Distinguished from a missing root so the message names the actual mistake."""
+    path = tmp_path / "not-a-dir"
+    path.write_text("")
+    result = _cli("--root", str(path))
     assert result.returncode == 1
     assert "not a directory" in result.stderr
 

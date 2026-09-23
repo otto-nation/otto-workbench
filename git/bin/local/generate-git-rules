@@ -20,6 +20,7 @@ Options:
 Environment overrides (used in tests):
   CONVENTIONS_SH      path to conventions.sh
   GIT_RULES_OUTPUT    output file path
+  PR_TEMPLATE_PY      path to ai/lib/core/pr_template.py
 EOF
 }
 

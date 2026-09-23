@@ -45,6 +45,26 @@ from enum import StrEnum
 
 from git.land import CommitStatus
 
+# The hedge an unverified fix carries, wherever one is reported. A fix pass
+# edits code and then says so; whether the edit works is a separate claim, and
+# one nothing establishes unless the verify gate ran and reached a verdict.
+# Saying "fixed" for both is what turns an ordinary wrong guess into a
+# retraction, because the reader closes the item on the strength of a claim
+# nobody checked.
+#
+# Here, beside `ItemOutcome.verified`, rather than in the module that first
+# printed it: a PR reply, a commit body and a review document all report the
+# same tri-state about the same gate, and a reader who has learned the phrase
+# on one should meet it unchanged on the others. `pr.thread_replies` re-exports
+# it under its old name, which is what its own callers and tests still use.
+UNVERIFIED_NOTE = "Not verified automatically"
+
+# The same hedge mid-sentence, for a surface that parenthesises it rather than
+# opening a sentence with it. Spelled out rather than `.lower()`-ed at the call
+# site: a future wording carrying a proper noun or an acronym — "Not verified by
+# CI" — would come back mangled from the transform, and silently.
+UNVERIFIED_NOTE_INLINE = "not verified automatically"
+
 
 class FixOutcome(StrEnum):
     """What became of one item a fix pass was handed.
@@ -215,6 +235,9 @@ class ItemOutcome:
     # every fix on every PR, which trains the reader to skip the caveat on the
     # rows that earned one.
     verified: bool | None = None
+    # ``UNVERIFIED_NOTE`` below is the phrase every surface spells this state
+    # with — it lives beside the field rather than in one surface's module so a
+    # second reader does not have to import a publishing module to say it.
     # What the gate ran and what came of it, in the words a reply prints. Set
     # whether or not the gate could reach a verdict, since "no runnable check"
     # is the part an operator needs to see on an unverified row.

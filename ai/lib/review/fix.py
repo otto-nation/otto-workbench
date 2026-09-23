@@ -42,7 +42,9 @@ during a review, and a fix pass needs only a finished review file to work from.
 
 from __future__ import annotations
 
+import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from fix import engine as fix_engine
@@ -50,8 +52,8 @@ from fix import types as fix_types
 from fix import verify as fix_verify
 from core import log
 from core.phases import Phase
-from pr.fix import FixOutcome, ItemOutcome
-from review.paths import phase_log_path
+from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
+from review.paths import phase_log_path, read_review_meta, write_review_meta
 from review.document import ReviewDocument, is_skipped
 from review.grammar import FINDING_ID_RE
 from review.retry import _has_output
@@ -76,7 +78,7 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
     """
     lines: list[str] = []
     _block(lines, "Fixed:", [
-        (o.id, _describe(findings.get(o.id), o))
+        (o.id, _fixed_entry(findings.get(o.id), o))
         for o in outcomes if o.outcome.counts_as_fixed
     ])
     _block(lines, "Skipped:", [
@@ -88,6 +90,195 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
         for o in outcomes if o.outcome is FixOutcome.DECLINED
     ])
     return "\n".join(lines)
+
+
+def _unverified_detail(outcome: ItemOutcome) -> str | None:
+    """Why the gate could not stand behind this fix, or None when it stood.
+
+    Three states collapse to two answers here. None is a pass that never asked
+    the gate, True is one it answered, and both mean the surfaces say nothing:
+    only `False` — the gate ran and could not establish the fix works — earns a
+    caveat. The empty string is that case with no detail to give, which is still
+    a caveat and is why this returns None rather than "" for the quiet one.
+    """
+    if outcome.verified is not False:
+        return None
+    return outcome.verify_detail
+
+
+# What one summary line may run to. `lib/conventions.sh` sets
+# COMMIT_BODY_MAX_LEN to 100 and these lines land in a commit body, where
+# nothing on this path enforces it — a fix pass is not going to have its own
+# commit rejected by a hook it never runs.
+_SUMMARY_LINE_MAX = 100
+
+# Where a description is clipped before the budget above is applied. Kept as a
+# cap of its own so an unhedged line reads the way it always has: the whole-line
+# budget only bites once a caveat is there to compete with it.
+_DESCRIBE_MAX = 80
+
+
+def _clip(text: str, limit: int) -> str:
+    """`text` no longer than `limit`, ellipsised when it had to give.
+
+    The marker is part of the budget rather than added to it: a clip that
+    overran the limit it was called with would defeat the one caller that has
+    one.
+
+    A limit of zero or less returns nothing rather than slicing to it. `text[:n]`
+    with a non-positive `n` counts from the end, so the clip would hand back
+    most of the string — longest output where the budget was tightest, which is
+    the opposite of what every caller is asking for.
+    """
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit - 1].rstrip() + "\u2026"
+
+
+# The caveat a landed-but-unverifiable fix carries on the review document, in
+# the shape the other two annotations use. Anchored to the tail for the reason
+# `_SKIP` and `_DECLINED` are: matched anywhere, a finding whose prose quotes
+# the annotation — the docs of this module do, verbatim — would read as already
+# carrying one.
+_UNVERIFIED_TAIL_RE = re.compile(r"\*\(unverified(?:\s*[—–-]+\s*.+?)?\)\*\s*$")
+
+
+def _annotated(line: str, note: str) -> str:
+    """`line` with `note` appended, and nothing on it left to misread.
+
+    Every annotation this module writes goes through here, because the hazard
+    belongs to the append and not to any one caller. The patterns that read an
+    annotation back are anchored to the end of the line but not to its start,
+    so they match from wherever a `*(` appears to whatever `)*` comes last. A
+    line whose prose merely *quotes* an annotation — the docs and tests of this
+    module do, verbatim — is safe until something is appended after it: the
+    append supplies the close, and the pattern spans the distance between.
+
+    So the quotation in the line is defused before ours is added, which costs a
+    space in someone's prose and keeps the annotation readable. Refusing to
+    append instead would be the cheaper answer for the advisory caveat, and the
+    wrong one here: a decline or a skip is a verdict the next round reads back,
+    and a line that silently did not get one is a finding whose outcome was
+    dropped. One rule for both, because two rules is how the second append site
+    came to have no rule at all.
+
+    `note` arrives already escaped and is not touched here. It is the one thing
+    on the finished line that is *meant* to read as an annotation, so running it
+    through the same defusing would break the annotation being written — the
+    value interpolated into it is each caller's to escape, and both do.
+
+    Only the `*(` sequence is rewritten, never whitespace. `_escape_annotation`
+    collapses runs of it, which is right for a value the agent wrote and wrong
+    for a line the reviewer did: `FindingIdentity` hashes the first eighty
+    characters of the body, so collapsing a double space there changes the
+    stable id and the next round's carry-forward stops recognising the finding.
+    It also flattens inline code, table alignment and indentation that are the
+    author's, not ours. A line cannot carry a newline in any case — it was split
+    out of the document on one.
+
+    A line already ending in our own caveat is returned untouched. Defusing it
+    would mangle what a synthesis pass carried forward and leave a second copy
+    beside it, which is the outcome this function exists to prevent, arriving
+    through the function itself.
+
+    A verdict withheld that way is not the dropped outcome the paragraph above
+    refuses. A skip or a decline is withheld only on a line carrying our own
+    caveat, and such a line is still unchecked, still undeclined, and so still
+    in the next round's work set — the finding is retried rather than lost. The
+    case it refuses to overwrite is narrow and the annotation it would have
+    written is recoverable; the one it protects is not.
+    """
+    if _UNVERIFIED_TAIL_RE.search(line):
+        return line
+    return f"{line.rstrip().replace('*(', '* (')} {note}"
+
+
+def _escape_annotation(detail: str) -> str:
+    """`detail` with any annotation it quotes defused.
+
+    `verify_detail` is the gate agent's own prose, and the gate is routinely
+    reasoning about this repo — about, on occasion, this very function. A detail
+    quoting `*(declined — ...)*` otherwise makes the whole finding parse as
+    adjudicated, because `grammar.py`'s decline pattern is unanchored at its
+    head and finds the quotation inside the caveat. `grammar.py` documents that
+    exact class of failure for the annotation it owns; interpolating agent prose
+    unescaped reintroduces it through the back door.
+
+    The opening `*(` is what is broken rather than the closing `)*`: the decline
+    pattern spans whatever sits between the two, so a defused close still leaves
+    a match once prose supplies its own. Breaking the open leaves no annotation
+    for any of the three patterns to find, and costs a space in a line of prose
+    nobody parses.
+
+    Newlines go too. A value carrying one splits the finding line in two, and
+    the remainder — agent prose, on a line of its own — is parsed as whatever it
+    happens to look like: text shaped like a finding declaration becomes one.
+    `fix.tracking` collapses whitespace on the engine's path, but an
+    `ItemOutcome` built anywhere else does not pass through it.
+    """
+    return " ".join(detail.replace("*(", "* (").split())
+
+
+def _fixed_line(line: str, outcome: ItemOutcome) -> str:
+    """The finding line a landed fix leaves behind: ticked, and hedged if owed.
+
+    The tick and the caveat are one decision rather than two, so they are made
+    in one place — a caller that ticked the box and then asked separately
+    whether to annotate it is a caller that can do the first and forget the
+    second.
+
+    Only a line whose box this call actually ticked may be annotated. A PR-mode
+    template asks for a finding with no checkbox at all, so the tick is a no-op
+    there and `finding.checked` stays false however many rounds run — the guard
+    upstream that makes this idempotent never engages, and the caveat would
+    compound once per round on a finding that also never leaves `open_findings`.
+    An already-hedged line is left alone for the same reason, which is what a
+    synthesis pass carrying the annotation forward needs.
+    """
+    # The box the declaration carries, not the first `- [ ]` anywhere on the
+    # line: a finding quoting the empty box in its own prose — a review of a
+    # template does — would otherwise have that quotation ticked instead, which
+    # corrupts the prose and annotates a finding that stays open.
+    box = FINDING_ID_RE.match(line.strip())
+    if not (box and box.group(1) == " "):
+        return line
+    ticked = line.replace("- [ ]", "- [x]", 1)
+    detail = _unverified_detail(outcome)
+    if detail is None:
+        return ticked
+    caveat = f"unverified — {_escape_annotation(detail)}" if detail else "unverified"
+    return _annotated(ticked, f"*({caveat})*")
+
+
+def _fixed_entry(finding: Finding | None, outcome: ItemOutcome) -> str:
+    """One `Fixed:` entry: what was fixed, and the caveat when one is owed.
+
+    Both halves are clipped, because either can overrun the line on its own: a
+    finding's first line runs to `_DESCRIBE_MAX`, and `verify_detail` is agent
+    prose with no length contract at all.
+
+    The description gives way first. A truncated description still names the
+    finding — the id beside it is what a reader looks the finding up by — while a
+    caveat cut short is a claim about verification that stops mid-sentence, and
+    the caveat is the part that changes what the reader does next. So the detail
+    is clipped only once the description has given up everything it can.
+    """
+    described = _describe(finding, outcome)
+    detail = _unverified_detail(outcome)
+    prefix = len(f"  - [{outcome.id}] ")
+    if detail is None:
+        return _clip(described, max(_SUMMARY_LINE_MAX - prefix, 0))
+
+    scaffolding = len(f" ({UNVERIFIED_NOTE_INLINE} — )") if detail else len(f" ({UNVERIFIED_NOTE_INLINE})")
+    room = max(_SUMMARY_LINE_MAX - prefix - scaffolding, 0)
+    # The description keeps at most half the room, so a long one cannot starve
+    # the caveat; anything it leaves unused goes to the detail.
+    described = _clip(described, room // 2)
+    detail = _clip(detail, max(room - len(described), 0))
+    caveat = f" ({UNVERIFIED_NOTE_INLINE} — {detail})" if detail else f" ({UNVERIFIED_NOTE_INLINE})"
+    return described + caveat
 
 
 def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> None:
@@ -109,7 +300,7 @@ def _describe(finding: Finding | None, outcome: ItemOutcome) -> str:
     if finding is None:
         return outcome.file or outcome.id
     if finding.body:
-        return finding.body.split("\n", 1)[0][:80]
+        return _clip(finding.body.split("\n", 1)[0], _DESCRIBE_MAX)
     return finding.path
 
 
@@ -129,7 +320,11 @@ def _annotation(outcome: ItemOutcome) -> str:
         word = "skipped"
     else:
         return ""
-    return f"*({word} — {outcome.reason})*" if outcome.reason else f"*({word})*"
+    # `reason` is the gate's own prose by way of `engine`'s verdict detail, so a
+    # reason quoting an annotation would otherwise nest one inside this one and
+    # hand the inner word to the parsers — a skip written as a decline.
+    reason = _escape_annotation(outcome.reason)
+    return f"*({word} — {reason})*" if reason else f"*({word})*"
 
 
 def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
@@ -138,6 +333,14 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     A fix ticks the box, a decline or a `needs a person` appends the annotation,
     and anything else leaves the line alone — which is what hands a finding the
     pass never answered to the next round unchanged.
+
+    A fix the gate could not stand behind ticks the box and says so beside it.
+    The tick is honest — an edit was made, and the pass committed it — but the
+    document is what a reviewer reads and what the next round reconciles
+    against, and a bare tick there is the pass vouching for an edit nothing
+    exercised. The annotation is not a verdict the parsers read back, so the
+    finding stays fixed to every reader that matters and carries the caveat for
+    the one who is deciding whether to trust it.
 
     A finding the review had already checked, declined or skipped keeps what it
     has: those verdicts were reached before the agent ran and outrank it, and
@@ -161,11 +364,11 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
         if finding.checked or finding.declined or is_skipped(finding):
             continue
         if outcome.outcome.counts_as_fixed:
-            lines[n] = line.replace("- [ ]", "- [x]", 1)
+            lines[n] = _fixed_line(line, outcome)
             continue
         note = _annotation(outcome)
         if note:
-            lines[n] = f"{line.rstrip()} {note}"
+            lines[n] = _annotated(line, note)
     return "\n".join(lines)
 
 
@@ -307,6 +510,50 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
         log.info("No findings left to fix — skipping fix pass")
         return
 
-    fix_engine.run(
+    run = fix_engine.run(
         ReviewFixAdapter(job, findings), trail=trail, verify=fix_verify.run,
     )
+    _record_commit(job, run)
+
+
+def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:
+    """Record the fix pass's commit in the review's sidecar, and say what is owed.
+
+    The push is gated and the commit is not, so the ordinary end of
+    `--fix` without `--post` is a commit sitting on the branch that nothing has
+    sent. Until this, the only trace was one `resume` line on a terminal the
+    operator may already have closed: no status surface knew the commit
+    existed, and a review directory that recorded the findings recorded nothing
+    about the work done against them.
+
+    Written for every landing, not only a held one. A pushed commit is the fact
+    that answers "what did the last fix pass do" on the next run, and a reader
+    that only ever saw the held ones could not tell a pass that published from
+    one that never ran.
+
+    A pass with no landing — no items, nothing to commit — records nothing and
+    leaves any earlier round's record alone, which is the difference between a
+    round that had nothing to say and one that retracted what the last said.
+    The same holds for a landing that ran but produced no new commit: `land`
+    reports that as `NO_CHANGES` or `COMMIT_FAILED`, never as `None`, and both
+    carry an empty `sha` — the tell that nothing here should overwrite an
+    earlier round's real commit.
+    """
+    if run.landed is None or not run.landed.sha:
+        return
+    sha, status = run.landed.sha, run.landed.status
+    # Both must be the strings the sidecar's schema says they are. Every review
+    # lookup on the machine walks these files, so a value that is not
+    # serialisable takes the whole sidecar down — the attribution of a review
+    # that was written correctly — rather than costing the one field it came in.
+    if not isinstance(sha, str) or not isinstance(status, str):
+        log.warn(f"Fix pass reported an unrecordable commit ({status!r}) — not stamped")
+        return
+    review_dir = Path(job.artifact_dir)
+    write_review_meta(review_dir, replace(
+        read_review_meta(review_dir),
+        fix_commit_sha=sha,
+        fix_commit_status=str(status),
+    ))
+    if run.landed.resume:
+        log.info(f"Fix commit held locally — {run.landed.resume}")

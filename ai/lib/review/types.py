@@ -340,6 +340,36 @@ class ReviewMeta:
     # `ReviewEntry.reviewed_at` for what answers "when" in that case.
     started_at: str = ""
     reviewed_at: str = ""
+    # The fix pass's commit, and what became of its push. Recorded here rather
+    # than in the PR's state because a self-review need not have a PR, while the
+    # review directory exists for every run — and because the commit is a fact
+    # about this review rather than about a pull request.
+    #
+    # `fix_commit_status` is `CommitStatus`'s plain string, not the enum: it is
+    # `git.land`'s vocabulary, and naming it here would make the sidecar's
+    # schema depend on a module it otherwise knows nothing about.
+    fix_commit_sha: str = ""
+    fix_commit_status: str = ""
+
+    @property
+    def unpushed_fix_commit(self) -> str:
+        """The fix commit this review left on the branch, or "" when none is owed.
+
+        Which statuses mean "still local" is `pr.attribution`'s answer, not a
+        second list here: it already owns the question for the comments domain,
+        and two lists would disagree the first time a status is added — as one
+        written by hand here already did, by omitting `push_unverified`.
+
+        An empty status is a sidecar written before this field, and reads as
+        nothing owed. Saying otherwise would report every earlier review as
+        holding work, which is the false positive that teaches a reader to
+        ignore the line.
+        """
+        from pr.attribution import commit_unpushed
+
+        if not self.fix_commit_status:
+            return ""
+        return self.fix_commit_sha if commit_unpushed(self.fix_commit_status) else ""
 
 
 def meta_enum(enum_cls, value):

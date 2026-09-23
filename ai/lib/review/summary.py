@@ -67,6 +67,15 @@ class ReviewSummaryReport:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     duration_ms: int = 0
+    # The fix commit the pass left on the branch and nothing sent. Empty when
+    # the pass pushed, found nothing to commit, or never ran — so a non-empty
+    # value is always work owed rather than work done.
+    #
+    # Not in `to_json`. That dict is the `REVIEW_SUMMARY:` wire, and this
+    # field's only reader is `pr.review_sync`, which is handed the typed report
+    # in-process by `review.completion.record_domain`. Putting it on the wire
+    # would widen a published contract for a value nothing out there reads.
+    unpushed_fix_commit: str = ""
 
     def to_json(self) -> dict:
         """The summary as the dict written to stdout."""
@@ -148,6 +157,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
         cache_read_tokens=usage.cache_read_tokens,
         cache_write_tokens=usage.cache_write_tokens,
         duration_ms=usage.duration_ms,
+        unpushed_fix_commit=meta.unpushed_fix_commit,
     )
 
 

@@ -135,6 +135,12 @@ class ReviewRow:
     cache_read_tokens: int
     cache_write_tokens: int
     duration_ms: int
+    # The fix commit this review's pass left unpushed, or "" when it owes
+    # nothing. A new optional field, which the version policy above says does
+    # not bump the schema. Only the unpushed case is reported: a pushed commit
+    # is on the branch for anyone to find, while a held one is knowable from
+    # nowhere else once the terminal that printed its resume line is gone.
+    unpushed_fix_commit: str = ""
 
 
 def row_for(entry: ReviewEntry) -> ReviewRow:
@@ -172,6 +178,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
         verdict=verdict.value if verdict else "",
         status=read_pipeline_status(entry.path),
         failure_detail=build_failure_detail(entry.path),
+        unpushed_fix_commit=meta.unpushed_fix_commit,
         cost_usd=usage.cost,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,

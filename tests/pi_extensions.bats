@@ -1121,37 +1121,37 @@ _blocked() {
   [ -n "$output" ]
 }
 
-@test "review-guard: a bare sudo or doas shell escape is refused" {
-  # `-s` and `-i` are not in WRAPPER_VALUE_FLAGS[sudo], so they read as
-  # ordinary wrapper flags and unwrap() had no residual command left to hand
-  # WRITE_COMMANDS/WRITE_STATEMENT_PATTERNS — an interactive, write-capable
-  # shell escape unwrapped to "" and was silently allowed.
-  _blocked 'sudo -s'
-  [ -n "$output" ]
-  _blocked 'sudo -i'
-  [ -n "$output" ]
-  _blocked 'sudo'
-  [ -n "$output" ]
-  _blocked 'doas'
-  [ -n "$output" ]
+@test "review-guard: an interactive shell is refused however it is reached" {
+  # Two review rounds each closed one spelling of this and left the others:
+  # first bare `sudo`/`sudo -s`, then the same behind a wrapper. `bash`,
+  # `sudo bash` and `su` were allowed throughout — the same write channel by a
+  # shorter route. The rule is now stated once over the unwrapped command, so
+  # the cases below are one rule rather than five.
+  for escape in 'sudo -s' 'sudo -i' 'sudo' 'doas' 'su' 'su -' \
+                'bash' 'sh' 'zsh' 'bash -i' 'sudo bash' 'sudo su'; do
+    _blocked "$escape"
+    [ -n "$output" ] || { echo "allowed: $escape"; false; }
+  done
 }
 
-@test "review-guard: a bare sudo or doas shell escape is refused behind a wrapper" {
-  # The check above matched only the raw statement's leading word, so it never
-  # ran on the unwrapped form: `env sudo -s`, `time sudo -i`, `nohup sudo -s`,
-  # `nice sudo -i` and `xargs sudo -s` all unwrap to "sudo -s"/"sudo -i" by the
-  # same rule bare `sudo -s` does, and were silently allowed one wrapper away
-  # from the case above.
-  _blocked 'env sudo -s'
-  [ -n "$output" ]
-  _blocked 'time sudo -i'
-  [ -n "$output" ]
-  _blocked 'nohup sudo -s'
-  [ -n "$output" ]
-  _blocked 'nice sudo -i'
-  [ -n "$output" ]
-  _blocked 'xargs sudo -s'
-  [ -n "$output" ]
+@test "review-guard: an interactive shell is refused behind a wrapper" {
+  # `env sudo -s` and friends unwrap to the same escape one wrapper removed.
+  for escape in 'env sudo -s' 'time sudo -i' 'nohup sudo -s' 'nice sudo -i' \
+                'xargs sudo -s' 'env bash' 'env su'; do
+    _blocked "$escape"
+    [ -n "$output" ] || { echo "allowed: $escape"; false; }
+  done
+}
+
+@test "review-guard: a shell running a read-only payload is still allowed" {
+  # The escape rule must not swallow `sh -c`: its payload is a command in its
+  # own right, unwrapped and rescanned, so a read stays a read.
+  _blocked "bash -c 'pytest tests/'"
+  [ -z "$output" ]
+  _blocked "sh -c 'grep -rn foo .'"
+  [ -z "$output" ]
+  _blocked "sudo sh -c 'pytest'"
+  [ -z "$output" ]
 }
 
 @test "review-guard: a shell-wrapper refusal names what the inner check found" {

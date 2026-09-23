@@ -288,6 +288,26 @@ function lastWrapper(statement: string): string {
 }
 
 /**
+ * Commands that hand the agent a shell this predicate cannot read.
+ *
+ * `sudo`, `doas` and `su` elevate into one; the rest are the shell itself. A
+ * `sh -c "..."` is not here — its payload is a command in its own right and is
+ * unwrapped and rescanned below, which is why the check that uses this set
+ * excludes a statement carrying one.
+ *
+ * ceiling: an interpreter with an inline-eval flag is the same hole in a
+ * different language — `python3 -c "import os; os.remove(f)"` is how an agent
+ * escaped this guard once already, and node, perl and ruby all offer it. Not
+ * closed here because an interpreter is also the ordinary way to run a test or
+ * a one-liner that only reads, so refusing the command name would refuse the
+ * common case, and reading the payload means parsing four more languages.
+ * Upgrade when a refusal log shows an agent reaching for one to write with.
+ */
+const INTERACTIVE_SHELLS = new Set([
+  "sudo", "doas", "su", "sh", "bash", "zsh", "dash", "ksh", "fish",
+]);
+
+/**
  * `statement` with quoted spans blanked, for the flag patterns to match against.
  *
  * A flag letter inside a quoted argument is data, not a flag: `curl -s URL -H
@@ -347,18 +367,17 @@ export function blockedWriteCommand(command: string, depth = 0): string | null {
       return `\`${head}\` writes: ${statement.trim()}`;
     }
 
-    // `unwrap` returns "" for `sudo -s`/`sudo -i`/bare `sudo`/`doas`: `-s` and
-    // `-i` are not in WRAPPER_VALUE_FLAGS[sudo], so they read as ordinary
-    // wrapper flags and are skipped, leaving no residual word to unwrap to.
-    // That is not "no command" — a bare sudo/doas opens an interactive,
-    // write-capable shell in its own right, and unwrap has nothing left to
-    // hand WRITE_COMMANDS or WRITE_STATEMENT_PATTERNS to catch it with.
+    // An interactive shell is a write channel this predicate cannot see into,
+    // whether it is reached as a bare `sudo`, as `sudo -s`, or by naming the
+    // shell outright. Two rounds of review each closed one spelling of this and
+    // left the others — `sudo -s` refused while `bash`, `sudo bash` and `su`
+    // walked through — so the rule is stated once here over the unwrapped
+    // command rather than as a case per spelling.
     //
-    // Checked against `lastWrapper`, not the raw statement, so a preceding
-    // wrapper doesn't hide it: `env sudo -s`, `time sudo -i` and `nohup sudo
-    // -s` all unwrap to "" by the same rule and are the same escape one
-    // wrapper removed.
-    if (!head && ["sudo", "doas"].includes(lastWrapper(statement))) {
+    // `head` empty means every word was a wrapper or its flags, which is the
+    // `sudo -s` shape: no command left to run, so the wrapper is the command.
+    const escape = head || lastWrapper(statement);
+    if (INTERACTIVE_SHELLS.has(escape) && !shellPayload(statement)) {
       return `interactive shell escape: ${statement.trim()}`;
     }
 

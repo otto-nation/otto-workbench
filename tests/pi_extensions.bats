@@ -1136,6 +1136,24 @@ _blocked() {
   [ -n "$output" ]
 }
 
+@test "review-guard: a bare sudo or doas shell escape is refused behind a wrapper" {
+  # The check above matched only the raw statement's leading word, so it never
+  # ran on the unwrapped form: `env sudo -s`, `time sudo -i`, `nohup sudo -s`,
+  # `nice sudo -i` and `xargs sudo -s` all unwrap to "sudo -s"/"sudo -i" by the
+  # same rule bare `sudo -s` does, and were silently allowed one wrapper away
+  # from the case above.
+  _blocked 'env sudo -s'
+  [ -n "$output" ]
+  _blocked 'time sudo -i'
+  [ -n "$output" ]
+  _blocked 'nohup sudo -s'
+  [ -n "$output" ]
+  _blocked 'nice sudo -i'
+  [ -n "$output" ]
+  _blocked 'xargs sudo -s'
+  [ -n "$output" ]
+}
+
 @test "review-guard: a shell-wrapper refusal names what the inner check found" {
   # The recursive shell-payload check used to discard blockedWriteCommand's
   # inner return value and always report a generic message, so the refusal

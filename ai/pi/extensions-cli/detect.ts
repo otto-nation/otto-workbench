@@ -255,6 +255,39 @@ function unwrap(statement: string): string {
 }
 
 /**
+ * The last command wrapper `unwrap` was holding when it ran out of words to
+ * unwrap, or "" when `unwrap` found a residual command instead.
+ *
+ * Mirrors `unwrap`'s own loop rather than calling it, because `unwrap` throws
+ * the wrapper name away once it returns "" — the exact case this exists for.
+ * `env sudo -s` and `sudo -s` both unwrap to "": `env` is skipped as a
+ * wrapper, `sudo` is then seen and also skipped as a wrapper (it is in
+ * `COMMAND_WRAPPERS` too), and `-s` is not a value flag for `sudo` so it is
+ * skipped as an ordinary wrapper flag, leaving no residual word. This is what
+ * tells the two apart from a wrapper around an ordinary command that happens
+ * to produce no residual for some other reason.
+ */
+function lastWrapper(statement: string): string {
+  const words = statement.trim().split(/\s+/).filter(Boolean);
+  let wrapper = "";
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+    const name = word.split("/").pop() ?? "";
+    if (COMMAND_WRAPPERS.has(name)) {
+      wrapper = name;
+      continue;
+    }
+    if (word.startsWith("-")) {
+      if (WRAPPER_VALUE_FLAGS[wrapper]?.has(word)) i++;
+      continue;
+    }
+    return "";
+  }
+  return wrapper;
+}
+
+/**
  * `statement` with quoted spans blanked, for the flag patterns to match against.
  *
  * A flag letter inside a quoted argument is data, not a flag: `curl -s URL -H
@@ -320,7 +353,12 @@ export function blockedWriteCommand(command: string, depth = 0): string | null {
     // That is not "no command" — a bare sudo/doas opens an interactive,
     // write-capable shell in its own right, and unwrap has nothing left to
     // hand WRITE_COMMANDS or WRITE_STATEMENT_PATTERNS to catch it with.
-    if (!head && /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo|doas)\b/.test(statement)) {
+    //
+    // Checked against `lastWrapper`, not the raw statement, so a preceding
+    // wrapper doesn't hide it: `env sudo -s`, `time sudo -i` and `nohup sudo
+    // -s` all unwrap to "" by the same rule and are the same escape one
+    // wrapper removed.
+    if (!head && ["sudo", "doas"].includes(lastWrapper(statement))) {
       return `interactive shell escape: ${statement.trim()}`;
     }
 

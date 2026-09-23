@@ -238,6 +238,27 @@ def test_the_cli_show_reports_a_holder(tmp_path, monkeypatch):
     assert "a run" in result.stdout
 
 
+def test_the_cli_show_names_an_unlabelled_holder(tmp_path):
+    """A library claim writes an empty command, which a dict default never fills.
+
+    `record.get("command", fallback)` returns the empty string rather than the
+    fallback, so the column renders blank and the row reads as a corrupt record
+    rather than an unlabelled one.
+    """
+    env = dict(os.environ, WORKBENCH_STATE_DIR=str(tmp_path / "state"))
+    subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, %r)\n" % str(LIB_DIR) +
+         "from core.job_slots import claim\n"
+         "with claim(want=1, floor=1, cores=18):\n"
+         "    pass\n"],
+        check=True, timeout=60, env=env,
+    )
+    result = subprocess.run([str(CLI), "--show"], capture_output=True, text=True,
+                            timeout=60, env=env)
+    assert "unknown command" in result.stdout
+
+
 def test_the_cli_show_is_quiet_with_no_pool(tmp_path):
     env = dict(os.environ, WORKBENCH_STATE_DIR=str(tmp_path / "empty"))
     result = subprocess.run([str(CLI), "--show"], capture_output=True, text=True,

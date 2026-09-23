@@ -38,8 +38,12 @@ def _show() -> int:
         return 0
     print("test slots (a record is the last holder, not a live one):")
     for record in records:
+        # `or`, not a dict default: a claim taken through the library rather
+        # than this CLI has no label to give, and writes the empty string —
+        # which a default never replaces, leaving a blank column.
+        command = record.get("command") or "unknown command"
         print(f"  slot {record.get('slot', '?'):>2}  pid {record.get('pid', '?')}"
-              f"  {record.get('command', 'unknown command')}"
+              f"  {command}"
               f"  (started {record.get('started', 'unknown time')})")
     return 0
 

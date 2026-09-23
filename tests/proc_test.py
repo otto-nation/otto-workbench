@@ -388,6 +388,13 @@ class TestRunStdin:
 # missed, rather than one that was about to exit anyway.
 GRANDCHILD_LIFETIME = 20
 
+# How long a call that kills a group may take before the wait after the kill is
+# the unbounded one again. `_reap` waits `QUICK`, and the slack is for a loaded
+# machine rather than for a second bound: this repo's own runner documents
+# subprocesses losing the scheduler for seconds at a time, and a ceiling with no
+# room for that fails on contention instead of on the defect.
+REAP_CEILING = timeouts.QUICK * 2
+
 
 def _alive(pid: int) -> bool:
     """Whether *pid* names a live process, without signalling it."""
@@ -491,12 +498,12 @@ class TestRunKillProcessGroup:
         the first. Here the signal never lands at all, which is the shape of the
         other two and the one an unbounded wait never returns from.
 
-        Bounded well under `QUICK` so a regression is a hang rather than a slow
-        pass: the call may take the reap's five seconds, and the assertion is
-        that it takes anything finite at all. Bounded at half of
-        `GRANDCHILD_LIFETIME` rather than the full lifetime so a regression
-        that merely slows the reap (rather than making it unbounded) still
-        fails the assertion.
+        The bound is the reap's own, with room for a loaded machine to be slow
+        about it — not a fraction of the fixture's lifetime, which is a number
+        this assertion has nothing to do with. A reap that returns in `QUICK`
+        plus slack is working; one that runs to the fixture's own 20s is the
+        unbounded wait back again, and anything between the two is a reap
+        answering to something other than its bound, which is also a defect.
         """
         monkeypatch.setattr(proc.os, "killpg", lambda pid, sig: None)
 
@@ -506,8 +513,9 @@ class TestRunKillProcessGroup:
         elapsed = time.monotonic() - started
 
         assert r.returncode == proc.TIMEOUT_RETURNCODE
-        assert elapsed < GRANDCHILD_LIFETIME / 2, (
-            f"the call waited {elapsed:.1f}s on a child that ignored SIGKILL")
+        assert elapsed < REAP_CEILING, (
+            f"the call waited {elapsed:.1f}s on a child that ignored SIGKILL, "
+            f"which is past the {timeouts.QUICK:g}s reap bound")
         assert "did not exit after SIGKILL" in r.stderr
 
     def test_what_outlived_the_kill_is_named_alongside_what_was_not_signalled(
@@ -559,8 +567,9 @@ class TestRunKillProcessGroup:
                      timeout=timeouts.QUICK, kill_process_group=True)
         elapsed = time.monotonic() - started
 
-        assert elapsed < GRANDCHILD_LIFETIME / 2, (
-            f"unwinding waited {elapsed:.1f}s on a child that ignored SIGKILL")
+        assert elapsed < REAP_CEILING, (
+            f"unwinding waited {elapsed:.1f}s on a child that ignored SIGKILL, "
+            f"which is past the {timeouts.QUICK:g}s reap bound")
 
     def test_the_group_goes_even_when_the_way_out_is_not_a_timeout(self, tmp_path,
                                                                    monkeypatch):

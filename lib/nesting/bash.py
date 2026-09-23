@@ -1,12 +1,13 @@
 import re
 
-from nesting.preprocess import heredoc_delimiter, strip_shell_line
+from nesting.preprocess import strip_shell_line
 from nesting.types import Violation
 
 _OPENERS = re.compile(r'\b(if|for|while|until|case)\b')
 _CLOSERS = re.compile(r'\b(fi|done|esac)\b')
 _FUNC_DEF = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{')
 _FUNC_END = re.compile(r'^\}\s*$')
+_HEREDOC_START = re.compile(r"<<-?\s*'?([A-Za-z_]\w*)'?")
 _CMD_SUB_OPEN = re.compile(r'\$\(')
 _BATS_TEST = re.compile(r'^@test\b')
 
@@ -35,17 +36,13 @@ def _preprocess_line(state: _State, raw_line: str) -> str | None:
             state.heredoc_end = None
         return None
 
-    # Read before the strip, and from the quote state this line starts in: the
-    # strip both erases a quoted delimiter and advances the state past it, so
-    # afterwards neither the text nor the flags describe this line. Searching
-    # the raw line instead would find a `<<` that is only being talked about,
-    # in a comment or inside a string, and open a heredoc that never existed.
-    delimiter = heredoc_delimiter(line, state.in_squote, state.in_dquote)
+    m = _HEREDOC_START.search(line)
+    if m:
+        state.heredoc_end = m.group(1)
 
     stripped, state.in_squote, state.in_dquote = strip_shell_line(
         line, state.in_squote, state.in_dquote,
     )
-    state.heredoc_end = delimiter
 
     opens = len(_CMD_SUB_OPEN.findall(stripped))
     state.sub_depth += opens

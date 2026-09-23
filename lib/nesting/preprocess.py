@@ -13,10 +13,16 @@ def strip_strings_and_comments(line: str) -> str:
 def heredoc_delimiter(line: str, in_squote: bool, in_dquote: bool) -> str | None:
     """The delimiter a heredoc opened on *line* will end at, or None.
 
-    Shared by the nesting checker and the size counter: both answer "does a
-    heredoc body start on this line", and the answer has to be the same in a
-    nesting count and a size count or one of them is reading a different file
-    than the other.
+    Lives here beside ``strip_shell_line`` because it is the other half of the
+    same scan, but only the size counter uses it today. ``nesting/bash.py``
+    keeps its own regex deliberately: it reads the delimiter off the raw line
+    and so opens a heredoc on a ``<<`` that is merely mentioned, but its state
+    also survives ``strip_shell_line`` leaking an unclosed single-quote span on
+    a line like ``"$(printf "the remote's branch")"`` — nested quoting inside a
+    command substitution that the flat scan cannot model. Switching it to this
+    helper makes it trust those leaked flags and suppress the next real
+    heredoc, which newly fails `tests/generate_doc_reference.bats`. Unifying
+    the two needs `strip_shell_line` fixed first; see #1471.
 
     Neither the raw line nor the quote-stripped one can answer this alone, and
     each is wrong in the opposite direction. ``strip_shell_line`` erases the

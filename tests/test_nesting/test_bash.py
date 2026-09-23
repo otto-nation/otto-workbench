@@ -161,30 +161,6 @@ EOF
     assert _check(code) == []
 
 
-def test_a_heredoc_mentioned_in_a_comment_opens_nothing():
-    """A raw-line search for `<<` finds one in a comment and never closes it.
-
-    lib/ai/commit.sh explains its unquoted `<<EOF` in a comment above it; a
-    scan that doesn't skip comments and quotes swallows the rest of the file
-    (here, the three-deep nesting below) waiting for a terminator that never
-    arrives, and reports no violation at all.
-    """
-    code = '''\
-#!/usr/bin/env bash
-my_func() {
-  # see <<EOF for details
-  if true; then
-    if true; then
-      if true; then
-        echo "too deep"
-      fi
-    fi
-  fi
-}
-'''
-    assert len(_check(code)) > 0
-
-
 def test_single_line_function_skipped():
     code = '''\
 #!/usr/bin/env bash

@@ -150,7 +150,6 @@ report_for() {
   [[ "$output" == *"capped at 12"* ]]
 }
 
-# passes-at-base: a negative case — holds that the new contention branch stays quiet on an idle machine
 @test "an uncontended run does not claim a sibling took anything" {
   run report_for 18
   [[ "$output" == *"12 job(s)"* ]]

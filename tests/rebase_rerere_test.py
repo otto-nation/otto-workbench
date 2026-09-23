@@ -182,25 +182,21 @@ class TestTallyReplays:
 
 
 class TestUnattendedEditor:
-    """Nothing in the environment can hand an unattended rebase an editor."""
+    """Nothing in the environment can hand an unattended rebase an editor.
 
-    def test_clears_every_editor_override(self):
-        env = dict(
-            GIT_EDITOR="vim", GIT_SEQUENCE_EDITOR="vim",
-            VISUAL="vim", EDITOR="vim", PATH="/usr/bin",
-        )
-        with mock.patch.dict(os.environ, env, clear=True):
-            result = lifecycle.unattended_env()
+    What `unattended_env` does to the variables is `git_client`'s to assert — it
+    owns them now, because an AI agent's own git calls are owed the same
+    treatment and two copies of the list would drift. What is asserted here is
+    that the rebase driver still reaches for it, and that a real `--autosquash`
+    replay does not block.
+    """
 
-        assert "GIT_EDITOR" not in result
-        assert "GIT_SEQUENCE_EDITOR" not in result
-        assert "VISUAL" not in result
-        assert "EDITOR" not in result
-        # Everything else is passed through — a git that cannot find its own
-        # binaries is not an improvement on one that opens an editor.
-        assert result["PATH"] == "/usr/bin"
+    def test_the_driver_uses_the_client_s_pinned_env(self):
+        """Re-exported, not re-implemented — a local copy is a place to drift."""
+        assert lifecycle.unattended_env is git_client.unattended_env
+        assert lifecycle.UNATTENDED_CONFIG == {"core.editor": git_client.NO_EDITOR}
 
-    def test_git_resolves_to_the_configured_editor_under_the_scrubbed_env(self, tmp_path):
+    def test_git_resolves_to_the_configured_editor_under_the_pinned_env(self, tmp_path):
         """The precedence this defends against, asserted against git itself.
 
         `GIT_EDITOR` outranks `core.editor`, so the config alone leaves an
@@ -212,14 +208,14 @@ class TestUnattendedEditor:
                 "var", "GIT_EDITOR", cwd=str(repo),
                 config=lifecycle.UNATTENDED_CONFIG,
             )
-            scrubbed = git_client.run(
+            pinned = git_client.run(
                 "var", "GIT_EDITOR", cwd=str(repo),
                 config=lifecycle.UNATTENDED_CONFIG,
                 env=lifecycle.unattended_env(),
             )
 
         assert leaked.stdout.strip() == "vim"
-        assert scrubbed.stdout.strip() == "true"
+        assert pinned.stdout.strip() == git_client.NO_EDITOR
 
     def test_a_squash_does_not_block_when_the_operator_prefers_an_editor(self, tmp_path):
         """The regression: this hung indefinitely rather than failing.

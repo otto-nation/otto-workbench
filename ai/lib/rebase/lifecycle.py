@@ -10,8 +10,6 @@ a refusal, or an abort that leaves the branch where it started.
 
 from __future__ import annotations
 
-import os
-
 from agent import backend as ai_backend
 from core import log
 from core.proc import CmdResult
@@ -65,34 +63,20 @@ RERERE_CONFIG = {
 # `--autosquash` a `squash!` commit asks for the combined message *during* the
 # initial replay, and without this the run halts there with "there was a problem
 # with the editor". A `fixup!` never asks, which is why the gap stayed hidden.
-UNATTENDED_CONFIG = {"core.editor": "true"}
+UNATTENDED_CONFIG = {"core.editor": git_client.NO_EDITOR}
 
 REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
 
-# Variables that outrank `core.editor`, cleared for the child.
+# Paired with `UNATTENDED_CONFIG`: the config says which editor to use, and this
+# makes sure nothing in the environment outranks it. Both halves are needed —
+# see `git_client.unattended_env` for the precedence table and what an inherited
+# `GIT_EDITOR` did to an unattended rebase.
 #
-# `-c core.editor=true` is not sufficient on its own: git resolves its editor
-# as GIT_EDITOR > core.editor > VISUAL > EDITOR > vi, so an operator with
-# `export GIT_EDITOR=vim` in their profile hands an unattended rebase a full
-# screen editor on a pipe with no terminal. It does not fail — it blocks, and
-# `rebase` is an unbounded subcommand, so nothing arrives to end it: the run
-# hangs until the job's own timeout kills it and leaves a partial rebase for
-# the next run to inherit.
-#
-# VISUAL and EDITOR rank below `core.editor` and are cleared anyway, so that
-# what the child does is a property of this dict rather than of the precedence
-# table staying as it is.
-_EDITOR_VARS = ("GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "VISUAL", "EDITOR")
-
-
-def unattended_env() -> dict[str, str]:
-    """The parent environment with every editor override removed.
-
-    Paired with ``UNATTENDED_CONFIG``: the config says which editor to use and
-    this makes sure nothing outranks it. Built per call rather than once at
-    import, so a test or a caller that sets one of these sees it honoured.
-    """
-    return {k: v for k, v in os.environ.items() if k not in _EDITOR_VARS}
+# Re-exported rather than defined here because the same environment is owed to
+# every child that may reach git without this process choosing the argv, and an
+# AI agent holding a shell is the other one. Two copies of the variable list
+# would be two places for the next variable to be added to only one of.
+unattended_env = git_client.unattended_env
 
 
 def rebase_continue(cwd: str) -> CmdResult:

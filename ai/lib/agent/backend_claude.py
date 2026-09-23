@@ -24,7 +24,7 @@ from agent import usage as ai_usage
 from core import log
 from core import timeouts
 from agent import vertex_quota
-from agent.backend import AgentInvocation
+from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import _log_stderr_on_failure, claude_display_text, parse_claude_event
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -158,6 +158,13 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
 def _build_prompt_cmd(model: str | None = None) -> list[str]:
     # --output-format needs --print, which -p already supplies. Without it the reply
     # carries no usage and every prompt() call goes unmeasured.
+    #
+    # No tool allowlist, unlike the Pi backend's `--no-tools`: this command omits
+    # the `--permission-mode acceptEdits` that `_base_cmd` carries, so a tool call
+    # from a stateless prompt is refused by the default mode. That is a weaker
+    # guarantee than Pi's — it rests on a flag that is absent rather than on one
+    # that is present — and `--allowedTools` is variadic, so the empty value that
+    # would state it outright is not a spelling this repo has verified.
     cmd = ["claude", "-p", "--bare", "--output-format", "json"]
     if model:
         cmd += ["--model", model]
@@ -256,7 +263,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=inv.env,
+        env=agent_env(inv),
     )
     _send_stdin(proc, inv.prompt)
     stream_progress(proc, inv.session_log, label=inv.label)
@@ -275,7 +282,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=sys.stderr,
         text=True,
         cwd=inv.cwd,
-        env=inv.env,
+        env=agent_env(inv),
     )
     _send_stdin(proc, inv.prompt)
     _stream_fix_output(proc, inv.session_log)

@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent import usage as ai_usage
+from git import client as git_client
 # Backend is defined in core.phases so the config layer can type agent.backend
 # without importing this module, and re-exported here because this is where
 # callers have always read it from.
@@ -280,6 +281,10 @@ class AgentInvocation:
     # A complete environment for the backend subprocess, or None to inherit the
     # parent's. Not a delta: callers that need one variable changed build the
     # whole mapping, because a partial env silently strips PATH and HOME.
+    #
+    # Not the last word either: `agent_env` pins the editor variables over
+    # whatever this holds, because an agent that can be handed an editor can
+    # block forever on one. Nothing else is imposed.
     env: dict[str, str] | None = None
     session_log: str = ""
     add_dirs: list[str] = field(default_factory=list)
@@ -296,6 +301,25 @@ class AgentInvocation:
     task: str | None = None
     repo: str | None = None
     pr: str | None = None
+
+
+def agent_env(inv: AgentInvocation) -> dict[str, str]:
+    """The environment an agent subprocess runs under: ``inv.env``, editors pinned.
+
+    An agent holds a shell, so it reaches git with argv this process never
+    chose — `-c core.editor=true` protects the git calls the rebase driver
+    makes and none of the ones an agent makes for itself. A `git commit`,
+    `git rebase --edit-todo` or `git tag -a` from inside a tool call opens the
+    operator's editor on a pipe with no terminal and blocks there, and the
+    backends run unbounded, so nothing ends it. Pinning the variables is the
+    only lever that reaches a command this process does not write.
+
+    Applied to both backends and to every entry point, because which agent
+    happens to shell out to git is not a property either backend can know.
+    ``None`` still means inherit, as the field documents — the parent's
+    environment with the pins over it, not a scrub.
+    """
+    return git_client.unattended_env(os.environ if inv.env is None else inv.env)
 
 
 def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int) -> None:

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import backend as ai_backend
 from agent import usage as ai_usage
+from git import client as git_client
 
 
 @pytest.fixture
@@ -532,10 +533,11 @@ class TestBackendsGetTheInvocationEnv:
 
     # The Pi backend attaches the review guard to these two entry points and
     # adds the roots it gates on, so its env is the invocation's plus those.
-    # Claude has no such extension and passes the field through untouched.
+    # Both backends additionally pin the editor variables — see
+    # `TestAgentsCannotBeHandedAnEditor`.
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
-    def test_claude_gets_the_invocation_env_verbatim(
+    def test_claude_gets_the_invocation_env_with_only_the_editors_added(
         self, monkeypatch, tmp_path, entry_point,
     ):
         module = importlib.import_module("agent.backend_claude")
@@ -546,7 +548,8 @@ class TestBackendsGetTheInvocationEnv:
             session_log=str(tmp_path / "s.jsonl"),
             env={"PATH": "/stub:/usr/bin"},
         ))
-        assert seen["env"] == {"PATH": "/stub:/usr/bin"}
+        assert seen["env"]["PATH"] == "/stub:/usr/bin"
+        assert set(seen["env"]) == {"PATH", *git_client.EDITOR_VARS}
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_pi_extends_the_invocation_env_without_replacing_it(
@@ -567,13 +570,16 @@ class TestBackendsGetTheInvocationEnv:
         ))
         assert seen["env"]["PATH"] == "/stub:/usr/bin"
         assert seen["env"]["REVIEW_WORKTREE_DIR"] == str(tmp_path)
-        assert set(seen["env"]) == {"PATH", "REVIEW_WORKTREE_DIR"}
+        assert set(seen["env"]) == {
+            "PATH", "REVIEW_WORKTREE_DIR", *git_client.EDITOR_VARS,
+        }
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_claude_inherits_when_env_is_unset(
         self, monkeypatch, tmp_path, entry_point,
     ):
         """None means inherit — the field must not turn every call into a scrub."""
+        monkeypatch.setenv("A_PARENT_VAR", "kept")
         module = importlib.import_module("agent.backend_claude")
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
@@ -581,7 +587,7 @@ class TestBackendsGetTheInvocationEnv:
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
         ))
-        assert seen["env"] is None
+        assert seen["env"]["A_PARENT_VAR"] == "kept"
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_pi_inherits_the_parent_env_when_unset(
@@ -598,6 +604,55 @@ class TestBackendsGetTheInvocationEnv:
         ))
         assert seen["env"]["A_PARENT_VAR"] == "kept"
         assert seen["env"]["REVIEW_WORKTREE_DIR"] == str(tmp_path)
+
+
+BACKENDS = ["agent.backend_claude", "agent.backend_pi"]
+
+
+class TestAgentsCannotBeHandedAnEditor:
+    """No agent subprocess inherits an editor, on either backend.
+
+    An agent holds a shell, so it reaches git with argv this process never
+    chose. `-c core.editor=true` covers the git calls the rebase driver makes
+    and none of the ones an agent makes for itself: a resolver ran
+    `git rebase --edit-todo` from a tool call, git opened the operator's
+    `GIT_EDITOR` on a pipe with no terminal, and the run blocked for 45 minutes
+    until the job timeout killed it.
+    """
+
+    @pytest.mark.parametrize("module_name", BACKENDS)
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_an_inherited_editor_is_overridden(
+        self, monkeypatch, tmp_path, module_name, entry_point,
+    ):
+        for var in git_client.EDITOR_VARS:
+            monkeypatch.setenv(var, "vim")
+        module = importlib.import_module(module_name)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(module, entry_point)(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+        ))
+        for var in git_client.EDITOR_VARS:
+            assert seen["env"][var] == git_client.NO_EDITOR
+
+    @pytest.mark.parametrize("module_name", BACKENDS)
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_a_caller_supplied_env_is_pinned_too(
+        self, monkeypatch, tmp_path, module_name, entry_point,
+    ):
+        """The eval harness builds a whole env; it must not be the way back in."""
+        module = importlib.import_module(module_name)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(module, entry_point)(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            env={"PATH": "/stub", "GIT_EDITOR": "vim"},
+        ))
+        assert seen["env"]["GIT_EDITOR"] == git_client.NO_EDITOR
+        assert seen["env"]["PATH"] == "/stub"
 
 
 class TestBuildAddDirs:

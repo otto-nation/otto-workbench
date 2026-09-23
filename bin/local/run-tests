@@ -352,13 +352,19 @@ run_pytest() {
 # results.
 report_missing_xdist() {
   warn "pytest has no xdist plugin: running serially, which is several times slower." >&2
-  info "  using: $(command -v pytest)" >&2
+  local primary
+  primary="$(command -v pytest)"
+  if [[ -z "$primary" ]]; then
+    info "  pytest not found on PATH" >&2
+  else
+    info "  using: $primary" >&2
+  fi
 
   # A second pytest further down PATH that *does* have xdist is the shadowing
   # case, and it has a different remedy from a genuinely missing plugin.
   local other
   while IFS= read -r other; do
-    [[ "$other" == "$(command -v pytest)" ]] && continue
+    [[ "$other" == "$primary" ]] && continue
     if "$other" -VV 2>/dev/null | grep -q xdist; then
       info "  shadowing: $other — which does have xdist" >&2
       info "  fix: remove the shadowing pytest, or put its directory later on PATH" >&2
@@ -375,6 +381,9 @@ report_missing_xdist() {
 # lookup walks PATH itself.
 _pytest_candidates() {
   local dir
+  # An empty PATH segment conventionally means the current directory, but that
+  # is skipped here rather than honoured: executing a bare `./pytest` picked up
+  # from an empty segment is a needless risk this probe doesn't need to take.
   while IFS= read -r -d ':' dir; do
     [[ -n "$dir" && -x "$dir/pytest" ]] && echo "$dir/pytest"
   done < <(printf '%s:' "$PATH")

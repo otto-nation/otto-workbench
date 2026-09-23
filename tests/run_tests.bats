@@ -400,6 +400,15 @@ report_for() {
   [[ "$output" != *"shadowing:"* ]]
 }
 
+@test "pytest missing entirely is reported as missing, not as a blank path" {
+  # No pytest anywhere on PATH: the old code printed "using: " with nothing
+  # after it, which reads as a bug rather than the actual failure mode.
+  PATH="/usr/bin:/bin" run report_missing_xdist
+  [[ "$output" == *"pytest not found on PATH"* ]]
+  [[ "$output" != *"using: "$'\n'* ]]
+  [[ "$output" != *"using:  "* ]]
+}
+
 @test "the diagnostics stay off stdout, which the pre-push hook parses" {
   local dir_a="$TMPDIR/quiet-bin"
   mkdir -p "$dir_a"

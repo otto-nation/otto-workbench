@@ -400,13 +400,43 @@ report_for() {
   [[ "$output" != *"shadowing:"* ]]
 }
 
+# passes-at-base: a negative case — at base the function prints nothing at all, so the string it refuses is absent either way
+@test "the pytest in use is not reported as shadowing itself" {
+  # The candidate walk finds the primary too, so it has to be excluded by name.
+  # Without that, a pytest that does carry xdist but is being probed for some
+  # other reason names itself as its own shadow — advice that cannot be acted
+  # on, pointing at the file already in use.
+  local dir_a="$TMPDIR/self-bin"
+  mkdir -p "$dir_a"
+  printf '#!/usr/bin/env bash\necho "pytest-xdist-3.8.0"\n' > "$dir_a/pytest"
+  chmod +x "$dir_a/pytest"
+
+  PATH="$dir_a:/usr/bin:/bin" run report_missing_xdist
+  [[ "$output" != *"shadowing: $dir_a/pytest"* ]]
+}
+
 @test "pytest missing entirely is reported as missing, not as a blank path" {
   # No pytest anywhere on PATH: the old code printed "using: " with nothing
   # after it, which reads as a bug rather than the actual failure mode.
-  PATH="/usr/bin:/bin" run report_missing_xdist
+  #
+  # PATH is two scratch dirs and nothing else — no system directories, so the
+  # absence is the test's own doing rather than a property of the machine, and
+  # a box with a /usr/bin/pytest cannot fail this for an unrelated reason.
+  #
+  # bats needs its own utilities on PATH, so they are linked into the scratch
+  # dir instead of inherited: `mktemp` and friends are what the helpers call,
+  # and an empty PATH breaks bats before the assertion is reached.
+  local bare="$TMPDIR/bare-path"
+  mkdir -p "$bare"
+  local tool
+  for tool in mktemp cat rm mkdir sed grep; do
+    ln -sf "$(command -v "$tool")" "$bare/$tool"
+  done
+  [ ! -e "$bare/pytest" ]
+
+  PATH="$bare" run report_missing_xdist
   [[ "$output" == *"pytest not found on PATH"* ]]
-  [[ "$output" != *"using: "$'\n'* ]]
-  [[ "$output" != *"using:  "* ]]
+  [[ "$output" != *"using:"* ]]
 }
 
 @test "the diagnostics stay off stdout, which the pre-push hook parses" {

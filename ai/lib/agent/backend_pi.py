@@ -196,6 +196,12 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
     # matter are gated at the write instead (see `publishing`). Upgrade when pi
     # grows per-command bash permissions.
     #
+    # The git half of that list is enforced here, by the review guard rather
+    # than by this argv: `review-guard.ts` refuses the same commands at the bash
+    # call, and it is attached to every fix run (see REVIEW_EXTENSION). So the
+    # two backends deny the same git commands by different mechanisms, and only
+    # the `gh` deny is genuinely absent on this one.
+    #
     # PI_GITHUB_TOOLS is withheld for the same reason: naming a tool is how the
     # allowlist grants it, so the one form of GitHub reach this list can express
     # is the one it declines to.

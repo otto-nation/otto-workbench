@@ -11,6 +11,7 @@ call at all.
 
 import ast
 import json
+import re
 import subprocess
 import sys
 import types
@@ -87,7 +88,38 @@ class TestBuildFixCmd:
         """Every outward write waits for --post; `gh` would route around it."""
         cmd = ai_backend_claude._build_fix_cmd(ai_backend.AgentInvocation(prompt="p"))
         assert "--disallowedTools" in cmd
-        assert cmd[cmd.index("--disallowedTools") + 1] == "Bash(gh:*)"
+        denied = cmd[cmd.index("--disallowedTools") + 1].split(",")
+        assert "Bash(gh:*)" in denied
+
+    @pytest.mark.parametrize("command", [
+        "git commit", "git push", "git rebase", "git reset", "git checkout",
+    ])
+    def test_denies_the_git_commands_that_move_the_branch(self, command):
+        """The engine commits for the agent, scoped to the paths it watched the
+        agent touch. An agent that commits or rebases lands work outside the one
+        scope the pass can account for — which is how a fix pass came to rewrite
+        a branch somebody was working on."""
+        cmd = ai_backend_claude._build_fix_cmd(ai_backend.AgentInvocation(prompt="p"))
+        denied = cmd[cmd.index("--disallowedTools") + 1].split(",")
+        assert f"Bash({command}:*)" in denied
+
+    def test_both_backends_bar_the_same_git_commands(self):
+        """Two spellings of one rule: `--tools` allowlists tool names and cannot
+        bar a single bash command, so Pi enforces this in `review-guard.ts`
+        instead. The lists drifting is how one backend quietly keeps a command
+        the other denies."""
+        guard = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
+                 / "pi" / "extensions-cli" / "review-guard.ts").read_text()
+        pattern = re.search(r"git\\s\+\(\?:([a-z|\-]+)\)", guard)
+        assert pattern, "review-guard.ts no longer spells its git denies as one alternation"
+        pi_denied = set(pattern.group(1).split("|"))
+
+        claude_denied = {
+            d[len("Bash(git "):-len(":*)")]
+            for d in ai_backend_claude.FIX_DENIED_TOOLS.split(",")
+            if d.startswith("Bash(git ")
+        }
+        assert claude_denied == pi_denied
 
     def test_the_review_agent_keeps_gh(self):
         """Only the fix pass is barred — a review agent reads the PR with it."""

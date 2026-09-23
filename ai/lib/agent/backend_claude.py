@@ -135,7 +135,35 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # enforced rather than trusted. A comment answered by rewriting the PR description
 # is drafted to a file instead; `pr.comments.deliver_pr_body` sends it through
 # the gated client.
-FIX_DENIED_TOOLS = "Bash(gh:*)"
+# The git half is the same argument turned inward. The engine commits for the
+# agent (`fix.engine.run` → `git.land.land`), scoped to the paths it watched the
+# agent touch, so an agent that commits, rebases or resets is not finishing the
+# job early — it is landing work outside the one scope the pass can account for,
+# under a message nothing in this codebase wrote. `agent.templates.ROLE_BLOCK`
+# has always said so in prose, and says of itself that "negation is weaker than
+# omission"; this is that rule where the tool call can see it.
+#
+# The Pi backend enforces the same list by a different mechanism, since `--tools`
+# allowlists tool names and cannot bar one bash command: see
+# WRITE_COMMAND_PATTERNS in ai/pi/extensions-cli/review-guard.ts, which this is
+# kept in step with. A command added to one belongs in the other.
+FIX_DENIED_TOOLS = ",".join((
+    "Bash(gh:*)",
+    "Bash(git commit:*)",
+    "Bash(git push:*)",
+    "Bash(git rebase:*)",
+    "Bash(git reset:*)",
+    "Bash(git checkout:*)",
+    "Bash(git switch:*)",
+    "Bash(git restore:*)",
+    "Bash(git stash:*)",
+    "Bash(git clean:*)",
+    "Bash(git merge:*)",
+    "Bash(git cherry-pick:*)",
+    "Bash(git revert:*)",
+    "Bash(git apply:*)",
+    "Bash(git am:*)",
+))
 
 
 def _build_fix_cmd(inv: AgentInvocation) -> list[str]:

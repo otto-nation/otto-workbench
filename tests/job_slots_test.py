@@ -21,20 +21,32 @@ import pytest
 
 from core import job_slots
 from core.job_slots import LOCK_ENV, claim, holders, pool_size
+from core.job_slots_cli import GRANT_ENV
 
 CLI = REPO_ROOT / "bin" / "local" / "claim-job-slots"
 
 
 @pytest.fixture(autouse=True)
 def _pool_in_tmp(tmp_path, monkeypatch):
-    """Point the state root at a scratch dir and drop any inherited marker.
+    """Point the state root at a scratch dir and drop both inherited markers.
 
     The state root has to move or a test would claim slots out of the pool the
     developer's own suite run is holding — and then report a grant that says
     more about the machine than about the code.
+
+    Both markers have to go, and not only for the in-process claims. This suite
+    normally runs *under* `run-tests → claim-job-slots → pytest`, so the outer
+    run has exported its own marker and grant into this process; the `_cli`
+    helpers below pass no `env=`, so a subprocess inherits whatever
+    `os.environ` holds at call time. Left in place, `LOCK_ENV` makes every CLI
+    child take the pass-through branch and report the outer run's grant rather
+    than claiming anything. `monkeypatch.delenv` mutates the live environment,
+    which is what the subprocesses read — so this is the guard for them too,
+    deliberately and not incidentally.
     """
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv(LOCK_ENV, raising=False)
+    monkeypatch.delenv(GRANT_ENV, raising=False)
     yield
 
 
@@ -168,6 +180,29 @@ def test_the_cli_passes_the_grant_to_its_child():
     result = _cli("--want", "3", "--cores", "18", "--",
                   "sh", "-c", "echo $WORKBENCH_TEST_SLOTS_GRANTED")
     assert result.stdout.strip() == "3"
+
+
+def test_the_fixture_leaves_no_marker_for_a_cli_child_to_inherit():
+    """The nested case this suite actually runs in.
+
+    Under `task test` or pre-push an outer run-tests has already exported its
+    marker and grant into this process, and `_cli` passes no `env=`, so a child
+    reads whatever `os.environ` holds. Were they still set, every CLI test here
+    would take the pass-through branch, claim no slots, and assert on a number
+    the pool never issued — green, and testing nothing.
+
+    Asserted on this process's own environment rather than on a grant: a grant
+    of 3 is what a correct claim and an inherited 3 both look like, and the
+    wrapper legitimately sets the marker for its own child, so the child cannot
+    answer the question either. What the fixture guarantees is that nothing is
+    set *here*, which is what every `_cli` call forwards.
+    """
+    assert LOCK_ENV not in os.environ
+    assert GRANT_ENV not in os.environ
+    # And a claim taken from this state really does reach the pool, rather than
+    # passing through and echoing a number nothing reserved.
+    with claim(want=3, floor=1, cores=18):
+        assert len(holders()) == 3
 
 
 def test_the_cli_returns_the_childs_exit_status():

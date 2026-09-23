@@ -353,6 +353,14 @@ CHANGED=false
 # empty, which run_bats and run_pytest read as "the whole suite". That is the
 # only safe direction to fail: a selection that silently narrowed to nothing
 # would report a green gate having run no tests.
+# No --base, so the selectors use their own default of origin/main, and no
+# fetch either — unlike the pre-push hook, which passes the ref it has just
+# fetched. That divergence is deliberate and safe in this direction: both
+# selectors diff `origin/main...HEAD`, which resolves through the merge base,
+# so a local origin/main that is behind the real one moves that base *earlier*
+# and selects a superset. The failure mode of a stale base here is running too
+# many tests, never too few. Fetching instead would put a network round trip
+# in front of the target developers run between edits.
 select_changed() {
   local selected
   if [[ "$1" != pytest ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-tests" ]]; then

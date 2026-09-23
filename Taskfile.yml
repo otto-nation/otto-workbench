@@ -27,7 +27,7 @@ tasks:
     cmds:
       - bin/local/run-tests
   test:pytest:
-    desc: "Run Python (pytest) tests only"
+    desc: "Run the Python (pytest) tests your branch can affect"
     silent: true
     cmds:
       - bin/local/run-tests --pytest --changed

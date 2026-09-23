@@ -19,6 +19,7 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { statements } from "../extensions/_shared/statements.ts";
+import { tokenize, type Token } from "../extensions/_shared/tokenize.ts";
 
 /**
  * Commands that write, matched at a statement head.
@@ -132,13 +133,45 @@ const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
 };
 
 /**
- * A redirect that names a destination, which `2>&1` and `2>/dev/null` do not.
+ * Redirect operators that name a destination file.
  *
- * Matching a bare `>` instead caught every `cmd 2>&1` an agent writes while
- * reading, and a guard that fires on ordinary reads is one whose refusals stop
- * being read.
+ * `<` and `<<<` read rather than write, and `2>&1` names a descriptor rather
+ * than a file — both are told apart by what follows the operator, not by the
+ * operator itself, so the check lives in `redirectTargets` below.
  */
-const REDIRECT = />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)(\S+)/g;
+const WRITING_REDIRECTS = new Set([">", ">>", ">|", "&>", "&>>"]);
+
+/** Destinations that discard, so a redirect naming one writes nothing. */
+const NULL_SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
+
+/**
+ * Every file a statement's redirects would write, as scanned tokens.
+ *
+ * Read from the token scan rather than from a regex over the raw statement,
+ * which is what the rule did before. A `>` inside quotes is an argument, and
+ * matching it as a redirect refused a large share of ordinary reads:
+ * `awk 'length > 80' f.txt`, `grep -rn 'a->b' src/`, `rg 'fn f() -> R' src/`
+ * and any `jq` with a comparison in it. A review agent greps constantly, and a
+ * guard whose refusals land on greps is one whose refusals stop being read.
+ *
+ * A descriptor duplication (`2>&1`, `>&2`) names no file: the tokenizer emits
+ * `&` as its own operator, so the destination slot holds an operator rather
+ * than a word and there is nothing to report.
+ */
+function redirectTargets(tokens: Token[]): string[] {
+  const targets: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!tok.operator || !WRITING_REDIRECTS.has(tok.value)) continue;
+    const target = tokens[i + 1];
+    // `> &1` is a descriptor, and a redirect with nothing after it is a syntax
+    // error rather than a write.
+    if (!target || target.operator) continue;
+    if (NULL_SINKS.has(target.value)) continue;
+    targets.push(target.value);
+  }
+  return targets;
+}
 
 /**
  * Scratch destinations a redirect may target.
@@ -153,10 +186,33 @@ const REDIRECT = />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)(\S+)/g;
  */
 export const SCRATCH_PREFIXES = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
+/**
+ * True for a redirect destination the agent may write.
+ *
+ * Delegates to `isScratchPath`, which canonicalises. The raw `startsWith` this
+ * replaces disagreed with that function about the same prefix list, so
+ * `> /private/tmp/../../Users/x/p.txt` was accepted as scratch by the redirect
+ * rule and rejected as outside the worktree by the write tool — one file, two
+ * predicates, opposite answers.
+ *
+ * Absolute paths only. `isScratchPath` resolves what it is given against the
+ * process cwd, so every *relative* target came back scratch whenever that cwd
+ * happened to sit under one of the prefixes — and a review runs in a worktree
+ * under /var/folders often enough for that to be the common case, not the
+ * corner. A redirect the guard cannot place is a redirect it must not exempt.
+ *
+ * `~` and `$HOME` are unexpanded here because nothing in this file expands
+ * them, so they are not absolute either and fall to the same refusal. That is
+ * the right answer for a different reason: `> ~/notes.txt` writes to the home
+ * directory, which is not scratch however it is spelled.
+ *
+ * The target arrives dequoted from the token scan, so no quote stripping is
+ * needed.
+ */
 function isScratchTarget(target: string): boolean {
-  const cleaned = target.replace(/^['"]|['"]$/g, "");
-  if (cleaned === "/dev/null") return true;
-  return SCRATCH_PREFIXES.some((prefix) => cleaned.startsWith(prefix));
+  if (NULL_SINKS.has(target)) return true;
+  if (!target.startsWith("/")) return false;
+  return isScratchPath(target);
 }
 
 /**
@@ -417,11 +473,11 @@ export function blockedWriteCommand(command: string, depth = 0): string | null {
     }
 
     // A statement can carry more than one redirect (e.g. `cmd > a.txt 2>b.txt`),
-    // and each one is a separate write target — matchAll so a scratch first
-    // redirect does not shadow a non-scratch second one.
-    for (const redirect of statement.matchAll(REDIRECT)) {
-      if (!isScratchTarget(redirect[1])) {
-        return `redirect writes to ${redirect[1]}: ${statement.trim()}`;
+    // and each one is a separate write target — every one is checked so a
+    // scratch first redirect does not shadow a non-scratch second one.
+    for (const target of redirectTargets(tokenize(statement))) {
+      if (!isScratchTarget(target)) {
+        return `redirect writes to ${target}: ${statement.trim()}`;
       }
     }
   }

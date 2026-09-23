@@ -1378,6 +1378,47 @@ _blocked() {
   [ -n "$output" ]
 }
 
+@test "review-guard: a quoted > is an argument, not a redirect" {
+  # The redirect rule read a regex over the raw statement, so any `>` inside a
+  # quoted argument was a write target. A review agent greps constantly, and
+  # this refused a large share of ordinary reads — comparisons, arrows, type
+  # parameters. A guard whose refusals land on greps is one whose refusals stop
+  # being read.
+  for ok in "awk 'length > 80' f.txt" "awk '\$2 > 100' data" \
+            "grep -rn 'a->b' src/" "rg 'fn foo() -> Result' src/" \
+            "jq '.items | map(select(.age > 30))' d.json" \
+            "git log --pretty='%h -> %s'" "echo 'A > B'"; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
+  done
+}
+
+@test "review-guard: a redirect that climbs out of a scratch root is refused" {
+  # isScratchTarget compared the raw prefix while isScratchPath canonicalised,
+  # so one file got opposite answers from two predicates in the same file.
+  _blocked 'echo x > /private/tmp/../../Users/isaacg/p.txt'
+  [ -n "$output" ]
+  _blocked 'pytest > /tmp/../etc/hosts'
+  [ -n "$output" ]
+  # `>|` is a redirect the old pattern did not know at all.
+  _blocked 'echo hi >| /Users/isaacg/probe.txt'
+  [ -n "$output" ]
+}
+
+# passes-at-base: the old raw-prefix compare also rejected a relative target, so this held before the rewrite; the case exists because routing through isScratchPath introduced cwd resolution, which made every relative path read as scratch until the absolute-only guard was added back
+@test "review-guard: a relative redirect target is not scratch" {
+  # isScratchPath resolves against the process cwd, so every relative target
+  # read as scratch whenever that cwd sat under one of the prefixes — and a
+  # review runs in a worktree under /var/folders often enough for that to be
+  # the common case. A redirect the guard cannot place must not be exempted.
+  _blocked 'echo x > rel.txt'
+  [ -n "$output" ]
+  _blocked 'echo x > ./rel.txt'
+  [ -n "$output" ]
+  _blocked 'pytest > ~/notes.txt'
+  [ -n "$output" ]
+}
+
 @test "review-guard: a redirect outside the scratch roots is refused" {
   _blocked 'echo hi > /etc/hosts'
   [ -n "$output" ]

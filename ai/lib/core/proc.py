@@ -58,6 +58,17 @@ the caller did, so `run` decodes with replacement and the bytes come back as
 text on the result. A non-UTF-8 file in a diff used to abort a review run at
 post-processing, after every agent had been paid for.
 
+A caller running something that spawns its own tree passes
+`kill_process_group=True` and gets a child in a session of its own, so an
+expired bound takes the whole group. Killing is not reaping: SIGKILL is posted
+and may not have landed — `killpg` can be refused outright, and a child in
+uninterruptible sleep does not receive it until it leaves that state — so every
+wait after a kill on that path is bounded, and what outlived it is named on the
+stderr the caller already reads. That path does not enter `Popen` as a context
+manager for the same reason: `__exit__` reaps with an unbounded `wait()` for
+anything but a `KeyboardInterrupt`, which would hang the unwinding of an
+ordinary exception on exactly the group the kill failed to remove.
+
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
 invisible to anyone watching from outside: a starved `git commit` comes back as
@@ -106,6 +117,8 @@ import subprocess
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+
+from core import timeouts
 
 # gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
 # from REST or GraphQL, and git over https reports one as "HTTP 502" too.
@@ -407,6 +420,10 @@ def _kill_group(process: subprocess.Popen) -> str:
     nothing to signal — the race, not a failure. A group this process may not
     signal is the one case worth telling the caller about, because something is
     then still running with nothing holding a handle to it.
+
+    Signalling is not reaping, which is why `_reap` exists and why every caller
+    here pairs the two. SIGKILL is posted and this returns; the caller then
+    decides how long it is prepared to wait for the group to act on it.
     """
     try:
         os.killpg(process.pid, signal.SIGKILL)
@@ -416,6 +433,52 @@ def _kill_group(process: subprocess.Popen) -> str:
         return (f"\nprocess group {process.pid} could not be signalled and may "
                 f"still be running")
     return ""
+
+
+def _reap(process: subprocess.Popen) -> str:
+    """Wait briefly for a killed *process*, and say so when it does not go.
+
+    A bound rather than a bare `wait()`, because the kill that precedes this is
+    asynchronous and not guaranteed to have landed at all. Three states reach
+    here and only one of them is a process that is dying: `killpg` succeeded
+    and SIGKILL is merely posted; `killpg` raised `PermissionError` and the
+    group is alive and unsignalled; or the child is in uninterruptible sleep,
+    where SIGKILL is not delivered until it leaves. An unbounded wait treats
+    all three as the first, and the last two then hang the caller — which on
+    the MCP path is a tool call that has already exceeded its budget.
+
+    `QUICK` is the bound because this is only ever a wait for an already-dead
+    process to be reaped, not for work: a group that has had SIGKILL and is
+    still there after five seconds is not about to finish.
+
+    Returns a note for the timeout detail, empty when the process is gone, so
+    what outlived the kill reaches the same stderr the caller already reads.
+    Nothing raises, for the same reason `_kill_group` does not.
+    """
+    try:
+        process.wait(timeout=timeouts.QUICK)
+    except subprocess.TimeoutExpired:
+        return (f"\nprocess {process.pid} did not exit after SIGKILL and may "
+                f"still be running")
+    return ""
+
+
+def _close_pipes(process: subprocess.Popen) -> None:
+    """Close the three pipes, tolerating one the child already broke.
+
+    `Popen.__exit__` does this too, but it also reaps unbounded; this is the
+    half worth having on a path that cannot afford to block. `communicate` has
+    already closed them on the success path, so the second close is a no-op
+    there and this is called unconditionally rather than on the error paths
+    alone — one exit discipline is easier to keep right than three.
+    """
+    for pipe in (process.stdout, process.stderr, process.stdin):
+        if pipe is None:
+            continue
+        try:
+            pipe.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
 
 
 def _timed_out(cmd: list[str], timeout: float | None, exc: subprocess.TimeoutExpired,
@@ -444,21 +507,32 @@ def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | N
     `KeyboardInterrupt`, or a `ValueError` from writing to a stream the child
     already closed, leaves through the bare clause below, which kills the group
     on the way and lets the exception continue — `subprocess.run` does the same
-    for the same reason. Without it `Popen.__exit__` only waits, so the tree
-    this function exists to contain would outlive the call that started it and
-    block the exception behind its own `wait`.
+    for the same reason. Without it the tree this function exists to contain
+    would outlive the call that started it.
+
+    Popen is not entered as a context manager, and that is the other half of
+    the same argument. `__exit__` closes the pipes — worth having — and then
+    reaps with an unbounded `self.wait()` for anything but a `KeyboardInterrupt`,
+    so a group that survived its SIGKILL would block the unwinding of an
+    ordinary exception: the hang this function exists to prevent, reached while
+    handling the error that was going to report it. The two halves are done by
+    hand instead, `_reap` before `_close_pipes`, both bounded and neither able
+    to raise.
     """
     stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
-    with subprocess.Popen(cmd, start_new_session=True, stdin=stdin, **spawn) as process:
-        try:
-            stdout, stderr = process.communicate(input_text, timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            survivors = _kill_group(process)
-            process.wait()
-            return _timed_out(cmd, timeout, exc, survivors)
-        except BaseException:
-            _kill_group(process)
-            raise
+    process = subprocess.Popen(cmd, start_new_session=True, stdin=stdin, **spawn)
+    try:
+        stdout, stderr = process.communicate(input_text, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        survivors = _kill_group(process) + _reap(process)
+        _close_pipes(process)
+        return _timed_out(cmd, timeout, exc, survivors)
+    except BaseException:
+        _kill_group(process)
+        _reap(process)
+        _close_pipes(process)
+        raise
+    _close_pipes(process)
     return CmdResult(returncode=process.returncode, stdout=stdout or "", stderr=stderr or "")
 
 

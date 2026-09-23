@@ -1096,7 +1096,7 @@ _blocked() {
 
 @test "review-guard: a second redirect outside the scratch roots is refused" {
   # REDIRECT.exec() only ever saw the first redirect in a statement, so
-  # \`pytest > /tmp/out.txt 2>/etc/badfile" was judged solely on the scratch
+  # `pytest > /tmp/out.txt 2>/etc/badfile` was judged solely on the scratch
   # first redirect and the non-scratch second one was never checked.
   _blocked 'pytest > /tmp/out.txt 2>/etc/badfile'
   [ -n "$output" ]

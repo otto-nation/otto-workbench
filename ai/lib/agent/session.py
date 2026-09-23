@@ -20,7 +20,7 @@ from pathlib import Path
 
 from core import log
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from agent.backend_events import is_write_tool, pi_write_tool_used
+from agent.backend_events import PI_RPC_EVENT_TYPES, is_write_tool, pi_write_tool_used
 
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
@@ -128,10 +128,7 @@ def _is_pi_log(records: list[dict]) -> bool:
     A log carrying neither shape is neither backend's and is left to the
     Claude-shaped path, which reports "cannot tell" rather than guessing.
     """
-    return any(
-        record.get("type") in ("tool_execution_start", "turn_end", "agent_end")
-        for record in records
-    )
+    return any(record.get("type") in PI_RPC_EVENT_TYPES for record in records)
 
 
 def _pi_wrote_output(records: list[dict]) -> bool:

@@ -51,7 +51,7 @@ const WRITE_STATEMENT_PATTERNS = [
  * reading, and a guard that fires on ordinary reads is one whose refusals stop
  * being read.
  */
-const REDIRECT = />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)(\S+)/;
+const REDIRECT = />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)(\S+)/g;
 
 /**
  * Scratch destinations a redirect may target.
@@ -105,9 +105,13 @@ export function blockedWriteCommand(command: string): string | null {
       if (pattern.test(statement)) return `write-capable command: ${statement.trim()}`;
     }
 
-    const redirect = REDIRECT.exec(statement);
-    if (redirect && !isScratchTarget(redirect[1])) {
-      return `redirect writes to ${redirect[1]}: ${statement.trim()}`;
+    // A statement can carry more than one redirect (e.g. `cmd > a.txt 2>b.txt`),
+    // and each one is a separate write target — matchAll so a scratch first
+    // redirect does not shadow a non-scratch second one.
+    for (const redirect of statement.matchAll(REDIRECT)) {
+      if (!isScratchTarget(redirect[1])) {
+        return `redirect writes to ${redirect[1]}: ${statement.trim()}`;
+      }
     }
   }
   return null;

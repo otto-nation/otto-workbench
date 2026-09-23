@@ -46,6 +46,16 @@ class StreamEvent:
 
 WRITE_TOOL_NAMES = frozenset({"edit", "multiedit", "notebookedit", "write"})
 
+# ── Pi RPC event-type recognition ────────────────────────────────────────────
+#
+# The event types that only Pi's --mode json stream emits, no two of which
+# Claude's stream-json format has an equivalent for. agent.session's
+# `_is_pi_log` keys on this set to tell a Pi RPC log from a Claude one; keep
+# it here rather than re-enumerating it, since a type added to the RPC
+# protocol only needs to widen this set once.
+
+PI_RPC_EVENT_TYPES = frozenset({"tool_execution_start", "turn_end", "agent_end"})
+
 
 def is_write_tool(name: str) -> bool:
     """Whether a tool can put content into a file.

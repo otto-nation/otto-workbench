@@ -217,10 +217,24 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
 # ── RPC protocol helpers ─────────────────────────────────────────────────────
 
 
-def _send(proc: subprocess.Popen, command: dict):
-    """Write a JSONL command to the RPC process's stdin."""
-    proc.stdin.write(json.dumps(command) + "\n")
-    proc.stdin.flush()
+def _send(proc: subprocess.Popen, command: dict) -> bool:
+    """Write a JSONL command to the RPC process's stdin. True when it landed.
+
+    Writing to a child that has already exited raises rather than failing
+    quietly, and every caller here is capable of reaching a dead Pi: the very
+    first `prompt` when Pi rejected its own flags and exited, and the mid-run
+    `abort`/`steer` that follow a turn_end Pi emitted on its way out. An
+    unguarded traceback from those is the same class of fault this module was
+    fixed for — an early failure surfacing as something other than the error
+    it is — so the failure is reported to the caller, which knows whether the
+    command mattered.
+    """
+    try:
+        proc.stdin.write(json.dumps(command) + "\n")
+        proc.stdin.flush()
+        return True
+    except (BrokenPipeError, ValueError):
+        return False
 
 
 def _read_rpc_response(proc: subprocess.Popen, command_type: str) -> dict:
@@ -258,6 +272,13 @@ _FATAL_RPC_COMMANDS = frozenset({"prompt", "parse"})
 # a human, not a payload, and a runaway one would otherwise land whole in the
 # session log and in every ledger row that quotes it.
 _RPC_ERROR_MAX_CHARS = 2000
+
+# Pi was gone before its prompt could be written. Reported in the same shape as
+# a refusal, because it is the same failure from the caller's side: the run
+# never started and nothing downstream should wait for it.
+_PROMPT_UNDELIVERED = (
+    "pi exited before the prompt could be sent — its stdin was already closed"
+)
 
 # What a run Pi refused exits with when Pi's own status does not say so. A
 # clean RPC shutdown after a rejected prompt is exit 0, and a caller reading
@@ -331,6 +352,21 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> bool:
     return True
 
 
+def _close_pipes(proc: subprocess.Popen) -> None:
+    """Close the three pipes, tolerating one the child already broke.
+
+    Popen.__exit__ does this, but it also reaps unbounded; this is the half
+    worth having on a path that cannot afford to block.
+    """
+    for pipe in (proc.stdout, proc.stderr, proc.stdin):
+        if pipe is None:
+            continue
+        try:
+            pipe.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+
 @contextmanager
 def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
     """Start Pi in its own process session, killing the group on the way out.
@@ -343,23 +379,22 @@ def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
     nothing holding a handle to it. The kill on the way out is the other half
     of that flag, and `core.proc._run_in_own_group` pairs the two the same way.
 
-    Popen is entered as a context manager only around the kill, for the same
-    reason it is there: its __exit__ closes the three pipes and reaps the
-    child, so an interrupt leaves neither open descriptors nor a zombie behind
-    the kill. The success path does not go through it. `_wait_for_exit` has
-    already reaped the process by the time this returns, or reported and left
-    a group that will not reap even after SIGKILL — and routing that return
-    back through `Popen.__exit__` would call its unbounded `self.wait()` right
-    after, turning "left" into the exact silent hang this module exists to
-    avoid, one level up.
+    The pipes are closed and the child reaped by hand rather than by entering
+    Popen. Its __exit__ reaps with an unbounded `self.wait()` for anything but
+    a KeyboardInterrupt, so a group that survived SIGKILL would hang the
+    unwinding of an ordinary exception — the same silent hang this module
+    exists to avoid, on the one path with an exception already in flight. The
+    success path does not come through here at all: `_wait_for_exit` has
+    already waited, on the terms that path needs.
     """
     proc = subprocess.Popen(cmd, start_new_session=True, **spawn)
     try:
         yield proc
     except BaseException:
-        with proc:
-            _kill_group(proc)
-            raise
+        _kill_group(proc)
+        _wait_for_exit(proc, abandoned=True)
+        _close_pipes(proc)
+        raise
 
 
 def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
@@ -373,7 +408,8 @@ def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
     promises stats: reading ``tokens`` off the envelope silently yields an empty
     dict, which reaches the ledger as a run that cost money and spent no tokens.
     """
-    _send(proc, {"type": "get_session_stats"})
+    if not _send(proc, {"type": "get_session_stats"}):
+        return {}
     resp = _read_rpc_response(proc, "get_session_stats")
     data = resp.get("data")
     return data if data is not None else resp
@@ -475,6 +511,21 @@ class StreamResult:
     stop_reason: str
     model: str | None = None
     error: str | None = None
+
+
+def _undelivered_prompt(log_file) -> StreamResult:
+    """The result of a run whose prompt never reached Pi.
+
+    Logged into the session file in Pi's own response shape, so the record that
+    explains the failure is where every other refusal leaves one.
+    """
+    log.error(f"pi refused the run: {_PROMPT_UNDELIVERED}")
+    log_file.write(json.dumps({
+        "type": "response", "command": "prompt", "success": False,
+        "error": _PROMPT_UNDELIVERED,
+    }) + "\n")
+    log_file.flush()
+    return StreamResult(0, 0.0, "error", None, _PROMPT_UNDELIVERED)
 
 
 def _consume_stream(
@@ -689,15 +740,16 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
     prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
     start_time = time.monotonic()
 
-    # Send the prompt via RPC
-    _send(proc, {"type": "prompt", "message": full_prompt})
-
-    # Stream events with budget and turn enforcement
+    # Send the prompt via RPC. A prompt that cannot be written means Pi is
+    # already gone, so there is no stream to consume and no stats to ask for.
     with open(inv.session_log, "w") as log_fh:
-        stream = _consume_stream(
-            proc, log_fh, prefix,
-            max_turns=inv.max_turns, max_budget=inv.max_budget,
-        )
+        if _send(proc, {"type": "prompt", "message": full_prompt}):
+            stream = _consume_stream(
+                proc, log_fh, prefix,
+                max_turns=inv.max_turns, max_budget=inv.max_budget,
+            )
+        else:
+            stream = _undelivered_prompt(log_fh)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -751,14 +803,15 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
     """Prompt Pi and consume its stream, persisting the run only if asked to."""
     start_time = time.monotonic()
 
-    _send(proc, {"type": "prompt", "message": _prompt_with_dirs(inv)})
-
     log_path = inv.session_log if inv.session_log else os.devnull
     with open(log_path, "w") as log_file:
-        stream = _consume_stream(
-            proc, log_file, "",
-            max_turns=inv.max_turns, max_budget=inv.max_budget,
-        )
+        if _send(proc, {"type": "prompt", "message": _prompt_with_dirs(inv)}):
+            stream = _consume_stream(
+                proc, log_file, "",
+                max_turns=inv.max_turns, max_budget=inv.max_budget,
+            )
+        else:
+            stream = _undelivered_prompt(log_file)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 

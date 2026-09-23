@@ -724,8 +724,24 @@ class _RefusingProc:
         def close(self):
             pass
 
+    class _Stdout:
+        """An iterable that closes, as a real Popen's stdout pipe is."""
+
+        def __init__(self, lines):
+            self._lines = iter(lines)
+            self.closed = False
+
+        def __iter__(self):
+            return self._lines
+
+        def __next__(self):
+            return next(self._lines)
+
+        def close(self):
+            self.closed = True
+
     def __init__(self, lines, wait_hangs=False, returncode=0):
-        self.stdout = iter(lines)
+        self.stdout = self._Stdout(lines)
         self.stdin = self._Stdin()
         self.stderr = io.StringIO("")
         self.returncode = returncode
@@ -746,12 +762,19 @@ class _RefusingProc:
     def kill(self):
         self.killed = True
 
-    # A real Popen is a context manager, and the backend enters it so the pipes
-    # are closed and the child reaped on the way out.
+    # A real Popen is a context manager whose __exit__ closes the three pipes
+    # and then reaps — with an *unbounded* wait for anything that is not a
+    # KeyboardInterrupt. Mirrored rather than stubbed, so a path that enters
+    # this object inherits the hang the real one would impose instead of
+    # passing against a no-op.
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc_info):
+    def __exit__(self, exc_type, *rest):
+        self.stdout.close()
+        if exc_type is KeyboardInterrupt:
+            return False
+        self.wait()
         return False
 
 
@@ -945,20 +968,7 @@ class TestPiRunsInItsOwnGroup:
             ))
         assert killpg_calls == [(proc.pid, signal.SIGKILL)]
 
-    def test_an_interrupt_closes_the_pipes_and_reaps_the_child(
-        self, monkeypatch, tmp_path,
-    ):
-        # Entering Popen is what closes the three pipes and reaps the child.
-        # Without it an interrupt leaks all three descriptors and leaves a
-        # zombie behind the kill, which the SIGKILL alone does not collect.
-        exits = []
-
-        class _Reaping(_RefusingProc):
-            def __exit__(self, *exc_info):
-                exits.append(exc_info[0])
-                return False
-
-        proc = _Reaping([])
+    def _interrupted_run(self, monkeypatch, tmp_path, proc):
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
         monkeypatch.setattr("core.proc.os.killpg", lambda pid, sig: None)
 
@@ -966,12 +976,143 @@ class TestPiRunsInItsOwnGroup:
             raise KeyboardInterrupt
 
         monkeypatch.setattr(ai_backend_pi, "_consume_stream", _interrupted)
-
         with pytest.raises(KeyboardInterrupt):
             ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
                 prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
             ))
-        assert exits == [KeyboardInterrupt], "Popen was never entered"
+
+    def test_an_interrupt_closes_the_pipes_and_reaps_the_child(
+        self, monkeypatch, tmp_path,
+    ):
+        # The kill alone collects neither: the descriptors stay open and the
+        # child stays a zombie until GC. Asserted as the outcome rather than as
+        # "Popen.__exit__ ran", because entering Popen is exactly what this
+        # path must not do — its reap is unbounded.
+        proc = _RefusingProc([])
+        self._interrupted_run(monkeypatch, tmp_path, proc)
+        assert proc.stdout.closed
+        assert proc.waits, "the child was never reaped"
+
+    # A KeyboardInterrupt takes Popen.__exit__'s own bounded arm, so the double
+    # cannot show the hang here; the non-interrupt case this guards against is
+    # the reachable one, confirmed separately against a real child.
+    # passes-at-base: the interrupt arm was already bounded by CPython itself
+    def test_an_interrupt_does_not_hang_on_a_group_that_survives_sigkill(
+        self, monkeypatch, tmp_path,
+    ):
+        # Popen.__exit__ reaps with an unbounded wait() for anything that is
+        # not a KeyboardInterrupt, so entering it here would hang the unwinding
+        # of an ordinary exception on a child that would not die.
+        proc = _RefusingProc([], wait_hangs=True)
+
+        def _always_hangs(timeout=None):
+            proc.waits.append(timeout)
+            raise subprocess.TimeoutExpired("pi", timeout)
+
+        proc.wait = _always_hangs
+        self._interrupted_run(monkeypatch, tmp_path, proc)
+        assert all(t is not None for t in proc.waits), "an unbounded wait ran"
+
+
+class TestWritingToADeadPi:
+    """Pi can exit before a command is written; that is not a traceback.
+
+    `_send` writes to the child's stdin, which raises once the far end is gone.
+    Every caller can reach a dead Pi: the first prompt when Pi rejected its own
+    flags and exited, and the mid-run abort/steer that follow a turn_end Pi
+    emitted on the way out.
+    """
+
+    class _DeadStdin:
+        def write(self, data):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    def test_send_reports_a_broken_pipe_rather_than_raising(self):
+        proc = _RefusingProc([])
+        proc.stdin = self._DeadStdin()
+        assert ai_backend_pi._send(proc, {"type": "abort"}) is False
+
+    def test_send_reports_success_when_the_write_lands(self):
+        proc = _RefusingProc([])
+        assert ai_backend_pi._send(proc, {"type": "abort"}) is True
+
+    def test_a_closed_stdin_is_not_a_traceback_either(self):
+        # A file object closed under us raises ValueError, not BrokenPipeError.
+        proc = _RefusingProc([])
+        proc.stdin = io.StringIO()
+        proc.stdin.close()
+        assert ai_backend_pi._send(proc, {"type": "abort"}) is False
+
+    def test_the_limit_abort_survives_a_pi_that_already_exited(self):
+        # _check_limits fires after a turn_end Pi may have emitted on its way
+        # out. An unguarded write here crashed the run at its turn ceiling.
+        proc = _RefusingProc([])
+        proc.stdin = self._DeadStdin()
+        stop, _ = ai_backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
+        assert stop == "max_turns"
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_an_undeliverable_prompt_is_reported_not_waited_on(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        # Pi died before the prompt could be written, so there is no stream
+        # coming. Consuming one would wait out the whole timeout for events
+        # that will never arrive — this issue's own failure, one step earlier.
+        proc = _RefusingProc([])
+        proc.stdin = self._DeadStdin()
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
+
+        def _must_not_run(*a, **kw):
+            raise AssertionError("consumed a stream from a pi that never got the prompt")
+
+        monkeypatch.setattr(ai_backend_pi, "_consume_stream", _must_not_run)
+        log = tmp_path / "s.jsonl"
+        code = getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
+        assert code != 0
+        assert "exited before the prompt" in log.read_text()
+
+    def test_the_undelivered_prompt_diagnoses_as_an_error(self, monkeypatch, tmp_path):
+        from agent import session as agent_session
+        from agent.diagnosis import DiagnosisKind
+
+        proc = _RefusingProc([])
+        proc.stdin = self._DeadStdin()
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
+        log = tmp_path / "s.jsonl"
+        ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
+        diagnosis = agent_session.diagnose_missing_output(str(log))
+        assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
+
+    def test_stats_are_not_asked_of_a_pi_that_cannot_be_written_to(self):
+        # The query writes, then reads until a reply. A child that never got
+        # the question will not answer it, and on a live-but-silent child that
+        # read blocks with no bound — so the send failing must skip the read
+        # rather than fall through to it.
+        proc = _RefusingProc([])
+        proc.stdin = self._DeadStdin()
+
+        class _NeverAnswers:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                raise AssertionError("read a pi that never received the query")
+
+            def close(self):
+                pass
+
+        proc.stdout = _NeverAnswers()
+        assert ai_backend_pi._get_stats_after_agent_end(proc) == {}
 
 
 class TestPromptCarriesReadableDirs:

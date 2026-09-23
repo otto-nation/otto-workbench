@@ -233,8 +233,15 @@ def test_git_resolves_to_a_no_op_editor_under_the_pinned_env(repo, monkeypatch):
     removed: with nothing set and no config, git falls through its own table to
     `vi` — the editor that hung a rebase for 45 minutes on a pipe with no
     terminal.
+
+    `TERM` is pinned alongside, because it selects which of those two endings
+    the cleared case has: on `TERM=dumb` — what a GitHub runner exports — git
+    refuses its own fallback and exits non-zero rather than answering `vi`, so
+    a test left on the ambient value asserts the fallback on a developer's
+    machine and asserts nothing on CI.
     """
     monkeypatch.setenv("GIT_EDITOR", "vim")
+    monkeypatch.setenv("TERM", "xterm")
 
     leaked = git_client.run("var", "GIT_EDITOR", cwd=repo)
     cleared = git_client.run(

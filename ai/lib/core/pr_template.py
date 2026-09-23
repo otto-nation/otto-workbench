@@ -38,15 +38,24 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Every location GitHub resolves a PR template from. All three directories it
-# documents — the repo root, `docs/`, and `.github/` — in both the lowercase
-# and uppercase spellings that repos in the wild actually use.
+# GitHub's single-file PR template, in all three directories it documents —
+# `.github/`, the repo root, and `docs/` — and in both the lowercase and
+# uppercase spellings that repos in the wild actually use.
 #
 # GitHub's filenames are not case sensitive and a checkout on a case-sensitive
 # filesystem is, so both spellings are listed rather than one being assumed. The
 # order only decides between two templates in one repo, which is a
 # misconfiguration either way; what it must not do is miss a directory, which is
 # what the two lists this replaces both did with `docs/`.
+#
+# ceiling: the single-file form only. GitHub also honours a
+# `PULL_REQUEST_TEMPLATE/` directory of several templates in any of these three
+# folders, and a `.txt` extension alongside `.md`. The directory form is left
+# unresolved because GitHub picks between its templates by the `template` query
+# parameter on the compare URL, which a resolver reading a checkout has no
+# equivalent of — any choice here would be a guess at which one the author
+# wanted. Upgrade if a repo we work in adopts the directory form: the resolver
+# then needs a way to be told which template to use, not a better guess.
 TEMPLATE_PATHS = (
     ".github/pull_request_template.md",
     ".github/PULL_REQUEST_TEMPLATE.md",

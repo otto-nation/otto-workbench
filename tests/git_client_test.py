@@ -231,14 +231,18 @@ def test_git_resolves_to_a_no_op_editor_under_the_pinned_env(repo, monkeypatch):
     leaves an operator's `export GIT_EDITOR=vim` in charge. Clearing the
     variable is not enough either, which is why these are pinned rather than
     removed: with nothing set and no config, git falls through its own table to
-    `vi` — the editor that hung a rebase for 45 minutes on a pipe with no
-    terminal.
+    a full-screen editor — the kind that hung a rebase for 45 minutes on a pipe
+    with no terminal.
 
-    `TERM` is pinned alongside, because it selects which of those two endings
-    the cleared case has: on `TERM=dumb` — what a GitHub runner exports — git
-    refuses its own fallback and exits non-zero rather than answering `vi`, so
-    a test left on the ambient value asserts the fallback on a developer's
-    machine and asserts nothing on CI.
+    Which editor that is belongs to the build, not to git: a stock build falls
+    through to `vi`, Debian's to the `editor` alternative. So the assertion is
+    that the fallback is a real editor rather than the no-op — naming one makes
+    the test a claim about the runner's git package, which is how it passed
+    locally and failed on CI.
+
+    `TERM` is pinned for the same reason. On `TERM=dumb`, which a GitHub runner
+    exports, git refuses the fallback altogether and exits non-zero with no
+    answer — leaving the cleared case asserting nothing at all.
     """
     monkeypatch.setenv("GIT_EDITOR", "vim")
     monkeypatch.setenv("TERM", "xterm")
@@ -254,7 +258,7 @@ def test_git_resolves_to_a_no_op_editor_under_the_pinned_env(repo, monkeypatch):
     )
 
     assert leaked.stdout.strip() == "vim"
-    assert cleared.stdout.strip() == "vi"
+    assert cleared.ok and cleared.stdout.strip() not in ("", git_client.NO_EDITOR)
     assert pinned.stdout.strip() == git_client.NO_EDITOR
 
 

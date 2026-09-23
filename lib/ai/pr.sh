@@ -11,8 +11,8 @@
 # ```
 #
 # State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-# `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`,
-# `PR_TITLE`, `PR_DESCRIPTION`.
+# `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_TEMPLATE_PATH`,
+# `PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
 
 # WORKBENCH_ROOT comes from ai/core.sh, which this file requires be sourced
 # first (see the header above). _pr_load_template asks git for the repo root,
@@ -274,14 +274,21 @@ _pr_resolve_issue() {
 }
 
 # _pr_load_template
-# Finds a PR template in the GitHub-recognised locations (priority order).
-# Falls back to a minimal Summary/Changes/Testing template when none is found.
-# Sets PR_TEMPLATE and PR_HAS_TEMPLATE.
+# Resolves the repo's PR template through ai/lib/core/pr_template.py, the one
+# owner of where a template may live and what a repo without one gets.
+# Sets PR_TEMPLATE, PR_TEMPLATE_PATH and PR_HAS_TEMPLATE.
 #
-# Resolved from the repo root, not the working directory. All four locations
-# GitHub recognises are repo-root-relative, so a bare relative path only finds
-# them when the caller happens to be standing at the top of the tree — run from
-# any subdirectory, every candidate misses, PR_HAS_TEMPLATE stays false, and
+# The candidate list used to be spelled here as well as in Python, under a
+# comment asking whoever edited one to remember the other. They drifted anyway:
+# neither looked in `docs/`, which GitHub honours, so a repo keeping its
+# template there was told it had none. Asking the owner is the same move
+# `_pr_issue_provider` makes for a config value — bash does not get its own
+# reader of a question something else already answers.
+#
+# Resolved from the repo root, not the working directory. Every candidate is
+# repo-root-relative, so a bare relative path only finds them when the caller
+# happens to be standing at the top of the tree — run from any subdirectory,
+# every candidate misses, PR_HAS_TEMPLATE stays false, and
 # _pr_check_body_against_template returns 0 without comparing anything. The
 # check would be silently absent exactly where nothing else says so.
 #
@@ -293,28 +300,38 @@ _pr_resolve_issue() {
 # under a git hook — pre-push exports one — would have `--show-toplevel` answer
 # the cwd rather than the repo root, silently restoring the very bug this
 # resolution exists to fix.
+#
+# A failed resolution leaves PR_HAS_TEMPLATE false and PR_TEMPLATE empty, and
+# the caller reports it. Degrading silently to the fallback template here would
+# push Summary/Changes/Testing at a repo that ships its own — the same wrong
+# answer the `docs/` gap gave, arrived at a different way.
 _pr_load_template() {
   PR_HAS_TEMPLATE=false
   PR_TEMPLATE=""
-  local root
+  PR_TEMPLATE_PATH=""
+  local root record
   root=$(git_env_clear; git rev-parse --show-toplevel 2> /dev/null) || root="."
-  local candidate
-  for candidate in \
-    ".github/pull_request_template.md" \
-    ".github/PULL_REQUEST_TEMPLATE.md" \
-    "pull_request_template.md" \
-    "PULL_REQUEST_TEMPLATE.md"; do
-    if [[ -f "$root/$candidate" ]]; then
-      PR_TEMPLATE=$(cat "$root/$candidate")
-      PR_HAS_TEMPLATE=true
-      return
-    fi
-  done
-  PR_TEMPLATE="## Summary
 
-## Changes
+  # No PYTHONPATH: the module is reached by its file path and imports nothing
+  # from ai/lib, being layer 1. Same reasoning as _push_verified's call.
+  record=$(python3 "$WORKBENCH_ROOT/ai/lib/core/pr_template.py" --root "$root") || {
+    echo "✗ Could not resolve this repo's PR template" >&2
+    return 1
+  }
 
-## Testing"
+  # The record is the path, a newline, then the template. A path cannot contain
+  # a newline, so the first one splits them — but a zero-byte template yields a
+  # record with no newline at all, which `${record#*$'\n'}` would return whole,
+  # reading the path as the body. Hence the explicit test.
+  if [[ "$record" == *$'\n'* ]]; then
+    PR_TEMPLATE_PATH="${record%%$'\n'*}"
+    PR_TEMPLATE="${record#*$'\n'}"
+  else
+    PR_TEMPLATE_PATH="$record"
+    PR_TEMPLATE=""
+  fi
+  [ -n "$PR_TEMPLATE_PATH" ] && PR_HAS_TEMPLATE=true
+  return 0
 }
 
 # _pr_generate_single_commit CHANGED_FILES
@@ -545,7 +562,9 @@ _pr_check_body_against_template() {
   [ -n "$missing" ] || return 0
 
   echo "✗ The PR body does not use this repo's template" >&2
-  echo "→ Missing section(s) from .github/PULL_REQUEST_TEMPLATE.md:" >&2
+  # The resolved path, not a guess at it: the template is one of six locations
+  # and naming the wrong one sends its author to edit a file that does not exist.
+  echo "→ Missing section(s) from $PR_TEMPLATE_PATH:" >&2
   printf '%s' "$missing" >&2
   echo "→ Use the template's own headers, or drop --body to have them filled" >&2
   return 1
@@ -561,7 +580,11 @@ generate_pr_content() {
   # Loaded before the override check, not after it. A body supplied by hand
   # skips every AI path that would have been handed the template, so this is
   # the only place left that can tell whether it conforms.
-  _pr_load_template
+  #
+  # A failure aborts the PR rather than proceeding with no template. Every path
+  # below reads PR_TEMPLATE — the AI ones fill it and the override one checks
+  # against it — so carrying on would open a PR whose body answers to nothing.
+  _pr_load_template || return 1
 
   if [[ -n "${PR_TITLE_OVERRIDE:-}" && -n "${PR_BODY_OVERRIDE:-}" ]]; then
     _pr_check_body_against_template "$PR_BODY_OVERRIDE" || return 1

@@ -45,27 +45,20 @@ def _run(ctx, *, body="", ai=(_wrapped("NEW BODY"), 0), **kw):
 # ── template discovery ──────────────────────────────────────────────────────
 
 
-def test_checked_in_template_wins_over_the_fallback(worktree):
-    (worktree / ".github").mkdir()
-    (worktree / ".github" / "pull_request_template.md").write_text("## Why\n")
-    template, rel = pr_describe_cli._load_template(worktree)
-    assert template == "## Why\n"
-    assert rel == ".github/pull_request_template.md"
+# The prompt's own two cases — a checked-in template and none — are covered
+# under "prompt content" below, which predates this module having one owner.
+# What is left to pin here is the path that reaches state, on a location the
+# lists this replaced did not look in.
 
 
-def test_first_recognised_path_wins(worktree):
-    (worktree / ".github").mkdir()
-    (worktree / ".github" / "pull_request_template.md").write_text("first")
-    (worktree / "PULL_REQUEST_TEMPLATE.md").write_text("last")
-    template, rel = pr_describe_cli._load_template(worktree)
-    assert template == "first"
-    assert rel == ".github/pull_request_template.md"
-
-
-def test_repo_without_a_template_falls_back(worktree):
-    template, rel = pr_describe_cli._load_template(worktree)
-    assert "## Summary" in template
-    assert rel == ""
+def test_the_resolved_path_is_recorded_in_state(worktree):
+    """A `docs/` template, which neither of the lists this replaced looked in."""
+    (worktree / "docs").mkdir()
+    (worktree / "docs" / "pull_request_template.md").write_text("## Why\n")
+    ctx = _ctx(worktree)
+    _run(ctx)
+    state = pr_state.load_state(ctx.target_dir)
+    assert state.describe.template_path == "docs/pull_request_template.md"
 
 
 # ── talking to gh ───────────────────────────────────────────────────────────

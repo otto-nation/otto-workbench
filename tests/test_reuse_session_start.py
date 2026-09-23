@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
 from config import workbench_config  # noqa: E402
 
 ISSUE_TRACKER_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "issue-tracker.md"
+GIT_OPERATIONS_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "git-operations.md"
 
 
 def _run(rss, repo):
@@ -64,6 +65,74 @@ def test_the_rule_quotes_both_lines_the_hook_emits(rss, tmp_path):
     rule = ISSUE_TRACKER_RULE.read_text()
     assert rss._issues_line(str(configured)) in rule
     assert rss._issues_line(str(unconfigured)) in rule
+
+
+class TestThePRTemplateLine:
+    """What the hook says about the repo's PR template.
+
+    Derived on every session rather than configured, so these drive the real
+    resolver against a real directory. Where a template may live is
+    `core.pr_template`'s question and is tested in pr_template_test.py; what is
+    checked here is that the line an agent reads carries the answer.
+    """
+
+    def test_it_names_the_template_and_its_sections(self, rss, tmp_path, capsys):
+        repo = tmp_path / "repo"
+        (repo / ".github").mkdir(parents=True)
+        (repo / ".github" / "pull_request_template.md").write_text(
+            "## What\n\n## Why\n",
+        )
+        _run(rss, repo)
+        out = capsys.readouterr().out
+        assert "PR template: .github/pull_request_template.md" in out
+        assert "## What, ## Why" in out
+
+    def test_a_repo_with_no_template_is_told_to_use_the_fallback(
+        self, rss, tmp_path, capsys,
+    ):
+        """The state an agent most needs told, so it is not silence.
+
+        Without the line, "this repo ships none" is indistinguishable from
+        "nobody looked" — and the agent goes and looks, once per session.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _run(rss, repo)
+        out = capsys.readouterr().out
+        assert "PR template: none in this repo" in out
+        assert "## Summary, ## Changes, ## Testing" in out
+
+    def test_the_rule_quotes_the_line_for_a_repo_with_no_template(
+        self, rss, tmp_path,
+    ):
+        """The rule points the agent at a line this hook owns the wording of.
+
+        Same contract as the issue-tracker rule above: quoted verbatim, so a
+        reworded hook would leave the rule naming a line that does not exist.
+        Reword the rule to match, not the other way round.
+
+        Only the no-template state is quotable — the other names a path that
+        differs per repo, so the rule gives its shape instead.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        assert rss._pr_template_line(str(repo)) in GIT_OPERATIONS_RULE.read_text()
+
+    def test_the_sections_are_the_ones_pr_create_enforces(
+        self, rss, tmp_path, capsys,
+    ):
+        """One resolver behind both, so the line cannot name other sections.
+
+        A second implementation for the context line would be free to disagree
+        with the check that refuses a body — the agent told one set of headers
+        and the automation demanding another.
+        """
+        repo = tmp_path / "repo"
+        (repo / "docs").mkdir(parents=True)
+        (repo / "docs" / "pull_request_template.md").write_text("## Context\n")
+        _run(rss, repo)
+        assert "PR template: docs/pull_request_template.md (## Context)" \
+            in capsys.readouterr().out
 
 
 class TestWhereTheSessionStarted:

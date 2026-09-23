@@ -3127,6 +3127,38 @@ A caller passes every `ai/lib` module it imports, this one included — the set 
 checked against the module's imports rather than curated, so a proxy listing
 itself is the rule holding rather than a module patching its own attributes.
 
+### core/pr_template.py
+
+Where a repo's PR template is, and what it says — resolved in one place.
+
+Three callers need the same answer and each used to work it out for itself:
+``lib/ai/pr.sh`` for ``task pr:create``, ``cli/pr_describe.py`` for
+``pr describe``, and the SessionStart hook that tells the agent which template
+this repo ships. The first two carried the candidate path list and the fallback
+template as literals, under a comment asking whoever edited one to remember the
+other. They had already drifted from GitHub: neither looked in ``docs/``, which
+GitHub has always honoured, so a repo keeping its template there was told it had
+none and got the fallback's headers pushed at it instead.
+
+The resolution is a handful of ``stat`` calls against a checkout, so it is
+re-derived on every read rather than recorded in config. A path cached in
+``.workbench.yml`` is a second answer to a question the filesystem already
+answers, and it is wrong the moment someone adds, moves, or deletes the file.
+The rediscovery this module exists to stop was never the automation's — it was
+the agent's, and the SessionStart line is what settles that.
+
+Bash reads through the CLI below rather than globbing for itself, the same way
+it asks ``config_cli.py`` for a config value instead of parsing YAML twice. The
+record it prints is:
+
+    <relative path or empty><newline><template text>
+
+The first line is the path relative to the repo root, empty when the repo ships
+no template and the text that follows is this module's fallback. A path cannot
+contain a newline, so the split is unambiguous — but note that a zero-byte
+template yields a record with no newline at all, and a caller splitting on the
+first one has to handle that rather than reading the path as the body.
+
 ### core/proc.py
 
 One type for what a subprocess said, and one helper for running it.

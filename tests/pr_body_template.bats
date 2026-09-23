@@ -140,6 +140,73 @@ off template"
   [ "$status" -eq 0 ]
 }
 
+@test "a template in docs/ is found" {
+  # The location both hand-maintained candidate lists missed. GitHub has always
+  # honoured docs/, so a repo keeping its template there had its own sections
+  # ignored and the fallback's pushed at it. Resolving through the one owner in
+  # ai/lib/core/pr_template.py is what closes it for this caller.
+  rm -rf .github
+  mkdir -p docs
+  printf '## Context\n\n## Risk\n' > docs/pull_request_template.md
+
+  _pr_load_template
+  [ "$PR_HAS_TEMPLATE" = "true" ]
+  [ "$PR_TEMPLATE_PATH" = "docs/pull_request_template.md" ]
+
+  run _pr_check_body_against_template "## Summary
+
+off template"
+  [ "$status" -eq 1 ]
+}
+
+@test "the refusal names the template that was actually resolved" {
+  # The path is one of six, and naming the wrong one sends the body's author to
+  # edit a file that does not exist. The message used to say
+  # .github/PULL_REQUEST_TEMPLATE.md whatever had been found.
+  rm -rf .github
+  mkdir -p docs
+  printf '## Context\n' > docs/pull_request_template.md
+  _pr_load_template
+
+  run _pr_check_body_against_template "## Summary"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"docs/pull_request_template.md"* ]]
+}
+
+@test "an empty template does not read as its own path" {
+  # The record the resolver prints is the path, a newline, then the template.
+  # A zero-byte template yields a record with no newline at all, and the
+  # obvious `${record#*$'\n'}` returns the whole record unchanged when there is
+  # none — so PR_TEMPLATE would come back holding the path. Every header check
+  # under it would then be comparing bodies against a filename.
+  rm -rf .github
+  mkdir -p .github
+  : > .github/pull_request_template.md
+
+  _pr_load_template
+  [ "$PR_HAS_TEMPLATE" = "true" ]
+  [ "$PR_TEMPLATE_PATH" = ".github/pull_request_template.md" ]
+  [ -z "$PR_TEMPLATE" ]
+}
+
+@test "a resolver that cannot answer aborts rather than dropping the template" {
+  # Degrading to the fallback would push Summary/Changes/Testing at a repo that
+  # ships its own — the same wrong answer the docs/ gap gave, reached a
+  # different way. generate_pr_content must not open a PR on it.
+  WORKBENCH_ROOT="$TMPDIR/nonexistent"
+
+  run _pr_load_template
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not resolve this repo's PR template"* ]]
+
+  PR_TITLE_OVERRIDE="fix: thing"
+  PR_BODY_OVERRIDE="## What
+
+## Why"
+  run generate_pr_content "isaac/fix/thing" "main"
+  [ "$status" -eq 1 ]
+}
+
 @test "extra sections beyond the template are allowed" {
   # The template is a floor, not a ceiling — a PR that says more than it was
   # asked for is not malformed.

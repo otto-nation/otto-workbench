@@ -50,13 +50,17 @@ anchor file* moved, which goes to the verify gate. Everything else the agent cla
 about its own work stands as written.
 
 So `Skipped: [M1] no auto-fix` sits happily on top of a commit containing the edit for
-M1. The agent edited a caller or a test rather than the anchor file — the one case the
-mechanical check does not catch, because it looks only at whether the item's own anchor
-file moved, and this manual audit step exists to cover exactly that gap; or ticked `needs a
-person` and changed the code anyway, another case the check does not see, since that
-outcome is not one of the two it watches; or deferred and the gate could not settle it,
-which is the one case the check does route on, and here it ran and came back without a
-verdict. In every one of those the edit is committed and the message says no work was done.
+M1, by three routes:
+
+| What the agent did | Why the check misses it |
+|---|---|
+| Edited a caller or a test, deferred the finding | The check asks only whether the item's *own* anchor file moved |
+| Ticked `needs a person` and changed the code anyway | That outcome is not one of the two the check watches |
+| Deferred where the anchor file did move | Routed to the gate, which came back without a verdict |
+
+Only the third is seen mechanically at all, and seeing it is not the same as settling it.
+In all three the edit is committed and the message says no work was done. The first two
+are what this manual step exists for.
 
 That is the worst way for a change to reach main — not unreviewed, but *reported as
 absent*, so nobody looks. A regression shipped this way is invisible to the one artifact

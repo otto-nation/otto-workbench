@@ -193,6 +193,8 @@ off template"
   # Degrading to the fallback would push Summary/Changes/Testing at a repo that
   # ships its own — the same wrong answer the docs/ gap gave, reached a
   # different way. generate_pr_content must not open a PR on it.
+  #
+  # shellcheck disable=SC2034  # read by _pr_load_template in the sourced lib
   WORKBENCH_ROOT="$TMPDIR/nonexistent"
 
   run _pr_load_template

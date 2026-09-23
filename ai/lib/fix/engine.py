@@ -54,7 +54,7 @@ from agent.registry import PHASES
 from core.phases import Effort, Phase
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
-from core.trail import Trail
+from core.trail import Trail, tinfo
 from config.workbench_config import WorkbenchConfig
 
 # The checklist's name inside a pass's artifact directory. Published because a
@@ -1126,6 +1126,19 @@ def run(
             f"could not read the state of {adapter.workdir} — skipping fix pass"
         )
         return FixRun()
+    if dirty_before:
+        # Recorded, not refused. A pass that commits into a tree somebody else
+        # is editing moves HEAD under them, which is how a fix pass came to
+        # capture work that had just been reverted — but nothing observable here
+        # tells that tree from an ordinary one. A dirty worktree is the normal
+        # case for a self-review (`review.collect` reviews uncommitted edits on
+        # purpose), the pre-push pass exists to repair a dirty tree, and no fix
+        # pass on this machine has a terminal to be asked which it is. So this
+        # leaves the evidence a diagnosis needs — alongside the `origin` every
+        # record carries — rather than guessing and refusing the common case.
+        tinfo(trail, "dirty_baseline",
+              f"{len(dirty_before)} file(s) already modified before the pass",
+              data={"paths": sorted(dirty_before), "workdir": str(adapter.workdir)})
 
     chunk_size = agent_phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)

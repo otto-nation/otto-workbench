@@ -983,8 +983,16 @@ gate is what tells the two apart, and a fix it falsifies lands as work still
 owed rather than as done.
 
 The commit always happens; the push waits for `--post`. `land` owns both, and
-the split is its: a local commit asserts nothing to anybody, while a push puts
-the pass's work on a branch somebody else is reading.
+the split is its: a push puts the pass's work on a branch somebody else is
+reading, while a commit reaches only the worktree the pass was pointed at.
+
+That split assumes the worktree has one writer. It does not hold for a tree an
+operator is editing at the same time — a pass that committed into one moved HEAD
+under them and captured work they had just reverted. Nothing here can tell that
+tree from any other: a dirty worktree is the ordinary case for a self-review,
+and no fix pass on this machine has a terminal to be asked. What the pass does
+leave is evidence — `trail` records the pre-existing dirt at `dirty_baseline`,
+and every record carries who started the run.
 
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
@@ -3475,6 +3483,19 @@ outermost recorded run, carried down the process tree in ``TRAIL_ROOT_ENV`` and
 recorded on every event a descendant writes. ``otto-log show <root>`` renders
 the whole command as one timeline and ``otto-log query --root <id>`` selects it,
 while ``--invocation`` still addresses one process on its own.
+
+Every event also carries ``origin``: the pid, the parent pid, the parent's
+program name, the terminal (``""`` when there is none), the harness the run
+started under, and the run's own command line, bounded at
+``ORIGIN_COMMAND_LIMIT``. It is read once per process in ``Trail.start`` and
+copied onto each record, because a launcher can only be named while it is still
+alive — a fix pass that wrote into an actively edited worktree could not be
+attributed to anything after the fact, and the record it left said what it did
+but never who asked. Each field is best-effort and an unanswerable probe is
+omitted rather than blanked, so ``event.get("origin", {})`` reads the same for a
+run that could not be asked and a record written before the field existed.
+``origin`` is optional and so does not move ``schema_version``; ``context``
+stays what the run was working on, which readers still compare whole.
 
 The root keeps six months, counting the month in progress
 (``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it

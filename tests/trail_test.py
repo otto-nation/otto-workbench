@@ -15,11 +15,13 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
 from core import workbench_paths
+from core import trail as trail_mod
 from core.trail import (
     ARTIFACT_LIMIT,
     EXCERPT_LIMIT,
     FINISH_ACTION,
     INVOCATION_HEX_WIDTH,
+    ORIGIN_COMMAND_LIMIT,
     SCHEMA_VERSION,
     TRAIL_KEEP_MONTHS,
     TRAIL_ROOT_ENV,
@@ -30,6 +32,7 @@ from core.trail import (
     artifacts_dir,
     billed_to,
     inherited_root,
+    process_origin,
     prune_trail,
     tdecision,
     terr,
@@ -753,3 +756,76 @@ class TestArtifactRetention:
 
     def test_no_artifacts_root_is_not_an_error(self):
         assert prune_trail() == []
+
+
+class TestProcessOrigin:
+    """Who started a run, recorded while the answer is still available.
+
+    A fix pass wrote to an actively edited worktree four times and could not be
+    attributed to anything afterwards: its launcher had exited, and the record
+    it left named only what it did, never who asked. These fields are read at
+    `Trail.start`, which is the last moment the parent is guaranteed to exist.
+    """
+
+    def test_an_event_names_the_process_that_wrote_it(self):
+        Trail.start(script="s", context={}).info("a", "d")
+        origin = _read_events()[0]["origin"]
+        assert origin["pid"] == os.getpid()
+        assert origin["ppid"] == os.getppid()
+
+    def test_it_names_the_program_that_launched_the_run(self):
+        with mock.patch.object(trail_mod, "_parent_command", return_value="node"):
+            Trail.start(script="s", context={}).info("a", "d")
+        assert _read_events()[0]["origin"]["parent"] == "node"
+
+    def test_a_probe_that_cannot_answer_is_left_out(self):
+        """Absent, not blank. Attribution naming the wrong parent is worse than
+        none, so a failed probe must not read as an answer."""
+        with mock.patch.object(trail_mod, "_parent_command", return_value=""):
+            Trail.start(script="s", context={}).info("a", "d")
+        assert "parent" not in _read_events()[0]["origin"]
+
+    def test_it_names_the_harness_the_run_started_under(self, monkeypatch):
+        monkeypatch.delenv("PI_SESSION_ID", raising=False)
+        monkeypatch.delenv("WORKBENCH_AUTO_TASK", raising=False)
+        monkeypatch.setenv("CLAUDECODE", "1")
+        Trail.start(script="s", context={}).info("a", "d")
+        assert _read_events()[0]["origin"]["harness"] == "claude-code"
+
+    def test_an_auto_task_is_named_ahead_of_the_session_it_spawned(self, monkeypatch):
+        """A nested harness reads as the outer one: the auto-task is what
+        launched the session, and the launcher is the question."""
+        monkeypatch.setenv("WORKBENCH_AUTO_TASK", "1")
+        monkeypatch.setenv("CLAUDECODE", "1")
+        assert process_origin()["harness"] == "auto-task"
+
+    def test_a_run_with_no_terminal_records_that_it_had_none(self):
+        """The evidence the guard in `fix.engine` acts on, kept so a refusal or
+        a failure to refuse can be read back afterwards."""
+        with mock.patch.object(trail_mod.os, "ttyname", side_effect=OSError):
+            assert process_origin()["tty"] == ""
+
+    def test_an_unaskable_terminal_is_absent_rather_than_blank(self):
+        """"" is a run with no terminal; a missing key is a probe that could not
+        be made. One blank string would spell both."""
+        with mock.patch.object(trail_mod.sys, "stdin", None):
+            assert "tty" not in process_origin()
+
+    def test_the_command_is_bounded(self):
+        """A prompt reaches some entry points as an argument, so this is the
+        field most able to grow without bound."""
+        with mock.patch.object(trail_mod.sys, "argv", ["x" * 900]):
+            assert len(process_origin()["command"]) == ORIGIN_COMMAND_LIMIT
+
+    def test_a_run_that_records_nothing_probes_nothing(self):
+        """No record to carry the answer, so the subprocess would be spent on a
+        field that reaches no file."""
+        with mock.patch.object(trail_mod, "_parent_command") as probe:
+            Trail.start(script="s", context={}, record=False).info("a", "d")
+        assert probe.call_count == 0
+
+    def test_attribution_stays_out_of_the_runs_context(self):
+        """`context` is the subject under work — repo, pr, branch. Readers
+        compare it whole, so a field added there changes what they match."""
+        Trail.start(script="s", context={"repo": "org/repo"}).info("a", "d")
+        assert _read_events()[0]["context"] == {"repo": "org/repo"}

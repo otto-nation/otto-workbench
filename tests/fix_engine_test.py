@@ -12,7 +12,7 @@ contract is with `FixAdapter`, not with CI or comments.
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1491,3 +1491,55 @@ def test_an_item_with_no_file_is_never_contradicted(tmp_path, landed, head, snap
                   run_fix=_answer(adapter, tick="deferred"))
 
     assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+
+
+
+# ── evidence for a pass that shared its worktree ────────────────────────────
+
+
+def test_a_pass_records_the_dirt_it_found_before_it_ran(
+    tmp_path, landed, head, snapshots,
+):
+    """The evidence a diagnosis needs, from the one moment it can be taken.
+
+    A fix pass committed into a worktree somebody was editing and the only
+    surviving trace was a commit on the branch. Nothing here can refuse that
+    case — a dirty tree is the ordinary one for a self-review — so the pass
+    records what was already in the tree instead of guessing about it.
+    """
+    trail = MagicMock()
+    snapshots.side_effect = _reads({"theirs.py"}, {"theirs.py", "ours.py"})
+    _run(StubAdapter(tmp_path), trail=trail)
+
+    recorded = [c for c in trail.info.call_args_list
+                if c.args and c.args[0] == "dirty_baseline"]
+    assert len(recorded) == 1
+    assert recorded[0].kwargs["data"]["paths"] == ["theirs.py"]
+
+
+# passes-at-base: the silent case, asserted so the new record cannot start firing on every pass
+def test_a_pass_with_the_tree_to_itself_records_no_such_thing(
+    tmp_path, landed, head, snapshots,
+):
+    """The common case says nothing, so the record means something when it
+    does appear."""
+    trail = MagicMock()
+    snapshots.side_effect = _reads(set(), {"ours.py"})
+    _run(StubAdapter(tmp_path), trail=trail)
+
+    assert not [c for c in trail.info.call_args_list
+                if c.args and c.args[0] == "dirty_baseline"]
+
+
+# passes-at-base: holds the decision not to refuse — base commits here and must keep doing so
+def test_the_pass_still_commits_over_a_tree_it_shares(
+    tmp_path, landed, head, snapshots,
+):
+    """Recorded, never refused. The pre-push pass exists to repair a dirty
+    tree and a self-review is documented to run against one; a refusal here
+    would break both to guess at a case it cannot identify."""
+    snapshots.side_effect = _reads({"theirs.py"}, {"theirs.py", "ours.py"})
+    run, _ = _run(StubAdapter(tmp_path))
+
+    assert landed.call_count == 1
+    assert run.landed is not None

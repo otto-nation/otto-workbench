@@ -279,11 +279,39 @@ def _format_show(events: list[dict], focus: str | None = None) -> str:
     lines = [
         f"{ANSI_BOLD}Invocation {root}{ANSI_RESET} — {' → '.join(scripts)} — {ts}{duration}",
         f"Context: {ctx_str}",
-        "",
     ]
+    started = _format_origin(first.get("origin"))
+    if started:
+        lines.append(f"Started by: {started}")
+    lines.append("")
     for e in events:
         lines.append(_format_event_line(e, script_width=width))
     return "\n".join(lines)
+
+
+def _format_origin(origin: dict | None) -> str:
+    """Who started the run, as one line, or "" when nothing was recorded.
+
+    Rendered in the header rather than left to `--json` because this is the
+    question somebody has when they open a trail for a run they did not expect:
+    a fix pass wrote into a worktree and there was no process left to ask.
+    Absent on records written before the field existed, which is why nothing is
+    printed rather than a row of unknowns.
+    """
+    if not origin:
+        return ""
+    parent = origin.get("parent") or "?"
+    parts = [f"{parent} (ppid {origin.get('ppid', '?')})"]
+    if origin.get("harness"):
+        parts.append(f"via {origin['harness']}")
+    # Only the absence is worth saying: a run on a terminal is the ordinary case
+    # and naming the device adds nothing, while no terminal is the thing a
+    # surprising run has in common with every other unattended one.
+    if origin.get("tty") == "":
+        parts.append("no terminal")
+    if origin.get("command"):
+        parts.append(f"\n  {origin['command']}")
+    return " ".join(parts)
 
 
 # ── Usage stats ───────────────────────────────────────────────────────────

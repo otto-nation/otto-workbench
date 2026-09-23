@@ -19,6 +19,19 @@ recorded on every event a descendant writes. ``otto-log show <root>`` renders
 the whole command as one timeline and ``otto-log query --root <id>`` selects it,
 while ``--invocation`` still addresses one process on its own.
 
+Every event also carries ``origin``: the pid, the parent pid, the parent's
+program name, the terminal (``""`` when there is none), the harness the run
+started under, and the run's own command line, bounded at
+``ORIGIN_COMMAND_LIMIT``. It is read once per process in ``Trail.start`` and
+copied onto each record, because a launcher can only be named while it is still
+alive — a fix pass that wrote into an actively edited worktree could not be
+attributed to anything after the fact, and the record it left said what it did
+but never who asked. Each field is best-effort and an unanswerable probe is
+omitted rather than blanked, so ``event.get("origin", {})`` reads the same for a
+run that could not be asked and a record written before the field existed.
+``origin`` is optional and so does not move ``schema_version``; ``context``
+stays what the run was working on, which readers still compare whole.
+
 The root keeps six months, counting the month in progress
 (``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it
 opens, so growth is bounded whatever writes to the root, and
@@ -59,6 +72,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from core import proc
+from core import timeouts
 from core import workbench_paths
 
 
@@ -107,6 +121,35 @@ TRAIL_ROOT_ENV = "WORKBENCH_TRAIL_ROOT"
 # read becomes its own root instead, which loses a correlation but never writes
 # a `root` that resolves to nothing.
 _ROOT_FORMAT = re.compile(r"[0-9a-f]{1,32}\Z")
+
+# How much of a run's own argv is kept. A command line is the most direct answer
+# to "what was this run asked to do", and it is also the field most able to grow
+# without bound — a fix pass carries `--repo-dir` paths, and a prompt reaches
+# some entry points as an argument. Enough to read the subcommand and its
+# flags; a reader needing the rest has the pid to correlate on.
+ORIGIN_COMMAND_LIMIT = 300
+
+# How the parent is named. `comm=` rather than `args=`: a parent's own argv can
+# carry an agent prompt, and the question this answers is which program spawned
+# the run, not how that program was configured. BSD `ps`, which is what this
+# machine has; the same flags answer on a Linux runner.
+_PARENT_PROBE = ("ps", "-o", "comm=", "-p")
+
+# Which harness a run was started under, in the order a nested one should be
+# read: an auto-task spawns a session, so a run inside one is an auto-task run
+# before it is a session's.
+#
+# Names only, never values. Which harness is the question; what the operator
+# exported into it is not, and copying a value here would put arbitrary
+# environment into a file that other tooling reads back.
+_HARNESS_MARKERS = (
+    ("WORKBENCH_AUTO_TASK", "auto-task"),
+    ("PI_SESSION_ID", "pi"),
+    ("CLAUDECODE", "claude-code"),
+    ("CLAUDE_CODE_ENTRYPOINT", "claude-code"),
+    ("SSH_CONNECTION", "ssh"),
+    ("CI", "ci"),
+)
 
 # Months of history the root keeps, counting the month in progress. Nothing
 # used to drop anything, which was survivable while every writer was a human at
@@ -213,6 +256,75 @@ def inherited_root() -> str | None:
     return value if _ROOT_FORMAT.match(value) else None
 
 
+def _parent_command(ppid: int) -> str:
+    """The parent's program name, or "" when it cannot be read.
+
+    Through `proc.run` rather than `subprocess` directly, so the shared timeout
+    bound applies: a `ps` that hangs must not hold up the run whose first record
+    this is.
+    """
+    r = proc.run([*_PARENT_PROBE, str(ppid)], timeout=timeouts.QUICK)
+    return r.stdout.strip() if r.ok else ""
+
+
+def _tty_name() -> str | None:
+    """The terminal on stdin, "" when there is none, or None when unaskable.
+
+    Three answers rather than two, and the distinction carries the weight: ""
+    is a run with no terminal, which is what an unattended one looks like, while
+    None is a probe that could not be made and asserts nothing either way. A
+    single blank string would spell both, and a reader could not tell the
+    evidence from the absence of it.
+    """
+    try:
+        return os.ttyname(sys.stdin.fileno())
+    except OSError:
+        # A real descriptor that is not a terminal — a pipe, a file, /dev/null.
+        return ""
+    except (AttributeError, ValueError):
+        # stdin replaced by an object with no true descriptor, which pytest's
+        # capture does on every test in this repo. Nothing was asked.
+        return None
+
+
+def _harness() -> str:
+    """Which agent harness this run was started under, or "" for none known."""
+    for var, name in _HARNESS_MARKERS:
+        if os.environ.get(var):
+            return name
+    return ""
+
+
+def process_origin() -> dict:
+    """Who started this process, as far as it can be established from inside it.
+
+    Read once per run rather than per event: none of it can change while the
+    process lives, and a copy on every record would multiply one fact by the
+    dozens a review writes.
+
+    `parent` is captured here, at start, because that is the only moment the
+    parent is guaranteed to still exist. A fix pass that wrote to an actively
+    edited worktree was unattributable precisely because everything identifying
+    its launcher was asked for after it had gone.
+
+    Every field is best-effort, and one that cannot be read is left out rather
+    than guessed at — attribution naming the wrong parent is worse than none.
+    """
+    origin: dict = {"pid": os.getpid(), "ppid": os.getppid()}
+    parent = _parent_command(os.getppid())
+    if parent:
+        origin["parent"] = parent
+    tty = _tty_name()
+    if tty is not None:
+        origin["tty"] = tty
+    harness = _harness()
+    if harness:
+        origin["harness"] = harness
+    if sys.argv:
+        origin["command"] = " ".join(sys.argv)[:ORIGIN_COMMAND_LIMIT]
+    return origin
+
+
 def artifacts_dir() -> Path:
     """Where the full output of a failure is kept, by month.
 
@@ -316,6 +428,10 @@ class TrailEvent:
     span: str | None = None
     duration_ms: int | None = None
     data: dict | None = None
+    # Who started the process that wrote this, captured once at `Trail.start`.
+    # Absent on records written before this field existed and on a run whose
+    # every probe failed; `event.get("origin", {})` reads the same for both.
+    origin: dict | None = None
 
     def to_json(self) -> str:
         d = asdict(self)
@@ -340,7 +456,9 @@ class Trail:
         start_ns: int,
         record: bool = True,
         root: str | None = None,
+        origin: dict | None = None,
     ):
+        self._origin = origin
         self._script = script
         self._context = context
         self.invocation = invocation
@@ -400,6 +518,10 @@ class Trail:
             start_ns=time.monotonic_ns(),
             record=record,
             root=root,
+            # Only a recorded run is probed. An unrecorded one writes nothing to
+            # carry the answer, so asking would spend a subprocess on a field
+            # that reaches no file.
+            origin=process_origin() if record else None,
         )
 
     def _append(self, event: TrailEvent) -> None:
@@ -466,6 +588,7 @@ class Trail:
             span=span,
             duration_ms=duration_ms,
             data=data,
+            origin=self._origin,
         )
 
     @property

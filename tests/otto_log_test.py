@@ -209,6 +209,31 @@ class TestCommandCorrelation:
         assert "pr → claude-review → review-orchestrate" in out
         assert "review-orchestrate ran" in out
 
+    def test_show_names_who_started_the_run(self, capsys):
+        """The question somebody has when they open a trail for a run they did
+        not expect. A fix pass wrote into a worktree and there was no process
+        left to ask, so the header answers it without a --json detour."""
+        root, _ = _make_command("pr", "claude-review")
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=root, only=False, json=False))
+        out = capsys.readouterr().out
+        assert "Started by:" in out
+        assert "ppid" in out
+
+    # passes-at-base: back-compat — base has no origin field at all, so it prints nothing either
+    def test_show_says_nothing_of_a_record_predating_attribution(self, capsys):
+        """A row of unknowns would read as a probe that failed rather than as
+        history written before the field existed."""
+        root = _make_trail("pr", [("a", "first")])
+        path = next(iter(workbench_paths.trail_dir().glob("*.jsonl")))
+        kept = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        for e in kept:
+            e.pop("origin", None)
+        path.write_text("".join(json.dumps(e) + "\n" for e in kept))
+        otto_log.cmd_show(argparse.Namespace(
+            invocation=root, only=False, json=False))
+        assert "Started by:" not in capsys.readouterr().out
+
     def test_show_finds_the_command_from_a_child_id(self, capsys):
         """A user has one ID in hand and does not know which end it came from."""
         root, child, _ = _make_command(*_PR_REVIEW)

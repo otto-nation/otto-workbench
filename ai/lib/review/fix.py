@@ -31,8 +31,16 @@ gate is what tells the two apart, and a fix it falsifies lands as work still
 owed rather than as done.
 
 The commit always happens; the push waits for `--post`. `land` owns both, and
-the split is its: a local commit asserts nothing to anybody, while a push puts
-the pass's work on a branch somebody else is reading.
+the split is its: a push puts the pass's work on a branch somebody else is
+reading, while a commit reaches only the worktree the pass was pointed at.
+
+That split assumes the worktree has one writer. It does not hold for a tree an
+operator is editing at the same time — a pass that committed into one moved HEAD
+under them and captured work they had just reverted. Nothing here can tell that
+tree from any other: a dirty worktree is the ordinary case for a self-review,
+and no fix pass on this machine has a terminal to be asked. What the pass does
+leave is evidence — `trail` records the pre-existing dirt at `dirty_baseline`,
+and every record carries who started the run.
 
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.

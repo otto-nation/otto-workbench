@@ -150,6 +150,7 @@ report_for() {
   [[ "$output" == *"capped at 12"* ]]
 }
 
+# passes-at-base: a negative case — the strings it refuses do not exist at base, and 18 cores gave 12 there too
 @test "an uncontended run does not claim a sibling took anything" {
   run report_for 18
   [[ "$output" == *"12 job(s)"* ]]

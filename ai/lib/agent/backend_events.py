@@ -201,6 +201,34 @@ def pi_write_tool_used(data: dict) -> bool:
     )
 
 
+def pi_tool_signature(data: dict) -> str | None:
+    """A stable "which call was this" key for a parsed Pi tool event.
+
+    The tool name and its primary argument, so repeating the *same* read is
+    distinguishable from reading the next file. Returns None for an event that
+    is not a tool invocation, and for one carrying no argument to key on — a
+    signature of the bare tool name would read every `ls` as a repeat.
+
+    Only `tool_execution_start` is read, not the `message_update` blocks
+    `pi_write_tool_used` also accepts: one execution is one event here, where
+    the streaming updates repeat the same call many times over and would count
+    a single read as a loop.
+    """
+    if data.get("type") != "tool_execution_start":
+        return None
+    name = data.get("toolName", "") or data.get("name", "")
+    if not name:
+        return None
+    args = data.get("args") or data.get("input") or {}
+    if not isinstance(args, dict):
+        return None
+    for key in ("path", "command", "pattern", "symbol", "url"):
+        value = args.get(key)
+        if isinstance(value, str) and value:
+            return f"{name}:{key}={value}"
+    return None
+
+
 def parse_pi_cost(data: dict) -> float | None:
     """Extract per-message cost from a parsed Pi message_end event.
 

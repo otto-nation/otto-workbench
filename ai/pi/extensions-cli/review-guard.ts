@@ -32,31 +32,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { realpathSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { blockedWriteCommand } from "./detect.ts";
 
-// Shell constructs that write. Matched against the whole command, so this is a
-// coarse net: it catches the ordinary cases and accepts false positives on a
-// command that merely mentions one. A review agent has no reason to run any of
-// them, so refusing too much costs nothing here.
-const WRITE_COMMAND_PATTERNS = [
-  /\bcp\b/,
-  /\bmv\b/,
-  /\brm\b/,
-  /\btee\b/,
-  /\bdd\b/,
-  /\btruncate\b/,
-  /\binstall\b/,
-  /\bsed\s+-i/,
-  /\bperl\s+[^|]*-i/,
-  /\b(?:curl|wget)\b[^|]*\s-[a-zA-Z]*[oO]\b/,
-  // `apply` and `am` write arbitrary file content straight out of a patch,
-  // which is the shape a fix pass reaches for when it wants a diff on disk.
-  /\bgit\s+(?:commit|push|checkout|switch|restore|reset|clean|stash|rebase|merge|apply|am|cherry-pick|revert)\b/,
-  // A redirect that names a destination, which `2>&1` and `2>/dev/null` do not.
-  // Matching a bare `>` instead caught every `cmd 2>&1` an agent writes while
-  // reading, and a guard that fires on ordinary reads is one whose refusals
-  // stop being read.
-  />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)\S/,
-];
+// No `context` hook prunes the superpowers bootstrap here, though the shape of
+// this extension invites one. The package injects it through its own `context`
+// hook, but only when its skills were discovered: backend_pi's `--no-skills`
+// already suppresses it, and a filter added here matched nothing on every
+// probe. Measured preamble is identical with and without one, so what it would
+// add is a hook that never fires and a marker string to keep in step with
+// someone else's package.
 
 // resolve() normalises `.` and `..` but does not follow symlinks, and on macOS
 // /tmp is a symlink to /private/tmp: a root and a path that name the same
@@ -126,8 +110,16 @@ export default function (pi: ExtensionAPI) {
       }
     } else if (isToolCallEventType("bash", event)) {
       summary = event.input.command.slice(0, 120);
-      if (WRITE_COMMAND_PATTERNS.some((p) => p.test(event.input.command))) {
-        blocked = `write-capable command in a review session: ${summary}`;
+      const offending = blockedWriteCommand(event.input.command);
+      if (offending) {
+        // The offending statement, not a slice of the whole command: a 120-char
+        // summary truncated the trailing redirect that was the real match, so
+        // the refusal looked like it had blocked the `cd` in front of it.
+        blocked =
+          `write-capable command in a review session — ${offending}. ` +
+          `A review reads; it does not modify the tree. To run a suite, invoke it ` +
+          `directly (\`pytest tests/foo.py\`) or redirect to /tmp ` +
+          `(\`pytest tests/ > /tmp/out.txt 2>&1\`).`;
       }
     } else if (isToolCallEventType("read", event)) {
       summary = event.input.path;

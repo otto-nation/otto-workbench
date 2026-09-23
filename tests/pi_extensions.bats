@@ -999,3 +999,133 @@ EOF'
     "$REPO_ROOT/ai/pi/extensions/exit-status-guard/index.ts"
   [ "$status" -ne 0 ]
 }
+
+# ── review-guard ────────────────────────────────────────────────────────────
+#
+# Same split as the guards above: the predicate is in extensions-cli/detect.ts,
+# which imports only ../extensions/_shared/statements.ts, so node loads it
+# directly. review-guard.ts itself imports the Pi SDK and cannot be loaded here.
+
+# _blocked COMMAND — prints the refusal for COMMAND, or the empty string.
+_blocked() {
+  run node --input-type=module -e "
+    const { blockedWriteCommand } = await import('$REPO_ROOT/ai/pi/extensions-cli/detect.ts');
+    process.stdout.write(blockedWriteCommand(process.argv[1]) ?? '');
+  " -- "$1"
+}
+
+@test "review-guard: a plain suite run is allowed" {
+  _blocked 'pytest tests/test_foo.py'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "review-guard: the redirect test-pipe-guard prescribes is allowed" {
+  # test-pipe-guard refuses a piped suite and names this exact rewrite as the
+  # fix. When this was refused too, the two guards left no command the agent
+  # could run: it abandoned verification and burned its budget re-reading.
+  _blocked 'pytest tests/ > /tmp/out.txt 2>&1'
+  [ -z "$output" ]
+}
+
+@test "review-guard: a compound cd into a suite run is allowed" {
+  _blocked 'cd /repo/wt && pytest tests/ > /tmp/out.txt 2>&1'
+  [ -z "$output" ]
+}
+
+@test "review-guard: the other scratch roots are allowed too" {
+  # The same list claude-bash-guard exempts. The two must agree.
+  _blocked 'pytest > /var/folders/ab/cd/T/out.txt 2>&1'
+  [ -z "$output" ]
+  _blocked 'pytest > /private/tmp/out.txt'
+  [ -z "$output" ]
+  _blocked 'pytest > /dev/null'
+  [ -z "$output" ]
+}
+
+@test "review-guard: a write verb in the worktree path is not a write" {
+  # \b treats / and - as boundaries, so an unanchored /\brm\b/ matched the
+  # branch name and disabled bash for the whole session.
+  _blocked 'cd /Users/i/wt/isaac-fix-rm-stale && pytest tests/'
+  [ -z "$output" ]
+  _blocked 'cd /Users/i/wt/repo-install-hooks && pytest'
+  [ -z "$output" ]
+  _blocked 'pytest tests/install/test_setup.py'
+  [ -z "$output" ]
+  _blocked 'grep -rn tee ai/'
+  [ -z "$output" ]
+}
+
+@test "review-guard: reading git history is allowed" {
+  _blocked 'git log --oneline -5'
+  [ -z "$output" ]
+  _blocked 'git diff HEAD~1'
+  [ -z "$output" ]
+}
+
+@test "review-guard: a write command at a statement head is refused" {
+  _blocked 'rm -rf build'
+  [ -n "$output" ]
+  _blocked 'cd /repo && rm -rf build'
+  [ -n "$output" ]
+  _blocked 'cp a b'
+  [ -n "$output" ]
+  _blocked 'FOO=1 mv a b'
+  [ -n "$output" ]
+  _blocked '/bin/rm -rf foo'
+  [ -n "$output" ]
+}
+
+@test "review-guard: in-place editors and git writes are refused" {
+  _blocked "sed -i '' s/a/b/ f.txt"
+  [ -n "$output" ]
+  _blocked 'git commit -m x'
+  [ -n "$output" ]
+  _blocked 'git push'
+  [ -n "$output" ]
+  _blocked 'curl -o out.bin https://example.com/x'
+  [ -n "$output" ]
+}
+
+@test "review-guard: a redirect outside the scratch roots is refused" {
+  _blocked 'echo hi > /etc/hosts'
+  [ -n "$output" ]
+  _blocked 'pytest > ~/notes.txt'
+  [ -n "$output" ]
+}
+
+@test "review-guard: the refusal names the offending statement" {
+  # A 120-char slice of the whole command hid the trailing redirect that was
+  # the real match, so the refusal read as though it had blocked the cd.
+  _blocked 'cd /some/very/long/worktree/path/that/runs/past/the/old/truncation/limit/for/sure/and/then/some && pytest tests/ > /etc/out.txt'
+  [ -n "$output" ]
+  [[ "$output" == *"/etc/out.txt"* ]]
+}
+
+@test "review-guard: the scratch roots match claude-bash-guard's" {
+  # Two guards enforcing one rule that disagree is worse than one guard.
+  for root in /tmp/ /private/tmp/ /var/folders/; do
+    run grep -q -- "$root" "$REPO_ROOT/ai/pi/extensions-cli/detect.ts"
+    [ "$status" -eq 0 ]
+    run grep -q -- "$root" "$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "review-guard: no context hook, so no marker to keep in step" {
+  # --no-skills already suppresses the superpowers bootstrap, which the package
+  # injects only for skills it discovered. A filter here matched nothing on
+  # every probe; one added later would be a hook that never fires.
+  run grep -q 'pi.on("context"' "$REPO_ROOT/ai/pi/extensions-cli/review-guard.ts"
+  [ "$status" -ne 0 ]
+}
+
+@test "review-guard: the bare flags do not disable extension discovery" {
+  # --no-extensions would deregister the provider serving the run and strip
+  # every gh_*/web_* tool from the agent's list.
+  run grep -q 'no-extensions' "$REPO_ROOT/ai/lib/agent/backend_pi.py"
+  [ "$status" -eq 0 ]
+  run grep -qE 'BARE_FLAGS = \("--no-context-files", "--no-skills"\)' \
+    "$REPO_ROOT/ai/lib/agent/backend_pi.py"
+  [ "$status" -eq 0 ]
+}

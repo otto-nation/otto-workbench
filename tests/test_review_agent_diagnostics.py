@@ -281,3 +281,78 @@ class TestWritableDirs:
     def test_does_not_grant_the_reviews_root(self, monkeypatch):
         add_dirs = self._add_dirs(monkeypatch, "/tmp/reviews/repo-1")
         assert "/tmp/reviews" not in add_dirs
+
+
+def _pi_tool(name: str, **args) -> str:
+    return json.dumps({"type": "tool_execution_start", "toolName": name, "args": args})
+
+
+def _pi_result(subtype: str = "error_max_turns", num_turns: int = _TURNS) -> str:
+    """A Pi run's result record, alongside the RPC events that mark the shape."""
+    return json.dumps({"type": "result", "subtype": subtype, "num_turns": num_turns})
+
+
+class TestPiLogsAreReadableForWrites:
+    """A Pi run that wrote nothing used to be indistinguishable from one that worked.
+
+    Pi emits RPC events rather than Claude's `assistant` records, so the
+    no-write diagnosis never fired for it: the only thing that could trigger a
+    retry was exhausting the turn cap, and a run that circled and gave up early
+    was written off as a completed review with an empty file.
+    """
+
+    def test_pi_run_without_a_write_is_named_a_no_write_failure(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_tool("read", path="/wt/a.py"),
+            json.dumps({"type": "turn_end"}),
+            _pi_result(),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.MAX_TURNS
+        assert diagnosis.no_write_tool
+
+    def test_pi_run_that_wrote_stays_plain(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_tool("write", path="/out/review.md"),
+            json.dumps({"type": "turn_end"}),
+            _pi_result(),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert not diagnosis.no_write_tool
+
+    def test_a_completed_pi_run_with_no_write_is_still_flagged(self, tmp_path):
+        # The case the turn cap never catches: the agent stopped on its own.
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            json.dumps({"type": "agent_end"}),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.COMPLETED
+        assert diagnosis.no_write_tool
+
+    def test_a_pi_crash_is_not_labelled_a_no_write_failure(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            json.dumps({"type": "turn_end"}),
+            json.dumps({
+                "type": "result", "subtype": "error", "is_error": True,
+                "result": "spawn ENOENT",
+            }),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
+        assert not diagnosis.no_write_tool
+
+    def test_a_log_of_neither_shape_still_reports_cannot_tell(self, tmp_path):
+        # Absence of evidence is not evidence of absence for a backend whose
+        # logs this module cannot read.
+        log_path = _write_log(tmp_path, _result())
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert not diagnosis.no_write_tool

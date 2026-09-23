@@ -1527,3 +1527,126 @@ class TestPiToolLabels:
         from agent.backend_events import _pi_tool_label
 
         assert _pi_tool_label({"toolName": "bash"}) == "Bash"
+
+
+class TestBareFlags:
+    """The Pi equivalent of the Claude backend's --bare.
+
+    A dispatched agent is not an interactive session: loading this machine's
+    AGENTS.md cost ~39k tokens of preamble on every turn of every phase, and an
+    agent handed the interactive rulebook reaches for the interactive workflow.
+    """
+
+    def test_agent_cmd_disables_context_file_discovery(self):
+        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        assert "--no-context-files" in cmd
+
+    def test_agent_cmd_disables_skill_discovery(self):
+        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        assert "--no-skills" in cmd
+
+    def test_fix_cmd_disables_both_too(self):
+        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        assert "--no-context-files" in cmd
+        assert "--no-skills" in cmd
+
+    def test_neither_cmd_disables_extensions(self):
+        # --no-extensions would deregister the provider that serves the run and
+        # strip every gh_*/web_* tool the agent list grants, leaving a review
+        # with no provider and a truncated toolset.
+        agent = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        assert "--no-extensions" not in agent
+        assert "--no-extensions" not in fix
+
+    def test_explicit_skill_still_passed_alongside_no_skills(self, tmp_path, monkeypatch):
+        # --no-skills turns off *discovery*; an explicit --skill still loads.
+        # Were that not so, the agent definition would be silently dropped.
+        skills = tmp_path / "skills" / "reviewer"
+        skills.mkdir(parents=True)
+        (skills / "SKILL.md").write_text("---\nname: reviewer\n---\nbody\n")
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", tmp_path / "skills")
+        cmd = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+        )
+        assert "--no-skills" in cmd
+        assert "--skill" in cmd
+
+
+class TestNoProgressSteer:
+    """The read-only loop the turn and budget caps do not catch in time.
+
+    Both limits are satisfied by an agent re-reading the same region until it
+    runs out, which is how a run reached its cap having written nothing.
+    """
+
+    class MockProc:
+        def __init__(self, lines):
+            self.stdout = iter(lines)
+            self.stdin = TestCheckLimits.MockStdin()
+
+    def _read(self, path):
+        return json.dumps({
+            "type": "tool_execution_start",
+            "toolName": "read",
+            "args": {"path": path},
+        }) + "\n"
+
+    def _write(self, path):
+        return json.dumps({
+            "type": "tool_execution_start",
+            "toolName": "write",
+            "args": {"path": path},
+        }) + "\n"
+
+    def _run(self, lines):
+        proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
+        ai_backend_pi._consume_stream(proc, io.StringIO(), "")
+        return [c for c in proc.stdin.commands if c["type"] == "steer"]
+
+    def test_repeating_one_read_earns_a_steer(self):
+        steers = self._run([self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT)
+        assert len(steers) == 1
+        assert "write" in steers[0]["message"]
+
+    def test_below_the_limit_is_left_alone(self):
+        steers = self._run([self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT - 1))
+        assert steers == []
+
+    def test_reading_different_files_is_progress(self):
+        steers = self._run([self._read(f"/f{i}.py") for i in range(6)])
+        assert steers == []
+
+    def test_a_write_clears_the_count(self):
+        # An agent that wrote is working, so what it repeated before does not
+        # count against it.
+        lines = [self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT - 1)
+        lines += [self._write("/out.md")]
+        lines += [self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT - 1)
+        assert self._run(lines) == []
+
+    def test_the_steer_fires_once(self):
+        steers = self._run([self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT * 3))
+        assert len(steers) == 1
+
+    def test_the_no_progress_steer_is_independent_of_the_turn_warning(self):
+        # Different conditions, so a run that loops early and then nears its
+        # turn cap earns both. Suppressing one behind the other would hide
+        # whichever fired second.
+        lines = [self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT
+        lines += [json.dumps({"type": "turn_end"}) + "\n"] * 8
+        proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
+        ai_backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
+        steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
+        assert len(steers) == 2
+        assert any("same tool call" in s["message"] for s in steers)
+        assert any(ai_backend_pi._WRITE_FIRST in s["message"] for s in steers)
+
+    def test_streaming_updates_do_not_count_as_repeats(self):
+        # message_update repeats the same call many times over; counting those
+        # would read a single read as a loop.
+        line = json.dumps({
+            "type": "message_update",
+            "content": [{"type": "toolCall", "name": "read", "arguments": {}}],
+        }) + "\n"
+        assert self._run([line] * 10) == []

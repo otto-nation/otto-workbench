@@ -157,6 +157,63 @@ def test_the_real_map_covers_every_test_file():
     assert result.returncode == 0, result.stderr
 
 
+def test_a_package_init_resolves_its_own_relative_imports():
+    """`from .create import x` in wiki/__init__.py means wiki.create.
+
+    The index strips the `.__init__` suffix, so for a package's own init the
+    dotted name *is* the package and taking its parent climbs one level too
+    far. Rebased onto the empty string the import resolved to nothing, and the
+    whole package became unreachable from any test that imports it.
+    """
+    assert sp._package_of("wiki", "ai/lib/wiki/__init__.py") == "wiki"
+    assert sp._package_of("wiki.create", "ai/lib/wiki/create.py") == "wiki"
+    assert sp._package_of("ui", "lib/ui.py") == ""
+
+
+def test_a_change_to_a_package_module_selects_the_tests_that_use_it():
+    """The end-to-end form of the above: 164 wiki tests went unselected."""
+    mapping = sp.dependency_map()
+    selected = {t for t, deps in mapping.items()
+                if sp._selects(t, deps, ["ai/lib/wiki/create.py"])}
+    assert "tests/wiki_test.py" in selected
+
+
+def test_a_script_subject_carries_the_scripts_own_imports():
+    """A test naming a bin/ script is testing what that script imports.
+
+    Path refs were not closed over, so a test whose subject is a script saw the
+    script file alone — and a module reached only through such a script was
+    selected by nothing at all.
+    """
+    mapping = sp.dependency_map()
+    selected = {t for t, deps in mapping.items()
+                if sp._selects(t, deps, ["lib/repo_scan.py"])}
+    assert "tests/validate_bats_version_test.py" in selected
+
+
+def test_a_data_file_ref_is_not_followed_as_source():
+    """Only a parseable Python file has imports worth chasing."""
+    assert sp._is_parseable_source("bin/local/select-pytest") is True
+    assert sp._is_parseable_source("ai/lib/core/proc.py") is True
+    assert sp._is_parseable_source("bin/local/registry.yml") is False
+    assert sp._is_parseable_source("bin/local") is False
+    assert sp._is_parseable_source("no/such/path") is False
+
+
+def test_the_selection_is_printed_as_absolute_paths():
+    """run-tests hands this list to pytest without changing directory.
+
+    A relative path resolves against the caller's cwd, so `run-tests --changed`
+    from any subdirectory exited 4 with 'file or directory not found'. The bats
+    selector next door has always emitted absolute paths.
+    """
+    result = subprocess.run([str(SCRIPT), "--all"], capture_output=True,
+                            text=True, timeout=120)
+    lines = result.stdout.split()
+    assert lines, "expected a file list"
+    assert all(line.startswith("/") for line in lines)
+
+
 def test_the_real_map_reaches_a_module_through_its_imports():
     """A test importing pr.fix depends on what pr.fix itself imports.
 
@@ -208,7 +265,7 @@ def test_conftest_selects_everything(monkeypatch, capsys):
     monkeypatch.setattr(sp, "_changed_files", lambda base: ["tests/conftest.py"])
     assert sp.main(["--base", "whatever"]) == 0
     printed = capsys.readouterr().out.split()
-    assert printed == sp._all_tests()
+    assert printed == [str(REPO_ROOT / p) for p in sp._all_tests()]
 
 
 def test_a_fixture_change_selects_everything(monkeypatch, capsys):
@@ -217,7 +274,8 @@ def test_a_fixture_change_selects_everything(monkeypatch, capsys):
     monkeypatch.setattr(sp, "_changed_files",
                         lambda base: ["tests/fixtures/mcp_tools.json"])
     assert sp.main(["--base", "whatever"]) == 0
-    assert capsys.readouterr().out.split() == sp._all_tests()
+    assert capsys.readouterr().out.split() == [str(REPO_ROOT / p)
+                                               for p in sp._all_tests()]
 
 
 def test_validate_fails_on_an_unmapped_test():
@@ -247,7 +305,7 @@ def test_all_lists_every_collectable_test_file():
                             text=True, timeout=120)
     lines = result.stdout.split()
     expected = sorted(
-        str(p.relative_to(REPO_ROOT))
+        str(p)
         for p in (REPO_ROOT / "tests").rglob("*.py")
         if "__pycache__" not in p.parts
         and p.name not in ("conftest.py", "__init__.py")
@@ -260,7 +318,7 @@ def test_all_reaches_tests_in_a_subpackage():
     including the full-suite fallback, which prints this same list."""
     result = subprocess.run([str(SCRIPT), "--all"], capture_output=True,
                             text=True, timeout=120)
-    assert "tests/test_nesting/test_python.py" in result.stdout.split()
+    assert str(REPO_ROOT / "tests/test_nesting/test_python.py") in result.stdout.split()
 
 
 def test_every_no_deps_entry_names_a_file_that_exists():

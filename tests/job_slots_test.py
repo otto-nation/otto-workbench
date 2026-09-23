@@ -187,6 +187,46 @@ def test_an_unwritable_state_root_still_yields_a_grant(monkeypatch, tmp_path):
         assert granted == 7
 
 
+def test_the_no_pool_path_still_sets_the_marker(monkeypatch, tmp_path):
+    """The marker is how a re-execing caller knows the claim already happened.
+
+    run-tests execs itself under the claim wrapper and skips that exec when the
+    marker is set. Yielding without it — which the unwritable-state-root path
+    did — has the child re-exec, and its child re-exec, unbounded, with nothing
+    on screen. The grant alone does not close it: the guard reads the marker.
+    """
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(blocker))
+    with claim(want=3, floor=1, cores=18):
+        assert os.environ.get(LOCK_ENV) == "3"
+    assert LOCK_ENV not in os.environ
+
+
+def test_a_run_with_no_pool_does_not_re_exec_itself(tmp_path):
+    """End to end through the wrapper, because the loop is what it prevents.
+
+    The child re-runs the wrapper the way run-tests does, guarded on the
+    marker. An unset marker makes that recursion unbounded; the depth counter
+    is what turns a hang into an assertion.
+    """
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory")
+    env = dict(os.environ, WORKBENCH_STATE_DIR=str(blocker / "state"))
+    depth = tmp_path / "depth"
+    child = (
+        f'echo x >> {depth}; '
+        f'[ $(wc -l < {depth}) -gt 3 ] && exit 9; '
+        f'[ -n "$WORKBENCH_TEST_SLOTS" ] && exit 0; '
+        f'exec {CLI} --want 2 --cores 4 -- sh -c "$0" "$0"'
+    )
+    result = subprocess.run([str(CLI), "--want", "2", "--cores", "4", "--",
+                             "sh", "-c", child, child],
+                            capture_output=True, timeout=60, env=env)
+    assert result.returncode == 0
+    assert depth.read_text().count("x") == 1
+
+
 def test_the_pool_leaves_a_core_for_the_rest_of_the_machine():
     assert pool_size(18) == 17
 

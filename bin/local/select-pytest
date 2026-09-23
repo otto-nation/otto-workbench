@@ -38,7 +38,9 @@ Usage: select-pytest [--base REF] [--validate] [--all]
                  the always-run list (catches renames that break the map)
   --all          Print every test file
 
-Output: one path per line, relative to the repo root.
+Output: one absolute path per line, matching what select-tests emits — a
+relative path resolves against the caller's cwd, and run-tests passes this list
+straight to pytest without changing directory.
 Exit code: 0 on success, 1 when --validate finds an unmapped test.
 """
 
@@ -205,9 +207,25 @@ def _forward_graph(index: dict[str, str]) -> dict[str, set[str]]:
     """Module file → the module files it imports."""
     graph = {}
     for dotted, relpath in index.items():
-        package = dotted.rsplit(".", 1)[0] if "." in dotted else ""
-        graph[relpath] = _imports_of(relpath, package, index)
+        graph[relpath] = _imports_of(relpath, _package_of(dotted, relpath), index)
     return graph
+
+
+def _package_of(dotted: str, relpath: str) -> str:
+    """The package a module's relative imports resolve against.
+
+    For a plain module that is the parent (`wiki.create` → `wiki`), but for a
+    package's own ``__init__.py`` the dotted name *is* the package: the
+    `.__init__` suffix was stripped when the index was built, so taking the
+    parent there climbs one level too far. `from .create import x` inside
+    `ai/lib/wiki/__init__.py` then rebases onto the empty string and resolves
+    to nothing, which made every module in that package unreachable from the
+    tests that import it — 164 wiki tests went unselected by a change to their
+    own subject.
+    """
+    if Path(relpath).name == "__init__.py":
+        return dotted
+    return dotted.rsplit(".", 1)[0] if "." in dotted else ""
 
 
 def _closure(start: str, graph: dict[str, set[str]]) -> set[str]:
@@ -384,11 +402,54 @@ def dependency_map() -> dict[str, set[str]]:
         text = (REPO_ROOT / relpath).read_text()
         direct = _imports_of(relpath, _test_package(relpath), index)
         direct |= _load_lib_deps(text)
+        refs = _refs_of(text)
+        # A script named by path is a subject like any other, so its own
+        # imports are followed too. Without this a test whose subject is a
+        # bin/ script saw only the script file: `wiki_test.py` reached
+        # `ai/bin/wiki` and none of the 19 modules behind it, and
+        # `lib/repo_scan.py` — reached only through four validator scripts —
+        # was selected by nothing at all.
+        direct |= _script_subjects(refs, graph, index)
         deps: set[str] = set()
         for dep in direct:
             deps |= _closure(dep, graph)
-        mapping[relpath] = deps | _refs_of(text)
+        mapping[relpath] = deps | refs
     return mapping
+
+
+def _script_subjects(refs: set[str], graph: dict[str, set[str]],
+                     index: dict[str, str]) -> set[str]:
+    """The refs worth following, adding each to *graph* so it can be closed over.
+
+    A script is not in the module index — nothing imports it by name — so its
+    edges have to be added here or `_closure` walks straight past it.
+    """
+    followable = set()
+    for ref in refs:
+        if ref not in graph and _is_parseable_source(ref):
+            graph[ref] = _imports_of(ref, "", index)
+        if ref in graph:
+            followable.add(ref)
+    return followable
+
+
+def _is_parseable_source(ref: str) -> bool:
+    """Whether *ref* names a file whose own imports are worth following.
+
+    Extensionless scripts included — that is the whole point, since a test
+    naming `ai/bin/wiki` is testing what that script imports. A directory, a
+    data file, or anything that does not parse as Python answers False.
+    """
+    path = REPO_ROOT / ref
+    if not path.is_file():
+        return False
+    if path.suffix and path.suffix != ".py":
+        return False
+    try:
+        ast.parse(path.read_text())
+    except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+        return False
+    return True
 
 
 def _test_package(relpath: str) -> str:
@@ -501,7 +562,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     if args.all:
-        print("\n".join(_all_tests()))
+        print("\n".join(str(REPO_ROOT / path) for path in _all_tests()))
         return 0
 
     mapping = dependency_map()
@@ -518,8 +579,9 @@ def main(argv: list[str]) -> int:
                    if _selects(test, deps, changed)}
         selected = sorted(always | matched)
 
-    print("\n".join(selected))
-    print(f"# selected {len(selected)}/{len(_all_tests())} test files", file=sys.stderr)
+    total = len(_all_tests())
+    print("\n".join(str(REPO_ROOT / path) for path in selected))
+    print(f"# selected {len(selected)}/{total} test files", file=sys.stderr)
     return 0
 
 

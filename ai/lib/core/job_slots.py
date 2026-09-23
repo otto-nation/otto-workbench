@@ -169,16 +169,23 @@ def claim(want: int, floor: int, cores: int, command: str = ""):
     want = max(1, want)
     floor = max(1, min(floor, want))
 
+    previous = os.environ.get(LOCK_ENV)
     try:
         slots_dir().mkdir(parents=True, exist_ok=True)
     except OSError:
         # No pool is not a reason to refuse to run tests; it is a reason to
-        # size the way a single run would have.
-        yield want
+        # size the way a single run would have. The marker is still set, and
+        # has to be: a caller that re-execs itself under the claim wrapper
+        # reads it to know the claim already happened, and yielding without it
+        # sent run-tests into an unbounded re-exec loop with nothing on screen.
+        try:
+            os.environ[LOCK_ENV] = str(want)
+            yield want
+        finally:
+            _restore_marker(previous)
         return
 
     held = _take_up_to(want, cores, command)
-    previous = os.environ.get(LOCK_ENV)
     try:
         granted = max(len(held), floor)
         os.environ[LOCK_ENV] = str(granted)

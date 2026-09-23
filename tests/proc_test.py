@@ -493,7 +493,10 @@ class TestRunKillProcessGroup:
 
         Bounded well under `QUICK` so a regression is a hang rather than a slow
         pass: the call may take the reap's five seconds, and the assertion is
-        that it takes anything finite at all.
+        that it takes anything finite at all. Bounded at half of
+        `GRANDCHILD_LIFETIME` rather than the full lifetime so a regression
+        that merely slows the reap (rather than making it unbounded) still
+        fails the assertion.
         """
         monkeypatch.setattr(proc.os, "killpg", lambda pid, sig: None)
 
@@ -503,7 +506,7 @@ class TestRunKillProcessGroup:
         elapsed = time.monotonic() - started
 
         assert r.returncode == proc.TIMEOUT_RETURNCODE
-        assert elapsed < GRANDCHILD_LIFETIME, (
+        assert elapsed < GRANDCHILD_LIFETIME / 2, (
             f"the call waited {elapsed:.1f}s on a child that ignored SIGKILL")
         assert "did not exit after SIGKILL" in r.stderr
 
@@ -556,7 +559,7 @@ class TestRunKillProcessGroup:
                      timeout=timeouts.QUICK, kill_process_group=True)
         elapsed = time.monotonic() - started
 
-        assert elapsed < GRANDCHILD_LIFETIME, (
+        assert elapsed < GRANDCHILD_LIFETIME / 2, (
             f"unwinding waited {elapsed:.1f}s on a child that ignored SIGKILL")
 
     def test_the_group_goes_even_when_the_way_out_is_not_a_timeout(self, tmp_path,

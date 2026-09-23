@@ -1,5 +1,6 @@
 """Tests for bin/local/validate-file-size and lib/file_size.py."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -223,6 +224,9 @@ def test_a_new_file_over_the_cap_fails(tmp_path):
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 1
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads a 0o000 file, so the mode proves nothing",
+)
 def test_an_unreadable_file_names_itself_instead_of_raising(tmp_path):
     """A gate over a whole tree must say which file it choked on.
 

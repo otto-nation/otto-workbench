@@ -155,7 +155,10 @@ def over_cap(root: Path, max_lines: int) -> list[tuple[str, int]]:
         except OSError as err:
             # Naming the file beats a traceback from inside the counter: the
             # gate runs over a whole tree, and "which file" is the only part
-            # of that stack anyone acts on.
+            # of that stack anyone acts on. Stopping at the first one is
+            # deliberate — an unreadable file is a broken checkout or a bad
+            # mode, not a violation to enumerate, and the second one has the
+            # same cause as the first.
             raise SystemExit(
                 f"{RED}✗{NC} cannot read {path.relative_to(root)}: {err.strerror}",
             ) from err

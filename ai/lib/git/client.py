@@ -235,9 +235,11 @@ def run(
 
     `env` replaces the child's environment outright, as `proc.run` documents.
     It exists for the settings `-c` cannot reach: `GIT_EDITOR` outranks
-    `core.editor`, so a caller that must not be handed an editor has to unset
+    `core.editor`, so a caller that must not be handed an editor has to reach
     the variable rather than configure around it. Pass `os.environ | {...}` to
-    add rather than replace.
+    add rather than replace, or `unattended_env()` for that editor case — which
+    pins rather than unsets, because an unset `GIT_EDITOR` leaves git to fall
+    through its own precedence table to `vi`.
     """
     return proc.run(
         _argv(args, config), cwd=cwd, timeout=_timeout_for(args), env=env,

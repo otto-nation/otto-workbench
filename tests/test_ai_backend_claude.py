@@ -250,3 +250,40 @@ class TestEveryCommandCarriesAnAddDir:
             ai_backend.invoke_fix = original
 
         assert captured["add_dirs"] == ["/tmp/the-worktree"]
+
+
+class TestThePromptShapeGrantsNoTools:
+    """A stateless prompt must not be able to run a tool, on either backend.
+
+    The Pi backend states this with `--no-tools`, after one of its prompt calls
+    ran `git rebase --edit-todo` and blocked on `vi`. This backend states it by
+    omission: `_build_prompt_cmd` is the one command here that does not go
+    through `_base_cmd`, so it carries neither `--permission-mode acceptEdits`
+    nor `--allowedTools Bash(*)`, and a headless `claude -p` denies anything
+    that would otherwise prompt.
+
+    That is the weaker of the two guarantees, because it rests on flags being
+    absent. Nothing stops a later edit routing this through `_base_cmd` for
+    consistency and handing every conflict resolver a shell, with no test
+    failing — so what is pinned is the absence itself.
+    """
+
+    def test_a_prompt_command_grants_no_tools_and_no_permission_mode(self):
+        cmd = ai_backend_claude._build_prompt_cmd()
+        assert "--allowedTools" not in cmd
+        assert "--permission-mode" not in cmd
+
+    def test_the_absence_survives_a_model(self):
+        cmd = ai_backend_claude._build_prompt_cmd(model="claude-opus-4-6")
+        assert "--allowedTools" not in cmd
+        assert "--permission-mode" not in cmd
+
+    def test_the_agent_modes_do_grant_tools(self):
+        """The contrast is the point — an agent with no tools does nothing."""
+        inv = ai_backend_claude.AgentInvocation(prompt="", add_dirs=["/tmp/wt"])
+        for cmd in (
+            ai_backend_claude._build_agent_cmd(inv),
+            ai_backend_claude._build_fix_cmd(inv),
+        ):
+            assert "--allowedTools" in cmd
+            assert cmd[cmd.index("--permission-mode") + 1] == "acceptEdits"

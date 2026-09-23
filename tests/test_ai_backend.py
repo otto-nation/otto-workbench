@@ -490,7 +490,14 @@ class TestBackendsRunInTheGivenDirectory:
 
 
 def _recording_popen(seen):
-    """A Popen stand-in that records its kwargs and streams nothing back."""
+    """A Popen stand-in that records its kwargs and streams nothing back.
+
+    ``wait`` takes Popen's own ``timeout`` because a backend is entitled to
+    bound it; a fake that accepts only the bare call fails every caller that
+    does, for a reason about the fake rather than about the backend. The
+    context-manager methods are here for the same reason: a real Popen is one,
+    and a backend that enters it is using the API as documented.
+    """
 
     class FakeProc:
         returncode = 0
@@ -498,14 +505,14 @@ def _recording_popen(seen):
         stdout = io.StringIO("")
         stderr = io.StringIO("")
 
-        def wait(self):
+        def wait(self, timeout=None):
             return 0
 
-        def poll(self):
-            # None means still running, which is what keeps these cases on the
-            # ordinary path: an exited process with an empty stream is how the
-            # backend recognises one that died before speaking the protocol.
-            return None
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
 
     def popen(cmd, **kwargs):
         seen.update(kwargs)

@@ -2553,6 +2553,8 @@ invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
   - Clean abort via {"type": "abort"} instead of SIGTERM
   - Claude-compatible result records written to session logs
+  - A response with success:false on prompt or parse ends the run and is
+    reported, instead of being waited out
 
 prompt() uses print mode (pi -p) for simplicity.
 

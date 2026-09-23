@@ -388,9 +388,21 @@ def create_or_update_deferred_issue(
     # Before the issue is built rather than after it is filed: the body below
     # links the PR on the origin's forge while the filing goes to the tracker's,
     # so a disagreement between them is visible in what this call produces.
+    #
+    # `ctx.host` rather than a sidecar's, unlike `review-post`: this runs inside
+    # the process that resolved the target, so the live remote is the freshest
+    # answer available and no file has to carry it. The sidecar exists for the
+    # one caller that cannot ask — a `review-post` spawned with a review file
+    # and no remote — and reaching for it here would prefer a recorded answer
+    # over a current one.
     mismatch = review_issue.warn_on_host_mismatch(
         provider, provider_info.options, ctx.host,
     )
+    # Logged on an update too, not only on creation. A mismatch is a live
+    # property of the configuration rather than an event at filing time, and the
+    # run that acts on it is the one that needs telling — an operator reading
+    # today's output should not have to find the run that first created the
+    # issue to learn its links point at another instance.
     if mismatch and trail:
         trail.warn("deferred_issue", mismatch)
 

@@ -335,13 +335,17 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
 
     # Read separately from `repo` because `--repo` may name a repo the cwd is
     # not: the slug can be handed in, the host can only be read off the remote.
-    # A run whose `--repo` disagrees with `--repo-dir`'s origin gets the empty
-    # host and renders public GitHub, which is the answer it gave before the
-    # host existed.
+    # Taken only when the origin names the same repo the run is reviewing — the
+    # host is evidence about *that* remote, and a scratch checkout or a fork
+    # whose `--repo` points elsewhere would otherwise stamp its own forge onto
+    # someone else's review. Disagreement falls back to the empty host and
+    # renders public GitHub, which is the answer this gave before the host
+    # existed; a wrong enterprise host is worse than a known-generic one.
     origin = pr_target.repo_identity_from_origin(args.repo_dir)
+    host = origin.host if origin and origin.label == repo else ""
 
     job = ReviewJob(
-        repo=repo, host=origin.host if origin else "", pr_number=args.pr, pr=pr, ctx=ctx,
+        repo=repo, host=host, pr_number=args.pr, pr=pr, ctx=ctx,
         wt_path=args.repo_dir, review_file=args.review_file,
         session_log=session_log,
         issue_link=args.issue, issue_context=args.issue_context,

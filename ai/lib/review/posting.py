@@ -245,8 +245,13 @@ def _post_as_comment(
     diff_text = review_github._get_diff(args.repo, args.pr)
     # `main` stamps both onto `args` from the sidecar, which is the only thing
     # that knows the forge here: this process is spawned with a review file and
-    # never reads a remote. Defaulted because a caller that built `args` itself
-    # renders public GitHub, as this path did before the host existed.
+    # never reads a remote.
+    #
+    # `getattr` rather than `args.host`, unlike the slug beside it: `host` is
+    # not an argparse argument and so is not on the namespace parsing produces
+    # — only `main` puts it there. A caller that builds its own `args`, which
+    # every test of this function does, would otherwise raise instead of
+    # rendering the public-GitHub default this path had before the host existed.
     review_format.resolve_permalinks(
         findings, args.repo, diff_text, head_ref, base_ref, getattr(args, "host", ""))
 

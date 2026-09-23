@@ -356,7 +356,11 @@ else
   fi
   if [[ -n "$_pytest_selected" ]]; then
     _pytest_file_count=$(echo "$_pytest_selected" | wc -l | tr -d ' ')
-    _pytest_total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.py' ! -name 'conftest.py' | wc -l | tr -d ' ')
+    # From the selector, not a find spelled here: a second definition of "every
+    # test file" drifts from the first, and this one did — it read 193/187 once
+    # the selector learned to recurse into the tests package that a maxdepth 1
+    # find cannot see.
+    _pytest_total=$("$REPO_ROOT/bin/local/select-pytest" --all 2>/dev/null | wc -l | tr -d ' ')
     _pytest_label="pytest ($_pytest_file_count/$_pytest_total files)"
   fi
 

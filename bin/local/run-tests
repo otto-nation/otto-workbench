@@ -311,7 +311,15 @@ run_bats() {
 # retention is what collects it.
 run_pytest() {
   local jobs_flag=()
-  pytest -VV 2>/dev/null | grep -q xdist && jobs_flag=(-n "$(granted_jobs)")
+  if pytest -VV 2>/dev/null | grep -q xdist; then
+    jobs_flag=(-n "$(granted_jobs)")
+  else
+    # Say so rather than just being six times slower. A pytest that resolves to
+    # a different interpreter than the one xdist was installed into — a version
+    # manager's shim taking precedence over pipx on PATH, say — turns a 65s
+    # suite into a 420s one, and nothing in the output names the cause.
+    warn "pytest has no xdist plugin: running serially. $(command -v pytest)" >&2
+  fi
 
   local basetemp_flag=()
   if [[ -z "${PYTEST_DEBUG_TEMPROOT:-}" ]]; then

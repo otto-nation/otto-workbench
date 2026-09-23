@@ -1143,6 +1143,7 @@ _blocked() {
   done
 }
 
+# passes-at-base: the guard against over-reach — before INTERACTIVE_SHELLS no shell name was matched at all, so these passed by the hole; the case exists to stop the new rule swallowing `sh -c`, and it fails if the payload exemption is dropped
 @test "review-guard: a shell running a read-only payload is still allowed" {
   # The escape rule must not swallow `sh -c`: its payload is a command in its
   # own right, unwrapped and rescanned, so a read stays a read.

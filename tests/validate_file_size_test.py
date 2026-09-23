@@ -21,6 +21,11 @@ def _write(root: Path, name: str, body: str) -> Path:
     return path
 
 
+def _lines(n: int) -> str:
+    """*n* copies of a throwaway statement — a body big enough to trip a cap."""
+    return "x = 1\n" * n
+
+
 # ── The counter: Python ──────────────────────────────────────────────────────
 
 def test_a_blank_line_is_not_code():
@@ -159,67 +164,67 @@ def test_typescript_is_declared_out_of_scope(tmp_path):
 
 def test_tests_are_out_of_scope(tmp_path):
     """#910 owns the suites; this gate would only duplicate it, loudly."""
-    _write(tmp_path, "tests/big_test.py", "x = 1\n" * 900)
+    _write(tmp_path, "tests/big_test.py", _lines(900))
     assert vfs.discover(tmp_path) == []
 
 
 def test_a_directory_outside_the_scan_roots_is_skipped(tmp_path):
-    _write(tmp_path, "site/app.py", "x = 1\n" * 900)
+    _write(tmp_path, "site/app.py", _lines(900))
     assert vfs.discover(tmp_path) == []
 
 
 def test_pycache_is_skipped(tmp_path):
-    _write(tmp_path, "ai/__pycache__/x.py", "x = 1\n" * 900)
+    _write(tmp_path, "ai/__pycache__/x.py", _lines(900))
     assert vfs.discover(tmp_path) == []
 
 
 # ── The gate ─────────────────────────────────────────────────────────────────
 
 def test_a_file_at_the_cap_passes(tmp_path):
-    _write(tmp_path, "ai/a.py", "x = 1\n" * 10)
+    _write(tmp_path, "ai/a.py", _lines(10))
     assert vfs.over_cap(tmp_path, 10) == []
 
 
 def test_a_file_one_over_the_cap_is_reported(tmp_path):
-    _write(tmp_path, "ai/a.py", "x = 1\n" * 11)
+    _write(tmp_path, "ai/a.py", _lines(11))
     assert vfs.over_cap(tmp_path, 10) == [("ai/a.py", 11)]
 
 
 def test_prose_does_not_count_against_the_cap(tmp_path):
     """The whole point: a documented file is not a large one."""
-    _write(tmp_path, "ai/a.py", '"""Doc.\n' + "prose\n" * 50 + '"""\n' + "x = 1\n" * 5)
+    _write(tmp_path, "ai/a.py", '"""Doc.\n' + "prose\n" * 50 + '"""\n' + _lines(5))
     assert vfs.over_cap(tmp_path, 10) == []
 
 
 def test_violations_are_reported_worst_first(tmp_path):
-    _write(tmp_path, "ai/small.py", "x = 1\n" * 12)
-    _write(tmp_path, "ai/big.py", "x = 1\n" * 30)
+    _write(tmp_path, "ai/small.py", _lines(12))
+    _write(tmp_path, "ai/big.py", _lines(30))
     assert [name for name, _ in vfs.over_cap(tmp_path, 10)] == ["ai/big.py", "ai/small.py"]
 
 
 def test_a_new_file_over_the_cap_fails(tmp_path):
     """The case the gate exists for: phase 5 produced two of these unnoticed."""
-    _write(tmp_path, "ai/a.py", "x = 1\n" * 11)
+    _write(tmp_path, "ai/a.py", _lines(11))
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 1
 
 
 def test_a_known_file_over_the_cap_does_not_fail(tmp_path, monkeypatch):
     """Pre-existing debt is #853's and #911's; blocking on it blocks every push."""
     monkeypatch.setitem(vfs.KNOWN_OVER, "ai/a.py", "#853")
-    _write(tmp_path, "ai/a.py", "x = 1\n" * 11)
+    _write(tmp_path, "ai/a.py", _lines(11))
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 0
 
 
 def test_a_new_file_fails_even_beside_a_known_one(tmp_path, monkeypatch):
     """An exemption must not carry cover for anything but itself."""
     monkeypatch.setitem(vfs.KNOWN_OVER, "ai/known.py", "#853")
-    _write(tmp_path, "ai/known.py", "x = 1\n" * 11)
-    _write(tmp_path, "ai/new.py", "x = 1\n" * 11)
+    _write(tmp_path, "ai/known.py", _lines(11))
+    _write(tmp_path, "ai/new.py", _lines(11))
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 1
 
 
 def test_it_passes_when_nothing_is_over(tmp_path):
-    _write(tmp_path, "ai/a.py", "x = 1\n" * 5)
+    _write(tmp_path, "ai/a.py", _lines(5))
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 0
 
 

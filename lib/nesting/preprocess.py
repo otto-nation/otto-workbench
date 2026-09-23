@@ -1,11 +1,65 @@
 import re
 
+_HEREDOC_START = re.compile(r"<<-?\s*[\"']?([A-Za-z_]\w*)[\"']?")
+
 
 def strip_strings_and_comments(line: str) -> str:
     line = re.sub(r"'[^']*'", '', line)
     line = re.sub(r'"[^"]*"', '', line)
     line = re.sub(r'#.*', '', line)
     return line
+
+
+def heredoc_delimiter(line: str, in_squote: bool, in_dquote: bool) -> str | None:
+    """The delimiter a heredoc opened on *line* will end at, or None.
+
+    Shared by the nesting checker and the size counter: both answer "does a
+    heredoc body start on this line", and the answer has to be the same in a
+    nesting count and a size count or one of them is reading a different file
+    than the other.
+
+    Neither the raw line nor the quote-stripped one can answer this alone, and
+    each is wrong in the opposite direction. ``strip_shell_line`` erases the
+    inside of a quoted span, so a quoted delimiter (``cat <<'EOF'``) comes back
+    as ``cat <<`` and the heredoc is never seen to start — its body then gets
+    scanned as ordinary shell, silently dropping the blank and ``#``-led lines
+    a caller may promise to count. Searching the raw line instead finds a
+    ``<<`` that is only being talked about, in a comment (``# unquoted <<EOF,
+    not <<'EOF'``, in lib/ai/commit.sh) or inside a string, and opens a
+    heredoc that never existed — swallowing the rest of the file up to a
+    delimiter that never arrives.
+
+    So the scan walks the line itself: a heredoc opens where the ``<<``
+    operator sits in code, outside both kinds of quote and before any
+    comment, and the delimiter that follows it is read from the raw text with
+    its quotes intact.
+    """
+    i = 0
+    while i < len(line):
+        char = line[i]
+        if in_squote:
+            in_squote = char != "'"
+        elif char == "\\":
+            i += 2
+            continue
+        elif in_dquote:
+            in_dquote = char != '"'
+        elif char == "'":
+            in_squote = True
+        elif char == '"':
+            in_dquote = True
+        elif char == "#":
+            # A comment runs to end of line, so nothing past it opens anything.
+            return None
+        elif line.startswith("<<<", i):
+            # A here-string, not a heredoc: it takes a word rather than a body,
+            # so there is no delimiter and no following lines to swallow.
+            i += 2
+        elif line.startswith("<<", i):
+            match = _HEREDOC_START.match(line, i)
+            return match.group(1) if match else None
+        i += 1
+    return None
 
 
 def strip_shell_line(

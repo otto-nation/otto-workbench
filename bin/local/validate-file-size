@@ -54,8 +54,9 @@ MAX_CODE_LINES = 600
 #
 # ceiling: three named exemptions, because failing on them would block every
 # push on work owned elsewhere. Delete an entry when its file comes under the
-# cap; the dict is empty once #853 and #911 have landed, and at that point this
-# gate is the unconditional one #911 specifies.
+# cap; the dict is empty once the two #853 entries and the one #911 entry
+# (`gh/pr_reads.py`) have landed, and at that point this gate is the
+# unconditional one #911 specifies.
 KNOWN_OVER = {
     "bin/otto-workbench": "#853",
     "ai/claude/steps.sh": "#853",
@@ -176,7 +177,8 @@ def _report_known(known: list[tuple[str, int]]) -> None:
     print(f"{YELLOW}▲{NC} {len(known)} file(s) over the cap, each owned by an open issue",
           file=sys.stderr)
     for relpath, count in known:
-        print(f"      {relpath}: {count}  ({KNOWN_OVER[relpath]})", file=sys.stderr)
+        owner = KNOWN_OVER.get(relpath, "?")
+        print(f"      {relpath}: {count}  ({owner})", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:

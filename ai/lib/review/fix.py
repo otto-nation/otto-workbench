@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from fix import engine as fix_engine
@@ -52,7 +53,7 @@ from fix import verify as fix_verify
 from core import log
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
-from review.paths import phase_log_path
+from review.paths import phase_log_path, read_review_meta, write_review_meta
 from review.document import ReviewDocument, is_skipped
 from review.grammar import FINDING_ID_RE
 from review.retry import _has_output
@@ -167,8 +168,31 @@ def _annotated(line: str, note: str) -> str:
     on the finished line that is *meant* to read as an annotation, so running it
     through the same defusing would break the annotation being written — the
     value interpolated into it is each caller's to escape, and both do.
+
+    Only the `*(` sequence is rewritten, never whitespace. `_escape_annotation`
+    collapses runs of it, which is right for a value the agent wrote and wrong
+    for a line the reviewer did: `FindingIdentity` hashes the first eighty
+    characters of the body, so collapsing a double space there changes the
+    stable id and the next round's carry-forward stops recognising the finding.
+    It also flattens inline code, table alignment and indentation that are the
+    author's, not ours. A line cannot carry a newline in any case — it was split
+    out of the document on one.
+
+    A line already ending in our own caveat is returned untouched. Defusing it
+    would mangle what a synthesis pass carried forward and leave a second copy
+    beside it, which is the outcome this function exists to prevent, arriving
+    through the function itself.
+
+    A verdict withheld that way is not the dropped outcome the paragraph above
+    refuses. A skip or a decline is withheld only on a line carrying our own
+    caveat, and such a line is still unchecked, still undeclined, and so still
+    in the next round's work set — the finding is retried rather than lost. The
+    case it refuses to overwrite is narrow and the annotation it would have
+    written is recoverable; the one it protects is not.
     """
-    return f"{_escape_annotation(line.rstrip())} {note}"
+    if _UNVERIFIED_TAIL_RE.search(line):
+        return line
+    return f"{line.rstrip().replace('*(', '* (')} {note}"
 
 
 def _escape_annotation(detail: str) -> str:
@@ -222,9 +246,7 @@ def _fixed_line(line: str, outcome: ItemOutcome) -> str:
         return line
     ticked = line.replace("- [ ]", "- [x]", 1)
     detail = _unverified_detail(outcome)
-    # Read before the defusing in `_annotated`, which would otherwise break the
-    # caveat a synthesis pass carried forward and let a second one in beside it.
-    if detail is None or _UNVERIFIED_TAIL_RE.search(line):
+    if detail is None:
         return ticked
     caveat = f"unverified — {_escape_annotation(detail)}" if detail else "unverified"
     return _annotated(ticked, f"*({caveat})*")
@@ -303,11 +325,6 @@ def _annotation(outcome: ItemOutcome) -> str:
     # hand the inner word to the parsers — a skip written as a decline.
     reason = _escape_annotation(outcome.reason)
     return f"*({word} — {reason})*" if reason else f"*({word})*"
-
-
-# `_escape_annotation` is applied to the interpolated value here and to the whole
-# line in `_annotated`. Both are needed: one closes a quotation the agent wrote,
-# the other a quotation the reviewer did.
 
 
 def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
@@ -493,6 +510,46 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
         log.info("No findings left to fix — skipping fix pass")
         return
 
-    fix_engine.run(
+    run = fix_engine.run(
         ReviewFixAdapter(job, findings), trail=trail, verify=fix_verify.run,
     )
+    _record_commit(job, run)
+
+
+def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:
+    """Record the fix pass's commit in the review's sidecar, and say what is owed.
+
+    The push is gated and the commit is not, so the ordinary end of
+    `--fix` without `--post` is a commit sitting on the branch that nothing has
+    sent. Until this, the only trace was one `resume` line on a terminal the
+    operator may already have closed: no status surface knew the commit
+    existed, and a review directory that recorded the findings recorded nothing
+    about the work done against them.
+
+    Written for every landing, not only a held one. A pushed commit is the fact
+    that answers "what did the last fix pass do" on the next run, and a reader
+    that only ever saw the held ones could not tell a pass that published from
+    one that never ran.
+
+    A pass with no landing — no items, nothing to commit — records nothing and
+    leaves any earlier round's record alone, which is the difference between a
+    round that had nothing to say and one that retracted what the last said.
+    """
+    if run.landed is None:
+        return
+    sha, status = run.landed.sha, run.landed.status
+    # Both must be the strings the sidecar's schema says they are. Every review
+    # lookup on the machine walks these files, so a value that is not
+    # serialisable takes the whole sidecar down — the attribution of a review
+    # that was written correctly — rather than costing the one field it came in.
+    if not isinstance(sha, str) or not isinstance(status, str):
+        log.warn(f"Fix pass reported an unrecordable commit ({status!r}) — not stamped")
+        return
+    review_dir = Path(job.artifact_dir)
+    write_review_meta(review_dir, replace(
+        read_review_meta(review_dir),
+        fix_commit_sha=sha,
+        fix_commit_status=str(status),
+    ))
+    if run.landed.resume:
+        log.info(f"Fix commit held locally — {run.landed.resume}")

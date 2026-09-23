@@ -14,7 +14,7 @@ everything above it is what this module decided to ask for.
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from conftest import git_out
@@ -27,9 +27,11 @@ from agent import invoke as agent_invoke
 from agent.registry import PHASES
 from fix import engine as fix_engine
 from git import land
+from pr import attribution
 from git import push
 from review import document as review_document
 from review import fix as review_fix
+from review import grammar as review_grammar
 from review import paths as review_paths
 from review import types as review_types
 from core.proc import TIMEOUT_RETURNCODE, CmdResult
@@ -609,7 +611,49 @@ class TestApplyOutcomes:
             "M1", "M2",
         ]
 
-    # passes-at-base: base appends nothing after the quotation, so it stays mid-line
+    # passes-at-base: base rewrites nothing on the line, so the id is safe there for free
+    def test_an_append_leaves_the_stable_id_alone(self):
+        """`FindingIdentity` hashes the body's first eighty characters.
+
+        An annotation lands past them, so appending one has never changed the
+        id — and `reconcile` matches a prior round's finding by exactly that id.
+        Anything this function rewrites *before* position eighty breaks the
+        carry-forward silently, on the next run rather than this one.
+        """
+        body = (
+            "the guard  is missing here and this body runs well past eighty "
+            "characters so the append lands after it"
+        )
+        line = f"- [ ] **[M1]** `a.py:1` — {body}"
+        out = review_fix._apply_outcomes(
+            f"## Must fix\n{line}\n",
+            [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
+        )
+        before = review_grammar.FindingIdentity.of(line)
+        after = review_grammar.FindingIdentity.of(out.splitlines()[1])
+        assert after.stable_id == before.stable_id
+
+    # passes-at-base: base rewrites nothing on the line, so the spacing is safe for free
+    def test_an_append_leaves_the_author_s_own_spacing_alone(self):
+        """Inline code, table alignment and indentation are the author's."""
+        line = "- [ ] **[M1]** `a.py:1` — compare `x  ==  y` and a | a  | b  | table"
+        out = review_fix._apply_outcomes(
+            f"## Must fix\n{line}\n",
+            [_outcome("M1", FixOutcome.NEEDS_HUMAN, "nope")],
+        )
+        assert out.splitlines()[1].startswith(line)
+
+    def test_a_verdict_does_not_overwrite_a_carried_caveat(self):
+        """The finding stays open, so the next round retries it rather than losing it."""
+        line = "- [ ] **[M1]** `a.py:1` — x *(unverified — no runnable check)*"
+        out = review_fix._apply_outcomes(
+            f"## Must fix\n{line}\n",
+            [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
+        )
+        doc = review_document.ReviewDocument.parse(out)
+        assert out.splitlines()[1] == line
+        assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
+
     # passes-at-base: base appends nothing after the quotation, so it stays mid-line
     def test_prose_quoting_an_annotation_is_not_turned_into_one(self):
         """The decline pattern runs from any `*(` to the last `)*` on the line.
@@ -998,6 +1042,121 @@ class TestWhatALandedPassLeavesBehind:
 
         mock_push.assert_not_called()
         assert "- [x] **[M2]**" in Path(job.review_file).read_text()
+
+
+class TestTheHeldCommitIsRecorded:
+    """The push is gated and the commit is not, so a pass ordinarily leaves one.
+
+    Before the sidecar recorded it, the only trace was a `resume` line on a
+    terminal the operator may already have closed: no surface knew the commit
+    existed, and the review directory that held the findings held nothing about
+    the work done against them.
+    """
+
+    @staticmethod
+    def _run(status, sha="abc1234", resume=""):
+        return fix_engine.FixRun(
+            landed=land.LandResult(status=status, sha=sha, resume=resume),
+        )
+
+    REVIEW = (
+        "## Must fix\n"
+        "- [ ] **[M1]** `a.py:1` — Missing nil check\n"
+    )
+
+    def test_the_pass_records_what_it_landed(self, git_wt, tmp_path):
+        """Asserted through `run_fix_pass`, not by calling the recorder.
+
+        Every other case here drives `_record_commit` directly, so all of them
+        pass against a pass that never calls it — which is the same wiring bug
+        `test_the_pass_hands_the_engine_a_gate_at_all` exists to catch one
+        argument along.
+        """
+        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        landed = land.LandResult(status=land.CommitStatus.PUSH_HELD, sha="abc1234")
+        with patch.object(review_fix.fix_engine, "run",
+                          return_value=fix_engine.FixRun(landed=landed)):
+            review_fix.run_fix_pass(job)
+
+        meta = review_paths.read_review_meta(Path(job.artifact_dir))
+        assert meta.unpushed_fix_commit == "abc1234"
+
+    def test_a_held_commit_is_recorded_as_owed(self, git_wt, tmp_path):
+        job = _make_job(git_wt, tmp_path)
+        review_dir = Path(job.artifact_dir)
+        review_fix._record_commit(job, self._run(land.CommitStatus.PUSH_HELD))
+
+        meta = review_paths.read_review_meta(review_dir)
+        assert meta.fix_commit_sha == "abc1234"
+        assert meta.unpushed_fix_commit == "abc1234"
+
+    def test_a_pushed_commit_owes_nothing(self, git_wt, tmp_path):
+        job = _make_job(git_wt, tmp_path)
+        review_fix._record_commit(job, self._run(land.CommitStatus.PUSHED))
+
+        meta = review_paths.read_review_meta(Path(job.artifact_dir))
+        assert meta.fix_commit_sha == "abc1234"
+        assert meta.unpushed_fix_commit == ""
+
+    def test_every_unpushed_status_reads_as_owed(self, git_wt, tmp_path):
+        """Which statuses mean "still local" is `pr.attribution`'s answer.
+
+        Asserted over the whole enum rather than the one status the gate
+        produces today, because a list kept here would be the second one and
+        would drift — as a hand-written one already did, by omitting
+        `push_unverified`.
+        """
+        job = _make_job(git_wt, tmp_path)
+        for status in land.CommitStatus:
+            review_fix._record_commit(job, self._run(status))
+            meta = review_paths.read_review_meta(Path(job.artifact_dir))
+            expected = "abc1234" if attribution.commit_unpushed(status) else ""
+            assert meta.unpushed_fix_commit == expected, status
+
+    def test_recording_keeps_what_the_sidecar_already_held(self, git_wt, tmp_path):
+        """The sidecar is the review's attribution; a fix pass adds to it."""
+        job = _make_job(git_wt, tmp_path)
+        review_dir = Path(job.artifact_dir)
+        review_paths.write_review_meta(
+            review_dir, review_types.ReviewMeta(repo="o/r", head_sha="deadbeef"),
+        )
+        review_fix._record_commit(job, self._run(land.CommitStatus.PUSH_HELD))
+
+        meta = review_paths.read_review_meta(review_dir)
+        assert (meta.repo, meta.head_sha) == ("o/r", "deadbeef")
+        assert meta.unpushed_fix_commit == "abc1234"
+
+    def test_a_pass_with_no_landing_leaves_the_record_alone(self, git_wt, tmp_path):
+        """Nothing to commit is not a retraction of what an earlier round said."""
+        job = _make_job(git_wt, tmp_path)
+        review_dir = Path(job.artifact_dir)
+        review_fix._record_commit(job, self._run(land.CommitStatus.PUSH_HELD))
+        review_fix._record_commit(job, fix_engine.FixRun(landed=None))
+
+        assert review_paths.read_review_meta(review_dir).unpushed_fix_commit == "abc1234"
+
+    def test_an_unrecordable_commit_does_not_take_the_sidecar_with_it(self, git_wt, tmp_path):
+        """Every review lookup on the machine walks these files.
+
+        A value the schema cannot serialise would cost the whole sidecar — the
+        attribution of a review that was written correctly — rather than the one
+        field it arrived in.
+        """
+        job = _make_job(git_wt, tmp_path)
+        review_dir = Path(job.artifact_dir)
+        review_paths.write_review_meta(
+            review_dir, review_types.ReviewMeta(repo="o/r", head_sha="deadbeef"),
+        )
+        review_fix._record_commit(job, fix_engine.FixRun(landed=MagicMock()))
+
+        meta = review_paths.read_review_meta(review_dir)
+        assert (meta.repo, meta.head_sha) == ("o/r", "deadbeef")
+        assert meta.fix_commit_sha == ""
+
+    def test_a_sidecar_predating_the_field_owes_nothing(self):
+        """An unpushed commit is a positive fact, never inferred from silence."""
+        assert review_types.ReviewMeta().unpushed_fix_commit == ""
+        assert review_types.ReviewMeta(fix_commit_sha="abc1234").unpushed_fix_commit == ""
 
 
 class TestSnapshotDiffStagesEveryShapeOfChange:

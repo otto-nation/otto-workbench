@@ -339,6 +339,13 @@ class ReviewSummary(Domain):
     # state file written before the field existed: unknown, not "no", so a
     # reader offers the recovery it would have offered before.
     recoverable: bool | None = None
+    # The fix commit the review's pass left on the branch unpushed. The push is
+    # gated and the commit is not, so `--fix` without `--post` ordinarily ends
+    # with one; before this was recorded, the only trace was a resume line on a
+    # terminal. Empty for a state file written before the field, which reads as
+    # nothing owed rather than as unknown — an unpushed commit is a positive
+    # fact, and inferring one from silence would report it for every old state.
+    unpushed_fix_commit: str = ""
     cost_usd: float = 0.0
     total_tokens: int = 0
 
@@ -370,6 +377,8 @@ class ReviewSummary(Domain):
             lines.append(f"  findings: {', '.join(parts)}")
         if self.cost_usd:
             lines.append(f"  cost: ${self.cost_usd:.2f}")
+        if self.unpushed_fix_commit:
+            lines.append(f"  fixes committed, not pushed: {self.unpushed_fix_commit}")
         # `recoverable is False` rather than `not self.recoverable`: only an
         # explicit no suppresses the hint. A run whose state predates the field
         # says nothing either way, and silently dropping the hint there would
@@ -386,6 +395,10 @@ class ReviewSummary(Domain):
             blockers.append("must-fix findings")
         if self._incomplete:
             blockers.append("review incomplete")
+        # A commit the branch holds and the remote does not is work the merge
+        # would not include, which is the question readiness answers.
+        if self.unpushed_fix_commit:
+            blockers.append("fix commit not pushed")
         return Readiness(blockers=tuple(blockers))
 
 

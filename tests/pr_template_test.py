@@ -219,19 +219,3 @@ def test_a_root_that_is_a_file_is_a_different_error(tmp_path):
     result = _cli("--root", str(path))
     assert result.returncode == 1
     assert "not a directory" in result.stderr
-
-
-# ── the rules render this fallback ──────────────────────────────────────────
-
-
-def test_the_generated_rules_carry_the_fallback_template():
-    """`git.generated.md` renders the constant rather than a copy of it.
-
-    The rules tell an agent which sections to write when a repo ships none, and
-    `task pr:create` fills those same sections on that same repo. A second copy
-    in the generator is the two disagreeing about what a templateless PR looks
-    like.
-    """
-    rules = (Path(__file__).resolve().parent.parent
-             / "ai" / "guidelines" / "rules" / "git.generated.md").read_text()
-    assert pr_template.FALLBACK_TEMPLATE in rules

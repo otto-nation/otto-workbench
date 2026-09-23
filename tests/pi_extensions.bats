@@ -1155,6 +1155,26 @@ _blocked() {
   [ -z "$output" ]
 }
 
+@test "review-guard: every -c spelling is parsed, not refused as an escape" {
+  # The escape rule refuses whatever SHELL_DASH_C cannot parse, so a spelling it
+  # missed became a false positive rather than an unrecognised read: a
+  # path-qualified `/bin/sh -c`, a long flag, a `-c` that is not last in its
+  # cluster, and `fish` (in INTERACTIVE_SHELLS but absent from the payload
+  # pattern) were all refused while running a plain pytest.
+  for ok in "/bin/sh -c 'pytest'" "/bin/bash -c 'pytest tests/'" \
+            "bash --norc -c 'pytest'" "bash -ce 'pytest tests/'" \
+            "bash -cx 'pytest'" "fish -c 'pytest'"; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
+  done
+  # The same spellings must still rescan the payload rather than wave it past.
+  for bad in "/bin/sh -c 'rm -rf x'" "bash --norc -c 'rm -rf x'" \
+             "bash -ce 'rm -rf x'" "fish -c 'rm -rf x'"; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed a write: $bad"; false; }
+  done
+}
+
 @test "review-guard: a shell-wrapper refusal names what the inner check found" {
   # The recursive shell-payload check used to discard blockedWriteCommand's
   # inner return value and always report a generic message, so the refusal

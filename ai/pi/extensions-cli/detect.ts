@@ -328,8 +328,22 @@ function blankQuoted(statement: string): string {
   return statement.replace(/'[^']*'/g, "QUOTEDARG").replace(/"[^"]*"/g, "QUOTEDARG");
 }
 
-/** A `sh -c "..."` payload, which is a command in its own right. */
-const SHELL_DASH_C = /^(?:sh|bash|zsh|dash|ksh)\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*c\s+(.*)$/s;
+/**
+ * A `sh -c "..."` payload, which is a command in its own right.
+ *
+ * The shell name is matched after `unwrap` has stripped any leading path, so
+ * `/bin/sh -c` and `sh -c` read the same — they did not until the escape rule
+ * below started refusing what this cannot parse, and a path-qualified `-c` was
+ * then refused as an interactive shell.
+ *
+ * Long flags and a `-c` that is not last in its cluster are both accepted
+ * (`bash --norc -c`, `bash -ce`), because everything this fails to parse falls
+ * through to that escape rule: an unparsed spelling is not an unrecognised
+ * read, it is a refusal. `fish` is in the alternation for the same reason — it
+ * is in INTERACTIVE_SHELLS, so omitting it here refuses `fish -c 'pytest'`.
+ */
+const SHELL_DASH_C =
+  /^(?:sh|bash|zsh|dash|ksh|fish)\s+(?:(?:-[a-zA-Z]*|--[a-zA-Z-]+)\s+)*-[a-zA-Z]*c[a-zA-Z]*\s+(.*)$/s;
 
 /**
  * The command inside a `sh -c "..."` wrapper, or null when there is none.
@@ -341,7 +355,11 @@ const SHELL_DASH_C = /^(?:sh|bash|zsh|dash|ksh)\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*c\
  * rather than on what it does.
  */
 function shellPayload(statement: string): string | null {
-  const match = SHELL_DASH_C.exec(unwrap(statement));
+  // Path-stripped the way `commandHead` strips it, so `/bin/sh -c` matches.
+  const unwrapped = unwrap(statement);
+  const [first, ...rest] = unwrapped.split(/\s+/).filter(Boolean);
+  const pathless = first ? [first.split("/").pop(), ...rest].join(" ") : unwrapped;
+  const match = SHELL_DASH_C.exec(pathless);
   if (!match) return null;
   const payload = match[1].trim();
   // An unbalanced quote means the split above cut through a quoted span, so the

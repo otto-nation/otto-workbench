@@ -149,14 +149,23 @@ def _reads(baseline, *rest):
     restate it to keep the list long enough.
 
     The last answer given is repeated to fill, so a test naming two readings
-    gets its second one at the position the commit scope is taken from.
+    gets its second one at the position the commit scope is taken from. Each
+    repetition is its own set object — callers only ever combine a reading
+    with `-`/`|`, but a copy per slot keeps a future mutating caller from
+    corrupting every other stubbed reading in the list.
 
     Sized to `PASS_READS`, which is a one-batch pass's own read count — a
     multi-batch or retried pass reads the tree more times than this pads for,
     and needs `_settles_at` instead.
     """
     answers = [baseline, *rest]
-    return [*answers[:-1], *([answers[-1]] * (PASS_READS - len(answers) + 1))]
+    padding = PASS_READS - len(answers) + 1
+    return [*answers[:-1], *(_copy(answers[-1]) for _ in range(padding))]
+
+
+def _copy(reading):
+    """A fresh copy of a stubbed `changed_files` reading, or `None` unchanged."""
+    return set(reading) if reading is not None else None
 
 
 def _settles_at(baseline, final):
@@ -170,9 +179,11 @@ def _settles_at(baseline, final):
 
     The worktree it describes is one an agent edited once and then left alone:
     every reading after the first shows the same difference from the baseline.
+    Each reading returned is its own set object, so a caller that mutated one
+    in place could not corrupt a later stubbed reading.
     """
     answers = iter([baseline])
-    return lambda *_a, **_k: next(answers, final)
+    return lambda *_a, **_k: _copy(next(answers, final))
 
 
 def _run(adapter, **kwargs):
@@ -1200,7 +1211,6 @@ class TestAfterVerifyRunsBeforeTheCommit:
         adapter = StubAdapter(tmp_path)
         _run(adapter)
         assert adapter.recorded is not None
-
 
 
 # ── reconciling the boxes against the tree ──────────────────────────────────

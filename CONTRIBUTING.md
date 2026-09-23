@@ -75,12 +75,13 @@ A run that finds every slot taken proceeds at the floor of 2 rather than queuein
 overshoot is deliberate: waiting would make the third worktree's pre-push sit silent for
 the length of two suites, which is how people learn `--no-verify`.
 
-Bounding the oversubscription is what keeps concurrent whole-suite runs honest. Neither suite fails
-gracefully when it cannot get scheduled: a subprocess that never runs surfaces as a
-timeout, a SIGPIPE, or a git daemon that will not answer, and none of those name the
-machine as the cause. When one does slip through, the shared runner in `tests/conftest.py`
-raises `MachineContention` rather than a plain assertion and says so in the message — a
-failure carrying that text is a machine to re-run on, not a defect to bisect.
+Bounding the oversubscription is what keeps concurrent whole-suite runs honest.
+Neither suite fails gracefully when it cannot get scheduled: a subprocess that never
+runs surfaces as a timeout, a SIGPIPE, or a git daemon that will not answer, and none
+of those name the machine as the cause. When one does slip through, the shared runner
+in `tests/conftest.py` raises `MachineContention` rather than a plain assertion and
+says so in the message — a failure carrying that text is a machine to re-run on, not a
+defect to bisect.
 
 That guard reaches the subprocesses the fixtures run. The ones the *code under test* runs
 are outside it: `proc.run` returns a starved command as an ordinary failure result, so the

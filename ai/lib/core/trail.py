@@ -261,9 +261,15 @@ def _parent_command(ppid: int) -> str:
 
     Through `proc.run` rather than `subprocess` directly, so the shared timeout
     bound applies: a `ps` that hangs must not hold up the run whose first record
-    this is.
+    this is. `proc.run` only guards a timeout, not a missing binary, so a `ps`
+    that is absent from PATH (a minimal container image, a sandboxed runner
+    without procps) is caught here the same way a failing one already is —
+    left out rather than bringing down the run whose first record this is.
     """
-    r = proc.run([*_PARENT_PROBE, str(ppid)], timeout=timeouts.QUICK)
+    try:
+        r = proc.run([*_PARENT_PROBE, str(ppid)], timeout=timeouts.QUICK)
+    except OSError:
+        return ""
     return r.stdout.strip() if r.ok else ""
 
 
@@ -429,8 +435,11 @@ class TrailEvent:
     duration_ms: int | None = None
     data: dict | None = None
     # Who started the process that wrote this, captured once at `Trail.start`.
-    # Absent on records written before this field existed and on a run whose
-    # every probe failed; `event.get("origin", {})` reads the same for both.
+    # Absent on records written before this field existed, and only then:
+    # `pid`/`ppid` are set unconditionally, so a recorded run always carries at
+    # least those even when every best-effort sub-field (`parent`, `tty`,
+    # `harness`, `command`) failed. `event.get("origin", {})` reads a pre-cutover
+    # record the same as one that was never trailed.
     origin: dict | None = None
 
     def to_json(self) -> str:

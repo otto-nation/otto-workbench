@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -218,7 +219,7 @@ class TestCommandCorrelation:
             invocation=root, only=False, json=False))
         out = capsys.readouterr().out
         assert "Started by:" in out
-        assert "ppid" in out
+        assert f"(ppid {os.getppid()})" in out
 
     # passes-at-base: back-compat — base has no origin field at all, so it prints nothing either
     def test_show_says_nothing_of_a_record_predating_attribution(self, capsys):

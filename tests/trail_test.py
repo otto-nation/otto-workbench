@@ -799,6 +799,14 @@ class TestProcessOrigin:
         monkeypatch.setenv("CLAUDECODE", "1")
         assert process_origin()["harness"] == "auto-task"
 
+    def test_a_missing_ps_binary_is_left_out_rather_than_crashing(self):
+        """A `ps` absent from PATH raises `FileNotFoundError` out of
+        `subprocess.run`, which `proc.run` does not catch. The probe must not
+        let that escape and take the whole run down with it."""
+        with mock.patch.object(trail_mod, "_PARENT_PROBE", ("no-such-binary-xyz",)):
+            Trail.start(script="s", context={}).info("a", "d")
+        assert "parent" not in _read_events()[0]["origin"]
+
     def test_a_run_with_no_terminal_records_that_it_had_none(self):
         """The evidence the guard in `fix.engine` acts on, kept so a refusal or
         a failure to refuse can be read back afterwards."""

@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Report source files whose code exceeds the size cap.
+
+Usage: bin/local/validate-file-size [--quiet] [--max-lines N] [DIR]
+
+Counts code only — blank lines, comments and docstrings do not count against
+the cap. `lib/file_size.py` says why at length; the short version is that a
+total-line count in this repo measures documentation, and the guidelines
+require the documentation it would tax.
+
+Scope is Python and shell source under `ai/`, `bin/` and `lib/` — the two
+languages `code_lines` reads. Tests are not covered: a test file is a flat
+list of cases where the argument for splitting is navigability rather than
+coupling, so it wants a different number and a different owner
+(#910). Adding tests here would also make this gate the loudest thing in the
+repo while saying nothing #910 does not already track.
+
+Exit code: 0 if every file over the cap is a known exemption, 1 otherwise.
+
+A file already over the line when this landed is listed in KNOWN_OVER with the
+issue that owns its split, and does not fail the build. Anything else does,
+immediately — which is the point, since the risk during #754 is a *new* file
+crossing the line unnoticed, and phase 5 produced two of those before anything
+was watching.
+
+This is not the allowlist #911 forbids. #911's gate lands with no exemptions at
+all — it splits whatever is still over the line in its own PR — and this list is
+what that PR deletes. The test suite pins it to exactly the set of files over
+the cap, so it can only shrink.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+_WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
+from ansi import DIM, GREEN, NC, RED, YELLOW  # noqa: E402
+from file_size import code_lines  # noqa: E402
+from repo_scan import BASE_SKIP_DIRS  # noqa: E402
+
+# 600 rather than #754's 700, because #754's number counts total lines and this
+# counts code. Measured across the 193 modules in ai/lib, code lines run to a
+# median of 145 and a p95 of 367; 600 sits above every honest module and below
+# the handful that are genuinely dense. A cap nothing is near is not a gate.
+MAX_CODE_LINES = 600
+
+# The files over the cap when this landed, each with the issue that splits it.
+# The two shell files are #853's by name. `gh/pr_reads.py` is the densest module
+# in ai/lib (647 code lines, 19% prose) and no phase of #754 names it, so it
+# falls to #911, which splits whatever is still over the line in its own PR.
+#
+# ceiling: three named exemptions, because failing on them would block every
+# push on work owned elsewhere. Delete an entry when its file comes under the
+# cap; the dict is empty once the two #853 entries and the one #911 entry
+# (`gh/pr_reads.py`) have landed, and at that point this gate is the
+# unconditional one #911 specifies.
+KNOWN_OVER = {
+    "bin/otto-workbench": "#853",
+    "ai/claude/steps.sh": "#853",
+    "ai/lib/gh/pr_reads.py": "#911",
+}
+
+SCAN_ROOTS = ("ai", "bin", "lib")
+
+SKIP_DIRS = BASE_SKIP_DIRS | {"__pycache__", ".venv", "venv", "node_modules"}
+
+# Extensions that are neither Python nor shell and are never source here.
+#
+# .ts is here deliberately, not by omission: `code_lines` only knows how to
+# count Python and shell, and the ~1,300 lines of TypeScript under
+# `ai/pi/extensions*/` today are all well under the cap (largest is 209
+# lines), so a naive counter would add code without yet catching anything.
+# Add a TypeScript counter to `lib/file_size.py` before pulling this out.
+_NOT_SOURCE = {
+    ".md", ".json", ".yml", ".yaml", ".txt", ".toml", ".pkl", ".png", ".svg",
+    ".jsonl", ".lock", ".env", ".html", ".css", ".j2", ".ts",
+}
+
+
+def _language(path: Path) -> str | None:
+    """``python``, ``shell``, or None if *path* is not source we count.
+
+    Extension first, then the shebang: the entry points under `ai/bin/` are
+    Python with no `.py` on them, and a size gate that skipped them would miss
+    the largest scripts in the tree.
+    """
+    suffix = path.suffix
+    if suffix == ".py":
+        return "python"
+    if suffix in (".sh", ".bash"):
+        return "shell"
+    if suffix in _NOT_SOURCE:
+        return None
+
+    try:
+        with open(path, "rb") as handle:
+            shebang = handle.readline()
+    except OSError:
+        return None
+    if not shebang.startswith(b"#!"):
+        return None
+    if b"python" in shebang:
+        return "python"
+    if b"bash" in shebang or shebang.rstrip().endswith(b"/sh"):
+        return "shell"
+    return None
+
+
+def discover(root: Path) -> list[tuple[Path, str]]:
+    """Every source file under *root*'s scan roots, with its language.
+
+    Sorted: an unsorted walk reports the same violations in a different order
+    on another machine, which makes two runs hard to diff.
+    """
+    found: list[tuple[Path, str]] = []
+    for scan_root in SCAN_ROOTS:
+        base = root / scan_root
+        if base.is_dir():
+            found.extend(_walk(base))
+    return sorted(found)
+
+
+def _walk(base: Path) -> list[tuple[Path, str]]:
+    """Every source file under *base*, paired with its language."""
+    found: list[tuple[Path, str]] = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        found.extend(_in_dir(Path(dirpath), sorted(filenames)))
+    return found
+
+
+def _in_dir(dirpath: Path, filenames: list[str]) -> list[tuple[Path, str]]:
+    """The source files among *filenames*, paired with their language."""
+    found: list[tuple[Path, str]] = []
+    for name in filenames:
+        path = dirpath / name
+        if not path.is_file() or path.is_symlink():
+            continue
+        language = _language(path)
+        if language:
+            found.append((path, language))
+    return found
+
+
+def over_cap(root: Path, max_lines: int) -> list[tuple[str, int]]:
+    """(relative path, code lines) for every file over *max_lines*, worst first."""
+    violations = []
+    for path, language in discover(root):
+        try:
+            count = code_lines(path, language)
+        except OSError as err:
+            # Naming the file beats a traceback from inside the counter: the
+            # gate runs over a whole tree, and "which file" is the only part
+            # of that stack anyone acts on. Stopping at the first one is
+            # deliberate — an unreadable file is a broken checkout or a bad
+            # mode, not a violation to enumerate, and the second one has the
+            # same cause as the first.
+            raise SystemExit(
+                f"{RED}✗{NC} cannot read {path.relative_to(root)}: {err.strerror}",
+            ) from err
+        if count > max_lines:
+            violations.append((str(path.relative_to(root)), count))
+    return sorted(violations, key=lambda row: -row[1])
+
+
+def _report(new: list[tuple[str, int]], max_lines: int) -> None:
+    print(f"{RED}✗{NC} {len(new)} file(s) over {max_lines} code lines",
+          file=sys.stderr)
+    for relpath, count in new:
+        print(f"      {relpath}: {count}", file=sys.stderr)
+    print(f"    {DIM}code lines only — blanks, comments and docstrings are not counted,",
+          file=sys.stderr)
+    print("    so documenting a file never pushes it over.", file=sys.stderr)
+    print(f"    Split along a seam the code already has, rather than at the line{NC}",
+          file=sys.stderr)
+
+
+def _report_known(known: list[tuple[str, int]]) -> None:
+    """Print the exemptions on success, so the debt stays visible.
+
+    validate-all discards a passing validator's output, so this only shows on a
+    direct run. That is the right audience: the push is not blocked by these,
+    and whoever runs the gate by hand is the person deciding what to split.
+    """
+    print(f"{YELLOW}▲{NC} {len(known)} file(s) over the cap, each owned by an open issue",
+          file=sys.stderr)
+    for relpath, count in known:
+        owner = KNOWN_OVER.get(relpath, "?")
+        print(f"      {relpath}: {count}  ({owner})", file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Report source files whose code exceeds the size cap.",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Only show failures")
+    parser.add_argument("--max-lines", type=int, default=MAX_CODE_LINES,
+                        help=f"Cap on code lines (default: {MAX_CODE_LINES})")
+    parser.add_argument("directory", nargs="?", default=str(_WORKBENCH_DIR),
+                        help="Directory to scan (default: the repo root)")
+    args = parser.parse_args(argv)
+
+    root = Path(args.directory).resolve()
+    violations = over_cap(root, args.max_lines)
+    new = [(path, n) for path, n in violations if path not in KNOWN_OVER]
+    known = [(path, n) for path, n in violations if path in KNOWN_OVER]
+
+    if new:
+        _report(new, args.max_lines)
+        return 1
+    if known and not args.quiet:
+        _report_known(known)
+        return 0
+    if not args.quiet:
+        print(f"{GREEN}✓{NC} every source file is within {args.max_lines} code lines")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -131,3 +131,39 @@ class TestAgentChanged:
         before = fix_scope.changed_files(str(git_wt))
         (git_wt / ".git" / "index").write_bytes(b"garbage")
         assert fix_scope.agent_changed(str(git_wt), before) is None
+
+    def test_scratch_files_an_agent_left_behind_are_not_committed(self, git_wt):
+        """An agent's throwaway file is not the pass's work.
+
+        A fix agent with no permitted way to delete a file created a fresh one
+        each time it needed a scratch — debug.test.ts, probe.test.ts, and a
+        zzz.test.tsx through zzz7 trail in one observed run. Untracked files are
+        in the scope by design, so all of them were committed and pushed.
+        """
+        before = fix_scope.changed_files(str(git_wt))
+        (git_wt / "real_fix.py").write_text("the actual work\n")
+        for name in ("debug.test.ts", "probe.test.ts", "zzz.test.tsx",
+                     "zzz4.test.tsx", "scratch.py", "delete-me.txt"):
+            (git_wt / name).write_text("throwaway\n")
+
+        assert fix_scope.agent_changed(str(git_wt), before) == {"real_fix.py"}
+
+    # passes-at-base: the guard against over-matching — before _drop_scratch nothing was dropped, so these survived by default; the case holds the pattern narrow from here and fails on a widened one
+    def test_a_real_file_whose_name_merely_contains_a_scratch_word_is_kept(
+        self, git_wt,
+    ):
+        """The cost of a false positive is a real fix left uncommitted.
+
+        Matched on the whole basename, so a deliberate contribution under a
+        debugger/ directory or named for what it tests is untouched.
+        """
+        before = fix_scope.changed_files(str(git_wt))
+        (git_wt / "tests").mkdir()
+        for name in ("tests/test_probe.py", "tests/debugger_test.py",
+                     "tests/test_debug_output.py", "tests/tmpdir_isolation.py"):
+            (git_wt / name).write_text("real work\n")
+
+        assert fix_scope.agent_changed(str(git_wt), before) == {
+            "tests/test_probe.py", "tests/debugger_test.py",
+            "tests/test_debug_output.py", "tests/tmpdir_isolation.py",
+        }

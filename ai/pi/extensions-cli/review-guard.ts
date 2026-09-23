@@ -30,9 +30,8 @@ import {
   isToolCallEventType,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { realpathSync } from "node:fs";
-import { basename, delimiter, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { blockedWriteCommand } from "./detect.ts";
+import { delimiter } from "node:path";
+import { blockedWriteCommand, isScratchPath, within } from "./detect.ts";
 
 // No `context` hook prunes the superpowers bootstrap here, though the shape of
 // this extension invites one. The package injects it through its own `context`
@@ -42,38 +41,9 @@ import { blockedWriteCommand } from "./detect.ts";
 // add is a hook that never fires and a marker string to keep in step with
 // someone else's package.
 
-// resolve() normalises `.` and `..` but does not follow symlinks, and on macOS
-// /tmp is a symlink to /private/tmp: a root and a path that name the same
-// directory in different spellings compare as unrelated, and the write is
-// refused. A path that does not exist yet — which every new file is — has no
-// realpath, so the nearest existing ancestor is canonicalised instead and the
-// remainder appended.
-function canonical(path: string): string {
-  let head = resolve(path);
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      return resolve(realpathSync(head), ...tail);
-    } catch {
-      const parent = dirname(head);
-      // dirname("/") is "/": the root itself does not resolve, so give up and
-      // fall back to the lexical form rather than looping forever.
-      if (parent === head) return resolve(path);
-      tail.unshift(basename(head));
-      head = parent;
-    }
-  }
-}
-
-/** True when `path` is inside `root` — the same directory, or below it. */
-function within(root: string, path: string): boolean {
-  const resolvedRoot = resolve(root);
-  const rel = relative(canonical(resolvedRoot), canonical(resolve(resolvedRoot, path)));
-  // A bare startsWith("..") also rejects a sibling-named child such as
-  // `...hidden`, which is inside the root.
-  if (rel === "") return true;
-  return rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
-}
+// `canonical`, `within` and `isScratchPath` live in detect.ts, which imports no
+// SDK and so loads under plain `node`: tests/pi_extensions.bats exercises the
+// write gating directly rather than by grepping this file's source.
 
 export default function (pi: ExtensionAPI) {
   const worktreeDir = process.env.REVIEW_WORKTREE_DIR;
@@ -103,10 +73,16 @@ export default function (pi: ExtensionAPI) {
 
     if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
       summary = event.input.path;
-      if (!allowedDirs.some((dir) => within(dir, event.input.path))) {
+      const permitted =
+        allowedDirs.some((dir) => within(dir, event.input.path)) ||
+        isScratchPath(event.input.path);
+      if (!permitted) {
         // Every allowed root, not just the worktree: a refusal that names one
         // of two permitted directories reads as a bug in the guard.
-        blocked = `${event.input.path} is outside the review's writable directories: ${allowedDirs.join(", ")}`;
+        blocked =
+          `${event.input.path} is outside the review's writable directories: ` +
+          `${allowedDirs.join(", ")}. A scratch file goes under /tmp, which is ` +
+          `writable and is not in the commit scope.`;
       }
     } else if (isToolCallEventType("bash", event)) {
       summary = event.input.command.slice(0, 120);
@@ -115,11 +91,17 @@ export default function (pi: ExtensionAPI) {
         // The offending statement, not a slice of the whole command: a 120-char
         // summary truncated the trailing redirect that was the real match, so
         // the refusal looked like it had blocked the `cd` in front of it.
+        // The scratch sentence names the route that actually exists. The
+        // refusal used to prescribe only a redirect, which does not help an
+        // agent trying to *delete* a file — and since `rm`, `mv` and `cp` are
+        // all refused here, an agent that had written into the worktree had no
+        // permitted way to clean up and left the file behind to be committed.
         blocked =
           `write-capable command in a review session — ${offending}. ` +
           `A review reads; it does not modify the tree. To run a suite, invoke it ` +
           `directly (\`pytest tests/foo.py\`) or redirect to /tmp ` +
-          `(\`pytest tests/ > /tmp/out.txt 2>&1\`).`;
+          `(\`pytest tests/ > /tmp/out.txt 2>&1\`). A scratch file belongs under ` +
+          `/tmp, where the write tool may create it and nothing needs deleting.`;
       }
     } else if (isToolCallEventType("read", event)) {
       summary = event.input.path;

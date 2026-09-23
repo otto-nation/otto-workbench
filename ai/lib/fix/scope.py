@@ -23,11 +23,50 @@ committing everything is how unreviewed content reaches a branch.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from core import log, proc
 from git import client as git_client
+
+# Scratch files an agent leaves behind, which are not the pass's work.
+#
+# A fix agent with no shell route to delete a file used to create a fresh
+# throwaway each time it needed one — `debug.test.ts`, `probe.test.ts`, and a
+# `zzz.test.tsx` through `zzz7` trail in one observed run. Untracked files are
+# in the commit scope by design (a fix that only adds a test still fixed the
+# finding), so every one of those was committed and pushed with the fix.
+#
+# review-guard now lets the agent write under /tmp, which is where a scratch
+# file belongs and is the actual fix. This is the second line: an agent can
+# still write one into the worktree, and no reviewer reads a diff expecting
+# `zzz4.test.tsx` in it.
+#
+# Deliberately narrow, and matched on the basename so a legitimate
+# `tests/debugger/test_probe.py` is untouched. The cost of a false positive is
+# a real fix left uncommitted in the worktree, so this only claims names no
+# deliberate contribution carries. Dropped paths are reported, never silent.
+_SCRATCH_BASENAME = re.compile(
+    r"""^(?:
+        (?:debug|probe|scratch|tmp|temp|delete[-_]?me|zzz\w*)
+        (?:[-_.]\w+)*
+        \.\w+
+    )$""",
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def _drop_scratch(paths: set[str], wt_path: str | Path) -> set[str]:
+    """`paths` without the throwaway files an agent left in the worktree."""
+    scratch = {p for p in paths if _SCRATCH_BASENAME.match(Path(p).name)}
+    if scratch:
+        log.warn(
+            f"not committing {len(scratch)} scratch file(s) an agent left in "
+            f"{wt_path}: {', '.join(sorted(scratch))}. A scratch file belongs "
+            f"under /tmp. Remove them, or rename one that is real work."
+        )
+    return paths - scratch
 
 
 @dataclass(frozen=True)
@@ -119,7 +158,7 @@ def agent_changed(wt_path: str | Path, before: set[str] | None) -> set[str] | No
     if before is None:
         return None
     after = changed_files(wt_path)
-    return None if after is None else after - before
+    return None if after is None else _drop_scratch(after - before, wt_path)
 
 
 def batch_scope(wt_path: str | Path, before: set[str] | None) -> BatchScope:

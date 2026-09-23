@@ -114,6 +114,11 @@ tools:
     visibility: brief
     description: "Validates that every ceiling marker names an upgrade trigger or is marked permanent"
 
+  - name: validate-file-size
+    permission: false
+    visibility: brief
+    description: "Fails when a source file passes 600 code lines — blanks, comments and docstrings are not counted, so documenting a file never pushes it over. The files already over are named with the issue that splits each"
+
   - name: check-new-tests
     permission: false
     visibility: brief

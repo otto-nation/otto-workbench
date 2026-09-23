@@ -155,17 +155,32 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
     return cmd
 
 
+# What a stateless prompt is not allowed to do. Read stays: it cannot block and
+# cannot write, and a prompt that reads a file it was asked about is still
+# answering with text.
+#
+# Verified against Claude Code 2.1.265, because the guess this replaces was
+# wrong. The comment here used to say that omitting `--permission-mode
+# acceptEdits` left a tool call refused by the default mode. It does not: asked
+# to run `echo`, `claude -p --bare` ran it, reported the output and recorded no
+# entry in `permission_denials`, and asked to name its tools it answered
+# "Bash\nEdit\nRead". So this path had the same hole as the Pi one — a stateless
+# prompt holding a shell — and was only ever protected by the models not
+# reaching for it.
+#
+# A denylist rather than `--allowedTools`: the flag is variadic, so the empty
+# value that would express "nothing" is not a spelling this repo has verified,
+# whereas naming the three tools that execute or write is exact.
+PROMPT_DENIED_TOOLS = ("Bash", "Edit", "Write")
+
+
 def _build_prompt_cmd(model: str | None = None) -> list[str]:
     # --output-format needs --print, which -p already supplies. Without it the reply
     # carries no usage and every prompt() call goes unmeasured.
-    #
-    # No tool allowlist, unlike the Pi backend's `--no-tools`: this command omits
-    # the `--permission-mode acceptEdits` that `_base_cmd` carries, so a tool call
-    # from a stateless prompt is refused by the default mode. That is a weaker
-    # guarantee than Pi's — it rests on a flag that is absent rather than on one
-    # that is present — and `--allowedTools` is variadic, so the empty value that
-    # would state it outright is not a spelling this repo has verified.
-    cmd = ["claude", "-p", "--bare", "--output-format", "json"]
+    cmd = [
+        "claude", "-p", "--bare", "--output-format", "json",
+        "--disallowedTools", *PROMPT_DENIED_TOOLS,
+    ]
     if model:
         cmd += ["--model", model]
     return cmd

@@ -35,21 +35,21 @@ Options:
 USAGE
 }
 
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
-
-if [[ "${1:-}" == "--show" ]]; then
-  PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
-    exec python3 "$REPO_ROOT/ai/lib/core/job_slots_cli.py" --show
-fi
-
 args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --show)
+      PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+        exec python3 "$REPO_ROOT/ai/lib/core/job_slots_cli.py" --show
+      ;;
     --want|--cores|--floor|--label)
-      # `--` is the command separator, never a value: without this check
-      # `--want -- sh -c true` consumes the separator, and the command that
-      # follows is then parsed as more options to this script.
-      [[ -n "${2:-}" && "${2:-}" != "--" ]] \
+      # Presence is `$# -ge 2`, not `-n "$2"`: an empty value is a value, and
+      # job_slots_cli falls back to the command string for an empty label. `--`
+      # is the command separator and never a value — without that check,
+      # `--want -- sh -c true` eats the separator and the command behind it is
+      # parsed as more options to this script.
+      [[ $# -ge 2 && "${2:-}" != "--" ]] \
         || { echo "claim-job-slots: $1 requires an argument" >&2; exit 2; }
       args+=("$1" "$2")
       shift 2

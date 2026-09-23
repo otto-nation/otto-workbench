@@ -65,16 +65,25 @@ def test_a_second_claim_gets_only_what_the_first_left():
     """
     with claim(want=4, floor=1, cores=6) as first:
         assert first == 4
-        os.environ.pop(LOCK_ENV, None)  # a fresh run, not our own pass-through
+        # Drop the marker the outer claim just set, so the inner one is a fresh
+        # run rather than a pass-through. Without this the test would exercise
+        # the nested case above instead of contention.
+        os.environ.pop(LOCK_ENV, None)
         with claim(want=4, floor=1, cores=6) as second:
             assert second == 1
 
 
 def test_slots_are_released_when_the_claim_exits():
-    with claim(want=3, floor=1, cores=18):
+    """Sized so a leak has nowhere to hide.
+
+    Against a 17-slot pool this assertion cannot fail: a first claim that
+    stranded slots 0-2 would simply have the second take 3-5, and 3 is what a
+    correct release and a total leak both look like. A pool of 3 leaves the
+    second claim nothing to find.
+    """
+    with claim(want=3, floor=1, cores=4):
         pass
-    os.environ.pop(LOCK_ENV, None)
-    with claim(want=3, floor=1, cores=18) as granted:
+    with claim(want=3, floor=1, cores=4) as granted:
         assert granted == 3
 
 
@@ -91,6 +100,21 @@ def test_a_claim_on_an_exhausted_pool_falls_back_to_the_floor():
             assert granted == 2
 
 
+def test_a_partly_satisfied_claim_below_the_floor_keeps_what_it_got():
+    """The common path on a contended machine, and the one the floor is for.
+
+    `max(len(held), floor)` and `len(held) or floor` agree whenever the pool is
+    empty or full, which is what the two tests either side of this one cover —
+    so the difference only shows when a claim gets *some* slots but fewer than
+    its floor. That is the middle run of the 12/5/2 split the module advertises,
+    and it read as 1 under the `or` spelling.
+    """
+    with claim(want=3, floor=1, cores=5):
+        os.environ.pop(LOCK_ENV, None)
+        with claim(want=4, floor=3, cores=5) as granted:
+            assert granted == 3
+
+
 def test_the_grant_never_exceeds_what_was_asked_for():
     with claim(want=2, floor=1, cores=18) as granted:
         assert granted == 2
@@ -101,10 +125,18 @@ def test_a_nested_claim_passes_through_with_the_parents_grant():
 
     A second claim from inside the first would compete with slots this process
     already holds, and would report a smaller number than the run is using.
+
+    Two things make this falsifiable, and it needs both. The pool is exactly
+    the size of the request, so a re-entering inner claim cannot find five more
+    and drops to the floor; and the holder count is asserted inside the block,
+    which separates "passed through" from "claimed a second five" directly.
+    Against a 17-slot pool the bare grant assertion held while the process
+    quietly sat on ten slots.
     """
-    with claim(want=5, floor=1, cores=18) as outer:
-        with claim(want=5, floor=1, cores=18) as inner:
+    with claim(want=5, floor=1, cores=6) as outer:
+        with claim(want=5, floor=1, cores=6) as inner:
             assert inner == outer == 5
+            assert len(holders()) == 5
 
 
 def test_a_junk_marker_is_not_honoured_as_a_grant(monkeypatch):
@@ -223,22 +255,21 @@ def test_the_cli_reports_a_command_it_cannot_run():
     assert "Traceback" not in result.stderr
 
 
-def test_a_failed_spawn_still_releases_its_slots(tmp_path):
-    """The slots a doomed run claimed must not outlive it.
+def test_a_failed_spawn_releases_its_slots_before_the_process_exits():
+    """In-process, because across processes the kernel answers regardless.
 
-    claim()'s finally is what frees them, and it runs whether the child started
-    or not — but a wrapper that leaked here would strand capacity on every
-    typo until the machine rebooted.
+    A first version of this ran two CLI subprocesses and asserted the second
+    got a full grant — which no change to `_release` can falsify, since the
+    first process had already exited and the kernel drops a dead holder's
+    flocks either way. Observed inside one process, the release is the code's
+    to get right: the pool is the size of the request, so a claim that failed
+    to free its slots leaves the next one nothing.
     """
-    env = dict(os.environ, WORKBENCH_STATE_DIR=str(tmp_path / "state"))
-    subprocess.run([str(CLI), "--want", "4", "--cores", "6", "--",
-                    "no-such-command-xyz"], capture_output=True, timeout=60, env=env)
-    after = subprocess.run(
-        [str(CLI), "--want", "4", "--cores", "6", "--", "sh", "-c",
-         "echo $WORKBENCH_TEST_SLOTS_GRANTED"],
-        capture_output=True, text=True, timeout=60, env=env,
-    )
-    assert after.stdout.strip() == "4"
+    with pytest.raises(OSError):
+        with claim(want=3, floor=1, cores=4):
+            raise OSError("a child that could not be spawned")
+    with claim(want=3, floor=1, cores=4) as granted:
+        assert granted == 3
 
 
 def test_the_cli_reports_a_signalled_child_as_128_plus_the_signal(tmp_path):

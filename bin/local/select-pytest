@@ -64,15 +64,22 @@ TESTS_DIR = REPO_ROOT / "tests"
 # Roots holding importable modules, in the order a test's sys.path sees them.
 MODULE_ROOTS = (REPO_ROOT / "ai" / "lib", REPO_ROOT / "lib")
 
-# Changes to these run everything. conftest.py is every test's fixture set, and
-# this script owns the selection itself — a bug in either is invisible to the
-# map it would be selecting through.
+# Changes to these run everything. A conftest is every test's fixture set — both
+# of them, since tests/test_nesting/ carries its own — and this script owns the
+# selection itself, so a bug in either is invisible to the map it would be
+# selecting through. tests/fixtures/ holds golden files that no test names by a
+# path this map can resolve: both golden tests spell the directory with a single
+# `.parent`, which is the tests dir rather than the repo root.
 FULL_SUITE_TRIGGERS = {
     "tests/conftest.py",
+    "tests/test_nesting/conftest.py",
     "pyproject.toml",
     "bin/local/run-tests",
     "bin/local/select-pytest",
 }
+
+# Prefixes under which any change runs everything, for the same reason.
+FULL_SUITE_TRIGGER_DIRS = ("tests/fixtures/",)
 
 # Path refs that name a search root rather than a subject. A test assigning
 # LIB_DIR = REPO_ROOT / "ai" / "lib" is saying where imports come from, not
@@ -85,12 +92,12 @@ BOOTSTRAP_REFS = {"ai/lib", "lib", "ai", "bin", "tests", ".git", "ai/bin"}
 # nothing and on an entry here that has since become mappable.
 NO_DEPS_TESTS = {
     # Asserts the sandbox in conftest, whose own changes trigger the full suite.
-    "git_sandbox_test.py",
+    "tests/git_sandbox_test.py",
     # Asserts conftest's script loader, same.
-    "script_loading_test.py",
+    "tests/script_loading_test.py",
     # Reads the config modules' source through a path assembled at call time
     # from a dotted name, which no static map can follow.
-    "test_workbench_config_layers.py",
+    "tests/test_workbench_config_layers.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')
@@ -167,7 +174,14 @@ def _from_import_names(node: ast.ImportFrom, package: str) -> list[str]:
         base = package
         for _ in range(node.level - 1):
             base = base.rsplit(".", 1)[0] if "." in base else ""
-        return [f"{base}.{node.module}" if node.module else base]
+        # `from . import land` names a module in `node.names`, not in
+        # `node.module` — returning only the package drops the edge entirely,
+        # and a package whose __init__ imports nothing (most of them here)
+        # takes the whole subtree's dependencies with it.
+        full = f"{base}.{node.module}" if node.module and base else (node.module or base)
+        if not full:
+            return []
+        return [full, *(f"{full}.{alias.name}" for alias in node.names)]
     if not node.module:
         return []
     return [node.module, *(f"{node.module}.{alias.name}" for alias in node.names)]
@@ -223,7 +237,7 @@ def _is_repo_root_expr(node: ast.AST) -> bool:
     parents = 0
     current = node
     while True:
-        if isinstance(current, ast.Call) and _takes_dunder_file(current):
+        if isinstance(current, ast.Call) and _is_path_of_dunder_file(current):
             # The Path(__file__) at the bottom of the chain.
             return parents == 2
         if isinstance(current, ast.Call):
@@ -239,7 +253,18 @@ def _is_repo_root_expr(node: ast.AST) -> bool:
         current = current.value
 
 
-def _takes_dunder_file(call: ast.Call) -> bool:
+def _is_path_of_dunder_file(call: ast.Call) -> bool:
+    """Whether *call* is `Path(__file__)`, however `Path` was imported.
+
+    The callee is checked as well as the argument. Without it any helper taking
+    `__file__` and two `.parent`s reads as the repo root, and every path built
+    on it becomes a ref pointing somewhere the file is not — the same
+    over-anchoring the two-`.parent` rule above exists to prevent.
+    """
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+    if name != "Path":
+        return False
     return any(isinstance(arg, ast.Name) and arg.id == "__file__"
                for arg in call.args)
 
@@ -302,38 +327,78 @@ def _path_refs(tree: ast.AST) -> set[str]:
     while _grow_aliases(tree, aliases):
         pass
 
-    divisions = (n for n in ast.walk(tree)
-                 if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div))
+    # ast.walk yields the inner nodes of a `/` chain as well as the whole
+    # thing, so `REPO_ROOT / "bin" / "local" / "validate-ceiling"` also offers
+    # `bin/local`. Keeping that prefix would make every change under bin/local/
+    # select every test naming any script there. Only the outermost node of
+    # each chain is the subject, so inner ones are skipped here rather than
+    # filtered from the union afterwards: a filter across the whole file drops
+    # a directory the test genuinely sweeps as soon as it also names one file
+    # beneath it — which is how a test that globs every review template
+    # stopped being selected by a new template being added.
+    inner = {id(n.left) for n in ast.walk(tree)
+             if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div)}
     refs = set()
-    for node in divisions:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+            continue
+        if id(node) in inner:
+            continue
         ref = _joined_path(node, aliases)
         if ref and ref not in BOOTSTRAP_REFS:
             refs.add(ref)
+    return refs
 
-    # ast.walk yields the inner nodes of a chain as well as the whole thing, so
-    # `REPO_ROOT / "bin" / "local" / "validate-ceiling"` also offers
-    # `bin/local`. Keeping that prefix would make every change under bin/local/
-    # select every test that names any script there — 19 of them, for a
-    # one-script change. Only the longest ref on each chain is the subject.
-    return {ref for ref in refs
-            if not any(other.startswith(f"{ref}/") for other in refs)}
+
+def _test_files() -> list[str]:
+    """Every collectable test file, as a path relative to the repo root.
+
+    Recursive, because `tests/` holds a package: `tests/test_nesting/` is five
+    modules and 83 tests. A flat glob silently omitted them from the map *and*
+    from `--all`, and since `run-tests --pytest-files` runs exactly the list it
+    is given, they stopped being collected on every path — including the
+    full-suite fallback, which prints this same list. `--validate` could not see
+    it either: a file that never enters the map is never checked for mapping.
+    """
+    found = []
+    for path in sorted(TESTS_DIR.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        if path.name in ("conftest.py", "__init__.py"):
+            continue
+        found.append(str(path.relative_to(REPO_ROOT)))
+    return found
 
 
 def dependency_map() -> dict[str, set[str]]:
-    """Test file name → every repo path a change to which should select it."""
+    """Test path → every repo path a change to which should select it.
+
+    Keyed on the repo-relative path rather than the bare filename, so a test in
+    a subpackage is addressable and two files of the same name in different
+    directories cannot collide.
+    """
     index = _module_index()
     graph = _forward_graph(index)
-    tests = (p for p in sorted(TESTS_DIR.glob("*.py")) if p.name != "conftest.py")
     mapping = {}
-    for test in tests:
-        text = test.read_text()
-        direct = _imports_of(f"tests/{test.name}", "", index)
+    for relpath in _test_files():
+        text = (REPO_ROOT / relpath).read_text()
+        direct = _imports_of(relpath, _test_package(relpath), index)
         direct |= _load_lib_deps(text)
         deps: set[str] = set()
         for dep in direct:
             deps |= _closure(dep, graph)
-        mapping[test.name] = deps | _refs_of(text)
+        mapping[relpath] = deps | _refs_of(text)
     return mapping
+
+
+def _test_package(relpath: str) -> str:
+    """The package a test file sits in, for resolving its relative imports.
+
+    `tests/test_nesting/test_python.py` is in `test_nesting`; a file directly
+    under `tests/` is in no package, which is what the empty string means.
+    """
+    parts = Path(relpath).parts
+    return ".".join(parts[1:-1]) if len(parts) > 2 else ""
 
 
 def _load_lib_deps(text: str) -> set[str]:
@@ -360,16 +425,22 @@ def _refs_of(text: str) -> set[str]:
 
 
 def _selects(test: str, deps: set[str], changed: list[str]) -> bool:
-    """Whether any changed path is this test's own file or one of its deps."""
+    """Whether any changed path is this test's own file or one of its deps.
+
+    *test* is repo-relative (`tests/x.py`, `tests/pkg/y.py`).
+    """
     for path in changed:
-        if path == f"tests/{test}":
+        if path == test:
             return True
         if path in deps:
             return True
-        # A dep naming a directory covers everything under it. The separator
-        # is required: without it a dep on `bin/local/pr` would match
-        # `bin/local/pr-rebase`.
-        if any(path.startswith(f"{dep}/") for dep in deps if not dep.endswith(".py")):
+        # A dep naming a directory covers everything under it. The separator is
+        # required: without it a dep on `bin/local/pr` would match
+        # `bin/local/pr-rebase`. Directory-ness is asked of the filesystem
+        # rather than inferred from a missing `.py` suffix, which reads every
+        # extensionless script dep as a directory prefix.
+        if any(path.startswith(f"{dep}/") for dep in deps
+               if (REPO_ROOT / dep).is_dir()):
             return True
     return False
 
@@ -388,8 +459,14 @@ def _changed_files(base: str) -> list[str]:
 
 
 def _all_tests() -> list[str]:
-    return [f"tests/{path.name}" for path in sorted(TESTS_DIR.glob("*.py"))
-            if path.name != "conftest.py"]
+    return _test_files()
+
+
+def _triggers_full_suite(changed: list[str]) -> bool:
+    """Whether any changed path makes a narrowed selection unsafe."""
+    return any(path in FULL_SUITE_TRIGGERS
+               or path.startswith(FULL_SUITE_TRIGGER_DIRS)
+               for path in changed)
 
 
 def _validate(mapping: dict[str, set[str]]) -> int:
@@ -433,14 +510,13 @@ def main(argv: list[str]) -> int:
         return _validate(mapping)
 
     changed = _changed_files(args.base)
-    if not changed or any(path in FULL_SUITE_TRIGGERS for path in changed):
+    if not changed or _triggers_full_suite(changed):
         selected = _all_tests()
     else:
-        always = sorted(f"tests/{name}" for name in NO_DEPS_TESTS
-                        if (TESTS_DIR / name).exists())
-        matched = sorted(f"tests/{test}" for test, deps in mapping.items()
-                         if _selects(test, deps, changed))
-        selected = sorted(set(always) | set(matched))
+        always = {name for name in NO_DEPS_TESTS if (REPO_ROOT / name).is_file()}
+        matched = {test for test, deps in mapping.items()
+                   if _selects(test, deps, changed)}
+        selected = sorted(always | matched)
 
     print("\n".join(selected))
     print(f"# selected {len(selected)}/{len(_all_tests())} test files", file=sys.stderr)

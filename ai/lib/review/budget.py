@@ -136,10 +136,13 @@ MIN_DIFF_BYTES = 20_000
 # back in its own turns and the same bytes reach the same context window.
 #
 # ceiling: density is (additions + deletions) / post-image lines, so a pure
-# deletion reads denser than it is and a rename reads as wholly changed. Both
-# err toward keeping the file, which is the safe direction now that this only
-# orders a shortfall. Upgrade to per-hunk coverage if hunk ranges are ever
-# computed at collection time.
+# deletion reads denser than it is, which errs toward keeping the file — the
+# safe direction now that this only orders a shortfall. A pure rename (no
+# content edits) reports additions=0, deletions=0 rather than an absent count,
+# so it computes as maximally sparse rather than wholly changed; that is the
+# correct call here, not a case this errs on, since a rename with nothing
+# changed inside it costs a review nothing to shed first. Upgrade to per-hunk
+# coverage if hunk ranges are ever computed at collection time.
 FILE_CONTENT_DENSITY_THRESHOLD = 0.15
 
 # Below this a file is never sparse whatever its density: the bytes a shortfall

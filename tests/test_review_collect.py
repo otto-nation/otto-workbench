@@ -284,6 +284,23 @@ class TestFormatPreflightData:
         )
         assert "- big.go (29KB)" in rc.format_preflight_data(data).text
 
+    # A recorded size under 1024 bytes still rounds to a truncating `// 1024`
+    # as `0KB`, which reads as negligible rather than as the real small size.
+    # Fails against `size // 1024` and passes against `max(size // 1024, 1)`.
+    def test_an_omitted_file_under_1kb_is_not_rendered_as_0kb(self):
+        data = PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="log",
+            file_contents={"a.go": "code"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+            omitted_files=["tiny.go"],
+            file_sizes={"tiny.go": 500},
+        )
+        result = rc.format_preflight_data(data).text
+        assert "- tiny.go (1KB)" in result
+
     # The bare-path rendering this replaces also named the file. The case pins
     # that adding sizes did not make the name conditional on having one, and it
     # fails if the absent size is rendered as "(0KB)".

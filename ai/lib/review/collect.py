@@ -878,7 +878,7 @@ def _format_file_contents(
         ]
         for path in omitted:
             size = data.file_sizes.get(path)
-            suffix = f" ({size // 1024}KB)" if size else ""
+            suffix = f" ({max(size // 1024, 1)}KB)" if size else ""
             parts.append(f"- {path}{suffix}")
     return parts
 

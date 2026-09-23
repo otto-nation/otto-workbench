@@ -174,6 +174,20 @@ def test_holders_ignores_a_malformed_record():
     assert all(r["command"] == "real" for r in holders())
 
 
+def test_holders_ignores_a_slot_file_from_an_older_naming():
+    """Nothing ever deletes a slot file, so a rename leaves its predecessors.
+
+    The pool was two digits before it was three. Those files still sit in every
+    state dir the old code ever wrote to, holding records of processes that
+    cannot come back — and a loose `slot-*` glob reported all of them, so
+    `--show` listed 29 holders for a 17-slot pool.
+    """
+    with claim(want=1, floor=1, cores=18, command="current"):
+        pass
+    (job_slots.slots_dir() / "slot-04.lock").write_text('{"slot": 4, "pid": 1}')
+    assert [r["command"] for r in holders()] == ["current"]
+
+
 def test_holders_is_empty_before_any_claim():
     assert holders() == []
 

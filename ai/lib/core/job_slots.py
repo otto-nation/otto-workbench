@@ -131,8 +131,11 @@ def holders() -> list[dict]:
     if not directory.is_dir():
         return found
     # Sorted, because the "first" entry of an unsorted directory listing is a
-    # different entry on another machine.
-    for path in sorted(directory.glob("slot-*.lock")):
+    # different entry on another machine. The glob is pinned to the current
+    # filename width so a pool that has changed shape does not report the old
+    # names alongside the new: nothing ever deletes a slot file, so a rename
+    # leaves its predecessors behind as records of holders that cannot return.
+    for path in sorted(directory.glob("slot-[0-9][0-9][0-9].lock")):
         try:
             record = json.loads(path.read_text())
         except (OSError, ValueError):

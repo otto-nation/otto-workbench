@@ -45,24 +45,23 @@ Skip if the user explicitly requests it ("skip the review", "just create the PR"
 
 A fix pass's commit message and terminal summary are rendered from the agent's own boxes
 on the tracking file. The commit is not: staging takes every path the pass touched, with
-the outcomes unread. The two are reconciled in exactly one case — a deferral whose *own
-anchor file* moved, which goes to the verify gate. Everything else the agent claims
-about its own work stands as written.
+the outcomes unread. Attribution between the two is by path, and an agent that answers a
+finding by editing its caller or its test moves a file no check can tie back to it.
 
-So `Skipped: [M1] no auto-fix` sits happily on top of a commit containing the edit for
-M1, by three routes:
+So `Skipped: [M1] no auto-fix` could sit on top of a commit containing the edit for M1,
+by three routes. Two now report themselves; the third cannot:
 
-| What the agent did | Why the check misses it |
+| What the agent did | What happens now |
 |---|---|
-| Edited a caller or a test, deferred the finding | The check asks only whether the item's *own* anchor file moved |
-| Ticked `needs a person` and changed the code anyway | That outcome is not one of the two the check watches |
-| Deferred where the anchor file did move | Routed to the gate, which came back without a verdict |
+| Ticked `needs a person` and changed the code anyway | Contradicted and sent to the gate, as a deferral already was |
+| Deferred where the anchor file did move, gate reached no verdict | Says so in the row, instead of falling back to `no auto-fix` |
+| Edited a caller or a test, deferred the finding | **Unreported by outcome.** A pass claiming no fixes at all lists the files it is committing; a pass with one real fix among them does not |
 
-Only the third is seen mechanically at all, and seeing it is not the same as settling it.
-In all three the edit is committed and the message says no work was done. The first two
-are what this manual step exists for.
+The third is the path-attribution ceiling and is not closeable by a check: a file moving
+is evidence that something happened, never that *this item* is what happened. That is
+what this manual step is for.
 
-That is the worst way for a change to reach main — not unreviewed, but *reported as
+A change reaching main this way is the worst case — not unreviewed, but *reported as
 absent*, so nobody looks. A regression shipped this way is invisible to the one artifact
 everyone reads afterwards.
 
@@ -73,6 +72,10 @@ Therefore, at step 2 above, audit the diff:
 3. Any finding reported skipped or declined whose code moved is unreviewed work — review
    it now, or revert that hunk. Do not take the annotation as a statement that nothing
    happened
+
+A row reading "the gate reached no verdict" or a footer naming files no fix claims is the
+pass telling you where to start. Neither is a finding against the agent: both mean the
+evidence is in the diff and nowhere else.
 
 This is the same failure as a masked exit status (`testing.md` § Reading a Suite Result):
 an artifact that reports on work is not the work, and the report is the thing that can

@@ -61,16 +61,31 @@ class Contradiction(StrEnum):
     DEFERRED_WITH_EDIT = "deferred_with_edit"
 
 
-# The outcomes that assert no work was done. Both close an item having changed
-# nothing, so an edit to the item's own file contradicts either one. SKIPPED is
+# The outcomes that assert no work was done. Each closes an item having changed
+# nothing, so an edit to the item's own file contradicts any of them. SKIPPED is
 # included even though it means "never attempted": a batch that edited the file
 # of an item it claims it never looked at is making the same untrue statement,
 # and the stronger claim deserves the check at least as much.
 #
+# NEEDS_HUMAN is here for the same reason and was missing for a bad one. It
+# reads as a hand-off rather than a claim, but the sentence it puts in the
+# commit message is the one this module exists to check — the surfaces print it
+# under the same "Skipped" heading as a deferral, so an agent that edited the
+# code and then asked for a person publishes "no work was done" over a commit
+# containing the edit. The set that decides a contradiction has to match the set
+# that claims nothing happened, and the review pass's `_STILL_OPEN` has always
+# been DEFERRED and NEEDS_HUMAN together.
+#
+# The gate demotes a falsified fix *to* NEEDS_HUMAN, which is not this case and
+# is not re-examined: `_verify` resolves contradictions before any demotion, so
+# an outcome only reaches that branch after this set has been consulted.
+#
 # Public because the verify gate words a contradicted item by it — the question
 # put to the gate is the inverse of the one a claimed fix gets, and the set that
 # decides a contradiction is the same set that decides the wording.
-CLAIMS_NO_WORK = frozenset({FixOutcome.DEFERRED, FixOutcome.SKIPPED})
+CLAIMS_NO_WORK = frozenset({
+    FixOutcome.DEFERRED, FixOutcome.SKIPPED, FixOutcome.NEEDS_HUMAN,
+})
 
 
 def contradiction(

@@ -150,12 +150,21 @@ git show --stat HEAD
 
 Staging takes every path the pass touched and never reads the outcomes, so a
 finding the summary reports as `no auto-fix` can have its edit in that commit.
-The agent edited a caller rather than the anchor file, or ticked `needs a
-person` and changed the code anyway, or deferred where the gate could not
-settle it — only the deferral-on-its-own-anchor case is reconciled. Any file in
-`--stat` that no reported fix accounts for is work nobody reviewed, and it
-reads as absent in the one artifact anyone checks later. Present it as such and
-read the hunk.
+Any file in `--stat` that no reported fix accounts for is work nobody reviewed,
+and it reads as absent in the one artifact anyone checks later. Present it as
+such and read the hunk.
+
+Two of these now announce themselves, and both are pointers to the diff rather
+than findings against the agent:
+
+- a row reading `the gate reached no verdict` — the item's own file moved and
+  the gate could not settle whether that edit answers it
+- a footer reading `This pass reports no fixes but is committing changes to:` —
+  the pass claims nothing and is staging files anyway
+
+The case neither catches is an agent that fixed one finding by editing another
+file, in a pass that also reports a real fix. That is the path-attribution
+ceiling, and reading `--stat` is the only thing that finds it.
 
 A finding annotated with what a check *found* — "the named test does not
 exist", "the repro still exits 3" — is one the verify gate falsified rather

@@ -67,7 +67,19 @@ from core.trail import Trail
 _STILL_OPEN = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
 
 
-def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
+# The footer a pass gets when it claims no fixes and commits changes anyway.
+# Only that combination: a pass with a fix in it has already explained why the
+# tree moved, and listing the files under every ordinary summary would train the
+# reader to skip the block that matters.
+_UNCLAIMED_EDITS = (
+    "\nThis pass reports no fixes but is committing changes to:\n{files}\n"
+    "Nothing above claims this work. Read the diff before trusting the lines "
+    "that say it was skipped."
+)
+
+
+def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding],
+             changed: set[str] | None = None) -> str:
     """What the pass did, for the commit message and the operator's terminal.
 
     Three blocks, because the three answers are worth telling apart: a fix is
@@ -75,6 +87,13 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
     work nobody is going to do. `findings` is what the ids were rendered from —
     the tracking file records no description of its own, so the one line a fix
     is reported under comes from the finding it answered.
+
+    `changed` is what the pass is about to commit, and it is here because this
+    text is the only account of the pass most people read. The blocks describe
+    outcomes; the commit carries files; attribution between them is by path and
+    misses an agent that fixed a finding by editing its caller or its test. The
+    footer states the files rather than claiming anything about them, which is
+    the most this can honestly do and strictly more than the silence it replaces.
     """
     lines: list[str] = []
     _block(lines, "Fixed:", [
@@ -89,6 +108,9 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
         (o.id, o.reason or "adjudicated, not a defect")
         for o in outcomes if o.outcome is FixOutcome.DECLINED
     ])
+    if lines and changed and not any(o.outcome.counts_as_fixed for o in outcomes):
+        lines.append(_UNCLAIMED_EDITS.format(files="\n".join(
+            f"  {path}" for path in sorted(changed))))
     return "\n".join(lines)
 
 
@@ -451,7 +473,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         commits nothing — `record` is what then says where the work was left.
         """
         self.changed = changed
-        self.summary = _summary(outcomes, self.findings)
+        self.summary = _summary(outcomes, self.findings, changed)
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"

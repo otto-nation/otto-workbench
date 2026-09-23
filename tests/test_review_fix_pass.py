@@ -497,6 +497,53 @@ class TestTheSummary:
     def test_a_pass_that_settled_nothing_summarises_nothing(self):
         assert review_fix._summary([], {}) == ""
 
+    def test_a_pass_claiming_no_fixes_names_the_files_it_is_committing(self):
+        """The blocks describe outcomes; the commit carries files.
+
+        Attribution between the two is by path, so an agent that fixed a
+        finding by editing its caller or its test is invisible to every
+        mechanical check — and the summary then reads as though the pass did
+        nothing, over a commit that changed the code.
+        """
+        summary = review_fix._summary(
+            [_outcome("N1", FixOutcome.DEFERRED)], {}, {"caller.py", "a_test.py"},
+        )
+
+        assert "no auto-fix" in summary
+        assert "This pass reports no fixes but is committing changes to:" in summary
+        # Sorted, so the same pass renders the same message twice running.
+        assert summary.index("  a_test.py") < summary.index("  caller.py")
+        assert "Read the diff" in summary
+
+    def test_a_pass_with_a_fix_in_it_does_not_get_the_footer(self):
+        """A fix already explains why the tree moved.
+
+        Printing the files under every summary would train the reader to skip
+        the block, which costs exactly the case the block exists for.
+        """
+        summary = review_fix._summary(
+            [_outcome("M1", FixOutcome.FIXED), _outcome("N1", FixOutcome.DEFERRED)],
+            {}, {"a.py"},
+        )
+
+        assert "is committing changes to" not in summary
+
+    def test_a_pass_that_committed_nothing_does_not_get_the_footer(self):
+        """Nothing was staged, so there is no discrepancy to report."""
+        summary = review_fix._summary(
+            [_outcome("N1", FixOutcome.DEFERRED)], {}, set(),
+        )
+
+        assert "is committing changes to" not in summary
+
+    def test_an_unreadable_worktree_does_not_get_the_footer(self):
+        """None is "could not look", which is not evidence of unclaimed work."""
+        summary = review_fix._summary(
+            [_outcome("N1", FixOutcome.DEFERRED)], {}, None,
+        )
+
+        assert "is committing changes to" not in summary
+
     def test_a_fix_the_gate_could_not_stand_behind_says_so(self):
         """Only a falsified fix is demoted, so an unverifiable one stays under Fixed."""
         summary = review_fix._summary(

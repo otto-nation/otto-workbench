@@ -24,20 +24,30 @@ from pathlib import Path
 from core import markdown
 from git import client as git_client
 from pr.fix import ItemOutcome
+from pr.target import forge_base_url
 from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread
 
+# Every builder below takes `host` last and defaults it to the empty string,
+# which `forge_base_url` reads as public GitHub. That default is the answer
+# these functions gave before the host existed, so a caller that has not been
+# taught to pass one keeps working and renders exactly what it rendered before
+# — the alternative, a required parameter, would be a link nobody can build
+# rather than a link on the wrong forge.
 
-def blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
+
+def blob_permalink(
+    repo: str, sha: str, filepath: str, line: int = 0, host: str = "",
+) -> str:
     """A blob URL pinned to a SHA, so the link still points at the cited code.
 
     Branch-relative blob URLs drift as the branch moves; a claim posted to a
     reviewer has to survive the next push. Omit line for a whole-file link.
     """
-    url = f"https://github.com/{repo}/blob/{sha}/{filepath}"
+    url = f"{forge_base_url(host)}/{repo}/blob/{sha}/{filepath}"
     return f"{url}#L{line}" if line else url
 
 
-def commit_permalink(repo: str, sha: str) -> str:
+def commit_permalink(repo: str, sha: str, host: str = "") -> str:
     """The URL of one commit.
 
     Trivial, and worth owning anyway: three surfaces claim a fix landed — the
@@ -45,7 +55,7 @@ def commit_permalink(repo: str, sha: str) -> str:
     had built this string itself. A commit link that 404s is the one thing a
     reviewer reads as the tool lying to them, so the shape has one spelling.
     """
-    return f"https://github.com/{repo}/commit/{sha}"
+    return f"{forge_base_url(host)}/{repo}/commit/{sha}"
 
 
 def anchored_line(
@@ -176,7 +186,7 @@ class CommentSource:
     def ok(self) -> bool:
         return bool(self.id)
 
-    def permalink(self, repo: str, pr_number: int) -> str | None:
+    def permalink(self, repo: str, pr_number: int, host: str = "") -> str | None:
         """The anchor a reader follows back to the comment, or None.
 
         None for a source with no id, and for one whose kind is UNSET — a
@@ -186,7 +196,7 @@ class CommentSource:
         """
         if not self.ok or self.type is CommentSourceKind.UNSET:
             return None
-        base = f"https://github.com/{repo}/pull/{pr_number}"
+        base = f"{forge_base_url(host)}/{repo}/pull/{pr_number}"
         return f"{base}#{self.type.anchor}-{self.id}"
 
 
@@ -213,30 +223,33 @@ def comment_item_source(entry: CommentItem | ItemOutcome) -> CommentSource:
 
 def comment_item_permalink(
     entry: CommentItem,
-    repo: str, pr_number: int,
+    repo: str, pr_number: int, host: str = "",
 ) -> str | None:
     """Build a permalink for a decomposed comment item from its source comment."""
-    return comment_item_source(entry).permalink(repo, pr_number)
+    return comment_item_source(entry).permalink(repo, pr_number, host)
 
 
 def thread_permalink(
     entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
-    repo: str, pr_number: int,
+    repo: str, pr_number: int, host: str = "",
 ) -> str | None:
-    """Build a GitHub permalink for a review thread or comment item."""
+    """Build a permalink for a review thread or comment item, on *host*'s forge."""
     thread = threads_by_id.get(entry.id)
     if thread and thread.comments:
         db_id = thread.comments[0].get("databaseId")
         if db_id:
-            return f"https://github.com/{repo}/pull/{pr_number}#{THREAD_ANCHOR}{db_id}"
-    return comment_item_permalink(entry, repo, pr_number)
+            return (
+                f"{forge_base_url(host)}/{repo}/pull/{pr_number}"
+                f"#{THREAD_ANCHOR}{db_id}"
+            )
+    return comment_item_permalink(entry, repo, pr_number, host)
 
 
 def thread_cell(
     entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
-    repo: str, pr_number: int,
+    repo: str, pr_number: int, host: str = "",
 ) -> str:
     """The entry's summary as a table cell, linked back to the thread it names.
 
@@ -260,5 +273,5 @@ def thread_cell(
     nothing to say.
     """
     summary = markdown.escape_cell(entry.summary or "—")
-    url = thread_permalink(entry, threads_by_id, repo, pr_number)
+    url = thread_permalink(entry, threads_by_id, repo, pr_number, host)
     return f"[{summary}]({url})" if url else summary

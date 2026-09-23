@@ -217,8 +217,9 @@ def build_deferred_issue_body(
     the backlog as a broken table.
 
     *host* is the forge to link the PR on; empty renders public GitHub, which is
-    what this body carried before the parameter existed. The thread cells below
-    are not yet host-aware — see the permalinks phase of the design note.
+    what this body carried before the parameter existed. It reaches the thread
+    cells too, so a row's link and the heading above it name the same forge —
+    an issue mixing the two would send a reader to a host the repo is not on.
     """
     pr_url = f"{pr_target.forge_base_url(host)}/{repo}/pull/{pr_number}"
     parts = [
@@ -230,7 +231,7 @@ def build_deferred_issue_body(
     for entry in deferred:
         file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
         parts.append(markdown.render_row([
-            permalinks.thread_cell(entry, threads_by_id, repo, pr_number),
+            permalinks.thread_cell(entry, threads_by_id, repo, pr_number, host),
             file_cell,
             markdown.escape_cell(entry.reason or "—"),
         ]))
@@ -383,6 +384,15 @@ def create_or_update_deferred_issue(
             IssueDelivery.UNDELIVERED if publishing_open else IssueDelivery.SKIPPED,
         )
     provider = provider_info.name
+
+    # Before the issue is built rather than after it is filed: the body below
+    # links the PR on the origin's forge while the filing goes to the tracker's,
+    # so a disagreement between them is visible in what this call produces.
+    mismatch = review_issue.warn_on_host_mismatch(
+        provider, provider_info.options, ctx.host,
+    )
+    if mismatch and trail:
+        trail.warn("deferred_issue", mismatch)
 
     body = build_deferred_issue_body(
         deferred, repo, pr_number, threads_by_id, ctx.host,

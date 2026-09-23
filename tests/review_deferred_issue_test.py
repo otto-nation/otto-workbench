@@ -362,6 +362,22 @@ class TestTheTrackingIssueBody:
             [_entry()], "owner/repo", 42, {})
         assert "https://github.com/owner/repo/pull/42" in body
 
+    def test_a_thread_cell_links_the_same_forge_as_the_heading(self):
+        """The heading and the rows under it must not name different forges.
+
+        The heading took the host first, and a body whose rows still pointed at
+        github.com read as correct from the title alone — every row beneath it
+        sent the reader to a host the repo is not served from. The other
+        enterprise test above passes an empty `threads_by_id`, so its rows carry
+        no link at all and it cannot see this.
+        """
+        threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 12345}])}
+        body = deferred_issue.build_deferred_issue_body(
+            [_entry()], "owner/repo", 42, threads, "ghe.acme.com")
+        row = next(line for line in body.splitlines() if "#discussion_r12345" in line)
+        assert "https://ghe.acme.com/owner/repo/pull/42#discussion_r12345" in row
+        assert "github.com" not in body
+
     def test_the_divider_matches_the_header(self):
         """One column count, from `markdown.table_divider`. The two were spelled
         apart and the divider's dash counts did not match its own header."""

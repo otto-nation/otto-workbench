@@ -589,6 +589,11 @@ class PreflightData:
     review_checklists: dict[str, str] = field(default_factory=dict)
     review_profiles: list = field(default_factory=list)
     omitted_files: list[str] = field(default_factory=list)
+    # Every collected file's byte size, kept or dropped. The contents of a
+    # dropped file are gone by the time the block is rendered, so this is the
+    # only place its size still exists — and a path with no size beside it is a
+    # read the agent cannot price before making it.
+    file_sizes: dict[str, int] = field(default_factory=dict)
     delta_diff: str = ""
     delta_commit_log: str = ""
     delta_files: list[str] = field(default_factory=list)

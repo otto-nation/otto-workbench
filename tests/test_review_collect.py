@@ -271,6 +271,67 @@ class TestFormatPreflightData:
         assert "- huge.go" in result
         assert "a.go" in result
 
+    def test_an_omitted_file_is_named_with_its_size(self):
+        data = PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="log",
+            file_contents={"a.go": "code"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+            omitted_files=["big.go"],
+            file_sizes={"big.go": 30_699},
+        )
+        assert "- big.go (29KB)" in rc.format_preflight_data(data).text
+
+    # A recorded size under 1024 bytes still rounds to a truncating `// 1024`
+    # as `0KB`, which reads as negligible rather than as the real small size.
+    # Fails against `size // 1024` and passes against `max(size // 1024, 1)`.
+    def test_an_omitted_file_under_1kb_is_not_rendered_as_0kb(self):
+        data = PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="log",
+            file_contents={"a.go": "code"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+            omitted_files=["tiny.go"],
+            file_sizes={"tiny.go": 500},
+        )
+        result = rc.format_preflight_data(data).text
+        assert "- tiny.go (1KB)" in result
+
+    # The bare-path rendering this replaces also named the file. The case pins
+    # that adding sizes did not make the name conditional on having one, and it
+    # fails if the absent size is rendered as "(0KB)".
+    # passes-at-base: naming the file is behaviour the size suffix preserves
+    def test_an_omitted_file_with_no_recorded_size_is_still_named(self):
+        data = PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="log",
+            file_contents={"a.go": "code"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+            omitted_files=["big.go"],
+        )
+        result = rc.format_preflight_data(data).text
+        assert "- big.go" in result
+        assert "0KB" not in result
+
+    def test_the_omitted_section_says_the_diff_is_not_a_substitute(self):
+        data = PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="log",
+            file_contents={},
+            file_permissions={},
+            claude_md="",
+            architecture_md="",
+            omitted_files=["big.go"],
+        )
+        result = rc.format_preflight_data(data).text
+        assert "not the code around them" in result
+
     def test_no_omitted_section_when_all_files_included(self):
         data = PreflightData(
             diff="--- a/a.go\n+++ b/a.go",
@@ -370,17 +431,25 @@ class TestTheBlockReportsWhatItsDiffCost:
         assert 0 < block.rendered_diff_bytes < len(data.diff.encode())
 
 
-# ── Density-based file content skipping ─────────────────────────────────────
+# ── Sparse-file shedding under budget pressure ───────────────────────────────
 
 
-class TestDensitySkipping:
-    def test_large_file_small_diff_inlined_when_it_fits(self, tmp_path):
-        """Density alone must not withhold a file the budget could afford.
+def _ceiling_for(repo, monkeypatch, room: int) -> None:
+    """Pin the collection budget so exactly ``room`` bytes are left for contents.
 
-        Omitting it does not save the bytes: it is a file the diff touches, so
-        the prompt goes on to tell the agent to read it, and the same content
-        arrives through a tool call inside the turn budget instead.
-        """
+    The patch targets `rc` (`review_collect`), not `review_budget`, for the
+    reason spelled out in `test_tier1_files_prioritized_over_tier2_when_budget_tight`:
+    `collect_preflight_data` reads the name bound into its own module namespace.
+    """
+    diff_size = len(git_client.out(
+        "diff", "origin/main...HEAD", cwd=str(repo),
+    ).encode())
+    ceiling = diff_size + review_budget.TEMPLATE_OVERHEAD_BYTES + room
+    monkeypatch.setattr(rc, "collection_budget_bytes", lambda *_: ceiling)
+
+
+class TestSparseFileShedding:
+    def test_a_sparse_file_is_pre_collected_when_the_budget_has_room(self, tmp_path):
         (tmp_path / "big.py").write_text("x = 1\n" * 2000)
         job = _job(tmp_path, [{"path": "big.py", "additions": 2, "deletions": 1}])
 
@@ -390,67 +459,6 @@ class TestDensitySkipping:
         assert "big.py" in data.file_contents
         assert "big.py" not in data.omitted_files
 
-    def test_a_low_density_file_yields_to_a_dense_one_under_scarcity(
-        self, tmp_path, monkeypatch,
-    ):
-        """What the heuristic is actually for, once it is a tie-break.
-
-        With a budget too small for both, the file the diff already explains is
-        the one that goes, and the one it does not explain is kept.
-        """
-        (tmp_path / "sparse.py").write_text("x = 1\n" * 2000)  # 12000 bytes
-        (tmp_path / "dense.py").write_text("line\n" * 800)  # 4000 bytes
-        # Room for the fixed overhead and the dense file, but not for both
-        # files — so the fit has to choose, which is the only time density
-        # should decide anything.
-        monkeypatch.setattr(
-            rc, "collection_budget_bytes",
-            lambda *a, **k: rc.TEMPLATE_OVERHEAD_BYTES + 6000,
-        )
-        job = _job(tmp_path, [
-            {"path": "sparse.py", "additions": 2, "deletions": 1},
-            {"path": "dense.py", "additions": 700, "deletions": 600},
-        ])
-
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = rc.collect_preflight_data(job)
-
-        assert "dense.py" in data.file_contents
-        assert "sparse.py" in data.omitted_files
-
-    def test_tier_outranks_density_across_the_whole_budget(
-        self, tmp_path, monkeypatch,
-    ):
-        """A low-density Tier 1 file must not be crowded out by a dense Tier 3 one.
-
-        Ranking dense files against the *entire* remaining budget before sparse
-        files see any of it (rather than ranking every candidate together by
-        `(classify_tier, is_low_density, size)`) would let a large, dense Tier 3
-        file exhaust the budget first — even though a small, sparse Tier 1 file
-        would easily fit if tier were consulted before density.
-        """
-        # Tier 1 (path segment "auth"), low density: big enough to trigger the
-        # density heuristic, but only a sliver of it changed.
-        (tmp_path / "auth").mkdir()
-        (tmp_path / "auth" / "config.go").write_text("line\n" * 1200)  # 6000 bytes
-        # Tier 3 (path segment "gen"), dense: most of it changed.
-        (tmp_path / "gen").mkdir()
-        (tmp_path / "gen" / "big.go").write_text("line\n" * 1800)  # 9000 bytes
-        # Room for either file alone, not both.
-        monkeypatch.setattr(
-            rc, "collection_budget_bytes",
-            lambda *a, **k: rc.TEMPLATE_OVERHEAD_BYTES + 10000,
-        )
-        job = _job(tmp_path, [
-            {"path": "auth/config.go", "additions": 2, "deletions": 1},
-            {"path": "gen/big.go", "additions": 1500, "deletions": 1500},
-        ])
-
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = rc.collect_preflight_data(job)
-
-        assert "auth/config.go" in data.file_contents
-        assert "gen/big.go" in data.omitted_files
 
     def test_small_file_always_included(self, tmp_path):
         (tmp_path / "small.py").write_text("x = 1\n")
@@ -471,6 +479,68 @@ class TestDensitySkipping:
             data = rc.collect_preflight_data(job)
 
         assert "refactored.py" in data.file_contents
+
+    # The old gate dropped the sparse file too, by a different route. This case
+    # holds the shed *ordering* the change keeps rather than the overflow guard
+    # it adds, and fails if the ordering is inverted.
+    # passes-at-base: pins the shed ordering, which this change preserves
+    def test_the_budget_sheds_the_sparse_file_before_the_dense_one(
+        self, tmp_path, monkeypatch,
+    ):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "sparse.py").write_text("x = 1\n" * 2000)
+        (repo / "dense.py").write_text("y = 1\n" * 2000)
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "sparse.py").write_text("x = 1\n" * 1999 + "x = 2\n")
+        (repo / "dense.py").write_text("y = 2\n" * 2000)
+        commit_all(repo, "change")
+
+        job = _job(
+            tmp_path,
+            [
+                {"path": "sparse.py", "additions": 1, "deletions": 1},
+                {"path": "dense.py", "additions": 2000, "deletions": 2000},
+            ],
+            wt_path=str(repo),
+        )
+        # Room for one of the two 12KB files, not both.
+        _ceiling_for(repo, monkeypatch, 14_000)
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = rc.collect_preflight_data(job)
+
+        assert "dense.py" in data.file_contents
+        assert "sparse.py" in data.omitted_files
+
+    def test_only_as_many_sparse_files_are_shed_as_the_shortfall_needs(
+        self, tmp_path, monkeypatch,
+    ):
+        repo = init_repo(tmp_path / "repo")
+        for name in ("a.py", "b.py", "c.py"):
+            (repo / name).write_text(f"# {name}\n" + "x = 1\n" * 2000)
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        for name in ("a.py", "b.py", "c.py"):
+            (repo / name).write_text(f"# {name}\n" + "x = 1\n" * 1999 + "x = 2\n")
+        commit_all(repo, "change")
+
+        job = _job(
+            tmp_path,
+            [
+                {"path": name, "additions": 1, "deletions": 1}
+                for name in ("a.py", "b.py", "c.py")
+            ],
+            wt_path=str(repo),
+        )
+        # Three ~12KB sparse files, room for two. One shortfall, one file shed.
+        _ceiling_for(repo, monkeypatch, 26_000)
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = rc.collect_preflight_data(job)
+
+        assert len(data.omitted_files) == 1
+        assert len(data.file_contents) == 2
 
 
 # ── collect_preflight_data (git repo tests) ─────────────────────────────────
@@ -675,13 +745,7 @@ class TestCollectPreflightData:
         assert "func uncommitted" not in data.diff
         assert "func untracked" not in data.diff
 
-    def test_the_only_file_a_diff_touches_is_never_withheld(self, tmp_path):
-        """The regression: a small change to a big file, and nothing else.
-
-        Preflight used to send zero of the one file under review and then order
-        the agent to go and read it, spending turns on what collection had just
-        declined to include.
-        """
+    def test_sparse_large_file_kept_when_the_budget_has_room(self, tmp_path):
         repo = init_repo(tmp_path / "repo")
         (repo / "big.py").write_text("x = 1\n" * 2000)
         commit_all(repo, "init")
@@ -699,7 +763,7 @@ class TestCollectPreflightData:
         with contextlib.redirect_stdout(io.StringIO()):
             data = rc.collect_preflight_data(job)
         assert "big.py" in data.file_contents
-        assert data.omitted_files == []
+        assert "big.py" not in data.omitted_files
 
     def test_tier1_files_prioritized_over_tier2_when_budget_tight(
         self, tmp_path, monkeypatch,

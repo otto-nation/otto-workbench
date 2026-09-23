@@ -574,6 +574,23 @@ class TestBudgetKeepsTheFilesItCanAfford:
         assert "- huge.py" in text
         assert "Files not pre-collected" in text
 
+    def test_the_header_sends_the_agent_to_the_omitted_files(self):
+        """The do-not-re-read header has to admit the exception below it.
+
+        Scoping Read/Bash to files outside the PR contradicts the omitted
+        section and the turn-budget guidance, both of which tell the agent to
+        read files that are in it.
+        """
+        header = format_preflight_data(
+            _make_preflight(omitted_files=["big.go"]),
+        ).text.split("### Full diff")[0]
+        assert "files named under \"Files not pre-collected\"" in header
+
+        nothing_omitted = format_preflight_data(
+            _make_preflight(omitted_files=[]),
+        ).text.split("### Full diff")[0]
+        assert "Files not pre-collected" not in nothing_omitted
+
     def test_nothing_fitting_is_still_a_clean_drop(self):
         pf = _make_preflight(file_contents={"huge.py": "x" * (MAX_PROMPT_BYTES * 2)})
         plan = _fit_budget(_make_job(pf), {"header": "small"})

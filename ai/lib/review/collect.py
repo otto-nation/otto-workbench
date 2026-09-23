@@ -682,13 +682,47 @@ def _collect_file_data(
     return contents, permissions, changes
 
 
-def _is_low_density(path: str, content: str, file_changes: dict[str, int]) -> bool:
+def _is_sparse(path: str, content: str, file_changes: dict[str, int]) -> bool:
+    """Whether the change touches too little of ``path`` to be worth its bytes *first*.
+
+    A tiebreak for a collection that does not fit, not a reason to withhold a
+    file from one that does. Sparse is where value-per-byte is lowest — the
+    diff already carries the changed lines — so it is where a shortfall is
+    taken from. It is not where a review can do without the file: the diff
+    gives three lines of context, and whether a change is correct is a
+    question about the code around it.
+
+    Both producers of ``pr.files`` report every path's counts — `gh.pr_reads`
+    from the API payload and `git.numstat` from `--numstat` — so the fallback
+    below is for a caller that supplies neither, not a case either of them
+    reaches. A pure rename reports an explicit zero rather than no entry, and
+    so reads as maximally sparse: correct here, since a file with nothing
+    changed inside it is the cheapest thing a shortfall can take.
+    """
     size = len(content.encode())
     if size <= FILE_CONTENT_MIN_SIZE:
         return False
     total_lines = content.count("\n") or 1
     changed = file_changes.get(path, total_lines)
     return (changed / total_lines) < FILE_CONTENT_DENSITY_THRESHOLD
+
+
+def _shed_sparse(sizes: dict[str, int], sparse: list[str], overflow: int) -> list[str]:
+    """The sparse paths to drop to cover ``overflow`` bytes, largest first.
+
+    Largest first because the shortfall is in bytes: the fewest files dropped
+    is the fewest a phase has to open. Stops as soon as the overflow is
+    covered — shedding every sparse file to cover a 2KB shortfall is what this
+    replaced.
+    """
+    shed: list[str] = []
+    remaining = overflow
+    for path in sorted(sparse, key=lambda p: -sizes[p]):
+        if remaining <= 0:
+            break
+        shed.append(path)
+        remaining -= sizes[path]
+    return shed
 
 
 def _fit_to_budget(
@@ -700,49 +734,38 @@ def _fit_to_budget(
 ) -> FileFit:
     """Which of `all_contents` a review can afford, at collection time.
 
-    Ranks every candidate together and keeps what fits in `budget_bytes` once
-    `base_size` (the diff, the commit log, and the rest of the fixed overhead)
-    is spent. Low-density files — large ones `file_changes` shows only a sliver
-    of, where the diff already carries what changed — rank last within their
-    tier.
+    Everything fits until it does not. A file the budget has room for is
+    pre-collected whatever proportion of it the change touched, because
+    withholding it does not save the bytes — the agent reads it back in its
+    own turns and the same content reaches the same context window, having
+    also cost a tool call and the turns `OMITTED_FILE_TURNS` grants for it.
 
-    Density is a tie-break under scarcity, not a veto. Every path here is a
-    file the diff touches, so a skipped one is a file the agent is about to be
-    told to read anyway: withholding it does not save the bytes, it moves them
-    out of a cheap bulk collection and into the agent's own turns, at one tool
-    call and a full-file result each. When the leftovers fit, they are inlined.
-    The heuristic only bites when something genuinely has to give, which is the
-    case it was written for — a small change to a huge file, alongside other
-    files that would otherwise be crowded out.
-
-    Density reaches `fit_files` as its `deprioritise` set, which ranks below
-    tier: a low-density file yields to a dense one of the same tier, and never
-    to a less valuable file of a lower one. So the file dropped under scarcity
-    is the one the diff already explains, without that preference ever costing
-    a Tier 1 file its place.
+    Only a collection that overflows sheds anything, and then it sheds sparse
+    files largest-first and only as far as the overflow requires, before
+    ranking whatever is left by `(classify_tier, size)` and keeping what fits
+    in `budget_bytes` once `base_size` (the diff, the commit log, and the rest
+    of the fixed overhead) is spent.
     """
-    low_density = {
-        p for p, c in all_contents.items()
-        if _is_low_density(p, c, file_changes)
-    }
-    fit = fit_files(
-        all_contents, all_permissions, budget_bytes - base_size,
-        deprioritise=low_density,
-    )
-    included, permissions, omitted = fit.included, fit.permissions, fit.omitted
+    room = max(0, budget_bytes - base_size)
+    sizes = {p: len(c.encode()) for p, c in all_contents.items()}
+    overflow = sum(sizes.values()) - room
 
-    skipped_sparse = [p for p in omitted if p in low_density]
-    if skipped_sparse:
-        density_kb = sum(
-            len(all_contents[p].encode()) for p in skipped_sparse
-        ) // 1024
-        log.info(
-            f"Skipped {len(skipped_sparse)} low-density files "
-            f"(~{density_kb}KB) — diff sufficient, budget short"
-        )
+    shed: list[str] = []
+    if overflow > 0:
+        sparse = [p for p, c in all_contents.items() if _is_sparse(p, c, file_changes)]
+        shed = _shed_sparse(sizes, sparse, overflow)
+
+    candidates = {p: c for p, c in all_contents.items() if p not in set(shed)}
+    fit = fit_files(candidates, all_permissions, room)
+    included, permissions, omitted = fit.included, fit.permissions, shed + fit.omitted
+
     if omitted:
-        omitted_kb = sum(len(all_contents.get(p, "").encode()) for p in omitted) // 1024
-        log.info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
+        omitted_kb = sum(sizes.get(p, 0) for p in omitted) // 1024
+        log.info(
+            f"Pre-collected {len(included)}/{len(all_contents)} files "
+            f"({len(omitted)} omitted, ~{omitted_kb}KB) — "
+            f"over budget by {max(0, overflow) // 1024}KB"
+        )
 
     return FileFit(included, permissions, omitted)
 
@@ -782,6 +805,7 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         review_checklists=review_checklists,
         review_profiles=profiles,
         omitted_files=fit.omitted,
+        file_sizes={p: len(c.encode()) for p, c in all_contents.items()},
         delta_diff=delta.diff,
         delta_commit_log=delta.commit_log,
         delta_files=delta.files,
@@ -792,6 +816,24 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
 
 
 # ── Formatting ───────────────────────────────────────────────────────────────
+
+def _effective_omitted(
+    data: PreflightData, file_filter: list[str] | None,
+    files: FileFit | None = None,
+) -> list[str]:
+    """The paths this block will tell the agent to read, in the order listed.
+
+    Both the omitted section and the header's read instruction depend on this,
+    and a header that names the section while the section is absent is how the
+    instruction stops matching the block it introduces.
+    """
+    omitted = data.omitted_files
+    if file_filter:
+        omitted = [p for p in omitted if p in set(file_filter)]
+    if files is not None:
+        omitted = files.omitted + [p for p in omitted if p not in data.file_contents]
+    return omitted
+
 
 def _format_file_contents(
     data: PreflightData, file_filter: list[str] | None,
@@ -823,15 +865,20 @@ def _format_file_contents(
             parts.append(contents[path])
             parts.append("</file>")
 
-    omitted = data.omitted_files
-    if file_filter:
-        omitted = [p for p in omitted if p in set(file_filter)]
-    if files is not None:
-        omitted = files.omitted + [p for p in omitted if p not in data.file_contents]
+    omitted = _effective_omitted(data, file_filter, files)
     if omitted:
-        parts += ["", "### Files not pre-collected (read directly)"]
+        parts += [
+            "",
+            "### Files not pre-collected (read directly)",
+            "",
+            "These did not fit the prompt budget. The diff above carries their"
+            " changed lines but not the code around them — read a file when a"
+            " finding depends on what surrounds the change.",
+        ]
         for path in omitted:
-            parts.append(f"- {path}")
+            size = data.file_sizes.get(path)
+            suffix = f" ({max(size // 1024, 1)}KB)" if size else ""
+            parts.append(f"- {path}{suffix}")
     return parts
 
 
@@ -888,12 +935,18 @@ def format_preflight_data(
     the only place the figure exists: the caller knows the cap it handed out,
     which on the ordinary path is several times what the diff spent.
     """
+    reads = (
+        "cross-references, callers, tests, config files outside the PR, and the"
+        " files named under \"Files not pre-collected\""
+        if _effective_omitted(data, file_filter, files)
+        else "cross-references, callers, tests, config files outside the PR"
+    )
     parts = [
         "## Pre-collected data",
         "",
         "Use this data directly. Do NOT re-read these files, re-run git diff, re-run git log,",
-        "or re-fetch PR reviews via gh api. Only use Read/Bash for files NOT listed here",
-        "(cross-references, callers, tests, config files outside the PR).",
+        "or re-fetch PR reviews via gh api. Only use Read/Bash for files whose contents are",
+        f"not here ({reads}).",
     ]
 
     diff_text = scope_diff(data.diff, file_filter) if file_filter else data.diff

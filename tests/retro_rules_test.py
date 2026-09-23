@@ -118,15 +118,34 @@ def _match_rank(comments: list[str], rules: list[dict]) -> list[str]:
 # the length artefact this exists to catch. The words are nonsense syllables so
 # that no amount of it can coincide with a review comment.
 _NONSENSE = [
-    f"zib{a}{b}{c}qua"
+    f"zib{a}{b}{c}{d}qua"
+    for d in "aeiouy"
     for c in "aeiouy"
     for b in "aeiouy"
     for a in "bcdfghjklmnpqrstvwxyz"
 ]
-OFF_TOPIC_PADDING = "\n\n".join(
-    "- " + " ".join(_NONSENSE[i:i + 25]) + "."
-    for i in range(0, len(_NONSENSE), 25)
-)
+
+
+def _off_topic_padding() -> str:
+    """Nonsense prose with a bigger vocabulary than the largest real rule file.
+
+    Sized from the rule set rather than fixed, because "bigger than the largest
+    file" is a property of a tree that grows: a hardcoded word count decays into
+    a setup precondition that fails the day a rule file overtakes it, which
+    reads as the scorer regressing when nothing about the scorer moved. Every
+    word is a nonsense syllable, so no amount of this can coincide with a
+    review comment.
+    """
+    largest = max(len(r["keywords"]) for r in _rules())
+    words = _NONSENSE[:largest + 1]
+    assert len(words) > largest, (
+        f"_NONSENSE holds {len(_NONSENSE)} words, too few to outgrow the "
+        f"largest rule file's {largest} — widen the generator"
+    )
+    return "\n\n".join(
+        "- " + " ".join(words[i:i + 25]) + "."
+        for i in range(0, len(words), 25)
+    )
 
 
 # Rule files whose whole text is absorbed into one other file below. Four of
@@ -137,7 +156,7 @@ _ABSORBED_FILES = frozenset({
 })
 
 
-def _pad_rule(filename: str, padding: str = OFF_TOPIC_PADDING) -> list[dict]:
+def _pad_rule(filename: str, padding: str | None = None) -> list[dict]:
     """The rule set with one file grown by `padding`.
 
     The padded file ends up with the biggest vocabulary in the set while saying
@@ -146,8 +165,9 @@ def _pad_rule(filename: str, padding: str = OFF_TOPIC_PADDING) -> list[dict]:
     grown file is a rule the loader could have produced rather than a hand-copy
     that stops simulating one the next time construction changes.
     """
+    text = _off_topic_padding() if padding is None else padding
     return [
-        build_rule(rule["filename"], rule["content"] + "\n\n" + padding)
+        build_rule(rule["filename"], rule["content"] + "\n\n" + text)
         if rule["filename"] == filename
         else rule
         for rule in _rules()

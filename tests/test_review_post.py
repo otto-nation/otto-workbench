@@ -1588,6 +1588,36 @@ class TestDryRunIntegration:
 
         assert result.returncode == 0
 
+    def test_a_sidecar_naming_a_forge_renders_links_on_it(self, tmp_path):
+        """End to end, through the process that actually posts.
+
+        `review-post` is spawned with a review file and never reads a remote, so
+        the sidecar is the only thing that can tell it a link belongs on an
+        enterprise host. Asserted here rather than on the builder alone because
+        it is the wiring — sidecar to `args` to renderer — that this closes.
+        """
+        review_dir = tmp_path / "ghe-review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        # A prose reference is what `resolve_permalinks` rewrites, and it only
+        # runs with both refs in hand — the stock fixture has neither, so it
+        # renders no permalink at all and could not see a wrong forge.
+        review_file.write_text(self.REVIEW_MD.replace(
+            "- **[M1]** **`handler.go:11`** — missing error check",
+            "- **[M1]** **`handler.go:11`** — missing error check, see handler.go:11",
+        ))
+        (review_dir / "meta.json").write_text(json.dumps({
+            "repo": "test/repo", "head_sha": "abc123def456",
+            "head_ref": "feat/x", "base_ref": "main",
+            "host": "ghe.acme.com",
+        }))
+
+        result = self._run_dry_run(review_file, tmp_path)
+
+        assert result.returncode == 0
+        assert "https://ghe.acme.com/test/repo/blob/" in result.stdout
+        assert "https://github.com/test/repo/blob/" not in result.stdout
+
     def test_a_sidecar_naming_no_branch_is_posted(self, tmp_path):
         """A review written before the field existed still publishes.
 

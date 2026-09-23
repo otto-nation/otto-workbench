@@ -246,6 +246,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     repo = sidecar.repo
     args.repo = repo
+    # Stamped beside `repo` so every posting path reads the host the same way it
+    # reads the slug. `_run_post` is handed the sidecar and takes it from there;
+    # the comment-fallback path only ever sees `args`, and a host it cannot read
+    # is an enterprise link rendered on public GitHub.
+    args.host = sidecar.host
 
     # The artifact keys on the PR number and the run lock keys on the branch, so
     # two runs the lock treats as unrelated can still reach one review.md. This

@@ -77,12 +77,52 @@ already decided it is not.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from core import log
 from core import proc
 from core import timeouts
 from core.proc import CmdResult
+
+# What git runs where an editor would otherwise open. `true` exits zero without
+# touching the file, so whatever git wanted confirmed is taken as it stands.
+NO_EDITOR = "true"
+
+# Every variable that can name an editor, in the order git consults them:
+# GIT_EDITOR > core.editor > VISUAL > EDITOR > vi. `-c core.editor=true` is not
+# sufficient on its own, because the first of these outranks it — an operator
+# with `export GIT_EDITOR=vim` in their profile hands an unattended run a full
+# screen editor on a pipe with no terminal. It does not fail, it blocks, and
+# the subcommands that open an editor are the unbounded ones, so nothing
+# arrives to end it.
+#
+# VISUAL and EDITOR rank below `core.editor` and are pinned anyway, so that what
+# a child sees is a property of this tuple rather than of the precedence table
+# staying as it is — and so that a non-git tool reading $EDITOR gets the same
+# no-op rather than the `vi` an unset variable would leave it to find.
+EDITOR_VARS = ("GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "VISUAL", "EDITOR")
+
+
+def unattended_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """*base* (the parent environment by default) with every editor pinned to a no-op.
+
+    See the `EDITOR_VARS` comment above for which variables are pinned, in
+    what order git consults them, and why pinning rather than clearing is
+    what closes off `vi` as a fallback.
+
+    Built per call rather than once at import, so a test or a caller that sets
+    one of these sees the current value overridden rather than a snapshot taken
+    at interpreter start.
+
+    For any child that may reach git without this process choosing the argv —
+    an unattended rebase driving itself, and an AI agent holding a shell. The
+    agent is the case `-c` cannot reach at all: it builds its own git commands,
+    so the only place to say "no editor" is the environment it inherits.
+    """
+    source = os.environ if base is None else base
+    return {**source, **{var: NO_EDITOR for var in EDITOR_VARS}}
 
 # Subcommands whose output is a list of paths. git escapes a non-ASCII name in
 # that output unless told otherwise, and an escaped name is not a pathspec a
@@ -194,9 +234,11 @@ def run(
 
     `env` replaces the child's environment outright, as `proc.run` documents.
     It exists for the settings `-c` cannot reach: `GIT_EDITOR` outranks
-    `core.editor`, so a caller that must not be handed an editor has to unset
+    `core.editor`, so a caller that must not be handed an editor has to reach
     the variable rather than configure around it. Pass `os.environ | {...}` to
-    add rather than replace.
+    add rather than replace, or `unattended_env()` for that editor case — which
+    pins rather than unsets, because an unset `GIT_EDITOR` leaves git to fall
+    through its own precedence table to `vi`.
     """
     return proc.run(
         _argv(args, config), cwd=cwd, timeout=_timeout_for(args), env=env,

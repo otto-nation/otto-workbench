@@ -250,3 +250,50 @@ class TestEveryCommandCarriesAnAddDir:
             ai_backend.invoke_fix = original
 
         assert captured["add_dirs"] == ["/tmp/the-worktree"]
+
+
+class TestThePromptShapeGrantsNoTools:
+    """A stateless prompt must not be able to run a tool, on either backend.
+
+    The Pi backend states this with `--no-tools`, after one of its prompt calls
+    ran `git rebase --edit-todo` and blocked on `vi`. This backend needs its own
+    statement, because the obvious reading of the code is wrong: `claude -p
+    --bare` carries neither `--permission-mode acceptEdits` nor an allowlist,
+    and a tool call is *not* refused by the default mode.
+
+    Verified against Claude Code 2.1.265. Asked to run `echo`, the bare command
+    ran it and recorded nothing in `permission_denials`; asked to name its
+    tools it answered "Bash\nEdit\nRead". With `--disallowedTools Bash Edit
+    Write` the same question answers "Read" alone. So this path had the same
+    hole the Pi one did, and the denylist is what closes it.
+    """
+
+    def _prompt_cmd(self, **kwargs):
+        return ai_backend_claude._build_prompt_cmd(**kwargs)
+
+    def test_the_executing_tools_are_denied(self):
+        cmd = self._prompt_cmd()
+        denied = cmd[cmd.index("--disallowedTools") + 1:]
+        for tool in ai_backend_claude.PROMPT_DENIED_TOOLS:
+            assert tool in denied
+
+    def test_bash_is_among_them(self):
+        """The one that hung a rebase — named rather than left to the list."""
+        assert "Bash" in ai_backend_claude.PROMPT_DENIED_TOOLS
+
+    def test_the_denial_survives_a_model(self):
+        """`--model` takes a value, so it must not be parsed as another tool."""
+        cmd = self._prompt_cmd(model="claude-opus-4-6")
+        assert cmd[cmd.index("--model") + 1] == "claude-opus-4-6"
+        denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--model")]
+        assert list(ai_backend_claude.PROMPT_DENIED_TOOLS) == denied
+
+    def test_the_agent_modes_keep_their_tools(self):
+        """The contrast is the point — an agent with no tools does nothing."""
+        inv = ai_backend_claude.AgentInvocation(prompt="", add_dirs=["/tmp/wt"])
+        for cmd in (
+            ai_backend_claude._build_agent_cmd(inv),
+            ai_backend_claude._build_fix_cmd(inv),
+        ):
+            assert "--allowedTools" in cmd
+            assert cmd[cmd.index("--permission-mode") + 1] == "acceptEdits"

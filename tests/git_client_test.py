@@ -6,6 +6,7 @@ test author expected would pass whether or not the flag combination is right.
 The one exception is the argv builder, which is pure and is asserted directly.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -190,6 +191,75 @@ def test_a_path_listing_read_returns_a_usable_pathspec(repo):
     assert listed == ["é.txt"]
     assert git_client.run("add", "--", *listed, cwd=repo).ok
     assert git_client.lines("diff", "--cached", "--name-only", cwd=repo) == ["é.txt"]
+
+
+# ── Unattended editor ───────────────────────────────────────────────────────
+
+
+def test_unattended_env_pins_every_editor_variable(monkeypatch):
+    for var in git_client.EDITOR_VARS:
+        monkeypatch.setenv(var, "vim")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = git_client.unattended_env()
+
+    for var in git_client.EDITOR_VARS:
+        assert env[var] == git_client.NO_EDITOR
+    # Everything else is passed through — a git that cannot find its own
+    # binaries is not an improvement on one that opens an editor.
+    assert env["PATH"] == "/usr/bin"
+
+
+def test_unattended_env_pins_a_supplied_base_too(monkeypatch):
+    """A caller that builds a whole env must not be the way back in.
+
+    The eval harness hands the backends a complete mapping with its recording
+    shims on PATH, so the pins have to be applied over that rather than over
+    `os.environ` — which is also what keeps the shims in front.
+    """
+    monkeypatch.delenv("GIT_EDITOR", raising=False)
+    env = git_client.unattended_env({"PATH": "/stub", "GIT_EDITOR": "vim"})
+    assert env == {
+        "PATH": "/stub",
+        **{var: git_client.NO_EDITOR for var in git_client.EDITOR_VARS},
+    }
+
+
+def test_git_resolves_to_a_no_op_editor_under_the_pinned_env(repo, monkeypatch):
+    """The precedence this defends against, asserted against git itself.
+
+    `GIT_EDITOR` outranks `core.editor`, so a caller passing the config alone
+    leaves an operator's `export GIT_EDITOR=vim` in charge. Clearing the
+    variable is not enough either, which is why these are pinned rather than
+    removed: with nothing set and no config, git falls through its own table to
+    a full-screen editor — the kind that hung a rebase for 45 minutes on a pipe
+    with no terminal.
+
+    Which editor that is belongs to the build, not to git: a stock build falls
+    through to `vi`, Debian's to the `editor` alternative. So the assertion is
+    that the fallback is a real editor rather than the no-op — naming one makes
+    the test a claim about the runner's git package, which is how it passed
+    locally and failed on CI.
+
+    `TERM` is pinned for the same reason. On `TERM=dumb`, which a GitHub runner
+    exports, git refuses the fallback altogether and exits non-zero with no
+    answer — leaving the cleared case asserting nothing at all.
+    """
+    monkeypatch.setenv("GIT_EDITOR", "vim")
+    monkeypatch.setenv("TERM", "xterm")
+
+    leaked = git_client.run("var", "GIT_EDITOR", cwd=repo)
+    cleared = git_client.run(
+        "var", "GIT_EDITOR", cwd=repo,
+        env={k: v for k, v in os.environ.items()
+             if k not in git_client.EDITOR_VARS},
+    )
+    pinned = git_client.run(
+        "var", "GIT_EDITOR", cwd=repo, env=git_client.unattended_env(),
+    )
+
+    assert leaked.stdout.strip() == "vim"
+    assert cleared.ok and cleared.stdout.strip() not in ("", git_client.NO_EDITOR)
+    assert pinned.stdout.strip() == git_client.NO_EDITOR
 
 
 # ── Formatting ──────────────────────────────────────────────────────────────

@@ -313,6 +313,53 @@ class TestProviderFlag:
         assert cmd[idx + 1] == "bedrock"
 
 
+class TestPromptCmdHasNoTools:
+    """A stateless prompt cannot hold a tool, and the flag is the only thing saying so.
+
+    ``-p`` is non-interactive, not tool-less: Pi's built-ins stay registered and
+    ``--approve`` runs them without asking. So the shape documented as
+    "stateless text-in/text-out" arrived holding a shell, and a rebase conflict
+    resolver used it — ``git rebase --edit-todo`` from a tool call, ``vi`` on a
+    pipe with no terminal, and ``prompt()`` runs UNBOUNDED, so the run sat there
+    for 45 minutes until the job's timeout killed it and left a partial rebase
+    behind.
+
+    Every case here asserts our argv rather than Pi's behaviour, which is the
+    shape of the original bug: the command was reviewed and what the CLI did
+    with it was not. Two things cover that gap instead of a live call, which
+    ``_no_live_backend`` in conftest refuses on purpose. Pi rejects an unknown
+    option outright — ``pi --tools`` with no value exits non-zero on ``Unknown
+    option`` — so a renamed flag fails every prompt call immediately rather
+    than silently restoring the tools. And the behaviour itself was checked by
+    hand when the flag went in: asked to run ``echo`` via bash, Pi runs it
+    without ``--no-tools`` and answers the fallback word with it.
+    """
+
+    def test_the_flag_is_on_the_command(self):
+        assert "--no-tools" in ai_backend_pi._build_prompt_cmd()
+
+    def test_it_survives_every_other_knob(self):
+        """A later flag added ahead of it must not displace it."""
+        cmd = ai_backend_pi._build_prompt_cmd(
+            model="sonnet", provider="bedrock", thinking="high",
+        )
+        assert "--no-tools" in cmd
+
+    def test_the_agent_modes_keep_their_tools(self):
+        """Only the prompt shape loses them — an agent with no tools does nothing."""
+        inv = ai_backend_pi.AgentInvocation(prompt="")
+        assert "--no-tools" not in ai_backend_pi._build_agent_cmd(inv)
+        assert "--no-tools" not in ai_backend_pi._build_fix_cmd(inv)
+
+    def test_it_reaches_the_subprocess(self, monkeypatch, tmp_path):
+        seen = []
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: seen.append(cmd) or
+                            subprocess.CompletedProcess(cmd, 0, "answer", ""))
+        ai_backend_pi.prompt("ask", cwd=str(tmp_path))
+        assert "--no-tools" in seen[0]
+
+
+
 class TestPromptCmdThinking:
     """A stateless prompt is sized the same way the agent modes are.
 

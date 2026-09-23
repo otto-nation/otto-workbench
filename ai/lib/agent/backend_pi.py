@@ -59,7 +59,7 @@ from agent import usage as ai_usage
 from core import log
 from core import timeouts
 from core.proc import _kill_group
-from agent.backend import AgentInvocation
+from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
     pi_write_tool_used,
@@ -108,7 +108,7 @@ def _guard_env(inv: AgentInvocation) -> dict[str, str]:
     merged over os.environ — the eval fixtures put recording shims on PATH and
     inheriting the real environment behind them would defeat that.
     """
-    env = dict(os.environ if inv.env is None else inv.env)
+    env = agent_env(inv)
     env[ENV_REVIEW_WORKTREE_DIR] = inv.cwd
     # The review document lives under ~/.local/state/workbench/reviews/, which is
     # outside the worktree by design. Gating on the worktree alone would refuse
@@ -154,7 +154,16 @@ def _build_prompt_cmd(
     # --mode json, not bare -p: print mode emits the reply and nothing else, so
     # a prompt measured that way lands no ledger row at all. The Claude backend
     # pairs --print with --output-format for the same reason.
-    cmd = ["pi", "-p", "--mode", "json", "--no-session", "--approve"]
+    #
+    # --no-tools is what makes the shape match its name. `-p` is only
+    # non-interactive, not tool-less: Pi's built-ins stay registered and
+    # `--approve` runs them without asking, so a "stateless text-in/text-out"
+    # call arrived holding a shell. A conflict resolver used it to run
+    # `git rebase --edit-todo`, which opened `vi` on a pipe with no terminal,
+    # and `prompt()` is UNBOUNDED — the rebase sat there until the job's own
+    # timeout killed it 45 minutes later. Nothing in a prompt's contract wants
+    # a tool: the caller sends text and parses text back.
+    cmd = ["pi", "-p", "--mode", "json", "--no-session", "--approve", "--no-tools"]
     if provider:
         cmd += ["--provider", provider]
     if model:
@@ -733,7 +742,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=_guard_env(inv) if ext else inv.env,
+        env=_guard_env(inv) if ext else agent_env(inv),
     )
 
     with _rpc_process(cmd, **spawn) as proc:
@@ -803,7 +812,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=_guard_env(inv) if ext else inv.env,
+        env=_guard_env(inv) if ext else agent_env(inv),
     )
 
     with _rpc_process(cmd, **spawn) as proc:

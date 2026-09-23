@@ -24,7 +24,7 @@ from agent import usage as ai_usage
 from core import log
 from core import timeouts
 from agent import vertex_quota
-from agent.backend import AgentInvocation
+from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import _log_stderr_on_failure, claude_display_text, parse_claude_event
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -183,10 +183,32 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
     return cmd
 
 
+# What a stateless prompt is not allowed to do. Read stays: it cannot block and
+# cannot write, and a prompt that reads a file it was asked about is still
+# answering with text.
+#
+# Verified against Claude Code 2.1.265, because the guess this replaces was
+# wrong. The comment here used to say that omitting `--permission-mode
+# acceptEdits` left a tool call refused by the default mode. It does not: asked
+# to run `echo`, `claude -p --bare` ran it, reported the output and recorded no
+# entry in `permission_denials`, and asked to name its tools it answered
+# "Bash\nEdit\nRead". So this path had the same hole as the Pi one — a stateless
+# prompt holding a shell — and was only ever protected by the models not
+# reaching for it.
+#
+# A denylist rather than `--allowedTools`: the flag is variadic, so the empty
+# value that would express "nothing" is not a spelling this repo has verified,
+# whereas naming the three tools that execute or write is exact.
+PROMPT_DENIED_TOOLS = ("Bash", "Edit", "Write")
+
+
 def _build_prompt_cmd(model: str | None = None) -> list[str]:
     # --output-format needs --print, which -p already supplies. Without it the reply
     # carries no usage and every prompt() call goes unmeasured.
-    cmd = ["claude", "-p", "--bare", "--output-format", "json"]
+    cmd = [
+        "claude", "-p", "--bare", "--output-format", "json",
+        "--disallowedTools", *PROMPT_DENIED_TOOLS,
+    ]
     if model:
         cmd += ["--model", model]
     return cmd
@@ -284,7 +306,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=inv.env,
+        env=agent_env(inv),
     )
     _send_stdin(proc, inv.prompt)
     stream_progress(proc, inv.session_log, label=inv.label)
@@ -303,7 +325,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=sys.stderr,
         text=True,
         cwd=inv.cwd,
-        env=inv.env,
+        env=agent_env(inv),
     )
     _send_stdin(proc, inv.prompt)
     _stream_fix_output(proc, inv.session_log)

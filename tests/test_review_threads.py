@@ -897,12 +897,18 @@ def _git_ran(returncode, stdout="", stderr=""):
 def _answering_the_owner(mock_run, sha="abc1234", touched=("f.go",)):
     """Wrap a `git_client.run` stub so the owner's own reads are answered.
 
-    Two of them. The commit scope is a dirty-set snapshot taken on either side
-    of the agent, and a catch-all stub answers both readings identically — an
-    empty difference, so the pass commits nothing and every assertion about the
-    commit fails for a reason the test never set up. ``touched`` is what the
-    agent is taken to have changed: absent from the first reading and present
-    in the second.
+    The commit scope is a dirty-set snapshot taken on either side of the agent,
+    and a catch-all stub answers both readings identically — an empty
+    difference, so the pass commits nothing and every assertion about the commit
+    fails for a reason the test never set up. ``touched`` is what the agent is
+    taken to have changed: absent from the first reading and present in every
+    reading after it.
+
+    Answered by that shape rather than by a list of one reply per read. The
+    engine reads the worktree once per batch as well as once per pass, so a
+    fixed-length list encodes how many invocations the pass makes — and when it
+    runs short, the exhausted iterator's default reads as a worktree where the
+    agent changed nothing, failing the commit for a reason no test wrote.
 
     Every push here goes through `push.push`, which finishes by asking the
     remote what it holds. A stub's catch-all answers that with the empty string
@@ -916,13 +922,14 @@ def _answering_the_owner(mock_run, sha="abc1234", touched=("f.go",)):
     discarded as somebody else's branch, and every push would read as lost for
     a reason that has nothing to do with what the test set up.
     """
-    snapshots = iter(("", "\n".join(touched)))
+    baseline = iter(("",))
+    after = "\n".join(touched)
 
     def run(*cmd, **kwargs):
         if cmd[:1] == ("ls-remote",):
             return _git_ran(0, stdout=f"{sha}\t{cmd[-1]}\n" if sha else "")
         if cmd[:2] == ("diff", "HEAD"):
-            return _git_ran(0, stdout=next(snapshots, ""))
+            return _git_ran(0, stdout=next(baseline, after))
         if cmd[:2] == ("ls-files", "--others"):
             return _git_ran(0, stdout="")
         return mock_run(*cmd, **kwargs)

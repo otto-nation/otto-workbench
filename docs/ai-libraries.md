@@ -332,6 +332,45 @@ the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
 
+### fix/reconcile.py
+
+What the agent said against what the worktree shows, per item.
+
+A fix pass has two accounts of itself and until this module they never met.
+`fix.tracking` parses what the agent ticked; `fix.scope` observes what actually
+changed. The engine held both — it computed the diff to scope its `git add` and
+built its report from the boxes — and compared them nowhere, so an agent that
+edited a file and ticked `deferred` had its edit committed and reported as work
+still owed. Both accounts were right about their own half and nobody asked them
+the same question.
+
+**This module reports observations, not verdicts.** That division is the whole
+design, and it is load-bearing in both directions:
+
+*Where the observation is decisive, it routes.* An item saying "I did nothing"
+whose own file moved in its batch is a contradiction on the item's own terms —
+no judgement about code quality is needed to see it, and the outcome it carries
+is one nothing else checks. That item is sent to the verify gate, which is
+where claims already go to be tested.
+
+*Where the observation is coarse, it informs.* An item saying "I fixed this"
+whose anchor file did not move is not thereby wrong. `fix.scope` says agents
+routinely edit a test, a fixture, or the caller that broke instead of the line
+the reviewer annotated, and one edit can satisfy several items that name the
+same file. A path-level miss is too weak to demote on and always will be, so
+this module never demotes: it hands the gate the diff alongside the claim and
+lets the reader that can weigh them do the weighing.
+
+The tempting alternative was a mechanical "claimed a fix, changed nothing"
+verdict. It was measured and rejected rather than skipped: chunk sizes are 10
+for the comment and CI passes and 30 for the findings pass, and the check can
+only fire when a batch's diff is *entirely* empty, because a non-empty diff is
+consistent with any subset of that batch's items having caused it. One genuine
+fix among ten therefore clears the other nine, which is precisely the case the
+check would exist to catch. A rule that fires only when the pass did nothing at
+all adds a second place for the vocabulary to drift and catches a case the
+existing unproductive-pass guard already reports.
+
 ### fix/scope.py
 
 What a fix pass changed, so its commit can be scoped to exactly that.

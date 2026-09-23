@@ -69,6 +69,12 @@ manager for the same reason: `__exit__` reaps with an unbounded `wait()` for
 anything but a `KeyboardInterrupt`, which would hang the unwinding of an
 ordinary exception on exactly the group the kill failed to remove.
 
+The default path still reaps unbounded, through `subprocess.run`'s own kill.
+It is the narrower exposure by some way — one direct child, no `killpg` to be
+refused, no grandchild to outlive the signal — and a `ceiling:` at that call
+names what closing it would cost, which is a rewrite of how the suite stubs
+`gh` rather than anything in this module.
+
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
 invisible to anyone watching from outside: a starved `git commit` comes back as
@@ -629,6 +635,21 @@ def run(
     # stream is only ours to do when there is not.
     if input_text is None:
         spawn["stdin"] = subprocess.DEVNULL
+    # ceiling: this path inherits `subprocess.run`'s unbounded reap — on a bound
+    # it SIGKILLs the direct child and then waits for it with no bound of its
+    # own, so a child that cannot take the signal hangs the call, which is the
+    # defect `_reap` closes on the group path. Much narrower here: the target is
+    # this process's own child, so there is no `killpg` to be refused and no
+    # grandchild to outlive the signal, leaving uninterruptible sleep on a
+    # stalled mount as the only way in. Left because the cost is not in this
+    # function: `subprocess.run` is the seam 58 stubs across 8 test files patch
+    # to answer as `gh` would, handing back `CompletedProcess`, so taking the
+    # spawn over here swaps that for a Popen double and rewrites all of them —
+    # a refactor of the suite's mocking strategy rather than a bug fix.
+    # Upgrade trigger: when a caller on this path is seen hanging past its
+    # bound, or once those stubs move to a Popen-shaped double for any other
+    # reason, at which point this becomes the same three-line change
+    # `_run_in_own_group` took.
     try:
         completed = subprocess.run(cmd, input=input_text, timeout=timeout, **spawn)
     except subprocess.TimeoutExpired as exc:

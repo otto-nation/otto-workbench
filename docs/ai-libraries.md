@@ -3143,6 +3143,12 @@ manager for the same reason: `__exit__` reaps with an unbounded `wait()` for
 anything but a `KeyboardInterrupt`, which would hang the unwinding of an
 ordinary exception on exactly the group the kill failed to remove.
 
+The default path still reaps unbounded, through `subprocess.run`'s own kill.
+It is the narrower exposure by some way — one direct child, no `killpg` to be
+refused, no grandchild to outlive the signal — and a `ceiling:` at that call
+names what closing it would cost, which is a rewrite of how the suite stubs
+`gh` rather than anything in this module.
+
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
 invisible to anyone watching from outside: a starved `git commit` comes back as

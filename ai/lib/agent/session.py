@@ -20,7 +20,7 @@ from pathlib import Path
 
 from core import log
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from agent.backend_events import is_write_tool
+from agent.backend_events import PI_RPC_EVENT_TYPES, is_write_tool, pi_write_tool_used
 
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
@@ -116,10 +116,31 @@ def _tool_use_is_observable(records: list[dict]) -> bool:
     Derived from the log rather than the active backend, because a log can
     outlive the run that wrote it. Any `assistant` record means the log is in
     the Claude backend's shape, where every tool call is recorded — so an empty
-    tool set is a real absence. The Pi backend emits RPC events instead and
-    tracks writes via `pi_write_tool_used`, so its logs stay unreadable here.
+    tool set is a real absence.
     """
     return bool(_of_type(records, "assistant"))
+
+
+def _is_pi_log(records: list[dict]) -> bool:
+    """Whether these records are a Pi RPC stream rather than a Claude log.
+
+    Keyed on the RPC event envelope Pi writes and Claude has no equivalent of.
+    A log carrying neither shape is neither backend's and is left to the
+    Claude-shaped path, which reports "cannot tell" rather than guessing.
+    """
+    return any(record.get("type") in PI_RPC_EVENT_TYPES for record in records)
+
+
+def _pi_wrote_output(records: list[dict]) -> bool:
+    """Whether a Pi RPC log shows a file-writing tool being invoked.
+
+    The Pi half of the no-write diagnosis. Without it a Pi agent that ran to
+    its own conclusion having written nothing was indistinguishable from one
+    that worked, so the only thing that ever triggered a retry was exhausting
+    the turn cap — and a run that circled and gave up early was written off as
+    a completed review with an empty file.
+    """
+    return any(pi_write_tool_used(record) for record in records)
 
 
 def diagnose_missing_output(log_path: str) -> Diagnosis:
@@ -143,7 +164,13 @@ def diagnose_missing_output(log_path: str) -> Diagnosis:
     # error already explains the missing output, and a retry would most likely
     # reproduce it.
     crashed = diagnosis.kind in (DiagnosisKind.AGENT_ERROR, DiagnosisKind.TRANSIENT)
-    if crashed or not _tool_use_is_observable(records):
+    if crashed:
+        return diagnosis
+    if _is_pi_log(records):
+        if _pi_wrote_output(records):
+            return diagnosis
+        return replace(diagnosis, no_write_tool=True)
+    if not _tool_use_is_observable(records):
         return diagnosis
     tools_used = _tool_names_used(records)
     # empty tools_used also satisfies this when observability is confirmed

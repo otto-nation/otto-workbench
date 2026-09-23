@@ -38,6 +38,9 @@ export default function (pi: ExtensionAPI) {
         `Piping \`${runner}\` into a filter reports the filter's exit status, not the ` +
         `suite's — \`false | tail -1\` exits 0, so a failing run reads as a pass and a ` +
         `\`$?\` read after the pipe is the filter's. Redirect to a file and read the ` +
+        // /tmp specifically, not any path: review-guard refuses a redirect that
+        // writes outside the scratch roots, and a remedy it then refuses leaves
+        // the agent with no command it can run.
         `status, then grep the file: \`${runner} ... > /tmp/out.txt 2>&1\`, then read ` +
         `/tmp/out.txt. Do not append \`; echo $?\` to that — a trailing report becomes ` +
         `the command's own exit status, which is the same masking one statement later, ` +

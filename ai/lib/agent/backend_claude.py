@@ -145,7 +145,7 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 #
 # The Pi backend enforces the same list by a different mechanism, since `--tools`
 # allowlists tool names and cannot bar one bash command: see
-# WRITE_COMMAND_PATTERNS in ai/pi/extensions-cli/review-guard.ts, which this is
+# WRITE_STATEMENT_PATTERNS in ai/pi/extensions-cli/detect.ts, which this is
 # kept in step with. A command added to one belongs in the other.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",
@@ -267,6 +267,12 @@ def prompt(
 
     ``thinking`` and ``provider`` are accepted and dropped, as they are on this
     backend's agent modes: the Claude CLI has a flag for neither.
+
+    Dropping ``thinking`` is why the phase specs' levels were inert for as long
+    as this was the only backend, and why switching the default to Pi — which
+    honours the flag — turned extended thinking on for every phase at once.
+    That is the levels taking effect as written, not a regression, but it is a
+    real part of why a Pi review costs more per turn than a Claude one did.
     """
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,

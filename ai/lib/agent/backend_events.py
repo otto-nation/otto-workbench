@@ -46,6 +46,16 @@ class StreamEvent:
 
 WRITE_TOOL_NAMES = frozenset({"edit", "multiedit", "notebookedit", "write"})
 
+# ── Pi RPC event-type recognition ────────────────────────────────────────────
+#
+# The event types that only Pi's --mode json stream emits, no two of which
+# Claude's stream-json format has an equivalent for. agent.session's
+# `_is_pi_log` keys on this set to tell a Pi RPC log from a Claude one; keep
+# it here rather than re-enumerating it, since a type added to the RPC
+# protocol only needs to widen this set once.
+
+PI_RPC_EVENT_TYPES = frozenset({"tool_execution_start", "turn_end", "agent_end"})
+
 
 def is_write_tool(name: str) -> bool:
     """Whether a tool can put content into a file.
@@ -199,6 +209,34 @@ def pi_write_tool_used(data: dict) -> bool:
         block.get("type") == "toolCall" and is_write_tool(block.get("name", ""))
         for block in content
     )
+
+
+def pi_tool_signature(data: dict) -> str | None:
+    """A stable "which call was this" key for a parsed Pi tool event.
+
+    The tool name and its primary argument, so repeating the *same* read is
+    distinguishable from reading the next file. Returns None for an event that
+    is not a tool invocation, and for one carrying no argument to key on — a
+    signature of the bare tool name would read every `ls` as a repeat.
+
+    Only `tool_execution_start` is read, not the `message_update` blocks
+    `pi_write_tool_used` also accepts: one execution is one event here, where
+    the streaming updates repeat the same call many times over and would count
+    a single read as a loop.
+    """
+    if data.get("type") != "tool_execution_start":
+        return None
+    name = data.get("toolName", "") or data.get("name", "")
+    if not name:
+        return None
+    args = data.get("args") or data.get("input") or {}
+    if not isinstance(args, dict):
+        return None
+    for key in ("path", "command", "pattern", "symbol", "url"):
+        value = args.get(key)
+        if isinstance(value, str) and value:
+            return f"{name}:{key}={value}"
+    return None
 
 
 def parse_pi_cost(data: dict) -> float | None:

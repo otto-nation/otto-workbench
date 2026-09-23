@@ -62,7 +62,7 @@ from core.proc import _kill_group
 from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
-    pi_write_tool_used,
+    pi_tool_signature, pi_write_tool_used,
 )
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -78,6 +78,29 @@ PI_RESEARCH_TOOLS = "web_search,web_fetch,docs_index,go_references,go_call_hiera
 
 PI_AGENT_TOOLS = f"{PI_TOOLS},{PI_GITHUB_TOOLS},{PI_RESEARCH_TOOLS}"
 PI_FIX_TOOLS = f"{PI_TOOLS},{PI_RESEARCH_TOOLS}"
+
+# Pi's nearest equivalent to the Claude backend's `--bare`, which skips hooks,
+# auto-memory and CLAUDE.md discovery (see backend_claude._base_cmd).
+#
+# A dispatched agent is not an interactive session: it gets its instructions
+# from the phase template and its `--skill`, and this machine's AGENTS.md is
+# addressed to a human's session. Measured on this repo, loading it cost ~39k
+# tokens of preamble on every turn of every phase — re-read from cache each
+# turn, and behavioural besides, since an agent handed the interactive rulebook
+# reaches for the interactive workflow. Reviews ran ~2.2x slower and made ~2.1x
+# the tool calls at the same turn count.
+#
+# Both flags are scoped to *discovery*: an explicit `--skill` still loads under
+# `--no-skills`, which is what keeps the agent definition working. `--no-skills`
+# also takes the superpowers bootstrap with it — that package injects through a
+# `context` hook, but only for skills it discovered.
+#
+# `--no-extensions` is deliberately absent. It would strip the package that
+# registers the google-vertex-claude provider along with every gh_*/web_* tool
+# in PI_AGENT_TOOLS, leaving a run with no provider and a truncated toolset.
+# The per-invocation review guard is passed with `--extension`, which keeps
+# working either way.
+BARE_FLAGS = ("--no-context-files", "--no-skills")
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
 # Mirrors AGENTS_SKILLS_DIR in lib/constants.sh, where ai/skills/steps.sh installs.
@@ -176,7 +199,7 @@ def _build_prompt_cmd(
 def _build_agent_cmd(inv: AgentInvocation, extension: str | None = None) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
-        "--tools", PI_AGENT_TOOLS,
+        "--tools", PI_AGENT_TOOLS, *BARE_FLAGS,
     ]
     if inv.agent:
         skill_path = _resolve_skill_path(inv.agent)
@@ -216,7 +239,7 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
     # is the one it declines to.
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
-        "--tools", PI_FIX_TOOLS,
+        "--tools", PI_FIX_TOOLS, *BARE_FLAGS,
     ]
     if inv.provider:
         cmd += ["--provider", inv.provider]
@@ -472,6 +495,46 @@ def _steer_message(warning: str, wrote_output: bool) -> str:
     return f"{warning} {_WRAP_UP if wrote_output else _WRITE_FIRST}"
 
 
+# How many times the identical tool call may repeat before the run is treated
+# as stuck. Three is the first count that cannot be ordinary work: a re-read
+# after an edit is two, and a third identical call with no write in between is
+# the shape of an agent circling. Counted per signature and reset by any write,
+# so an agent making progress never reaches it.
+REPEAT_TOOL_LIMIT = 3
+
+_NO_PROGRESS = (
+    "You have now made the same tool call {count} times without writing "
+    "anything. Whatever you are trying to confirm, you are not going to get it "
+    "this way. Write your output file NOW with the `write` tool, recording what "
+    "you have established and marking the rest as unverified."
+)
+
+
+def _steer_if_looping(
+    process: subprocess.Popen, data: dict, tool_repeats: dict[str, int], prefix: str,
+) -> bool:
+    """Steer a run repeating one tool call with nothing written. True when it did.
+
+    A read-only loop is the one failure the turn and budget caps do not catch
+    in time: both are satisfied by an agent re-reading the same region until it
+    runs out, which is how a run reached its cap having written nothing.
+
+    Steered rather than aborted, because the agent can still write its file
+    with the turns it has left, and one refused step is not a reason to
+    abandon a run that has already cost tokens.
+    """
+    signature = pi_tool_signature(data)
+    if not signature:
+        return False
+    tool_repeats[signature] = tool_repeats.get(signature, 0) + 1
+    count = tool_repeats[signature]
+    if count < REPEAT_TOOL_LIMIT:
+        return False
+    log.warn(f"{prefix}no progress: {signature} repeated {count}x with no write — steering")
+    _send(process, {"type": "steer", "message": _NO_PROGRESS.format(count=count)})
+    return True
+
+
 def _check_limits(
     process: subprocess.Popen,
     turn_count: int, accumulated_cost: float,
@@ -561,6 +624,8 @@ def _consume_stream(
     wrote_output = False
     model = None
     error = None
+    tool_repeats: dict[str, int] = {}
+    nudged_no_progress = False
 
     for raw_line in process.stdout:
         log_file.write(raw_line)
@@ -581,7 +646,14 @@ def _consume_stream(
             continue
 
         prev_tool = _display_event(data, prev_tool, prefix)
-        wrote_output = wrote_output or pi_write_tool_used(data)
+        if pi_write_tool_used(data):
+            # Progress: the agent is no longer circling, so nothing it repeated
+            # before the write counts against it.
+            wrote_output = True
+            tool_repeats.clear()
+
+        if not wrote_output and not nudged_no_progress:
+            nudged_no_progress = _steer_if_looping(process, data, tool_repeats, prefix)
 
         msg_cost = parse_pi_cost(data)
         if msg_cost is not None:

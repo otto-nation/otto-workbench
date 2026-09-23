@@ -25,6 +25,23 @@ The last two are what make the suites run in parallel. Neither is required — w
 them `bin/local/run-tests` falls back to a serial run of the affected suite, which takes
 several minutes rather than well under one.
 
+xdist is injected into the *pipx* pytest, so it is only found when `pytest` resolves
+there. A second pytest earlier on PATH — typically one `pip install`ed into a version
+manager's Python, whose shim directory precedes `~/.local/bin` — shadows it, and the
+suite silently runs serially against an interpreter that never had the plugin. The
+runner reports this rather than just being slow:
+
+```
+⚠  pytest has no xdist plugin: running serially, which is several times slower.
+→   using: ~/.local/share/mise/installs/python/3.12.13/bin/pytest
+→   shadowing: ~/.local/bin/pytest — which does have xdist
+→   fix: remove the shadowing pytest, or put its directory later on PATH
+```
+
+Removing the shadowing copy is usually right — `pip uninstall pytest` in that
+interpreter, then `mise reshim` if it is mise. Reordering PATH instead moves every
+other shim too, which is rarely what you want.
+
 ## Running Tests
 
 ```bash

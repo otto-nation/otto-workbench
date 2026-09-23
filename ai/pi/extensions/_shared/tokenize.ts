@@ -47,6 +47,17 @@ export interface Token {
   /** True for an unquoted control or redirect operator. */
   operator: boolean;
   /**
+   * Where the token starts in the line it was scanned from.
+   *
+   * Carried so a caller reassembling a span can take it from the original text
+   * rather than by joining `raw` with spaces. Rejoining reshapes the command:
+   * `2>&1` scans as four tokens and comes back as `2 > & 1`, which no rule
+   * written against real shell text matches.
+   */
+  start: number;
+  /** One past the token's last character in the line it was scanned from. */
+  end: number;
+  /**
    * True when the word ended in an unterminated quote.
    *
    * Reported rather than smoothed over: an unbalanced quote means the command
@@ -57,10 +68,22 @@ export interface Token {
 }
 
 function token(
-  value: string, raw: string, quoted: boolean,
+  value: string, raw: string, quoted: boolean, start: number, end: number,
   { operator = false, unparsed = false } = {},
 ): Token {
-  return { value, raw, quoted, operator, unparsed };
+  return { value, raw, quoted, operator, unparsed, start, end };
+}
+
+/**
+ * The slice of `line` spanning `tokens`, exactly as it was written.
+ *
+ * The counterpart of the `start`/`end` fields: a caller that needs a run of
+ * tokens back as text takes it from the source rather than rebuilding it, so
+ * spacing, quoting and operator adjacency survive untouched.
+ */
+export function span(line: string, tokens: Token[]): string {
+  if (tokens.length === 0) return "";
+  return line.slice(tokens[0].start, tokens[tokens.length - 1].end);
 }
 
 /**
@@ -104,10 +127,11 @@ export function tokenize(line: string): Token[] {
   let quoted = false;
   let started = false;
   let unparsed = false;
+  let begin = 0;
 
-  const flush = () => {
+  const flush = (end: number) => {
     if (!started) return;
-    tokens.push(token(value, raw, quoted, { unparsed }));
+    tokens.push(token(value, raw, quoted, begin, end, { unparsed }));
     value = "";
     raw = "";
     quoted = false;
@@ -120,6 +144,7 @@ export function tokenize(line: string): Token[] {
 
     if (ch === "'" || ch === '"') {
       const close = closingQuote(line, i);
+      if (!started) begin = i;
       started = true;
       quoted = true;
       if (close === -1) {
@@ -128,13 +153,14 @@ export function tokenize(line: string): Token[] {
         value += line.slice(i + 1);
         raw += line.slice(i);
         unparsed = true;
+        i = line.length;
         break;
       }
-      let span = line.slice(i + 1, close);
+      let content = line.slice(i + 1, close);
       // A backslash escape is live inside double quotes and literal inside
       // single ones, which is the only way the two differ here.
-      if (ch === '"') span = span.replace(/\\([\s\S])/g, "$1");
-      value += span;
+      if (ch === '"') content = content.replace(/\\([\s\S])/g, "$1");
+      value += content;
       raw += line.slice(i, close + 1);
       i = close;
       continue;
@@ -144,6 +170,7 @@ export function tokenize(line: string): Token[] {
       // An escaped character is content, including an escaped quote or space.
       // `\rm` is `rm` with `quoted` set, which is what stops the escape being a
       // way to spell a write the command-name rules do not recognise.
+      if (!started) begin = i;
       if (i + 1 < line.length) {
         value += line[i + 1];
         raw += ch + line[i + 1];
@@ -159,7 +186,7 @@ export function tokenize(line: string): Token[] {
     }
 
     if (/\s/.test(ch)) {
-      flush();
+      flush(i);
       continue;
     }
 
@@ -167,17 +194,18 @@ export function tokenize(line: string): Token[] {
     // but only unquoted — a quoted one has already been consumed above.
     const op = matchOperator(line, i);
     if (op) {
-      flush();
-      tokens.push(token(op, op, false, { operator: true }));
+      flush(i);
+      tokens.push(token(op, op, false, i, i + op.length, { operator: true }));
       i += op.length - 1;
       continue;
     }
 
+    if (!started) begin = i;
     value += ch;
     raw += ch;
     started = true;
   }
-  flush();
+  flush(line.length);
   return tokens;
 }
 

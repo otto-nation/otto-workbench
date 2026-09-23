@@ -414,6 +414,43 @@ _tok() {
   [ "$output" = "-:bash -:-c U:rm -rf x" ]
 }
 
+@test "statements: a separator inside quotes does not split the statement" {
+  # The bypass this whole change exists to close. `statements()` split on the
+  # `;` inside the payload, and neither fragment parsed as a shell wrapper or
+  # as a write — so appending `; true` to any refused command defeated the
+  # guard entirely.
+  run node --input-type=module -e "
+    const { statements } = await import('$REPO_ROOT/ai/pi/extensions/_shared/statements.ts');
+    process.stdout.write(JSON.stringify(statements(process.argv[1])));
+  " -- "bash -c 'rm -rf x; echo done'"
+  [ "$output" = '["bash -c '\''rm -rf x; echo done'\''"]' ]
+}
+
+@test "statements: a quoted word equal to a separator is an argument" {
+  # `echo ';'` tokenizes to a word whose *value* is `;`. Splitting on the value
+  # rather than on the operator flag cuts the statement in two and loses the
+  # command — the flag is what distinguishes syntax the shell acts on from a
+  # separator character passed along as an argument.
+  run node --input-type=module -e "
+    const { statements } = await import('$REPO_ROOT/ai/pi/extensions/_shared/statements.ts');
+    process.stdout.write(JSON.stringify(statements(process.argv[1])));
+  " -- "grep ';' f"
+  [ "$output" = '["grep '\'';'\'' f"]' ]
+}
+
+# passes-at-base: the char-splitter special-cased `2>&1` too, so this held before the rewrite; the case pins that the token-based split did not lose it, and it fails if the redirect-adjacency check or the source-slice reassembly is dropped
+@test "statements: a redirect's & is not a statement separator" {
+  # `2>&1` scans as four tokens, and cutting at that `&` shatters the statement
+  # it sits inside. Reassembled from the source line, not by joining tokens
+  # with spaces — a rejoin returns `2 > & 1`, which no rule written against
+  # real shell text matches.
+  run node --input-type=module -e "
+    const { statements } = await import('$REPO_ROOT/ai/pi/extensions/_shared/statements.ts');
+    process.stdout.write(JSON.stringify(statements(process.argv[1])));
+  " -- 'pytest > /tmp/o.txt 2>&1'
+  [ "$output" = '["pytest > /tmp/o.txt 2>&1"]' ]
+}
+
 @test "tokenize: a file descriptor stays a word of its own" {
   # 2>&1 is `2`, `>`, `&`, `1`. Callers rely on this shape to tell a redirect
   # with no destination from one that names a file.

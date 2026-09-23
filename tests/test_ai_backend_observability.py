@@ -105,13 +105,13 @@ class TestBuildFixCmd:
 
     def test_both_backends_bar_the_same_git_commands(self):
         """Two spellings of one rule: `--tools` allowlists tool names and cannot
-        bar a single bash command, so Pi enforces this in `review-guard.ts`
-        instead. The lists drifting is how one backend quietly keeps a command
-        the other denies."""
+        bar a single bash command, so Pi enforces this in `detect.ts`, the
+        predicate review-guard.ts calls. The lists drifting is how one backend
+        quietly keeps a command the other denies."""
         guard = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
-                 / "pi" / "extensions-cli" / "review-guard.ts").read_text()
+                 / "pi" / "extensions-cli" / "detect.ts").read_text()
         pattern = re.search(r"git\\s\+\(\?:([a-z|\-]+)\)", guard)
-        assert pattern, "review-guard.ts no longer spells its git denies as one alternation"
+        assert pattern, "detect.ts no longer spells its git denies as one alternation"
         pi_denied = set(pattern.group(1).split("|"))
 
         claude_denied = {

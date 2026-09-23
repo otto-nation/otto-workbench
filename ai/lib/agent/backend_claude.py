@@ -145,7 +145,7 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 #
 # The Pi backend enforces the same list by a different mechanism, since `--tools`
 # allowlists tool names and cannot bar one bash command: see
-# WRITE_COMMAND_PATTERNS in ai/pi/extensions-cli/review-guard.ts, which this is
+# WRITE_STATEMENT_PATTERNS in ai/pi/extensions-cli/detect.ts, which this is
 # kept in step with. A command added to one belongs in the other.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",

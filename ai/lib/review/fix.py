@@ -50,7 +50,8 @@ from pathlib import Path
 from fix import engine as fix_engine
 from fix import types as fix_types
 from fix import verify as fix_verify
-from core import log
+from core import log, publishing
+from git import client as git_client
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
@@ -530,12 +531,46 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     findings = [f for f in doc.open_findings if not f.declined]
     if not findings:
         log.info("No findings left to fix — skipping fix pass")
+        _report_unpushed(job)
         return
 
     run = fix_engine.run(
         ReviewFixAdapter(job, findings), trail=trail, verify=fix_verify.run,
     )
     _record_commit(job, run)
+
+
+def _report_unpushed(job: ReviewJob) -> None:
+    """Say when a pass that published nothing leaves the branch ahead anyway.
+
+    `--post` is a gate on what this pass publishes, and the only thing it ever
+    publishes is its own fix commit — which `land` makes and pushes together,
+    inside a pass that a review with nothing left to fix returns before
+    reaching. So a clean review under `--post` pushes nothing, correctly, and
+    says nothing about it either. That silence is the defect: the operator's own
+    commits are the usual reason a branch is ahead here, and a run that reports
+    success while the remote is behind reads as a branch that shipped.
+
+    Reporting rather than pushing. This pass did not make those commits and does
+    not know what they are for — pushing a branch it never touched is a larger
+    claim than the flag makes, and a worse failure than the one it would fix.
+    Naming the gap costs a line and leaves the decision where it belongs.
+
+    Silent when publishing is off: a held gate is a run that was never going to
+    push, so an unpushed branch is the outcome that was asked for.
+    """
+    if not publishing.enabled():
+        return
+    # No upstream is a branch that has never been pushed, which `commits_ahead`
+    # reads as 0 — the same answer as "nothing to say", and the right one here:
+    # a branch with no remote is not a branch whose remote is behind.
+    ahead = git_client.commits_ahead(cwd=job.wt_path, target_ref="@{u}")
+    if ahead:
+        log.warn(
+            f"This pass pushed nothing — it had no fixes to make — but the "
+            f"branch is {ahead} commit{'s' if ahead != 1 else ''} ahead of its "
+            f"remote. Push them yourself if they are meant to be published."
+        )
 
 
 def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:

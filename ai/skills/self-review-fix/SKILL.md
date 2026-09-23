@@ -182,8 +182,17 @@ Confirm the push landed rather than assuming it did — a drafted push prints
 `DRAFT (not published)`, a gate failure fails the push without touching the
 commit, and a push git reports as successful can still leave `HEAD` and
 `@{u}` diverged if the remote didn't actually hold the commit or couldn't be
-asked to confirm it. The check below can't tell those apart, but the fix is
-the same either way — push again:
+asked to confirm it.
+
+A clean review is the fourth way, and the easiest to misread as success:
+`--push` publishes the pass's *own fix commit*, so a review with nothing left
+to fix makes no commit, pushes nothing, and is right not to. Any commits you
+made before running it are still local. The pass now says so — `This pass
+pushed nothing ... but the branch is N commits ahead of its remote` — but it
+only reports; pushing a branch it never touched is not its call.
+
+The check below can't tell these apart, but the fix is the same either way —
+push again:
 
 ```bash
 git rev-parse HEAD; git rev-parse @{u}

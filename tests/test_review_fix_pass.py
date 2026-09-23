@@ -33,6 +33,7 @@ from review import fix as review_fix
 from review import grammar as review_grammar
 from review import paths as review_paths
 from review import types as review_types
+from core import publishing
 from core.proc import TIMEOUT_RETURNCODE, CmdResult
 from core.phases import Effort, Phase
 from pr import attribution
@@ -1384,6 +1385,97 @@ class TestRunFixPassWhenTheSnapshotFails:
         _run(job, {"M1": "fixed"}, work=agent_run)
 
         assert Path(job.review_file).read_text() == self.REVIEW
+
+
+class TestAPassWithNothingToFix:
+    """What a run says when the review is clean and the branch is not.
+
+    `--post` gates what this pass publishes, and the only thing it publishes is
+    its own fix commit — which a review with nothing left to fix never makes. So
+    the push is skipped correctly and silently, while the operator's own commits
+    sit unpushed and the run reports success. Twice in one session that read as
+    a branch that had shipped.
+    """
+
+    CLEAN = "## Must fix\n- [x] **[M1]** `helper.py:1` — Missing helper\n"
+
+    @staticmethod
+    def _with_upstream(git_wt, tmp_path, *, ahead: int):
+        """Give the worktree a remote it is *ahead* commits in front of."""
+        remote = tmp_path / "remote.git"
+        git_out(remote.parent, "init", "-q", "--bare", str(remote))
+        git_out(git_wt, "remote", "add", "origin", str(remote))
+        git_out(git_wt, "push", "-q", "-u", "origin", "main")
+        for n in range(ahead):
+            (git_wt / f"local{n}.py").write_text("x\n")
+            git_out(git_wt, "add", "-A")
+            git_out(git_wt, "commit", "-qm", f"local work {n}")
+
+    def test_it_says_the_branch_is_ahead_of_its_remote(
+        self, git_wt, tmp_path, capsys, monkeypatch,
+    ):
+        """The gap itself: nothing to push, and commits nobody pushed."""
+        monkeypatch.setattr(publishing, "enabled", lambda: True)
+        self._with_upstream(git_wt, tmp_path, ahead=2)
+        job = _make_job(git_wt, tmp_path, self.CLEAN)
+
+        review_fix.run_fix_pass(job)
+
+        err = capsys.readouterr().err
+        assert "2 commits ahead of its remote" in err
+        assert "pushed nothing" in err
+
+    def test_one_commit_is_not_reported_in_the_plural(
+        self, git_wt, tmp_path, capsys, monkeypatch,
+    ):
+        monkeypatch.setattr(publishing, "enabled", lambda: True)
+        self._with_upstream(git_wt, tmp_path, ahead=1)
+
+        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+
+        assert "1 commit ahead" in capsys.readouterr().err
+
+    # passes-at-base: asserts the line is absent, and at base it is always absent
+    def test_a_branch_level_with_its_remote_says_nothing(
+        self, git_wt, tmp_path, capsys, monkeypatch,
+    ):
+        """The ordinary clean run must not grow a line that means nothing."""
+        monkeypatch.setattr(publishing, "enabled", lambda: True)
+        self._with_upstream(git_wt, tmp_path, ahead=0)
+
+        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+
+        assert "ahead of its remote" not in capsys.readouterr().err
+
+    # passes-at-base: asserts the line is absent, and at base it is always absent
+    def test_a_branch_that_was_never_pushed_says_nothing(
+        self, git_wt, tmp_path, capsys, monkeypatch,
+    ):
+        """No upstream is not a remote that is behind.
+
+        `commits_ahead` reads an unresolvable ref as 0, which is the right
+        answer here rather than a coincidence worth working around: a branch
+        with no remote is not a branch whose remote is missing commits.
+        """
+        monkeypatch.setattr(publishing, "enabled", lambda: True)
+
+        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+
+        assert "ahead of its remote" not in capsys.readouterr().err
+
+    # passes-at-base: asserts the line is absent, and at base it is always absent
+    def test_a_held_gate_says_nothing(self, git_wt, tmp_path, capsys, monkeypatch):
+        """A run that was never going to push has nothing to report.
+
+        Without `--post` the unpushed branch is the outcome that was asked for,
+        and warning about it would fire on every local `--fix` run.
+        """
+        monkeypatch.setattr(publishing, "enabled", lambda: False)
+        self._with_upstream(git_wt, tmp_path, ahead=2)
+
+        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+
+        assert "ahead of its remote" not in capsys.readouterr().err
 
 
 # ── the parsers the pass reads its work set through ─────────────────────────

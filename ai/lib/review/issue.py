@@ -24,11 +24,9 @@ from core import timeouts
 from config import workbench_config
 from config import workbench_config_write
 from config.workbench_config import yaml_dump
-# One fact, one owner. `pr.target` names the public instance for the URL
-# builders and this module needs the same answer: a host equal to it adds
-# nothing to what gh resolves by default, so it is normalised away rather than
-# qualifying every ``--repo`` with it. Spelled twice, the two are a pair to keep
-# in step for no reason either file states.
+# Imported rather than spelled again: see `pr.target` for what the value is.
+# Here it is the host that adds nothing to gh's own resolution, so a base_url
+# naming it is normalised away instead of qualifying every ``--repo``.
 from pr.target import PUBLIC_GITHUB_HOST
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")

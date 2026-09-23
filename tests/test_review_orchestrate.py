@@ -2877,6 +2877,53 @@ class TestCleanupScope:
             ro._run_orchestrate(MagicMock(), args, "org/repo", str(review_dir / "session.jsonl"))
         return review_dir
 
+    def _host_for_origin(self, ro, monkeypatch, tmp_path, identity):
+        """The host `_run_orchestrate` puts on the job, for a given origin read.
+
+        Captured off the `ReviewJob` rather than read back from `meta.json`:
+        the faked pipeline writes that file itself, so the sidecar on disk is
+        the fake's and says nothing about what the run resolved.
+        """
+        seen = {}
+
+        def _capture(job, **_kwargs):
+            seen["host"] = job.host
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}\n")
+
+        monkeypatch.setattr(
+            ro.pr_target, "repo_identity_from_origin", lambda *a, **k: identity)
+        self._run(ro, monkeypatch, tmp_path, pipeline=_capture)
+        return seen["host"]
+
+    def test_the_origins_host_is_stamped_when_it_names_the_same_repo(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """The ordinary run: `--repo` and the checkout's origin agree."""
+        identity = ro.pr_target.RepoIdentity(
+            label="org/repo", key="org-repo", host="ghe.acme.com")
+        assert self._host_for_origin(
+            ro, monkeypatch, tmp_path, identity) == "ghe.acme.com"
+
+    def test_an_origin_naming_another_repo_does_not_lend_its_host(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """A host is evidence about the remote it was read from, and no other.
+
+        `--repo` may name a repo the checkout is not — a fork, or a scratch
+        tree with an unrelated origin. Stamping that origin's forge onto this
+        review renders every permalink on an instance the reviewed repo is not
+        served from, which is worse than the generic default: a wrong
+        enterprise link looks authoritative and 404s.
+        """
+        identity = ro.pr_target.RepoIdentity(
+            label="other/elsewhere", key="other-elsewhere", host="ghe.acme.com")
+        assert self._host_for_origin(ro, monkeypatch, tmp_path, identity) == ""
+
+    # passes-at-base: a checkout with no origin had no host to stamp before this change either
+    def test_no_origin_leaves_the_host_unset(self, ro, monkeypatch, tmp_path):
+        assert self._host_for_origin(ro, monkeypatch, tmp_path, None) == ""
+
     def test_the_fix_passes_leavings_do_not_outlive_the_run(
         self, ro, monkeypatch, tmp_path,
     ):

@@ -428,8 +428,12 @@ report_for() {
   # and an empty PATH breaks bats before the assertion is reached.
   local bare="$TMPDIR/bare-path"
   mkdir -p "$bare"
+  # bash is linked alongside the coreutils bats reaches for: the function under
+  # test needs none of them (warn and info are builtins), but bats' own helpers
+  # do, and an interpreter resolved from the ambient PATH rather than this one
+  # is a dependency that would break silently if bats ever looked it up afresh.
   local tool
-  for tool in mktemp cat rm mkdir sed grep; do
+  for tool in bash mktemp cat rm mkdir sed grep; do
     ln -sf "$(command -v "$tool")" "$bare/$tool"
   done
   [ ! -e "$bare/pytest" ]

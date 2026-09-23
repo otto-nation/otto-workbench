@@ -521,11 +521,12 @@ without `--post` the revised body is drafted to stderr and the PR is untouched.
 records nothing, where a draft still records that the pass ran. `pr fix`
 forwards `--post` to the description for this reason, and forwards nothing else.
 
-The template is read from the first of `.github/pull_request_template.md`,
-`.github/PULL_REQUEST_TEMPLATE.md`, `pull_request_template.md`, or
-`PULL_REQUEST_TEMPLATE.md`. Repos with no file at any of these four paths silently
-get the built-in fallback (Summary / Changes / Testing only); a differently-named
-template file is not detected.
+The template is resolved by `ai/lib/core/pr_template.py`, which owns the candidate
+list for every caller — this command, `task pr:create`, and the SessionStart context
+line. It checks `pull_request_template.md`, in either case, in `.github/`, the repo
+root, and `docs/`, and takes the first that exists. A repo with none of them gets the
+built-in fallback (Summary / Changes / Testing only). A differently-named template,
+and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
 
 **Push status in `pr status`:**
 

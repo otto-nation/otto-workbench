@@ -63,7 +63,7 @@ tasks:
     # anything runs this body under errexit.
     #
     # The loop is a witness set, not the closure of what a task reaches.
-    # Three of the five stand for a directory the pin must supply at all:
+    # Three of the six stand for a directory the pin must supply at all:
     # lib/ai/core.sh for lib/ai, lib/conventions.sh for the rest of lib, and
     # ai/lib/git/push.py for the ai/ tree the installed symlink farm has no
     # link to. The fourth stands for a silence: lib/config_cli.py is read at
@@ -82,6 +82,13 @@ tasks:
     # `.` lines, just as the excluded modules do, but through the same
     # WORKBENCH_ROOT indirection the other four are listed for.
     #
+    # The sixth, ai/lib/core/pr_template.py, is a third failure mode next to
+    # the silent and the late: pr.sh:317 reaches it mid-run, through
+    # $WORKBENCH_ROOT, and a missing file fails inside python3 with its own
+    # error path — _pr_load_template prints "Could not resolve this repo's
+    # PR template" and returns 1, rather than losing a value silently
+    # (config_cli.py) or failing deep inside a later stage (push.py).
+    #
     # The modules a task names itself are otherwise absent, as are
     # lib/git_remote.sh and lib/ai/compact_diff.sh behind them. Each fails
     # while the body's first three `.` lines run, before git, the AI or any
@@ -98,7 +105,7 @@ tasks:
           /*) ;;
           *) echo "WORKBENCH_LIB_DIR must be an absolute path: $WORKBENCH_LIB_DIR" >&2; exit 1 ;;
         esac
-        for _f in lib/ai/core.sh lib/gitenv.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py; do
+        for _f in lib/ai/core.sh lib/gitenv.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py ai/lib/core/pr_template.py; do
           if [ ! -f "$WORKBENCH_LIB_DIR/$_f" ]; then
             echo "WORKBENCH_LIB_DIR does not contain $_f: $WORKBENCH_LIB_DIR" >&2
             exit 1

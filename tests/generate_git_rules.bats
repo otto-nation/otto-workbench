@@ -163,4 +163,34 @@ _write_conventions() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"CONVENTIONS_SH"* ]]
   [[ "$output" == *"GIT_RULES_OUTPUT"* ]]
+  [[ "$output" == *"PR_TEMPLATE_PY"* ]]
+}
+
+# PR_TEMPLATE_PY overrides which module the generator asks for the fallback
+# template, the same way CONVENTIONS_SH overrides the constants source.
+@test "the fallback template comes from PR_TEMPLATE_PY when overridden" {
+  cat > "$TMPDIR/pr_template.py" <<'EOF'
+import sys
+if "--fallback" in sys.argv:
+    print("## Custom Fallback")
+EOF
+  run env PR_TEMPLATE_PY="$TMPDIR/pr_template.py" GIT_RULES_OUTPUT="$OUT" \
+    "$GENERATOR" --quiet
+  [ "$status" -eq 0 ]
+  run grep -cF "Custom Fallback" "$OUT"
+  [ "$output" -ge 1 ]
+}
+
+# A PR_TEMPLATE_PY that cannot answer --fallback is a missing source of truth,
+# like an unreadable conventions file, and must abort with its own message
+# rather than rendering rules with a blank or stale fallback section.
+@test "a PR_TEMPLATE_PY that prints no fallback is reported, not swallowed" {
+  cat > "$TMPDIR/pr_template.py" <<'EOF'
+import sys
+sys.exit(0)
+EOF
+  run env PR_TEMPLATE_PY="$TMPDIR/pr_template.py" GIT_RULES_OUTPUT="$OUT" \
+    "$GENERATOR" --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not read the fallback PR template from $TMPDIR/pr_template.py"* ]]
 }

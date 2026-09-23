@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""SessionStart hook: inject reuse level, ceiling scan nudge, and issue tracker.
+"""SessionStart hook: reuse level, ceiling nudge, issue tracker, PR template.
 
-Four responsibilities, in the order main() handles them:
+Five responsibilities, in the order main() handles them:
 1. Emit the active reuse level as session context
 2. Register the repo in the project registry
 3. Run ceiling-scan --json; if no-trigger markers exist, nudge
 4. Emit the repo's issue tracker, configured or not
+5. Emit the repo's PR template and the sections it requires
 
 The registration rides along here because this hook already resolves the repo
 root for the ceiling scan, so it costs nothing extra and it is the cheapest
@@ -41,6 +42,7 @@ sys.path.insert(0, str(BIN_DIR))
 # belongs behind them, like ai/lib already is.
 sys.path.insert(0, str(BIN_DIR.parents[2] / "lib"))
 
+from core import pr_template  # noqa: E402
 from core import proc  # noqa: E402
 from core import timeouts  # noqa: E402
 from config import workbench_projects  # noqa: E402
@@ -125,6 +127,32 @@ def _issues_line(repo: str) -> str:
     return f"Issue tracker: {provider}"
 
 
+def _pr_template_line(repo: str) -> str:
+    """Which PR template this repo ships, and what sections it requires.
+
+    A derived fact, not a configured one — and that is why it is emitted rather
+    than left to be looked up. The template is six `stat` calls away, so every
+    session that opens or updates a PR rediscovered it: grep `.github/`, read
+    the file, infer the headers. Once per session, for an answer that does not
+    change within one.
+
+    Recording it in `.workbench.yml` instead would cache a filesystem fact in a
+    second place and be wrong the moment someone added, moved or deleted the
+    file. So the line is derived on every session start, from the same
+    `core.pr_template` that `task pr:create` and `pr describe` resolve through
+    — what the agent is told and what the automation enforces cannot disagree.
+
+    The headers are named, not just the path. The path alone is another lookup;
+    the sections are what an agent writing a PR body actually needs, and they
+    are short enough to spend the context on.
+    """
+    template = pr_template.load(Path(repo))
+    sections = ", ".join(template.headers) or "no sections"
+    if not template.found:
+        return f"PR template: none in this repo — use the fallback ({sections})"
+    return f"PR template: {template.path} ({sections})"
+
+
 def main() -> None:
     lines: list[str] = []
 
@@ -145,6 +173,7 @@ def main() -> None:
 
     if repo:
         lines.append(_issues_line(repo))
+        lines.append(_pr_template_line(repo))
 
     if lines:
         print("\n".join(lines))

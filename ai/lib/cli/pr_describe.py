@@ -27,6 +27,7 @@ from gh import client as gh_client
 from git import client as git_client
 from git import topology as git_topology
 from core import log
+from core import pr_template
 from core import publishing
 from core import run_lock
 from pr import context as pr_context
@@ -40,18 +41,6 @@ from core.trail import Trail, add_trail_args
 # name. Spelled out rather than derived, so the shim can be renamed only by
 # changing the name in both places at once.
 SCRIPT = "pr-describe"
-
-# GitHub's recognised template locations, in the order GitHub itself resolves
-# them. Mirrors _pr_load_template in lib/ai/pr.sh, which serves `task pr:create`
-# from bash — keep the two lists in step.
-_TEMPLATE_PATHS = (
-    ".github/pull_request_template.md",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    "pull_request_template.md",
-    "PULL_REQUEST_TEMPLATE.md",
-)
-
-_FALLBACK_TEMPLATE = "## Summary\n\n## Changes\n\n## Testing"
 
 # The model says this, alone, when the body already conforms. Anything else is
 # taken as the replacement body.
@@ -72,15 +61,6 @@ def _git(cwd: Path, *args: str) -> str:
         log.warn(f"git {' '.join(args)} failed: {r.detail}")
         return ""
     return r.stdout.strip()
-
-
-def _load_template(wt_path: Path) -> tuple[str, str]:
-    """Return (template, relative path). Path is "" when none is checked in."""
-    for candidate in _TEMPLATE_PATHS:
-        path = wt_path / candidate
-        if path.is_file():
-            return path.read_text(), candidate
-    return _FALLBACK_TEMPLATE, ""
 
 
 def _fetch_pr_body(repo: str, pr_number: int) -> tuple[str, str] | None:
@@ -225,7 +205,7 @@ def run_describe(
             f"Description already written for {git_client.abbrev(ctx.head_sha)} — skipping")
         return 0
 
-    template, template_path = _load_template(wt_path)
+    template = pr_template.load(wt_path)
     fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
     if fetched is None:
         if trail:
@@ -239,7 +219,7 @@ def run_describe(
     changed_files = _git(wt_path, "diff", "--name-only", f"origin/{base}...HEAD")
 
     prompt = _build_prompt(
-        template, bool(template_path), title, body, commits, changed_files,
+        template.text, template.found, title, body, commits, changed_files,
     )
     answer = agent_invoke.run_prompt(
         Phase.DESCRIBE, prompt,
@@ -256,7 +236,7 @@ def run_describe(
     if raw == _NO_CHANGE:
         log.info("Description already matches the template — no change")
         _persist(wt_path, ctx, DescribeSummary(
-            head_sha=ctx.head_sha, template_path=template_path,
+            head_sha=ctx.head_sha, template_path=template.path,
             changed=False, updated_at=pr_state.now_iso(),
         ))
         return 0
@@ -286,15 +266,15 @@ def run_describe(
         return 1
 
     if applied:
-        log.info(f"Revised PR description against {template_path or 'the default template'}")
+        log.info(f"Revised PR description against {template.path or 'the default template'}")
         if trail:
             trail.info("describe", "description revised",
-                       data={"template": template_path, "head_sha": ctx.head_sha})
+                       data={"template": template.path, "head_sha": ctx.head_sha})
     # Recorded either way: a draft still reflects a real revision the AI
     # produced at this HEAD, so a repeated run before `--post` should not
     # re-earn the AI call — see the module docstring's commit-awareness note.
     _persist(wt_path, ctx, DescribeSummary(
-        head_sha=ctx.head_sha, template_path=template_path,
+        head_sha=ctx.head_sha, template_path=template.path,
         changed=True, updated_at=pr_state.now_iso(),
     ))
     return 0

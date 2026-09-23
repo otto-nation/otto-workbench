@@ -20,6 +20,7 @@ Options:
 Environment overrides (used in tests):
   CONVENTIONS_SH      path to conventions.sh
   GIT_RULES_OUTPUT    output file path
+  PR_TEMPLATE_PY      path to ai/lib/core/pr_template.py
 EOF
 }
 
@@ -30,6 +31,7 @@ QUIET=false
 
 CONVENTIONS_SH="${CONVENTIONS_SH:-"$REPO_ROOT/lib/conventions.sh"}"
 OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
+PR_TEMPLATE_PY="${PR_TEMPLATE_PY:-"$REPO_ROOT/ai/lib/core/pr_template.py"}"
 
 # Sourced rather than grepped, the way every other reader of the file does it
 # (`lib/ai/core.sh`, `bin/local/check-surface-compat`, `git/bin/generate-changelog`).
@@ -50,6 +52,23 @@ for _const in COMMIT_TYPES COMMIT_HEADER_MAX_LEN COMMIT_BODY_MAX_LEN \
     exit 1
   fi
 done
+
+# The fallback PR template, read from the module that owns it rather than
+# written out here. The rules tell an agent which sections to write when a repo
+# ships no template of its own, and `task pr:create` fills those same sections
+# on that same repo — a second copy here is the two disagreeing about what a
+# templateless PR looks like.
+#
+# `--fallback` rather than a resolution against an empty directory: the module
+# is asked for the constant it owns, with no temp directory to clean up and no
+# filter whose exit status would replace its own. An unreadable module aborts
+# under errexit, like the conventions guards above — that is a missing source of
+# truth, not a missing constant.
+FALLBACK_TEMPLATE=$(python3 "$PR_TEMPLATE_PY" --fallback)
+if [[ -z "$FALLBACK_TEMPLATE" ]]; then
+  err "Could not read the fallback PR template from $PR_TEMPLATE_PY"
+  exit 1
+fi
 
 # Build comma-separated and bullet-list type displays
 TYPES_DISPLAY=$(echo "$COMMIT_TYPES" | tr ' ' ', ')
@@ -109,12 +128,9 @@ _budget_line() {
     "- Always create PRs via \`task pr:create\` — see \`git-operations.md\` § PR Creation for the full invocation and flags." \
     "- When a repo has a PR template, its section headers are required — do not substitute or invent sections. The fallback template below is ONLY for repos with no project template:" \
     "" \
-    '```markdown' \
-    "## Summary" \
-    "" \
-    "## Changes" \
-    "" \
-    "## Testing" \
+    '```markdown'
+  printf '%s\n' "$FALLBACK_TEMPLATE"
+  printf '%s\n' \
     '```' \
     "" \
     "### Single-commit PRs" \

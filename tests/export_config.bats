@@ -15,7 +15,6 @@ setup_file() {
   export WORKBENCH_DIR="$REPO_ROOT"
   export WORKBENCH_STABLE_DIR="$REPO_ROOT"
   export NO_COLOR=1
-  export WORKBENCH_SKIP_GENERATE=1
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/ui.sh"
   # shellcheck source=/dev/null

@@ -55,6 +55,15 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 - To supply a custom title and/or body: `task --global pr:create -- --no-issue --draft --title "feat: title" --body "description"` — when both are provided, AI generation is skipped entirely; when only one is provided, the other is still AI-generated. Use `--body-file /path/to/file` instead of `--body` for multi-line or complex content
 - When the current working directory is not the target repo (e.g., running from a different worktree), pass `REPO_DIR`: `task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue --draft` — without this, git commands run against the CWD repo instead of the intended one
 
+## The PR Template
+
+- The SessionStart context line answers which template this repo ships and what sections it requires: a repo with one shows `PR template: {path} ({sections})`; a repo without shows `PR template: none in this repo — use the fallback (## Summary, ## Changes, ## Testing)`. Read it rather than grepping `.github/` — the line and `pr:create` resolve through the same `ai/lib/core/pr_template.py`, so the path and sections it names are the ones the automation found
+- What the line says and what `pr:create` *enforces* are not the same thing. A body is checked against the template's headers only where the repo ships one: `_pr_check_body_against_template` returns without checking when there is no template, so the fallback sections are what to write, not a gate that will stop you
+- When no such line is in your context, the harness you are running in has no SessionStart hook — that is Claude Code's, and its absence says nothing about the repo. Check the six paths below, then stop; that is a bounded check, not the open-ended hunt the line exists to save
+- Six paths are resolved, in this order: `pull_request_template.md` in `.github/`, then the repo root, then `docs/`, each in either case. The first that exists wins, and `ai/lib/core/pr_template.py` owns the list for every caller that resolves it in code — bash included, which asks it rather than globbing
+- Those six are GitHub's single-file form, not everything GitHub honours. A `PULL_REQUEST_TEMPLATE/` directory of several templates, and the `.txt` spelling, are both real and neither is resolved — GitHub picks between multiple templates by query parameter, which a resolver reading a checkout cannot do. In a repo using that form the line will say there is no template while one exists, so trust the directory over the line when you find one
+- There is no config key for this and there should not be. The template is six `stat` calls away in the checkout, and a path recorded in `.workbench.yml` is a second answer that goes stale the moment someone adds, moves, or deletes the file
+
 ## Replying to Review Comments
 
 - Back every factual claim in a reply with a link to the code. Use a blob permalink pinned to a SHA (`https://github.com/<owner>/<repo>/blob/<sha>/<path>#L<line>`) or a commit link — never a branch-relative URL, which drifts as the branch moves

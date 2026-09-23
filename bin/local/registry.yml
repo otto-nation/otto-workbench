@@ -194,10 +194,25 @@ tools:
     visibility: brief
     description: "Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection"
 
+  - name: select-pytest
+    permission: false
+    visibility: brief
+    description: "Emits the pytest files affected by a set of changed paths, resolved through the import graph — the pytest counterpart of select-tests"
+
+  - name: claim-job-slots
+    permission: false
+    visibility: brief
+    description: "Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them"
+
   - name: validate-test-deps
     permission: false
     visibility: brief
     description: "Validates that every bats test has resolvable source refs or is in the always-run list"
+
+  - name: validate-pytest-deps
+    permission: false
+    visibility: brief
+    description: "Validates that every pytest file resolves deps through the import graph or is declared unmappable"
 
   - name: check-surface-compat
     permission: false

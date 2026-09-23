@@ -29,8 +29,9 @@ several minutes rather than well under one.
 
 ```bash
 task gate          # the whole pre-push gate, exactly as pushing runs it
-task test          # run both suites (bats, then pytest)
-task test:pytest   # run only the pytest suite
+task test          # the tests your branch can affect (bats, then pytest)
+task test:all      # every test, selection off
+task test:pytest   # only the pytest suite, still selected
 task lint          # ShellCheck all shell scripts
 ```
 
@@ -47,20 +48,40 @@ read as a pass: `bin/local/run-tests | tail -40` reports `tail`'s exit status an
 not the suite's, and deciding pass/fail by grepping output for `✗` reads text
 where there is a status to check.
 
-Both test targets go through `bin/local/run-tests`, which owns the parallelism settings for the whole
-repo — the Taskfile, the pre-push hook, and CI all call it rather than spelling the flags
-out themselves. It sizes the run from the cores the machine is *not* already using — the
-core count less the one-minute load average, floored at 2 and capped at 12 — so a suite
-started beside another one takes the share that one left rather than oversubscribing the
-box. Set `TEST_JOBS` to take the sizing back, and `TEST_JOBS=1` to get the serial ordering
+`task test` runs only what your branch can reach, through `bin/local/select-tests` and
+`bin/local/select-pytest`. On this repo's recent history that is a median of 45 of 154
+bats files and 28 of 187 pytest files. A change to shared infrastructure — `conftest.py`,
+`test_helper.bash`, `run-tests` itself — selects everything, and so does a selector that
+fails or cannot narrow: failing towards the whole suite is the only safe direction, since
+a selection that silently narrowed to nothing would report green having run no tests.
+Reach for `task test:all` when you suspect the map rather than the code.
+
+Every test target goes through `bin/local/run-tests`, which owns the parallelism settings
+for the whole repo — the Taskfile, the pre-push hook, and CI all call it rather than
+spelling the flags out themselves. It asks for one job per core, capped at 12, and claims
+that many slots from a machine-wide pool under `~/.local/state/workbench/test-slots/`.
+A slot is *held* for the length of the run, so a suite starting beside another one sees
+what that one is holding rather than what the load average has got round to reporting:
+three concurrent runs on an 18-core box get 12, 5 and 2. Set `TEST_JOBS` to take the
+sizing back — which also skips the pool — and `TEST_JOBS=1` to get the serial ordering
 when bisecting a test that only fails under concurrency.
 
-Sizing from load is what keeps concurrent whole-suite runs honest. Neither suite fails
-gracefully when it cannot get scheduled: a subprocess that never runs surfaces as a
-timeout, a SIGPIPE, or a git daemon that will not answer, and none of those name the
-machine as the cause. When one does slip through, the shared runner in `tests/conftest.py`
-raises `MachineContention` rather than a plain assertion and says so in the message — a
-failure carrying that text is a machine to re-run on, not a defect to bisect.
+The pool replaced sizing from the one-minute load average, which could not work: two
+suites launched within a minute of each other both read an idle machine and both took the
+cap, so 24 heavy processes landed on 18 cores. Measured here, the bats suite takes 299s
+at 12 jobs and 377s when a concurrent run has pushed it to 7.
+
+A run that finds every slot taken proceeds at the floor of 2 rather than queueing. That
+overshoot is deliberate: waiting would make the third worktree's pre-push sit silent for
+the length of two suites, which is how people learn `--no-verify`.
+
+Bounding the oversubscription is what keeps concurrent whole-suite runs honest.
+Neither suite fails gracefully when it cannot get scheduled: a subprocess that never
+runs surfaces as a timeout, a SIGPIPE, or a git daemon that will not answer, and none
+of those name the machine as the cause. When one does slip through, the shared runner
+in `tests/conftest.py` raises `MachineContention` rather than a plain assertion and
+says so in the message — a failure carrying that text is a machine to re-run on, not a
+defect to bisect.
 
 That guard reaches the subprocesses the fixtures run. The ones the *code under test* runs
 are outside it: `proc.run` returns a starved command as an ordinary failure result, so the

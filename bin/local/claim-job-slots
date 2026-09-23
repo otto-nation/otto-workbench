@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Hold a share of the machine's test-parallelism slots while a command runs.
+#
+# A flock lives only as long as the process holding its descriptor, so the
+# slots have to wrap the work rather than be claimed and returned. This holds
+# them and runs the command as a child, passing the granted count down in
+# WORKBENCH_TEST_SLOTS_GRANTED. See ai/lib/core/job_slots.py for why a held
+# slot beats a sampled load average.
+#
+# Usage:
+#   claim-job-slots --want N --cores N [--floor N] [--label TEXT] -- <command> [args...]
+#   claim-job-slots --show
+#
+# Exit status: the command's own.
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+claim-job-slots — hold test-parallelism slots while a command runs
+
+Usage:
+  claim-job-slots --want N --cores N [--floor N] [--label TEXT] -- <command> [args...]
+  claim-job-slots --show
+
+Options:
+  --want N       Slots to ask for. The grant never exceeds this.
+  --cores N      Cores the machine has. Sizes the pool.
+  --floor N      Slots to assume when the pool is empty. Default 1.
+  --label TEXT   Name recorded as the holder. Defaults to the command.
+  --show         Print the slot records and exit.
+  -h, --help     Show this message.
+USAGE
+}
+
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --show)
+      PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+        exec python3 "$REPO_ROOT/ai/lib/core/job_slots_cli.py" --show
+      ;;
+    --want|--cores|--floor|--label)
+      # Presence is `$# -ge 2`, not `-n "$2"`: an empty value is a value, and
+      # job_slots_cli falls back to the command string for an empty label. `--`
+      # is the command separator and never a value — without that check,
+      # `--want -- sh -c true` eats the separator and the command behind it is
+      # parsed as more options to this script.
+      [[ $# -ge 2 && "${2:-}" != "--" ]] \
+        || { echo "claim-job-slots: $1 requires an argument" >&2; exit 2; }
+      args+=("$1" "$2")
+      shift 2
+      ;;
+    --) shift; break ;;
+    *) echo "claim-job-slots: unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+[[ $# -gt 0 ]] || { echo "claim-job-slots: no command given after --" >&2; exit 2; }
+
+PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+  exec python3 "$REPO_ROOT/ai/lib/core/job_slots_cli.py" \
+  "${args[@]}" -- "$@"

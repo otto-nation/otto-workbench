@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# validate-pytest-deps — fail when a pytest file resolves no dependencies and
+# is not declared unmappable.
+#
+# The pytest counterpart of validate-test-deps, and it catches the same class
+# of silent breakage: a rename drops every unedited test that reached the old
+# module to zero deps, which is indistinguishable from a legitimately
+# unmappable test — except it is not declared as one, so it quietly becomes
+# never-selected with nothing reporting it.
+#
+# Also fails in the other direction, on a declared-unmappable test that has
+# since become mappable: left in the list it runs every time, which is the
+# selection silently not applying to it.
+#
+# Usage: bin/local/validate-pytest-deps [--quiet]
+# Exit code: 0 when every test is accounted for, 1 otherwise.
+
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: an inherited
+# GIT_DIR makes git skip discovery and answer the caller's cwd instead of the
+# repo root. See lib/ui.sh's header.
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+
+main() {
+  local quiet=false
+  [[ "${1:-}" == "--quiet" ]] && quiet=true
+
+  "$REPO_ROOT/bin/local/select-pytest" --validate || return 1
+
+  local total
+  total=$("$REPO_ROOT/bin/local/select-pytest" --all | wc -l | tr -d ' ')
+  $quiet || echo "✓ All $total pytest files resolve deps or are declared unmappable"
+}
+
+main "$@"

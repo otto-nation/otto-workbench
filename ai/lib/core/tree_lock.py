@@ -21,8 +21,10 @@ file: a crash under a pid file leaves every edit in the worktree blocked until
 someone finds and deletes it, which is worse than the bug this prevents.
 
 Distinct from ``run_lock.py``: that one is exclusive, keyed on an arbitrary
-target directory, and serializes ``pr`` runs. This one is shared, keyed on a
-git worktree, and serializes nothing — it only publishes a fact.
+target directory, and serializes ``pr`` runs. Distinct from ``job_slots.py``:
+that one is counted, keyed on the machine, and hands out test parallelism.
+This one is shared, keyed on a git worktree, and serializes nothing — it only
+publishes a fact.
 """
 
 # doc-group: platform

@@ -3038,6 +3038,55 @@ reaches the same rules, and the copy of the type list is exactly what the module
 exists to prevent. A module recreated later is a module recreated as that copy.
 It goes if a second release ships with no Python reader.
 
+### core/job_slots.py
+
+A machine-wide pool of test-parallelism slots.
+
+Sizing a test run from the load average cannot work, and the reason is not a
+tuning problem. A one-minute average lags the load it reports, so two suites
+started within a minute of each other both read an idle machine and both take
+the full cap: 24 heavy processes on 18 cores, each run slower than if it had
+taken half. Measured on this machine, the bats suite runs in 299s when it gets
+12 jobs and 377s when a concurrent run has pushed it down to 7 — and that
+7-job run was itself sized from load its own sibling had not yet produced.
+
+A slot is *held*, not sampled. A run that started 200ms ago has already taken
+its slots, so the next one sees what is left rather than what the kernel has
+got round to averaging. That is the whole difference: the reading cannot lag
+because there is no reading.
+
+The pool is a fixed set of files under ``<state>/test-slots/``, one per slot,
+each claimed with a non-blocking ``fcntl.flock``. The kernel drops every one
+when the holder exits for any reason, including SIGKILL, so there is no stale
+state to reap and a crashed run cannot strand capacity. Slot files are never
+deleted; their presence says nothing about whether anything holds them, the
+same way ``run_lock.py``'s records do not.
+
+Nothing ever blocks on a slot. A run that finds the pool empty proceeds at
+*floor* parallelism anyway, deliberately overshooting the pool rather than
+waiting: a queue would make the third worktree's pre-push sit silent for the
+length of two suites, which is how people learn ``--no-verify``. The floor is
+small enough that the overshoot stays bounded — three concurrent suites on 18
+cores take 12, 5 and 2 rather than 12, 12 and 12.
+
+Distinct from ``run_lock.py`` (exclusive, one target, serialises ``pr`` runs)
+and ``tree_lock.py`` (shared, one worktree, publishes a fact). This one is
+counted, machine-wide, and hands out capacity.
+
+### core/job_slots_cli.py
+
+Command-line face of the test-parallelism slot pool.
+
+Separate from job_slots.py so the library stays importable without argparse
+ceremony, and so bash has one file to invoke. The slots must wrap a child
+process rather than be claimed and returned from: a flock lives only as long
+as the process holding its descriptor, so a script that claimed and exited
+would hand its caller a number backed by nothing.
+
+The grant is passed to the child in the environment rather than printed,
+because stdout belongs to the suite — the pre-push hook parses run-tests'
+TAP stream, and a number on it would be read as a test result.
+
 ### core/log.py
 
 Centralized human-facing stderr output for otto-workbench AI scripts.
@@ -3573,8 +3622,10 @@ file: a crash under a pid file leaves every edit in the worktree blocked until
 someone finds and deletes it, which is worse than the bug this prevents.
 
 Distinct from ``run_lock.py``: that one is exclusive, keyed on an arbitrary
-target directory, and serializes ``pr`` runs. This one is shared, keyed on a
-git worktree, and serializes nothing — it only publishes a fact.
+target directory, and serializes ``pr`` runs. Distinct from ``job_slots.py``:
+that one is counted, keyed on the machine, and hands out test parallelism.
+This one is shared, keyed on a git worktree, and serializes nothing — it only
+publishes a fact.
 
 ### core/tree_lock_cli.py
 

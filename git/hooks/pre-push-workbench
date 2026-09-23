@@ -299,23 +299,21 @@ if [[ -x "$REPO_ROOT/bin/local/select-tests" ]]; then
   fi
 fi
 
+# One invocation, built from a conditionally-populated array — see the pytest
+# step below for why the two-copy form is worth avoiding.
+_bats_args=(--bats)
+if [[ -n "$_bats_selected" ]]; then
+  _bats_args+=(--files "$_bats_selected")
+fi
+
 _step "Running $_bats_label"
 _bats_start=$SECONDS
-if [[ -n "$_bats_selected" ]]; then
-  _bats_output=$("$REPO_ROOT/bin/local/run-tests" --bats --files "$_bats_selected" 2>&1) || {
-    printf "${RED}✗${NC}\n" >&2
-    echo "$_bats_output" | grep -E '^(not ok |# )'
-    err "Tests failed"
-    exit 1
-  }
-else
-  _bats_output=$("$REPO_ROOT/bin/local/run-tests" --bats 2>&1) || {
-    printf "${RED}✗${NC}\n" >&2
-    echo "$_bats_output" | grep -E '^(not ok |# )'
-    err "Tests failed"
-    exit 1
-  }
-fi
+_bats_output=$("$REPO_ROOT/bin/local/run-tests" "${_bats_args[@]}" 2>&1) || {
+  printf "${RED}✗${NC}\n" >&2
+  echo "$_bats_output" | grep -E '^(not ok |# )'
+  err "Tests failed"
+  exit 1
+}
 _bats_elapsed=$(( SECONDS - _bats_start ))
 
 # Extract test count from TAP plan line (1..N)
@@ -348,9 +346,36 @@ fi
 if ! command -v pytest >/dev/null 2>&1; then
   warn "pytest not found — skipping Python tests (pip install pytest)"
 else
-  _step "Running pytest"
+  # Change-based selection, the same shape as the bats step above: only the
+  # pytest files the diff can reach. Falls back to the whole suite when the
+  # selector is unavailable or when it reports a full-suite trigger.
+  _pytest_selected=""
+  _pytest_label="pytest"
+  if [[ -x "$REPO_ROOT/bin/local/select-pytest" ]]; then
+    _pytest_selected=$("$REPO_ROOT/bin/local/select-pytest" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null) || _pytest_selected=""
+  fi
+  if [[ -n "$_pytest_selected" ]]; then
+    _pytest_file_count=$(echo "$_pytest_selected" | wc -l | tr -d ' ')
+    # From the selector, not a find spelled here: a second definition of "every
+    # test file" drifts from the first, and this one did — it read 193/187 once
+    # the selector learned to recurse into the tests package that a maxdepth 1
+    # find cannot see.
+    _pytest_total=$("$REPO_ROOT/bin/local/select-pytest" --all 2>/dev/null | wc -l | tr -d ' ')
+    _pytest_label="pytest ($_pytest_file_count/$_pytest_total files)"
+  fi
+
+  # One invocation, built from a conditionally-populated array. Two copies of
+  # the call differing only in the selection argument means two copies of the
+  # failure handling, and a fix applied to only one of them is a gate that
+  # reports differently depending on whether the selection narrowed.
+  _pytest_args=(--pytest)
+  if [[ -n "$_pytest_selected" ]]; then
+    _pytest_args+=(--pytest-files "$_pytest_selected")
+  fi
+
+  _step "Running $_pytest_label"
   _pytest_start=$SECONDS
-  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" --pytest -- --tb=short -q 2>&1) || {
+  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" "${_pytest_args[@]}" -- --tb=short -q 2>&1) || {
     printf "${RED}✗${NC}\n" >&2
     echo "$_pytest_output"
     err "Pytest failed"

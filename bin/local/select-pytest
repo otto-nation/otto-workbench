@@ -1,0 +1,589 @@
+#!/usr/bin/env python3
+"""select-pytest — emit the pytest files affected by a set of changed paths.
+
+The bats selector next door does this by grepping path literals, which is the
+right tool there: a bats test names the script it exercises as a string. A
+pytest file names it as an *import*, so the same question is answered by the
+AST instead — and answered better, because an import graph closes transitively
+without any of the pattern-matching the bash version needs.
+
+Three signals map a test file to the sources it covers:
+
+  1. ``from core.proc import run`` → ``ai/lib/core/proc.py``, then closed over
+     that module's own imports, so a test reaching ``pr.fix`` is selected when
+     something ``pr.fix`` imports changes.
+  2. ``_load_lib("git_layout")`` → ``lib/git_layout.py``. The conftest helper
+     loads ``lib/`` modules by name off the path deliberately, so the import
+     graph never sees them.
+  3. ``REPO_ROOT / "bin" / "local" / "validate-ceiling"`` → that path. This is
+     what catches the tests whose subject is a *script* rather than a module.
+
+The third signal is read from the AST rather than by regex, because a test
+rarely spells the whole path at the point of use: it assigns
+``BIN_DIR = REPO_ROOT / "ai" / "bin"`` and then writes ``BIN_DIR / "wiki"``.
+A pattern match over the text sees that ref as ``wiki`` — a path that exists
+nowhere, so it matches no change and the test is never selected. Resolving
+assignments first is what makes those two lines mean ``ai/bin/wiki``.
+
+A bootstrap constant is not a dependency: ``LIB_DIR = REPO_ROOT / "ai" / "lib"``
+appears in 96 test files and says only that the file adds that directory to
+``sys.path``. Treating it as a ref would select every one of them for any
+change under ``ai/lib/``, which is the full suite wearing a disguise. Such a
+ref is dropped only when it is the *whole* ref — ``LIB_DIR / "core" / "proc.py"``
+names a subject and is kept.
+
+Usage: select-pytest [--base REF] [--validate] [--all]
+  --base REF     Diff against REF (default: origin/main)
+  --validate     Fail if any test file has no resolvable deps and is not in
+                 the always-run list (catches renames that break the map)
+  --all          Print every test file
+
+Output: one absolute path per line, matching what select-tests emits — a
+relative path resolves against the caller's cwd, and run-tests passes this list
+straight to pytest without changing directory.
+Exit code: 0 on success, 1 when --validate finds an unmapped test.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import re
+import subprocess
+import sys
+import warnings
+from pathlib import Path
+
+# Parsing every module in the repo surfaces each one's own SyntaxWarnings — an
+# invalid escape in a docstring, say. They are the source files' business and
+# are reported by the compile check that owns them; here they would bury the
+# selector's one line of output under warnings about files it only read.
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+TESTS_DIR = REPO_ROOT / "tests"
+
+# Roots holding importable modules, in the order a test's sys.path sees them.
+MODULE_ROOTS = (REPO_ROOT / "ai" / "lib", REPO_ROOT / "lib")
+
+# Changes to these run everything. A conftest is every test's fixture set — both
+# of them, since tests/test_nesting/ carries its own — and this script owns the
+# selection itself, so a bug in either is invisible to the map it would be
+# selecting through. tests/fixtures/ holds golden files that no test names by a
+# path this map can resolve: both golden tests spell the directory with a single
+# `.parent`, which is the tests dir rather than the repo root.
+FULL_SUITE_TRIGGERS = {
+    "tests/conftest.py",
+    "tests/test_nesting/conftest.py",
+    "pyproject.toml",
+    "bin/local/run-tests",
+    "bin/local/select-pytest",
+}
+
+# Prefixes under which any change runs everything, for the same reason.
+FULL_SUITE_TRIGGER_DIRS = ("tests/fixtures/",)
+
+# Path refs that name a search root rather than a subject. A test assigning
+# LIB_DIR = REPO_ROOT / "ai" / "lib" is saying where imports come from, not
+# what it covers.
+BOOTSTRAP_REFS = {"ai/lib", "lib", "ai", "bin", "tests", ".git", "ai/bin"}
+
+# Tests with no resolvable deps — they always run. Each entry names why, because
+# an entry added without one is how a test quietly becomes unselectable. Kept in
+# step by --validate, which fails both on a test outside this set that maps to
+# nothing and on an entry here that has since become mappable.
+NO_DEPS_TESTS = {
+    # Asserts the sandbox in conftest, whose own changes trigger the full suite.
+    "tests/git_sandbox_test.py",
+    # Asserts conftest's script loader, same.
+    "tests/script_loading_test.py",
+    # Reads the config modules' source through a path assembled at call time
+    # from a dotted name, which no static map can follow.
+    "tests/test_workbench_config_layers.py",
+}
+
+_LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')
+
+# Names that stand for the repo root itself. Any other name reaching a
+# directory has to get there through an assignment this module resolves.
+_ROOT_NAMES = frozenset({"REPO_ROOT", "ROOT", "repo_root", "WORKBENCH_DIR"})
+
+
+def _module_index() -> dict[str, str]:
+    """Dotted module name → repo-relative path, for every importable module.
+
+    First root wins on a collision, matching the ``sys.path`` order a test
+    sees: ``ai/lib`` is inserted before ``lib``.
+    """
+    index: dict[str, str] = {}
+    for root, path in _module_files():
+        dotted = ".".join(path.relative_to(root).with_suffix("").parts)
+        if dotted.endswith(".__init__"):
+            dotted = dotted[: -len(".__init__")]
+        index.setdefault(dotted, str(path.relative_to(REPO_ROOT)))
+    return index
+
+
+def _module_files():
+    """(root, path) for every importable module, in ``sys.path`` root order.
+
+    Sorted within each root: an unsorted listing makes "first wins" resolve to
+    a different file on another machine.
+    """
+    for root in MODULE_ROOTS:
+        importable = (p for p in sorted(root.rglob("*.py"))
+                      if "__pycache__" not in p.parts)
+        for path in importable:
+            yield root, path
+
+
+def _resolve(name: str, index: dict[str, str]) -> str | None:
+    """The file a dotted name refers to, trying longest prefix first.
+
+    ``from pr.fix import Engine`` is offered here as both ``pr.fix.Engine`` and
+    ``pr.fix``; the first that is a real module wins, so a package importing a
+    submodule resolves to the submodule rather than to the package.
+    """
+    parts = name.split(".")
+    for stop in range(len(parts), 0, -1):
+        candidate = ".".join(parts[:stop])
+        if candidate in index:
+            return index[candidate]
+    return None
+
+
+def _imported_names(tree: ast.AST, package: str) -> list[str]:
+    """Every dotted name an AST imports, relative ones resolved against *package*."""
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.extend(_from_import_names(node, package))
+    return names
+
+
+def _from_import_names(node: ast.ImportFrom, package: str) -> list[str]:
+    """The dotted names one ``from ... import ...`` offers for resolution.
+
+    A relative import is rebased onto *package*, one level per dot past the
+    first. An absolute one offers both ``pkg`` and ``pkg.name`` for each name
+    imported, because ``from pkg import mod`` imports a module rather than an
+    attribute whenever ``pkg.mod`` exists — ``_resolve`` picks the longest
+    spelling that is real.
+    """
+    if node.level:
+        base = package
+        for _ in range(node.level - 1):
+            base = base.rsplit(".", 1)[0] if "." in base else ""
+        # `from . import land` names a module in `node.names`, not in
+        # `node.module` — returning only the package drops the edge entirely,
+        # and a package whose __init__ imports nothing (most of them here)
+        # takes the whole subtree's dependencies with it.
+        full = f"{base}.{node.module}" if node.module and base else (node.module or base)
+        if not full:
+            return []
+        return [full, *(f"{full}.{alias.name}" for alias in node.names)]
+    if not node.module:
+        return []
+    return [node.module, *(f"{node.module}.{alias.name}" for alias in node.names)]
+
+
+def _imports_of(relpath: str, package: str, index: dict[str, str]) -> set[str]:
+    """Repo files the file at *relpath* imports directly."""
+    try:
+        tree = ast.parse((REPO_ROOT / relpath).read_text())
+    except (OSError, SyntaxError, ValueError):
+        return set()
+    found = set()
+    for name in _imported_names(tree, package):
+        resolved = _resolve(name, index)
+        if resolved is not None and resolved != relpath:
+            found.add(resolved)
+    return found
+
+
+def _forward_graph(index: dict[str, str]) -> dict[str, set[str]]:
+    """Module file → the module files it imports."""
+    graph = {}
+    for dotted, relpath in index.items():
+        graph[relpath] = _imports_of(relpath, _package_of(dotted, relpath), index)
+    return graph
+
+
+def _package_of(dotted: str, relpath: str) -> str:
+    """The package a module's relative imports resolve against.
+
+    For a plain module that is the parent (`wiki.create` → `wiki`), but for a
+    package's own ``__init__.py`` the dotted name *is* the package: the
+    `.__init__` suffix was stripped when the index was built, so taking the
+    parent there climbs one level too far. `from .create import x` inside
+    `ai/lib/wiki/__init__.py` then rebases onto the empty string and resolves
+    to nothing, which made every module in that package unreachable from the
+    tests that import it — 164 wiki tests went unselected by a change to their
+    own subject.
+    """
+    if Path(relpath).name == "__init__.py":
+        return dotted
+    return dotted.rsplit(".", 1)[0] if "." in dotted else ""
+
+
+def _closure(start: str, graph: dict[str, set[str]]) -> set[str]:
+    """*start* and everything it transitively imports."""
+    seen = {start}
+    queue = [start]
+    while queue:
+        fresh = [n for n in graph.get(queue.pop(), ()) if n not in seen]
+        seen.update(fresh)
+        queue.extend(fresh)
+    return seen
+
+
+def _is_repo_root_expr(node: ast.AST) -> bool:
+    """Whether *node* is the ``Path(__file__).resolve().parent.parent`` idiom.
+
+    165 of the test files spell the repo root this way rather than importing a
+    constant, so a resolver that only knew the names in ``_ROOT_NAMES`` would
+    see no path refs at all in most of the suite. Matched structurally: a chain
+    of ``.parent`` attributes, two of them (``tests/x.py`` → ``tests`` → root),
+    bottoming out in a call taking ``__file__``.
+
+    Two ``.parent``s exactly, not "at least two". A third names the directory
+    *above* the repo, and treating that as the root would have every path
+    built from it point at a file outside the tree.
+    """
+    parents = 0
+    current = node
+    while True:
+        if isinstance(current, ast.Call) and _is_path_of_dunder_file(current):
+            # The Path(__file__) at the bottom of the chain.
+            return parents == 2
+        if isinstance(current, ast.Call):
+            # The .resolve() partway up it, whose func carries the rest.
+            current = current.func
+            continue
+        if not isinstance(current, ast.Attribute):
+            return False
+        if current.attr == "parent":
+            parents += 1
+        elif current.attr != "resolve":
+            return False
+        current = current.value
+
+
+def _is_path_of_dunder_file(call: ast.Call) -> bool:
+    """Whether *call* is `Path(__file__)`, however `Path` was imported.
+
+    The callee is checked as well as the argument. Without it any helper taking
+    `__file__` and two `.parent`s reads as the repo root, and every path built
+    on it becomes a ref pointing somewhere the file is not — the same
+    over-anchoring the two-`.parent` rule above exists to prevent.
+    """
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+    if name != "Path":
+        return False
+    return any(isinstance(arg, ast.Name) and arg.id == "__file__"
+               for arg in call.args)
+
+
+def _joined_path(node: ast.AST, aliases: dict[str, str]) -> str | None:
+    """The repo-relative path a ``root / "a" / "b"`` expression builds, or None.
+
+    Recurses down the left spine of the ``/`` chain, so an expression rooted at
+    a name this module knows — the repo root, or a directory alias already
+    resolved — yields the whole path, and one rooted at anything else (a
+    ``tmp_path``, a function call, a loop variable) yields None rather than a
+    fragment that would silently match nothing.
+    """
+    if isinstance(node, ast.Name):
+        if node.id in _ROOT_NAMES:
+            return ""
+        return aliases.get(node.id)
+    if _is_repo_root_expr(node):
+        return ""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        base = _joined_path(node.left, aliases)
+        if base is None:
+            return None
+        right = node.right
+        if not isinstance(right, ast.Constant) or not isinstance(right.value, str):
+            return None
+        return f"{base}/{right.value}" if base else right.value
+    return None
+
+
+def _grow_aliases(tree: ast.AST, aliases: dict[str, str]) -> bool:
+    """Record every resolvable ``NAME = <root> / ...``. True when any was new.
+
+    The caller repeats until this returns False, which is what lets an alias
+    built from another resolve regardless of the order they appear in.
+    """
+    assignments = (n for n in ast.walk(tree)
+                   if isinstance(n, ast.Assign) and len(n.targets) == 1
+                   and isinstance(n.targets[0], ast.Name)
+                   and n.targets[0].id not in aliases)
+    grew = False
+    for node in assignments:
+        resolved = _joined_path(node.value, aliases)
+        if resolved:
+            aliases[node.targets[0].id] = resolved
+            grew = True
+    return grew
+
+
+def _path_refs(tree: ast.AST) -> set[str]:
+    """Repo-relative paths the source names, bootstrap roots aside.
+
+    Two passes, because an alias is routinely defined further down the file
+    than something built from it and Python only cares about runtime order.
+    The first records every ``NAME = <root> / ...`` assignment it can resolve,
+    repeating while the table keeps growing; the second reads every ``/``
+    expression in the file through it.
+    """
+    aliases: dict[str, str] = {}
+    while _grow_aliases(tree, aliases):
+        pass
+
+    # ast.walk yields the inner nodes of a `/` chain as well as the whole
+    # thing, so `REPO_ROOT / "bin" / "local" / "validate-ceiling"` also offers
+    # `bin/local`. Keeping that prefix would make every change under bin/local/
+    # select every test naming any script there. Only the outermost node of
+    # each chain is the subject, so inner ones are skipped here rather than
+    # filtered from the union afterwards: a filter across the whole file drops
+    # a directory the test genuinely sweeps as soon as it also names one file
+    # beneath it — which is how a test that globs every review template
+    # stopped being selected by a new template being added.
+    inner = {id(n.left) for n in ast.walk(tree)
+             if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div)}
+    refs = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+            continue
+        if id(node) in inner:
+            continue
+        ref = _joined_path(node, aliases)
+        if ref and ref not in BOOTSTRAP_REFS:
+            refs.add(ref)
+    return refs
+
+
+def _test_files() -> list[str]:
+    """Every collectable test file, as a path relative to the repo root.
+
+    Recursive, because `tests/` holds a package: `tests/test_nesting/` is five
+    modules and 83 tests. A flat glob silently omitted them from the map *and*
+    from `--all`, and since `run-tests --pytest-files` runs exactly the list it
+    is given, they stopped being collected on every path — including the
+    full-suite fallback, which prints this same list. `--validate` could not see
+    it either: a file that never enters the map is never checked for mapping.
+    """
+    found = []
+    for path in sorted(TESTS_DIR.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        if path.name in ("conftest.py", "__init__.py"):
+            continue
+        found.append(str(path.relative_to(REPO_ROOT)))
+    return found
+
+
+def dependency_map() -> dict[str, set[str]]:
+    """Test path → every repo path a change to which should select it.
+
+    Keyed on the repo-relative path rather than the bare filename, so a test in
+    a subpackage is addressable and two files of the same name in different
+    directories cannot collide.
+    """
+    index = _module_index()
+    graph = _forward_graph(index)
+    mapping = {}
+    for relpath in _test_files():
+        text = (REPO_ROOT / relpath).read_text()
+        direct = _imports_of(relpath, _test_package(relpath), index)
+        direct |= _load_lib_deps(text)
+        refs = _refs_of(text)
+        # A script named by path is a subject like any other, so its own
+        # imports are followed too. Without this a test whose subject is a
+        # bin/ script saw only the script file: `wiki_test.py` reached
+        # `ai/bin/wiki` and none of the 19 modules behind it, and
+        # `lib/repo_scan.py` — reached only through four validator scripts —
+        # was selected by nothing at all.
+        direct |= _script_subjects(refs, graph, index)
+        deps: set[str] = set()
+        for dep in direct:
+            deps |= _closure(dep, graph)
+        mapping[relpath] = deps | refs
+    return mapping
+
+
+def _script_subjects(refs: set[str], graph: dict[str, set[str]],
+                     index: dict[str, str]) -> set[str]:
+    """The refs worth following, adding each to *graph* so it can be closed over.
+
+    A script is not in the module index — nothing imports it by name — so its
+    edges have to be added here or `_closure` walks straight past it.
+    """
+    followable = set()
+    for ref in refs:
+        if ref not in graph and _is_parseable_source(ref):
+            graph[ref] = _imports_of(ref, "", index)
+        if ref in graph:
+            followable.add(ref)
+    return followable
+
+
+def _is_parseable_source(ref: str) -> bool:
+    """Whether *ref* names a file whose own imports are worth following.
+
+    Extensionless scripts included — that is the whole point, since a test
+    naming `ai/bin/wiki` is testing what that script imports. A directory, a
+    data file, or anything that does not parse as Python answers False.
+    """
+    path = REPO_ROOT / ref
+    if not path.is_file():
+        return False
+    if path.suffix and path.suffix != ".py":
+        return False
+    try:
+        ast.parse(path.read_text())
+    except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+        return False
+    return True
+
+
+def _test_package(relpath: str) -> str:
+    """The package a test file sits in, for resolving its relative imports.
+
+    `tests/test_nesting/test_python.py` is in `test_nesting`; a file directly
+    under `tests/` is in no package, which is what the empty string means.
+    """
+    parts = Path(relpath).parts
+    return ".".join(parts[1:-1]) if len(parts) > 2 else ""
+
+
+def _load_lib_deps(text: str) -> set[str]:
+    """``lib/`` modules the conftest helper loads by name.
+
+    That helper loads them off the path deliberately, so the import graph never
+    sees them and this is the only signal that the test covers them.
+    """
+    candidates = (f"lib/{m.group(1)}.py" for m in _LOAD_LIB.finditer(text))
+    return {c for c in candidates if (REPO_ROOT / c).exists()}
+
+
+def _refs_of(text: str) -> set[str]:
+    """Path refs in *text*, or none when it does not parse.
+
+    A test file that cannot be parsed contributes no refs rather than failing
+    the selection: it will not run either way, and the compile check is what
+    owns reporting it.
+    """
+    try:
+        return _path_refs(ast.parse(text))
+    except (SyntaxError, ValueError):
+        return set()
+
+
+def _selects(test: str, deps: set[str], changed: list[str]) -> bool:
+    """Whether any changed path is this test's own file or one of its deps.
+
+    *test* is repo-relative (`tests/x.py`, `tests/pkg/y.py`).
+    """
+    for path in changed:
+        if path == test:
+            return True
+        if path in deps:
+            return True
+        # A dep naming a directory covers everything under it. The separator is
+        # required: without it a dep on `bin/local/pr` would match
+        # `bin/local/pr-rebase`. Directory-ness is asked of the filesystem
+        # rather than inferred from a missing `.py` suffix, which reads every
+        # extensionless script dep as a directory prefix.
+        if any(path.startswith(f"{dep}/") for dep in deps
+               if (REPO_ROOT / dep).is_dir()):
+            return True
+    return False
+
+
+def _changed_files(base: str) -> list[str]:
+    """Paths differing from *base*, or an empty list when git cannot say."""
+    for args in (["diff", "--name-only", f"{base}...HEAD"],
+                 ["diff", "--name-only", base, "HEAD"]):
+        result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode == 0:
+            return [line for line in result.stdout.splitlines() if line.strip()]
+    return []
+
+
+def _all_tests() -> list[str]:
+    return _test_files()
+
+
+def _triggers_full_suite(changed: list[str]) -> bool:
+    """Whether any changed path makes a narrowed selection unsafe."""
+    return any(path in FULL_SUITE_TRIGGERS
+               or path.startswith(FULL_SUITE_TRIGGER_DIRS)
+               for path in changed)
+
+
+def _validate(mapping: dict[str, set[str]]) -> int:
+    """Fail when a test maps to nothing and is not declared as unmappable."""
+    unmapped = sorted(
+        test for test, deps in mapping.items()
+        if not deps and test not in NO_DEPS_TESTS
+    )
+    stale = sorted(
+        test for test in NO_DEPS_TESTS
+        if test in mapping and mapping[test]
+    )
+    for test in unmapped:
+        print(f"Unmapped test: {test} (no resolvable imports or path refs, "
+              f"not in NO_DEPS_TESTS)", file=sys.stderr)
+    for test in stale:
+        print(f"Stale NO_DEPS_TESTS entry: {test} now resolves deps — "
+              f"remove it so a change to those deps selects it", file=sys.stderr)
+    if unmapped or stale:
+        print(f"{len(unmapped) + len(stale)} test(s) out of step with the map. "
+              f"Fix the refs or update NO_DEPS_TESTS in bin/local/select-pytest",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(add_help=True, description=__doc__)
+    parser.add_argument("--base", default="origin/main")
+    parser.add_argument("--validate", action="store_true")
+    parser.add_argument("--all", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.all:
+        print("\n".join(str(REPO_ROOT / path) for path in _all_tests()))
+        return 0
+
+    mapping = dependency_map()
+
+    if args.validate:
+        return _validate(mapping)
+
+    changed = _changed_files(args.base)
+    if not changed or _triggers_full_suite(changed):
+        selected = _all_tests()
+    else:
+        always = {name for name in NO_DEPS_TESTS if (REPO_ROOT / name).is_file()}
+        matched = {test for test, deps in mapping.items()
+                   if _selects(test, deps, changed)}
+        selected = sorted(always | matched)
+
+    total = len(_all_tests())
+    print("\n".join(str(REPO_ROOT / path) for path in selected))
+    print(f"# selected {len(selected)}/{total} test files", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

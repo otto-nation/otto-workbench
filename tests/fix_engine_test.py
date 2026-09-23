@@ -1269,7 +1269,6 @@ def test_a_deferral_the_gate_confirms_becomes_a_fix(tmp_path, landed, head, snap
     assert "the repro passes" in run.outcomes[0].reason
 
 
-# passes-at-base: asserts a deferral is left alone, which is all base ever did
 def test_a_deferral_the_gate_cannot_settle_stands_as_recorded(
     tmp_path, landed, head, snapshots,
 ):

@@ -3,8 +3,9 @@
 #
 # The runner is sourced rather than executed: its main() is behind a
 # BASH_SOURCE guard, so sizing can be exercised without starting a suite.
-# `getconf` and `load_average` are shadowed per test, which is the only way to
-# ask what the machine's own core count and load would produce.
+# `cpu_count` is shadowed per test, which is the only way to ask what a given
+# core count would produce — the real one answers for whatever box the suite
+# happens to be running on.
 
 # `run --separate-stderr` is a 1.5.0 flag, and bats silently treats flags it
 # does not know as the command to run.
@@ -13,87 +14,57 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  # Both are read by the code under test and both are set on a real run — CI
-  # sets CI, and a caller or a parent suite may have exported TEST_JOBS. Left
-  # in place they would decide the answer instead of the test.
-  unset TEST_JOBS CI
+  # All four are read by the code under test and all four are set on a real
+  # run — CI sets CI, a caller or a parent suite may have exported TEST_JOBS,
+  # and the slot wrapper exports its grant and marker into everything it runs,
+  # this suite included. Left in place they would decide the answer instead of
+  # the test: under the gate the outer run's grant of 12 reached report_jobs
+  # and three tests asserting on a pinned core count failed.
+  unset TEST_JOBS CI WORKBENCH_TEST_SLOTS_GRANTED WORKBENCH_TEST_SLOTS
   # shellcheck source=../bin/local/run-tests
   source "$REPO_ROOT/bin/local/run-tests"
-  # Defined after the source, which brings its own load_average with it.
-  # Shadowing both readers is the only way to ask what a given machine would
-  # produce; the real ones answer for whatever box the suite happens to be on.
-  getconf() { echo "$MACHINE_CORES"; }
-  load_average() { echo "$MACHINE_LOAD"; }
+  # Defined after the source, which brings lib/portable.sh's own cpu_count
+  # with it. The pool is not exercised here: main() skips the claim when
+  # TEST_JOBS or CI is set, and every test below calls test_jobs directly
+  # rather than going through main.
+  cpu_count() { echo "$MACHINE_CORES"; }
 }
 
 teardown() {
   common_teardown
 }
 
-# machine CORES LOAD — pin what test_jobs reads about the machine it is on.
+# machine CORES — pin what test_jobs reads about the machine it is on.
+#
+# Only the core count now: the sizing no longer reads the load average, because
+# a one-minute figure cannot see a suite that started thirty seconds ago. What
+# another run is holding is asked of the slot pool instead, which is exercised
+# in tests/job_slots_test.py.
 machine() {
   MACHINE_CORES="$1"
-  MACHINE_LOAD="$2"
 }
 
-@test "an idle machine gets one job per core" {
-  machine 8 0.42
+@test "a machine gets one job per core" {
+  machine 8
   test_jobs
   [ "$JOBS" -eq 8 ]
 }
 
-@test "cores already busy are not handed to the suite" {
-  machine 8 3.70
-  test_jobs
-  [ "$JOBS" -eq 5 ]
-}
-
-@test "a fractional load is truncated, not rounded up" {
-  # A one-minute average already lags the load it reports; rounding up would
-  # count that lag twice and give away a core the machine may have back.
-  machine 8 3.99
-  test_jobs
-  [ "$JOBS" -eq 5 ]
-}
-
 @test "a machine with more cores than the cap still stops at the cap" {
-  machine 64 0.10
+  machine 64
   test_jobs
   [ "$JOBS" -eq "$TEST_JOBS_CAP" ]
 }
 
-@test "a saturated machine falls back to the floor rather than to zero" {
-  # Free capacity is negative here: the load exceeds the core count, which is
-  # exactly the three-concurrent-suites case. The suite must still progress.
-  machine 8 20.00
+@test "a single-core machine asks for one job" {
+  machine 1
   test_jobs
-  [ "$JOBS" -eq "$TEST_JOBS_FLOOR" ]
-  [ "$JOBS" -gt 0 ]
+  [ "$JOBS" -eq 1 ]
 }
 
-@test "an oversubscribed single-core machine still gets the floor" {
-  machine 1 4.00
-  test_jobs
-  [ "$JOBS" -eq "$TEST_JOBS_FLOOR" ]
-}
-
-@test "an unreadable load average reads as an idle machine" {
-  # Guessing from a reading of unknown shape is worse than the plain core
-  # count the sizing used before load entered it.
-  machine 8 0
-  load_average() { return 1; }
-  test_jobs
-  [ "$JOBS" -eq 8 ]
-}
-
-@test "a load average of an unexpected shape reads as an idle machine" {
-  machine 8 "not-a-number"
-  test_jobs
-  [ "$JOBS" -eq 8 ]
-}
-
-@test "TEST_JOBS wins over the sizing, the cap and the floor" {
-  machine 8 3.70
+# passes-at-base: the override predates the pool, and holds that it did not start clamping a named value
+@test "TEST_JOBS wins over the sizing and the cap" {
+  machine 8
   TEST_JOBS=32 test_jobs
   [ "$JOBS" -eq 32 ]
 }
@@ -101,98 +72,160 @@ machine() {
 @test "TEST_JOBS=1 restores the serial ordering" {
   # The bisect path: a test that only fails under concurrency needs one worker
   # even on a machine with capacity for twelve.
-  machine 8 0.10
+  machine 8
   TEST_JOBS=1 test_jobs
   [ "$JOBS" -eq 1 ]
 }
 
-@test "CI ignores the load average and sizes from the core count" {
-  # A hosted runner is dedicated to the job, so its load average reports the
-  # checkout and pipx installs that just finished rather than competing work.
-  machine 4 3.90
-  CI=true test_jobs
-  [ "$JOBS" -eq 4 ]
+@test "the sizing no longer reads the load average" {
+  # The bug this replaced: two suites launched within a minute of each other
+  # both read an idle machine and both took the cap, so 24 heavy processes
+  # landed on 18 cores. A reading cannot lag when there is no reading.
+  run grep -n 'load_average' "$REPO_ROOT/bin/local/run-tests"
+  [ "$status" -ne 0 ]
 }
 
-@test "busy_cores reports nothing busy under CI" {
-  machine 8 7.50
-  CI=true run busy_cores
-  [ "$output" -eq 0 ]
+@test "granted_jobs prefers the pool's grant over what was asked for" {
+  # The claim wrapper exports what it actually handed this run. Reading JOBS
+  # instead would run twelve workers while the pool believed it had granted
+  # five, which is the oversubscription the pool exists to prevent.
+  machine 18
+  test_jobs
+  WORKBENCH_TEST_SLOTS_GRANTED=5 run granted_jobs
+  [ "$output" -eq 5 ]
+}
+
+@test "granted_jobs falls back to the request when nothing granted" {
+  # The CI and TEST_JOBS paths skip the pool entirely, so no grant is exported
+  # and the request is the number to run at.
+  machine 18
+  test_jobs
+  run granted_jobs
+  [ "$output" -eq 12 ]
+}
+
+@test "both runners are sized from the grant, not the request" {
+  # A grant read by only one of them is half a fix: the other still takes the
+  # full cap, and two suites still oversubscribe on that half.
+  run grep -cE '(--jobs|-n) "\$\(granted_jobs\)"' "$REPO_ROOT/bin/local/run-tests"
+  [ "$output" -eq 2 ]
 }
 
 # report_jobs writes to stderr, so `run` needs both streams merged to see it.
 # JOBS is what main() resolves before either suite starts; the tests set it the
 # same way rather than calling the suites.
 report_for() {
-  machine "$1" "$2"
+  machine "$1"
   test_jobs
   report_jobs 2>&1
 }
 
 @test "a run says how parallel it is before it starts" {
-  run report_for 8 0.42
+  run report_for 8
   [ "$status" -eq 0 ]
   [[ "$output" == *"8 job(s)"* ]]
 }
 
-@test "a floored run says the machine is busy and the run will be slow" {
-  # The case worth reading: a suite sized down by another worktree's run is
+@test "a run sized down by a sibling says so, and names the reason" {
+  # The case worth reading: a suite that got 3 of the 12 it asked for is
   # otherwise indistinguishable from one that is simply slow.
-  run report_for 18 17.0
+  machine 18
+  test_jobs
+  WORKBENCH_TEST_SLOTS_GRANTED=3 run report_jobs 2>&1
+  [[ "$output" == *"3 job(s)"* ]]
+  [[ "$output" == *"another test run holds the rest"* ]]
+}
+
+@test "a run floored by a full pool warns that it will be slow" {
+  machine 18
+  test_jobs
+  WORKBENCH_TEST_SLOTS_GRANTED=2 run report_jobs 2>&1
   [[ "$output" == *"2 job(s)"* ]]
-  [[ "$output" == *"floored"* ]]
   [[ "$output" == *"expect a slow run"* ]]
 }
 
 @test "a capped run says so rather than implying the machine was empty" {
-  run report_for 32 0.10
+  run report_for 32
   [[ "$output" == *"12 job(s)"* ]]
   [[ "$output" == *"capped at 12"* ]]
 }
 
-@test "an ordinary run reports the load it was sized from" {
-  run report_for 18 9.0
-  [[ "$output" == *"9 job(s)"* ]]
-  [[ "$output" == *"18 cores less ~9 in use"* ]]
-  [[ "$output" != *"floored"* ]]
-  [[ "$output" != *"capped"* ]]
+# passes-at-base: a negative case — holds that the new contention branch is not taken on an idle machine
+@test "an uncontended run does not claim a sibling took anything" {
+  run report_for 18
+  [[ "$output" == *"12 job(s)"* ]]
+  [[ "$output" != *"holds the rest"* ]]
+  [[ "$output" != *"expect a slow run"* ]]
 }
 
-@test "the report describes the reading test_jobs used, not a fresh one" {
-  # load_average reads live kernel state on every call, so a machine whose
-  # load is fluctuating between the two calls main() makes — test_jobs() to
-  # resolve JOBS, then report_jobs() to explain it — must not have the second
-  # call silently re-derive a different "why" than the JOBS value it is
-  # attached to.
-  machine 18 17.0
-  test_jobs
-  machine 18 0.10
-  run report_jobs 2>&1
-  [[ "$output" == *"2 job(s)"* ]]
-  [[ "$output" == *"18 cores less ~17 in use"* ]]
-  [[ "$output" == *"floored"* ]]
+@test "a CI run says the pool was skipped" {
+  # A hosted runner is dedicated to the job and the bats shards run on separate
+  # runners, so a machine-wide pool there would only contend with itself.
+  machine 4
+  CI=true test_jobs
+  CI=true run report_jobs 2>&1
+  [[ "$output" == *"4 job(s)"* ]]
+  [[ "$output" == *"pool skipped under CI"* ]]
 }
 
-@test "an overridden run credits TEST_JOBS rather than the load" {
-  machine 18 9.0
+# passes-at-base: the override's reporting predates the pool, and still names TEST_JOBS over the grant
+@test "an overridden run credits TEST_JOBS rather than the machine" {
+  machine 18
   # shellcheck disable=SC2034  # read by test_jobs and report_jobs in bin/local/run-tests
   TEST_JOBS=4
   test_jobs
   run report_jobs
   [[ "$output" == *"4 job(s)"* ]]
   [[ "$output" == *"TEST_JOBS"* ]]
-  [[ "$output" != *"cores less"* ]]
+  [[ "$output" != *"cores"* ]]
+}
+
+# passes-at-base: nothing exported the grant before this change; its subject is setup()'s unset, not the pool
+@test "the suite does not inherit the grant of the run executing it" {
+  # This suite runs *under* run-tests, so the slot wrapper has exported its own
+  # grant into it. Read as the run under test's, it decides the answer: the
+  # gate's grant of 12 reached report_jobs and failed three tests here that a
+  # standalone bats invocation passed. setup() unsets it; this is what holds
+  # that line in place.
+  [ -z "${WORKBENCH_TEST_SLOTS_GRANTED:-}" ]
+  [ -z "${WORKBENCH_TEST_SLOTS:-}" ]
 }
 
 @test "the report stays off stdout, which the pre-push hook parses" {
   # The hook counts passes out of this script's stdout; a line there would be
   # read as a test result. `--separate-stderr` is what splits the two streams
   # — bats merges them into $output otherwise, which would pass either way.
-  machine 8 0.42
+  machine 8
   test_jobs
   run --separate-stderr report_jobs
   [ -z "$output" ]
   [[ "$stderr" == *"8 job(s)"* ]]
+}
+
+@test "the slot claim wraps the suite rather than preceding it" {
+  # A flock lives only as long as the process holding its descriptor, so a
+  # claim taken and returned before the runner starts reserves nothing. The
+  # exec is what makes the wrapper the parent of the suite.
+  run grep -n 'exec "$WORKBENCH_DIR/bin/local/claim-job-slots"' "$REPO_ROOT/bin/local/run-tests"
+  [ "$status" -eq 0 ]
+}
+
+@test "the slot claim comes after the tree lock, not before it" {
+  # The tree lock can wait on a concurrent validator. Slots held across that
+  # wait would be capacity reserved by a run that has not started, which is the
+  # pool lying about what the machine is doing.
+  local tree_line slots_line
+  tree_line=$(grep -n 'exec "$WORKBENCH_DIR/bin/local/with-tree-lock"' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  slots_line=$(grep -n 'exec "$WORKBENCH_DIR/bin/local/claim-job-slots"' "$REPO_ROOT/bin/local/run-tests" | cut -d: -f1)
+  [ -n "$tree_line" ]
+  [ -n "$slots_line" ]
+  [ "$slots_line" -gt "$tree_line" ]
+}
+
+@test "CI and TEST_JOBS skip the claim rather than queueing behind it" {
+  run grep -n 'z "${WORKBENCH_TEST_SLOTS:-}" && -z "${CI:-}" && -z "${TEST_JOBS:-}"' \
+    "$REPO_ROOT/bin/local/run-tests"
+  [ "$status" -eq 0 ]
 }
 
 @test "main reports the parallelism it resolved" {

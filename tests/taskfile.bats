@@ -76,6 +76,25 @@ setup() {
   [[ "$output" != *"SKIP"* ]]
 }
 
+@test "test selects only what the branch can affect" {
+  # The target run between edits. Without --changed it was several minutes of
+  # tests the diff could not reach, every time.
+  run yq -r '.tasks.test.cmds[0]' "$TASKFILE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"run-tests"* ]]
+  [[ "$output" == *"--changed"* ]]
+}
+
+@test "test:all runs the suite with selection off" {
+  # The escape hatch that makes --changed safe to default: a developer who
+  # suspects the map is wrong needs a way to run everything that is not
+  # "remember the flag".
+  run yq -r '.tasks."test:all".cmds[0]' "$TASKFILE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"run-tests"* ]]
+  [[ "$output" != *"--changed"* ]]
+}
+
 @test "test:* routes a single file through run-tests" {
   # Filename must be the VALUE of --files, not an argument after a bare --.
   # Passing it after -- would run the entire tests/ tree plus a stray

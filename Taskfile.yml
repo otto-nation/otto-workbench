@@ -13,7 +13,16 @@ includes:
 
 tasks:
   test:
-    desc: "Run bats and pytest test suites"
+    desc: "Run the tests your branch can affect (bats and pytest)"
+    silent: true
+    cmds:
+      # --changed, because this is the target run between edits: the pre-push
+      # gate already selects, and a `task test` that did not was several
+      # minutes of tests the diff could not reach. Use test:all before
+      # concluding something unrelated is broken.
+      - bin/local/run-tests --changed
+  test:all:
+    desc: "Run every test, selection off"
     silent: true
     cmds:
       - bin/local/run-tests
@@ -21,7 +30,7 @@ tasks:
     desc: "Run Python (pytest) tests only"
     silent: true
     cmds:
-      - bin/local/run-tests --pytest
+      - bin/local/run-tests --pytest --changed
   test:*:
     desc: "Run a single test suite by filename"
     vars:

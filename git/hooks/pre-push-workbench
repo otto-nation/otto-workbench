@@ -348,14 +348,37 @@ fi
 if ! command -v pytest >/dev/null 2>&1; then
   warn "pytest not found — skipping Python tests (pip install pytest)"
 else
-  _step "Running pytest"
+  # Change-based selection, the same shape as the bats step above: only the
+  # pytest files the diff can reach. Falls back to the whole suite when the
+  # selector is unavailable or when it reports a full-suite trigger.
+  _pytest_selected=""
+  _pytest_label="pytest"
+  if [[ -x "$REPO_ROOT/bin/local/select-pytest" ]]; then
+    _pytest_selected=$("$REPO_ROOT/bin/local/select-pytest" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null) || _pytest_selected=""
+  fi
+  if [[ -n "$_pytest_selected" ]]; then
+    _pytest_file_count=$(echo "$_pytest_selected" | wc -l | tr -d ' ')
+    _pytest_total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.py' ! -name 'conftest.py' | wc -l | tr -d ' ')
+    _pytest_label="pytest ($_pytest_file_count/$_pytest_total files)"
+  fi
+
+  _step "Running $_pytest_label"
   _pytest_start=$SECONDS
-  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" --pytest -- --tb=short -q 2>&1) || {
-    printf "${RED}✗${NC}\n" >&2
-    echo "$_pytest_output"
-    err "Pytest failed"
-    exit 1
-  }
+  if [[ -n "$_pytest_selected" ]]; then
+    _pytest_output=$("$REPO_ROOT/bin/local/run-tests" --pytest --pytest-files "$_pytest_selected" -- --tb=short -q 2>&1) || {
+      printf "${RED}✗${NC}\n" >&2
+      echo "$_pytest_output"
+      err "Pytest failed"
+      exit 1
+    }
+  else
+    _pytest_output=$("$REPO_ROOT/bin/local/run-tests" --pytest -- --tb=short -q 2>&1) || {
+      printf "${RED}✗${NC}\n" >&2
+      echo "$_pytest_output"
+      err "Pytest failed"
+      exit 1
+    }
+  fi
   _pytest_elapsed=$(( SECONDS - _pytest_start ))
   _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
   _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"

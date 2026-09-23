@@ -142,6 +142,21 @@ Read the review file **after the command completes** and present:
 - If Must-fix or Should-fix findings remain unfixed, list them with any
   skip reasons annotated inline as `*(skipped — reason)*`
 
+Then read the commit itself, because the summary does not describe it:
+
+```bash
+git show --stat HEAD
+```
+
+Staging takes every path the pass touched and never reads the outcomes, so a
+finding the summary reports as `no auto-fix` can have its edit in that commit.
+The agent edited a caller rather than the anchor file, or ticked `needs a
+person` and changed the code anyway, or deferred where the gate could not
+settle it — only the deferral-on-its-own-anchor case is reconciled. Any file in
+`--stat` that no reported fix accounts for is work nobody reviewed, and it
+reads as absent in the one artifact anyone checks later. Present it as such and
+read the hunk.
+
 A finding annotated with what a check *found* — "the named test does not
 exist", "the repro still exits 3" — is one the verify gate falsified rather
 than one the agent declined. The fix pass ticked it, the gate ran something,

@@ -113,6 +113,9 @@ class TestBuildFixCmd:
         # Not anchored to `git\s+` any more: the Pi pattern reaches past global
         # flags, so `git -C /repo commit` is denied too. This matches the
         # subcommand alternation wherever in GIT_WRITE_SUBCOMMANDS it sits.
+        # assumes commit is first: this only anchors on the alternation that
+        # starts with `commit`, so reordering GIT_WRITE_SUBCOMMANDS to put
+        # another subcommand first would make this stop matching.
         pattern = re.search(r"\(\?:(commit\|[a-z|\-]+)\)", guard)
         assert pattern, "detect.ts no longer spells its git denies as one alternation"
         pi_denied = set(pattern.group(1).split("|"))
@@ -132,6 +135,7 @@ class TestBuildFixCmd:
         """
         guard = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
                  / "pi" / "extensions-cli" / "detect.ts").read_text()
+        # assumes commit is first, same as the parity test above.
         subcommands = re.search(r"\(\?:(commit\|[a-z|\-]+)\)", guard)
         assert subcommands
         # The alternation is preceded by a flag-skipping group, not by `git\s+`.

@@ -1121,6 +1121,29 @@ _blocked() {
   [ -n "$output" ]
 }
 
+@test "review-guard: a bare sudo or doas shell escape is refused" {
+  # `-s` and `-i` are not in WRAPPER_VALUE_FLAGS[sudo], so they read as
+  # ordinary wrapper flags and unwrap() had no residual command left to hand
+  # WRITE_COMMANDS/WRITE_STATEMENT_PATTERNS — an interactive, write-capable
+  # shell escape unwrapped to "" and was silently allowed.
+  _blocked 'sudo -s'
+  [ -n "$output" ]
+  _blocked 'sudo -i'
+  [ -n "$output" ]
+  _blocked 'sudo'
+  [ -n "$output" ]
+  _blocked 'doas'
+  [ -n "$output" ]
+}
+
+@test "review-guard: a shell-wrapper refusal names what the inner check found" {
+  # The recursive shell-payload check used to discard blockedWriteCommand's
+  # inner return value and always report a generic message, so the refusal
+  # never said what the wrapped command actually did.
+  _blocked "bash -c 'rm -rf x'"
+  [[ "$output" == *'`rm` writes: rm -rf x'* ]]
+}
+
 @test "review-guard: a write behind a command wrapper is refused" {
   # commandHead read one word, so the bare `rm` was refused while every wrapped
   # spelling of it was allowed. A guard that blocks the ergonomic form and

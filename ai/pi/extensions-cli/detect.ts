@@ -314,12 +314,23 @@ export function blockedWriteCommand(command: string, depth = 0): string | null {
       return `\`${head}\` writes: ${statement.trim()}`;
     }
 
+    // `unwrap` returns "" for `sudo -s`/`sudo -i`/bare `sudo`/`doas`: `-s` and
+    // `-i` are not in WRAPPER_VALUE_FLAGS[sudo], so they read as ordinary
+    // wrapper flags and are skipped, leaving no residual word to unwrap to.
+    // That is not "no command" — a bare sudo/doas opens an interactive,
+    // write-capable shell in its own right, and unwrap has nothing left to
+    // hand WRITE_COMMANDS or WRITE_STATEMENT_PATTERNS to catch it with.
+    if (!head && /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo|doas)\b/.test(statement)) {
+      return `interactive shell escape: ${statement.trim()}`;
+    }
+
     // Depth-limited so a pathological `sh -c "sh -c ..."` cannot spin. One
     // level is every real invocation; the limit is about termination, not about
     // a nesting an agent is expected to reach.
     const payload = depth < 4 ? shellPayload(statement) : null;
-    if (payload && blockedWriteCommand(payload, depth + 1)) {
-      return `write-capable command inside a shell wrapper: ${statement.trim()}`;
+    const innerReason = payload ? blockedWriteCommand(payload, depth + 1) : null;
+    if (innerReason) {
+      return `write-capable command inside a shell wrapper: ${statement.trim()} (${innerReason})`;
     }
 
     // Against the unwrapped, quote-blanked statement: `sudo sed -i` and

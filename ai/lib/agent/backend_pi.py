@@ -766,6 +766,11 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
         error=stream.error,
     )
 
+    return _finish(proc, stream, inv.session_log)
+
+
+def _finish(proc: subprocess.Popen, stream: StreamResult, session_log: str) -> int:
+    """Shut the RPC process down and report the exit code the caller should see."""
     # Close stdin to terminate the RPC process — tolerate early exit
     try:
         proc.stdin.close()
@@ -774,7 +779,7 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
     # Reading stderr blocks until the child closes it, so it is only safe once
     # the child is gone. A group that survived SIGKILL never closes it.
     if _wait_for_exit(proc, abandoned=stream.error is not None):
-        _log_stderr_on_failure(proc, inv.session_log)
+        _log_stderr_on_failure(proc, session_log)
     return _exit_code(proc, stream)
 
 
@@ -823,12 +828,4 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
             error=stream.error,
         )
 
-    try:
-        proc.stdin.close()
-    except BrokenPipeError:
-        pass
-    # Reading stderr blocks until the child closes it, so it is only safe once
-    # the child is gone. A group that survived SIGKILL never closes it.
-    if _wait_for_exit(proc, abandoned=stream.error is not None):
-        _log_stderr_on_failure(proc, inv.session_log)
-    return _exit_code(proc, stream)
+    return _finish(proc, stream, inv.session_log)

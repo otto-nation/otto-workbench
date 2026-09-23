@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 from conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -84,6 +86,19 @@ def test_a_heredoc_body_is_code():
 def test_a_comment_inside_a_heredoc_is_code():
     source = "cat <<EOF\n# printed, not a comment\nEOF\n"
     assert shell_code_lines(source) == 3
+
+
+def test_the_line_that_closes_a_multi_line_string_is_code():
+    """The closing line holds the quote that ends the span, so it is code.
+
+    The strip leaves it empty and the span is shut by the time it returns, so
+    reading the state after the strip drops it — 35 lines across 16 of this
+    repo's own in-scope shell files, every one of them under the cap rather
+    than over it.
+    """
+    assert shell_code_lines('echo "a\nb"\n') == 2
+    assert shell_code_lines("echo 'x\ny'\n") == 2
+    assert shell_code_lines('echo "a\nb"\necho after\n') == 3
 
 
 def test_a_hash_inside_a_shell_string_is_not_a_comment():
@@ -206,6 +221,22 @@ def test_a_new_file_over_the_cap_fails(tmp_path):
     """The case the gate exists for: phase 5 produced two of these unnoticed."""
     _write(tmp_path, "ai/a.py", _lines(11))
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 1
+
+
+def test_an_unreadable_file_names_itself_instead_of_raising(tmp_path):
+    """A gate over a whole tree must say which file it choked on.
+
+    The counter's `read_text` raises `PermissionError` from three frames down,
+    where the traceback names pathlib rather than the file.
+    """
+    locked = _write(tmp_path, "ai/locked.py", _lines(3))
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(SystemExit) as caught:
+            vfs.main(["--max-lines", "10", str(tmp_path)])
+    finally:
+        locked.chmod(0o644)
+    assert "ai/locked.py" in str(caught.value)
 
 
 def test_a_known_file_over_the_cap_does_not_fail(tmp_path, monkeypatch):

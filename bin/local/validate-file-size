@@ -8,9 +8,10 @@ the cap. `lib/file_size.py` says why at length; the short version is that a
 total-line count in this repo measures documentation, and the guidelines
 require the documentation it would tax.
 
-Scope is source under `ai/`, `bin/` and `lib/`. Tests are not covered: a test
-file is a flat list of cases where the argument for splitting is navigability
-rather than coupling, so it wants a different number and a different owner
+Scope is Python and shell source under `ai/`, `bin/` and `lib/` — the two
+languages `code_lines` reads. Tests are not covered: a test file is a flat
+list of cases where the argument for splitting is navigability rather than
+coupling, so it wants a different number and a different owner
 (#910). Adding tests here would also make this gate the loudest thing in the
 repo while saying nothing #910 does not already track.
 
@@ -149,7 +150,15 @@ def over_cap(root: Path, max_lines: int) -> list[tuple[str, int]]:
     """(relative path, code lines) for every file over *max_lines*, worst first."""
     violations = []
     for path, language in discover(root):
-        count = code_lines(path, language)
+        try:
+            count = code_lines(path, language)
+        except OSError as err:
+            # Naming the file beats a traceback from inside the counter: the
+            # gate runs over a whole tree, and "which file" is the only part
+            # of that stack anyone acts on.
+            raise SystemExit(
+                f"{RED}✗{NC} cannot read {path.relative_to(root)}: {err.strerror}",
+            ) from err
         if count > max_lines:
             violations.append((str(path.relative_to(root)), count))
     return sorted(violations, key=lambda row: -row[1])

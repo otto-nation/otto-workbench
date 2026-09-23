@@ -124,6 +124,13 @@ class _ShellScan:
 
     def _in_heredoc(self, line: str) -> None:
         self.code += 1
+        # ceiling: `strip()` ends a heredoc on any indented terminator, where
+        # bash only allows that after `<<-`, and never for trailing space. The
+        # lenient form ends a body early and undercounts the rest of the file;
+        # no in-scope file has such a line today. Upgrade trigger: capture the
+        # `-` the way ai/pi/extensions/_shared/statements.ts already does
+        # (HEREDOC_OPEN) once any file relies on the distinction, or when this
+        # counter and those guards are unified.
         if line.strip() == self.heredoc_end:
             self.heredoc_end = None
 
@@ -132,15 +139,19 @@ class _ShellScan:
         # the strip both erases a quoted delimiter and advances the state past
         # it, so afterwards neither the text nor the flags describe this line.
         delimiter = heredoc_delimiter(line, self.in_squote, self.in_dquote)
+        was_quoted = self.in_squote or self.in_dquote
 
         stripped, self.in_squote, self.in_dquote = strip_shell_line(
             line, self.in_squote, self.in_dquote,
         )
         if not stripped.strip():
             # Nothing survived the strip: either a whole-line comment, or a
-            # line wholly inside a quoted span. An open quote means the line
-            # still carries content, so it counts; a comment does not.
-            self.code += int(self.in_squote or self.in_dquote)
+            # line wholly inside a quoted span. A line that was already inside
+            # a span carries content — string data, and on the last line the
+            # quote that closes it — so it counts; a comment does not. Testing
+            # the state after the strip would drop that closing line, since by
+            # then the span it ends is no longer open.
+            self.code += int(was_quoted or self.in_squote or self.in_dquote)
             self.heredoc_end = delimiter
             return
 

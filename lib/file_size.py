@@ -39,6 +39,52 @@ from nesting.preprocess import strip_shell_line
 _HEREDOC_START = re.compile(r"<<-?\s*[\"']?([A-Za-z_]\w*)[\"']?")
 
 
+def _heredoc_delimiter(line: str, in_squote: bool, in_dquote: bool) -> str | None:
+    """The delimiter a heredoc opened on *line* will end at, or None.
+
+    Neither the raw line nor the quote-stripped one can answer this alone, and
+    each is wrong in the opposite direction. ``strip_shell_line`` erases the
+    inside of a quoted span, so a quoted delimiter (``cat <<'EOF'``) comes back
+    as ``cat <<`` and the heredoc is never seen to start — its body then gets
+    scanned as ordinary shell, silently dropping the blank and ``#``-led lines
+    the module promises to count. Searching the raw line instead finds a ``<<``
+    that is only being talked about, in a comment (``# unquoted <<EOF, not
+    <<'EOF'``, in lib/ai/commit.sh) or inside a string, and opens a heredoc that
+    never existed — swallowing the rest of the file up to a delimiter that never
+    arrives.
+
+    So the scan walks the line itself: a heredoc opens where the ``<<`` operator
+    sits in code, outside both kinds of quote and before any comment, and the
+    delimiter that follows it is read from the raw text with its quotes intact.
+    """
+    i = 0
+    while i < len(line):
+        char = line[i]
+        if in_squote:
+            in_squote = char != "'"
+        elif char == "\\":
+            i += 2
+            continue
+        elif in_dquote:
+            in_dquote = char != '"'
+        elif char == "'":
+            in_squote = True
+        elif char == '"':
+            in_dquote = True
+        elif char == "#":
+            # A comment runs to end of line, so nothing past it opens anything.
+            return None
+        elif line.startswith("<<<", i):
+            # A here-string, not a heredoc: it takes a word rather than a body,
+            # so there is no delimiter and no following lines to swallow.
+            i += 2
+        elif line.startswith("<<", i):
+            match = _HEREDOC_START.match(line, i)
+            return match.group(1) if match else None
+        i += 1
+    return None
+
+
 def _docstring_lines(tree: ast.AST) -> set[int]:
     """Every line held by a docstring, at any level of *tree*."""
     held: set[int] = set()
@@ -85,7 +131,14 @@ def python_code_lines(source: str) -> int:
             warnings.simplefilter("ignore")
             tree = ast.parse(source)
     except SyntaxError:
-        # Same reasoning as the tokenize failure above.
+        # Unlike the tokenize fallback above, this one also loses blank-line
+        # and docstring exclusion, not just comment recognition — a bigger
+        # swing in the count. That is intentional: a file that fails to parse
+        # (a bad edit, a newer syntax the running interpreter doesn't know)
+        # should read as large rather than risk slipping under the cap on the
+        # strength of its own docstring, so counting every non-blank line is
+        # over-counting on purpose, the same safe direction as the fallback
+        # above, just further in that direction.
         return sum(1 for line in source.splitlines() if line.strip())
 
     lines = source.splitlines()
@@ -127,6 +180,11 @@ class _ShellScan:
             self.heredoc_end = None
 
     def _outside_heredoc(self, line: str) -> None:
+        # Read before the strip, and from the quote state this line starts in:
+        # the strip both erases a quoted delimiter and advances the state past
+        # it, so afterwards neither the text nor the flags describe this line.
+        delimiter = _heredoc_delimiter(line, self.in_squote, self.in_dquote)
+
         stripped, self.in_squote, self.in_dquote = strip_shell_line(
             line, self.in_squote, self.in_dquote,
         )
@@ -135,11 +193,10 @@ class _ShellScan:
             # line wholly inside a quoted span. An open quote means the line
             # still carries content, so it counts; a comment does not.
             self.code += int(self.in_squote or self.in_dquote)
+            self.heredoc_end = delimiter
             return
 
-        match = _HEREDOC_START.search(stripped)
-        if match:
-            self.heredoc_end = match.group(1)
+        self.heredoc_end = delimiter
         self.code += 1
 
 

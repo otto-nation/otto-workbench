@@ -67,9 +67,15 @@ SCAN_ROOTS = ("ai", "bin", "lib")
 SKIP_DIRS = BASE_SKIP_DIRS | {"__pycache__", ".venv", "venv", "node_modules"}
 
 # Extensions that are neither Python nor shell and are never source here.
+#
+# .ts is here deliberately, not by omission: `code_lines` only knows how to
+# count Python and shell, and the ~1,300 lines of TypeScript under
+# `ai/pi/extensions*/` today are all well under the cap (largest is 209
+# lines), so a naive counter would add code without yet catching anything.
+# Add a TypeScript counter to `lib/file_size.py` before pulling this out.
 _NOT_SOURCE = {
     ".md", ".json", ".yml", ".yaml", ".txt", ".toml", ".pkl", ".png", ".svg",
-    ".jsonl", ".lock", ".env", ".html", ".css", ".j2",
+    ".jsonl", ".lock", ".env", ".html", ".css", ".j2", ".ts",
 }
 
 

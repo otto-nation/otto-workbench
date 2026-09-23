@@ -90,6 +90,48 @@ def test_a_quoted_heredoc_delimiter_is_recognised():
     assert shell_code_lines(source) == 3
 
 
+def test_a_blank_and_comment_line_inside_a_quoted_heredoc_is_code():
+    """A quoted delimiter must not fall back to scanning the body as code."""
+    source = "cat <<'USAGE'\nUsage:\n\n# not a real comment\nUSAGE\n"
+    assert shell_code_lines(source) == 5
+
+
+def test_a_double_quoted_heredoc_delimiter_is_recognised():
+    source = 'cat <<"USAGE"\nUsage:\n\n# not a real comment\nUSAGE\n'
+    assert shell_code_lines(source) == 5
+
+
+def test_a_heredoc_mentioned_in_a_comment_opens_nothing():
+    """lib/ai/commit.sh explains its unquoted `<<EOF` in a comment above it.
+
+    Reading the delimiter off the raw line finds this one and swallows the
+    rest of the file waiting for a terminator that never comes.
+    """
+    source = "echo hi\n# see <<EOF for details\n\n\necho bye\n"
+    assert shell_code_lines(source) == 2
+
+
+def test_a_heredoc_written_inside_a_string_opens_nothing():
+    source = 'x="note <<EOF here"\n\n\necho done\n'
+    assert shell_code_lines(source) == 2
+
+
+def test_a_here_string_is_not_a_heredoc():
+    """`<<<` takes a word, not a body — there are no following lines to take."""
+    source = 'grep x <<< "$v"\n\n# c\necho done\n'
+    assert shell_code_lines(source) == 2
+
+
+def test_a_tab_stripping_heredoc_is_recognised():
+    source = "cat <<-EOF\n\tbody\n\n\tEOF\necho after\n"
+    assert shell_code_lines(source) == 5
+
+
+def test_a_heredoc_sharing_its_line_with_a_pipe_is_recognised():
+    source = "cat <<EOF | grep x\nbody\n\nEOF\necho after\n"
+    assert shell_code_lines(source) == 5
+
+
 # ── Discovery ────────────────────────────────────────────────────────────────
 
 def test_a_python_file_without_an_extension_is_found(tmp_path):
@@ -106,6 +148,12 @@ def test_a_shell_file_is_found_by_shebang(tmp_path):
 
 def test_markdown_is_not_source(tmp_path):
     _write(tmp_path, "ai/notes.md", "# heading\n" * 900)
+    assert vfs.discover(tmp_path) == []
+
+
+def test_typescript_is_declared_out_of_scope(tmp_path):
+    """Excluded on purpose, not by falling through unnoticed: see _NOT_SOURCE."""
+    _write(tmp_path, "ai/pi/extensions/thing.ts", "const x = 1;\n" * 900)
     assert vfs.discover(tmp_path) == []
 
 

@@ -355,7 +355,6 @@ def fit_files(
     contents: dict[str, str],
     permissions: dict[str, str],
     ceiling: int,
-    deprioritise: frozenset[str] | set[str] = frozenset(),
 ) -> FileFit:
     """The files from `contents` that fit in `ceiling` bytes, cheapest useful first.
 
@@ -364,24 +363,18 @@ def fit_files(
     so it never has to be re-associated with whatever subset makes the cut.
     `ceiling` is the total bytes the kept files may spend together.
 
-    Ranked by `(classify_tier, deprioritise, size)` — the cheapest useful file
-    first — so a ceiling too low for everything still buys the files most worth
-    having. `deprioritise` is a set of paths a caller would rather drop first,
-    and it ranks *below* tier on purpose: it breaks ties within a tier rather
-    than reordering across them, so a caller's preference cannot cost a Tier 1
-    file its place to a Tier 3 one. Partitioning on that preference before
-    ranking is what would — the whole ceiling would go to the preferred group
-    while a more valuable file in the other waited for the leftovers.
+    Ranked by `(classify_tier, size)` — the cheapest useful file first — so a
+    ceiling too low for everything still buys the files most worth having.
+    Which files are worth shedding first is `_fit_to_budget`'s question, not
+    this one's: it sheds sparse files to cover an overflow before calling here,
+    so what arrives is already the set worth ranking on tier and size alone.
     """
     sizes = {p: len(c.encode()) for p, c in contents.items()}
     included: dict[str, str] = {}
     included_perms: dict[str, str] = {}
     omitted: list[str] = []
     remaining = max(0, ceiling)
-    for path in sorted(
-        contents,
-        key=lambda p: (classify_tier(p), p in deprioritise, sizes[p]),
-    ):
+    for path in sorted(contents, key=lambda p: (classify_tier(p), sizes[p])):
         if sizes[path] <= remaining:
             included[path] = contents[path]
             included_perms[path] = permissions.get(path, "")

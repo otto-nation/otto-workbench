@@ -1025,6 +1025,17 @@ def _no_scope(_outcome: ItemOutcome) -> fix_scope.BatchScope:
     return fix_scope.UNKNOWN_SCOPE
 
 
+# What a contradicted item says when the gate reached no verdict on it. Not a
+# claim either way: the observation is a fact about the tree, and the absence of
+# a verdict is a fact about the run. Both beat the summary's "no auto-fix"
+# fallback, which is the one reading of an empty reason that is certainly wrong
+# here.
+_UNSETTLED_CONTRADICTION = (
+    "recorded as not done, but this item's file was changed in the same run "
+    "and the gate reached no verdict on it — read the diff"
+)
+
+
 def _resolve_contradiction(
     outcome: ItemOutcome, verdict: Verdict | None,
 ) -> int:
@@ -1054,11 +1065,19 @@ def _resolve_contradiction(
     fix and passed", and the surfaces read `False` as a hedge to print beside a
     *claimed fix* — writing it onto a row that claims no fix at all would
     caveat a deferral for failing to prove work it never said it did.
+
+    What the unsettled cases do get is a `reason`, because the alternative is
+    worse than saying nothing: an outcome with no reason renders as the summary's
+    bare fallback, "no auto-fix", which asserts to whoever reads the commit that
+    nothing happened here — over a commit that carries the edit. The outcome
+    stands as recorded; only the sentence published about it stops overclaiming.
     """
     if verdict is None:
+        outcome.reason = outcome.reason or _UNSETTLED_CONTRADICTION
         return 0
     outcome.verify_detail = verdict.detail
     if verdict.ok is None:
+        outcome.reason = outcome.reason or verdict.detail or _UNSETTLED_CONTRADICTION
         return 0
     if verdict.ok is True:
         outcome.outcome = FixOutcome.FIXED

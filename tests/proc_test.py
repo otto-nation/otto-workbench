@@ -388,6 +388,13 @@ class TestRunStdin:
 # missed, rather than one that was about to exit anyway.
 GRANDCHILD_LIFETIME = 20
 
+# How long a call that kills a group may take before the wait after the kill is
+# the unbounded one again. `_reap` waits `QUICK`, and the slack is for a loaded
+# machine rather than for a second bound: this repo's own runner documents
+# subprocesses losing the scheduler for seconds at a time, and a ceiling with no
+# room for that fails on contention instead of on the defect.
+REAP_CEILING = timeouts.QUICK * 2
+
 
 def _alive(pid: int) -> bool:
     """Whether *pid* names a live process, without signalling it."""
@@ -396,6 +403,11 @@ def _alive(pid: int) -> bool:
     except (ProcessLookupError, PermissionError):
         return False
     return True
+
+
+def _raise_value_error(*args, **kwargs):
+    """A `communicate` that fails the way a closed stdin fails."""
+    raise ValueError("I/O operation on closed file")
 
 
 def _wait_until_gone(pid: int, timeout: float = 5.0) -> bool:
@@ -468,12 +480,96 @@ class TestRunKillProcessGroup:
             raise PermissionError(1, "Operation not permitted")
 
         monkeypatch.setattr(proc.os, "killpg", denied)
-        # Short-lived, unlike the fixtures above: nothing kills this one, so
-        # `Popen.__exit__` waits it out and its lifetime is the test's cost.
-        r = proc.run(["sleep", "2"], timeout=0.3, kill_process_group=True)
+        # Long-lived on purpose: nothing kills this one, so the call may only
+        # return by bounding its own wait. A regression here does not fail the
+        # assertions below, it hangs until the suite's own timeout.
+        r = proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
+                     kill_process_group=True)
 
         assert r.returncode == proc.TIMEOUT_RETURNCODE
         assert "could not be signalled and may still be running" in r.stderr
+
+    def test_a_child_that_outlives_sigkill_does_not_hang_the_call(self, monkeypatch):
+        """The kill is a signal, not a death, so the wait after it needs a bound.
+
+        Three states reach the reap and only one is a process that is dying:
+        SIGKILL merely posted, a group `killpg` was not permitted to signal, and
+        a child in uninterruptible sleep. An unbounded wait treats all three as
+        the first. Here the signal never lands at all, which is the shape of the
+        other two and the one an unbounded wait never returns from.
+
+        The bound is the reap's own, with room for a loaded machine to be slow
+        about it — not a fraction of the fixture's lifetime, which is a number
+        this assertion has nothing to do with. A reap that returns in `QUICK`
+        plus slack is working; one that runs to the fixture's own 20s is the
+        unbounded wait back again, and anything between the two is a reap
+        answering to something other than its bound, which is also a defect.
+        """
+        monkeypatch.setattr(proc.os, "killpg", lambda pid, sig: None)
+
+        started = time.monotonic()
+        r = proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
+                     kill_process_group=True)
+        elapsed = time.monotonic() - started
+
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert elapsed < REAP_CEILING, (
+            f"the call waited {elapsed:.1f}s on a child that ignored SIGKILL, "
+            f"which is past the {timeouts.QUICK:g}s reap bound")
+        assert "did not exit after SIGKILL" in r.stderr
+
+    def test_what_outlived_the_kill_is_named_alongside_what_was_not_signalled(
+        self, monkeypatch,
+    ):
+        """Two different failures, and a reader needs to tell them apart.
+
+        `killpg` refused is a group nothing was sent to; a reap that expired is
+        a group that was sent SIGKILL and stayed. A call can hit both at once,
+        and the stderr every caller already reads is where both belong.
+        """
+        def denied(pid, sig):
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(proc.os, "killpg", denied)
+        r = proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
+                     kill_process_group=True)
+
+        assert "could not be signalled" in r.stderr
+        assert "did not exit after SIGKILL" in r.stderr
+
+    def test_an_interrupt_does_not_hang_on_a_child_that_ignores_sigkill(
+        self, tmp_path, monkeypatch,
+    ):
+        """The exception path needs the same bound as the timeout path.
+
+        This is the one that regressed once already. Entering Popen as a context
+        manager gets its pipe-closing, and with it an `__exit__` that reaps with
+        an unbounded `self.wait()` for every exception but `KeyboardInterrupt` —
+        so the hang comes back one level up, while unwinding the error that was
+        going to report it. `ValueError` rather than `KeyboardInterrupt` here
+        precisely because CPython bounds the latter to 0.25s in `__exit__` and
+        would mask the defect; the function's own docstring names `ValueError`
+        as a way out of `communicate`.
+        """
+        monkeypatch.setattr(proc.os, "killpg", lambda pid, sig: None)
+        spawn = subprocess.Popen
+
+        def refuses_to_communicate(*args, **kwargs):
+            process = spawn(*args, **kwargs)
+            process.communicate = _raise_value_error
+            return process
+
+        monkeypatch.setattr(proc.subprocess, "Popen", refuses_to_communicate)
+
+        started = time.monotonic()
+        with pytest.raises(ValueError):
+            proc.run(["sleep", str(GRANDCHILD_LIFETIME)],
+                     timeout=timeouts.QUICK, kill_process_group=True)
+        elapsed = time.monotonic() - started
+
+        assert elapsed < REAP_CEILING, (
+            f"unwinding waited {elapsed:.1f}s on a child that ignored SIGKILL, "
+            f"which is past the {timeouts.QUICK:g}s reap bound")
 
     def test_the_group_goes_even_when_the_way_out_is_not_a_timeout(self, tmp_path,
                                                                    monkeypatch):

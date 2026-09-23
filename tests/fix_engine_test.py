@@ -1351,6 +1351,69 @@ def test_a_deferral_is_not_contradicted_by_another_item_s_file(
     assert run.outcomes[0].outcome is FixOutcome.DEFERRED
 
 
+def test_a_hand_off_whose_own_file_changed_is_put_to_the_gate(
+    tmp_path, landed, head, snapshots,
+):
+    """`needs a person` claims no work just as loudly as a deferral does.
+
+    It reads as a hand-off rather than a claim, which is why it was outside the
+    checked set, but the sentence it publishes is the same one: the surfaces
+    print it under "Skipped", so an agent that edited the code and then asked
+    for a person put "no work was done" on a commit carrying the edit.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+    seen = {}
+
+    def run_verify(_phase, _prompt, **kwargs):
+        seen["ids"] = [i.id for i in kwargs["items"]]
+        seen["body"] = kwargs["items"][0].body
+        return {}
+
+    _run(adapter, verify=run_verify,
+         run_fix=_answer(adapter, tick="needs a person"))
+
+    assert seen["ids"] == ["i0"]
+    assert "recorded this item as work it did not do" in seen["body"]
+
+
+def test_a_contradiction_the_gate_never_answered_says_so_in_its_reason(
+    tmp_path, landed, head, snapshots,
+):
+    """An empty reason renders as "no auto-fix", which is the one wrong reading.
+
+    The outcome stands as the agent recorded it — no verdict, no demotion — but
+    the row must not go on to assert that nothing happened, because the commit
+    it rides in contains the edit that contradicted it.
+    """
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(adapter, verify=lambda *_a, **_k: {},
+                  run_fix=_answer(adapter, tick="deferred"))
+
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+    assert "the gate reached no verdict" in run.outcomes[0].reason
+    assert run.outcomes[0].reason != ""
+
+
+def test_a_contradiction_the_gate_could_not_settle_keeps_the_gate_s_words(
+    tmp_path, landed, head, snapshots,
+):
+    """The gate's own explanation beats the generic one where there is one."""
+    snapshots.side_effect = _settles_at(set(), {"a.py"})
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix_engine.Verdict(ok=None, detail="belongs to i1"))),
+        run_fix=_answer(adapter, tick="deferred"),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.DEFERRED
+    assert run.outcomes[0].reason == "belongs to i1"
+
+
 # passes-at-base: guards against over-firing, and base fires never
 def test_an_unreadable_worktree_contradicts_nothing(
     tmp_path, landed, head, snapshots,

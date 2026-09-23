@@ -142,6 +142,30 @@ Read the review file **after the command completes** and present:
 - If Must-fix or Should-fix findings remain unfixed, list them with any
   skip reasons annotated inline as `*(skipped — reason)*`
 
+Then read the commit itself, because the summary does not describe it:
+
+```bash
+git show --stat HEAD
+```
+
+Staging takes every path the pass touched and never reads the outcomes, so a
+finding the summary reports as `no auto-fix` can have its edit in that commit.
+Any file in `--stat` that no reported fix accounts for is work nobody reviewed,
+and it reads as absent in the one artifact anyone checks later. Present it as
+such and read the hunk.
+
+Two of these now announce themselves, and both are pointers to the diff rather
+than findings against the agent:
+
+- a row reading `the gate reached no verdict` — the item's own file moved and
+  the gate could not settle whether that edit answers it
+- a footer reading `This pass reports no fixes but is committing changes to:` —
+  the pass claims nothing and is staging files anyway
+
+The case neither catches is an agent that fixed one finding by editing another
+file, in a pass that also reports a real fix. That is the path-attribution
+ceiling, and reading `--stat` is the only thing that finds it.
+
 A finding annotated with what a check *found* — "the named test does not
 exist", "the repro still exits 3" — is one the verify gate falsified rather
 than one the agent declined. The fix pass ticked it, the gate ran something,
@@ -158,8 +182,17 @@ Confirm the push landed rather than assuming it did — a drafted push prints
 `DRAFT (not published)`, a gate failure fails the push without touching the
 commit, and a push git reports as successful can still leave `HEAD` and
 `@{u}` diverged if the remote didn't actually hold the commit or couldn't be
-asked to confirm it. The check below can't tell those apart, but the fix is
-the same either way — push again:
+asked to confirm it.
+
+A clean review is the fourth way, and the easiest to misread as success:
+`--push` publishes the pass's *own fix commit*, so a review with nothing left
+to fix makes no commit, pushes nothing, and is right not to. Any commits you
+made before running it are still local. The pass now says so — `This pass
+pushed nothing ... but the branch is N commits ahead of its remote` — but it
+only reports; pushing a branch it never touched is not its call.
+
+The check below can't tell these apart, but the fix is the same either way —
+push again:
 
 ```bash
 git rev-parse HEAD; git rev-parse @{u}

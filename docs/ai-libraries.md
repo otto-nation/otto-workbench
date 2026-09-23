@@ -3140,6 +3140,23 @@ the caller did, so `run` decodes with replacement and the bytes come back as
 text on the result. A non-UTF-8 file in a diff used to abort a review run at
 post-processing, after every agent had been paid for.
 
+A caller running something that spawns its own tree passes
+`kill_process_group=True` and gets a child in a session of its own, so an
+expired bound takes the whole group. Killing is not reaping: SIGKILL is posted
+and may not have landed — `killpg` can be refused outright, and a child in
+uninterruptible sleep does not receive it until it leaves that state — so every
+wait after a kill on that path is bounded, and what outlived it is named on the
+stderr the caller already reads. That path does not enter `Popen` as a context
+manager for the same reason: `__exit__` reaps with an unbounded `wait()` for
+anything but a `KeyboardInterrupt`, which would hang the unwinding of an
+ordinary exception on exactly the group the kill failed to remove.
+
+The default path still reaps unbounded, through `subprocess.run`'s own kill.
+It is the narrower exposure by some way — one direct child, no `killpg` to be
+refused, no grandchild to outlive the signal — and a `ceiling:` at that call
+names what closing it would cost, which is a rewrite of how the suite stubs
+`gh` rather than anything in this module.
+
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
 invisible to anyone watching from outside: a starved `git commit` comes back as

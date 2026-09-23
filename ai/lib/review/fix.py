@@ -58,7 +58,8 @@ from pathlib import Path
 from fix import engine as fix_engine
 from fix import types as fix_types
 from fix import verify as fix_verify
-from core import log
+from core import log, publishing
+from git import client as git_client
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
@@ -75,7 +76,19 @@ from core.trail import Trail
 _STILL_OPEN = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
 
 
-def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
+# The footer a pass gets when it claims no fixes and commits changes anyway.
+# Only that combination: a pass with a fix in it has already explained why the
+# tree moved, and listing the files under every ordinary summary would train the
+# reader to skip the block that matters.
+_UNCLAIMED_EDITS = (
+    "\nThis pass reports no fixes but is committing changes to:\n{files}\n"
+    "Nothing above claims this work. Read the diff before trusting the lines "
+    "that say it was skipped."
+)
+
+
+def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding],
+             changed: set[str] | None = None) -> str:
     """What the pass did, for the commit message and the operator's terminal.
 
     Three blocks, because the three answers are worth telling apart: a fix is
@@ -83,6 +96,13 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
     work nobody is going to do. `findings` is what the ids were rendered from —
     the tracking file records no description of its own, so the one line a fix
     is reported under comes from the finding it answered.
+
+    `changed` is what the pass is about to commit, and it is here because this
+    text is the only account of the pass most people read. The blocks describe
+    outcomes; the commit carries files; attribution between them is by path and
+    misses an agent that fixed a finding by editing its caller or its test. The
+    footer states the files rather than claiming anything about them, which is
+    the most this can honestly do and strictly more than the silence it replaces.
     """
     lines: list[str] = []
     _block(lines, "Fixed:", [
@@ -97,6 +117,9 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
         (o.id, o.reason or "adjudicated, not a defect")
         for o in outcomes if o.outcome is FixOutcome.DECLINED
     ])
+    if lines and changed and not any(o.outcome.counts_as_fixed for o in outcomes):
+        lines.append(_UNCLAIMED_EDITS.format(files="\n".join(
+            f"  {path}" for path in sorted(changed))))
     return "\n".join(lines)
 
 
@@ -459,7 +482,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         commits nothing — `record` is what then says where the work was left.
         """
         self.changed = changed
-        self.summary = _summary(outcomes, self.findings)
+        self.summary = _summary(outcomes, self.findings, changed)
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"
@@ -516,12 +539,46 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     findings = [f for f in doc.open_findings if not f.declined]
     if not findings:
         log.info("No findings left to fix — skipping fix pass")
+        _report_unpushed(job)
         return
 
     run = fix_engine.run(
         ReviewFixAdapter(job, findings), trail=trail, verify=fix_verify.run,
     )
     _record_commit(job, run)
+
+
+def _report_unpushed(job: ReviewJob) -> None:
+    """Say when a pass that published nothing leaves the branch ahead anyway.
+
+    `--post` is a gate on what this pass publishes, and the only thing it ever
+    publishes is its own fix commit — which `land` makes and pushes together,
+    inside a pass that a review with nothing left to fix returns before
+    reaching. So a clean review under `--post` pushes nothing, correctly, and
+    says nothing about it either. That silence is the defect: the operator's own
+    commits are the usual reason a branch is ahead here, and a run that reports
+    success while the remote is behind reads as a branch that shipped.
+
+    Reporting rather than pushing. This pass did not make those commits and does
+    not know what they are for — pushing a branch it never touched is a larger
+    claim than the flag makes, and a worse failure than the one it would fix.
+    Naming the gap costs a line and leaves the decision where it belongs.
+
+    Silent when publishing is off: a held gate is a run that was never going to
+    push, so an unpushed branch is the outcome that was asked for.
+    """
+    if not publishing.enabled():
+        return
+    # No upstream is a branch that has never been pushed, which `commits_ahead`
+    # reads as 0 — the same answer as "nothing to say", and the right one here:
+    # a branch with no remote is not a branch whose remote is behind.
+    ahead = git_client.commits_ahead(cwd=job.wt_path, target_ref="@{u}")
+    if ahead:
+        log.warn(
+            f"This pass pushed nothing — it had no fixes to make — but the "
+            f"branch is {ahead} commit{'s' if ahead != 1 else ''} ahead of its "
+            f"remote. Push them yourself if they are meant to be published."
+        )
 
 
 def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:

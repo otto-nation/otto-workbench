@@ -108,10 +108,9 @@ EDITOR_VARS = ("GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "VISUAL", "EDITOR")
 def unattended_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """*base* (the parent environment by default) with every editor pinned to a no-op.
 
-    Pinned rather than cleared: clearing leaves git to fall through its
-    precedence table to `vi`, so a caller that does not also pass
-    `core.editor=true` is back where it started. `true` is what every layer
-    resolves to, whichever of them wins.
+    See the `EDITOR_VARS` comment above for which variables are pinned, in
+    what order git consults them, and why pinning rather than clearing is
+    what closes off `vi` as a fallback.
 
     Built per call rather than once at import, so a test or a caller that sets
     one of these sees the current value overridden rather than a snapshot taken

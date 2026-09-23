@@ -317,7 +317,11 @@ def agent_env(inv: AgentInvocation) -> dict[str, str]:
     Applied to both backends and to every entry point, because which agent
     happens to shell out to git is not a property either backend can know.
     ``None`` still means inherit, as the field documents — the parent's
-    environment with the pins over it, not a scrub.
+    environment with the pins over it, not a scrub. That inheritance is a
+    snapshot of ``os.environ`` taken when this function runs, not the
+    exec-time environment ``Popen(env=None)`` would use; both backends call
+    this immediately before ``Popen``, so the two are indistinguishable in
+    practice.
     """
     return git_client.unattended_env(os.environ if inv.env is None else inv.env)
 

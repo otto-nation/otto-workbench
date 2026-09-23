@@ -71,7 +71,10 @@ def pool_size(cores: int) -> int:
 
 
 def _slot_path(index: int) -> Path:
-    return slots_dir() / f"slot-{index:02d}.lock"
+    # Three digits, so the names still sort in numeric order on a machine with
+    # more than 99 cores — pool_size is deliberately uncapped, and two digits
+    # would file slot-100 ahead of slot-99 in holders()' sorted listing.
+    return slots_dir() / f"slot-{index:03d}.lock"
 
 
 def _record(handle, index: int, command: str) -> None:

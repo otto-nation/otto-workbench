@@ -7,6 +7,7 @@ assert against a second claim taken while the first is still open.
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -137,7 +138,7 @@ def test_a_released_slot_still_has_its_record():
 def test_holders_ignores_a_malformed_record():
     with claim(want=2, floor=1, cores=18, command="real"):
         pass
-    (job_slots.slots_dir() / "slot-99.lock").write_text("{not json")
+    (job_slots.slots_dir() / "slot-999.lock").write_text("{not json")
     assert all(r["command"] == "real" for r in holders())
 
 
@@ -208,6 +209,80 @@ def test_the_fixture_leaves_no_marker_for_a_cli_child_to_inherit():
 def test_the_cli_returns_the_childs_exit_status():
     """The status is the whole point of a wrapper the gate runs."""
     assert _cli("--want", "1", "--cores", "18", "--", "sh", "-c", "exit 7").returncode == 7
+
+
+def test_the_cli_reports_a_command_it_cannot_run():
+    """A missing child is a message, not a traceback.
+
+    Every other failure on this surface reports itself as `job_slots_cli: ...`;
+    an uncaught OSError here would be the one path that does not.
+    """
+    result = _cli("--want", "1", "--cores", "18", "--", "no-such-command-xyz")
+    assert result.returncode == 127
+    assert "cannot run no-such-command-xyz" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_a_failed_spawn_still_releases_its_slots(tmp_path):
+    """The slots a doomed run claimed must not outlive it.
+
+    claim()'s finally is what frees them, and it runs whether the child started
+    or not — but a wrapper that leaked here would strand capacity on every
+    typo until the machine rebooted.
+    """
+    env = dict(os.environ, WORKBENCH_STATE_DIR=str(tmp_path / "state"))
+    subprocess.run([str(CLI), "--want", "4", "--cores", "6", "--",
+                    "no-such-command-xyz"], capture_output=True, timeout=60, env=env)
+    after = subprocess.run(
+        [str(CLI), "--want", "4", "--cores", "6", "--", "sh", "-c",
+         "echo $WORKBENCH_TEST_SLOTS_GRANTED"],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    assert after.stdout.strip() == "4"
+
+
+def test_the_cli_reports_a_signalled_child_as_128_plus_the_signal(tmp_path):
+    """The shell convention a caller of a wrapper script expects.
+
+    Popen reports a signal death as a negative returncode, and `sys.exit(-N)`
+    becomes `256-N` — so without the translation a SIGTERMed suite exits 241
+    and the gate reads it as an ordinary non-zero. This is the most novel part
+    of the wrapper and nothing else exercises it.
+    """
+    env = dict(os.environ, WORKBENCH_STATE_DIR=str(tmp_path / "state"))
+    result = subprocess.run(
+        [str(CLI), "--want", "1", "--cores", "18", "--",
+         "sh", "-c", "kill -TERM $$"],
+        capture_output=True, timeout=60, env=env,
+    )
+    assert result.returncode == 128 + signal.SIGTERM
+
+
+def test_a_signal_to_the_wrapper_reaches_the_child(tmp_path):
+    """The child runs in its own session, so it is not reached by group delivery.
+
+    The forwarding handlers are the only thing that deliver a Ctrl-C or a
+    terminal hangup to the suite. Without them the wrapper dies, the flocks
+    drop, and the tests keep running outside the pool — which is the failure
+    the handlers exist to prevent, and it is invisible from the outside.
+    """
+    env = dict(os.environ, WORKBENCH_STATE_DIR=str(tmp_path / "state"))
+    started, caught = tmp_path / "started", tmp_path / "caught"
+    proc = subprocess.Popen(
+        [str(CLI), "--want", "1", "--cores", "18", "--", "sh", "-c",
+         f"trap 'touch {caught}; exit 0' TERM; touch {started}; "
+         f"while [ ! -f {caught} ]; do sleep 0.05; done"],
+        env=env,
+    )
+    try:
+        _await(started, "the child never started")
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
+    assert caught.exists(), "the child never saw the signal sent to the wrapper"
 
 
 def test_the_cli_rejects_a_flag_with_no_value():
@@ -305,5 +380,5 @@ def _await(path: Path, message: str, seconds: float = 30) -> None:
 
 def test_a_record_survives_as_json():
     with claim(want=1, floor=1, cores=18, command="x"):
-        text = (job_slots.slots_dir() / "slot-00.lock").read_text()
+        text = (job_slots.slots_dir() / "slot-000.lock").read_text()
     assert json.loads(text)["slot"] == 0

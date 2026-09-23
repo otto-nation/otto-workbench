@@ -42,9 +42,14 @@ def _show() -> int:
         # than this CLI has no label to give, and writes the empty string —
         # which a default never replaces, leaving a blank column.
         command = record.get("command") or "unknown command"
-        print(f"  slot {record.get('slot', '?'):>2}  pid {record.get('pid', '?')}"
-              f"  {command}"
-              f"  (started {record.get('started', 'unknown time')})")
+        # Every field through str() before it is formatted. holders() tolerates
+        # a malformed record rather than raising, and stopping one layer short
+        # of its consumers would have that tolerance end in a TypeError here:
+        # `:>2` rejects a list where it accepts an int or a str.
+        slot = str(record.get("slot", "?"))
+        pid = str(record.get("pid", "?"))
+        started = str(record.get("started", "unknown time"))
+        print(f"  slot {slot:>2}  pid {pid}  {command}  (started {started})")
     return 0
 
 
@@ -61,7 +66,17 @@ def _run_child(child: list[str], granted: int) -> int:
     """
     env = os.environ.copy()
     env[GRANT_ENV] = str(granted)
-    proc = subprocess.Popen(child, start_new_session=True, env=env)
+    try:
+        proc = subprocess.Popen(child, start_new_session=True, env=env)
+    except OSError as exc:
+        # A command that does not exist or cannot be executed. The slots are
+        # released by claim()'s finally either way, so this is about the
+        # message: every other failure on this surface reports itself as
+        # `job_slots_cli: ...` and a raw traceback here would be the one path
+        # that does not. 127 is the shell's convention for "command not
+        # found", which is what a caller of a wrapper script expects to see.
+        print(f"job_slots_cli: cannot run {child[0]}: {exc}", file=sys.stderr)
+        return 127
 
     def _forward(signum: int, _frame: object) -> None:
         try:

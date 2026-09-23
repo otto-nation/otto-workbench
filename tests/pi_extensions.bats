@@ -350,6 +350,77 @@ _run_step_from_worktree() {
   [ ! -e "$PI_EXT_DIR/_shared" ]
 }
 
+# ─── _shared/tokenize ───────────────────────────────────────────────────────
+# The scan every guard rule reads. Imports nothing, so node loads it directly.
+#
+# The cases here are the two defect classes that motivated it, stated as
+# properties rather than as the commands that exposed them: a quoted operator
+# is content, and a dequoted word is the command it spells.
+
+# _tok COMMAND — prints one `flags:value` per token, space separated.
+# Flags: O operator, Q quoted, U unparsed, - plain.
+_tok() {
+  run node --input-type=module -e "
+    const { tokenize } = await import('$REPO_ROOT/ai/pi/extensions/_shared/tokenize.ts');
+    process.stdout.write(tokenize(process.argv[1]).map(t =>
+      (t.operator ? 'O' : t.unparsed ? 'U' : t.quoted ? 'Q' : '-') + ':' + t.value
+    ).join(' '));
+  " -- "$1"
+}
+
+@test "tokenize: an operator inside quotes is content, not syntax" {
+  # `awk 'length > 80' f` was refused as a write and
+  # `bash -c 'rm -rf x; echo done'` was permitted as a read — one mistake in
+  # two directions, and both are this property.
+  _tok "awk 'length > 80' f.txt"
+  [ "$output" = "-:awk Q:length > 80 -:f.txt" ]
+  _tok "bash -c 'rm -rf x; echo done'"
+  [ "$output" = "-:bash -:-c Q:rm -rf x; echo done" ]
+  _tok "grep -rn 'a->b' src/"
+  [ "$output" = "-:grep -:-rn Q:a->b -:src/" ]
+}
+
+@test "tokenize: an unquoted operator is syntax" {
+  _tok 'echo hi > /tmp/x'
+  [ "$output" = "-:echo -:hi O:> -:/tmp/x" ]
+  _tok 'cat f | sed -n 1p'
+  [ "$output" = "-:cat -:f O:| -:sed -:-n -:1p" ]
+  # `>|` is one operator, not `>` followed by a pipe that splits the statement.
+  _tok 'echo hi >| /tmp/x'
+  [ "$output" = "-:echo -:hi O:>| -:/tmp/x" ]
+}
+
+@test "tokenize: a quoted or escaped command name dequotes to itself" {
+  # `'rm' -rf x` and `\rm -rf x` both run rm, and both read as an unknown
+  # command to a rule matching the raw word.
+  _tok "'rm' -rf x"
+  [ "$output" = "Q:rm -:-rf -:x" ]
+  _tok '\rm -rf x'
+  [ "$output" = "Q:rm -:-rf -:x" ]
+}
+
+@test "tokenize: a backslash escape is live in double quotes, literal in single" {
+  _tok 'echo "a\"b"'
+  [ "$output" = '-:echo Q:a"b' ]
+  _tok "echo 'a\\\"b'"
+  [ "$output" = '-:echo Q:a\"b' ]
+}
+
+@test "tokenize: an unterminated quote is reported, not guessed at" {
+  # The operators inside it must not read as syntax: the command was cut
+  # somewhere the scan cannot see, and a verdict from the fragments is a
+  # verdict on something the shell would never have run.
+  _tok "bash -c 'rm -rf x"
+  [ "$output" = "-:bash -:-c U:rm -rf x" ]
+}
+
+@test "tokenize: a file descriptor stays a word of its own" {
+  # 2>&1 is `2`, `>`, `&`, `1`. Callers rely on this shape to tell a redirect
+  # with no destination from one that names a file.
+  _tok 'pytest > /tmp/o.txt 2>&1'
+  [ "$output" = "-:pytest O:> -:/tmp/o.txt -:2 O:> O:& -:1" ]
+}
+
 # ─── sleep-guard ──────────────────────────────────────────────────────────
 # The half of the no-sleep rule that runs under Pi. Its predicate is in
 # detect.ts, which imports nothing, so node can load it directly — index.ts

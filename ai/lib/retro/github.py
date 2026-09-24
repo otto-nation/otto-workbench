@@ -434,6 +434,8 @@ def _prs_page(
     repo: str, owner: str, name: str, cursor: str | None,
 ) -> dict | None:
     """One page of the merged-PR list, or None when GraphQL cannot answer."""
+    # cursor is None on the first page; graphql() omits a None variable rather
+    # than sending it, so no conditional guard is needed here.
     r = gh_client.graphql(
         _RETRO_PRS_QUERY,
         variables={"owner": owner, "name": name, "cursor": cursor},

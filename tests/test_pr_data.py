@@ -665,7 +665,9 @@ class TestFetchReviewThreads:
         assert [t["id"] for t in found.threads] == ["PRT_1"]
         assert found.complete
         mock_gql.assert_called_once()
-        assert "endCursor" not in mock_gql.call_args.kwargs["variables"]
+        # None rather than absent: `graphql()` itself omits a None variable
+        # from the wire request, so the caller no longer needs its own guard.
+        assert mock_gql.call_args.kwargs["variables"]["endCursor"] is None
 
     @patch("gh.client.graphql")
     def test_follows_pages_until_exhausted(self, mock_gql):

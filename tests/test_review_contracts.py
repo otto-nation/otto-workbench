@@ -952,6 +952,16 @@ class TestOutputBlockContract:
         rendered = _FIX_RENDERERS[render](tmp_path)
         assert agent_templates.ROLE_BLOCK in rendered
 
+    def test_fix_and_verify_templates_forbid_unscoped_runners(self, tmp_path):
+        """A phase whose budget is turns must not spend them on the pre-push gate."""
+        findings = _render_fix_findings(tmp_path)
+        verify = _render_verify_fixes(tmp_path)
+        for text in (findings, verify):
+            assert "invoke it directly (`pytest tests/foo.py`)" in text
+            assert "bin/local/run-tests" in text
+            assert "validate-all" in text
+        assert "Run the project's own checks" not in verify
+
     def test_the_verify_template_does_not_claim_the_editing_role(self):
         """The gate is read-only and says so itself in stricter terms.
 

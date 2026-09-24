@@ -14,6 +14,8 @@ from review.grouping import (
     GROUP_TIER1,
     GROUP_TIER3,
     MAX_GROUP_FILES,
+    MAX_GROUP_LINES,
+    MIN_GROUP_LINES,
     ReviewProfile,
     ReviewRule,
     _split_large_dir,
@@ -157,20 +159,37 @@ class TestGroupFiles:
         pkg_groups = [g for g in group_files(pr) if g.name.startswith("pkg")]
         assert len(pkg_groups) == 1
 
+    def test_root_files_share_one_bucket(self):
+        pr = _pr([
+            {"path": "Taskfile.global.yml", "additions": 10, "deletions": 0},
+            {"path": "README.md", "additions": 5, "deletions": 0},
+            {"path": "ai/x.py", "additions": 10, "deletions": 0},
+        ])
+        groups = group_files(pr)
+        names = [g.name for g in groups]
+        assert "Taskfile.global.yml" not in names
+        assert "README.md" not in names
+        root = [g for g in groups if g.name == "."]
+        assert len(root) == 1
+        assert set(root[0].files) == {"Taskfile.global.yml", "README.md"}
+
 
 # ── merge_smallest_groups ────────────────────────────────────────────────────
 
 
 class TestMergeSmallestGroups:
     def test_under_limit(self):
-        groups = [Group("a", ["f1"], 10), Group("b", ["f2"], 20)]
+        groups = [
+            Group("a", ["f1"], MIN_GROUP_LINES),
+            Group("b", ["f2"], MIN_GROUP_LINES + 10),
+        ]
         assert len(merge_smallest_groups(groups, 5)) == 2
 
     def test_over_limit(self):
         groups = [
-            Group("a", ["f1"], 10),
-            Group("b", ["f2"], 20),
-            Group("c", ["f3"], 30),
+            Group("a", ["f1"], MIN_GROUP_LINES),
+            Group("b", ["f2"], MIN_GROUP_LINES + 10),
+            Group("c", ["f3"], MIN_GROUP_LINES + 20),
         ]
         assert len(merge_smallest_groups(groups, 2)) == 2
 
@@ -185,9 +204,9 @@ class TestMergeSmallestGroups:
 
     def test_prefers_shared_directory_prefix(self):
         groups = [
-            Group("src/api", ["api.go"], 100),
-            Group("src/auth", ["auth.go"], 100),
-            Group("tests/unit", ["test.go"], 50),
+            Group("src/api", ["api.go"], MIN_GROUP_LINES + 50),
+            Group("src/auth", ["auth.go"], MIN_GROUP_LINES + 50),
+            Group("tests/unit", ["test.go"], MIN_GROUP_LINES + 50),
         ]
         result = merge_smallest_groups(groups, 2)
         assert len(result) == 2
@@ -198,14 +217,72 @@ class TestMergeSmallestGroups:
     def test_falls_back_to_size_without_shared_prefix(self):
         groups = [
             Group("alpha", ["a.go"], 500),
-            Group("beta", ["b.go"], 10),
-            Group("gamma", ["c.go"], 20),
+            Group("beta", ["b.go"], MIN_GROUP_LINES + 50),
+            Group("gamma", ["c.go"], MIN_GROUP_LINES + 50),
         ]
         result = merge_smallest_groups(groups, 2)
         assert len(result) == 2
         merged = [g for g in result if "+" in g.name][0]
         assert "beta" in merged.name
         assert "gamma" in merged.name
+
+    def test_observed_five_dir_split_collapses(self):
+        pr = _pr([
+            {"path": "ai/lib/review.py", "additions": 280, "deletions": 0},
+            {"path": "bin/pr", "additions": 120, "deletions": 0},
+            {"path": "docs/tools.md", "additions": 1, "deletions": 0},
+            {"path": "lib/ui.sh", "additions": 150, "deletions": 0},
+            {"path": "tests/test_x.py", "additions": 130, "deletions": 0},
+        ])
+        grouped = group_files(pr)
+        assert len(grouped) == 5
+        merged = merge_smallest_groups(grouped, 8)
+        assert len(merged) < 5
+        assert sum(g.lines for g in merged) == 681
+        assert all(g.lines >= MIN_GROUP_LINES for g in merged)
+
+    def test_root_level_file_does_not_keep_own_group(self):
+        pr = _pr([
+            {"path": "Taskfile.global.yml", "additions": 30, "deletions": 0},
+            {"path": "ai/lib/review.py", "additions": 400, "deletions": 0},
+        ])
+        merged = merge_smallest_groups(group_files(pr), 8)
+        assert len(merged) == 1
+        assert "Taskfile.global.yml" not in {g.name for g in merged}
+
+    def test_merges_undersized_groups_under_cap(self):
+        groups = [
+            Group("ai", ["a.py"], 40),
+            Group("bin", ["b.sh"], 30),
+            Group("docs", ["d.md"], 1),
+        ]
+        result = merge_smallest_groups(groups, 8)
+        assert len(result) == 1
+        assert result[0].lines == 71
+
+    def test_stops_at_one_group_even_when_under_floor(self):
+        groups = [
+            Group("docs", ["a.md"], 10),
+            Group("bin", ["b.sh"], 20),
+        ]
+        result = merge_smallest_groups(groups, 8)
+        assert len(result) == 1
+        assert result[0].lines == 30
+
+    def test_single_group_under_floor_is_unchanged(self):
+        groups = [Group("docs", ["a.md"], 10)]
+        result = merge_smallest_groups(groups, 8)
+        assert len(result) == 1
+        assert result[0].name == "docs"
+        assert result[0].lines == 10
+
+    def test_floor_merge_stops_when_pair_exceeds_max_group_lines(self):
+        groups = [
+            Group("tiny", ["t.py"], 50),
+            Group("big", ["b.py"], MAX_GROUP_LINES),
+        ]
+        result = merge_smallest_groups(groups, 8)
+        assert len(result) == 2
 
 
 # ── load_profiles ────────────────────────────────────────────────────────────

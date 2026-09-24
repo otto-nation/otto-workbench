@@ -286,10 +286,10 @@ class TestRenamePartners:
     def test_nothing_dropped_asks_git_nothing(self, git_wt):
         assert fix_scope.rename_partners(set(), {"src.py"}, git_wt) == set()
 
-    def test_a_failed_read_readmits_nothing(self, git_wt):
-        failed = CmdResult(returncode=1, stdout="", stderr="boom")
-        with patch("fix.scope.git_client.run", return_value=failed):
-            partners = fix_scope.rename_partners(
-                {"renamed.py"}, {"src.py"}, git_wt,
-            )
+    @patch("fix.scope.git_client.run")
+    def test_a_failed_read_readmits_nothing(self, mock_run, git_wt):
+        mock_run.side_effect = [CmdResult(returncode=1, stdout="", stderr="boom")]
+        partners = fix_scope.rename_partners(
+            {"renamed.py"}, {"src.py"}, git_wt,
+        )
         assert partners == set()

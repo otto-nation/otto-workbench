@@ -84,6 +84,12 @@ def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = No
     `config` and `git`, which sit at this layer and so cannot be imported from
     it. The CLI resolves the name and hands it down, which also keeps this
     function answerable without a config file at all.
+
+    What comes back is always resolved. A base reached through a symlink would
+    otherwise carry two names — the link's when the caller entered above it, the
+    target's when the caller entered inside it, because *start* is resolved
+    before the walk. Every write is relative to the root this returns, so two
+    names for one wiki reach the manifest and the log.
     """
     if explicit:
         candidate = Path(explicit).expanduser().resolve()
@@ -95,9 +101,9 @@ def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = No
         if depth > MAX_PARENT_DEPTH:
             break
         if is_wiki(directory / name):
-            return directory / name
+            return (directory / name).resolve()
         if is_wiki(directory):
-            return directory
+            return directory.resolve()
         if (directory / ".git").exists():
             break
     return None

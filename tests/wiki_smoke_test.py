@@ -198,6 +198,27 @@ class TestConfiguredDirectory:
         assert result.stdout.strip() == str((project / "knowledge").resolve())
 
 
+class TestSymlinkedEntry:
+    def test_path_is_the_same_string_from_either_side_of_a_link(self, project, tmp_path):
+        """One wiki, one path — through the binary, where the user reads it.
+
+        Entered from above the link and from inside it. These were two different
+        strings, because only one of the two entry points had the link collapsed
+        for it before the walk.
+        """
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        assert run("init", "--domain", "Payments", cwd=vault).returncode == 0
+        (project / "wiki").symlink_to(vault / "wiki", target_is_directory=True)
+
+        above = run("path", cwd=project)
+        inside = run("path", cwd=project / "wiki")
+        assert above.returncode == 0, above.stderr
+        assert inside.returncode == 0, inside.stderr
+        assert above.stdout.strip() == inside.stdout.strip()
+        assert above.stdout.strip() == str((vault / "wiki").resolve())
+
+
 class TestPackaging:
     def test_the_binary_runs_without_the_skill_directory(self, project, tmp_path):
         """`wiki init` falls back when the SCHEMA template is not installed.

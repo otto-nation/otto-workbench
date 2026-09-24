@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -194,6 +195,59 @@ class TestConfiguredDirectory:
     def test_explicit_path_ignores_the_setting(self, tmp_path):
         root = make_wiki(tmp_path, dirname="elsewhere")
         assert wiki.find_wiki(tmp_path, explicit=str(root), dirname="knowledge") == root
+
+
+class TestSymlinkedEntry:
+    """A base reached through a symlink has one name, whichever side it is entered from.
+
+    The placement this covers is a link in the repo pointing at a base kept
+    elsewhere. `find_wiki` resolves *start* before walking, so entering inside
+    the link already yielded the target's path while entering above it yielded
+    the link's — two names for one wiki in console output, and in the `root`
+    every write is relative to.
+    """
+
+    def _linked(self, tmp_path: Path) -> tuple[Path, Path]:
+        """A base at `vault/kb`, and a `repo/wiki` symlink pointing at it."""
+        target = make_wiki(tmp_path / "vault", dirname="kb")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "wiki").symlink_to(target, target_is_directory=True)
+        return repo, target.resolve()
+
+    def test_entering_above_the_link_returns_the_real_path(self, tmp_path):
+        repo, target = self._linked(tmp_path)
+        assert wiki.find_wiki(repo) == target
+
+    def test_both_entry_points_agree_on_one_path(self, tmp_path):
+        repo, _ = self._linked(tmp_path)
+        assert wiki.find_wiki(repo) == wiki.find_wiki(repo / "wiki")
+
+    def test_path_prints_the_real_path(self, tmp_path, capsys):
+        repo, target = self._linked(tmp_path)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(target)
+
+    def test_status_reports_the_real_path(self, tmp_path, capsys):
+        repo, target = self._linked(tmp_path)
+        assert wiki.main(["status", "--json", str(repo)]) == 0
+        assert json.loads(capsys.readouterr().out)["path"] == str(target)
+
+    def test_an_explicit_link_resolves_to_the_same_path(self, tmp_path):
+        repo, target = self._linked(tmp_path)
+        assert wiki.find_wiki(tmp_path, explicit=str(repo / "wiki")) == target
+
+    def test_a_dangling_link_is_not_a_wiki(self, tmp_path):
+        """Why config has to be consulted before the walk, once a vault exists.
+
+        `is_wiki` follows the link to decide, so a link whose target has moved
+        answers exactly as a directory with no wiki in it does. Nothing in the
+        walk can tell the two apart.
+        """
+        repo, target = self._linked(tmp_path)
+        shutil.move(str(target), str(tmp_path / "moved"))
+        assert not wiki.is_wiki(repo / "wiki")
+        assert wiki.find_wiki(repo) is None
 
 
 class TestConfiguredDirnameResolvesTheRepoRoot:

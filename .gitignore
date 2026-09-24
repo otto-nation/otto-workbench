@@ -8,6 +8,23 @@ Brewfile.lock.json
 # Python
 __pycache__/
 
+# uv debris. This repo is not a uv project — pyproject.toml carries only
+# [tool.pytest.ini_options] and no [project] table — but uv cannot tell, so any
+# bare `uv run` with the repo as its CWD writes both of these. `uv.lock` pins
+# nothing (three lines, no packages) and was deleted deliberately in #793,
+# because a lockfile present is what advertises a uv project and sends the next
+# reader to `uv run pytest` instead of the bare command everything here uses.
+# It came back through a blanket `git add -A` that swept it into an unrelated
+# commit, which is the accident these two lines close.
+#
+# .venv/ is listed for completeness rather than need: uv writes `.venv/.gitignore`
+# holding `*`, so the directory hides itself and never reaches `git status`.
+# That self-concealment is exactly why it is worth naming here — it is the half
+# of the debris nobody notices, and a reader who deletes one should know about
+# the other.
+uv.lock
+.venv/
+
 # OS files
 .DS_Store
 Thumbs.db

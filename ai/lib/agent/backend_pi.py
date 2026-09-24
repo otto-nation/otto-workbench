@@ -666,9 +666,17 @@ def _consume_stream(
             model = data.get("message", {}).get("model") or model
 
         if event_type == "turn_end":
+            # The follow_up sent with abort is a summary, not another turn of
+            # work. Counting it made a cap of N record as N+1.
+            if aborted:
+                continue
             turn_count += 1
-            stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered, wrote_output) if not aborted else (None, steered)
-            stop_reason, aborted = (stop, True) if stop else (stop_reason, aborted)
+            stop, steered = _check_limits(
+                process, turn_count, accumulated_cost,
+                max_turns, max_budget, steered, wrote_output,
+            )
+            if stop:
+                stop_reason, aborted = stop, True
 
         if event_type == "agent_end":
             break

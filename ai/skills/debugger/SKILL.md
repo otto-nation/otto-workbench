@@ -1,9 +1,10 @@
 ---
 name: debugger
-description: "Systematic code-level bug diagnosis — traces through source code to find root causes, and modifies nothing. TRIGGER when: investigating a bug, a test failure, or unexpected behavior. Diagnose before fixing."
+description: "Systematic code-level bug diagnosis — traces through source code to find root causes, and modifies nothing. TRIGGER when: a bug, a test failure, or unexpected behavior needs a diagnosis before anyone changes code, or an investigation is dispatched read-only. SKIP: this session will implement the fix — that is superpowers:systematic-debugging, whose last phase implements; this protocol stops at the diagnosis."
 source: otto-workbench/ai/skills/debugger/SKILL.md
 agent: debugger
 trigger: "Loaded automatically for debugging work. Pi has no agent files, so the protocol arrives as a skill."
+skip: "Do not use when this session will implement the fix — superpowers:systematic-debugging owns that path and its fourth phase is the implementation. This protocol ends at a diagnosis and modifies nothing."
 ---
 
 <!-- Installed to Pi's discovery root only. Claude Code loads the same protocol

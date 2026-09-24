@@ -137,6 +137,11 @@ class Refusal(StrEnum):
     divergence names something to reconcile with the remote, and a transport
     failure names nothing the caller did wrong.
 
+    ``AUTH`` and ``UNREACHABLE`` are transport failures separated out because
+    their remedies have nothing in common — one is a credential to fix, the
+    other a network to wait on — and the generic wording sent a reader after
+    the wrong one. ``TRANSPORT`` remains for the rest.
+
     A dropped connection names nothing at all. It is the one refusal where the
     remote still has to be asked what it kept, because git stopped being able to
     say — so it is the one that does not end at `REFUSED`.
@@ -145,6 +150,8 @@ class Refusal(StrEnum):
     HOOK = "hook"
     DIVERGED = "diverged"
     TRANSPORT = "transport"
+    AUTH = "auth"
+    UNREACHABLE = "unreachable"
     DROPPED = "dropped"
     OTHER = "other"
 
@@ -226,6 +233,24 @@ _TRANSPORT_MARKERS = (
     "repository not found",
 )
 
+# The transport failures that are the operator's credentials rather than the
+# network. Split out because the remedies share nothing: a key the remote will
+# not take is fixed in a browser, and a host that will not resolve is fixed by
+# waiting or reconnecting. Reported as one thing, the reader checks the wrong
+# one first.
+_AUTH_MARKERS = (
+    "permission denied",
+    "authentication failed",
+    "repository not found",
+)
+
+# Reachability, as opposed to what happened once a connection was made.
+_UNREACHABLE_MARKERS = (
+    "could not resolve host",
+    "connection refused",
+    "connection timed out",
+)
+
 # The signatures of a connection that was established and then died mid-transfer.
 # Their own set rather than more `_TRANSPORT_MARKERS`, because the two need
 # opposite answers: nothing was ever sent through a refused key or an
@@ -281,6 +306,13 @@ def classify(output: str) -> Refusal:
         return Refusal.DIVERGED
     if any(marker in lowered for marker in _DROPPED_MARKERS):
         return Refusal.DROPPED
+    # Before the generic transport check, and in this order: an auth failure
+    # prints "Could not read from remote repository" underneath the denial, so
+    # the generic marker matches every auth failure too and would win.
+    if any(marker in lowered for marker in _AUTH_MARKERS):
+        return Refusal.AUTH
+    if any(marker in lowered for marker in _UNREACHABLE_MARKERS):
+        return Refusal.UNREACHABLE
     if any(marker in lowered for marker in _TRANSPORT_MARKERS):
         return Refusal.TRANSPORT
     if _PUSH_REFUSED in lowered:
@@ -548,15 +580,119 @@ def resume_command(result: PushResult, wt_path: str | Path) -> str:
     return _push_command(wt_path, args)
 
 
+# How long to spend asking ssh why it was refused. The probe runs only on the
+# failure path, after a push has already cost a round trip, and it is one more
+# to the same host — but a reader waiting on an error message is owed a bound.
+_AUTH_PROBE_TIMEOUT = 15.0
+
+# What `ssh -v` prints once the server has taken the key. On its own it says the
+# key is authorised and nothing about whether the session then succeeded.
+_KEY_ACCEPTED = "server accepts key"
+
+# How a host answers an authenticated session it will not give a shell to. Both
+# GitHub's greeting and the generic denial are checked, because reaching the
+# accept line above says only that the key was taken — a working agent goes on
+# to authenticate, and an agent that cannot sign stops at the denial. Without
+# this the probe calls every auth failure an agent fault, including a repository
+# that does not exist, whose key was equally accepted.
+_AUTH_SUCCEEDED = (
+    "successfully authenticated",
+    "does not provide shell access",
+    "logged in as",
+)
+
+
+def _ssh_host(wt_path: str | Path, remote: str) -> str:
+    """The ssh destination for *remote*, or empty when it is not an ssh remote.
+
+    Only `git@host` scp-style and `ssh://` URLs answer. An https remote returns
+    empty, because its credentials are a helper's business and an ssh probe
+    would say nothing true about them.
+    """
+    url = git_client.out("remote", "get-url", remote, cwd=wt_path)
+    if not url:
+        return ""
+    if url.startswith("ssh://"):
+        without_scheme = url[len("ssh://"):]
+        return without_scheme.split("/", 1)[0]
+    if "@" in url and ":" in url and not url.startswith("http"):
+        return url.split(":", 1)[0]
+    return ""
+
+
+def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
+    """One line saying why ssh would not authenticate, or empty if it would.
+
+    `Permission denied (publickey)` is the same sentence for causes with
+    nothing in common: no key offered at all, a key the remote has never been
+    told about, and — the one that is invisible without `ssh -v` — a key the
+    remote *accepts* whose signature the local agent then refuses to produce.
+    That last one happens whenever the private half is passphrase-protected and
+    the agent holding it will not sign for this process: a sandboxed subprocess,
+    a cron job, a detached shell. The push output shows none of it, so an
+    operator reads "permission denied", assumes their key is wrong, and goes
+    looking in the remote's settings for a fault that is on their own machine.
+
+    Best-effort and never fatal: a probe that cannot run leaves the report as it
+    was rather than replacing a true error with a speculative one.
+    """
+    host = _ssh_host(wt_path, remote)
+    if not host:
+        return ""
+    probe = proc.run(
+        ["ssh", "-v", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+         "-T", host],
+        timeout=_AUTH_PROBE_TIMEOUT,
+    )
+    output = probe.combined_output.lower()
+    if not output:
+        return ""
+    if any(marker in output for marker in _AUTH_SUCCEEDED):
+        # ssh authenticates fine from here, so the credentials are not what the
+        # push tripped over — a missing repository denies access with the same
+        # sentence. Naming the agent here would be a confident wrong answer.
+        return ("ssh authenticates to this host, so the credentials are not the "
+                "problem — check the remote path exists and you have write access")
+    if _KEY_ACCEPTED not in output:
+        # The remote never got as far as taking the key, so the key itself is
+        # what to fix rather than anything holding it.
+        return ""
+    return ("the remote accepted your key and the signature failed after — "
+            "the ssh agent would not sign for this process, not a key the "
+            "remote rejected")
+
+
+def _auth_hint(result: PushResult, wt_path: str | Path) -> list[str]:
+    """The ssh diagnosis for *result*, as nothing or a single line.
+
+    A list rather than a string so the caller loops instead of branching on
+    emptiness — whether there is a hint at all is this function's question, not
+    the reporter's, and asking it here keeps both the probe gate and the empty
+    case out of the report's control flow.
+    """
+    if result.refusal is not Refusal.AUTH:
+        return []
+    hint = diagnose_ssh_auth(wt_path, result.remote)
+    return [hint] if hint else []
+
+
 def _refused_headline(result: PushResult) -> str:
     """What to lead a refused push with.
 
     A push that died on a dropped connection was not refused by anybody, and
     "nothing reached the remote" is a claim nothing has established — whether
     anything reached it is precisely what the drop left open.
+
+    The two credential and reachability refusals name themselves rather than
+    printing the enum: "push refused (auth)" is a category, and what the reader
+    needs is the sentence that sends them to the right place.
     """
     if result.refusal is Refusal.DROPPED:
         return "push dropped mid-transfer — what the remote took is unconfirmed"
+    if result.refusal is Refusal.AUTH:
+        return "push refused — the remote would not accept your credentials"
+    if result.refusal is Refusal.UNREACHABLE:
+        return "push refused — the remote could not be reached"
     return f"push refused ({result.refusal}) — nothing reached the remote"
 
 
@@ -621,6 +757,10 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     if result.status is PushStatus.REFUSED:
         log.error(_refused_headline(result))
         for line in proc.tail(result.output).splitlines():
+            log.dim(line)
+        # After git's own words, not instead of them: the probe is a second
+        # opinion about output the reader can still see for themselves.
+        for line in _auth_hint(result, wt_path):
             log.dim(line)
         if result.log:
             log.dim(f"full output: {result.log}")

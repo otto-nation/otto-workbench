@@ -344,9 +344,12 @@ def test_the_refused_report_omits_the_line_when_there_is_no_artifact(capsys):
     ("! [rejected] main -> main (stale info)", push.Refusal.DIVERGED),
     ("Updates were rejected because the tip is behind its remote counterpart.",
      push.Refusal.DIVERGED),
-    ("ssh: Could not resolve host: github.com", push.Refusal.TRANSPORT),
+    ("ssh: Could not resolve host: github.com", push.Refusal.UNREACHABLE),
+    ("ssh: connect to host github.com port 22: Connection timed out",
+     push.Refusal.UNREACHABLE),
     ("fatal: Could not read from remote repository.", push.Refusal.TRANSPORT),
-    ("Permission denied (publickey).", push.Refusal.TRANSPORT),
+    ("Permission denied (publickey).", push.Refusal.AUTH),
+    ("ERROR: Repository not found.", push.Refusal.AUTH),
     ("validate-all failed\nerror: failed to push some refs to 'origin'",
      push.Refusal.HOOK),
     ("something nobody has seen before", push.Refusal.OTHER),
@@ -364,6 +367,21 @@ def test_a_hook_rejection_outranks_nothing_it_shares_words_with():
     output = ("fatal: Could not read from remote repository.\n"
               "error: failed to push some refs to 'origin'")
     assert push.classify(output) is push.Refusal.TRANSPORT
+
+
+def test_an_auth_denial_outranks_the_generic_line_underneath_it():
+    """The real shape of a refused key, which is why AUTH is checked first.
+
+    ssh prints the denial and git prints "Could not read from remote
+    repository" underneath — so the generic transport marker matches every auth
+    failure too, and checking it first reported a wrong credential as a network
+    fault. This is verbatim what a push with an unauthorised key produces.
+    """
+    output = ("git@github.com: Permission denied (publickey).\n"
+              "fatal: Could not read from remote repository.\n"
+              "Please make sure you have the correct access rights\n"
+              "and the repository exists.")
+    assert push.classify(output) is push.Refusal.AUTH
 
 
 # Everything a push killed by a mid-transfer reset prints — ssh's diagnostic,
@@ -397,9 +415,11 @@ def test_an_auth_failure_is_not_a_drop(output):
 
     Verifying these would ask `ls-remote` to reach a remote the credentials just
     failed against, and report a push that never happened as one that could not
-    be confirmed.
+    be confirmed. Which of the three non-drop refusals they land on is the
+    parametrisation above's business; what matters here is that none is
+    `DROPPED`.
     """
-    assert push.classify(output) is push.Refusal.TRANSPORT
+    assert push.classify(output) is not push.Refusal.DROPPED
 
 
 # ── the drop predicate ──────────────────────────────────────────────────────
@@ -582,7 +602,7 @@ def test_an_auth_failure_is_refused_without_asking_the_remote(monkeypatch):
     result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
 
     assert result.status is push.PushStatus.REFUSED
-    assert result.refusal is push.Refusal.TRANSPORT
+    assert result.refusal is push.Refusal.AUTH
 
 
 def test_a_hook_rejection_is_refused_without_asking_the_remote(monkeypatch):
@@ -618,7 +638,8 @@ def test_a_dropped_refusal_is_not_repairable():
 
 
 @pytest.mark.parametrize("refusal", [push.Refusal.HOOK, push.Refusal.DIVERGED,
-                                     push.Refusal.TRANSPORT, push.Refusal.OTHER])
+                                     push.Refusal.TRANSPORT, push.Refusal.AUTH,
+                                     push.Refusal.UNREACHABLE, push.Refusal.OTHER])
 def test_every_other_refusal_is_repairable(refusal):
     assert push.PushResult(
         push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
@@ -776,6 +797,7 @@ def test_a_divergence_answers_force_with_lease():
 
 
 @pytest.mark.parametrize("refusal", [push.Refusal.HOOK, push.Refusal.TRANSPORT,
+                                     push.Refusal.AUTH, push.Refusal.UNREACHABLE,
                                      push.Refusal.DROPPED, push.Refusal.OTHER])
 def test_no_other_refusal_answers_a_force_push(refusal):
     """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
@@ -1046,3 +1068,141 @@ def test_script_imports_with_pythonpath_overwritten(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "usage: push.py" in result.stdout
+
+
+# ── ssh auth diagnosis ──────────────────────────────────────────────────────
+#
+# `Permission denied (publickey)` is one sentence for causes with different
+# remedies, and the one it hides completely is an agent that will not sign for
+# the calling process. A push made from a sandboxed subprocess, a cron job, or a
+# a detached shell fails exactly like a key the remote has never seen — the
+# distinction lives only in `ssh -v`, which nobody runs before concluding their
+# key is wrong.
+
+
+def _ssh_probe(monkeypatch, output: str, *, url: str = "git@github.com:o/r.git"):
+    """Stub the remote URL read and the ssh probe that follows it."""
+    monkeypatch.setattr(push.git_client, "out", lambda *a, **k: url)
+    monkeypatch.setattr(
+        push.proc, "run", lambda *a, **k: proc.CmdResult(255, "", output),
+    )
+
+
+_KEY_ACCEPTED_TRACE = (
+    "debug1: Offering public key: /home/u/.ssh/id_ed25519 ED25519 SHA256:abc\n"
+    "debug1: Server accepts key: /home/u/.ssh/id_ed25519 ED25519 SHA256:abc\n"
+    "git@github.com: Permission denied (publickey).\n"
+)
+
+_KEY_REJECTED_TRACE = (
+    "debug1: Offering public key: /home/u/.ssh/id_ed25519 ED25519 SHA256:abc\n"
+    "debug1: Authentications that can continue: publickey\n"
+    "git@github.com: Permission denied (publickey).\n"
+)
+
+
+def test_a_key_the_remote_accepted_names_the_agent(monkeypatch):
+    """The failure that is invisible without `ssh -v`.
+
+    The server took the key and the signature failed after it, which means the
+    key is authorised and the local agent would not sign. Reported as a rejected
+    key it sends the operator into the remote's settings for a fault on their
+    own machine.
+    """
+    _ssh_probe(monkeypatch, _KEY_ACCEPTED_TRACE)
+    hint = push.diagnose_ssh_auth("/tmp/wt", "origin")
+    assert "agent" in hint
+    assert "not a key the remote rejected" in hint
+
+
+_AUTH_WORKS_TRACE = (
+    "debug1: Server accepts key: /home/u/.ssh/id_ed25519 ED25519 SHA256:abc\n"
+    "Hi someone! You've successfully authenticated, but GitHub does not "
+    "provide shell access.\n"
+)
+
+
+def test_a_working_agent_is_not_blamed_for_a_missing_repository(monkeypatch):
+    """The false positive the accept-line check alone produces.
+
+    A repository that does not exist is denied with the same sentence as a bad
+    credential, and its key is accepted just as readily — so a probe that stops
+    at "Server accepts key" reports a healthy agent as broken. Authenticating
+    all the way through is what tells the two apart, and it sends the reader to
+    the remote path instead.
+    """
+    _ssh_probe(monkeypatch, _AUTH_WORKS_TRACE)
+    hint = push.diagnose_ssh_auth("/tmp/wt", "origin")
+    assert "credentials are not the problem" in hint
+    assert "agent" not in hint
+
+
+def test_a_key_the_remote_never_took_says_nothing(monkeypatch):
+    """git's own message is already right here, so the probe adds nothing.
+
+    A second sentence restating it would be noise on the one path where the
+    obvious reading is the correct one.
+    """
+    _ssh_probe(monkeypatch, _KEY_REJECTED_TRACE)
+    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+
+
+def test_an_https_remote_is_not_probed(monkeypatch):
+    """An ssh probe says nothing true about a credential helper's token."""
+    _ssh_probe(monkeypatch, _KEY_ACCEPTED_TRACE,
+               url="https://github.com/o/r.git")
+    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+
+
+def test_a_probe_that_cannot_run_says_nothing(monkeypatch):
+    """Best-effort: a silent probe leaves the real error as the only claim."""
+    _ssh_probe(monkeypatch, "")
+    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+
+
+def test_a_remote_with_no_url_is_not_probed(monkeypatch):
+    monkeypatch.setattr(push.git_client, "out", lambda *a, **k: "")
+    monkeypatch.setattr(push.proc, "run", _never_runs)
+    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+
+
+@pytest.mark.parametrize("url,host", [
+    ("git@github.com:o/r.git", "git@github.com"),
+    ("ssh://git@github.com/o/r.git", "git@github.com"),
+    ("ssh://git@ghe.acme.com:2222/o/r.git", "git@ghe.acme.com:2222"),
+    ("https://github.com/o/r.git", ""),
+    ("/srv/local/repo.git", ""),
+])
+def test_the_ssh_host_is_read_from_the_remote_url(monkeypatch, url, host):
+    monkeypatch.setattr(push.git_client, "out", lambda *a, **k: url)
+    assert push._ssh_host("/tmp/wt", "origin") == host
+
+
+def test_an_auth_refusal_reports_the_agent_hint(monkeypatch, capsys):
+    """The hint reaches the operator, under git's own words rather than instead."""
+    _ssh_probe(monkeypatch, _KEY_ACCEPTED_TRACE)
+    push.report(
+        push.PushResult(
+            push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+            refusal=push.Refusal.AUTH,
+            output="git@github.com: Permission denied (publickey).",
+        ),
+        "/tmp/wt",
+    )
+    out = capsys.readouterr().err
+    assert "would not accept your credentials" in out
+    assert "Permission denied" in out
+    assert "agent" in out
+
+
+def test_a_non_auth_refusal_runs_no_probe(monkeypatch, capsys):
+    """A hook rejection costs no round trip to ssh."""
+    monkeypatch.setattr(push, "diagnose_ssh_auth", _never_runs)
+    push.report(
+        push.PushResult(
+            push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+            refusal=push.Refusal.HOOK, output="validate-all failed",
+        ),
+        "/tmp/wt",
+    )
+    assert "validate-all failed" in capsys.readouterr().err

@@ -1,6 +1,6 @@
 ---
 name: debugger
-description: Systematic code-level bug diagnosis. Read-only — traces through source code to find root causes. Never modifies anything.
+description: "Systematic code-level bug diagnosis. Read-only — traces through source code to find root causes. Never modifies anything. Dispatch when a bug needs a diagnosis before anyone changes code. Not for a session that will implement the fix: that is superpowers:systematic-debugging, whose last phase implements, and loading both is duplicated process rather than escalation."
 model: inherit
 source: otto-workbench/ai/claude/agents/debugger.md
 ---

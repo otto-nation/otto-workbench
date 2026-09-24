@@ -17,6 +17,10 @@ docs/getting-started.md linguist-generated=true
 docs/libraries.md linguist-generated=true
 docs/tools.md linguist-generated=true
 
+# bin/local/generate-test-weights, from the junit reports the CI bats shards
+# upload. Measured runtimes, so every line changes a little on each refresh.
+tests/weights.tsv linguist-generated=true
+
 # release-please
 CHANGELOG.md linguist-generated=true
 .github/.release-please-manifest.json linguist-generated=true

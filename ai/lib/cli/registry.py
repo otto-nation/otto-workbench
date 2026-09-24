@@ -1,11 +1,11 @@
 """Every `pr` subcommand, and the whole of what dispatch needs to know about it.
 
 One spec per subcommand, and the spec is the whole declaration: the help line,
-the backing script, what the invocation needs resolved before its handler runs,
-and whether a bare token in its argv can name a target. Four tables in
-`ai/bin/pr` said those things separately — `_COMMANDS`, `_CUSTOM`,
-`_NO_TARGET_COMMANDS` and the mode table — and `_validate_needs` was the only
-one of them with a check.
+the backing script, the importable handler, what the invocation needs resolved
+before that handler runs, and whether a bare token in its argv can name a
+target. Four tables in `ai/bin/pr` said those things separately — `_COMMANDS`,
+`_CUSTOM`, `_NO_TARGET_COMMANDS` and the mode table — and `_validate_needs`
+was the only one of them with a check.
 
 Written as a tuple and keyed afterwards, like `agent.registry`: a literal keyed
 by hand spells every subcommand name twice and can drift between the two
@@ -13,12 +13,13 @@ spellings. **The tuple's order is the display order** — `pr --help`, the
 subparsers and the MCP `command` enum all read it in sequence — so reordering
 it is a user-visible change, not a cosmetic one.
 
-No handler field yet. Six of the nine run functions defined inside `ai/bin/pr`,
-which is not an importable module, so a handler here would resolve for the five
-delegates and lie for the other four. It lands with the dispatch that reads it
-(#909 T7 commit 4), where the contract it has to name — how a resolved context
-and a target flag reach an in-process callable — is decided rather than
-guessed.
+`handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
+not a callable: an eager import would pull every delegate into `pr --help`.
+Seven of the nine name an importable function today. `review` and `comments`
+are None — their wrappers (`cmd_review`, `cmd_comments`) still live in
+`ai/bin/pr` and call `_run_delegate`, which this commit does not move. Filling
+those two is T7 commit 4c; an honest None beats a string that would resolve
+to the wrong callable.
 """
 
 # doc-group: cli
@@ -42,6 +43,13 @@ class CommandSpec:
       downstream has to know which kind a spec carries. No default: a command
       silent about the three axes is exactly what `validate_needs` refuses, and
       a default would answer for it before the check ever ran.
+    * ``handler`` — ``"<module>:<attr>"`` naming the in-process callable, or
+      None when the wrapper is still binary-local. A string, not a callable:
+      dispatch imports it at call time so `pr --help` does not. Defaulted to
+      None because two of the nine cannot honestly point anywhere yet;
+      `review` and `comments` set that explicitly, and a test pins every
+      value as a literal so a silent default on a new command fails the
+      build rather than shipping as None.
     * ``script`` — the backing script's *name* under `ai/bin`, or None for a
       command `pr` runs itself. A name and not a path: under
       WORKBENCH_AI_LIB_DIR this module resolves inside the pinned checkout
@@ -69,6 +77,7 @@ class CommandSpec:
     need: Need | Callable[[Sequence[str]], Need]
     script: str | None = None
     takes_target: bool = True
+    handler: str | None = None
 
 
 _SPECS: tuple[CommandSpec, ...] = (
@@ -79,26 +88,41 @@ _SPECS: tuple[CommandSpec, ...] = (
     # no arity list of its own: parse_pr_flags in lib/ai/pr.sh stays the single
     # source of truth for which of create's flags take a value.
     CommandSpec("create",   "Create a PR (wraps task pr:create)",
-                Need(REMOTE, update=False, lock=True), takes_target=False),
+                Need(REMOTE, update=False, lock=True), takes_target=False,
+                handler="cli.pr_commands:cmd_create"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
-                Need(LOCAL,  update=False, lock=False)),
+                Need(LOCAL,  update=False, lock=False),
+                handler="cli.pr_commands:cmd_status"),
     CommandSpec("ci",       "Check CI failures",
-                Need(REMOTE, update=True,  lock=True),  script="ci-check"),
+                Need(REMOTE, update=True,  lock=True),  script="ci-check",
+                handler="cli.ci_check:main"),
     # The one spec whose declaration its own argv resolves. `cli.review_modes`
     # owns the table the resolver reads, so this is an ordinary import rather
     # than something the entry point has to supply from above.
+    #
+    # handler is None: `cmd_review` still lives in `ai/bin/pr` and calls
+    # `_run_delegate`. Pointing at `cli.claude_review:main` would skip the
+    # --self injection and the mode-flag routing. Filling this is T7 commit 4c.
     CommandSpec("review",   "Run code review",
-                review_modes.need_for,                  script="claude-review"),
+                review_modes.need_for,                  script="claude-review",
+                handler=None),
+    # handler is None: `cmd_comments` still lives in `ai/bin/pr` and calls
+    # `_run_delegate`. Filling this is T7 commit 4c.
     CommandSpec("comments", "Fetch and manage PR review threads",
-                Need(REMOTE, update=True,  lock=True),  script="review-threads"),
+                Need(REMOTE, update=True,  lock=True),  script="review-threads",
+                handler=None),
     CommandSpec("fix",      "Fix CI + review + comments",
-                Need(REMOTE, update=True,  lock=True)),
+                Need(REMOTE, update=True,  lock=True),
+                handler="cli.pr_commands:cmd_fix"),
     CommandSpec("rebase",   "Rebase onto the branch's base",
-                Need(REMOTE, update=False, lock=True),  script="pr-rebase"),
+                Need(REMOTE, update=False, lock=True),  script="pr-rebase",
+                handler="cli.pr_rebase:main"),
     CommandSpec("describe", "Revise the PR description",
-                Need(REMOTE, update=True,  lock=True),  script="pr-describe"),
+                Need(REMOTE, update=True,  lock=True),  script="pr-describe",
+                handler="cli.pr_describe:main"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
-                Need(REMOTE, update=False, lock=True)),
+                Need(REMOTE, update=False, lock=True),
+                handler="cli.pr_commands:cmd_gc"),
 )
 
 COMMANDS: dict[str, CommandSpec] = {s.name: s for s in _SPECS}

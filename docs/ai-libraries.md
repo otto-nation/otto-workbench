@@ -4543,6 +4543,29 @@ names. The resolvers here still take a table rather than reaching for one:
 `review_modes` would otherwise have to be imported from below it, and taking it
 as an argument is also what lets a test declare a table of its own.
 
+### cli/pr_commands.py
+
+The four `pr` subcommands that used to be defined inside the binary.
+
+`status`, `fix`, `create` and `gc` ran inside `ai/bin/pr`, which is not an
+importable module, so `CommandSpec.handler` could not name them. They live
+here so the field means one thing across the nine: a `"<module>:<attr>"`
+string that importlib can resolve, or None.
+
+Still spawning. `cmd_fix` runs `claude-review`, `ci-check` and `pr-describe`
+as child processes, and `cmd_create` still shells out to `task pr:create`.
+#909 T7 commit 4c turns those into calls; this module is the seam that makes
+the four importable without changing how they run.
+
+Each spawn is *given* the directory to run from rather than deriving one from
+`__file__`. Under `WORKBENCH_AI_LIB_DIR` this module resolves inside the
+pinned checkout while the entry point's own BIN_DIR does not, so a path
+derived here would spawn a different tree's delegates than `ai/bin/pr` does.
+Matches `cli.review_modes` and `review.publish.post`.
+
+`cmd_review` and `cmd_comments` stay in the binary: they call `_run_delegate`,
+which this commit does not move. Their `CommandSpec.handler` is None until 4c.
+
 ### cli/pr_describe.py
 
 Revise a PR description against the repo's PR template.
@@ -4596,11 +4619,11 @@ Usage:
 Every `pr` subcommand, and the whole of what dispatch needs to know about it.
 
 One spec per subcommand, and the spec is the whole declaration: the help line,
-the backing script, what the invocation needs resolved before its handler runs,
-and whether a bare token in its argv can name a target. Four tables in
-`ai/bin/pr` said those things separately — `_COMMANDS`, `_CUSTOM`,
-`_NO_TARGET_COMMANDS` and the mode table — and `_validate_needs` was the only
-one of them with a check.
+the backing script, the importable handler, what the invocation needs resolved
+before that handler runs, and whether a bare token in its argv can name a
+target. Four tables in `ai/bin/pr` said those things separately — `_COMMANDS`,
+`_CUSTOM`, `_NO_TARGET_COMMANDS` and the mode table — and `_validate_needs`
+was the only one of them with a check.
 
 Written as a tuple and keyed afterwards, like `agent.registry`: a literal keyed
 by hand spells every subcommand name twice and can drift between the two
@@ -4608,12 +4631,13 @@ spellings. **The tuple's order is the display order** — `pr --help`, the
 subparsers and the MCP `command` enum all read it in sequence — so reordering
 it is a user-visible change, not a cosmetic one.
 
-No handler field yet. Six of the nine run functions defined inside `ai/bin/pr`,
-which is not an importable module, so a handler here would resolve for the five
-delegates and lie for the other four. It lands with the dispatch that reads it
-(#909 T7 commit 4), where the contract it has to name — how a resolved context
-and a target flag reach an in-process callable — is decided rather than
-guessed.
+`handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
+not a callable: an eager import would pull every delegate into `pr --help`.
+Seven of the nine name an importable function today. `review` and `comments`
+are None — their wrappers (`cmd_review`, `cmd_comments`) still live in
+`ai/bin/pr` and call `_run_delegate`, which this commit does not move. Filling
+those two is T7 commit 4c; an honest None beats a string that would resolve
+to the wrong callable.
 
 ### cli/review_modes.py
 

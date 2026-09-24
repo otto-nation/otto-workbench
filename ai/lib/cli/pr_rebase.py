@@ -138,7 +138,6 @@ def cmd_push(
         conflicts_resolved=state.rebase.conflicts_resolved,
         files_resolved=state.rebase.files_resolved,
         files_stale=state.rebase.files_stale,
-        files_replayed=state.rebase.files_replayed,
         force_pushed=True,
         lease_expect=state.rebase.lease_expect,
         target_base=target_ref,

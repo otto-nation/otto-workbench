@@ -143,7 +143,6 @@ already has.
   "conflicts_resolved": 2,
   "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
   "files_stale": ["orc-lending/go.sum"],
-  "files_replayed": ["orc-lending/package-lock.json"],
   "force_pushed": true
 }
 ```
@@ -152,15 +151,12 @@ already has.
 push recovery adds (regeneration, check fixes) are excluded. `conflicts_resolved`
 counts conflicted-file resolutions, matching `files_resolved`.
 
-`files_replayed` is disjoint from `files_resolved` and is not counted in
-`conflicts_resolved`: those files conflicted, and git resolved them itself by
-replaying a resolution recorded in an earlier run, so no AI call was spent on
-them. Report them as such — "3 conflicts, 2 reused from a previous run" — rather
-than folding them into the resolved count or omitting them. A run can be
-`"conflicts_resolved": 0` with a non-empty `files_replayed`, which is a rebase
-that met conflicts and cost nothing, not a clean one; saying "no conflicts"
-there is wrong. The resolutions come from git's rerere cache, which is local to
-the worktree and unshared, so the same branch on another machine pays full price.
+Every conflict a run meets is resolved by that run: git's rerere cache is held
+off for the whole rebase, so nothing is replayed from an earlier one and nothing
+this run resolves is recorded for a later one. The cache is shared by every
+worktree of a repo and is read by a plain `git rebase` too, so recording an
+unreviewed AI resolution into it put that resolution in the path of every later
+rebase, including one run by hand.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
 non-empty, those files were staged from the incoming side and never rebuilt —

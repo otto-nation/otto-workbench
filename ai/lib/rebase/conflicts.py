@@ -37,6 +37,16 @@ CONFLICT_CONTEXT_LINES = 30
 CHUNKED_MIN_LINES = 200
 CHUNKED_MAX_CONFLICT_RATIO = 0.5
 
+# How many lines of a block's own context a resolution may repeat before it is
+# read as having echoed the context back rather than resolved the conflict.
+#
+# One is ordinary and innocent: a resolution legitimately ends with a blank line
+# or a closing brace that the following context also starts with. Two identical
+# lines in sequence, at exactly the block boundary, is not a coincidence worth
+# accommodating — and the cost of being wrong is one retry, against a corrupted
+# merge for the miss in the other direction.
+MAX_ECHOED_CONTEXT_LINES = 1
+
 
 # ── Generated-file detection ──────────────────────────────────────────────
 
@@ -240,15 +250,65 @@ def should_chunk(content: str, blocks: list[ConflictBlock]) -> bool:
     return conflict_lines / total < CHUNKED_MAX_CONFLICT_RATIO
 
 
+def _overlap(first: list[str], second: list[str]) -> int:
+    """Longest run ending *first* that also begins *second*.
+
+    Note this is not a prefix walk from the boundary inward: the alignment
+    shifts with the run's length, so the whole candidate run is compared at each
+    length. Contexts are bounded at ``CONFLICT_CONTEXT_LINES``, so the quadratic
+    shape costs nothing worth avoiding.
+    """
+    longest = 0
+    for n in range(1, min(len(first), len(second)) + 1):
+        if first[-n:] == second[:n]:
+            longest = n
+    return longest
+
+
+def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
+    """How many lines of *block*'s context *resolution* repeated back.
+
+    The chunked prompt sends each conflict wrapped in context and asks for only
+    the conflict's replacement. A model that returns the context too is not
+    caught by any marker check — the text parses, holds no conflict markers, and
+    splices cleanly — but `splice_resolutions` replaces only the marker region,
+    so every echoed line lands a second time beside the copy already in the
+    file. One rebase of this repo duplicated a whole shell function that way,
+    which bash resolves by silently taking the second definition.
+
+    Lines the conflict region itself contains are not counted. A resolution
+    ending with a line that was genuinely part of the conflict is doing its job,
+    even when the following context happens to open with that same line.
+    """
+    owned = set(block.conflict.splitlines())
+    res = resolution.splitlines()
+    after = block.context_after.splitlines()
+    before = block.context_before.splitlines()
+
+    # The resolution's tail against the following context's head, and the
+    # preceding context's tail against the resolution's head.
+    n_tail = _overlap(res, after)
+    n_head = _overlap(before, res)
+
+    novel_tail = sum(1 for line in after[:n_tail] if line not in owned)
+    novel_head = sum(1 for line in before[len(before) - n_head:] if line not in owned)
+    return max(novel_tail, novel_head)
+
+
 def parse_chunked_resolutions(
-    stdout: str, num_blocks: int,
+    stdout: str, blocks: list[ConflictBlock],
 ) -> tuple[list[str] | None, str]:
     """Extract per-block resolutions from AI output.
+
+    Takes the blocks rather than a count because each resolution is checked
+    against the context its own block was sent with — see
+    ``echoed_context_lines`` for what that catches and why no marker check
+    reaches it.
 
     Returns (list_of_resolutions, failure_reason). failure_reason is empty on success.
     """
     resolutions = []
-    for i in range(1, num_blocks + 1):
+    for i in range(1, len(blocks) + 1):
         begin_marker = f"{RESOLVE_BEGIN}_{i}"
         end_marker = f"{RESOLVE_END}_{i}"
         begin = stdout.find(begin_marker)
@@ -266,6 +326,9 @@ def parse_chunked_resolutions(
                 f"{ParseFailure.SURVIVING_CONFLICT_MARKER}_in_block_{i}"
                 f":{surviving.strip()}"
             )
+        echoed = echoed_context_lines(resolved, blocks[i - 1])
+        if echoed > MAX_ECHOED_CONTEXT_LINES:
+            return None, f"{ParseFailure.ECHOED_CONTEXT}_in_block_{i}:{echoed}"
         resolutions.append(resolved + "\n")
     return resolutions, ""
 

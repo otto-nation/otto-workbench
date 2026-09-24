@@ -530,7 +530,6 @@ class RebaseSummary(Domain):
     conflicts_resolved: int = 0
     files_resolved: list[str] = field(default_factory=list)
     files_stale: list[str] = field(default_factory=list)
-    files_replayed: list[str] = field(default_factory=list)
     force_pushed: bool = False
     # The remote tip the replay was based on. Carried across the gap between a
     # `--no-push` rebase and the push that finishes it; see RebaseOutcome.
@@ -551,12 +550,6 @@ class RebaseSummary(Domain):
         else:
             desc = (f"resolved {self.conflicts_resolved} file(s) across "
                     f"{self.commits_replayed} commit(s)")
-        # Spelled "file(s)" even though the clause sits next to a commit
-        # count, because "5 commit(s) replayed, 2 from a recorded resolution"
-        # reads as two commits when it means two files.
-        if self.files_replayed:
-            desc += (f", {len(self.files_replayed)} file(s) from a recorded "
-                     "resolution")
         if self.force_pushed:
             desc += ", force-pushed"
         lines = [f"**Rebase**: {desc}"]

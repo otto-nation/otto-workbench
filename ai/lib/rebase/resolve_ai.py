@@ -232,7 +232,7 @@ def resolve_chunked(
     answer = agent_invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"chunked resolution for {filepath}",
-        usable=lambda s: conflicts.parse_chunked_resolutions(s, len(blocks))[0] is not None,
+        usable=lambda s: conflicts.parse_chunked_resolutions(s, blocks)[0] is not None,
         task="conflict-resolve-chunked",
         **billed_to(trail),
     )
@@ -242,7 +242,7 @@ def resolve_chunked(
         log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
 
-    resolutions, failure_reason = conflicts.parse_chunked_resolutions(answer.text, len(blocks))
+    resolutions, failure_reason = conflicts.parse_chunked_resolutions(answer.text, blocks)
     if resolutions is None:
         tfail(
             trail, "resolve_conflicts",

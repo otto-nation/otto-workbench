@@ -114,6 +114,168 @@ class TestSpliceResolutions:
         assert "<<<<<<< " not in result
 
 
+_CONFLICT = (
+    "<<<<<<< HEAD\n"
+    "    return a\n"
+    "=======\n"
+    "    return b\n"
+    ">>>>>>> abc\n"
+)
+_AFTER = "\n# next thing\ndef other():\n    pass\n"
+_BEFORE = "def f():\n    setup()\n"
+
+
+def _ctx_block(before: str = _BEFORE, after: str = _AFTER):
+    return rebase_types.ConflictBlock(
+        index=1, start=0, end=4, conflict=_CONFLICT,
+        context_before=before, context_after=after,
+    )
+
+
+class TestEchoedContextLines:
+    """The chunked prompt's one instruction that nothing else enforces.
+
+    A resolution that repeats the context it was shown parses, holds no
+    conflict markers and splices cleanly — and then every echoed line exists
+    twice, because `splice_resolutions` replaces only the marker region while
+    the real context still follows it in the file.
+    """
+
+    def test_a_clean_resolution_echoes_nothing(self):
+        assert conflicts.echoed_context_lines("    return a + b\n", _ctx_block()) == 0
+
+    def test_a_trailing_blank_line_is_not_an_echo(self):
+        """One shared line at the boundary is ordinary, so it stays allowed."""
+        n = conflicts.echoed_context_lines("    return a + b\n\n", _ctx_block())
+        assert n <= conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_a_shared_closing_brace_is_not_an_echo(self):
+        block = _ctx_block(after="}\n\nint other(void) {\n")
+        n = conflicts.echoed_context_lines("    x();\n}\n", block)
+        assert n <= conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_two_echoed_lines_are_caught(self):
+        n = conflicts.echoed_context_lines(
+            "    return a + b\n\n# next thing\n", _ctx_block(),
+        )
+        assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_the_whole_trailing_context_is_caught(self):
+        n = conflicts.echoed_context_lines("    return a + b\n" + _AFTER, _ctx_block())
+        assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_the_leading_context_is_caught_too(self):
+        """A model can echo the context it was shown on either side."""
+        n = conflicts.echoed_context_lines(
+            _BEFORE + "    return a + b\n", _ctx_block(),
+        )
+        assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_a_line_the_conflict_owns_is_not_an_echo(self):
+        """Ending on a line the conflict contained is the resolution's job.
+
+        Counting it would reject a correct merge whenever the following context
+        happens to open with a line the conflict also held.
+        """
+        block = _ctx_block(after="    return a\n    cleanup()\n")
+        assert conflicts.echoed_context_lines("    return a\n", block) == 0
+
+
+class TestParseChunkedRejectsEchoedContext:
+    """The guard reached through the parser the resolver actually calls."""
+
+    def _stdout(self, body: str, n: int = 1) -> str:
+        return (
+            f"{conflicts.RESOLVE_BEGIN}_{n}\n{body}"
+            f"{conflicts.RESOLVE_END}_{n}\n"
+        )
+
+    def test_rejects_a_resolution_that_echoed_its_context(self):
+        result, reason = conflicts.parse_chunked_resolutions(
+            self._stdout("    return a + b\n" + _AFTER), [_ctx_block()],
+        )
+        assert result is None
+        assert rebase_types.ParseFailure.ECHOED_CONTEXT in reason
+
+    def test_accepts_the_same_resolution_without_the_echo(self):
+        result, reason = conflicts.parse_chunked_resolutions(
+            self._stdout("    return a + b\n"), [_ctx_block()],
+        )
+        assert reason == ""
+        assert result == ["    return a + b\n"]
+
+    def test_names_the_block_that_echoed(self):
+        """Which block failed, so a retry's diagnosis is not a guess."""
+        blocks = [
+            rebase_types.ConflictBlock(
+                index=1, start=0, end=4, conflict=_CONFLICT,
+                context_before="", context_after="",
+            ),
+            _ctx_block(),
+        ]
+        stdout = (
+            self._stdout("fine\n", 1)
+            + self._stdout("    return a + b\n" + _AFTER, 2)
+        )
+        result, reason = conflicts.parse_chunked_resolutions(stdout, blocks)
+        assert result is None
+        assert "block_2" in reason
+
+
+class TestTheDuplicatedFunctionRegression:
+    """The shape of the rebase that landed a shell function defined twice.
+
+    Reconstructed as a whole file so the damage is asserted where it was seen:
+    not in the parser's return value, but in what `splice_resolutions` writes
+    out. Both halves matter — that the guard rejects it, and that letting it
+    through really does duplicate the function — because a guard asserted only
+    against itself would pass with the splice bug fixed the other way.
+    """
+
+    HELPER = (
+        "report_missing_xdist() {\n"
+        '  warn "pytest has no xdist plugin" >&2\n'
+        "}\n"
+    )
+
+    def _file(self) -> str:
+        return (
+            "run_pytest() {\n"
+            "  local jobs_flag=()\n"
+            "<<<<<<< HEAD\n"
+            '    warn "no xdist" >&2\n'
+            "=======\n"
+            "    report_missing_xdist\n"
+            ">>>>>>> abc123\n"
+            "}\n"
+            "\n"
+            + self.HELPER
+        )
+
+    def test_the_echoing_resolution_is_rejected(self):
+        content = self._file()
+        block = conflicts.extract_conflict_blocks(content)[0]
+        echoed = "    report_missing_xdist\n" + block.context_after
+
+        n = conflicts.echoed_context_lines(echoed, block)
+        assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    # passes-at-base: asserts the unchanged splice behaviour the guard exists to keep unreached
+    def test_splicing_it_would_have_duplicated_the_function(self):
+        """What the guard prevents, stated as the damage rather than a count."""
+        content = self._file()
+        block = conflicts.extract_conflict_blocks(content)[0]
+        echoed = "    report_missing_xdist\n" + block.context_after
+
+        spliced = conflicts.splice_resolutions(content, [block], [echoed])
+        assert spliced.count("report_missing_xdist() {") == 2
+
+        clean = conflicts.splice_resolutions(
+            content, [block], ["    report_missing_xdist\n"],
+        )
+        assert clean.count("report_missing_xdist() {") == 1
+
+
 # ── is_binary ────────────────────────────────────────────────────────────
 
 class TestIsBinary:

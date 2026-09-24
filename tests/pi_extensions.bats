@@ -1419,6 +1419,17 @@ _unscoped() {
   [ -z "$output" ]
 }
 
+@test "review-guard: pytest has no --keyword long form, only -k" {
+  # pytest's own --help lists only "-k EXPRESSION"; there is no --keyword
+  # spelling. Listing it in SUBJECT_RUNNERS would let an agent "scope" a run
+  # with a flag pytest itself rejects, which is not scoping at all. A
+  # trailing word is left off: `--keyword test_foo` reads test_foo as a
+  # positional subject regardless of the flag, which would mask this case.
+  _unscoped 'pytest --keyword'
+  [ -n "$output" ]
+  [[ "$output" == *"invoke it directly"* ]]
+}
+
 @test "review-guard: a selector flag belongs to one runner, not both" {
   # -f is --filter to bats and --looponfail to pytest, which re-runs the whole
   # suite on every file change. Reading it as a subject would allow the worst

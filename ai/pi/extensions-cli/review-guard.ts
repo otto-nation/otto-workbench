@@ -107,6 +107,14 @@ export default function (pi: ExtensionAPI) {
         // A different job from the commit-scope rule: these commands do not
         // write, so write gating and the scoped commit cannot see them. The
         // reason already names the form the templates ask for.
+        //
+        // Checked only when the commit-scope rule found nothing, not
+        // independently of it: a command that both bypasses the commit scope
+        // and is an unscoped test run (e.g. `bin/local/run-tests; git commit
+        // -am wip`) should report the commit-scope refusal, the more urgent
+        // of the two — the agent will hit the runner refusal on its next
+        // attempt regardless. Ordering, not an oversight; do not make these
+        // independent and double the reasons in one refusal.
         const unscoped = unscopedTestRun(event.input.command);
         if (unscoped) blocked = unscoped;
       }

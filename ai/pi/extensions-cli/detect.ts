@@ -440,7 +440,7 @@ const GATE_RUNNERS = new Set(["run-tests", "validate-all"]);
  * refuse. A shared set would read that as the agent naming something.
  */
 const SUBJECT_RUNNERS = new Map<string, Set<string>>([
-  ["pytest", new Set(["-k", "--keyword", "--last-failed", "--lf"])],
+  ["pytest", new Set(["-k", "--last-failed", "--lf"])],
   ["bats", new Set(["-f", "--filter"])],
 ]);
 
@@ -451,7 +451,11 @@ const SUBJECT_RUNNERS = new Map<string, Set<string>>([
  * `::` node id, or a selector flag above. A bare `pytest` or `pytest -q`
  * names nothing. Redirect tails are not arguments — `pytest > /tmp/out`
  * must not read `/tmp/out` as a path, and `pytest 2>&1` must not read the
- * descriptor `2` as one either.
+ * descriptor `2` as one either. That digit-before-redirect check only fires
+ * when the descriptor is the first token after the command name — the loop
+ * has already returned on any selector or positional word ahead of it — so
+ * in practice it is scoped to exactly the `pytest 2>&1` shape, narrower than
+ * the general phrasing above might suggest to an editor extending it.
  *
  * ceiling: a value-taking flag spelled as two words (`pytest --tb short`,
  * no path) looks like a positional and would pass. `python -m pytest` is a
@@ -473,6 +477,10 @@ function namesASubject(tokens: Token[], selectors: Set<string>): boolean {
     ) {
       return true;
     }
+    // ceiling: this reads any `-k`-prefixed junk that isn't itself a flag
+    // (`-kk`, a hypothetical `-kill`) as an attached keyword too. Only pytest
+    // defines `-k`, and it has no other flag starting with `-k`, so this is
+    // inert in practice; upgrade if pytest ever adds one.
     if (attached && word.length > 2 && word.startsWith(attached)
         && !word.startsWith(`${attached}-`)) {
       return true;

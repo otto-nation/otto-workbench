@@ -24,6 +24,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from agent import invoke as agent_invoke
+from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
 from fix import engine as fix_engine
 from git import land
@@ -124,7 +125,7 @@ def _heading_id(line: str) -> str:
     return line.split("fix:")[1].split(" ")[0]
 
 
-def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None):
+def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None, stop=None):
     """A `run_fix` stub that ticks `boxes` on the checklist it finds on disk.
 
     Keyed by finding id, valued with the whole box line the agent would leave
@@ -134,6 +135,8 @@ def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None):
     `work` runs first and is where a test puts the edits the agent would have
     made to the worktree; the engine writes the checklist immediately before
     each invocation, so an answer written any earlier is thrown away.
+    `stop` is the diagnosis the real `run_fix` would return for a truncated
+    pass, so a test can ask the engine to report one without writing a log.
     """
     tracking = _tracking(job)
 
@@ -158,13 +161,16 @@ def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None):
         # reads the silence as a deferral — which several assertions here would
         # take for the answer they asked for. Fail on the typo instead.
         assert not owed, f"no box matched the answer for: {sorted(owed)}"
-        return agent_invoke.FixResult(0, None)
+        if stop is None:
+            return agent_invoke.FixResult(0, None)
+        return agent_invoke.FixResult(0, None, stop=stop)
 
     return run_fix
 
 
 def _run(
-    job: ReviewJob, boxes: dict[str, str], *, work=None, verdicts=None, **kwargs,
+    job: ReviewJob, boxes: dict[str, str], *,
+    work=None, verdicts=None, stop=None, **kwargs,
 ):
     """Run the pass with the agent stubbed, and hand back the stub.
 
@@ -181,7 +187,7 @@ def _run(
     with patch.object(review_fix.fix_verify, "run",
                       side_effect=lambda *a, **k: dict(verdicts or {})):
         with patch.object(fix_engine.agent_invoke, "run_fix",
-                          side_effect=_answer(job, boxes, work=work)) as inv:
+                          side_effect=_answer(job, boxes, work=work, stop=stop)) as inv:
             review_fix.run_fix_pass(job, **kwargs)
     return inv
 
@@ -450,6 +456,22 @@ class TestTheCommitScope:
         assert "[M1] body" in spec.message
         assert "[S1] needs design" in spec.message
 
+    def test_a_truncated_pass_commit_differs_from_a_complete_pass(
+        self, git_wt, tmp_path,
+    ):
+        outcomes = [
+            _outcome("M1", FixOutcome.FIXED),
+            _outcome("N1", FixOutcome.DEFERRED),
+        ]
+        complete = self._adapter(git_wt, tmp_path).landing(outcomes, {"a.py"})
+        truncated = self._adapter(git_wt, tmp_path)
+        truncated.stop = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=30)
+        truncated_spec = truncated.landing(outcomes, {"a.py"})
+
+        assert complete.message != truncated_spec.message
+        assert "max turns" in truncated_spec.message
+        assert "30" in truncated_spec.message
+
 
 class TestTheSummary:
     """Three answers worth telling apart, in the terms each is worth reading."""
@@ -482,6 +504,27 @@ class TestTheSummary:
         """The agent never reached it, so there is no reason it could have given."""
         summary = review_fix._summary([_outcome("N1", FixOutcome.DEFERRED)], {})
         assert "Skipped:\n  - [N1] no auto-fix" in summary
+
+    def test_a_truncated_pass_names_the_turn_limit(self):
+        summary = review_fix._summary(
+            [
+                _outcome("M1", FixOutcome.FIXED),
+                _outcome("N1", FixOutcome.DEFERRED),
+            ],
+            self.FINDINGS,
+            stop=Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=30),
+        )
+        assert "max turns" in summary
+        assert "30" in summary
+
+    def test_a_truncated_deferral_is_not_reported_as_no_auto_fix(self):
+        summary = review_fix._summary(
+            [_outcome("N1", FixOutcome.DEFERRED)],
+            {},
+            stop=Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=30),
+        )
+        assert "not reached (turn limit)" in summary
+        assert "no auto-fix" not in summary
 
     def test_a_decline_has_its_own_heading(self):
         """A skip is retried next pass; a decline is work nobody is going to do."""
@@ -1061,6 +1104,32 @@ class TestWhatALandedPassLeavesBehind:
         err = capsys.readouterr().err
         assert "Fix summary:" in err
         assert "[M1] by design" in err
+
+    @patch("git.land.push.push", return_value=_PUSHED)
+    def test_a_truncated_pass_names_the_limit_in_the_summary_and_commit(
+        self, mock_push, git_wt, tmp_path, capsys,
+    ):
+        """One ticked box used to look like a finished pass that skipped the rest."""
+        job = _make_job(git_wt, tmp_path, self.REVIEW)
+
+        def agent_run():
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+
+        _run(
+            job, {"M2": "fixed"},
+            work=agent_run,
+            stop=Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=30),
+        )
+
+        err = capsys.readouterr().err
+        assert "max turns" in err
+        assert "30" in err
+        assert "not reached (turn limit)" in err
+
+        msg = git_out(git_wt, "log", "-1", "--format=%B")
+        assert "max turns" in msg
+        assert "not reached (turn limit)" in msg
+        assert "no auto-fix" not in msg
 
     @patch("git.land.push.push", return_value=_PUSHED)
     def test_a_pass_that_changed_no_files_commits_nothing(

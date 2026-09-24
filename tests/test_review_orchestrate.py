@@ -548,6 +548,20 @@ class TestDiagnoseMissingOutput:
         result = ro.diagnose_missing_output(str(tmp_path / "missing.jsonl"))
         assert result.kind is ro.DiagnosisKind.NO_SESSION_LOG
 
+    def test_an_empty_path_is_a_missing_log_not_a_directory_read(self, ro):
+        """`Path("")` is `Path(".")`, which exists — and is not a log.
+
+        A caller that has no session log to name passes the empty string, and
+        an existence check answers True for the working directory. Reading it
+        raises rather than reporting the log as missing.
+        """
+        result = ro.diagnose_missing_output("")
+        assert result.kind is ro.DiagnosisKind.NO_SESSION_LOG
+
+    def test_a_directory_is_a_missing_log(self, ro, tmp_path):
+        result = ro.diagnose_missing_output(str(tmp_path))
+        assert result.kind is ro.DiagnosisKind.NO_SESSION_LOG
+
     def test_empty_log(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text("")

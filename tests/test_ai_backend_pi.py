@@ -231,6 +231,24 @@ class TestCheckLimits:
         assert steered is False
 
 
+class TestLimitStopTurnCount:
+    """The follow_up after abort is a summary, not another counted turn."""
+
+    def test_a_limit_stopped_agent_records_the_cap_not_the_follow_up(self):
+        proc = TestConsumeStreamTracksWrites.MockProc([
+            _event("turn_end"),
+            _event("turn_end"),
+            _event("turn_end"),
+            _event("agent_end"),
+        ])
+        stream = ai_backend_pi._consume_stream(
+            proc, io.StringIO(), "", max_turns=2,
+        )
+        assert stream.stop_reason == "max_turns"
+        assert stream.turn_count == 2
+        assert any(c["type"] == "follow_up" for c in proc.stdin.commands)
+
+
 class TestResolveSkillPath:
     def test_returns_skill_path_when_exists(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "pi" / "skills"

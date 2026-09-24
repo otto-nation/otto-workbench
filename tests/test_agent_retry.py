@@ -67,6 +67,34 @@ class TestRetryUnproductive:
         assert diagnosis is None
         assert calls == []
 
+    def test_a_productive_run_is_not_diagnosed_by_this_layer(
+        self, tmp_path, monkeypatch,
+    ):
+        """`retry_unproductive` only governs the retry; truncation is the
+        caller's own concern (`agent.invoke._truncation`), diagnosed from its
+        own read of the log rather than threaded through here.
+        """
+        log_path = _write_log(tmp_path, {
+            "type": "result", "subtype": "max_turns", "num_turns": _TURNS,
+        })
+        diagnosed = []
+        real = agent_retry.diagnose_missing_output
+
+        def spy(path):
+            diagnosed.append(path)
+            return real(path)
+
+        monkeypatch.setattr(agent_retry, "diagnose_missing_output", spy)
+        calls = []
+        diagnosis = agent_retry.retry_unproductive(
+            lambda p, t: calls.append((p, t)) or 0,
+            "PROMPT", log_path,
+            label="fix", max_turns=_TURNS, produced=lambda: True,
+        )
+        assert diagnosis is None
+        assert calls == []
+        assert diagnosed == []
+
     def test_retries_once_when_nothing_was_produced(self, tmp_path):
         """`produced` is False going into the retry and True coming out of it."""
         log_path = write_thrash_log(tmp_path / "session.jsonl")

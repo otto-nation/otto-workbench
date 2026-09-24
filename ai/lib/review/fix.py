@@ -55,6 +55,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from agent.diagnosis import Diagnosis, DiagnosisKind
 from fix import engine as fix_engine
 from fix import types as fix_types
 from fix import verify as fix_verify
@@ -75,6 +76,10 @@ from core.trail import Trail
 # for the next round.
 _STILL_OPEN = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
 
+# A deferral with no reason on a truncated pass is work the agent never reached,
+# not a decline of auto-fix. Named so a reader of the commit body can tell.
+_NOT_REACHED = "not reached (turn limit)"
+
 
 # The footer a pass gets when it claims no fixes and commits changes anyway.
 # Only that combination: a pass with a fix in it has already explained why the
@@ -87,8 +92,21 @@ _UNCLAIMED_EDITS = (
 )
 
 
+def _truncated(stop: Diagnosis | None) -> bool:
+    return stop is not None and stop.kind is DiagnosisKind.MAX_TURNS
+
+
+def _skip_reason(outcome: ItemOutcome, truncated: bool) -> str:
+    if outcome.reason:
+        return outcome.reason
+    if truncated and outcome.outcome is FixOutcome.DEFERRED:
+        return _NOT_REACHED
+    return "no auto-fix"
+
+
 def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding],
-             changed: set[str] | None = None) -> str:
+             changed: set[str] | None = None, *,
+             stop: Diagnosis | None = None) -> str:
     """What the pass did, for the commit message and the operator's terminal.
 
     Three blocks, because the three answers are worth telling apart: a fix is
@@ -103,14 +121,19 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding],
     misses an agent that fixed a finding by editing its caller or its test. The
     footer states the files rather than claiming anything about them, which is
     the most this can honestly do and strictly more than the silence it replaces.
+
+    `stop` is why the last attempt ended. A MAX_TURNS pass is named as truncated
+    here so the commit body differs from a finished one without the trail.
     """
     lines: list[str] = []
+    if _truncated(stop):
+        lines.append(f"Pass truncated: {stop.message}")
     _block(lines, "Fixed:", [
         (o.id, _fixed_entry(findings.get(o.id), o))
         for o in outcomes if o.outcome.counts_as_fixed
     ])
     _block(lines, "Skipped:", [
-        (o.id, o.reason or "no auto-fix")
+        (o.id, _skip_reason(o, _truncated(stop)))
         for o in outcomes if o.outcome in _STILL_OPEN
     ])
     _block(lines, "Declined:", [
@@ -482,7 +505,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         commits nothing — `record` is what then says where the work was left.
         """
         self.changed = changed
-        self.summary = _summary(outcomes, self.findings, changed)
+        self.summary = _summary(outcomes, self.findings, changed, stop=self.stop)
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"

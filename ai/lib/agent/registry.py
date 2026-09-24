@@ -87,11 +87,17 @@ _SPECS: tuple[PhaseSpec, ...] = (
         thinking=Thinking.LOW, max_turns=20,
         shape=PhaseShape.FIX,
         scales_with_omitted=False,
-        scaling=ItemScaling(turns_per_item=2, turns_cap=60),
+        # Five turns an item, matching comments_fix, because a finding is
+        # disprove-before-edit plus a regression test — not CI's "20 turns / 10
+        # failures". Cap raised in step: 5 × 16 = 80, so a full chunk actually
+        # gets the new rate. Leaving the cap at 60 would clamp a 16-item invoke
+        # back to ~2 turns an item, which is the number that already failed to
+        # converge.
+        scaling=ItemScaling(turns_per_item=5, turns_cap=80),
         # Ceiling above `turns_cap`, not equal to it: a pass that scaled all the
-        # way to 60 and still ran out would otherwise retry at exactly the 60
+        # way to 80 and still ran out would otherwise retry at exactly the 80
         # that just failed, which is the one case the bump exists to cover.
-        retry=RetryBudget(ceiling=80, turns_min=40, bump=20),
+        retry=RetryBudget(ceiling=120, turns_min=40, bump=20),
     ),
     # The review fix pass's verify gate, and the same phase as the comments
     # gate in everything but its budget: a review has an `--effort` behind it,
@@ -103,11 +109,11 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # this gate skippable is a pass declining to hand `fix_engine.run` a
     # `verify=` at all.
     #
-    # The engine chunks the fix pass and not the gate, so a pass that fixed more
-    # than the cap covers gives the gate less than five turns an item. That
-    # fails the safe way — an item it never reached is unverified, which leaves
-    # the fix standing — and the alternative is a gate that spends more than the
-    # pass it is checking.
+    # The engine chunks the fix pass; the gate chunks itself via the same
+    # `phase_chunk_size`. A gate handed every claimed fix in one invoke used to
+    # get ~1 turn an item against this cap, which failed the safe way — an item
+    # it never reached stayed unverified. Chunking keeps five turns an item
+    # without the gate spending more than one pass of this budget at a time.
     PhaseSpec(
         Phase.FIX_VERIFY, PhaseDomain.REVIEW, "Verify gate",
         template="verify-fixes.md",

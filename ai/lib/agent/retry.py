@@ -182,6 +182,7 @@ def retry_unproductive(
     recover: Callable[[], None] | None = None,
     hint_select: Callable[[Diagnosis], str] = hint_for,
     ceiling: int = DEFAULT_RETRY_CEILING,
+    turns_fn: Callable[[Diagnosis, int], int] | None = None,
 ) -> Diagnosis | None:
     """Give an agent that produced nothing a second attempt.
 
@@ -189,7 +190,9 @@ def retry_unproductive(
     it left anything behind — an output file for a review phase, a checked box
     for a fix pass.  `recover()`, when given, salvages output from the session
     log before the run is written off.  `ceiling` bounds the retry's turn
-    budget — see `turns_for`.
+    budget — see `turns_for`.  `turns_fn`, when given, replaces `turns_for` so
+    a phase can keep one retry policy across the unproductive path and the
+    leftovers path.
 
     Returns the diagnosis, or None once something was produced. A caller that
     also needs to know *why* a produced run ended — a fix pass distinguishing
@@ -208,7 +211,10 @@ def retry_unproductive(
     if not is_retryable(diagnosis):
         return diagnosis
 
-    turns = turns_for(diagnosis, max_turns, ceiling=ceiling)
+    turns = (
+        turns_fn(diagnosis, max_turns) if turns_fn is not None
+        else turns_for(diagnosis, max_turns, ceiling=ceiling)
+    )
     log.warn(
         f"{label} produced no output ({diagnosis.message}) "
         f"— retrying once ({turns} turns)"
@@ -238,6 +244,7 @@ def run_guarded(
     recover: Callable[[], None] | None = None,
     hint_select: Callable[[Diagnosis], str] = hint_for,
     ceiling: int = DEFAULT_RETRY_CEILING,
+    turns_fn: Callable[[Diagnosis, int], int] | None = None,
 ) -> Diagnosis | None:
     """Run an agent and guard the result with `retry_unproductive`.
 
@@ -251,7 +258,7 @@ def run_guarded(
         invoke, prompt, log_path,
         label=label, max_turns=max_turns,
         produced=produced, recover=recover, hint_select=hint_select,
-        ceiling=ceiling,
+        ceiling=ceiling, turns_fn=turns_fn,
     )
 
 

@@ -7,6 +7,7 @@ resolved to is what the backend is told, and that a runner spends nothing the
 shape has no use for.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -332,3 +333,27 @@ class TestRunAgentQuotaRetry:
         agent_invoke.run_agent(self._inv(tmp_path), throttle=throttle)
         # The backoff the failure set is what a sibling agent waits out.
         assert throttle._resume_at > 0
+
+
+class TestRunFixRetryPolicy:
+    """The unproductive path must use the same formula as leftover retry."""
+
+    def test_an_unproductive_fix_retry_uses_the_phase_formula(
+        self, monkeypatch, tmp_path,
+    ):
+        calls = []
+        monkeypatch.setattr(
+            ai_backend, "invoke_fix",
+            lambda inv: calls.append(inv.max_turns) or 0,
+        )
+        log = tmp_path / "s.jsonl"
+        log.write_text(json.dumps({
+            "type": "result", "subtype": "error_max_turns", "num_turns": 15,
+        }) + "\n")
+        agent_invoke.run_fix(
+            Phase.FIX, "fix it", cwd=tmp_path,
+            session_log=str(log), produced=lambda: False,
+            max_turns=15,
+        )
+        assert calls[0] == 15
+        assert calls[1] == agent_phases.phase_retry_turns(Phase.FIX, 15)

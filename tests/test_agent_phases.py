@@ -13,6 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import phases as agent_phases
+from agent import retry as agent_retry
+from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, RETRYABLE_FIX_PHASES, REVIEW_PHASES
 from core.phases import Effort, Phase
 
@@ -22,11 +24,11 @@ class TestPhaseTurns:
         assert agent_phases.phase_turns(Phase.CI_FIX) == PHASES[Phase.CI_FIX].max_turns
 
     def test_items_below_the_flat_budget_do_not_shrink_it(self):
-        # 5 items at 2 turns each is 10 — under the fix phase's flat 20.
-        assert agent_phases.phase_turns(Phase.FIX, items=5) == 20
+        # 3 items at 5 turns each is 15 — under the fix phase's flat 20.
+        assert agent_phases.phase_turns(Phase.FIX, items=3) == 20
 
     def test_items_above_the_flat_budget_scale_it_up(self):
-        assert agent_phases.phase_turns(Phase.FIX, items=25) == 50
+        assert agent_phases.phase_turns(Phase.FIX, items=6) == 30
 
     def test_scaling_stops_at_the_cap(self):
         cap = PHASES[Phase.FIX].scaling.turns_cap
@@ -44,6 +46,12 @@ class TestPhaseTurns:
             scaling = PHASES[phase].scaling
             chunk = agent_phases.phase_chunk_size(phase)
             assert agent_phases.phase_turns(phase, items=chunk) <= scaling.turns_cap
+
+    def test_a_full_fix_chunk_gets_the_per_item_rate(self):
+        """Raising the rate without the cap would still bind at 2 turns/item."""
+        chunk = agent_phases.phase_chunk_size(Phase.FIX)
+        budget = agent_phases.phase_turns(Phase.FIX, items=chunk)
+        assert budget / chunk >= 5
 
 
 class TestEffortBuysTurns:
@@ -127,8 +135,24 @@ class TestPhaseRetryTurns:
         assert agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, 5) == 30
 
     def test_the_bump_is_applied_above_the_floor(self):
-        assert agent_phases.phase_retry_turns(Phase.FIX, 30) == 50
-        assert agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, 60) == 75
+        assert agent_phases.phase_retry_turns(Phase.FIX, 30) == 60
+        assert agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, 60) == 120
+
+    def test_partial_progress_does_not_shrink_the_retry(self):
+        """Zero ticks doubles via turns_for; leftovers must not get less."""
+        exhausted = Diagnosis(DiagnosisKind.MAX_TURNS)
+        for phase in RETRYABLE_FIX_PHASES:
+            spec = PHASES[phase]
+            cap = spec.scaling.turns_cap or spec.max_turns
+            originals = {spec.max_turns, cap}
+            if cap > spec.max_turns:
+                originals.add((spec.max_turns + cap) // 2)
+            for original in sorted(originals):
+                none = agent_retry.turns_for(
+                    exhausted, original, ceiling=spec.retry.ceiling,
+                )
+                partial = agent_phases.phase_retry_turns(phase, original)
+                assert partial >= none, (phase, original)
 
     def test_a_retry_never_shrinks_the_budget_that_just_ran_out(self):
         for phase in (Phase.FIX, Phase.COMMENTS_FIX, Phase.CI_FIX):
@@ -143,7 +167,7 @@ class TestPhaseRetryTurns:
         assert agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, cap) > cap
 
     def test_the_ceiling_binds(self):
-        assert agent_phases.phase_retry_turns(Phase.FIX, 500) == 80
+        assert agent_phases.phase_retry_turns(Phase.FIX, 500) == 120
         assert agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, 500) == 120
 
     def test_every_retryable_phase_outgrows_a_maxed_first_pass(self):
@@ -169,6 +193,11 @@ class TestPhaseRetryTurns:
 
 class TestPhaseChunkSize:
     """A chunk must fit both caps, or the pass starves on whichever binds first."""
+
+    def test_the_fix_pass_chunk_fits_the_cap(self):
+        scaling = PHASES[Phase.FIX].scaling
+        chunk = agent_phases.phase_chunk_size(Phase.FIX)
+        assert chunk * scaling.turns_per_item <= scaling.turns_cap
 
     def test_the_comments_pass_chunk_fits_both_caps(self):
         scaling = PHASES[Phase.COMMENTS_FIX].scaling

@@ -366,10 +366,17 @@ def phase_budget(
 def phase_retry_turns(phase: Phase, original: int) -> int:
     """Turns for a second attempt at a phase whose first came back empty.
 
-    Bumped above whatever the original pass was given and floored at the spec's
-    minimum, then capped by the retry ceiling rather than the first pass's cap:
-    clamping a retry to the budget that just ran out guarantees the same
-    failure, which is what made the bump dead precisely when it was warranted.
+    The unproductive-path retry (`agent.retry.turns_for`) doubles the original
+    budget. This function is the leftovers path, and the two used to disagree:
+    a pass that ticked nothing got `2n`, a pass that ticked one box got
+    `n + bump`, and at n=30 that is 60 against 50 — progress shrank the second
+    attempt. Doubling is therefore in the max here too, so one phase has one
+    retry policy and partial progress never gets less than a no-progress retry.
+
+    Floored at the spec's minimum, then capped by the retry ceiling rather than
+    the first pass's cap: clamping a retry to the budget that just ran out
+    guarantees the same failure, which is what made the bump dead precisely
+    when it was warranted.
 
     Only the four phases a `FixAdapter` names as its own reach here, through
     `fix.engine._retry`: `fix`, `comments_fix`, `ci_fix` and `prepush_fix`. The
@@ -380,7 +387,10 @@ def phase_retry_turns(phase: Phase, original: int) -> int:
     why every spec that reaches here sets one above its cap.
     """
     retry = PHASES[phase].retry
-    return min(max(retry.turns_min, original + retry.bump), retry.ceiling)
+    return min(
+        max(retry.turns_min, original + retry.bump, original * 2),
+        retry.ceiling,
+    )
 
 
 def phase_chunk_size(phase: Phase) -> int:

@@ -1342,3 +1342,20 @@ class TestPromptStatsConcurrentAppends:
         stats = json.loads((tmp_path / "prompt-stats.json").read_text())
         assert len(stats) == n
         assert {row["template"] for row in stats} == {f"t{i}" for i in range(n)}
+
+    def test_a_write_failure_is_logged_with_the_exception_detail(self, tmp_path, monkeypatch, capsys):
+        job = _make_job()
+        job.review_file = str(tmp_path / "review.md")
+
+        def _boom(path, data):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("review.prompt.write_json", _boom)
+
+        _log_prompt_size(
+            "t", "p", {}, job,
+            budget_bytes=10_000, model=TEST_MODEL,
+        )
+
+        stderr = capsys.readouterr().err
+        assert "disk full" in stderr

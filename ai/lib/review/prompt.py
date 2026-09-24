@@ -544,8 +544,8 @@ def _append_prompt_stats(stats_file: str, stats: dict) -> None:
         existing.append(stats)
         try:
             write_json(path, existing)
-        except OSError:
-            log.warn(f"{path} could not be written")
+        except OSError as exc:
+            log.warn(f"{path} could not be written ({exc})")
 
 
 def _log_prompt_size(

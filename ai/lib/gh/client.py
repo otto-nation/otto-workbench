@@ -431,6 +431,15 @@ def graphql(
     (`-F`), so gh detects integers and booleans. *input_text* sends a whole
     query document on stdin instead, which is what a mutation with a nested
     variable needs.
+
+    A variable whose value is ``None`` is omitted rather than sent. gh builds
+    each `-F` from an f-string, so a Python ``None`` would reach the API as the
+    four-character string ``"None"`` — and GraphQL's own spec says an absent
+    variable and a null one are the same thing, which is what every caller
+    means by it. The cost of getting this wrong is not a type error: a first
+    page requested with ``after: "None"`` is rejected as an invalid cursor, so
+    a paging caller's opening request fails and any REST fallback behind it
+    silently becomes the only path that ever runs.
     """
     argv: list[str] = ["api", "graphql"]
     if input_text is not None:
@@ -438,6 +447,8 @@ def graphql(
     else:
         argv += ["-f", f"query={query}"]
     for key, value in (variables or {}).items():
+        if value is None:
+            continue
         argv += ["-F", f"{key}={value}"]
     call = functools.partial(run, *argv, input_text=input_text)
     return _with_retries(call, "graphql") if retry else call()

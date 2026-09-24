@@ -390,6 +390,46 @@ def test_graphql_sends_a_whole_document_on_stdin(stub_gh):
     assert "query=" not in said
 
 
+def test_graphql_omits_a_none_variable_rather_than_sending_the_word(stub_gh):
+    """A None cursor means the first page, not the literal string "None".
+
+    The f-string that builds each -F has no opinion about None, so before this
+    the opening page of every paged query went out as `after: "None"` and came
+    back INVALID_CURSOR_ARGUMENTS. Two retro scans ran entirely on their REST
+    fallback because of it, and the fallback answers, so nothing failed loudly.
+    """
+    calls = stub_gh("echo '{}'")
+    gh_client.graphql(
+        "query($cursor: String) { x }",
+        variables={"owner": "o", "name": "r", "cursor": None},
+    )
+    said = calls.read_text()
+    # Not a bare "cursor" check: the query text declares $cursor either way.
+    assert "-F cursor=" not in said
+    assert "None" not in said
+    assert "-F owner=o" in said
+    assert "-F name=r" in said
+
+
+def test_graphql_still_sends_a_cursor_that_has_a_value(stub_gh):
+    """Omitting None must not also drop the second page's real cursor."""
+    calls = stub_gh("echo '{}'")
+    gh_client.graphql(
+        "query($cursor: String) { x }", variables={"cursor": "Y3Vyc29yOnYyOpHOAA"},
+    )
+    assert "-F cursor=Y3Vyc29yOnYyOpHOAA" in calls.read_text()
+
+
+def test_graphql_sends_a_falsy_variable_that_is_not_none(stub_gh):
+    """Only None is absent — 0, False and "" are values a query may mean."""
+    calls = stub_gh("echo '{}'")
+    gh_client.graphql("query { x }", variables={"pr": 0, "draft": False, "q": ""})
+    said = calls.read_text()
+    assert "-F pr=0" in said
+    assert "-F draft=False" in said
+    assert "-F q=" in said
+
+
 # ── Reads ───────────────────────────────────────────────────────────────────
 
 

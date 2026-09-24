@@ -42,6 +42,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 _BIN_DIR = Path(__file__).resolve().parent
@@ -55,7 +56,9 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 from _version import version_string as _version_string  # noqa: E402
-from config.workbench_config import WIKI_DIR_KEY, WIKI_ROOT_KEY, load_config_or_default  # noqa: E402
+from config.workbench_config import WIKI_DIR_KEY, WIKI_LINK_KEY, WIKI_ROOT_KEY  # noqa: E402
+from config.workbench_config import container_dir, load_config_or_default  # noqa: E402
+from git_layout import worktree_for  # noqa: E402
 from config.workbench_config_report import config_status  # noqa: E402
 from config.workbench_config_write import ConfigError as ConfigWriteError  # noqa: E402
 from config.workbench_config_write import set_value  # noqa: E402
@@ -123,8 +126,10 @@ __all__ = [
     "build_index",
     "collect_lint",
     "collect_signals",
+    "apply_link",
     "collect_status",
     "configured_dirname",
+    "container_link_path",
     "find_wiki",
     "hash_file",
     "init_wiki",
@@ -260,6 +265,93 @@ def vault_entry(vault: Path, root: Path) -> Path | None:
     if subpath is None:
         return None
     return (vault / subpath).resolve()
+
+
+@dataclass(frozen=True)
+class LinkOutcome:
+    """What `apply_link` did, and the line to print about it."""
+
+    ok: bool
+    message: str
+
+
+def container_link_path(root: Path) -> Path | None:
+    """Where this repo's browsing link goes, or ``None`` for a plain clone.
+
+    Beside a bare repo's worktrees rather than inside one. A per-worktree link
+    would need a `.gitignore` entry in every repo that wanted one, `wt remove`
+    would strand it, and committing one stores mode 120000 with an absolute
+    machine-specific path as the blob — which breaks the repo for everyone else.
+
+    Named `DEFAULT_WIKI_DIRNAME`, never `wiki.dir`: that key names the *in-tree*
+    placement, and a repo with a vault base has by definition not set it. A
+    configured `docs/knowledge` would also mean creating a directory at the
+    container to hold the link, which is not the workbench's to create.
+
+    `container_dir` answers for a worktree and for the container itself, and
+    ``None`` for a plain clone — which has no directory outside the working tree
+    to put a link in, and so gets none.
+    """
+    container = container_dir(str(root))
+    if container is None and (root / ".git").is_dir() and not (root / ".git").is_file():
+        # Standing in the container itself, which is where the link appears and
+        # so where someone is likely to run this. `container_dir` answers None
+        # here rather than naming it: it asks git for a toplevel, and a bare
+        # container has no work tree to report one.
+        worktree = worktree_for(str(root))
+        if worktree.ok:
+            container = str(root)
+    return Path(container) / DEFAULT_WIKI_DIRNAME if container else None
+
+
+def _link_resolves_to(link: Path, entry: Path) -> bool:
+    """Whether *link* is a symlink this repo owns, pointing at *entry*.
+
+    Compared unresolved as well as resolved: a link whose target has been moved
+    away still names it, and that is still a link this repo made rather than
+    someone else's.
+    """
+    if not link.is_symlink():
+        return False
+    target = Path(os.readlink(link))
+    return target == entry or (link.exists() and link.resolve() == entry)
+
+
+def apply_link(root: Path, entry: Path | None, wanted: bool) -> LinkOutcome:
+    """Bring this repo's browsing link into line with `wiki.link`.
+
+    Never replaces or deletes anything it did not make. A real directory, or a
+    symlink pointing somewhere else, is reported and left exactly as it is: the
+    link is a convenience, and no convenience is worth removing a directory
+    somebody put there.
+    """
+    link = container_link_path(root)
+    if link is None:
+        return LinkOutcome(True, "plain clone — no container to put a link in")
+    if entry is None:
+        return LinkOutcome(False, "this repo has no vault base to link to")
+
+    if _link_resolves_to(link, entry):
+        if wanted:
+            return LinkOutcome(True, f"{link} -> {entry}: already linked")
+        link.unlink()
+        return LinkOutcome(True, f"{link}: removed, {WIKI_LINK_KEY} is off")
+    if not wanted:
+        return LinkOutcome(True, f"{WIKI_LINK_KEY} is off, and no link of ours is there")
+
+    if link.is_symlink():
+        return LinkOutcome(
+            False,
+            f"{link} already points at {os.readlink(link)}, not {entry}"
+            f"\n  remove it yourself if it is stale",
+        )
+    if link.exists():
+        return LinkOutcome(
+            False,
+            f"{link} exists and is not a symlink\n  move it yourself if you want the link there",
+        )
+    link.symlink_to(entry, target_is_directory=True)
+    return LinkOutcome(True, f"{link} -> {entry}: linked")
 
 
 def default_vault_root() -> Path:
@@ -552,7 +644,40 @@ def cmd_init(start: Path, args: argparse.Namespace) -> int:
 
     print(f"{root}: created")
     print(f"  edit {SCHEMA_FILE} to say what this covers, then stage a source")
+
+    # The link is an affordance, so a failure to place one is reported and does
+    # not fail the command: the base is what `init` promised, and it is made.
+    if args.vault and load_config_or_default(repo_root(start)).wiki.link:
+        outcome = apply_link(repo_root(start), root, True)
+        print(f"  {outcome.message}", file=sys.stdout if outcome.ok else sys.stderr)
     return 0
+
+
+def cmd_link(wiki: Wiki, args: argparse.Namespace) -> int:
+    """Create or remove the browsing symlink from this repo to its base.
+
+    Honours `wiki.link` rather than taking a flag: there is one answer to
+    whether this repo keeps a link, and it is the setting. Running the command
+    with the key off is how a link gets removed.
+
+    Only a vault base gets one. An in-tree base is already in the repo, so a
+    link beside the worktrees would point at a directory inside one of them and
+    would go stale the moment that worktree was removed.
+    """
+    root = repo_root(Path(args.directory))
+    entry = vault_dir(root)
+    if entry != wiki.root:
+        print(
+            f"{SCRIPT}: {wiki.root} is not this repo's vault base, so there is"
+            " nothing to link to",
+            file=sys.stderr,
+        )
+        return 1
+
+    outcome = apply_link(root, entry, load_config_or_default(root).wiki.link)
+    print(outcome.message if outcome.ok else f"{SCRIPT}: {outcome.message}",
+          file=sys.stdout if outcome.ok else sys.stderr)
+    return 0 if outcome.ok else 1
 
 
 def cmd_ingest(wiki: Wiki, args: argparse.Namespace) -> int:
@@ -603,6 +728,7 @@ _COMMANDS = {
     "signals": (cmd_signals, "Counted evidence for the judgements lint leaves open"),
     "sources": (cmd_sources, "Raw sources with their hashes and compile state"),
     "index": (cmd_index, "Rebuild the master index from article frontmatter"),
+    "link": (cmd_link, "Create or remove the browsing symlink from this repo to its base"),
     "ingest": (cmd_ingest, "Copy a source into raw/ with frontmatter and a real hash"),
     "archive": (cmd_archive, "Retire an article to archive/, keeping it readable"),
 }

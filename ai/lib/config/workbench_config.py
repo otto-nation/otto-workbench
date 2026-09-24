@@ -150,6 +150,7 @@ ISSUE_TEAM_KEY = "issues.team"
 ISSUE_LABELS_KEY = "issues.labels"
 WIKI_DIR_KEY = "wiki.dir"
 WIKI_ROOT_KEY = "wiki.root"
+WIKI_LINK_KEY = "wiki.link"
 # Read from bash rather than written: git/steps.sh asks for this one through
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
@@ -370,9 +371,18 @@ class WikiConfig:
     ``root`` is writable at global scope only, and that is enforced rather than
     left to convention: an absolute path on one machine means nothing on any
     other, and a repo's ``.workbench.yml`` is read by everyone who clones it.
+
+    ``link`` asks for a symlink from the repo to its vault base, so ``cd wiki``
+    and an editor's file tree reach it. Browsing only — nothing resolves through
+    it, and a broken one costs nothing, which is what keeps it an affordance
+    rather than a second way to find a base. It is placed beside a bare repo's
+    worktrees rather than inside one: a per-worktree link needs a ``.gitignore``
+    entry in every repo, ``wt remove`` strands it, and committing one stores an
+    absolute machine-specific path as the blob.
     """
 
     dir: str = "wiki"
+    link: bool = False
     root: str = field(
         default="",
         metadata={"scope": ScopeRule(

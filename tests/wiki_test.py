@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import frontmatter_keys, load_script
+from conftest import add_worktree, frontmatter_keys, git_in, load_script
 
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 
@@ -483,11 +484,165 @@ class TestInitModes:
 
         for argv in (
             ["path"], ["status"], ["lint"], ["signals"], ["sources"], ["index"],
-            ["ingest", "--stage", str(source)], ["archive", "kept"],
+            ["link"], ["ingest", "--stage", str(source)], ["archive", "kept"],
         ):
             wiki.main([*argv, str(repo)])
             assert wiki.is_wiki(entry), f"{argv[0]} damaged the vault base"
         assert (entry / "archive" / "kept.md").is_file()
+
+
+class TestBrowsingLink:
+    """The link lives beside the worktrees and nothing resolves through it.
+
+    Placement is the whole point: inside a worktree it would need a `.gitignore`
+    entry in every repo, `wt remove` would strand it, and committing one stores
+    an absolute machine-specific path as the blob.
+    """
+
+    def _linked_container(self, container: Path, tmp_path: Path, monkeypatch) -> Path:
+        """A container whose repo has a real remote, and a vault holding its base."""
+        git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        return make_wiki(vault / "acme", dirname="widget").resolve()
+
+    def test_the_link_is_placed_beside_the_worktrees(self, container, tmp_path, monkeypatch):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container / "main")]) == 0
+        link = container / "wiki"
+        assert link.is_symlink()
+        assert link.resolve() == entry
+        assert not (container / "main" / "wiki").exists()
+
+    def test_a_second_worktree_shares_the_one_link(self, container, tmp_path, monkeypatch):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        second = add_worktree(container, "second")
+        assert wiki.main(["link", str(second)]) == 0
+        assert (container / "wiki").resolve() == entry
+        assert not (second / "wiki").exists()
+
+    def test_linking_twice_changes_nothing(self, container, tmp_path, monkeypatch, capsys):
+        self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container / "main")]) == 0
+        first = os.readlink(container / "wiki")
+        capsys.readouterr()
+        assert wiki.main(["link", str(container / "main")]) == 0
+        assert "already linked" in capsys.readouterr().out
+        assert os.readlink(container / "wiki") == first
+
+    def test_running_from_the_container_puts_it_in_the_same_place(
+        self, container, tmp_path, monkeypatch,
+    ):
+        """The container is where the link appears, so it is where people will cd."""
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container)]) == 0
+        assert (container / "wiki").resolve() == entry
+
+    def test_a_symlink_pointing_elsewhere_is_refused_not_replaced(
+        self, container, tmp_path, monkeypatch, capsys,
+    ):
+        self._linked_container(container, tmp_path, monkeypatch)
+        other = make_wiki(tmp_path / "other", dirname="kb")
+        (container / "wiki").symlink_to(other, target_is_directory=True)
+        assert wiki.main(["link", str(container / "main")]) == 1
+        assert "already points at" in capsys.readouterr().err
+        assert (container / "wiki").resolve() == other.resolve()
+
+    def test_a_real_directory_is_refused_and_survives(
+        self, container, tmp_path, monkeypatch, capsys,
+    ):
+        """No browsing convenience is worth deleting a directory somebody made."""
+        self._linked_container(container, tmp_path, monkeypatch)
+        occupied = container / "wiki"
+        occupied.mkdir()
+        (occupied / "keep.md").write_text("mine", encoding="utf-8")
+        assert wiki.main(["link", str(container / "main")]) == 1
+        assert "not a symlink" in capsys.readouterr().err
+        assert (occupied / "keep.md").read_text(encoding="utf-8") == "mine"
+
+    def test_the_key_being_off_removes_a_link_we_made(self, container, tmp_path, monkeypatch):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container / "main")]) == 0
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(entry.parent.parent), link=False)),
+        )
+        assert wiki.main(["link", str(container / "main")]) == 0
+        assert not (container / "wiki").exists()
+        assert not (container / "wiki").is_symlink()
+
+    def test_the_key_being_off_leaves_a_link_we_did_not_make(
+        self, container, tmp_path, monkeypatch,
+    ):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        other = make_wiki(tmp_path / "other", dirname="kb")
+        (container / "wiki").symlink_to(other, target_is_directory=True)
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(entry.parent.parent), link=False)),
+        )
+        assert wiki.main(["link", str(container / "main")]) == 0
+        assert (container / "wiki").resolve() == other.resolve()
+
+    def test_a_plain_clone_says_it_has_nowhere_to_put_one(self, tmp_path, monkeypatch, capsys):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "remote", "add", "origin",
+             "git@github.com:acme/widget.git"],
+            check=True,
+        )
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        make_wiki(vault / "acme", dirname="widget")
+        assert wiki.main(["link", str(repo)]) == 0
+        assert "plain clone" in capsys.readouterr().out
+        assert not (repo / "wiki").exists()
+
+    def test_an_in_tree_base_has_nothing_to_link_to(self, container, capsys, monkeypatch):
+        """A link beside the worktrees would point inside one of them."""
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(link=True)),
+        )
+        make_wiki(container / "main")
+        assert wiki.main(["link", str(container / "main")]) == 1
+        assert "not this repo's vault base" in capsys.readouterr().err
+        assert not (container / "wiki").exists()
+
+    def test_init_vault_places_the_link_when_the_key_is_on(
+        self, container, tmp_path, monkeypatch,
+    ):
+        git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        assert wiki.main(["init", "--vault", str(container / "main")]) == 0
+        assert (container / "wiki").resolve() == (vault / "acme" / "widget").resolve()
+
+    def test_init_still_succeeds_when_the_link_cannot_be_placed(
+        self, container, tmp_path, monkeypatch, capsys,
+    ):
+        """The base is what init promised; the affordance is not."""
+        git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        (container / "wiki").mkdir()
+        assert wiki.main(["init", "--vault", str(container / "main")]) == 0
+        assert wiki.is_wiki(vault / "acme" / "widget")
+        assert "not a symlink" in capsys.readouterr().err
 
 
 class TestSymlinkedEntry:

@@ -265,6 +265,66 @@ class TestInitModes:
         assert after.stdout.strip() == base
 
 
+class TestBrowsingLink:
+    def test_the_link_survives_removing_the_worktree_it_was_made_from(self, tmp_path, monkeypatch):
+        """Placement, end to end: beside the worktrees, so `wt remove` cannot reach it.
+
+        A link inside a worktree would go with the worktree, which is the whole
+        reason it is not put there.
+        """
+        launcher_dir = tmp_path / "installed"
+        (launcher_dir / "bin").mkdir(parents=True)
+        shutil.copy2(WIKI_BIN.parent.parent.parent / "config.schema.json",
+                     launcher_dir / "config.schema.json")
+        launcher = launcher_dir / "bin" / "otto-workbench"
+        launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        launcher.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{launcher.parent}:{os.environ['PATH']}")
+
+        seed = tmp_path / "seed"
+        subprocess.run(["git", "init", "-q", str(seed)], check=True)
+        subprocess.run(
+            ["git", "-C", str(seed), "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-qm", "init", "--allow-empty"],
+            check=True,
+        )
+        container = tmp_path / "container"
+        subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(container / ".git")], check=True)
+        subprocess.run(
+            ["git", "--git-dir", str(container / ".git"), "worktree", "add", "-q",
+             str(container / "main"), "main"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "--git-dir", str(container / ".git"), "remote", "set-url", "origin",
+             "git@github.com:acme/widget.git"],
+            check=True,
+        )
+
+        main = container / "main"
+        assert run("init", "--vault", "--domain", "Payments", cwd=main).returncode == 0
+        assert subprocess.run(
+            [str(launcher_dir / "bin" / "otto-workbench")], capture_output=True,
+        ).returncode == 0
+        base = run("path", cwd=main).stdout.strip()
+
+        # Turn the key on through the real writer, then link.
+        config = Path(os.environ["WORKBENCH_CONFIG_DIR"]) / "config.yml"
+        config.write_text(config.read_text(encoding="utf-8") + "  link: true\n", encoding="utf-8")
+        linked = run("link", cwd=main)
+        assert linked.returncode == 0, linked.stderr
+        assert (container / "wiki").is_symlink()
+        assert (container / "wiki").resolve() == Path(base)
+
+        subprocess.run(
+            ["git", "--git-dir", str(container / ".git"), "worktree", "remove",
+             "--force", str(main)],
+            check=True,
+        )
+        assert (container / "wiki").is_symlink()
+        assert (container / "wiki").resolve() == Path(base)
+
+
 class TestSymlinkedEntry:
     def test_path_is_the_same_string_from_either_side_of_a_link(self, project, tmp_path):
         """One wiki, one path — through the binary, where the user reads it.

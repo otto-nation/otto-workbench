@@ -28,6 +28,25 @@ time it is used, defaulting to `~/.local/share/workbench/wiki`. A repo with no o
 remote gets no vault folder — it has no name to file under, and two local repos sharing a
 name would share one base.
 
+### Browsing the vault from the repo
+
+A vault base is outside every worktree, so `cd wiki` and an editor's file tree no longer
+reach it. An opt-in symlink restores that:
+
+```bash
+otto-workbench config set wiki.link true
+wiki link
+```
+
+The link goes beside a bare repo's worktrees, not inside one — `wt remove` cannot strand
+it there, it needs no `.gitignore` entry, and it cannot be committed (a committed symlink
+stores an absolute machine-specific path). A plain clone has nowhere to put one and is
+told so.
+
+It is browsing only. Nothing resolves through it, so a stale or missing link costs
+nothing. `wiki link` with the key off removes a link the workbench made, and never touches
+one it did not.
+
 **Nothing backs the vault up.** It sits outside every repo, so no `git push` covers it. It
 is the one tree here that cannot be regenerated; tell the user to back it up themselves.
 

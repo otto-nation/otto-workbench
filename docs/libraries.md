@@ -182,6 +182,7 @@ Every key any of them accepts:
 | `github.ssh_over_443` | boolean | `false` |
 | `rebase.regenerate` | list of string | `[]` |
 | `wiki.dir` | string | `wiki` |
+| `wiki.link` | boolean | `false` |
 | `wiki.root` | string | — |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `rebase`, `prepush_fix`, `describe`

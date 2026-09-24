@@ -14,6 +14,7 @@ import pytest
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
 from conftest import assert_no_worktree_exit, load_script, make_ctx, seed_review
+from test_cli_registry import _spec
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
@@ -41,18 +42,6 @@ from review import gc as review_gc  # noqa: E402
 _TEST_PR = "3057"
 _TEST_REPLY_ID = "3777767789"
 _TEST_REPLY_BODY_FILE = "/tmp/reply.md"
-
-
-def _spec(**overrides) -> registry.CommandSpec:
-    """A throwaway CommandSpec, for a test about one field.
-
-    The declaration is required in full, so a test interested only in `script`
-    would otherwise restate a need it does not care about.
-    """
-    fields = dict(name="probe", help="a probe",
-                  need=registry.Need(registry.REMOTE, update=False, lock=False))
-    fields.update(overrides)
-    return registry.CommandSpec(**fields)
 
 
 # ── _is_pr_target ──────────────────────────────────────────────────────────

@@ -84,6 +84,15 @@ def test_the_exclusivity_prose_names_every_mode():
         assert flag in prose
 
 
+def test_the_exclusivity_prose_drops_the_leading_comma_for_a_single_flag():
+    """A one-entry table has nothing to join, so the prose is just the flag —
+    not the dangling `, and --flag` a naive `flags[:-1]` join produces when
+    there is no first element to join it to."""
+    with mock.patch.dict(review_modes.MODES, clear=True,
+                          values={"--only": review_modes.MODES["--post"]}):
+        assert review_modes.flags_prose() == "--only"
+
+
 # ── a handler runs without executing the binary ──────────────────────────
 
 

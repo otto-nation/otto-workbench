@@ -211,4 +211,6 @@ def need_for(argv: Sequence[str]) -> Need:
 def flags_prose() -> str:
     """The mode flags as an English list, for the exclusivity error."""
     flags = list(MODES)
+    if len(flags) == 1:
+        return flags[0]
     return f"{', '.join(flags[:-1])}, and {flags[-1]}"

@@ -46,7 +46,7 @@ def run(*args: str, cwd: Path) -> subprocess.CompletedProcess:
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """A git repo with no knowledge base yet."""
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "init", "-b", "main", "-q", str(tmp_path)], check=True)
     return tmp_path
 
 
@@ -316,7 +316,7 @@ class TestBrowsingLink:
         launcher = fake_workbench_launcher(tmp_path, monkeypatch)
 
         seed = tmp_path / "seed"
-        subprocess.run(["git", "init", "-q", str(seed)], check=True)
+        subprocess.run(["git", "init", "-b", "main", "-q", str(seed)], check=True)
         subprocess.run(
             ["git", "-C", str(seed), "-c", "user.name=t", "-c", "user.email=t@t",
              "commit", "-qm", "init", "--allow-empty"],

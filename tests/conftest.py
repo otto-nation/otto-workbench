@@ -964,7 +964,7 @@ def remote_repo(path, remote: str = "git@github.com:acme/widget.git") -> Path:
     """
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
-    git_in(path, "init", "-q")
+    git_in(path, "init", "-b", "main", "-q")
     git_in(path, "remote", "add", "origin", remote)
     return path
 

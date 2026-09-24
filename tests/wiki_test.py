@@ -313,7 +313,7 @@ class TestVaultResolution:
         """No identity, no folder — two local `notes` repos must not share one."""
         repo = tmp_path / "repo"
         repo.mkdir()
-        git_in(repo, "init", "-q")
+        git_in(repo, "init", "-b", "main", "-q")
         self._vault(tmp_path, monkeypatch, create=False)
         assert wiki.vault_dir(repo) is None
 
@@ -416,7 +416,7 @@ class TestInitModes:
     def test_vault_refuses_a_repo_with_no_origin_remote(self, tmp_path, capsys, monkeypatch):
         repo = tmp_path / "repo"
         repo.mkdir()
-        git_in(repo, "init", "-q")
+        git_in(repo, "init", "-b", "main", "-q")
         vault = self._vault_root(tmp_path, monkeypatch)
         monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
         assert wiki.main(["init", "--vault", str(repo)]) == 2
@@ -897,7 +897,7 @@ class TestConfiguredDirnameResolvesTheRepoRoot:
     """
 
     def _repo(self, tmp_path: Path, dirname: str) -> Path:
-        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        subprocess.run(["git", "init", "-b", "main", "-q", str(tmp_path)], check=True)
         (tmp_path / ".workbench.yml").write_text(f"wiki:\n  dir: {dirname}\n", encoding="utf-8")
         return tmp_path
 

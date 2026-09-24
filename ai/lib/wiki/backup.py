@@ -59,7 +59,9 @@ def backups_dir(root: Path) -> Path:
 
     Named for the base's directory plus a hash of its full path: two repos both
     called `notes` must not share a backup directory, and the readable half is
-    what makes the directory identifiable in a listing.
+    what makes the directory identifiable in a listing. Callers hand in the
+    resolved root, and two spellings of one path normalise to one name anyway,
+    so a base cannot end up with two directories.
 
     A sha256 of the path rather than the repo's `<org>/<repo>` identity, which
     would be the nicer name: that identity comes from `pr.target`, and this
@@ -108,9 +110,8 @@ def is_overdue(root: Path, now: datetime | None = None) -> bool:
 def _stamp_of(archive: Path) -> datetime | None:
     """The time in a snapshot's filename, or ``None`` if it does not carry one.
 
-    The disambiguating ``-2`` a same-second snapshot takes is dropped first:
-    without that, the second snapshot in a second parses as undated and the base
-    reads as never backed up.
+    The trailing counter every name carries is dropped first: without that, a
+    stamp never parses and every base reads as never backed up.
     """
     name = archive.name[: -len(ARCHIVE_SUFFIX)].split("-")[0]
     try:

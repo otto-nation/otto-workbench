@@ -7,8 +7,15 @@
  * individual detect.ts headers give for matching ai/claude/bin/claude-bash-guard
  * decision for decision, applied between the Pi guards themselves.
  *
- * Imports nothing, so tests/pi_extensions.bats can load it under plain `node`
- * the way it loads each detect.ts.
+ * Splitting is done over the token scan in ./tokenize.ts rather than over the
+ * raw line. A separator inside quotes is an argument, not a boundary, and
+ * reading it as one was a complete bypass of every rule downstream:
+ * `bash -c 'rm -rf x; echo done'` was cut into two fragments, neither of which
+ * parsed as a shell wrapper or as a write, and the delete was permitted. One
+ * `; true` appended to any refused command defeated the guard.
+ *
+ * Imports only ./tokenize.ts, which imports nothing, so tests/pi_extensions.bats
+ * can load it under plain `node` the way it loads each detect.ts.
  *
  * Not an extension itself: step_pi_extensions skips a `_`-prefixed directory by
  * name, so this is never installed and never warned about. Node resolves
@@ -17,8 +24,13 @@
  * extension directory is symlinked into ~/.pi/agent/extensions.
  */
 
+import { span, tokenize, type Token } from "./tokenize.ts";
+
 /** Opens a heredoc, capturing the `-` that allows an indented terminator and the marker. */
 const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
+
+/** The operators that end a statement, as the tokenizer spells them. */
+const STATEMENT_SEPARATORS = new Set([";", "&&", "||", "|", "&", ";;"]);
 
 /**
  * Split one line on the control operators that end a statement — `;`, `&&`,
@@ -35,33 +47,37 @@ const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
  */
 function splitOnControlOperators(line: string): string[] {
   const parts: string[] = [];
-  let current = "";
+  let current: Token[] = [];
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if ((ch === "&" && line[i + 1] === "&") || (ch === "|" && line[i + 1] === "|")) {
-      parts.push(current);
-      current = "";
-      i++;
-      continue;
-    }
-    if (ch === ";" || ch === "|") {
-      parts.push(current);
-      current = "";
-      continue;
-    }
-    if (ch === "&") {
-      if (current.endsWith(">") || line[i + 1] === ">") {
-        current += ch;
+  // Sliced from the line rather than rejoined from `raw`: joining with spaces
+  // reshapes the text every downstream rule is written against, turning
+  // `2>&1` into `2 > & 1`.
+  const flush = () => {
+    parts.push(span(line, current));
+    current = [];
+  };
+
+  const tokens = tokenize(line);
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+
+    // Quoted tokens are never separators — the whole reason this reads the
+    // scan instead of the characters.
+    if (tok.operator && STATEMENT_SEPARATORS.has(tok.value)) {
+      // An `&` belonging to a redirect is not a separator: `2>&1` scans as
+      // `2`, `>`, `&`, `1`, and cutting at that `&` shatters the statement it
+      // sits inside. The redirect before it is what tells the two apart.
+      const previous = tokens[i - 1];
+      if (tok.value === "&" && previous?.operator && previous.value.includes(">")) {
+        current.push(tok);
         continue;
       }
-      parts.push(current);
-      current = "";
+      flush();
       continue;
     }
-    current += ch;
+    current.push(tok);
   }
-  parts.push(current);
+  flush();
   return parts;
 }
 

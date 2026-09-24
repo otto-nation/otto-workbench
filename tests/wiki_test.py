@@ -7,6 +7,8 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from conftest import frontmatter_keys, load_script
 
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
@@ -195,6 +197,144 @@ class TestConfiguredDirectory:
     def test_explicit_path_ignores_the_setting(self, tmp_path):
         root = make_wiki(tmp_path, dirname="elsewhere")
         assert wiki.find_wiki(tmp_path, explicit=str(root), dirname="knowledge") == root
+
+
+class TestVaultSubpath:
+    """A repo's folder name inside the vault, derived from its remote identity."""
+
+    @pytest.mark.parametrize("label,expected", [
+        ("otto-nation/otto-workbench", "otto-nation/otto-workbench"),
+        ("acme/widget", "acme/widget"),
+        ("group/sub/widget", "group/sub/widget"),
+        ("acme/widget.js", "acme/widget.js"),
+    ])
+    def test_a_usable_label_nests_by_segment(self, label, expected):
+        assert wiki.vault_subpath(label) == expected
+
+    @pytest.mark.parametrize("label", ["", ".", "..", "acme/", "/widget", "a//b"])
+    def test_an_unusable_label_is_refused(self, label):
+        assert wiki.vault_subpath(label) is None
+
+    @pytest.mark.parametrize("label", ["../evil", "acme/../../etc/passwd", "acme/.."])
+    def test_a_traversal_segment_is_refused(self, label):
+        """Slugging is not enough on its own, which is easy to assume it is.
+
+        The slug character class keeps `.`, so `..` comes through it unchanged
+        and would climb out of the vault. A simplification to slug-only fails
+        here rather than in a directory above the vault.
+        """
+        assert wiki.vault_subpath(label) is None
+
+    def test_a_segment_that_slugs_away_is_refused(self, label="acme/\u6587\u6863"):
+        """Dropping an empty segment would merge two repos into one folder."""
+        assert wiki.vault_subpath(label) is None
+
+
+class TestVaultResolution:
+    """The vault is a config read, consulted before any walk.
+
+    Every case here drives `main` or `resolve_wiki` rather than `find_wiki`:
+    the vault is resolved by the CLI, and `find_wiki` is only handed the
+    in-tree half of the answer.
+    """
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "remote", "add", "origin",
+             "git@github.com:acme/widget.git"],
+            check=True,
+        )
+        return repo
+
+    def _vault(self, tmp_path: Path, monkeypatch, *, create: bool = True) -> Path:
+        """Point `wiki.root` at a vault, and optionally put acme/widget in it."""
+        root = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _root: WorkbenchConfig(wiki=WikiConfig(root=str(root))),
+        )
+        entry = root / "acme" / "widget"
+        if create:
+            make_wiki(entry.parent, dirname="widget")
+        return entry.resolve()
+
+    def test_a_vault_base_resolves_from_the_repo(self, tmp_path, monkeypatch, capsys):
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_it_resolves_the_same_from_a_nested_directory(self, tmp_path, monkeypatch, capsys):
+        """Stands in for a second worktree: no walk runs, so depth cannot matter."""
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        nested = repo / "src" / "deep"
+        nested.mkdir(parents=True)
+        assert wiki.main(["path", str(nested)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_the_vault_wins_over_an_in_tree_base(self, tmp_path, monkeypatch, capsys):
+        """The case that pins the ordering, and the only one that can.
+
+        Where only one base exists either ordering finds it, so precedence is
+        unobservable until the two disagree. A vault folder exists only where
+        someone deliberately made one; an in-tree directory can be a leftover.
+        """
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        make_wiki(repo)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_a_dangling_link_still_resolves_from_config(self, tmp_path, monkeypatch, capsys):
+        """A broken browsing link costs nothing, because no link is consulted.
+
+        The repo holds a symlink at `wiki/` and the vault has moved out from
+        under it. A walk sees a directory that is not a wiki; config still knows
+        where the base is. This holds whichever order the two are tried in —
+        what it pins is that the link is not the mechanism.
+        """
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        (repo / "wiki").symlink_to(tmp_path / "gone", target_is_directory=True)
+        assert not wiki.is_wiki(repo / "wiki")
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_no_vault_configured_falls_through_to_the_walk(self, tmp_path, monkeypatch, capsys):
+        """An unset `wiki.root` is no vault, not a default one."""
+        repo = self._repo(tmp_path)
+        monkeypatch.setattr(
+            wiki, "load_config_or_default", lambda _root: WorkbenchConfig(),
+        )
+        root = make_wiki(repo)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(root)
+        assert wiki.vault_dir(repo) is None
+
+    def test_a_repo_with_no_remote_gets_no_vault_folder(self, tmp_path, monkeypatch):
+        """No identity, no folder — two local `notes` repos must not share one."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        self._vault(tmp_path, monkeypatch, create=False)
+        assert wiki.vault_dir(repo) is None
+
+    def test_an_empty_vault_reports_the_path_it_checked(self, tmp_path, monkeypatch, capsys):
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch, create=False)
+        assert wiki.main(["path", str(repo)]) == 2
+        assert str(entry) in capsys.readouterr().err
+
+    def test_an_explicit_wiki_beats_the_vault(self, tmp_path, monkeypatch, capsys):
+        repo = self._repo(tmp_path)
+        self._vault(tmp_path, monkeypatch)
+        named = make_wiki(tmp_path / "elsewhere", dirname="kb")
+        assert wiki.main(["path", "--wiki", str(named), str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(named)
 
 
 class TestSymlinkedEntry:

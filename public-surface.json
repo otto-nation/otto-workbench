@@ -82,6 +82,7 @@
     "config:review.effort=low",
     "config:review.effort=medium",
     "config:wiki",
-    "config:wiki.dir"
+    "config:wiki.dir",
+    "config:wiki.root"
   ]
 }

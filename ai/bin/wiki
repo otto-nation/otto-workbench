@@ -88,6 +88,7 @@ manifest_row = wiki_create.manifest_row
 read_text = wiki_parsing.read_text
 slugify_title = wiki_create.slugify_title
 stage_source = wiki_create.stage_source
+vault_subpath = wiki_paths.vault_subpath
 
 # The SCHEMA template ships with the skill, the layer that owns the prose. It is
 # absent when the CLI is installed without the skill, so init falls back to a
@@ -115,6 +116,10 @@ __all__ = [
     "collect_status",
     "configured_dirname",
     "find_wiki",
+    "repo_root",
+    "resolve_wiki",
+    "vault_dir",
+    "vault_subpath",
     "hash_file",
     "init_wiki",
     "main",
@@ -126,26 +131,92 @@ __all__ = [
 SCRIPT = Path(__file__).name
 
 
-# ── Configuration ───────────────────────────────────────────────────────────
+# ── Configuration ────────────────────────────────────────────────────────
+
+
+def resolve_wiki(start: Path, explicit: str | None) -> tuple[Path | None, Path | None]:
+    """The base governing *start*, and the vault folder that was considered.
+
+    Three placements, in order: an explicit `--wiki`, then the machine's vault,
+    then the in-tree walk. The second element is the vault folder this repo
+    would use, whether or not a base was found there — the caller reports it
+    when nothing resolved, so "no knowledge base" names the path it checked.
+
+    The vault is consulted from config alone, so a repo that holds a browsing
+    symlink to its base does not depend on that link resolving: `is_wiki`
+    follows a link to decide, and a dangling one is indistinguishable from no
+    wiki at all. The link stays a convenience rather than the mechanism.
+
+    It is consulted *first* because a vault folder exists only where someone
+    deliberately made one, while an in-tree directory can be a leftover — a base
+    that predates the vault, or one a branch reintroduced. Where the two
+    disagree the deliberate answer should win, and reading config first also
+    spares the common case a filesystem walk.
+    """
+    if explicit:
+        return find_wiki(start, explicit=explicit), None
+
+    vault = vault_dir(repo_root(start))
+    if vault is not None and is_wiki(vault):
+        return vault, vault
+    return find_wiki(start, dirname=configured_dirname(start)), vault
+
+
+def repo_root(start: Path) -> Path:
+    """The repo *start* sits in, or *start* itself when there is no repo.
+
+    Config is read from here rather than from *start*: ``project_config_path``
+    looks for `.workbench.yml` directly under the path it is given instead of
+    walking up, so passing the search start reads the project scope from a file
+    that is not there, and a `--project` setting is honoured only when the CLI
+    runs from the repo root itself.
+    """
+    toplevel = git_client.out("rev-parse", "--show-toplevel", cwd=start)
+    return Path(toplevel) if toplevel else start
 
 
 def configured_dirname(start: Path) -> str:
     """The `wiki.dir` setting for *start*, or the default when unset.
 
-    Resolved against the repo root rather than *start*: ``project_config_path``
-    looks for `.workbench.yml` directly under the path it is given instead of
-    walking up, so passing the search start reads the project scope from a file
-    that is not there, and a `--project` setting is honoured only when the CLI
-    runs from the repo root itself. *start* stands in when there is no repo.
-
     Read through ``load_config_or_default`` so an unreadable config file leaves
     the knowledge base findable. Every other command here works without config;
     this one should not be the reason none of them run.
     """
-    toplevel = git_client.out("rev-parse", "--show-toplevel", cwd=start)
-    root = Path(toplevel) if toplevel else start
-    configured = load_config_or_default(root).wiki.dir.strip()
+    configured = load_config_or_default(repo_root(start)).wiki.dir.strip()
     return configured or DEFAULT_WIKI_DIRNAME
+
+
+def vault_dir(root: Path) -> Path | None:
+    """This repo's folder inside the machine's vault, or ``None``.
+
+    ``None`` covers three cases that all mean "no vault base for this repo":
+    `wiki.root` is unset, so the machine has no vault at all; the repo has no
+    origin remote, so it has no identity to name a folder by; or that identity
+    holds nothing usable as a path.
+
+    A remoteless repo gets no vault folder rather than one named after its
+    directory. Two local repos both called `notes` would otherwise share a base
+    and write into each other's articles, which is the failure the walk's own
+    docstring records from the plugin this replaced.
+
+    The identity import is deferred to here because it is only needed once a
+    vault exists: `pr.target` costs an import and a `git remote` subprocess, and
+    `wiki path` runs on every session exit through the capture hook. The config
+    module does the same for its schema generator, for the same reason.
+    """
+    configured = load_config_or_default(root).wiki.root.strip()
+    if not configured:
+        return None
+
+    from pr import target as pr_target
+
+    identity = pr_target.repo_identity_from_origin(str(root))
+    if identity is None:
+        return None
+    subpath = wiki_paths.vault_subpath(identity.label)
+    if subpath is None:
+        return None
+    return (Path(configured).expanduser() / subpath).resolve()
 
 
 # ── Commands ────────────────────────────────────────────────────────────────
@@ -448,16 +519,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return cmd_init(start, args)
 
-    # `--wiki` names the base outright, and `find_wiki` returns on it before
-    # looking at `dirname` — so skip the config load and `git rev-parse` here.
-    dirname = None if args.wiki else configured_dirname(start)
-    root = find_wiki(start, explicit=args.wiki, dirname=dirname)
+    root, vault = resolve_wiki(start, args.wiki)
     if root is None:
         where = args.wiki or args.directory
+        vault_note = f"\n  no vault base at {vault}" if vault else ""
         print(
             f"{SCRIPT}: no knowledge base found from {where} "
             f"(looked for a directory holding {SCHEMA_FILE}, "
-            f"{ARTICLES_DIR}/, and {RAW_DIR}/)",
+            f"{ARTICLES_DIR}/, and {RAW_DIR}/)"
+            f"{vault_note}",
             file=sys.stderr,
         )
         return 2

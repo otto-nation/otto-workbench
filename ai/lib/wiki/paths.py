@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -49,7 +50,40 @@ DEFAULT_SETTINGS = {
 
 
 
+# One repo's folder inside the vault is named from its remote. Same character
+# class as `pr.target.slug`, so the two agree on what a path component is.
+_VAULT_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
 # ── Resolution ──────────────────────────────────────────────────────────────
+
+
+def vault_subpath(label: str) -> str | None:
+    """One repo's folder inside the vault, as ``<org>/<repo>``, or ``None``.
+
+    *label* is a repo's canonical ``org/repo`` identity. Every segment is
+    slugged and then checked, because slugging alone does not make a path
+    component safe: the slug character class keeps ``.``, so ``..`` passes
+    through unchanged and would climb out of the vault. A segment that slugs
+    away to nothing — a repo named only in non-ASCII — is rejected for the same
+    reason, since dropping it silently would merge two repos' folders.
+
+    Nested rather than the ``owner-repo-hash`` form the review store uses: a
+    vault is browsed, and the sidebar of an editor opened on it should read as
+    directories. Every segment is kept, so a nested group path stays nested and
+    cannot collide across orgs.
+
+    ``None`` means no safe name, and the caller must refuse rather than fall
+    back to one it invented. Two unrelated repos that both reduced to the same
+    invented name would write into one base without either saying so.
+    """
+    segments = []
+    for raw in label.split("/"):
+        segment = _VAULT_SEGMENT_RE.sub("-", raw).strip("-")
+        if not segment or segment in (os.curdir, os.pardir):
+            return None
+        segments.append(segment)
+    return "/".join(segments) if segments else None
 
 
 def is_wiki(path: Path) -> bool:

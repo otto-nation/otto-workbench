@@ -123,6 +123,7 @@ ISSUE_PROVIDER_KEY = "issues.provider"
 ISSUE_TEAM_KEY = "issues.team"
 ISSUE_LABELS_KEY = "issues.labels"
 WIKI_DIR_KEY = "wiki.dir"
+WIKI_ROOT_KEY = "wiki.root"
 # Read from bash rather than written: git/steps.sh asks for this one through
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
@@ -294,20 +295,42 @@ class GitHubConfig:
 
 @dataclass(frozen=True)
 class WikiConfig:
-    """Where this repo keeps its compiled knowledge base.
+    """Where this machine, and this repo, keep compiled knowledge bases.
 
-    A directory name, resolved relative to each level the search walks, not a
-    path: the point of the walk is that a session anywhere under the repo finds
-    the same base, and an absolute path would fix it to one starting directory.
+    Two placements, both first-class. ``dir`` is the in-tree one: a base
+    committed with the repo and shared with whoever clones it. ``root`` is the
+    machine-level vault: a base private to this machine, outside every repo, so
+    it survives ``wt remove`` and reads the same from every worktree.
+
+    ``dir`` is a directory name, resolved relative to each level the search
+    walks, not a path: the point of the walk is that a session anywhere under
+    the repo finds the same base, and an absolute path would fix it to one
+    starting directory.
 
     Configuration rather than detection because the name is the only part that
     cannot be discovered. ``SCHEMA.md`` alongside ``articles/`` and ``raw/``
     identifies the directory once found, so a repo keeping its base under
     ``docs/knowledge`` needs to say so exactly once, and every harness reads the
     same answer.
+
+    ``root`` is the vault directory itself, holding one ``<org>/<repo>/`` folder
+    per repo. Empty means this machine has no vault, not "the default vault
+    path" — a default here would make every ``wiki init`` pick the private
+    placement silently, and which of the two a base gets is the one thing about
+    it that cannot be inferred.
+
+    An absolute path rather than a name re-derived from the data root on every
+    read: a vault of authored content must not move because someone set
+    ``XDG_DATA_HOME``. The data root supplies the default when ``wiki init``
+    writes this key, and the key is the only answer afterwards.
+
+    Global scope by convention — a machine-specific absolute path committed in
+    a repo's ``.workbench.yml`` means nothing on any other machine. Nothing in
+    the workbench writes it at project scope.
     """
 
     dir: str = "wiki"
+    root: str = ""
 
 
 @dataclass(frozen=True)

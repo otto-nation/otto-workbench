@@ -214,6 +214,9 @@
       "properties": {
         "dir": {
           "type": "string"
+        },
+        "root": {
+          "type": "string"
         }
       }
     }

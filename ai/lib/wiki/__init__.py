@@ -29,6 +29,7 @@ from .paths import (
     SOURCES_FILE,
     find_wiki,
     is_wiki,
+    vault_subpath,
 )
 from .parsing import (
     HASH_PREFIX_LEN,
@@ -79,4 +80,5 @@ __all__ = [
     "read_text",
     "slugify_title",
     "stage_source",
+    "vault_subpath",
 ]

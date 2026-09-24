@@ -849,13 +849,21 @@ class TestTimeoutIsReportedApart:
         assert "exited 3" in skipped[0].getMessage()
 
     def test_a_slow_tool_does_not_stop_the_others_being_offered(
-            self, tmp_path, caplog):
+            self, tmp_path, caplog, monkeypatch):
         """One dropped tool is one tool, not a scan that gave up.
 
         The shipped bound, because the round holds a tool that has to answer and
         the two share one bound — shortening it to hurry the sleeper along is
         how the quick tool starts timing out too.
+
+        One attempt rather than the shipped two, which is a different knob: the
+        bound stays what ships, and the sleeper still breaches it in full. What
+        this drops is the identical second breach, which says nothing here —
+        retry is TestProbeRetry's subject, and it asserts on the attempt count
+        directly. Worth doing because the two breaches are served serially, so
+        the case cost a flat 10s of the suite's wall time.
         """
+        monkeypatch.setattr(server, "PROBE_ATTEMPTS", 1)
         slow = _write_sleeping_tool(tmp_path, "sleeping-tool")
         quick = _write_marked_script(tmp_path, "my-tool")
 

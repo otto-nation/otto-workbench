@@ -18,6 +18,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from gh import client as gh_client
 from pr import state as pr_state
 from pr import supersession
 from pr.domains import SupersessionDomain, SupersessionKind, SupersessionSignal
@@ -148,9 +149,17 @@ class TestDetect:
             ),
         ],
     )
-    def test_a_failed_or_stalled_search_still_leaves_the_local_signal(self, gh_kwargs):
+    def test_a_failed_or_stalled_search_still_leaves_the_local_signal(
+        self, gh_kwargs, monkeypatch,
+    ):
         """No network, or a network that never answers, is a reason to say less —
         not a reason to say nothing."""
+        # A TimeoutExpired earns gh_client's transient ladder, which serves a
+        # real 2s + 4s before giving up. This asserts on the signals that
+        # survive a failed search, never on the waiting, so the ladder is
+        # collected rather than served — the same seam gh_client_test's
+        # `no_sleep` fixture uses, and for the same reason.
+        monkeypatch.setattr(gh_client, "sleep", lambda _: None)
         signals = _signals(
             diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", **gh_kwargs,
         )

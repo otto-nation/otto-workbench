@@ -395,6 +395,11 @@ class TestPromptCmdThinking:
         assert cmd[cmd.index("--provider") + 1] == "bedrock"
 
 
+def _detect_source() -> str:
+    """detect.ts, the SDK-free half of the guard that holds its predicates."""
+    return (ai_backend_pi.REVIEW_EXTENSION.parent / "detect.ts").read_text()
+
+
 class TestExtensionFlag:
     def test_agent_cmd_with_extension(self):
         cmd = ai_backend_pi._build_agent_cmd(
@@ -472,9 +477,19 @@ class TestExtensionFlag:
         A root spelled /tmp/x against a path spelled /private/tmp/x/f names one
         directory, and a lexical relative() walks out through `..` and refuses
         the write.
+
+        Read from detect.ts, where `canonical` and `within` live: review-guard.ts
+        imports the Pi SDK and loads only inside a session, so the predicates
+        moved to the sibling that plain `node` can load and the behaviour itself
+        is asserted in tests/pi_extensions.bats. What is checked here is that
+        the extension still routes through them rather than comparing lexically.
         """
-        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        source = _detect_source()
         assert "realpathSync" in source
+        assert "export function within(" in source
+
+        extension = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        assert "within(dir, event.input.path)" in extension
 
     def test_the_guard_matches_pi_s_tool_names_and_input_fields(self):
         """Pi's built-in tools are lowercase and take `path`, not `file_path`.

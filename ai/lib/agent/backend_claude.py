@@ -147,6 +147,15 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # allowlists tool names and cannot bar one bash command: see
 # WRITE_STATEMENT_PATTERNS in ai/pi/extensions-cli/detect.ts, which this is
 # kept in step with. A command added to one belongs in the other.
+#
+# ceiling: the two are not equally tight, and this half is the loose one. A
+# `Bash(git commit:*)` matcher is a prefix match, so `git -C /repo commit -m x`
+# and `git --no-pager commit -m x` are not the prefix and are not denied — the
+# same hole the Pi pattern had until GIT_WRITE_SUBCOMMANDS started reaching past
+# global flags, and one that cannot be closed here because the matcher grammar
+# has no way to express "any flags, then this subcommand". What holds on this
+# backend is the fix templates' prose and the engine committing for the agent.
+# Upgrade if Claude Code grows a regex or argv-aware permission matcher.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",
     "Bash(git commit:*)",

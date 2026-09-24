@@ -103,6 +103,17 @@ class TestBuildFixCmd:
         denied = cmd[cmd.index("--disallowedTools") + 1].split(",")
         assert f"Bash({command}:*)" in denied
 
+    @staticmethod
+    def _pi_git_subcommands(guard):
+        """Find the `(?:commit|...)` alternation detect.ts denies git writes with.
+
+        Fragile to reordering GIT_WRITE_SUBCOMMANDS: this only anchors on the
+        alternation that starts with `commit`, so putting another subcommand
+        first there would make this stop matching. Shared by the two tests
+        below so that caveat lives in one place.
+        """
+        return re.search(r"\(\?:(commit\|[a-z|\-]+)\)", guard)
+
     def test_both_backends_bar_the_same_git_commands(self):
         """Two spellings of one rule: `--tools` allowlists tool names and cannot
         bar a single bash command, so Pi enforces this in `detect.ts`, the
@@ -110,7 +121,10 @@ class TestBuildFixCmd:
         quietly keeps a command the other denies."""
         guard = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
                  / "pi" / "extensions-cli" / "detect.ts").read_text()
-        pattern = re.search(r"git\\s\+\(\?:([a-z|\-]+)\)", guard)
+        # Not anchored to `git\s+` any more: the Pi pattern reaches past global
+        # flags, so `git -C /repo commit` is denied too. This matches the
+        # subcommand alternation wherever in GIT_WRITE_SUBCOMMANDS it sits.
+        pattern = self._pi_git_subcommands(guard)
         assert pattern, "detect.ts no longer spells its git denies as one alternation"
         pi_denied = set(pattern.group(1).split("|"))
 
@@ -120,6 +134,23 @@ class TestBuildFixCmd:
             if d.startswith("Bash(git ")
         }
         assert claude_denied == pi_denied
+
+    def test_the_pi_guard_reaches_past_a_global_flag(self):
+        """`Bash(git commit:*)` is a prefix match, so `git -C /r commit` is not
+        denied on the Claude side and cannot be — the matcher grammar has no way
+        to say "any flags, then this subcommand". The Pi half can and does, and
+        the parity test above would otherwise pass with both halves blind to it.
+        """
+        guard = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
+                 / "pi" / "extensions-cli" / "detect.ts").read_text()
+        subcommands = self._pi_git_subcommands(guard)
+        assert subcommands
+        # The alternation is preceded by a flag-skipping group, not by `git\s+`.
+        head = guard[:subcommands.start()]
+        assert head.rstrip().endswith("*"), (
+            "the git subcommand alternation is anchored straight to `git`, so "
+            "`git -C /repo commit` is not denied"
+        )
 
     def test_the_review_agent_keeps_gh(self):
         """Only the fix pass is barred — a review agent reads the PR with it."""

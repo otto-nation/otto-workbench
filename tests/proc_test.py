@@ -388,12 +388,34 @@ class TestRunStdin:
 # missed, rather than one that was about to exit anyway.
 GRANDCHILD_LIFETIME = 20
 
-# How long a call that kills a group may take before the wait after the kill is
-# the unbounded one again. `_reap` waits `QUICK`, and the slack is for a loaded
-# machine rather than for a second bound: this repo's own runner documents
-# subprocesses losing the scheduler for seconds at a time, and a ceiling with no
-# room for that fails on contention instead of on the defect.
-REAP_CEILING = timeouts.QUICK * 2
+# The reap bound these cases run under. `_reap` reads `timeouts.QUICK` when it
+# is called rather than at import, so patching it is the bound the code under
+# test actually waits — not a fake standing in for it.
+#
+# Shortened from the shipped 5.0s because four cases here each wait it out in
+# full, serially, for 21s of the suite. What they assert is that the wait after
+# a kill is *bounded at all*: an unbounded one runs to the fixture's own 20s
+# lifetime, so 2.0s separates the two just as decisively as 5.0s does.
+#
+# Not shorter than 2.0. The slack below is for a loaded machine rather than for
+# a second bound — this repo's own runner documents subprocesses losing the
+# scheduler for seconds at a time — and at 1.0s that slack is thinner than the
+# stalls the runner already expects, which fails on contention instead of on
+# the defect.
+REAP_BOUND = 2.0
+
+
+@pytest.fixture
+def short_reap_ceiling(monkeypatch):
+    """Run the reap against REAP_BOUND, and hand back the matching ceiling.
+
+    The ceiling is computed here rather than read from a module constant: a
+    constant fixed at import stays at the shipped bound while the patch moves
+    the reap, so the assertion keeps passing against a window twice as wide as
+    the one it means to police — a test that loosened itself and said nothing.
+    """
+    monkeypatch.setattr(timeouts, "QUICK", REAP_BOUND)
+    return REAP_BOUND * 2
 
 
 def _alive(pid: int) -> bool:
@@ -468,7 +490,10 @@ class TestRunKillProcessGroup:
         finally:
             os.kill(grandchild, signal.SIGKILL)
 
-    def test_a_group_it_may_not_signal_still_reports_the_timeout(self, monkeypatch):
+    # passes-at-base: the reap was already bounded, only the bound got shorter
+    def test_a_group_it_may_not_signal_still_reports_the_timeout(
+        self, monkeypatch, short_reap_ceiling,
+    ):
         """The kill runs on the way to returning, so it must not throw.
 
         An exception here would replace the timeout result every caller
@@ -489,7 +514,10 @@ class TestRunKillProcessGroup:
         assert r.returncode == proc.TIMEOUT_RETURNCODE
         assert "could not be signalled and may still be running" in r.stderr
 
-    def test_a_child_that_outlives_sigkill_does_not_hang_the_call(self, monkeypatch):
+    # passes-at-base: the reap was already bounded, only the bound got shorter
+    def test_a_child_that_outlives_sigkill_does_not_hang_the_call(
+        self, monkeypatch, short_reap_ceiling,
+    ):
         """The kill is a signal, not a death, so the wait after it needs a bound.
 
         Three states reach the reap and only one is a process that is dying:
@@ -500,7 +528,7 @@ class TestRunKillProcessGroup:
 
         The bound is the reap's own, with room for a loaded machine to be slow
         about it — not a fraction of the fixture's lifetime, which is a number
-        this assertion has nothing to do with. A reap that returns in `QUICK`
+        this assertion has nothing to do with. A reap that returns in the bound
         plus slack is working; one that runs to the fixture's own 20s is the
         unbounded wait back again, and anything between the two is a reap
         answering to something other than its bound, which is also a defect.
@@ -513,13 +541,13 @@ class TestRunKillProcessGroup:
         elapsed = time.monotonic() - started
 
         assert r.returncode == proc.TIMEOUT_RETURNCODE
-        assert elapsed < REAP_CEILING, (
+        assert elapsed < short_reap_ceiling, (
             f"the call waited {elapsed:.1f}s on a child that ignored SIGKILL, "
             f"which is past the {timeouts.QUICK:g}s reap bound")
         assert "did not exit after SIGKILL" in r.stderr
 
     def test_what_outlived_the_kill_is_named_alongside_what_was_not_signalled(
-        self, monkeypatch,
+        self, monkeypatch, short_reap_ceiling,
     ):
         """Two different failures, and a reader needs to tell them apart.
 
@@ -538,7 +566,7 @@ class TestRunKillProcessGroup:
         assert "did not exit after SIGKILL" in r.stderr
 
     def test_an_interrupt_does_not_hang_on_a_child_that_ignores_sigkill(
-        self, tmp_path, monkeypatch,
+        self, tmp_path, monkeypatch, short_reap_ceiling,
     ):
         """The exception path needs the same bound as the timeout path.
 
@@ -567,7 +595,7 @@ class TestRunKillProcessGroup:
                      timeout=timeouts.QUICK, kill_process_group=True)
         elapsed = time.monotonic() - started
 
-        assert elapsed < REAP_CEILING, (
+        assert elapsed < short_reap_ceiling, (
             f"unwinding waited {elapsed:.1f}s on a child that ignored SIGKILL, "
             f"which is past the {timeouts.QUICK:g}s reap bound")
 

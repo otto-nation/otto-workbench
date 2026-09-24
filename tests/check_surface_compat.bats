@@ -2,12 +2,22 @@
 
 bats_require_minimum_version 1.5.0
 
+# Every case here commits on main and pushes, so none of them can share a
+# remote. The pair is built once and copied per test instead: 270ms of
+# init/clone/commit/push each becomes 170ms once plus a ~30ms copy, and each
+# test still gets a private, fully mutable remote and clone.
+setup_file() {
+  load 'test_helper'
+  common_setup
+  make_git_remote_prototype "$BATS_FILE_TMPDIR/proto" "feat/surface"
+}
+
 setup() {
   load 'test_helper'
   common_setup
   REMOTE="$TMPDIR/remote.git"
   LOCAL="$TMPDIR/local"
-  make_git_remote "$REMOTE" "$LOCAL" "feat/surface"
+  copy_git_remote_prototype "$BATS_FILE_TMPDIR/proto" "$REMOTE" "$LOCAL"
   GATE="$REPO_ROOT/bin/local/check-surface-compat"
 }
 

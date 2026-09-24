@@ -85,7 +85,7 @@ declare -gA _REG_VAL=()
 # Which files are in the cache, so a second reg_load can skip them.
 declare -gA _REG_LOADED=()
 
-# readonly so a later assignment cannot desync the key format `_reg_key` builds
+# readonly so a later assignment cannot desync the key format `_reg_key_into` builds
 # from the one `_reg_stream` emits — the two would stop meeting and every lookup
 # would miss, which reads as "absent" and is how a required-field check stops
 # firing. Guarded because several callers source this module twice, and
@@ -95,7 +95,7 @@ if [[ -z "${_REG_SEP:-}" ]]; then
   readonly _REG_PSEP=$'\x02'
 fi
 
-# _reg_key FILE PATH_SEGMENT... — the cache key for one node.
+# _reg_key_into VAR FILE PATH_SEGMENT... — the cache key for one node.
 #
 # The join lives here alone so no call site spells the delimiter itself: a
 # lookup that built its key by hand would silently miss every time the
@@ -110,16 +110,22 @@ fi
 # `reg_len` bounded — and the alternative is worse: a `tools: {0: {...}}` would
 # answer a read written for a list, which is the shadowing this marker exists
 # to prevent.
-_reg_key() {
-  local file="$1"; shift
-  local path=""
-  local seg
-  for seg in "$@"; do
-    [[ -n "$path" ]] && path+="$_REG_PSEP"
-    [[ "$seg" =~ ^[0-9]+$ ]] && seg="#$seg"
-    path+="$seg"
+#
+# Writes through a nameref rather than printing, because every accessor below
+# calls it and a `$(_reg_key ...)` is a fork apiece. Measured: 2000 calls cost
+# 2.19s as a command substitution and 0.068s this way. The `__` prefix is what
+# keeps a caller's own `key` variable from being the one assigned to.
+_reg_key_into() {
+  local -n __rg_key_out=$1
+  local __rg_file="$2"; shift 2
+  local __rg_path=""
+  local __rg_seg
+  for __rg_seg in "$@"; do
+    [[ -n "$__rg_path" ]] && __rg_path+="$_REG_PSEP"
+    [[ "$__rg_seg" =~ ^[0-9]+$ ]] && __rg_seg="#$__rg_seg"
+    __rg_path+="$__rg_seg"
   done
-  printf '%s' "$file$_REG_SEP$path"
+  __rg_key_out="$__rg_file$_REG_SEP$__rg_path"
 }
 
 # reg_load FILE... — read every node of each FILE into the cache.
@@ -217,7 +223,7 @@ _reg_report_unparseable() {
 # yq reports a sequence index and a numeric map key identically — both are
 # `!!int` in a path — so the parent is identified by collecting every sequence
 # path in the document first and testing the node's parent against that set.
-# `_reg_key` builds the same form from its arguments.
+# `_reg_key_into` builds the same form from its arguments.
 _reg_stream() {
   # $seqs is every sequence's path; a segment whose parent path is in it is an
   # index and takes the `#` marker.
@@ -313,7 +319,7 @@ reg_invalidate() {
 # both, matching the `// ""` idiom every call site was written against.
 reg_has() {
   local key
-  key=$(_reg_key "$@")
+  _reg_key_into key "$@"
   [[ -n "${_REG_TAG[$key]+set}" ]]
 }
 
@@ -324,8 +330,25 @@ reg_has() {
 # asks `reg_has` first, as `_check_permission_field` does.
 reg_type() {
   local key
-  key=$(_reg_key "$@")
+  _reg_key_into key "$@"
   printf '%s' "${_REG_TAG[$key]:-}"
+}
+
+# reg_type_into VAR FILE PATH_SEGMENT... — `reg_type` without the fork.
+#
+# The `$(reg_type ...)` a call site writes is a second fork on top of the one
+# the accessor used to pay itself, and the entry loops below run five reads per
+# tool over 146 tools. See `_reg_key_into` for the measurement.
+# Every local here carries the `__rg_` prefix, including the key. A bare `key`
+# would shadow a caller's own variable of that name, and since $1 is a nameref
+# to exactly such a variable, `reg_type_into key ...` would resolve the nameref
+# to this function's local and hand the caller back an empty string — a silent
+# wrong answer, not an error. Verified against callers named key, tag and val.
+reg_type_into() {
+  local -n __rg_type_out=$1
+  local __rg_key
+  _reg_key_into __rg_key "${@:2}"
+  __rg_type_out="${_REG_TAG[$__rg_key]:-}"
 }
 
 # reg_get FILE PATH_SEGMENT... — the scalar at that path, or empty.
@@ -337,7 +360,7 @@ reg_type() {
 # longer than the same read used to return.
 reg_get() {
   local key
-  key=$(_reg_key "$@")
+  _reg_key_into key "$@"
   local tag="${_REG_TAG[$key]:-}"
   # A map's stored value is its key list and a sequence's is its length — both
   # are answers to `reg_keys` and `reg_len`, not scalars. Returning them here
@@ -349,6 +372,24 @@ reg_get() {
   printf '%s' "$val"
 }
 
+# reg_get_into VAR FILE PATH_SEGMENT... — `reg_get` without the fork.
+#
+# VAR is emptied for the absent, null, map and sequence cases alike, which is
+# what `reg_get` prints nothing for — a call site's `[[ -n "$x" ]]` guard reads
+# the same either way.
+# See `reg_type_into` for why every local is `__rg_`-prefixed.
+reg_get_into() {
+  local -n __rg_val_out=$1
+  local __rg_key
+  _reg_key_into __rg_key "${@:2}"
+  local __rg_tag="${_REG_TAG[$__rg_key]:-}"
+  __rg_val_out=""
+  [[ "$__rg_tag" == "!!null" || "$__rg_tag" == "!!map" || "$__rg_tag" == "!!seq" ]] && return 0
+  local __rg_val="${_REG_VAL[$__rg_key]:-}"
+  while [[ "$__rg_val" == *$'\n' ]]; do __rg_val="${__rg_val%$'\n'}"; done
+  __rg_val_out="$__rg_val"
+}
+
 # reg_keys FILE PATH_SEGMENT... — the child keys of a map, one per line.
 #
 # Document order, not sorted — `_check_unknown_fields` reports the first
@@ -356,7 +397,7 @@ reg_get() {
 # for a path that is absent or is not a map.
 reg_keys() {
   local key
-  key=$(_reg_key "$@")
+  _reg_key_into key "$@"
   [[ "${_REG_TAG[$key]:-}" == "!!map" ]] || return 0
   local joined="${_REG_VAL[$key]}"
   [[ -n "$joined" ]] || return 0
@@ -380,11 +421,28 @@ reg_keys() {
 # `validate-registries` does, and reports it against the file by name.
 reg_len() {
   local key tag
-  key=$(_reg_key "$@")
+  _reg_key_into key "$@"
   tag="${_REG_TAG[$key]:-}"
   [[ -n "$tag" && "$tag" != "!!null" ]] || { printf '0'; return 0; }
   [[ "$tag" == "!!seq" ]] || return 1
   printf '%s' "${_REG_VAL[$key]}"
+}
+
+# reg_len_into VAR FILE PATH_SEGMENT... — `reg_len` without the fork.
+#
+# Returns 1 on a non-sequence and leaves VAR empty, matching what `reg_len`
+# does — a caller that meets the shape checks the status, and one that does not
+# aborts under `set -e` rather than walking zero entries.
+# See `reg_type_into` for why every local is `__rg_`-prefixed.
+reg_len_into() {
+  local -n __rg_len_out=$1
+  local __rg_key __rg_tag
+  _reg_key_into __rg_key "${@:2}"
+  __rg_tag="${_REG_TAG[$__rg_key]:-}"
+  __rg_len_out=0
+  [[ -n "$__rg_tag" && "$__rg_tag" != "!!null" ]] || return 0
+  [[ "$__rg_tag" == "!!seq" ]] || { __rg_len_out=""; return 1; }
+  __rg_len_out="${_REG_VAL[$__rg_key]}"
 }
 
 # collect_component_registries ARRAY_REF SCAN_DIR — the component `registry.yml`
@@ -472,14 +530,14 @@ registry_passes_install_check() {
   local file="$1"
   reg_load "$file" || return 1
   local install_check
-  install_check=$(reg_get "$file" meta install_check)
+  reg_get_into install_check "$file" meta install_check
   [[ "$install_check" == "true" ]] || return 0
 
   # Symlink-based check: pass if a symlink's target contains the expected string.
   # Used by registries whose relevance depends on a runtime choice (e.g. Docker runtime).
   local check_symlink check_contains
-  check_symlink=$(reg_get "$file" meta install_check_symlink)
-  check_contains=$(reg_get "$file" meta install_check_symlink_contains)
+  reg_get_into check_symlink "$file" meta install_check_symlink
+  reg_get_into check_contains "$file" meta install_check_symlink_contains
   if [[ -n "$check_symlink" && "$check_symlink" != "null" ]]; then
     # Expand ~ to $HOME, and the workbench roots to their resolved values.
     # Literal substitution rather than eval — the value comes from a registry
@@ -495,7 +553,7 @@ registry_passes_install_check() {
 
   # Command-based check: pass if a specific command is in PATH.
   local check_cmd
-  check_cmd=$(reg_get "$file" meta install_check_command)
+  reg_get_into check_cmd "$file" meta install_check_command
   if [[ -n "$check_cmd" && "$check_cmd" != "null" ]]; then
     is_installed "$check_cmd"
     return $?
@@ -503,10 +561,10 @@ registry_passes_install_check() {
 
   # Fallback: pass if any tool from the registry is installed
   local count i
-  count=$(reg_len "$file" tools)
+  reg_len_into count "$file" tools
   for (( i=0; i<count; i++ )); do
     local name
-    name=$(reg_get "$file" tools "$i" name)
+    reg_get_into name "$file" tools "$i" name
     if is_installed "$name"; then
       return 0
     fi
@@ -523,16 +581,16 @@ iter_registry_env() {
   reg_has "$file" env || return 0
 
   local count i
-  count=$(reg_len "$file" env)
+  reg_len_into count "$file" env
   for (( i=0; i<count; i++ )); do
     local var comment default_val setup_url prefix
-    var=$(reg_get "$file" env "$i" var)
+    reg_get_into var "$file" env "$i" var
     [[ -n "$var" && "$var" != "null" ]] || continue
 
-    comment=$(reg_get "$file" env "$i" comment)
-    default_val=$(reg_get "$file" env "$i" default)
-    setup_url=$(reg_get "$file" env "$i" setup_url)
-    prefix=$(reg_get "$file" env "$i" prefix)
+    reg_get_into comment "$file" env "$i" comment
+    reg_get_into default_val "$file" env "$i" default
+    reg_get_into setup_url "$file" env "$i" setup_url
+    reg_get_into prefix "$file" env "$i" prefix
 
     "$cb" "$var" "$comment" "$default_val" "$setup_url" "$prefix"
   done
@@ -546,18 +604,18 @@ iter_registry_auth() {
   reg_load "$file" || return 1
 
   local count i
-  count=$(reg_len "$file" tools)
+  reg_len_into count "$file" tools
   for (( i=0; i<count; i++ )); do
     local env_var
-    env_var=$(reg_get "$file" tools "$i" auth env_var)
+    reg_get_into env_var "$file" tools "$i" auth env_var
     [[ -n "$env_var" && "$env_var" != "null" ]] || continue
 
     local name
-    name=$(reg_get "$file" tools "$i" name)
+    reg_get_into name "$file" tools "$i" name
 
     local setup_url prefix
-    setup_url=$(reg_get "$file" tools "$i" auth setup_url)
-    prefix=$(reg_get "$file" tools "$i" auth prefix)
+    reg_get_into setup_url "$file" tools "$i" auth setup_url
+    reg_get_into prefix "$file" tools "$i" auth prefix
 
     "$cb" "$name" "$env_var" "$setup_url" "$prefix"
   done
@@ -572,30 +630,135 @@ _collect_tool_permission() {
   # An absent permission has no tag at all, where `yq '... | tag'` answered
   # !!null for it. Both mean "nothing to collect", and the empty case falls
   # through the same arm.
-  perm_tag=$(reg_type "$file" tools "$i" permission)
+  reg_type_into perm_tag "$file" tools "$i" permission
 
   case "$perm_tag" in
     ''|'!!null') return 0 ;;
     '!!bool')
-      perm_val=$(reg_get "$file" tools "$i" permission)
+      reg_get_into perm_val "$file" tools "$i" permission
       [[ "$perm_val" == "true" ]] || return 0
-      name=$(reg_get "$file" tools "$i" name)
+      reg_get_into name "$file" tools "$i" name
       __tool_perms+=("Bash($name:*)")
       ;;
     '!!str')
-      perm_val=$(reg_get "$file" tools "$i" permission)
+      reg_get_into perm_val "$file" tools "$i" permission
       [[ -n "$perm_val" ]] || return 0
       __tool_perms+=("Bash($perm_val:*)")
       ;;
     '!!seq')
       local j arr_len entry
-      arr_len=$(reg_len "$file" tools "$i" permission)
+      reg_len_into arr_len "$file" tools "$i" permission
       for (( j=0; j<arr_len; j++ )); do
-        entry=$(reg_get "$file" tools "$i" permission "$j")
+        reg_get_into entry "$file" tools "$i" permission "$j"
         __tool_perms+=("$entry")
       done
       ;;
   esac
+}
+
+# Which scan keys the open `reg_scan_hold` has already refreshed.
+declare -gA _REG_SCAN_HELD=()
+
+# Whether a `reg_scan_hold` is open at all. A separate flag rather than a test
+# on `_REG_SCAN_HELD`'s size: an empty map means both "no hold" and "hold open,
+# first collector not yet through", and reading those as the same thing would
+# leave the first collector inside a hold recording nothing — so the second
+# would invalidate and the hold would buy nothing.
+declare -g _REG_SCAN_HOLD_OPEN=""
+
+# reg_scan_hold CMD [ARG...] — run CMD with one registry scan shared by every
+# collector it calls.
+#
+# Each collector below re-scans on its own, because a collector is a directory
+# read and has to answer for the tree as it is now rather than as some earlier
+# call found it. Two collectors invoked for one logical operation do not need
+# two scans, though, and `step_claude_settings` calls two — so the yq parse of
+# every registry ran twice per sync, the second invalidating the cache the
+# first had just built. Measured at 0.4s of a 1.1s sync.
+#
+# Within the hold, the first collector to reach a given scan key invalidates
+# and loads; the rest reuse what it loaded. The hold is cleared on the way out
+# even when CMD fails, so a later collector outside it re-scans as before.
+#
+# ceiling: one scan per held block, so a caller that rewrites a registry
+# mid-block and expects the next collector to see it will not. Upgrade trigger:
+# if any caller needs a mid-block re-read, drop the hold there rather than
+# widening it — `step_claude_settings` reads the tree and never writes to it.
+# Not re-entrant on purpose: a nested call would clear the outer hold's keys on
+# the way out and silently return the outer block to one scan per collector.
+# The inner hold is a no-op instead, since the outer one already gives it what
+# it was asking for.
+#
+# CMD is called bare rather than as `"$@" || status=$?`. A command in a `||`
+# condition has errexit suppressed for its whole dynamic extent, so the body
+# would run on past a failure its caller had every reason to abort on: a
+# settings sync whose write failed carried on and printed its success line.
+# The release therefore has to happen in a trap, which is what lets the call
+# stay bare and the status propagate on its own.
+#
+# A collector running inside a command substitution reads the keys the block
+# has already recorded but cannot record its own, since its assignments die
+# with the subshell. So a block whose *first* collector runs in one re-scans
+# for every later collector and the hold buys nothing — measured at 0.99s
+# against 0.63s for the same pair the other way round. It costs time rather
+# than correctness, but it means the collector order in a held block is load
+# bearing: `step_claude_settings` calls collect_registry_permissions directly
+# before reaching _claude_mirror_env inside a `$(...)`, and swapping those two
+# would quietly undo this.
+reg_scan_hold() {
+  if [[ -n "$_REG_SCAN_HOLD_OPEN" ]]; then
+    "$@"
+    return $?
+  fi
+  _REG_SCAN_HELD=()
+  _REG_SCAN_HOLD_OPEN=1
+  trap '_reg_scan_release' RETURN
+  "$@"
+}
+
+# _reg_scan_release — drop the hold, when the frame returning is the hold's own.
+#
+# The guard is load-bearing under `set -T`, which bats sets: a RETURN trap is
+# inherited by every function the body calls, so an unguarded release fires at
+# the first collector's return and silently disables the sharing it exists to
+# provide. Checking the returning frame is what keeps it to `reg_scan_hold`.
+_reg_scan_release() {
+  [[ "${FUNCNAME[1]:-}" == "reg_scan_hold" ]] || return 0
+  _REG_SCAN_HOLD_OPEN=""
+  _REG_SCAN_HELD=()
+}
+
+# _reg_collect_scan REGS_REF SCAN_DIR BREW_DIR — the scan every collector opens
+# with: the registry list, loaded and current.
+#
+# Returns 1 when a file cannot be parsed, which is the collector's own failure
+# to propagate.
+#
+# The hold key is the two directories joined on `_REG_SEP`, uncanonicalised: a
+# caller spelling one of them differently between collectors (relative against
+# absolute, a trailing slash, a symlinked parent) gets a second key and a
+# second scan, which is the unheld behaviour and so costs time rather than
+# correctness. Two genuinely different directory pairs can only collide if a
+# path contains `_REG_SEP` itself, which is the delimiter assumption the whole
+# module already rests on — `reg_load` rejects that byte in a registry key for
+# the same reason.
+_reg_collect_scan() {
+  local -n __rg_regs_out=$1
+  local __rg_scan_dir="$2" __rg_brew_dir="$3"
+
+  __rg_regs_out=()
+  collect_registries __rg_regs_out "$__rg_scan_dir" "$__rg_brew_dir"
+  (( ${#__rg_regs_out[@]} > 0 )) || return 0
+
+  # Invalidated first: this is a directory scan, so it answers for the tree as
+  # it is now, not as some earlier call in the same process found it. The one
+  # exception is a scan key an open `reg_scan_hold` has already refreshed.
+  local __rg_hold_key="$__rg_scan_dir$_REG_SEP$__rg_brew_dir"
+  if [[ -z "${_REG_SCAN_HELD[$__rg_hold_key]:-}" ]]; then
+    reg_invalidate "${__rg_regs_out[@]}"
+    [[ -z "$_REG_SCAN_HOLD_OPEN" ]] || _REG_SCAN_HELD[$__rg_hold_key]=1
+  fi
+  reg_load "${__rg_regs_out[@]}" || return 1
 }
 
 # collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
@@ -610,15 +773,12 @@ collect_registry_permissions() {
 
   __perms_out=()
   local -a registries=()
-  collect_registries registries "$scan_dir" "$brew_dir"
-  # Invalidated first: this is a directory scan, so it answers for the tree as
-  # it is now, not as some earlier call in the same process found it.
-  (( ${#registries[@]} > 0 )) && { reg_invalidate "${registries[@]}"; reg_load "${registries[@]}" || return 1; }
+  _reg_collect_scan registries "$scan_dir" "$brew_dir" || return 1
 
   local file count i
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
-    count=$(reg_len "$file" tools)
+    reg_len_into count "$file" tools
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
@@ -666,25 +826,23 @@ collect_claude_env_vars() {
   __sources_out=()
   __targets_out=()
   local -a registries=()
-  collect_registries registries "$scan_dir" "$brew_dir"
-  # Invalidated first, for the reason collect_registry_permissions gives.
-  (( ${#registries[@]} > 0 )) && { reg_invalidate "${registries[@]}"; reg_load "${registries[@]}" || return 1; }
+  _reg_collect_scan registries "$scan_dir" "$brew_dir" || return 1
 
   local file flagged count i var target opted_out
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
-    flagged=$(reg_get "$file" meta claude_env)
+    reg_get_into flagged "$file" meta claude_env
     [[ "$flagged" == "true" ]] || continue
 
-    count=$(reg_len "$file" env)
+    reg_len_into count "$file" env
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
-      var=$(reg_get "$file" env "$i" var)
+      reg_get_into var "$file" env "$i" var
       [[ -n "$var" && "$var" != "null" ]] || continue
-      opted_out=$(reg_get "$file" env "$i" claude_env)
+      reg_get_into opted_out "$file" env "$i" claude_env
       [[ "$opted_out" != "false" ]] || continue
-      target=$(reg_get "$file" env "$i" target)
+      reg_get_into target "$file" env "$i" target
       [[ -z "$target" || "$target" == "null" ]] && target="$var"
       __sources_out+=("$var")
       __targets_out+=("$target")
@@ -721,20 +879,18 @@ collect_model_env_vars() {
   __vars_out=()
   __roles_out=()
   local -a registries=()
-  collect_registries registries "$scan_dir" "$brew_dir"
-  # Invalidated first, for the reason collect_registry_permissions gives.
-  (( ${#registries[@]} > 0 )) && { reg_invalidate "${registries[@]}"; reg_load "${registries[@]}" || return 1; }
+  _reg_collect_scan registries "$scan_dir" "$brew_dir" || return 1
 
   local file count i var role
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
-    count=$(reg_len "$file" env)
+    reg_len_into count "$file" env
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
-      role=$(reg_get "$file" env "$i" role)
+      reg_get_into role "$file" env "$i" role
       [[ " $MODEL_ROLES " == *" $role "* ]] || continue
-      var=$(reg_get "$file" env "$i" var)
+      reg_get_into var "$file" env "$i" var
       [[ -n "$var" && "$var" != "null" ]] || continue
       __vars_out+=("$var")
       __roles_out+=("$role")

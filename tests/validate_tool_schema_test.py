@@ -117,7 +117,8 @@ def test_a_tool_that_outruns_the_probe_timeout_is_caught(tmp_path, monkeypatch):
     assert "did not answer within" in _reasons(tmp_path)["slow-tool"]
 
 
-def test_a_timeout_is_not_reported_as_a_broken_tool(tmp_path):
+# passes-at-base: the attempt count dropped; the BROKEN-vs-TIMED_OUT assertion did not
+def test_a_timeout_is_not_reported_as_a_broken_tool(tmp_path, monkeypatch):
     """A wedged probe and a wrong answer want different people to look.
 
     On a build runner a breach of a bound the script should not need is the
@@ -127,7 +128,14 @@ def test_a_timeout_is_not_reported_as_a_broken_tool(tmp_path):
     The shipped bound, not TIMEOUT_BOUND: the broken tool has to get far enough
     to exit 3, and under a short one it times out like its neighbour — which is
     this very finding, arriving as a green test.
+
+    One attempt rather than the shipped two, which is a different knob from the
+    bound: the sleeper still breaches it in full, and what is dropped is the
+    identical second breach. Nothing here asserts on how many times a probe is
+    retried — test_mcp_server's TestProbeRetry owns that — and the two breaches
+    are served serially, so the case cost a flat 10s.
     """
+    monkeypatch.setattr(server, "PROBE_ATTEMPTS", 1)
     _write_script(tmp_path, "bin/slow-tool", SLEEPS_FOREVER)
     _write_script(tmp_path, "bin/broken-tool",
                   '#!/bin/bash\n# answers --tool-schema\nexit 3\n')

@@ -96,44 +96,51 @@ _help_run() {
     "$1" "$2" 2>&1
 }
 
-@test "all bash bin scripts produce help and exit 0 with -h" {
-  local failures=()
-
-  while IFS= read -r f; do
-    local name output rc
-    name=$(basename "$f")
+# _help_failures FLAG [--check-status] — the scripts whose FLAG is broken.
+#
+# Each script is asked independently and nothing is shared between them, so the
+# ~150 invocations run concurrently rather than one after another: the two
+# cases below spawned that many processes serially and cost ~9.4s each.
+#
+# `xargs -P` over a helper that prints one line per bad script, rather than a
+# shell loop — the findings come back on stdout, so a worker exiting non-zero
+# cannot lose a name. The exit status is deliberately not read: a script whose
+# -h fails is reported as a finding, which is what the caller asserts on.
+_help_failures() {
+  local flag="$1" check_status="${2:-}"
+  export -f _help_run
+  # shellcheck disable=SC2016  # $0/$1 are the worker's, expanded by bash -c
+  _discover_scripts | xargs -P 8 -I {} bash -c '
+    flag="$0"; check_status="$1"; script="$2"
+    name=$(basename "$script")
     rc=0
-    output=$(_help_run "$f" -h) || rc=$?
-    if [[ -z "$output" ]]; then
-      failures+=("$name: -h produced no output")
+    output=$(_help_run "$script" "$flag") || rc=$?
+    [[ -n "$output" ]] || printf "%s: %s produced no output\n" "$name" "$flag"
+    if [[ -n "$check_status" && $rc -ne 0 ]]; then
+      printf "%s: %s exit %s\n" "$name" "$flag" "$rc"
     fi
-    if [[ $rc -ne 0 ]]; then
-      failures+=("$name: -h exit $rc")
-    fi
-  done < <(_discover_scripts)
+  ' "$flag" "$check_status" {}
+}
 
-  if (( ${#failures[@]} > 0 )); then
+# passes-at-base: the assertion is unchanged, only the probes became concurrent
+@test "all bash bin scripts produce help and exit 0 with -h" {
+  local failures
+  failures=$(_help_failures -h --check-status)
+
+  if [[ -n "$failures" ]]; then
     printf 'Scripts with broken -h:\n'
-    printf '  %s\n' "${failures[@]}"
+    printf '  %s\n' "$failures"
     return 1
   fi
 }
 
 @test "all bash bin scripts produce help with --help" {
-  local failures=()
+  local failures
+  failures=$(_help_failures --help)
 
-  while IFS= read -r f; do
-    local name output
-    name=$(basename "$f")
-    output=$(_help_run "$f" --help) || true
-    if [[ -z "$output" ]]; then
-      failures+=("$name: --help produced no output")
-    fi
-  done < <(_discover_scripts)
-
-  if (( ${#failures[@]} > 0 )); then
+  if [[ -n "$failures" ]]; then
     printf 'Scripts with broken --help:\n'
-    printf '  %s\n' "${failures[@]}"
+    printf '  %s\n' "$failures"
     return 1
   fi
 }

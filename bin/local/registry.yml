@@ -194,6 +194,11 @@ tools:
     visibility: brief
     description: "Validates that the committed public surface snapshots match the registries, config schema, and shipped artifacts they are generated from"
 
+  - name: generate-test-weights
+    permission: false
+    visibility: brief
+    description: "Writes tests/weights.tsv from a bats junit report — the measured per-file runtimes the CI shard packer balances on"
+
   - name: select-tests
     permission: false
     visibility: brief

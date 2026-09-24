@@ -10,11 +10,63 @@
 # unrelated to the change under review — check the sourcing chain before
 # assuming the dependency-graph logic itself regressed.
 
+# _build_dep_graph walks every bash script in the repo and forks ~15 greps per
+# file to find its source edges — ~3s, and eight cases below need it. It is
+# memoised per process, but bats runs each test in its own subshell, so the
+# walk was paid eight times.
+#
+# Built once here and serialised. `declare -p` round-trips the associative
+# array exactly, so a restoring test holds the same graph the walk produced
+# rather than a summary of it.
+setup_file() {
+  load 'test_helper'
+  common_setup
+  local repo_root
+  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
+  # Sourced without a `WORKBENCH_DIR=... ` prefix: bash discards a temporary
+  # assignment once the builtin returns, and the script's own assignment to
+  # that same name goes with it — leaving WORKBENCH_DIR empty, the tree walk
+  # finding nothing, and a graph of zero keys that every restore then reads as
+  # "no dependents". The script derives the root from BASH_SOURCE itself.
+  # shellcheck source=/dev/null
+  source "$repo_root/bin/local/select-tests"
+  _build_dep_graph
+  # Rewritten to `declare -gA`. `declare -p` emits a plain `declare -A`, and
+  # sourcing that inside a function declares a *local* that vanishes on return
+  # — the restore would appear to work and leave the caller with an empty
+  # graph. It is the same trap _build_dep_graph documents for its own
+  # declaration, one step removed.
+  # An empty graph is the failure mode both comments above describe, and it is
+  # silent: every restore succeeds and every closure case reads "no dependents",
+  # so five tests fail on their assertions rather than one fixture failing to
+  # build. Checked here, where the cause is still visible.
+  if [[ ${#_REVERSE_DEPS[@]} -eq 0 ]]; then
+    echo "FATAL: _build_dep_graph produced no edges for $repo_root" >&2
+    return 1
+  fi
+
+  declare -p _REVERSE_DEPS \
+    | sed 's/^declare -A /declare -gA /' > "$BATS_FILE_TMPDIR/dep_graph"
+}
+
 setup() {
   load 'test_helper'
   common_setup
   # shellcheck source=../bin/local/select-tests
   source "$REPO_ROOT/bin/local/select-tests"
+}
+
+# _restore_dep_graph — the graph setup_file built, in place of a rebuild.
+#
+# `declare -gA` first: the cached line is a plain `declare -A`, which inside a
+# function creates a local that vanishes when it returns — the same trap
+# _build_dep_graph documents for its own declaration. _DEP_GRAPH_BUILT is set
+# so a later _build_dep_graph call is the no-op it already knows how to be.
+_restore_dep_graph() {
+  # shellcheck source=/dev/null
+  source "$BATS_FILE_TMPDIR/dep_graph"
+  _DEP_GRAPH_BUILT=1
 }
 
 teardown() {
@@ -60,35 +112,35 @@ teardown() {
 # ── Reverse-transitive closure ───────────────────────────────────────────────
 
 @test "reverse closure: lib/roots.sh reaches lib/constants.sh" {
-  _build_dep_graph
+  _restore_dep_graph
   run _reverse_closure "lib/roots.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"lib/constants.sh"* ]]
 }
 
 @test "reverse closure: lib/roots.sh reaches lib/registries.sh" {
-  _build_dep_graph
+  _restore_dep_graph
   run _reverse_closure "lib/roots.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"lib/registries.sh"* ]]
 }
 
 @test "reverse closure: lib/components.sh reaches bin/otto-workbench" {
-  _build_dep_graph
+  _restore_dep_graph
   run _reverse_closure "lib/components.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"bin/otto-workbench"* ]]
 }
 
 @test "reverse closure: lib/conventions.sh reaches bin/local/check-surface-compat" {
-  _build_dep_graph
+  _restore_dep_graph
   run _reverse_closure "lib/conventions.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"bin/local/check-surface-compat"* ]]
 }
 
 @test "reverse closure: a file with no dependents returns only itself" {
-  _build_dep_graph
+  _restore_dep_graph
   run _reverse_closure "bin/otto-workbench"
   [ "$status" -eq 0 ]
   [ "$(echo "$output" | wc -l | tr -d ' ')" -eq 1 ]
@@ -99,6 +151,7 @@ teardown() {
 
 @test "expand: lib/roots.sh pulls in transitive dependents" {
   local expanded
+  _restore_dep_graph
   expanded=$(_expand_changed_files "lib/roots.sh")
   [[ "$expanded" == *"lib/roots.sh"* ]]
   [[ "$expanded" == *"lib/constants.sh"* ]]
@@ -107,6 +160,7 @@ teardown() {
 
 @test "expand: a non-library file passes through unchanged" {
   local expanded
+  _restore_dep_graph
   expanded=$(_expand_changed_files "tests/run_tests.bats")
   # Only the file itself — no graph expansion
   [ "$(echo "$expanded" | wc -l | tr -d ' ')" -eq 1 ]
@@ -115,6 +169,7 @@ teardown() {
 
 @test "expand: multiple files merge their closures" {
   local expanded
+  _restore_dep_graph
   expanded=$(_expand_changed_files "lib/conventions.sh" "lib/components.sh")
   # lib/conventions.sh -> bin/local/check-surface-compat
   [[ "$expanded" == *"bin/local/check-surface-compat"* ]]

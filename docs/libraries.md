@@ -940,14 +940,18 @@ the caller has not already sourced `constants.sh`, since an
 | `reg_invalidate FILE...` | drop each FILE from the cache so the next read of it parses the file again. |
 | `reg_has FILE PATH_SEGMENT...` | 0 when a node exists at that path. |
 | `reg_type FILE PATH_SEGMENT...` | the YAML tag at that path, e.g. `!!str`. |
+| `reg_type_into VAR FILE PATH_SEGMENT...` | `reg_type` without the fork. |
 | `reg_get FILE PATH_SEGMENT...` | the scalar at that path, or empty. |
+| `reg_get_into VAR FILE PATH_SEGMENT...` | `reg_get` without the fork. |
 | `reg_keys FILE PATH_SEGMENT...` | the child keys of a map, one per line. |
 | `reg_len FILE PATH_SEGMENT...` | the length of a sequence, or 0 when it holds nothing. |
+| `reg_len_into VAR FILE PATH_SEGMENT...` | `reg_len` without the fork. |
 | `collect_component_registries ARRAY_REF SCAN_DIR` | the component `registry.yml` files under a root. ARRAY_REF names the caller's array, which is replaced with the paths found one and two directories below SCAN_DIR, in glob order. SCAN_DIR is the root those globs are anchored at; a root holding none of them leaves the array empty rather than filling it with unexpanded patterns. |
 | `collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
 | `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. Checks meta.install_check and meta.install_check_command. |
 | `iter_registry_env FILE CALLBACK` | Calls CALLBACK var comment default_val setup_url prefix for each env[] entry. |
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
+| `reg_scan_hold CMD [ARG...]` | run CMD with one registry scan shared by every collector it calls. |
 | `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
 | `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
 | `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |

@@ -14,6 +14,17 @@ setup() {
   export WORKBENCH_SYNC=true
   mkdir -p "$HOME"
 
+  # Around 150 cases below evaluate a guard predicate by spawning `node` to
+  # import one .ts module, and nearly all of the ~82ms that costs is startup
+  # and type-stripping rather than the predicate. Node's compile cache makes
+  # that work survive across processes, taking it to ~59ms.
+  #
+  # $BATS_FILE_TMPDIR, not $TMPDIR: common_setup pins the latter per test, so a
+  # cache written there is discarded before the next case can read it, and the
+  # first-run cost would be paid every time. bats removes the file-level
+  # directory when the file finishes, so nothing outlives the run.
+  export NODE_COMPILE_CACHE="$BATS_FILE_TMPDIR/node-compile-cache"
+
   FAKE_WORKBENCH="$TMPDIR/workbench"
   mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions"
   cp "$REPO_ROOT/ai/pi/steps.sh" "$FAKE_WORKBENCH/ai/pi/steps.sh"

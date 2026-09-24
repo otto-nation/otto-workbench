@@ -347,9 +347,54 @@ make_git_remote() {
   git commit -m "feat: add feature" --quiet
 }
 
+# make_git_remote_prototype PROTO_DIR BRANCH — build one remote/clone pair for a
+# whole file, to be copied per test by copy_git_remote_prototype.
+#
+# For a suite whose tests push to their remote or commit on its main: those
+# cannot share one pair, and clone_from_shared_remote below is not enough
+# either, since a clone still shares the remote it was cloned from. Copying
+# both halves gives every test a private, fully mutable pair.
+#
+# Call from setup_file with PROTO_DIR under $BATS_FILE_TMPDIR. Measured against
+# make_git_remote per test: 270ms each becomes 170ms once plus 30ms each.
+make_git_remote_prototype() {
+  local proto_dir="$1"
+  local branch="${2:-feature/test}"
+
+  mkdir -p "$proto_dir"
+  make_git_remote "$proto_dir/remote.git" "$proto_dir/local" "$branch"
+  cd / || return 1
+}
+
+# copy_git_remote_prototype PROTO_DIR REMOTE_DIR LOCAL_DIR — a private copy of
+# the pair make_git_remote_prototype built.
+#
+# The clone's origin is repointed at the copied remote; without that every
+# test would push into the prototype and see each other's commits, which is the
+# sharing this exists to avoid.
+copy_git_remote_prototype() {
+  local proto_dir="$1" remote_dir="$2" local_dir="$3"
+
+  common_setup
+  GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
+  export GIT_CEILING_DIRECTORIES
+
+  cd / || return 1
+  cp -R "$proto_dir/remote.git" "$remote_dir"
+  cp -R "$proto_dir/local" "$local_dir"
+  git -C "$local_dir" remote set-url origin "$remote_dir"
+
+  cd "$local_dir" || return 1
+  _assert_not_real_repo || return 1
+}
+
 # clone_from_shared_remote REMOTE_DIR LOCAL_DIR [BRANCH] — fast local clone from
 # a bare remote created by make_git_remote in setup_file. Use this in per-test
 # setup() to avoid repeating the expensive init/commit/push cycle.
+#
+# Only for a suite whose tests do not push: the remote stays shared, so a test
+# that pushes is visible to every other. Use make_git_remote_prototype and
+# copy_git_remote_prototype above when they do.
 clone_from_shared_remote() {
   local remote_dir="$1"
   local local_dir="$2"

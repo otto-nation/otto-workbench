@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import re
 import subprocess
 import sys
@@ -388,12 +389,27 @@ def _test_files() -> list[str]:
     return found
 
 
+@functools.cache
 def dependency_map() -> dict[str, set[str]]:
     """Test path → every repo path a change to which should select it.
 
     Keyed on the repo-relative path rather than the bare filename, so a test in
     a subpackage is addressable and two files of the same name in different
     directories cannot collide.
+
+    Cached because building it parses every module in the repo with `ast` —
+    ~1.6s, and `main` calls it exactly once, so the cache is inert in
+    production. It earns its keep under the test suite, where six cases each
+    rebuilt the same map.
+
+    The cached value is mutable and shared. Nothing mutates it today; a caller
+    that needs to should copy it rather than edit the map every other caller
+    then reads.
+
+    ceiling: cached for the life of the process, so a run that outlives an edit
+    to the tree keeps the map it first built. Upgrade trigger: if anything
+    long-lived starts calling this — a watcher, a daemon — key the cache on the
+    tree's state or give it an explicit invalidate.
     """
     index = _module_index()
     graph = _forward_graph(index)

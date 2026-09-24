@@ -132,11 +132,15 @@ class FixRun:
     having ticked boxes, and it can exit clean having ticked none. A caller that
     reports process success reads this one; a caller reporting what got fixed
     reads `outcomes`.
+    `stop` is MAX_TURNS when the last invocation hit the turn cap, even if it
+    ticked boxes. Landing reads it so the commit body can tell a truncated pass
+    from a finished one without consulting the trail.
     """
 
     outcomes: list[ItemOutcome] = field(default_factory=list)
     landed: land.LandResult | None = None
     exit_code: int = 0
+    stop: Diagnosis | None = None
     # HEAD before the agent ran, which is what `LandSpec.recover` compares
     # against and what a domain stamps its pre-pass anchors with.
     head_before: str = ""
@@ -191,6 +195,10 @@ class FixAdapter(ABC):
     # empty. Neither is true of a tracking file that arrives populated, so a fix
     # pass is told to fix things rather than to write the file it already has.
     fix_hint: str = agent_retry.FIX_RETRY_HINT
+    # Set by the engine before `landing`: MAX_TURNS when the last attempt hit
+    # the cap, else None. The commit body is assembled in `landing`, which runs
+    # before `FixRun` exists, so this is how a domain names a truncated pass.
+    stop: Diagnosis | None = None
     # Which phase sizes and prompts the verify gate, for a domain that runs one.
     # Separate from `phase` because the gate is a different agent asking a
     # different question: sizing it as the fix pass gives it the fix pass's
@@ -309,6 +317,9 @@ class _Batch:
     # changed" — the two differ in whether they can be held against the agent,
     # and only one of them is safe as a default.
     scope: fix_scope.BatchScope = fix_scope.UNKNOWN_SCOPE
+    # MAX_TURNS when this invocation hit the cap, even if it ticked boxes.
+    # Distinct from `unproductive`, which is the retry decision.
+    stop: Diagnosis | None = None
 
 
 @dataclass(frozen=True)
@@ -322,6 +333,7 @@ class _Settled:
     # file list is not: the scope is evidence for a decision taken during the
     # pass, and what survives into the record is the decision.
     scopes: dict[str, fix_scope.BatchScope] = field(default_factory=dict)
+    stop: Diagnosis | None = None
 
     def scope_for(self, outcome: ItemOutcome) -> fix_scope.BatchScope:
         """The observation behind one answer, or the unknown scope.
@@ -425,6 +437,7 @@ def _invoke(
         max_turns=turns,
         max_budget=budget or 0.0,
         scope=_batch_scope(adapter, before),
+        stop=result.stop,
     )
 
 
@@ -580,7 +593,10 @@ def _settle(
 
     again = [by_id[o.id] for o in deferred if o.id in by_id]
     if not again:
-        return _Settled(stalled + settled + deferred, worst, scopes)
+        last_stop = batches[-1].stop if batches else None
+        return _Settled(
+            stalled + settled + deferred, worst, scopes, stop=last_stop,
+        )
     # An id the pass never handed out cannot be re-asked — there is no item
     # behind it to render. It is still an answer the file gave, so it is
     # carried rather than dropped: every entry the pass parsed reaches the
@@ -593,6 +609,7 @@ def _settle(
         stalled + settled + unknown + retried.outcomes,
         max(worst, retried.exit_code),
         _merge_scopes(scopes, _scopes([retried])),
+        stop=retried.stop,
     )
 
 
@@ -1212,6 +1229,7 @@ def run(
         # this says so — and four copies of it is four chances for the next
         # adapter to be the one that stays quiet.
         fix_scope.report_unattributable(adapter.workdir)
+    adapter.stop = settled.stop
     spec = adapter.landing(settled.outcomes, changed)
     landed = land.land(
         adapter.workdir,
@@ -1229,6 +1247,7 @@ def run(
         outcomes=settled.outcomes,
         landed=landed,
         exit_code=settled.exit_code,
+        stop=settled.stop,
         head_before=head_before,
         batches=len(batched),
         max_turns=max_turns,

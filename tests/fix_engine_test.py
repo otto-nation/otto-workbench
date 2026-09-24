@@ -368,6 +368,25 @@ def test_a_stalled_batch_has_already_had_its_retry(tmp_path, landed, head):
     assert all(o.outcome is FixOutcome.DEFERRED for o in run.outcomes)
 
 
+def test_a_productive_turn_limit_is_recorded_without_stalling(
+    tmp_path, landed, head,
+):
+    """One ticked box is still production, and the pass still owes the rest."""
+    adapter = StubAdapter(tmp_path, count=2)
+    stop = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
+
+    def run_fix(phase, prompt, **kwargs):
+        _answer(adapter, ids={"i0"})(phase, prompt, **kwargs)
+        return agent_invoke.FixResult(0, None, stop=stop)
+
+    run, inv = _run(adapter, run_fix=run_fix)
+
+    assert run.stop == stop
+    assert adapter.stop == stop
+    # unproductive stays None, so the deferred remainder still gets its retry.
+    assert inv.call_count == 2
+
+
 def test_one_stalled_batch_does_not_cost_the_others_their_retry(tmp_path, landed, head):
     """The bug the partition exists for: a stalled batch swallowing the retry."""
     chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)

@@ -33,7 +33,7 @@ from agent import retry as agent_retry
 from agent import backend as ai_backend
 from core import log
 from agent import session as review_agent
-from agent.diagnosis import Diagnosis
+from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
 from core.phases import Effort, Phase, PhaseShape
 from agent.backend import AgentInvocation
@@ -220,6 +220,14 @@ def run_agent(
 # ── Fix shape ────────────────────────────────────────────────────────────────
 
 
+def _truncation(session_log: str) -> Diagnosis | None:
+    """MAX_TURNS from the last attempt, or None for any other ending."""
+    diagnosis = review_agent.diagnose_missing_output(session_log)
+    if diagnosis.kind is DiagnosisKind.MAX_TURNS:
+        return diagnosis
+    return None
+
+
 @dataclass(frozen=True)
 class FixResult:
     """What one guarded fix pass left behind.
@@ -228,10 +236,13 @@ class FixResult:
     ``unproductive`` is the guard's diagnosis when even the retry produced
     nothing, and ``None`` once the pass did work — a pass can exit non-zero
     having still checked items off, and a caller usually cares about both.
+    ``stop`` is why the last attempt ended when that ending is truncation:
+    MAX_TURNS even if boxes were ticked. It is not the retry decision.
     """
 
     exit_code: int
     unproductive: Diagnosis | None
+    stop: Diagnosis | None = None
 
     @property
     def ok(self) -> bool:
@@ -306,7 +317,7 @@ def run_fix(
 
     if produced is None:
         invoke(prompt, turns)
-        return FixResult(exit_code, None)
+        return FixResult(exit_code, None, stop=_truncation(session_log))
 
     unproductive = agent_retry.run_guarded(
         invoke, prompt, session_log,
@@ -314,4 +325,4 @@ def run_fix(
         produced=produced, hint_select=hint_select,
         ceiling=spec.retry.ceiling,
     )
-    return FixResult(exit_code, unproductive)
+    return FixResult(exit_code, unproductive, stop=_truncation(session_log))

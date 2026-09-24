@@ -353,3 +353,128 @@ report_for() {
   # The guard variable stops the re-exec recursing forever.
   grep -q 'WORKBENCH_TREE_LOCK' "$REPO_ROOT/bin/local/run-tests"
 }
+
+# ── Serial-run diagnostics ───────────────────────────────────────────────────
+#
+# A suite that loses xdist runs several times slower and says nothing, so the
+# only signal is a wall time nobody has a baseline for. These cover the message
+# that replaces that silence — and specifically the shadowing case, which is a
+# different remedy from a genuinely missing plugin.
+
+@test "a serial run names the pytest it is using" {
+  pytest() { [[ "$1" == "-VV" ]] && echo "no plugins here"; }
+  export -f pytest 2>/dev/null || true
+  run report_missing_xdist
+  [[ "$output" == *"running serially"* ]]
+  [[ "$output" == *"using:"* ]]
+}
+
+@test "a shadowed pytest is reported as shadowing, with its path" {
+  # The real case on a machine where a version manager's shim directory sits
+  # ahead of pipx's: `pytest` resolves to an interpreter that never had xdist
+  # injected, while the one that does sits second and unused.
+  local dir_a="$TMPDIR/bin-a" dir_b="$TMPDIR/bin-b"
+  mkdir -p "$dir_a" "$dir_b"
+  printf '#!/usr/bin/env bash\necho "pytest 9.0.0"\n' > "$dir_a/pytest"
+  printf '#!/usr/bin/env bash\necho "pytest-xdist-3.8.0"\n' > "$dir_b/pytest"
+  chmod +x "$dir_a/pytest" "$dir_b/pytest"
+
+  PATH="$dir_a:$dir_b:$PATH" run report_missing_xdist
+  [[ "$output" == *"shadowing: $dir_b/pytest"* ]]
+  [[ "$output" == *"which does have xdist"* ]]
+  [[ "$output" != *"pipx inject"* ]]
+}
+
+@test "a genuinely missing plugin is reported as an install, not a shadow" {
+  # Nothing else on PATH has xdist, so there is nothing to un-shadow and the
+  # remedy is the install the README documents.
+  local dir_a="$TMPDIR/only-bin"
+  mkdir -p "$dir_a"
+  printf '#!/usr/bin/env bash\necho "pytest 9.0.0"\n' > "$dir_a/pytest"
+  chmod +x "$dir_a/pytest"
+
+  # /usr/bin kept on PATH: emptying it entirely takes mktemp and the rest of
+  # the system utilities with it, and bats fails in its own helpers.
+  PATH="$dir_a:/usr/bin:/bin" run report_missing_xdist
+  [[ "$output" == *"pipx inject pytest pytest-xdist"* ]]
+  [[ "$output" != *"shadowing:"* ]]
+}
+
+# passes-at-base: a negative case — at base the function prints nothing at all, so the string it refuses is absent either way
+@test "the pytest in use is not reported as shadowing itself" {
+  # The candidate walk finds the primary too, so it has to be excluded by name.
+  # Without that, a pytest that does carry xdist but is being probed for some
+  # other reason names itself as its own shadow — advice that cannot be acted
+  # on, pointing at the file already in use.
+  local dir_a="$TMPDIR/self-bin"
+  mkdir -p "$dir_a"
+  printf '#!/usr/bin/env bash\necho "pytest-xdist-3.8.0"\n' > "$dir_a/pytest"
+  chmod +x "$dir_a/pytest"
+
+  PATH="$dir_a:/usr/bin:/bin" run report_missing_xdist
+  [[ "$output" != *"shadowing: $dir_a/pytest"* ]]
+}
+
+@test "pytest missing entirely is reported as missing, not as a blank path" {
+  # No pytest anywhere on PATH: the old code printed "using: " with nothing
+  # after it, which reads as a bug rather than the actual failure mode.
+  #
+  # PATH is two scratch dirs and nothing else — no system directories, so the
+  # absence is the test's own doing rather than a property of the machine, and
+  # a box with a /usr/bin/pytest cannot fail this for an unrelated reason.
+  #
+  # bats needs its own utilities on PATH, so they are linked into the scratch
+  # dir instead of inherited: `mktemp` and friends are what the helpers call,
+  # and an empty PATH breaks bats before the assertion is reached.
+  local bare="$TMPDIR/bare-path"
+  mkdir -p "$bare"
+  # bash is linked alongside the coreutils bats reaches for: the function under
+  # test needs none of them (warn and info are builtins), but bats' own helpers
+  # do, and an interpreter resolved from the ambient PATH rather than this one
+  # is a dependency that would break silently if bats ever looked it up afresh.
+  local tool
+  for tool in bash mktemp cat rm mkdir sed grep; do
+    ln -sf "$(command -v "$tool")" "$bare/$tool"
+  done
+  [ ! -e "$bare/pytest" ]
+
+  PATH="$bare" run report_missing_xdist
+  [[ "$output" == *"pytest not found on PATH"* ]]
+  [[ "$output" != *"using:"* ]]
+}
+
+@test "the diagnostics stay off stdout, which the pre-push hook parses" {
+  local dir_a="$TMPDIR/quiet-bin"
+  mkdir -p "$dir_a"
+  printf '#!/usr/bin/env bash\necho "pytest 9.0.0"\n' > "$dir_a/pytest"
+  chmod +x "$dir_a/pytest"
+
+  PATH="$dir_a:/usr/bin:/bin" run --separate-stderr report_missing_xdist
+  [ -z "$output" ]
+  [[ "$stderr" == *"running serially"* ]]
+}
+
+@test "_pytest_candidates lists every pytest on PATH, in resolution order" {
+  local dir_a="$TMPDIR/cand-a" dir_b="$TMPDIR/cand-b"
+  mkdir -p "$dir_a" "$dir_b"
+  printf '#!/usr/bin/env bash\n' > "$dir_a/pytest"
+  printf '#!/usr/bin/env bash\n' > "$dir_b/pytest"
+  chmod +x "$dir_a/pytest" "$dir_b/pytest"
+
+  PATH="$dir_a:$dir_b:/usr/bin:/bin" run _pytest_candidates
+  [ "${lines[0]}" = "$dir_a/pytest" ]
+  [ "${lines[1]}" = "$dir_b/pytest" ]
+}
+
+@test "_pytest_candidates skips a PATH entry with no pytest" {
+  # A non-existent directory on PATH is normal and must not abort the walk
+  # under set -e, which would leave the shadowing check silently unrun.
+  local dir_a="$TMPDIR/cand-real"
+  mkdir -p "$dir_a"
+  printf '#!/usr/bin/env bash\n' > "$dir_a/pytest"
+  chmod +x "$dir_a/pytest"
+
+  PATH="$TMPDIR/does-not-exist:$dir_a:/usr/bin:/bin" run _pytest_candidates
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$dir_a/pytest" ]
+}

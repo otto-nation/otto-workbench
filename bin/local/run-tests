@@ -314,11 +314,7 @@ run_pytest() {
   if pytest -VV 2>/dev/null | grep -q xdist; then
     jobs_flag=(-n "$(granted_jobs)")
   else
-    # Say so rather than just being six times slower. A pytest that resolves to
-    # a different interpreter than the one xdist was installed into — a version
-    # manager's shim taking precedence over pipx on PATH, say — turns a 65s
-    # suite into a 420s one, and nothing in the output names the cause.
-    warn "pytest has no xdist plugin: running serially. $(command -v pytest)" >&2
+    report_missing_xdist
   fi
 
   local basetemp_flag=()
@@ -341,6 +337,57 @@ run_pytest() {
     return
   fi
   pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
+}
+
+# report_missing_xdist — say the run is serial, and why, before it starts.
+#
+# A serial suite is six times slower and otherwise silent: the only signal is a
+# wall time nobody has a baseline for. The likely cause is not a missing
+# install but a shadowed one — a version manager's shim directory ahead of
+# pipx's on PATH means `pytest` resolves to an interpreter that never had xdist
+# injected, while the pipx pytest that does sits second and unused. Naming both
+# paths is what turns "tests are slow today" into a one-line fix.
+#
+# To stderr, because the pre-push hook parses this script's stdout for test
+# results.
+report_missing_xdist() {
+  warn "pytest has no xdist plugin: running serially, which is several times slower." >&2
+  local primary
+  primary="$(command -v pytest)"
+  if [[ -z "$primary" ]]; then
+    info "  pytest not found on PATH" >&2
+  else
+    info "  using: $primary" >&2
+  fi
+
+  # A second pytest further down PATH that *does* have xdist is the shadowing
+  # case, and it has a different remedy from a genuinely missing plugin.
+  local other
+  while IFS= read -r other; do
+    [[ "$other" == "$primary" ]] && continue
+    if "$other" -VV 2>/dev/null | grep -q xdist; then
+      info "  shadowing: $other — which does have xdist" >&2
+      info "  fix: remove the shadowing pytest, or put its directory later on PATH" >&2
+      return 0
+    fi
+  done < <(_pytest_candidates)
+
+  info "  fix: pipx inject pytest pytest-xdist" >&2
+}
+
+# _pytest_candidates — every pytest on PATH, in resolution order.
+#
+# `command -v -a` is not portable to the bash 3.2 that ships with macOS, so the
+# lookup walks PATH itself.
+_pytest_candidates() {
+  local dir
+  # An empty PATH segment conventionally means the current directory, but that
+  # is skipped here rather than honoured: executing a bare `./pytest` picked up
+  # from an empty segment is a needless risk this probe doesn't need to take.
+  while IFS= read -r -d ':' dir; do
+    [[ -n "$dir" && -x "$dir/pytest" ]] && echo "$dir/pytest"
+  done < <(printf '%s:' "$PATH")
+  return 0
 }
 
 # SHARD — when set, only this shard's files are run. Format: N/M.

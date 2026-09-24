@@ -71,7 +71,7 @@ def _parse_jsonl_records(log_path: str, record_type: str) -> list[dict]:
 
 
 def _parse_session_cost(log_path: str) -> float:
-    if not Path(log_path).exists():
+    if not log_path or not Path(log_path).is_file():
         return 0.0
     results = _parse_jsonl_records(log_path, "result")
     return sum(r.get("total_cost_usd", 0.0) for r in results)
@@ -147,8 +147,13 @@ def diagnose_missing_output(log_path: str) -> Diagnosis:
     """Why an agent run left no output, read from its session log.
 
     Public because `agent.retry` decides retryability from the returned kind.
+
+    A caller with no log to name is the same answer as a log that is not there.
+    `is_file` rather than `exists`: an empty path becomes `Path(".")`, which
+    exists as a directory and would pass an existence check, leaving the read
+    below to fail on a directory instead of reporting a missing log.
     """
-    if not Path(log_path).exists():
+    if not log_path or not Path(log_path).is_file():
         return Diagnosis(DiagnosisKind.NO_SESSION_LOG)
     records = read_jsonl(log_path)
     results = _of_type(records, "result")
@@ -191,7 +196,7 @@ def _detail_is_transient(detail: str) -> bool:
 
 
 def _is_model_error(log_path: str) -> bool:
-    if not Path(log_path).exists():
+    if not log_path or not Path(log_path).is_file():
         return False
     results = _parse_jsonl_records(log_path, "result")
     if not results:
@@ -237,7 +242,7 @@ def try_recover_output(log_path: str, output_path: str) -> bool:
     Public because `agent.retry` runs this before writing a run off as
     unproductive — the content is in the denial record either way.
     """
-    if not Path(log_path).exists():
+    if not log_path or not Path(log_path).is_file():
         return False
     for content in _collect_denied_contents(log_path):
         if "## " not in content:
@@ -263,7 +268,7 @@ def is_quota_error(log_path: str) -> bool:
     Public because ``agent.invoke`` decides the backoff and this module owns
     reading a session log — the two halves of the same retry.
     """
-    if not Path(log_path).exists():
+    if not log_path or not Path(log_path).is_file():
         return False
     return _has_quota_retry(read_jsonl(log_path))
 

@@ -505,31 +505,65 @@ def _run_batch(
 
 
 def _retry(
-    adapter: FixAdapter, items: list[FixItem], turns: int, trail: Trail | None,
+    adapter: FixAdapter, items: list[FixItem], trail: Trail | None,
+) -> list[_Batch]:
+    """Run the deferred remainder again, chunked, at the phase's retry budget.
+
+    Sized per chunk rather than against the first pass's largest batch: a
+    remainder of three items is not owed the retry of a sixteen-item cap, and
+    sending every leftover in one invoke is how a partial-progress retry
+    collapsed back to ~2 turns an item against the cap.
+    """
+    chunk_size = agent_phases.phase_chunk_size(adapter.phase)
+    batched = _chunks(items, chunk_size)
+    name = f"{PHASES[adapter.phase].label} retry"
+    if len(batched) > 1:
+        log.info(
+            f"Retry pass — {len(items)} deferred item(s) in {len(batched)} "
+            f"batches of up to {chunk_size}..."
+        )
+    single = len(batched) == 1
+    batches = [
+        _retry_chunk(
+            adapter, chunk,
+            name if single else f"{name} (batch {n}/{len(batched)})",
+            announce=single,
+        )
+        for n, chunk in enumerate(batched, start=1)
+    ]
+    if trail:
+        outcomes = [o for b in batches for o in b.outcomes]
+        trail.info(
+            "fix_retry", "retry pass complete",
+            data={
+                "fixed": sum(1 for o in outcomes if o.outcome.counts_as_fixed),
+                "still_deferred": _count(outcomes, FixOutcome.DEFERRED),
+            },
+        )
+    return batches
+
+
+def _retry_chunk(
+    adapter: FixAdapter, items: list[FixItem], label: str, *,
+    announce: bool,
 ) -> _Batch:
-    """Run the deferred remainder again, at the phase's retry budget."""
-    retry_turns = agent_phases.phase_retry_turns(adapter.phase, turns)
-    log.info(
-        f"Retry pass — {len(items)} deferred item(s) (max_turns={retry_turns})..."
-    )
-    batch = _invoke(
+    """One retry invoke, budgeted for this chunk's size rather than the pass's."""
+    original = agent_phases.phase_turns(adapter.phase, items=len(items))
+    retry_turns = agent_phases.phase_retry_turns(adapter.phase, original)
+    if announce:
+        log.info(
+            f"Retry pass — {len(items)} deferred item(s) "
+            f"(max_turns={retry_turns})..."
+        )
+    return _invoke(
         adapter, items,
-        label=f"{PHASES[adapter.phase].label} retry",
+        label=label,
         turns=retry_turns,
         budget=agent_phases.phase_budget(
             adapter.phase, adapter.effort, items=len(items),
         ),
         resume=True,
     )
-    if trail:
-        trail.info(
-            "fix_retry", "retry pass complete",
-            data={
-                "fixed": sum(1 for o in batch.outcomes if o.outcome.counts_as_fixed),
-                "still_deferred": _count(batch.outcomes, FixOutcome.DEFERRED),
-            },
-        )
-    return batch
 
 
 def _count(outcomes: list[ItemOutcome], outcome: FixOutcome) -> int:
@@ -582,7 +616,7 @@ def _record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> Non
 
 def _settle(
     adapter: FixAdapter, batches: list[_Batch], by_id: dict[str, FixItem],
-    turns: int, trail: Trail | None,
+    trail: Trail | None,
 ) -> _Settled:
     """Every item's final answer, once the deferred remainder has had its retry.
 
@@ -599,9 +633,9 @@ def _settle(
 
     again = [by_id[o.id] for o in deferred if o.id in by_id]
     if not again:
-        last_stop = batches[-1].stop if batches else None
         return _Settled(
-            stalled + settled + deferred, worst, scopes, stop=last_stop,
+            stalled + settled + deferred, worst, scopes,
+            stop=_first_stop(batches),
         )
     # An id the pass never handed out cannot be re-asked — there is no item
     # behind it to render. It is still an answer the file gave, so it is
@@ -610,13 +644,24 @@ def _settle(
     unknown = [o for o in deferred if o.id not in by_id]
     # The retry re-decided every item it was handed, so the first pass's
     # deferrals are superseded rather than reported alongside the second's.
-    retried = _retry(adapter, again, turns, trail)
+    retried = _retry(adapter, again, trail)
     return _Settled(
-        stalled + settled + unknown + retried.outcomes,
-        max(worst, retried.exit_code),
-        _merge_scopes(scopes, _scopes([retried])),
-        stop=retried.stop,
+        stalled + settled + unknown + [o for b in retried for o in b.outcomes],
+        max(worst, max((b.exit_code for b in retried), default=0)),
+        _merge_scopes(scopes, _scopes(retried)),
+        stop=_first_stop(retried),
     )
+
+
+def _first_stop(batches: list[_Batch]) -> Diagnosis | None:
+    """The first stop reason among `batches`, or None if none of them stopped.
+
+    A chunked pass is truncated when any one of its chunks ran out, not only
+    when the last did: the chunks after it were still handed their own budget
+    and may have finished cleanly, so reading the final batch would report a
+    pass that lost items as complete.
+    """
+    return next((b.stop for b in batches if b.stop is not None), None)
 
 
 def _scopes(batches: list[_Batch]) -> dict[str, fix_scope.BatchScope]:
@@ -1209,7 +1254,7 @@ def run(
     # the reviewer's own words behind a fixed one.
     by_id = {item.id: item for item in items}
 
-    settled = _settle(adapter, results, by_id, max_turns, trail)
+    settled = _settle(adapter, results, by_id, trail)
 
     # Before the gate runs, so the record is of what the pass claimed rather
     # than of what survived being checked: a fix the gate later falsifies is a

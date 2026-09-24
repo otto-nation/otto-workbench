@@ -51,20 +51,17 @@ if TYPE_CHECKING:
 _NOUN = "fix"
 
 
-def run(
-    phase: Phase, _prompt_unused: str, *, items: list[FixItem], adapter,
+def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
+    """Split claimed fixes so one gate invoke stays inside the phase's cap."""
+    if size <= 0:
+        return [items]
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _run_chunk(
+    phase: Phase, items: list[FixItem], adapter, label: str,
 ) -> dict[str, "Verdict"]:
-    """Ask the gate about `items` and hand back a verdict per item id.
-
-    Signature is the engine's `VerifyFn`: the engine supplies the phase and the
-    items, and the adapter is how a domain's own branch, repo and worktree reach
-    the prompt. The unused prompt argument keeps the shape identical to
-    `agent_invoke.run_fix`, so a test can substitute one for the other.
-
-    An id the agent did not answer is simply absent from the result. The engine
-    reads that as unverified rather than as falsified — see `engine._verify`,
-    which is where the decision not to demote on silence is argued.
-    """
+    """One gate invoke, budgeted for this chunk's size."""
     from fix.engine import Verdict
 
     path = adapter.verify_tracking_path
@@ -82,8 +79,10 @@ def run(
         max_turns=str(turns),
     )
 
-    log.info(f"Verify gate — checking {len(items)} claimed fix"
-             f"{'es' if len(items) != 1 else ''}...")
+    log.info(
+        f"{label} — checking {len(items)} claimed fix"
+        f"{'es' if len(items) != 1 else ''}..."
+    )
     agent_invoke.run_fix(
         phase, prompt,
         cwd=adapter.workdir,
@@ -94,8 +93,10 @@ def run(
         produced=lambda: bool(fix_tracking.parse_verdicts(path)),
         add_dirs=adapter.add_dirs(),
         max_turns=turns,
-        max_budget=agent_phases.phase_budget(phase, adapter.effort, items=len(items)),
-        label="Verify gate",
+        max_budget=agent_phases.phase_budget(
+            phase, adapter.effort, items=len(items),
+        ),
+        label=label,
         repo=adapter.repo or None,
         pr=adapter.pr or None,
         config=adapter.config,
@@ -108,3 +109,31 @@ def run(
         item_id: Verdict(ok=ok, detail=detail)
         for item_id, (ok, detail) in fix_tracking.parse_verdicts(path).items()
     }
+
+
+def run(
+    phase: Phase, _prompt_unused: str, *, items: list[FixItem], adapter,
+) -> dict[str, "Verdict"]:
+    """Ask the gate about `items` and hand back a verdict per item id.
+
+    Signature is the engine's `VerifyFn`: the engine supplies the phase and the
+    items, and the adapter is how a domain's own branch, repo and worktree reach
+    the prompt. The unused prompt argument keeps the shape identical to
+    `agent_invoke.run_fix`, so a test can substitute one for the other.
+
+    Chunked at `phase_chunk_size` so a pass that claimed more fixes than the
+    cap covers still gets five turns an item, rather than one invoke squeezing
+    thirty-nine claims into a 40-turn budget.
+
+    An id the agent did not answer is simply absent from the result. The engine
+    reads that as unverified rather than as falsified — see `engine._verify`,
+    which is where the decision not to demote on silence is argued.
+    """
+    chunk_size = agent_phases.phase_chunk_size(phase)
+    batched = _chunks(items, chunk_size)
+    name = "Verify gate"
+    verdicts: dict[str, "Verdict"] = {}
+    for n, chunk in enumerate(batched, start=1):
+        label = name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})"
+        verdicts.update(_run_chunk(phase, chunk, adapter, label))
+    return verdicts

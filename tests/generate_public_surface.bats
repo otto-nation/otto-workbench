@@ -1,9 +1,35 @@
 #!/usr/bin/env bats
 
+# A plain generator run costs ~1.7s and nine cases below do nothing but read
+# its output. Run once here; each of those copies the result rather than
+# regenerating it.
+#
+# Only the unmodified run is shared. Every case that shims a tool, exports
+# GIT_DIR, changes the locale or passes a bad flag still runs the generator
+# itself — those are asserting on what the run does, not on what it produced.
+setup_file() {
+  load 'test_helper'
+  common_setup
+  local repo_root
+  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  mkdir -p "$BATS_FILE_TMPDIR/snapshot"
+  "$repo_root/bin/local/generate-public-surface" \
+    --out-dir "$BATS_FILE_TMPDIR/snapshot" --quiet
+}
+
 setup() {
   load 'test_helper'
   common_setup
   GENERATOR="$REPO_ROOT/bin/local/generate-public-surface"
+}
+
+# _shared_snapshot — a private copy of the snapshot setup_file generated.
+#
+# Copied rather than read in place so a case that writes to $TMPDIR still
+# cannot reach another's, and so every assertion below keeps reading the
+# $TMPDIR paths it already names.
+_shared_snapshot() {
+  cp -R "$BATS_FILE_TMPDIR/snapshot/." "$TMPDIR/"
 }
 
 teardown() {
@@ -55,19 +81,19 @@ EOF
 }
 
 @test "root snapshot names the otto-workbench package" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   run jq -r '.package' "$TMPDIR/public-surface.json"
   [ "$output" = "otto-workbench" ]
 }
 
 @test "ai snapshot names the otto-ai-tools package" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   run jq -r '.package' "$TMPDIR/ai/claude/public-surface.json"
   [ "$output" = "otto-ai-tools" ]
 }
 
 @test "root snapshot carries commands, config keys, and components" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   run jq -r '.entries[]' "$TMPDIR/public-surface.json"
   [[ "$output" == *"command:get-secret"* ]]
   [[ "$output" == *"config:reuse.level"* ]]
@@ -76,13 +102,13 @@ EOF
 }
 
 @test "workbench-scoped tools are not public" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   run jq -r '.entries[]' "$TMPDIR/public-surface.json"
   [[ "$output" != *"command:validate-all"* ]]
 }
 
 @test "ai/claude tools land in the ai snapshot, not the root one" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   run jq -r '.entries[]' "$TMPDIR/ai/claude/public-surface.json"
   [[ "$output" == *"command:claude-review"* ]]
   [[ "$output" == *"agent:debugger"* ]]
@@ -93,7 +119,7 @@ EOF
 }
 
 @test "entries are sorted and unique" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   run jq -r '.entries == (.entries | sort | unique)' "$TMPDIR/public-surface.json"
   [ "$output" = "true" ]
 }
@@ -130,7 +156,7 @@ EOF
 }
 
 @test "ai/serena tools land in the root snapshot, not ai/claude" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   run jq -e '.entries | index("command:serena-mcp")' "$TMPDIR/public-surface.json"
   [ "$status" -eq 0 ]
   run jq -e '.entries | index("command:serena-mcp")' "$TMPDIR/ai/claude/public-surface.json"
@@ -138,7 +164,7 @@ EOF
 }
 
 @test "every ai/claude registry tool has a matching command entry" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   while IFS= read -r name; do
     run jq -e --arg e "command:$name" '.entries | index($e)' "$TMPDIR/ai/claude/public-surface.json"
     [ "$status" -eq 0 ]
@@ -146,7 +172,7 @@ EOF
 }
 
 @test "every ai/claude agent has a matching agent entry" {
-  "$GENERATOR" --out-dir "$TMPDIR" --quiet
+  _shared_snapshot
   for f in "$REPO_ROOT"/ai/claude/agents/*.md; do
     name="$(basename "$f" .md)"
     run jq -e --arg e "agent:$name" '.entries | index($e)' "$TMPDIR/ai/claude/public-surface.json"

@@ -14,6 +14,20 @@
 # junit report a CI shard uploaded, not from a local run, unless you are
 # bootstrapping the file.
 #
+# To refresh from CI, take the three shards' artifacts from any run of the
+# workflow and hand all three to this script at once:
+#
+#   gh run download <run-id> --pattern 'bats-timings-*' --dir /tmp/timings
+#   bin/local/generate-test-weights /tmp/timings/*/*.xml
+#
+# All three together, not one at a time: each shard reports only the files it
+# ran, so a single artifact rewrites the file with a third of the suite in it
+# and every other file falls back to the median.
+#
+# Nothing fails when the weights drift. A stale file costs a worse partition
+# and never a broken run, which is deliberate — a gate that failed on drift
+# would fail the push of whoever made a test slower.
+#
 # Usage:
 #   bin/local/generate-test-weights REPORT.xml [REPORT.xml...]
 #   bin/local/generate-test-weights --run          # measure locally, serially

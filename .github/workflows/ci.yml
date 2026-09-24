@@ -95,7 +95,26 @@ jobs:
         run: task --list
 
       - name: Run bats tests (shard ${{ matrix.shard }}/3)
-        run: bin/local/run-tests --bats --shard ${{ matrix.shard }}/3
+        run: |
+          bin/local/run-tests --bats --shard ${{ matrix.shard }}/3 -- \
+            --report-formatter junit --output "$RUNNER_TEMP/junit"
+
+      # The timings tests/weights.tsv is packed from. They have to come from
+      # here rather than a laptop: a loaded developer machine produces figures
+      # that swing 2x between runs, and it is this runner's imbalance the
+      # weights exist to fix.
+      #
+      # Uploaded on failure too. A shard that failed still timed every test
+      # that ran, and dropping the artifact when it is most likely someone is
+      # looking at the shard's duration is the wrong way round.
+      - name: Upload timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bats-timings-${{ matrix.shard }}
+          path: ${{ runner.temp }}/junit/*.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Check tests did not pollute repo config
         run: |

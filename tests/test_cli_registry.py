@@ -213,7 +213,7 @@ def test_a_resolver_returning_a_non_need_is_rejected():
     """A callable declaration is checked by resolving it, not by trusting it."""
     with pytest.raises(RuntimeError, match="listing"):
         validate_needs({"listing": command_spec(name="listing",
-                                         need=lambda argv: True)})
+                                                need=lambda argv: True)})
 
 
 def test_a_need_of_the_wrong_shape_is_rejected():

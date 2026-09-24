@@ -31,7 +31,7 @@ import {
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { delimiter } from "node:path";
-import { bypassesTheCommitScope, isScratchPath, within } from "./detect.ts";
+import { bypassesTheCommitScope, isScratchPath, unscopedTestRun, within } from "./detect.ts";
 
 // No `context` hook prunes the superpowers bootstrap here, though the shape of
 // this extension invites one. The package injects it through its own `context`
@@ -41,9 +41,10 @@ import { bypassesTheCommitScope, isScratchPath, within } from "./detect.ts";
 // add is a hook that never fires and a marker string to keep in step with
 // someone else's package.
 
-// `canonical`, `within` and `isScratchPath` live in detect.ts, which imports no
-// SDK and so loads under plain `node`: tests/pi_extensions.bats exercises the
-// write gating directly rather than by grepping this file's source.
+// `canonical`, `within`, `isScratchPath` and `unscopedTestRun` live in
+// detect.ts, which imports no SDK and so loads under plain `node`:
+// tests/pi_extensions.bats exercises them directly rather than by grepping
+// this file's source.
 
 export default function (pi: ExtensionAPI) {
   const worktreeDir = process.env.REVIEW_WORKTREE_DIR;
@@ -102,6 +103,20 @@ export default function (pi: ExtensionAPI) {
           `for — edit the files and let the engine commit them. To capture ` +
           `output, redirect to /tmp (\`pytest tests/ > /tmp/out.txt 2>&1\`); a ` +
           `scratch file belongs there too.`;
+      } else {
+        // A different job from the commit-scope rule: these commands do not
+        // write, so write gating and the scoped commit cannot see them. The
+        // reason already names the form the templates ask for.
+        //
+        // Checked only when the commit-scope rule found nothing, not
+        // independently of it: a command that both bypasses the commit scope
+        // and is an unscoped test run (e.g. `bin/local/run-tests; git commit
+        // -am wip`) should report the commit-scope refusal, the more urgent
+        // of the two — the agent will hit the runner refusal on its next
+        // attempt regardless. Ordering, not an oversight; do not make these
+        // independent and double the reasons in one refusal.
+        const unscoped = unscopedTestRun(event.input.command);
+        if (unscoped) blocked = unscoped;
       }
     } else if (isToolCallEventType("read", event)) {
       summary = event.input.path;

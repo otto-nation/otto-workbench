@@ -206,6 +206,10 @@ def _write_paths(data: dict) -> list[str] | None:
     if event_type == "tool_execution_start":
         if not is_write_tool(data.get("toolName", "") or data.get("name", "")):
             return None
+        # `args` only, unlike `pi_tool_signature`/`_pi_tool_label`: a real
+        # `tool_execution_start` from Pi never spells it `input`/`arguments`,
+        # those fallbacks exist there purely so a fixture written either way
+        # still labels.
         path = (data.get("args") or {}).get("path")
         return [path] if isinstance(path, str) and path else []
     if event_type != "message_update":
@@ -253,7 +257,8 @@ def pi_wrote_output(data: dict, output_path: str) -> bool:
         return False
     if not output_path or not paths:
         return True
-    return any(Path(p) == Path(output_path) for p in paths)
+    target = Path(output_path).resolve()
+    return any(Path(p).resolve() == target for p in paths)
 
 
 def pi_tool_signature(data: dict) -> str | None:

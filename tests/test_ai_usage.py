@@ -103,6 +103,12 @@ def test_parse_session_log_prefers_camel_case_model_usage(tmp_path):
     })
 
 
+def test_parse_session_log_reads_num_turns(tmp_path):
+    log = tmp_path / "session.jsonl"
+    _write_result(log, num_turns=12, total_cost_usd=0.1)
+    assert parse_session_log(str(log)).num_turns == 12
+
+
 def test_parse_session_log_falls_back_to_snake_case_usage(tmp_path):
     """Backends without modelUsage (Pi) emit a snake_case top-level usage block."""
     log = tmp_path / "session.jsonl"
@@ -293,6 +299,29 @@ def test_record_omits_absent_optional_context(ledger):
     assert "task" not in rec
     assert "repo" not in rec
     assert "pr" not in rec
+    assert "phase" not in rec
+    assert "num_turns" not in rec
+
+
+def test_record_includes_phase_and_turns(ledger):
+    ai_usage.record(
+        script="s", entry_point="fix", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=0,
+        phase="fix", num_turns=80,
+    )
+    rec = _records(ledger)[0]
+    assert rec["phase"] == "fix"
+    assert rec["num_turns"] == 80
+
+
+def test_record_prefers_session_turns_over_the_allocated_budget(ledger):
+    """The log says what the agent spent; the budget is only a fallback."""
+    ai_usage.record(
+        script="s", entry_point="fix", backend="claude", model=None,
+        usage=SessionUsage(num_turns=17), exit_code=0,
+        phase="fix", num_turns=80,
+    )
+    assert _records(ledger)[0]["num_turns"] == 17
 
 
 def test_record_carries_per_model_cost(ledger):

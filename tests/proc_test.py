@@ -406,7 +406,7 @@ REAP_BOUND = 2.0
 
 
 @pytest.fixture
-def short_reap_bound(monkeypatch):
+def short_reap_ceiling(monkeypatch):
     """Run the reap against REAP_BOUND, and hand back the matching ceiling.
 
     The ceiling is computed here rather than read from a module constant: a
@@ -492,7 +492,7 @@ class TestRunKillProcessGroup:
 
     # passes-at-base: the reap was already bounded, only the bound got shorter
     def test_a_group_it_may_not_signal_still_reports_the_timeout(
-        self, monkeypatch, short_reap_bound,
+        self, monkeypatch, short_reap_ceiling,
     ):
         """The kill runs on the way to returning, so it must not throw.
 
@@ -516,7 +516,7 @@ class TestRunKillProcessGroup:
 
     # passes-at-base: the reap was already bounded, only the bound got shorter
     def test_a_child_that_outlives_sigkill_does_not_hang_the_call(
-        self, monkeypatch, short_reap_bound,
+        self, monkeypatch, short_reap_ceiling,
     ):
         """The kill is a signal, not a death, so the wait after it needs a bound.
 
@@ -541,13 +541,13 @@ class TestRunKillProcessGroup:
         elapsed = time.monotonic() - started
 
         assert r.returncode == proc.TIMEOUT_RETURNCODE
-        assert elapsed < short_reap_bound, (
+        assert elapsed < short_reap_ceiling, (
             f"the call waited {elapsed:.1f}s on a child that ignored SIGKILL, "
             f"which is past the {timeouts.QUICK:g}s reap bound")
         assert "did not exit after SIGKILL" in r.stderr
 
     def test_what_outlived_the_kill_is_named_alongside_what_was_not_signalled(
-        self, monkeypatch, short_reap_bound,
+        self, monkeypatch, short_reap_ceiling,
     ):
         """Two different failures, and a reader needs to tell them apart.
 
@@ -566,7 +566,7 @@ class TestRunKillProcessGroup:
         assert "did not exit after SIGKILL" in r.stderr
 
     def test_an_interrupt_does_not_hang_on_a_child_that_ignores_sigkill(
-        self, tmp_path, monkeypatch, short_reap_bound,
+        self, tmp_path, monkeypatch, short_reap_ceiling,
     ):
         """The exception path needs the same bound as the timeout path.
 
@@ -595,7 +595,7 @@ class TestRunKillProcessGroup:
                      timeout=timeouts.QUICK, kill_process_group=True)
         elapsed = time.monotonic() - started
 
-        assert elapsed < short_reap_bound, (
+        assert elapsed < short_reap_ceiling, (
             f"unwinding waited {elapsed:.1f}s on a child that ignored SIGKILL, "
             f"which is past the {timeouts.QUICK:g}s reap bound")
 

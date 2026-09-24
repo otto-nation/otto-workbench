@@ -688,6 +688,13 @@ declare -g _REG_SCAN_HOLD_OPEN=""
 # the way out and silently return the outer block to one scan per collector.
 # The inner hold is a no-op instead, since the outer one already gives it what
 # it was asking for.
+#
+# CMD is called bare rather than as `"$@" || status=$?`. A command in a `||`
+# condition has errexit suppressed for its whole dynamic extent, so the body
+# would run on past a failure its caller had every reason to abort on: a
+# settings sync whose write failed carried on and printed its success line.
+# The release therefore has to happen in a trap, which is what lets the call
+# stay bare and the status propagate on its own.
 reg_scan_hold() {
   if [[ -n "$_REG_SCAN_HOLD_OPEN" ]]; then
     "$@"
@@ -695,11 +702,20 @@ reg_scan_hold() {
   fi
   _REG_SCAN_HELD=()
   _REG_SCAN_HOLD_OPEN=1
-  local status=0
-  "$@" || status=$?
+  trap '_reg_scan_release' RETURN
+  "$@"
+}
+
+# _reg_scan_release — drop the hold, when the frame returning is the hold's own.
+#
+# The guard is load-bearing under `set -T`, which bats sets: a RETURN trap is
+# inherited by every function the body calls, so an unguarded release fires at
+# the first collector's return and silently disables the sharing it exists to
+# provide. Checking the returning frame is what keeps it to `reg_scan_hold`.
+_reg_scan_release() {
+  [[ "${FUNCNAME[1]:-}" == "reg_scan_hold" ]] || return 0
   _REG_SCAN_HOLD_OPEN=""
   _REG_SCAN_HELD=()
-  return $status
 }
 
 # _reg_collect_scan REGS_REF SCAN_DIR BREW_DIR — the scan every collector opens

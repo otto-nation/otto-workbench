@@ -627,6 +627,20 @@ EOF
   local -a sources=() targets=()
   collect_claude_env_vars sources targets "$dir" "$dir/brew"
   [ "${sources[0]}" = "REWRITTEN_VAR" ]
+
+  # A second read, because one does not distinguish a released hold from a
+  # leaked one. A leaked flag arrives with an empty key map, so the first
+  # collector after it finds its key unheld, re-scans, and answers freshly —
+  # while recording the key. Only the read after that one sees the stale
+  # answer, which is the failure this case is named for.
+  cat > "$dir/component/registry.yml" <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: REWRITTEN_TWICE
+EOF
+  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  [ "${sources[0]}" = "REWRITTEN_TWICE" ]
 }
 
 @test "reg_load fails loudly on a file yq cannot parse" {

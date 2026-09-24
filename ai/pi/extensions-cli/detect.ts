@@ -1,144 +1,200 @@
 /**
- * The write-capable-command and writable-path predicates for review-guard, kept
- * apart from the extension that uses them.
+ * What review-guard refuses, and where it lets a write land.
+ *
+ * NOT a security boundary, and the naming here is deliberate about that. A fix
+ * agent holds an unrestricted `bash` (see PI_FIX_TOOLS in backend_pi.py), so
+ * `python3 -c "os.remove(f)"`, `find -delete`, `make clean` and every script in
+ * the repo write freely and are permitted by design. A predicate that reads
+ * command strings cannot close that and should not pretend to: an earlier
+ * version of this file grew five lists of write verbs, shells and wrappers
+ * trying, and blocked only the spellings an agent reaches for by accident while
+ * missing every one it would reach for on purpose.
+ *
+ * What actually contains a fix agent is elsewhere, and none of it depends on
+ * this file:
+ *
+ *   - `write` and `edit` are gated on their path, in review-guard.ts, which a
+ *     command spelling cannot route around
+ *   - the engine commits only the paths it watched the agent touch
+ *     (`fix.scope.agent_changed`), so stray writes are never staged
+ *   - the push consults the publishing gate (`land.land(gated=True)`)
+ *
+ * So this is left with the one job those three cannot do, and it is a narrow
+ * one: keep the engine's scoped commit the *only* commit. An agent that runs
+ * `git commit` itself lands work outside the scope `fix.scope` watched, under a
+ * message nothing in this codebase wrote — and that is invisible to all three
+ * mechanisms above, because by the time they look the work is already in a
+ * commit. The redirect rule is here for the same reason in miniature: a
+ * redirect names a destination, so it is one of the few shapes where the text
+ * really does say where the write goes.
+ *
+ * Read the refusals as ergonomics with one exception, not as enforcement with
+ * gaps. They steer an agent toward the tools the pipeline can account for.
  *
  * Same split as the guards under ai/pi/extensions/: review-guard.ts imports
  * `isToolCallEventType` from the Pi SDK as a value, so it only loads inside a
- * Pi session. This file imports only node builtins and
- * ../extensions/_shared/statements.ts, which itself imports nothing, so
- * tests/pi_extensions.bats can run it under plain `node` and assert the shapes
- * it does and does not match.
- *
- * The path predicates (`canonical`, `within`, `isScratchPath`) are here for
- * that reason and no other — they were review-guard.ts's own until the write
- * gating needed a test, and a guard whose decisions can only be asserted by
- * grepping its source is one whose behaviour is not held by anything.
+ * Pi session. This file imports only node builtins, ../extensions/_shared, and
+ * so runs under plain `node` — which is what lets tests/pi_extensions.bats
+ * assert its behaviour rather than grep its source.
  */
 
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { statements } from "../extensions/_shared/statements.ts";
+import { hasUnparsed, span, tokenize, type Token } from "../extensions/_shared/tokenize.ts";
 
 /**
- * Commands that write, matched at a statement head.
+ * `git` subcommands that move the branch, the index or the worktree.
  *
- * Anchored rather than searched for anywhere in the command, because `\b`
- * treats `/` and `-` as word boundaries: an unanchored /\brm\b/ matches the
- * *path* in `cd /repo/isaac-fix-rm-stale && pytest`, and `\binstall\b` matches
- * any path with an `install/` segment. That disabled bash for whole review
- * sessions on nothing but a branch name. A write verb is only a write when it
- * is the command being run.
+ * The one rule in this file that is enforcement rather than ergonomics. The
+ * engine commits for the agent, scoped to the paths it watched
+ * (`fix.engine.run` → `git.land.land`); an agent that commits, rebases or
+ * resets is not finishing the job early, it is landing work outside the only
+ * scope the pass can account for. `backend_claude.FIX_DENIED_TOOLS` denies the
+ * same subcommands through Claude's matcher, and the two are kept in step —
+ * tests/test_ai_backend_observability.py asserts the parity by running this
+ * predicate against every command that list denies.
+ *
+ * Compared against a whole token, never matched as a prefix. A `\b` after the
+ * subcommand made `merge` match `merge-base`, and `git merge-base` is how a
+ * review establishes its own base — ai/lib calls it in fifteen places.
+ *
+ * Kept to subcommands an agent plausibly runs. The porcelain's long tail
+ * (`filter-branch`, `gc`, `prune`, `update-ref`, …) is absent: a list
+ * enumerates members rather than fixing a class, so it earns entries one
+ * observed failure at a time.
  */
-const WRITE_COMMANDS = [
-  "cp",
-  "mv",
-  "rm",
-  "tee",
-  "dd",
-  "truncate",
-  "install",
-];
+const GIT_WRITE_SUBCOMMANDS = new Set([
+  "commit", "push", "checkout", "switch", "restore", "reset", "clean", "stash",
+  "rebase", "merge", "apply", "am", "cherry-pick", "revert",
+  "add", "rm", "mv", "branch", "tag", "config", "worktree", "fetch", "pull",
+]);
 
 /**
- * A `git` subcommand reached past any global flags in front of it.
+ * `git` global flags that take their value as a separate word.
  *
- * `git -C /repo commit`, `git --no-pager commit` and `git -c user.name=x commit`
- * all run a commit, and a pattern anchored straight to `git\s+(?:commit|...)`
- * matches none of them — so the denial this list exists to enforce was a
- * one-flag rewrite away from doing nothing. That matters more here than a
- * missed `sed`: backend_claude.FIX_DENIED_TOOLS names the same subcommands and
- * says Pi enforces them by this mechanism, and the fix engine's accountability
- * rests on the claim. An agent that commits for itself lands work outside the
- * scope `fix.scope` watched it produce.
- *
- * `-c` and `-C` take a separate argument, so the value after them is consumed
- * rather than read as the subcommand — otherwise `git -C commit` would name a
- * directory and be treated as one.
+ * Consumed with their value so `git -C commit` reads as a directory named
+ * `commit` rather than as the subcommand.
  */
-const GIT_WRITE_SUBCOMMANDS =
-  /^\s*git\s+(?:(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S*|\s+\S+)|-[a-zA-Z]+|--[a-zA-Z-]+)\s+)*(?:commit|push|checkout|switch|restore|reset|clean|stash|rebase|merge|apply|am|cherry-pick|revert)\b/;
+const GIT_VALUE_FLAGS = new Set(["-c", "-C", "--git-dir", "--work-tree",
+                                 "--namespace", "--exec-path", "--config-env"]);
 
 /**
- * Write constructs that are not a bare command name, matched against each
- * statement rather than the whole command string.
+ * Flags that make a mutating subcommand read-only, whichever it is.
  *
- * Anchored to a *flag position*, not to "the letter appears somewhere". The
- * first spelling of the sed rule was /^\s*sed\s+[^|]*-i/, and `[^|]*` crosses
- * into the arguments: a read-only `sed -n '1,5p' doc-internal/CLAUDE.md` was
- * refused because the path contains `-i`, as was any `s///` expression carrying
- * one. 18 tracked paths in this repo trip that, and the directory under review
- * when it was found was named `doc-internal`, so it fired on nearly every read
- * the agent attempted against its own subject tree. This is the same bug the
- * WRITE_COMMANDS comment above describes for `\b`, which had already cost a
- * session once; the reasoning had not been carried across to these patterns,
- * and neither had a negative-case test.
+ * `git apply --check` and `git push --dry-run` report what they would do and
+ * change nothing, and refusing them cost a review the cheapest way to answer
+ * its own questions.
+ *
+ * `-n` is deliberately absent: it is `--dry-run` for `push`, `clean`, `add`
+ * and `merge`, but `--no-verify` for `commit`, so treating it as read-only
+ * everywhere let `git commit -n -m x` through — a real commit, verified
+ * against a scratch repo. A flag whose meaning depends on the subcommand
+ * belongs in GIT_DRY_RUN_BY_SUBCOMMAND below, not here.
+ *
+ * ceiling: a read-only flag *anywhere* in the arguments disarms the rule, so
+ * `git branch --list -D x` and `git clean --dry-run -f` read as reads. Every
+ * such pair probed against a scratch repo turned out safe — git rejects the
+ * contradictory combinations outright, and treats dry-run as sticky for
+ * `clean` whichever order the flags come in — so this is loose logic rather
+ * than a live bypass, and tightening it would mean modelling each
+ * subcommand's flag precedence. Upgrade if a combination is ever found that
+ * git accepts and that writes.
  */
-const WRITE_STATEMENT_PATTERNS = [
-  // `-i` as a flag: alone, in a cluster (`-ni`), with a suffix (`-i.bak`), or
-  // spelled out. `g?sed` because GNU sed is `gsed` on macOS and edits in place
-  // just the same.
-  /^\s*(?:g?sed|perl)\s+(?:[^|]*\s)?-(?:[a-zA-Z]*i|-in-place)\b/,
-  // The long spellings are not optional extras: `curl --output f` and
-  // `wget --output-document f` write a file and matched nothing before.
-  /^\s*(?:curl|wget)\s+(?:[^|]*\s)?(?:-[a-zA-Z]*[oO]\b|--output(?:-document)?\b|--remote-name\b)/,
-  // `apply` and `am` write arbitrary file content straight out of a patch,
-  // which is the shape a fix pass reaches for when it wants a diff on disk.
-  GIT_WRITE_SUBCOMMANDS,
-];
+const GIT_DRY_RUN_FLAGS = new Set(["--dry-run", "--check", "--stat",
+                                   "--numstat", "--summary", "--help"]);
 
 /**
- * Command wrappers that take another command as their argument.
+ * Short dry-run flags, by the subcommand that reads them that way.
  *
- * `commandHead` reads one word, so every one of these hid the write behind it:
- * `sudo rm -rf x`, `xargs rm -f`, `env rm -rf x` and `time rm -rf x` were all
- * allowed while the bare `rm` was refused. A guard that blocks the ergonomic
- * spelling of a write and permits the awkward one is not containing anything —
- * it is charging the agent turns to discover the rewrite.
- *
- * Skipping the wrapper's own flags is what makes this work on `xargs -0 rm`,
- * and `WRAPPER_VALUE_FLAGS` is what keeps that from going wrong in the unsafe
- * direction: a flag taking a separate value leaves the *value* sitting where
- * the command should be, so `sudo -u root rm -rf x` reads its command as `root`
- * and is allowed. Skipping value and flag together is the difference between
- * this failing closed and failing open.
+ * Keyed rather than global because `-n` means opposite things: nothing is
+ * committed by `git push -n`, and something certainly is by `git commit -n`.
  */
-const COMMAND_WRAPPERS = new Set(["sudo", "env", "time", "xargs", "nohup", "nice", "doas"]);
-
-/**
- * Wrapper flags that consume the word after them.
- *
- * Keyed by wrapper, because the same letter means different things: `-u` drops
- * a variable for `env` and names a user for `sudo`. A flag written with an
- * attached value (`-n5`, `--user=root`) consumes nothing extra and is skipped
- * by the ordinary flag rule.
- *
- * ceiling: a hand-listed set, so a value-taking flag absent from it reads its
- * value as the command name and the statement is allowed. The wrappers here
- * are the ones an agent plausibly reaches for and the list covers their common
- * flags; the containment that does not depend on it is that the fix engine
- * commits by scope rather than trusting the agent. Upgrade to a real option
- * parser if a wrapper invocation ever gets past this that mattered.
- */
-const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
-  sudo: new Set(["-u", "-g", "-p", "-C", "-U", "-T", "-r", "-t", "--user", "--group"]),
-  doas: new Set(["-u", "-C"]),
-  env: new Set(["-u", "-C", "-S", "--unset", "--chdir"]),
-  time: new Set(["-f", "-o", "--format", "--output"]),
-  nice: new Set(["-n", "--adjustment"]),
-  xargs: new Set(["-I", "-L", "-n", "-P", "-s", "-E", "-a", "-d", "-i", "--replace",
-                  "--max-args", "--max-procs", "--arg-file", "--delimiter"]),
-  nohup: new Set(),
+const GIT_DRY_RUN_BY_SUBCOMMAND: Record<string, Set<string>> = {
+  push: new Set(["-n"]),
+  clean: new Set(["-n"]),
+  add: new Set(["-n"]),
+  merge: new Set(["-n"]),
 };
 
 /**
- * A redirect that names a destination, which `2>&1` and `2>/dev/null` do not.
+ * Subcommand pairs that only read, despite the first word being a write verb.
  *
- * Matching a bare `>` instead caught every `cmd 2>&1` an agent writes while
- * reading, and a guard that fires on ordinary reads is one whose refusals stop
- * being read.
+ * `git stash list` and `git branch --list` are reads; `git stash` and
+ * `git branch -D` are not. Keyed on the second word, which is the only thing
+ * that tells them apart.
  */
-const REDIRECT = />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)(\S+)/g;
+const GIT_READ_ONLY_ACTIONS: Record<string, Set<string>> = {
+  stash: new Set(["list", "show"]),
+  branch: new Set(["--list", "-l", "--show-current", "-v", "--verbose"]),
+  tag: new Set(["--list", "-l"]),
+  config: new Set(["--get", "--get-all", "--list", "-l", "--get-regexp"]),
+  worktree: new Set(["list"]),
+};
+
+/**
+ * Why this `git` invocation writes, or null when it only reads.
+ *
+ * Token-based because every previous spelling of this rule failed on the
+ * boundary between a subcommand and the text around it: anchored to `git\s+`
+ * it missed `git -C /r commit`, and loosened with `\b` it caught
+ * `git merge-base`.
+ */
+function gitWrite(tokens: Token[]): string | null {
+  if (tokens[0]?.value.split("/").pop() !== "git") return null;
+  let i = 1;
+  while (i < tokens.length) {
+    const word = tokens[i].value;
+    if (!word.startsWith("-")) break;
+    // `--git-dir=/x` carries its value; `--git-dir /x` takes the next word.
+    i += GIT_VALUE_FLAGS.has(word) ? 2 : 1;
+  }
+  const subcommand = tokens[i]?.value;
+  if (!subcommand || !GIT_WRITE_SUBCOMMANDS.has(subcommand)) return null;
+
+  const rest = tokens.slice(i + 1).map((t) => t.value);
+  if (rest.some((word) => GIT_DRY_RUN_FLAGS.has(word))) return null;
+  const shortDryRun = GIT_DRY_RUN_BY_SUBCOMMAND[subcommand];
+  if (shortDryRun && rest.some((word) => shortDryRun.has(word))) return null;
+  if (rest[0] && GIT_READ_ONLY_ACTIONS[subcommand]?.has(rest[0])) return null;
+  return subcommand;
+}
+
+/** Redirect operators that name a destination file. */
+const WRITING_REDIRECTS = new Set([">", ">>", ">|", "&>", "&>>"]);
+
+/** Destinations that discard, so a redirect naming one writes nothing. */
+const NULL_SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
+
+/**
+ * Every file a statement's redirects would write, as scanned tokens.
+ *
+ * Read from the token scan rather than from a regex over the raw statement,
+ * which is what the rule did before. A `>` inside quotes is an argument, and
+ * matching it as a redirect refused a large share of ordinary reads:
+ * `awk 'length > 80' f.txt`, `grep -rn 'a->b' src/`, `rg 'fn f() -> R' src/`
+ * and any `jq` with a comparison in it. A review agent greps constantly, and a
+ * guard whose refusals land on greps is one whose refusals stop being read.
+ *
+ * A descriptor duplication (`2>&1`, `>&2`) names no file: the tokenizer emits
+ * `&` as its own operator, so the destination slot holds an operator rather
+ * than a word and there is nothing to report.
+ */
+function redirectTargets(tokens: Token[]): string[] {
+  const targets: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!tok.operator || !WRITING_REDIRECTS.has(tok.value)) continue;
+    const target = tokens[i + 1];
+    // `> &1` is a descriptor, and a redirect with nothing after it is a syntax
+    // error rather than a write.
+    if (!target || target.operator) continue;
+    if (NULL_SINKS.has(target.value)) continue;
+    targets.push(target.value);
+  }
+  return targets;
+}
 
 /**
  * Scratch destinations a redirect may target.
@@ -153,10 +209,33 @@ const REDIRECT = />>?\s*(?!&\d)(?!\/dev\/(?:null|stdout|stderr)\b)(\S+)/g;
  */
 export const SCRATCH_PREFIXES = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
+/**
+ * True for a redirect destination the agent may write.
+ *
+ * Delegates to `isScratchPath`, which canonicalises. The raw `startsWith` this
+ * replaces disagreed with that function about the same prefix list, so
+ * `> /private/tmp/../../Users/x/p.txt` was accepted as scratch by the redirect
+ * rule and rejected as outside the worktree by the write tool — one file, two
+ * predicates, opposite answers.
+ *
+ * Absolute paths only. `isScratchPath` resolves what it is given against the
+ * process cwd, so every *relative* target came back scratch whenever that cwd
+ * happened to sit under one of the prefixes — and a review runs in a worktree
+ * under /var/folders often enough for that to be the common case, not the
+ * corner. A redirect the guard cannot place is a redirect it must not exempt.
+ *
+ * `~` and `$HOME` are unexpanded here because nothing in this file expands
+ * them, so they are not absolute either and fall to the same refusal. That is
+ * the right answer for a different reason: `> ~/notes.txt` writes to the home
+ * directory, which is not scratch however it is spelled.
+ *
+ * The target arrives dequoted from the token scan, so no quote stripping is
+ * needed.
+ */
 function isScratchTarget(target: string): boolean {
-  const cleaned = target.replace(/^['"]|['"]$/g, "");
-  if (cleaned === "/dev/null") return true;
-  return SCRATCH_PREFIXES.some((prefix) => cleaned.startsWith(prefix));
+  if (NULL_SINKS.has(target)) return true;
+  if (!target.startsWith("/")) return false;
+  return isScratchPath(target);
 }
 
 /**
@@ -206,9 +285,8 @@ export function within(root: string, path: string): boolean {
  * `isScratchTarget` above has always exempted these for a *redirect*, and
  * withholding them from the write tool left the guard contradicting itself: an
  * agent that needed a scratch file could not create one outside the worktree,
- * so it created one inside — and then could not remove it, because `rm`, `mv`,
- * `cp` and `git clean` are all refused. That is not containment. `changed_files`
- * in ai/lib/fix/scope.py counts untracked files, so every abandoned scratch file
+ * so it created one inside — and then could not remove it. `changed_files` in
+ * ai/lib/fix/scope.py counts untracked files, so every abandoned scratch file
  * was inside the commit scope and was committed and pushed with the fix; one
  * observed run left seven.
  */
@@ -216,212 +294,128 @@ export function isScratchPath(path: string): boolean {
   return SCRATCH_PREFIXES.some((prefix) => within(prefix, path));
 }
 
-/** The leading command word of a statement, with env assignments skipped. */
-function commandHead(statement: string): string {
-  return unwrap(statement).split(/\s+/).filter(Boolean)[0]?.split("/").pop() ?? "";
+/** Grouping operators that precede a command rather than being one. */
+const GROUPING = new Set(["(", "{"]);
+
+/** Shells whose `-c` argument is a command in its own right. */
+const SHELL_NAMES = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
+
+/**
+ * The command inside `sh -c "..."` or `eval "..."`, or null when there is none.
+ *
+ * Kept when the write-verb rules around it were removed, because the git rule
+ * needs it: `bash -c 'git commit -m x'` and `eval 'git commit -m x'` reach a
+ * commit as squarely as the bare form, and cutting the recursion with the rest
+ * silently reopened them. That is the whole justification — it is not here to
+ * catch `bash -c 'rm -rf x'`, which this guard permits like any other
+ * filesystem write.
+ *
+ * The payload is the token after the flag, already dequoted by the scan.
+ * Reading it from the tokens rather than by re-splitting the raw text is what
+ * makes nesting cost nothing: the regex this replaces stripped one quote pair
+ * off a string it had re-split itself, so `sh -c "sh -c \"git commit\""` came
+ * back as a fragment that matched nothing.
+ */
+function nestedCommand(statement: string): string | null {
+  const tokens = commandTokens(statement);
+  const name = tokens[0]?.value.split("/").pop() ?? "";
+
+  if (name === "eval") {
+    const rest = tokens.slice(1);
+    if (rest.length === 0) return null;
+    // A single quoted word is the whole payload, already dequoted.
+    if (rest.length === 1 && rest[0].quoted) return rest[0].value;
+    // Otherwise sliced from the source, never rejoined from tokens: a join
+    // drops the quotes the scan resolved, so `eval awk 'length > 80' f` came
+    // back as `awk length > 80 f` and its bare `>` read as a redirect to a
+    // file named `80`.
+    return span(statement, rest);
+  }
+
+  if (!SHELL_NAMES.has(name)) return null;
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.quoted || tok.operator || !tok.value.startsWith("-")) break;
+    // `-c`, or `-c` inside a cluster such as `-ce`. A long flag (`--norc`)
+    // carries no payload and is stepped over.
+    if (!tok.value.startsWith("--") && tok.value.includes("c")) {
+      return tokens[i + 1]?.value ?? null;
+    }
+  }
+  return null;
 }
 
 /**
- * `statement` with env assignments and command wrappers taken off the front.
+ * The tokens of the command actually being run, env assignments stripped.
  *
- * What is left is the command actually being run, which is what every rule
- * below wants to match against: `sudo sed -i ... f` is an in-place edit, and a
- * pattern anchored with `^\s*sed` sees the `sudo` and declines.
+ * Reads the token scan, so the command name is the word the shell would run
+ * rather than the characters that spell it: `'git' commit` and `\git commit`
+ * both run git, and both read as an unknown command to anything matching raw
+ * text.
+ *
+ * A leading `(` or `{` is stepped over for the same reason — `(git commit)`
+ * runs git in a subshell, and the parenthesis is syntax rather than the
+ * command.
  */
-function unwrap(statement: string): string {
-  const words = statement.trim().split(/\s+/).filter(Boolean);
-  // The wrapper whose flags are currently being skipped, so `-u` is read
-  // against the right one. Empty until a wrapper has been seen.
-  let wrapper = "";
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
+function commandTokens(statement: string): Token[] {
+  const tokens = tokenize(statement);
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.operator && GROUPING.has(tok.value)) continue;
+    if (tok.operator) break;
     // `FOO=bar cmd` — an assignment prefix is not the command being run.
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-    // Strip a path so `/bin/rm` and `rm` read the same.
-    const name = word.split("/").pop() ?? "";
-    if (COMMAND_WRAPPERS.has(name)) {
-      wrapper = name;
-      continue;
-    }
-    // A wrapper's own flags belong to the wrapper, not to the command it runs.
-    if (word.startsWith("-")) {
-      // A value written separately is the flag's, not the command being run.
-      if (WRAPPER_VALUE_FLAGS[wrapper]?.has(word)) i++;
-      continue;
-    }
-    return words.slice(i).join(" ");
+    if (!tok.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tok.value)) continue;
+    return tokens.slice(i);
   }
-  return "";
-}
-
-/**
- * The last command wrapper `unwrap` was holding when it ran out of words to
- * unwrap, or "" when `unwrap` found a residual command instead.
- *
- * Mirrors `unwrap`'s own loop rather than calling it, because `unwrap` throws
- * the wrapper name away once it returns "" — the exact case this exists for.
- * `env sudo -s` and `sudo -s` both unwrap to "": `env` is skipped as a
- * wrapper, `sudo` is then seen and also skipped as a wrapper (it is in
- * `COMMAND_WRAPPERS` too), and `-s` is not a value flag for `sudo` so it is
- * skipped as an ordinary wrapper flag, leaving no residual word. This is what
- * tells the two apart from a wrapper around an ordinary command that happens
- * to produce no residual for some other reason.
- */
-function lastWrapper(statement: string): string {
-  const words = statement.trim().split(/\s+/).filter(Boolean);
-  let wrapper = "";
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-    const name = word.split("/").pop() ?? "";
-    if (COMMAND_WRAPPERS.has(name)) {
-      wrapper = name;
-      continue;
-    }
-    if (word.startsWith("-")) {
-      if (WRAPPER_VALUE_FLAGS[wrapper]?.has(word)) i++;
-      continue;
-    }
-    return "";
-  }
-  return wrapper;
-}
-
-/**
- * Commands that hand the agent a shell this predicate cannot read.
- *
- * `sudo`, `doas` and `su` elevate into one; the rest are the shell itself. A
- * `sh -c "..."` is not here — its payload is a command in its own right and is
- * unwrapped and rescanned below, which is why the check that uses this set
- * excludes a statement carrying one.
- *
- * ceiling: an interpreter with an inline-eval flag is the same hole in a
- * different language — `python3 -c "import os; os.remove(f)"` is how an agent
- * escaped this guard once already, and node, perl and ruby all offer it. Not
- * closed here because an interpreter is also the ordinary way to run a test or
- * a one-liner that only reads, so refusing the command name would refuse the
- * common case, and reading the payload means parsing four more languages.
- * Upgrade when a refusal log shows an agent reaching for one to write with.
- */
-const INTERACTIVE_SHELLS = new Set([
-  "sudo", "doas", "su", "sh", "bash", "zsh", "dash", "ksh", "fish",
-]);
-
-/**
- * `statement` with quoted spans blanked, for the flag patterns to match against.
- *
- * A flag letter inside a quoted argument is data, not a flag: `curl -s URL -H
- * 'A: -o'` is a read, and `sed -n "s/a-i/b/p" f` is a read. The same two passes
- * ai/claude/bin/claude-bash-guard makes, and they inherit the same ceiling it
- * documents — an escaped quote ends a span early and an unpaired apostrophe
- * re-pairs with a later one. Replaced with a placeholder rather than deleted,
- * so `sed -i '' s/a/b/ f` keeps an argument where the empty string was and the
- * words on either side do not run together.
- *
- * ceiling: two regex passes, not a tokenizer, so both misreadings above are
- * possible. Each costs at most one refused or one permitted statement in a
- * review session, and the redirect rule below is unaffected because it reads
- * the raw statement. Upgrade to a real tokenizer if either misfire shows up on
- * a command worth running.
- */
-function blankQuoted(statement: string): string {
-  return statement.replace(/'[^']*'/g, "QUOTEDARG").replace(/"[^"]*"/g, "QUOTEDARG");
-}
-
-/**
- * A `sh -c "..."` payload, which is a command in its own right.
- *
- * The shell name is matched after `unwrap` has stripped any leading path, so
- * `/bin/sh -c` and `sh -c` read the same — they did not until the escape rule
- * below started refusing what this cannot parse, and a path-qualified `-c` was
- * then refused as an interactive shell.
- *
- * Long flags and a `-c` that is not last in its cluster are both accepted
- * (`bash --norc -c`, `bash -ce`), because everything this fails to parse falls
- * through to that escape rule: an unparsed spelling is not an unrecognised
- * read, it is a refusal. `fish` is in the alternation for the same reason — it
- * is in INTERACTIVE_SHELLS, so omitting it here refuses `fish -c 'pytest'`.
- */
-const SHELL_DASH_C =
-  /^(?:sh|bash|zsh|dash|ksh|fish)\s+(?:(?:-[a-zA-Z]*|--[a-zA-Z-]+)\s+)*-[a-zA-Z]*c[a-zA-Z]*\s+(.*)$/s;
-
-/**
- * The command inside a `sh -c "..."` wrapper, or null when there is none.
- *
- * `bash -c 'rm -rf x'` was allowed while a bare `rm -rf x` was refused, so the
- * wrapper was a complete bypass of every rule here. Unwrapped and rescanned
- * rather than blocked outright: a payload that only reads is still a read, and
- * a guard that refuses every `-c` would be refusing on the shape of the command
- * rather than on what it does.
- */
-function shellPayload(statement: string): string | null {
-  // Path-stripped the way `commandHead` strips it, so `/bin/sh -c` matches.
-  const unwrapped = unwrap(statement);
-  const [first, ...rest] = unwrapped.split(/\s+/).filter(Boolean);
-  const pathless = first ? [first.split("/").pop(), ...rest].join(" ") : unwrapped;
-  const match = SHELL_DASH_C.exec(pathless);
-  if (!match) return null;
-  const payload = match[1].trim();
-  // An unbalanced quote means the split above cut through a quoted span, so the
-  // payload is a fragment. Strip a matched pair only.
-  const quoted = /^(['"])([\s\S]*)\1$/.exec(payload);
-  return quoted ? quoted[2] : payload;
+  return [];
 }
 
 /**
  * Why `command` may not run in a review session, or null when it may.
+ *
+ * Two things only: a `git` subcommand that would commit outside the engine's
+ * scope, and a redirect to a destination that is not scratch. See the module
+ * header for why the list is this short and why `python3 -c` is not on it.
  *
  * Returns the offending statement so the refusal can name it, rather than
  * echoing a 120-character slice of the whole command — a truncated summary hid
  * the trailing redirect that was the actual match, and the refusal read as
  * though it had blocked the `cd` in front of it.
  */
-export function blockedWriteCommand(command: string, depth = 0): string | null {
+export function bypassesTheCommitScope(command: string, depth = 0): string | null {
+  // An unbalanced quote means the scan cannot see where the command ends, so
+  // both rules below would be reading fragments. Against the whole command,
+  // not each statement: `statements()` splits on newlines, so a quoted string
+  // spanning two lines arrives already torn into halves that each look
+  // unbalanced.
+  if (depth === 0 && hasUnparsed(tokenize(command))) {
+    return `unbalanced quote, so the command cannot be read: ${command.trim()}`;
+  }
+
   for (const statement of statements(command)) {
     if (!statement.trim()) continue;
 
-    const head = commandHead(statement);
-    if (WRITE_COMMANDS.includes(head)) {
-      return `\`${head}\` writes: ${statement.trim()}`;
+    const subcommand = gitWrite(commandTokens(statement));
+    if (subcommand) {
+      return `\`git ${subcommand}\` writes: ${statement.trim()}`;
     }
 
-    // An interactive shell is a write channel this predicate cannot see into,
-    // whether it is reached as a bare `sudo`, as `sudo -s`, or by naming the
-    // shell outright. Two rounds of review each closed one spelling of this and
-    // left the others — `sudo -s` refused while `bash`, `sudo bash` and `su`
-    // walked through — so the rule is stated once here over the unwrapped
-    // command rather than as a case per spelling.
-    //
-    // `head` empty means every word was a wrapper or its flags, which is the
-    // `sudo -s` shape: no command left to run, so the wrapper is the command.
-    const escape = head || lastWrapper(statement);
-    if (INTERACTIVE_SHELLS.has(escape) && !shellPayload(statement)) {
-      return `interactive shell escape: ${statement.trim()}`;
-    }
-
-    // Depth-limited so a pathological `sh -c "sh -c ..."` cannot spin. One
-    // level is every real invocation; the limit is about termination, not about
-    // a nesting an agent is expected to reach.
-    const payload = depth < 4 ? shellPayload(statement) : null;
-    const innerReason = payload ? blockedWriteCommand(payload, depth + 1) : null;
-    if (innerReason) {
-      return `write-capable command inside a shell wrapper: ${statement.trim()} (${innerReason})`;
-    }
-
-    // Against the unwrapped, quote-blanked statement: `sudo sed -i` and
-    // `xargs rm` are the writes they wrap, and a flag letter inside a quoted
-    // argument is data rather than a flag.
-    const unwrapped = blankQuoted(unwrap(statement));
-    for (const pattern of WRITE_STATEMENT_PATTERNS) {
-      if (pattern.test(unwrapped)) return `write-capable command: ${statement.trim()}`;
+    // A wrapped command reaches a commit as squarely as a bare one. Rescanned
+    // rather than refused on sight: `bash -c 'pytest'` is an ordinary thing to
+    // run. Depth-limited so a pathological nesting cannot spin — the limit is
+    // about termination, not about a depth an agent is expected to reach.
+    const nested = depth < 4 ? nestedCommand(statement) : null;
+    if (nested) {
+      const reason = bypassesTheCommitScope(nested, depth + 1);
+      if (reason) return `${reason} (inside: ${statement.trim()})`;
     }
 
     // A statement can carry more than one redirect (e.g. `cmd > a.txt 2>b.txt`),
-    // and each one is a separate write target — matchAll so a scratch first
-    // redirect does not shadow a non-scratch second one.
-    for (const redirect of statement.matchAll(REDIRECT)) {
-      if (!isScratchTarget(redirect[1])) {
-        return `redirect writes to ${redirect[1]}: ${statement.trim()}`;
+    // and each one is a separate write target — every one is checked so a
+    // scratch first redirect does not shadow a non-scratch second one.
+    for (const target of redirectTargets(tokenize(statement))) {
+      if (!isScratchTarget(target)) {
+        return `redirect writes to ${target}: ${statement.trim()}`;
       }
     }
   }

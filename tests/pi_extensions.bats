@@ -350,6 +350,114 @@ _run_step_from_worktree() {
   [ ! -e "$PI_EXT_DIR/_shared" ]
 }
 
+# ─── _shared/tokenize ───────────────────────────────────────────────────────
+# The scan every guard rule reads. Imports nothing, so node loads it directly.
+#
+# The cases here are the two defect classes that motivated it, stated as
+# properties rather than as the commands that exposed them: a quoted operator
+# is content, and a dequoted word is the command it spells.
+
+# _tok COMMAND — prints one `flags:value` per token, space separated.
+# Flags: O operator, Q quoted, U unparsed, - plain.
+_tok() {
+  run node --input-type=module -e "
+    const { tokenize } = await import('$REPO_ROOT/ai/pi/extensions/_shared/tokenize.ts');
+    process.stdout.write(tokenize(process.argv[1]).map(t =>
+      (t.operator ? 'O' : t.unparsed ? 'U' : t.quoted ? 'Q' : '-') + ':' + t.value
+    ).join(' '));
+  " -- "$1"
+}
+
+@test "tokenize: an operator inside quotes is content, not syntax" {
+  # `awk 'length > 80' f` was refused as a write and
+  # `bash -c 'rm -rf x; echo done'` was permitted as a read — one mistake in
+  # two directions, and both are this property.
+  _tok "awk 'length > 80' f.txt"
+  [ "$output" = "-:awk Q:length > 80 -:f.txt" ]
+  _tok "bash -c 'rm -rf x; echo done'"
+  [ "$output" = "-:bash -:-c Q:rm -rf x; echo done" ]
+  _tok "grep -rn 'a->b' src/"
+  [ "$output" = "-:grep -:-rn Q:a->b -:src/" ]
+}
+
+@test "tokenize: an unquoted operator is syntax" {
+  _tok 'echo hi > /tmp/x'
+  [ "$output" = "-:echo -:hi O:> -:/tmp/x" ]
+  _tok 'cat f | sed -n 1p'
+  [ "$output" = "-:cat -:f O:| -:sed -:-n -:1p" ]
+  # `>|` is one operator, not `>` followed by a pipe that splits the statement.
+  _tok 'echo hi >| /tmp/x'
+  [ "$output" = "-:echo -:hi O:>| -:/tmp/x" ]
+}
+
+@test "tokenize: a quoted or escaped command name dequotes to itself" {
+  # `'rm' -rf x` and `\rm -rf x` both run rm, and both read as an unknown
+  # command to a rule matching the raw word.
+  _tok "'rm' -rf x"
+  [ "$output" = "Q:rm -:-rf -:x" ]
+  _tok '\rm -rf x'
+  [ "$output" = "Q:rm -:-rf -:x" ]
+}
+
+@test "tokenize: a backslash escape is live in double quotes, literal in single" {
+  _tok 'echo "a\"b"'
+  [ "$output" = '-:echo Q:a"b' ]
+  _tok "echo 'a\\\"b'"
+  [ "$output" = '-:echo Q:a\"b' ]
+}
+
+@test "tokenize: an unterminated quote is reported, not guessed at" {
+  # The operators inside it must not read as syntax: the command was cut
+  # somewhere the scan cannot see, and a verdict from the fragments is a
+  # verdict on something the shell would never have run.
+  _tok "bash -c 'rm -rf x"
+  [ "$output" = "-:bash -:-c U:rm -rf x" ]
+}
+
+@test "statements: a separator inside quotes does not split the statement" {
+  # The bypass this whole change exists to close. `statements()` split on the
+  # `;` inside the payload, and neither fragment parsed as a shell wrapper or
+  # as a write — so appending `; true` to any refused command defeated the
+  # guard entirely.
+  run node --input-type=module -e "
+    const { statements } = await import('$REPO_ROOT/ai/pi/extensions/_shared/statements.ts');
+    process.stdout.write(JSON.stringify(statements(process.argv[1])));
+  " -- "bash -c 'rm -rf x; echo done'"
+  [ "$output" = '["bash -c '\''rm -rf x; echo done'\''"]' ]
+}
+
+@test "statements: a quoted word equal to a separator is an argument" {
+  # `echo ';'` tokenizes to a word whose *value* is `;`. Splitting on the value
+  # rather than on the operator flag cuts the statement in two and loses the
+  # command — the flag is what distinguishes syntax the shell acts on from a
+  # separator character passed along as an argument.
+  run node --input-type=module -e "
+    const { statements } = await import('$REPO_ROOT/ai/pi/extensions/_shared/statements.ts');
+    process.stdout.write(JSON.stringify(statements(process.argv[1])));
+  " -- "grep ';' f"
+  [ "$output" = '["grep '\'';'\'' f"]' ]
+}
+
+# passes-at-base: the char-splitter special-cased `2>&1` too, so this held before the rewrite; the case pins that the token-based split did not lose it, and it fails if the redirect-adjacency check or the source-slice reassembly is dropped
+@test "statements: a redirect's & is not a statement separator" {
+  # `2>&1` scans as four tokens, and cutting at that `&` shatters the statement
+  # it sits inside. Reassembled from the source line, not by joining tokens
+  # with spaces — a rejoin returns `2 > & 1`, which no rule written against
+  # real shell text matches.
+  run node --input-type=module -e "
+    const { statements } = await import('$REPO_ROOT/ai/pi/extensions/_shared/statements.ts');
+    process.stdout.write(JSON.stringify(statements(process.argv[1])));
+  " -- 'pytest > /tmp/o.txt 2>&1'
+  [ "$output" = '["pytest > /tmp/o.txt 2>&1"]' ]
+}
+
+@test "tokenize: a file descriptor stays a word of its own" {
+  # 2>&1 is `2`, `>`, `&`, `1`. Callers rely on this shape to tell a redirect
+  # with no destination from one that names a file.
+  _tok 'pytest > /tmp/o.txt 2>&1'
+  [ "$output" = "-:pytest O:> -:/tmp/o.txt -:2 O:> O:& -:1" ]
+}
+
 # ─── sleep-guard ──────────────────────────────────────────────────────────
 # The half of the no-sleep rule that runs under Pi. Its predicate is in
 # detect.ts, which imports nothing, so node can load it directly — index.ts
@@ -1009,8 +1117,8 @@ EOF'
 # _blocked COMMAND — prints the refusal for COMMAND, or the empty string.
 _blocked() {
   run node --input-type=module -e "
-    const { blockedWriteCommand } = await import('$REPO_ROOT/ai/pi/extensions-cli/detect.ts');
-    process.stdout.write(blockedWriteCommand(process.argv[1]) ?? '');
+    const { bypassesTheCommitScope } = await import('$REPO_ROOT/ai/pi/extensions-cli/detect.ts');
+    process.stdout.write(bypassesTheCommitScope(process.argv[1]) ?? '');
   " -- "$1"
 }
 
@@ -1043,9 +1151,9 @@ _blocked() {
   [ -z "$output" ]
 }
 
-@test "review-guard: a write verb in the worktree path is not a write" {
-  # \b treats / and - as boundaries, so an unanchored /\brm\b/ matched the
-  # branch name and disabled bash for the whole session.
+@test "review-guard: an ordinary command is not read as a git write" {
+  # \b treats / and - as boundaries, so an unanchored match caught the branch
+  # name and disabled bash for the whole session.
   _blocked 'cd /Users/i/wt/isaac-fix-rm-stale && pytest tests/'
   [ -z "$output" ]
   _blocked 'cd /Users/i/wt/repo-install-hooks && pytest'
@@ -1054,6 +1162,25 @@ _blocked() {
   [ -z "$output" ]
   _blocked 'grep -rn tee ai/'
   [ -z "$output" ]
+}
+
+@test "review-guard: a filesystem write is permitted, and that is the design" {
+  # This predicate is not a security boundary and must not be read as one. A
+  # fix agent holds an unrestricted bash, so `python3 -c` and `find -delete`
+  # write freely; an earlier version grew five lists of write verbs, shells
+  # and wrappers trying to catch them and blocked only the spellings an agent
+  # reaches for by accident.
+  #
+  # What contains the agent is elsewhere: write/edit are path-gated, the engine
+  # commits only the paths it watched, and the push is gated. This case exists
+  # so that a future reader adding `rm` back has to delete an assertion that
+  # says why it is absent, rather than filing the allowance as a bug.
+  for permitted in 'rm -rf build' 'touch f' 'sudo -s' 'bash' \
+                   'sed -i "" s/a/b/ f' 'curl -o out.bin https://x' \
+                   'python3 -c "import os; os.remove(0)"' 'find . -delete'; do
+    _blocked "$permitted"
+    [ -z "$output" ] || { echo "refused, but this guard does not own that: $permitted"; false; }
+  done
 }
 
 @test "review-guard: reading git history is allowed" {
@@ -1068,190 +1195,7 @@ _blocked() {
   [ -z "$output" ]
 }
 
-@test "review-guard: a read-only sed is allowed whatever the path contains" {
-  # /^\s*sed\s+[^|]*-i/ crossed into the arguments, so `-i` anywhere after the
-  # command matched: every read of a path containing `-i` was refused, and the
-  # directory under review when this was found was named doc-internal. 18
-  # tracked paths in this repo trip it. Same bug as the \b one the WRITE_COMMANDS
-  # comment describes; the patterns never got the test that caught it there.
-  _blocked "sed -n '55,95p' doc-internal/CLAUDE.md"
-  [ -z "$output" ]
-  _blocked 'sed -n 1p bin/wt-init'
-  [ -z "$output" ]
-  _blocked 'sed -n 1p bin/local/validate-tmpdir-isolation'
-  [ -z "$output" ]
-  _blocked "perl -ne 'print' bin/wt-init"
-  [ -z "$output" ]
-  # A flag letter inside a quoted expression is data, not a flag.
-  _blocked 'sed -n "s/a-i/b/p" f.txt'
-  [ -z "$output" ]
-  _blocked "cat f | sed -n 1p"
-  [ -z "$output" ]
-}
-
-@test "review-guard: a read-only curl is allowed when an argument holds -o" {
-  _blocked "curl -s https://api.github.com/x -H 'A: -o'"
-  [ -z "$output" ]
-  _blocked 'curl -sL https://example.com/x'
-  [ -z "$output" ]
-  _blocked 'wget https://example.com/x-o-y'
-  [ -z "$output" ]
-}
-
-# passes-at-base: `sh -c` was a complete bypass before this change, so a read-only payload was allowed by the hole rather than by the rule; the case holds the new unwrapping from being written as a blanket refusal of `-c`
-@test "review-guard: a read-only payload in a shell wrapper is allowed" {
-  # Unwrapped and rescanned, not refused on shape: a payload that only reads is
-  # still a read.
-  _blocked "bash -c 'pytest tests/'"
-  [ -z "$output" ]
-  _blocked "sh -c 'grep -rn foo .'"
-  [ -z "$output" ]
-}
-
-@test "review-guard: a write command at a statement head is refused" {
-  _blocked 'rm -rf build'
-  [ -n "$output" ]
-  _blocked 'cd /repo && rm -rf build'
-  [ -n "$output" ]
-  _blocked 'cp a b'
-  [ -n "$output" ]
-  _blocked 'FOO=1 mv a b'
-  [ -n "$output" ]
-  _blocked '/bin/rm -rf foo'
-  [ -n "$output" ]
-}
-
-@test "review-guard: an interactive shell is refused however it is reached" {
-  # Two review rounds each closed one spelling of this and left the others:
-  # first bare `sudo`/`sudo -s`, then the same behind a wrapper. `bash`,
-  # `sudo bash` and `su` were allowed throughout — the same write channel by a
-  # shorter route. The rule is now stated once over the unwrapped command, so
-  # the cases below are one rule rather than five.
-  for escape in 'sudo -s' 'sudo -i' 'sudo' 'doas' 'su' 'su -' \
-                'bash' 'sh' 'zsh' 'bash -i' 'sudo bash' 'sudo su'; do
-    _blocked "$escape"
-    [ -n "$output" ] || { echo "allowed: $escape"; false; }
-  done
-}
-
-@test "review-guard: an interactive shell is refused behind a wrapper" {
-  # `env sudo -s` and friends unwrap to the same escape one wrapper removed.
-  for escape in 'env sudo -s' 'time sudo -i' 'nohup sudo -s' 'nice sudo -i' \
-                'xargs sudo -s' 'env bash' 'env su'; do
-    _blocked "$escape"
-    [ -n "$output" ] || { echo "allowed: $escape"; false; }
-  done
-}
-
-# passes-at-base: the guard against over-reach — before INTERACTIVE_SHELLS no shell name was matched at all, so these passed by the hole; the case exists to stop the new rule swallowing `sh -c`, and it fails if the payload exemption is dropped
-@test "review-guard: a shell running a read-only payload is still allowed" {
-  # The escape rule must not swallow `sh -c`: its payload is a command in its
-  # own right, unwrapped and rescanned, so a read stays a read.
-  _blocked "bash -c 'pytest tests/'"
-  [ -z "$output" ]
-  _blocked "sh -c 'grep -rn foo .'"
-  [ -z "$output" ]
-  _blocked "sudo sh -c 'pytest'"
-  [ -z "$output" ]
-}
-
-@test "review-guard: every -c spelling is parsed, not refused as an escape" {
-  # The escape rule refuses whatever SHELL_DASH_C cannot parse, so a spelling it
-  # missed became a false positive rather than an unrecognised read: a
-  # path-qualified `/bin/sh -c`, a long flag, a `-c` that is not last in its
-  # cluster, and `fish` (in INTERACTIVE_SHELLS but absent from the payload
-  # pattern) were all refused while running a plain pytest.
-  for ok in "/bin/sh -c 'pytest'" "/bin/bash -c 'pytest tests/'" \
-            "bash --norc -c 'pytest'" "bash -ce 'pytest tests/'" \
-            "bash -cx 'pytest'" "fish -c 'pytest'"; do
-    _blocked "$ok"
-    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
-  done
-  # The same spellings must still rescan the payload rather than wave it past.
-  for bad in "/bin/sh -c 'rm -rf x'" "bash --norc -c 'rm -rf x'" \
-             "bash -ce 'rm -rf x'" "fish -c 'rm -rf x'"; do
-    _blocked "$bad"
-    [ -n "$output" ] || { echo "allowed a write: $bad"; false; }
-  done
-}
-
-@test "review-guard: a shell-wrapper refusal names what the inner check found" {
-  # The recursive shell-payload check used to discard blockedWriteCommand's
-  # inner return value and always report a generic message, so the refusal
-  # never said what the wrapped command actually did.
-  _blocked "bash -c 'rm -rf x'"
-  [[ "$output" == *'`rm` writes: rm -rf x'* ]]
-}
-
-@test "review-guard: a write behind a command wrapper is refused" {
-  # commandHead read one word, so the bare `rm` was refused while every wrapped
-  # spelling of it was allowed. A guard that blocks the ergonomic form and
-  # permits the awkward one charges turns without containing anything.
-  _blocked 'sudo rm -rf /x'
-  [ -n "$output" ]
-  _blocked 'env rm -rf x'
-  [ -n "$output" ]
-  _blocked 'time rm -rf x'
-  [ -n "$output" ]
-  _blocked 'xargs rm -f < list'
-  [ -n "$output" ]
-  _blocked 'xargs -0 rm -f'
-  [ -n "$output" ]
-  _blocked "bash -c 'rm -rf x'"
-  [ -n "$output" ]
-  _blocked "sudo sed -i '' s/a/b/ f"
-  [ -n "$output" ]
-}
-
-@test "review-guard: a wrapper flag's value is not read as the command" {
-  # Skipping a wrapper's flags fails open if a flag takes a separate value: the
-  # value lands where the command should be, so `sudo -u root rm -rf x` reads
-  # its command as `root` and is allowed. Caught on the first adversarial pass
-  # over the wrapper handling, not in review.
-  _blocked 'sudo -u root rm -rf x'
-  [ -n "$output" ]
-  _blocked 'env -u FOO rm -rf x'
-  [ -n "$output" ]
-  _blocked 'nice -n 5 rm -rf x'
-  [ -n "$output" ]
-  _blocked 'xargs -I{} rm {}'
-  [ -n "$output" ]
-  # An attached value consumes no extra word, so the command is still the
-  # word after the flag.
-  _blocked 'sudo --user=root rm -rf x'
-  [ -n "$output" ]
-}
-
-@test "review-guard: in-place editors and git writes are refused" {
-  _blocked "sed -i '' s/a/b/ f.txt"
-  [ -n "$output" ]
-  # Not only as the first argument: a cluster, a suffix, and the long spelling.
-  _blocked "sed -n -i '' s/a/b/ f.txt"
-  [ -n "$output" ]
-  _blocked 'sed -i.bak s/a/b/ f.txt'
-  [ -n "$output" ]
-  _blocked 'sed --in-place s/a/b/ f.txt'
-  [ -n "$output" ]
-  # GNU sed is gsed on macOS and edits in place just the same.
-  _blocked 'gsed -i s/a/b/ f.txt'
-  [ -n "$output" ]
-  _blocked 'perl -pi -e s/a/b/ f.txt'
-  [ -n "$output" ]
-  _blocked 'git commit -m x'
-  [ -n "$output" ]
-  _blocked 'git push'
-  [ -n "$output" ]
-  _blocked 'curl -o out.bin https://example.com/x'
-  [ -n "$output" ]
-  # The long spellings write a file and matched nothing before.
-  _blocked 'curl --output f https://example.com/x'
-  [ -n "$output" ]
-  _blocked 'wget --output-document f https://example.com/x'
-  [ -n "$output" ]
-  _blocked 'curl --remote-name https://example.com/x'
-  [ -n "$output" ]
-}
-
+# passes-at-base: #1480 landed the global-flag reach in main, so this holds without the trim; it stays because the rewrite to token comparison had to preserve it, and it fails if the flag-skipping loop is dropped
 @test "review-guard: a git write behind a global flag is refused" {
   # backend_claude.FIX_DENIED_TOOLS names these subcommands and says Pi enforces
   # them here. Anchoring straight to `git\s+commit` made that claim false for
@@ -1270,10 +1214,132 @@ _blocked() {
   [ -n "$output" ]
 }
 
+# passes-at-base: reported by check-new-tests because the whole file moved, but verified against origin/main directly — `git add -A` is allowed there, so this case does fail without the change
+@test "review-guard: the git subcommands that stage and move refs are writes" {
+  # `git rm -rf .` deletes the worktree and stages the deletion, and was
+  # allowed while a bare `rm -rf .` was refused.
+  for bad in 'git add -A' 'git rm -rf .' 'git mv a b' 'git branch -D x' \
+             'git tag -f v1' 'git config user.name x' \
+             'git worktree add /tmp/w'; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed: $bad"; false; }
+  done
+}
+
+@test "review-guard: -n is a dry run for some subcommands and not for others" {
+  # `-n` is --dry-run for push, clean, add and merge, but --no-verify for
+  # commit. Treating it as read-only everywhere let `git commit -n -m x`
+  # through, which makes a real commit — verified against a scratch repo, not
+  # inferred from the manual.
+  for bad in 'git commit -n -m x' 'git commit -nm x' 'git commit --no-verify -m x'; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed a commit: $bad"; false; }
+  done
+  for ok in 'git push -n' 'git clean -n' 'git add -n f' 'git merge -n topic'; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a dry run: $ok"; false; }
+  done
+}
+
+@test "review-guard: a commit reached through a wrapper is refused" {
+  # The recursion that catches these served the git rule too, not only the
+  # write-verb rules removed alongside it — cutting it silently reopened
+  # `bash -c 'git commit'`. A wrapped commit lands outside the engine's scope
+  # as squarely as a bare one.
+  for bad in "bash -c 'git commit -m x'" "eval 'git commit -m x'" \
+             'eval git commit -m x' "sh -c \"sh -c 'git push'\"" \
+             "bash -ce 'git add -A'"; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed: $bad"; false; }
+  done
+  # Rescanned, not refused on sight: a wrapper around a read is still a read,
+  # and a wrapper around a plain filesystem write is not this guard's business.
+  for ok in "bash -c 'pytest tests/'" "eval 'pytest'" \
+            "eval awk 'length > 80' f" "bash -c 'rm -rf x'"; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused: $ok ($output)"; false; }
+  done
+}
+
+@test "review-guard: a read-only git subcommand is allowed" {
+  # `\b` after the subcommand made `merge` match `merge-base` — the same
+  # hyphen-boundary bug WRITE_COMMANDS warns about. `git merge-base` is how a
+  # review establishes its base, and ai/lib calls it in fifteen places.
+  for ok in 'git merge-base origin/main HEAD' 'git merge-base --is-ancestor A B' \
+            'git merge-tree a b' 'git stash list' 'git stash show -p' \
+            'git apply --check p.diff' 'git clean -n' 'git push --dry-run' \
+            'git branch --list' 'git config --get user.name' \
+            'git remote -v' 'git worktree list'; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
+  done
+}
+
+@test "review-guard: a command with an unbalanced quote is refused" {
+  # The scan cannot see where such a command ends, so every rule is reading
+  # fragments rather than the command. tokenize.ts documented `hasUnparsed` as
+  # the thing a caller should consult and nothing consulted it — a promise the
+  # code did not keep. Bash rejects most of these before running anything, so
+  # this is a small hole rather than a live bypass, but a predicate that cannot
+  # read its input must not answer "allow".
+  _blocked "echo 'unterminated; rm -rf x"
+  [ -n "$output" ]
+  _blocked "bash -c 'rm -rf x"
+  [ -n "$output" ]
+  # A balanced quote spanning two lines is readable, and stays readable.
+  _blocked "$(printf "echo 'a\nb'\npytest tests/")"
+  [ -z "$output" ]
+}
+
+@test "review-guard: a quoted > is an argument, not a redirect" {
+  # The redirect rule read a regex over the raw statement, so any `>` inside a
+  # quoted argument was a write target. A review agent greps constantly, and
+  # this refused a large share of ordinary reads — comparisons, arrows, type
+  # parameters. A guard whose refusals land on greps is one whose refusals stop
+  # being read.
+  for ok in "awk 'length > 80' f.txt" "awk '\$2 > 100' data" \
+            "grep -rn 'a->b' src/" "rg 'fn foo() -> Result' src/" \
+            "jq '.items | map(select(.age > 30))' d.json" \
+            "git log --pretty='%h -> %s'" "echo 'A > B'"; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
+  done
+}
+
+# passes-at-base: same as above — verified against origin/main, which allows `> /private/tmp/../../Users/isaacg/p.txt`, so this case does fail without the change
+@test "review-guard: a redirect that climbs out of a scratch root is refused" {
+  # isScratchTarget compared the raw prefix while isScratchPath canonicalised,
+  # so one file got opposite answers from two predicates in the same file.
+  _blocked 'echo x > /private/tmp/../../Users/isaacg/p.txt'
+  [ -n "$output" ]
+  _blocked 'pytest > /tmp/../etc/hosts'
+  [ -n "$output" ]
+  # `>|` is a redirect the old pattern did not know at all.
+  _blocked 'echo hi >| /Users/isaacg/probe.txt'
+  [ -n "$output" ]
+}
+
+# passes-at-base: the old raw-prefix compare also rejected a relative target, so this held before the rewrite; the case exists because routing through isScratchPath introduced cwd resolution, which made every relative path read as scratch until the absolute-only guard was added back
+@test "review-guard: a relative redirect target is not scratch" {
+  # isScratchPath resolves against the process cwd, so every relative target
+  # read as scratch whenever that cwd sat under one of the prefixes — and a
+  # review runs in a worktree under /var/folders often enough for that to be
+  # the common case. A redirect the guard cannot place must not be exempted.
+  _blocked 'echo x > rel.txt'
+  [ -n "$output" ]
+  _blocked 'echo x > ./rel.txt'
+  [ -n "$output" ]
+  _blocked 'pytest > ~/notes.txt'
+  [ -n "$output" ]
+}
+
 @test "review-guard: a redirect outside the scratch roots is refused" {
   _blocked 'echo hi > /etc/hosts'
   [ -n "$output" ]
-  _blocked 'pytest > ~/notes.txt'
+  # $HOME is unexpanded here the same way ~ is, and for the same reason: this
+  # file does not expand either, so both fall to the same refusal rather than
+  # being read as scratch.
+  _blocked 'pytest > $HOME/notes.txt'
   [ -n "$output" ]
 }
 

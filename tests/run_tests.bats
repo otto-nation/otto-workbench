@@ -319,6 +319,7 @@ EOF
   [ "${#second[@]}" -eq 4 ]
 }
 
+# passes-at-base: equal @test counts also spread; it fails against a 0 fallback
 @test "files the weights do not name are spread, not piled on one shard" {
   # A test file added since the last weights regeneration has no measurement
   # and never will until CI runs it. It takes the median of the known weights.
@@ -355,6 +356,7 @@ EOF
   [ "$new_second" -gt 0 ]
 }
 
+# passes-at-base: the per-file grep needed no sentinel; the batched one does
 @test "a tests directory holding one file still shards" {
   # `grep -c` over a single file prints a bare count with no filename, so a
   # weight reader parsing "path:count" would read the count as the path and
@@ -372,6 +374,7 @@ EOF
   [ "${only[0]}" = "solo.bats" ]
 }
 
+# passes-at-base: there was no weights file to miss before; pins the degradation
 @test "a missing weights file still partitions every test file" {
   # Weights are data, not a dependency. A checkout without them — or a stale
   # generation — must degrade to a worse split, never to a run that shards

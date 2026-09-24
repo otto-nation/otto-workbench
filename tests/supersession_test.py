@@ -149,6 +149,7 @@ class TestDetect:
             ),
         ],
     )
+    # passes-at-base: it passed while really sleeping; only the waiting went
     def test_a_failed_or_stalled_search_still_leaves_the_local_signal(
         self, gh_kwargs, monkeypatch,
     ):

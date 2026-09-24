@@ -509,6 +509,7 @@ _scan_dir_with() {
   printf '%s' "$dir"
 }
 
+# passes-at-base: pins the invalidate-every-call behaviour the hold left intact
 @test "a collector outside a hold sees a registry rewritten since the last call" {
   # The unheld path, and the reason a collector invalidates at all: a sync step
   # that outlives an edit must answer for the tree as it is now.

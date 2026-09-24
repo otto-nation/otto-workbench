@@ -117,6 +117,7 @@ def test_a_tool_that_outruns_the_probe_timeout_is_caught(tmp_path, monkeypatch):
     assert "did not answer within" in _reasons(tmp_path)["slow-tool"]
 
 
+# passes-at-base: the attempt count dropped; the BROKEN-vs-TIMED_OUT assertion did not
 def test_a_timeout_is_not_reported_as_a_broken_tool(tmp_path, monkeypatch):
     """A wedged probe and a wrong answer want different people to look.
 

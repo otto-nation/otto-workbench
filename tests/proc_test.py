@@ -490,6 +490,7 @@ class TestRunKillProcessGroup:
         finally:
             os.kill(grandchild, signal.SIGKILL)
 
+    # passes-at-base: the reap was already bounded, only the bound got shorter
     def test_a_group_it_may_not_signal_still_reports_the_timeout(
         self, monkeypatch, short_reap_bound,
     ):
@@ -513,6 +514,7 @@ class TestRunKillProcessGroup:
         assert r.returncode == proc.TIMEOUT_RETURNCODE
         assert "could not be signalled and may still be running" in r.stderr
 
+    # passes-at-base: the reap was already bounded, only the bound got shorter
     def test_a_child_that_outlives_sigkill_does_not_hang_the_call(
         self, monkeypatch, short_reap_bound,
     ):

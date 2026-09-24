@@ -122,6 +122,7 @@ _help_failures() {
   ' "$flag" "$check_status" {}
 }
 
+# passes-at-base: the assertion is unchanged, only the probes became concurrent
 @test "all bash bin scripts produce help and exit 0 with -h" {
   local failures
   failures=$(_help_failures -h --check-status)

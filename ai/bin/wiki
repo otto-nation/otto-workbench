@@ -93,6 +93,7 @@ archive_article = wiki_create.archive_article
 backups_dir = wiki_backup.backups_dir
 build_index = wiki_report.build_index
 is_overdue = wiki_backup.is_overdue
+latest = wiki_backup.latest
 collect_lint = wiki_report.collect_lint
 collect_signals = wiki_report.collect_signals
 collect_status = wiki_report.collect_status
@@ -142,6 +143,7 @@ __all__ = [
     "hash_file",
     "init_wiki",
     "is_overdue",
+    "latest",
     "main",
     "prune",
     "restore",

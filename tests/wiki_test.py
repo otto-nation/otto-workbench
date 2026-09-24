@@ -565,6 +565,53 @@ class TestBackup:
         assert wiki.snapshots(root) == []
         assert list(wiki.backups_dir(root).glob("*")) == []
 
+    def test_two_snapshots_in_one_second_are_both_kept(self, tmp_path):
+        """The stamp is per-second, so the second would otherwise overwrite the first."""
+        root = self._base(tmp_path)
+        when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        first = wiki.snapshot(root, now=when)
+        second = wiki.snapshot(root, now=when)
+        assert first != second
+        assert len(wiki.snapshots(root)) == 2
+
+    def test_retention_within_one_second_drops_the_earlier_snapshot(self, tmp_path):
+        """Retention deletes from the front, so a wrong order deletes the newest.
+
+        Asserted on *which file survives*, not on the list being sorted:
+        `snapshots` sorts on the way out, so comparing it against `sorted()` is
+        a tautology that passes whatever the names are. Names are ordered as
+        text, and an unsuffixed name sorts after its own `-2` sibling — so with
+        two snapshots in one second, the one pruned was the later of the two.
+        """
+        root = self._base(tmp_path)
+        when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        first = wiki.snapshot(root, now=when)
+        second = wiki.snapshot(root, now=when)
+        first.write_bytes(b"earlier")
+        second.write_bytes(b"later")
+
+        wiki.prune(root, keep=1)
+        survivors = wiki.snapshots(root)
+        assert len(survivors) == 1
+        assert survivors[0].read_bytes() == b"later"
+
+    def test_a_same_second_snapshot_still_carries_its_date(self, tmp_path):
+        """An unparsed stamp would read as never-backed-up and always prompt."""
+        root = self._base(tmp_path)
+        when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        wiki.snapshot(root, now=when)
+        wiki.snapshot(root, now=when)
+        assert not wiki.is_overdue(root, now=datetime(2026, 5, 2, tzinfo=timezone.utc))
+
+    def test_restoring_twice_in_one_second_does_not_collide(self, tmp_path):
+        """The second restore raised FileExistsError at the user rather than landing."""
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        first = wiki.restore(root, archive)
+        second = wiki.restore(root, archive)
+        assert first != second
+        assert wiki.is_wiki(first) and wiki.is_wiki(second)
+
     def test_two_bases_with_one_name_do_not_share_a_directory(self, tmp_path):
         first = make_wiki(tmp_path / "one", dirname="notes")
         second = make_wiki(tmp_path / "two", dirname="notes")

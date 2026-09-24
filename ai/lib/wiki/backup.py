@@ -106,8 +106,13 @@ def is_overdue(root: Path, now: datetime | None = None) -> bool:
 
 
 def _stamp_of(archive: Path) -> datetime | None:
-    """The time in a snapshot's filename, or ``None`` if it does not carry one."""
-    name = archive.name[: -len(ARCHIVE_SUFFIX)]
+    """The time in a snapshot's filename, or ``None`` if it does not carry one.
+
+    The disambiguating ``-2`` a same-second snapshot takes is dropped first:
+    without that, the second snapshot in a second parses as undated and the base
+    reads as never backed up.
+    """
+    name = archive.name[: -len(ARCHIVE_SUFFIX)].split("-")[0]
     try:
         return datetime.strptime(name, STAMP_FORMAT).replace(tzinfo=timezone.utc)
     except ValueError:
@@ -124,7 +129,7 @@ def snapshot(root: Path, keep: int = KEEP_DEFAULT, now: datetime | None = None) 
     directory = backups_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
     stamp = (now or datetime.now(timezone.utc)).strftime(STAMP_FORMAT)
-    target = directory / f"{stamp}{ARCHIVE_SUFFIX}"
+    target = _free_name(directory, stamp, ARCHIVE_SUFFIX)
     partial = target.with_name(target.name + PARTIAL_SUFFIX)
 
     try:
@@ -136,6 +141,26 @@ def snapshot(root: Path, keep: int = KEEP_DEFAULT, now: datetime | None = None) 
 
     prune(root, keep)
     return target
+
+
+def _free_name(directory: Path, stamp: str, suffix: str) -> Path:
+    """``<stamp><suffix>`` in *directory*, disambiguated if it is taken.
+
+    The stamp is per-second, so two snapshots a moment apart would otherwise be
+    one: the second overwrites the first and the count silently does not grow.
+
+    The counter is zero-padded and starts at ``-01`` for the *first* name rather
+    than being omitted, because these names are sorted as text and retention
+    deletes from the front. A bare ``…Z`` would sort after ``…Z-02``, making the
+    oldest-first order wrong exactly when a second collides — and the file it
+    then pruned would be the newest.
+    """
+    attempt = 1
+    candidate = directory / f"{stamp}-{attempt:02d}{suffix}"
+    while candidate.exists():
+        attempt += 1
+        candidate = directory / f"{stamp}-{attempt:02d}{suffix}"
+    return candidate
 
 
 def prune(root: Path, keep: int = KEEP_DEFAULT) -> list[Path]:
@@ -158,7 +183,7 @@ def restore(root: Path, archive: Path) -> Path:
     once they have looked at it.
     """
     stamp = datetime.now(timezone.utc).strftime(STAMP_FORMAT)
-    destination = root.with_name(f"{root.name}.restored-{stamp}")
+    destination = _free_name(root.parent, f"{root.name}.restored-{stamp}", "")
     destination.mkdir(parents=True)
     with tarfile.open(archive, "r:gz") as tar:
         # `data` refuses absolute paths, parent traversal, links out of the

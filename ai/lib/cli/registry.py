@@ -50,6 +50,18 @@ class CommandSpec:
     * ``takes_target`` — whether a bare token in this command's argv can name a
       PR or a branch. False for a command that always acts on the current
       branch, where every bare token belongs to the flag before it.
+
+      Defaulted where ``need`` is not, and the asymmetry is deliberate but it
+      is *not* because True is the safer side — it is the side that ate
+      `pr create --title`. What makes the default acceptable is that the one
+      dangerous combination is already asserted against: a command that is
+      scriptless (so `_delegate_value_flags` has no parser to probe and the
+      scan degrades to "first bare token wins") *and* target-taking is covered
+      by `test_a_command_with_no_delegate_declares_no_value_taking_flag`, which
+      is parametrized over exactly that set and fails the build the moment one
+      of them grows a value-taking flag. `need` has no such check available —
+      there is no observable consequence to assert on until dispatch runs — so
+      it is refused at construction instead.
     """
 
     name: str

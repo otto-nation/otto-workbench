@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Unified PR lifecycle CLI.
 
-Thin dispatch layer — subcommands delegate to external scripts via _COMMANDS
-registry.  Flags pass through to the backing script untouched; run
-'pr <command> --help' to see each script's flags.
+Thin dispatch layer — subcommands delegate to external scripts named by
+`cli.registry.COMMANDS`.  Flags pass through to the backing script untouched;
+run 'pr <command> --help' to see each script's flags.
 """
 
 import argparse
@@ -27,8 +27,8 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
 sys.path.insert(0, str(_AI_LIB_DIR))
 
 from cli import review_modes
-from cli.needs import LOCAL as _LOCAL, REMOTE as _REMOTE
 from cli.needs import Need
+from cli.registry import COMMANDS, CommandSpec, need_for
 from pr import context as pr_context
 from pr import domains as pr_domains
 from pr import state as pr_state
@@ -47,72 +47,7 @@ from core.tool_parser import VALUE_FLAGS_FLAG
 from core.trail import Trail, add_trail_args
 
 
-# ── Command registry ────────────────────────────────────────────────────────
-#
-# Single source of truth for subcommands.  Delegating commands have a "script"
-# key; internal commands omit it.  "prefix" adds sub-command tokens before the
-# user's argv (e.g. claude-review gc …).
-
-_COMMANDS = {
-    "create":   {"help": "Create a PR (wraps task pr:create)",
-                 "need": Need(_REMOTE, update=False, lock=True)},
-    "status":   {"help": "Show CI, review, and comment status dashboard",
-                 "need": Need(_LOCAL,  update=False, lock=False)},
-    "ci":       {"help": "Check CI failures",                     "script": "ci-check",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "review":   {"help": "Run code review",                       "script": "claude-review",
-                 "need": review_modes.need_for},
-    "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "fix":      {"help": "Fix CI + review + comments",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "rebase":   {"help": "Rebase onto the branch's base",         "script": "pr-rebase",
-                 "need": Need(_REMOTE, update=False, lock=True)},
-    "describe": {"help": "Revise the PR description",             "script": "pr-describe",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "gc":       {"help": "Clean up stale PR artifacts",
-                 "need": Need(_REMOTE, update=False, lock=True)},
-}
-
-
-def _need_for(entry: dict, argv: list[str]) -> Need:
-    """The Need this invocation declares.
-
-    A command whose axes vary by flag declares a callable over its argv instead
-    of a constant; every other one declares the constant. One reader for both
-    shapes, so nothing downstream has to know which kind an entry carries.
-    """
-    need = entry.get("need")
-    return need(argv) if callable(need) else need
-
-
-def _validate_needs(commands: dict) -> None:
-    """Raise unless every command declares a Need.
-
-    The check that replaces "remember to edit two opt-out sets": a command that
-    declares nothing fails at import, where the old sets silently handed it
-    whatever not being listed happened to mean. A raise rather than an assert,
-    so the invariant survives -O.
-
-    A callable declaration is resolved over an empty argv and its answer
-    checked, so a resolver that returns something other than a Need for the
-    plain invocation fails here too rather than at the first dispatch.
-    """
-    undeclared = sorted(
-        name for name, entry in commands.items()
-        if not isinstance(_need_for(entry, []), Need)
-    )
-    if undeclared:
-        raise RuntimeError(
-            "pr: commands declare no dispatch need: " + ", ".join(undeclared)
-            + " — add a Need(depth, update=…, lock=…) to each _COMMANDS entry"
-        )
-
-
-_validate_needs(_COMMANDS)
-
-
-def _run_delegate(entry: dict, argv: list[str],
+def _run_delegate(spec: CommandSpec, argv: list[str],
                   ctx: pr_context.ResolvedContext, *,
                   original_pr: str | None = None,
                   original_branch: str | None = None) -> int:
@@ -126,7 +61,7 @@ def _run_delegate(entry: dict, argv: list[str],
     in the delegate — and prevents mismatched --repo-dir/--branch when
     the worktree is on a different branch than the target.
     """
-    cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
+    cmd = [str(BIN_DIR / spec.script)]
     if ctx.worktree_root:
         cmd += ["--repo-dir", str(ctx.worktree_root)]
     cmd += _target_flags(ctx, original_pr=original_pr,
@@ -167,7 +102,7 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
     return positionals, flags
 
 
-def _delegate_value_flags(entry: dict) -> frozenset[str]:
+def _delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
     """Ask a delegate which of its option strings consume a following value.
 
     The delegate's own argparse parser is the single source of truth for its
@@ -175,7 +110,7 @@ def _delegate_value_flags(entry: dict) -> frozenset[str]:
     of mirroring a list here that would rot the next time a delegate grows a
     flag.  Internal commands have no delegate and answer empty.
     """
-    script = entry.get("script")
+    script = spec.script
     if not script:
         return frozenset()
     # Arity is an improvement on the historical arity-blind scan, not a
@@ -289,7 +224,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
         or ctx.pr_number is not None
     )
     inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
-    return _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
+    return _run_delegate(COMMANDS["review"], inject + list(argv), ctx,
                          original_pr=original_pr,
                          original_branch=original_branch)
 
@@ -369,7 +304,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         log.blank()
         log.info(f"Fixing {ci_fixable} CI failure(s)...")
         rc = _run_delegate(
-            _COMMANDS["ci"], ["--fix"] + list(argv), ctx,
+            COMMANDS["ci"], ["--fix"] + list(argv), ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
         )
@@ -393,7 +328,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     # its commits and post its replies and then draft the description alone.
     log.blank()
     describe_argv = ["--post"] if "--post" in argv else []
-    if _run_delegate(_COMMANDS["describe"], describe_argv, ctx,
+    if _run_delegate(COMMANDS["describe"], describe_argv, ctx,
                      original_pr=_kw.get("original_pr"),
                      original_branch=_kw.get("original_branch")) != 0:
         exit_code = 1
@@ -406,7 +341,7 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                  original_branch: str | None = None,
                  **_kw) -> int:
     """Delegate to review-threads, routing --triage, --fix, --settle and --finish flags."""
-    return _run_delegate(_COMMANDS["comments"], list(argv), ctx,
+    return _run_delegate(COMMANDS["comments"], list(argv), ctx,
                          original_pr=original_pr,
                          original_branch=original_branch)
 
@@ -475,16 +410,6 @@ _CUSTOM = {
     "gc":       cmd_gc,
 }
 
-# Commands that accept no positional target, so every bare token in their argv
-# belongs to the flag before it. 'create' always operates on the current branch
-# and `task pr:create` has no way to accept a target, so the positional scan has
-# nothing to find there — only flag values to swallow. Skipping the scan is what
-# keeps `pr create --title "…"` from arriving as a dangling --title, and it needs
-# no arity list of its own: the flags are parsed by parse_pr_flags in
-# lib/ai/pr.sh, which stays their single source of truth.
-_NO_TARGET_COMMANDS = {"create"}
-
-
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command parser.
 
@@ -492,7 +417,7 @@ def _build_parser() -> argparse.ArgumentParser:
     forwarded whole and `pr <command> --help` is answered by the delegate — so
     add_help is left off for those. The subparsers are not returned alongside:
     what a command declares is read back off the built parser with
-    tool_parser.subparsers, which is what keeps _NO_TARGET_COMMANDS honest.
+    tool_parser.subparsers, which is what keeps `takes_target` honest.
     """
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
@@ -502,16 +427,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-h", "--help", action="store_true", dest="help")
 
     sub = parser.add_subparsers(dest="command")
-    for name, entry in _COMMANDS.items():
-        sub.add_parser(name, help=entry["help"], add_help="script" not in entry)
+    for name, spec in COMMANDS.items():
+        sub.add_parser(name, help=spec.help, add_help=spec.script is None)
     return parser
 
 
 def _build_usage() -> str:
-    max_name = max(len(n) for n in _COMMANDS)
+    max_name = max(len(n) for n in COMMANDS)
     cmd_lines = "\n".join(
-        f"  {name:<{max_name + 2}}{entry['help']}"
-        for name, entry in _COMMANDS.items()
+        f"  {name:<{max_name + 2}}{spec.help}"
+        for name, spec in COMMANDS.items()
     )
     contracts = ", ".join(_schema_contracts())
     versions = ", ".join(str(v) for v in review_listing.SCHEMA_VERSIONS)
@@ -552,7 +477,7 @@ def _tool_schema() -> dict:
             "properties": {
                 "command": {
                     "type": "string",
-                    "enum": list(_COMMANDS.keys()),
+                    "enum": list(COMMANDS),
                     "description": "Subcommand to run",
                 },
                 "repo_dir": {"type": "string", "description": "Git worktree directory", "x-context": True},
@@ -647,9 +572,9 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
                            original_pr=original_pr,
                            original_branch=original_branch,
                            schema_version=global_args.schema_version)
-        assert "script" in _COMMANDS[args.command], \
-            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
-        return _run_delegate(_COMMANDS[args.command], extra, ctx,
+        assert COMMANDS[args.command].script, \
+            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or give its CommandSpec a script"
+        return _run_delegate(COMMANDS[args.command], extra, ctx,
                              original_pr=original_pr,
                              original_branch=original_branch)
     except Exception as exc:
@@ -724,9 +649,9 @@ def main():
     except Exception as exc:
         log.warn(f"could not reconcile recorded pushes: {exc}")
 
-    entry = _COMMANDS[args.command]
-    if {"-h", "--help"} & set(extra) and "script" in entry:
-        cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", []) + ["--help"]
+    spec = COMMANDS[args.command]
+    if {"-h", "--help"} & set(extra) and spec.script:
+        cmd = [str(BIN_DIR / spec.script), "--help"]
         sys.exit(subprocess.run(cmd, timeout=timeouts.LOCAL).returncode)
 
     original_pr = getattr(args, "pr", None)
@@ -738,9 +663,9 @@ def main():
     # ambiguous about, so the common case (`pr review`, `pr comments --triage`)
     # spawns nothing.
     ambiguous = (original_pr is None and original_branch is None
-                 and args.command not in _NO_TARGET_COMMANDS)
+                 and spec.takes_target)
     if ambiguous and any(not a.startswith("-") for a in extra):
-        idx = _positional_index(extra, _delegate_value_flags(entry))
+        idx = _positional_index(extra, _delegate_value_flags(spec))
         if idx >= 0:
             original_pr, original_branch = pr_context.classify_target(extra[idx])
             extra.pop(idx)
@@ -753,7 +678,7 @@ def main():
     # The command's declaration drives all three axes from here. Read after the
     # positional scan above, because that scan is what turns a bare token into
     # the --pr that can escalate the declared depth.
-    need = _need_for(entry, extra)
+    need = need_for(spec, extra)
     _reject_a_target_that_resolves_to_nothing(
         args.command, extra, need, original_pr, original_branch,
     )

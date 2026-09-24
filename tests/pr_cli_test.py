@@ -28,6 +28,7 @@ _REAL_SUBPROCESS_RUN = subprocess.run
 
 pr_cli = load_script("pr_cli", BIN_DIR / "pr")
 
+from cli import registry  # noqa: E402
 from core import proc  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
@@ -42,28 +43,16 @@ _TEST_REPLY_ID = "3777767789"
 _TEST_REPLY_BODY_FILE = "/tmp/reply.md"
 
 
-# ── _parse_review_summary ──────────────────────────────────────────────────
+def _spec(**overrides) -> registry.CommandSpec:
+    """A throwaway CommandSpec, for a test about one field.
 
-
-def test_parse_review_summary_valid():
-    output = 'REVIEW_SUMMARY:{"repo":"owner/repo","verdict":"approve","findings":{"M":0,"S":1,"total":1}}'
-    result = pr_cli._parse_review_summary(output)
-    assert result["verdict"] == pr_domains.ReviewVerdict.APPROVE.value
-    assert result["findings"]["S"] == 1
-
-
-def test_parse_review_summary_multiline():
-    output = "Some output\nMore output\nREVIEW_SUMMARY:{\"verdict\":\"changes_requested\"}\nTrailing"
-    result = pr_cli._parse_review_summary(output)
-    assert result["verdict"] == pr_domains.ReviewVerdict.CHANGES_REQUESTED.value
-
-
-def test_parse_review_summary_missing():
-    assert pr_cli._parse_review_summary("no summary here") is None
-
-
-def test_parse_review_summary_invalid_json():
-    assert pr_cli._parse_review_summary("REVIEW_SUMMARY:{invalid}") is None
+    The declaration is required in full, so a test interested only in `script`
+    would otherwise restate a need it does not care about.
+    """
+    fields = dict(name="probe", help="a probe",
+                  need=registry.Need(registry.REMOTE, update=False, lock=False))
+    fields.update(overrides)
+    return registry.CommandSpec(**fields)
 
 
 # ── _is_pr_target ──────────────────────────────────────────────────────────
@@ -87,165 +76,6 @@ def test_is_pr_target_none():
 
 def test_is_pr_target_empty():
     assert pr_cli._is_pr_target("") is False
-
-
-# ── _COMMANDS registry ────────────────────────────────────────────────────
-
-
-def test_commands_registry_exists():
-    """Registry dict drives all subcommand registration."""
-    assert hasattr(pr_cli, "_COMMANDS")
-    assert isinstance(pr_cli._COMMANDS, dict)
-
-
-def test_commands_registry_has_all_subcommands():
-    # Keep this set in sync with _COMMANDS in ai/bin/pr
-    expected = {"create", "status", "ci", "review", "comments",
-                "fix", "rebase", "describe", "gc"}
-    assert set(pr_cli._COMMANDS.keys()) == expected
-
-
-def test_commands_registry_entries_have_help():
-    for name, entry in pr_cli._COMMANDS.items():
-        assert "help" in entry, f"{name} missing 'help'"
-        assert isinstance(entry["help"], str)
-
-
-def test_commands_with_script_key():
-    """Commands backed by an external script carry a 'script' key."""
-    has_script = {"ci", "review", "comments", "rebase", "describe"}
-    for name in has_script:
-        assert "script" in pr_cli._COMMANDS[name], f"{name} missing 'script'"
-
-
-def test_custom_handlers_are_registered():
-    """_CUSTOM contains the expected non-pure-delegate commands."""
-    expected_custom = {"create", "status", "review", "comments", "fix", "gc"}
-    assert set(pr_cli._CUSTOM.keys()) == expected_custom
-
-
-def test_internal_commands_have_no_script():
-    internal = {"create", "status", "fix", "gc"}
-    for name in internal:
-        assert "script" not in pr_cli._COMMANDS[name], f"{name} should not have 'script'"
-
-
-def test_sub_command_prefix():
-    assert pr_cli._COMMANDS["gc"].get("prefix") is None
-
-
-# ── declared dispatch needs ───────────────────────────────────────────────
-
-
-def test_every_command_declares_a_need():
-    """No command may be silent about depth, fetch, and lock.
-
-    Read through `_need_for` rather than off the entry, because a command whose
-    axes vary by flag declares a callable: the invariant is that a Need can be
-    obtained for any invocation, not that one is stored literally.
-    """
-    for name, entry in pr_cli._COMMANDS.items():
-        assert isinstance(pr_cli._need_for(entry, []), pr_cli.Need), \
-            f"{name} declares no dispatch need"
-
-
-def test_review_declares_a_need_per_invocation():
-    """`review` is the one entry whose declaration its argv resolves. A bare
-    invocation is about to review a PR, so it wants the branch current and it
-    needs `gh` to name the PR.
-
-    `--self` keeps the fetch and the lock — its subject is still the branch's
-    current state, and a `--fix` pass still commits to the worktree — but drops
-    to LOCAL, because a self-review runs before a PR exists and has no PR for
-    `gh` to name.
-    """
-    entry = pr_cli._COMMANDS["review"]
-    assert callable(entry["need"])
-
-    plain = pr_cli._need_for(entry, [])
-    assert plain == pr_cli.Need(pr_cli._REMOTE, update=True, lock=True)
-
-    self_need = pr_cli._need_for(entry, ["--self"])
-    assert self_need == pr_cli.Need(pr_cli._LOCAL, update=True, lock=True)
-    assert (self_need.update, self_need.lock) == (plain.update, plain.lock)
-
-
-@pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])
-def test_a_mode_acting_on_an_existing_review_does_not_fetch(mode):
-    """A mode flag's subject is a review already on disk, at the commit that
-    review describes. Fast-forwarding under it leaves `--summary` and `--post`
-    reporting a review of a commit the worktree no longer sits on, and pushes
-    `--recover` off the SHA it then has to pin a worktree back to. The PR still
-    has to be resolved and the lock still has to be held."""
-    need = pr_cli._need_for(pr_cli._COMMANDS["review"], [mode])
-    assert need == pr_cli.Need(pr_cli._REMOTE, update=False, lock=True)
-
-
-def test_post_beside_fix_is_a_modifier_and_not_a_mode():
-    """`--fix --post` asks to publish what this run produces, not a review on disk.
-
-    Read as a mode it would route to the poster, silently drop the fix pass, and
-    publish a review nobody asked to publish.
-    """
-    assert pr_cli._review_modes(["--fix", "--post"]) == []
-    assert pr_cli._review_modes(["--post"]) == ["--post"]
-
-
-def test_a_fix_run_that_may_publish_still_fetches():
-    """It is about to review and push, so it wants the branch current — the
-    no-fetch rule is for a mode reading a review already on disk."""
-    need = pr_cli._need_for(pr_cli._COMMANDS["review"], ["--fix", "--post"])
-    assert need == pr_cli.Need(pr_cli._REMOTE, update=True, lock=True)
-
-
-def test_a_fix_run_is_not_recorded_as_a_post_invocation():
-    """The trail names what ran; `pr review --post` is a different command."""
-    assert pr_cli._invocation("review", ["--fix", "--post"]) == "pr review"
-    assert pr_cli._invocation("review", ["--post"]) == "pr review --post"
-
-
-def test_a_fix_run_serves_no_post_schema():
-    assert pr_cli._served_schema_versions("review", ["--fix", "--post"]) == ()
-
-
-def test_every_mode_flag_declares_a_need():
-    """The default is a real Need rather than a "take review's" sentinel, so a
-    mode added without thinking about the axes lands on not-fetching — the safe
-    side — instead of on whatever `review` happens to declare."""
-    for flag, mode in pr_cli._REVIEW_MODES.items():
-        assert isinstance(mode.need, pr_cli.Need), flag
-
-
-def test_review_list_resolves_nothing_and_takes_no_lock():
-    """The listing answers from the reviews root, so it owes no target."""
-    need = pr_cli._need_for(pr_cli._COMMANDS["review"], ["--list"])
-    assert need == pr_cli.Need(pr_cli._NONE, update=False, lock=False)
-
-
-def test_a_resolver_returning_a_non_need_is_rejected():
-    """A callable declaration is checked by resolving it, not by trusting it."""
-    with pytest.raises(RuntimeError, match="listing"):
-        pr_cli._validate_needs(
-            {"listing": {"help": "list reviews", "need": lambda argv: True}},
-        )
-
-
-def test_a_command_without_a_need_is_rejected():
-    """The check that replaced the two opt-out sets. Forgetting used to be
-    silent — the command simply got whatever not being listed meant."""
-    with pytest.raises(RuntimeError, match="listing"):
-        pr_cli._validate_needs({"listing": {"help": "list reviews"}})
-
-
-def test_a_need_of_the_wrong_shape_is_rejected():
-    """A registry entry carrying anything but a Need is undeclared too — the
-    axes have to be readable off the declaration, not guessed from a truthy."""
-    with pytest.raises(RuntimeError, match="listing"):
-        pr_cli._validate_needs({"listing": {"help": "list reviews", "need": True}})
-
-
-def test_the_real_registry_passes_its_own_check():
-    pr_cli._validate_needs(pr_cli._COMMANDS)
 
 
 # ── help passthrough ─────────────────────────────────────────────────────
@@ -328,7 +158,7 @@ def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
 def test_run_delegate_builds_command(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx()
-    entry = {"script": "ci-check", "help": "x"}
+    entry = _spec(script="ci-check")
     pr_cli._run_delegate(entry, ["--run", "99"], ctx)
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/ci-check")
@@ -339,21 +169,10 @@ def test_run_delegate_builds_command(mock_run):
 
 
 @patch("pr_cli.subprocess.run")
-def test_run_delegate_includes_prefix(mock_run):
-    mock_run.return_value = MagicMock(returncode=0)
-    ctx = make_ctx()
-    entry = {"script": "claude-review", "prefix": ["gc"], "help": "x"}
-    pr_cli._run_delegate(entry, [], ctx)
-    cmd = mock_run.call_args[0][0]
-    assert cmd[0].endswith("/claude-review")
-    assert cmd[1] == "gc"
-
-
-@patch("pr_cli.subprocess.run")
 def test_run_delegate_passes_argv_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx()
-    entry = {"script": "pr-rebase", "help": "x"}
+    entry = _spec(script="pr-rebase")
     pr_cli._run_delegate(entry, ["--fix", "--push", "--unknown-future-flag"], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--fix" in cmd
@@ -365,7 +184,7 @@ def test_run_delegate_passes_argv_through(mock_run):
 def test_run_delegate_returns_exit_code(mock_run):
     mock_run.return_value = MagicMock(returncode=3)
     ctx = make_ctx()
-    entry = {"script": "pr-rebase", "help": "x"}
+    entry = _spec(script="pr-rebase")
     rc = pr_cli._run_delegate(entry, [], ctx)
     assert rc == 3
 
@@ -551,7 +370,7 @@ def test_run_delegate_forwards_only_original_pr(mock_run):
     """When the user provided --pr, only --pr is forwarded (not --branch)."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=99)
-    entry = {"script": "review-threads", "help": "x"}
+    entry = _spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx, original_pr="99")
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
@@ -564,7 +383,7 @@ def test_run_delegate_prefers_pr_over_original_branch(mock_run):
     """When the user provided --branch but a PR was resolved, forward --pr."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=99)
-    entry = {"script": "review-threads", "help": "x"}
+    entry = _spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
@@ -577,7 +396,7 @@ def test_run_delegate_falls_back_to_original_branch_without_pr(mock_run):
     """When the user provided --branch and no PR was resolved, forward --branch."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=None)
-    entry = {"script": "review-threads", "help": "x"}
+    entry = _spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
     cmd = mock_run.call_args[0][0]
     assert "--branch" in cmd
@@ -590,7 +409,7 @@ def test_run_delegate_auto_detected_forwards_pr(mock_run):
     """When neither flag was given and ctx has a PR, forward --pr (not --branch)."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=99)
-    entry = {"script": "review-threads", "help": "x"}
+    entry = _spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
@@ -603,7 +422,7 @@ def test_run_delegate_auto_detected_no_pr_forwards_branch(mock_run):
     """When neither flag was given and ctx has no PR, forward --branch."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=None)
-    entry = {"script": "review-threads", "help": "x"}
+    entry = _spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--branch" in cmd
@@ -615,7 +434,7 @@ def test_run_delegate_auto_detected_no_pr_forwards_branch(mock_run):
 def test_run_delegate_omits_branch_when_none(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="", pr_number=None)
-    entry = {"script": "ci-check", "help": "x"}
+    entry = _spec(script="ci-check")
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--branch" not in cmd
@@ -698,7 +517,7 @@ def test_cmd_comments_finish_passes_flag(mock_run):
 # ── cmd_review --repair ────────────────────────────────────────────────────
 
 
-@patch("pr_cli.sync_review_domain")
+@patch("cli.review_modes.sync_review_domain")
 @patch("pr_cli.subprocess.run")
 def test_cmd_review_does_not_rewrite_domain_after_delegate(
         mock_run, mock_sync, reviews_dir):
@@ -709,7 +528,7 @@ def test_cmd_review_does_not_rewrite_domain_after_delegate(
     mock_sync.assert_not_called()
 
 
-@patch("pr_cli.sync_review_domain")
+@patch("cli.review_modes.sync_review_domain")
 def test_cmd_review_repair_succeeds_with_review_file(mock_sync, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
@@ -1150,18 +969,18 @@ def test_positional_index_without_arity_matches_the_historical_scan():
 
 
 def test_delegate_value_flags_reads_the_real_delegate():
-    flags = pr_cli._delegate_value_flags(pr_cli._COMMANDS["comments"])
+    flags = pr_cli._delegate_value_flags(registry.COMMANDS["comments"])
     assert {"--reply", "--body-file", "--track"} <= flags
     assert "--triage" not in flags
     assert "--fix" not in flags
 
 
 def test_delegate_value_flags_is_empty_for_an_internal_command():
-    assert pr_cli._delegate_value_flags(pr_cli._COMMANDS["fix"]) == frozenset()
+    assert pr_cli._delegate_value_flags(registry.COMMANDS["fix"]) == frozenset()
 
 
 def test_delegate_value_flags_degrades_when_the_delegate_is_missing():
-    assert pr_cli._delegate_value_flags({"script": "no-such-delegate"}) == frozenset()
+    assert pr_cli._delegate_value_flags(_spec(script="no-such-delegate")) == frozenset()
 
 
 @patch("pr_cli.proc.run")
@@ -1171,14 +990,14 @@ def test_delegate_value_flags_degrades_on_a_hung_delegate(mock_run, capsys):
         returncode=proc.TIMEOUT_RETURNCODE, stdout="",
         stderr="timed out after 5s: ci-check --value-flags",
     )
-    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
     assert "timed out after 5s" in capsys.readouterr().err
 
 
 @patch("pr_cli.proc.run")
 def test_delegate_value_flags_degrades_on_a_nonzero_exit(mock_run):
     mock_run.return_value = proc.CmdResult(returncode=2, stdout="--reply\n", stderr="")
-    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
 
 
 @patch("pr_cli.proc.run")
@@ -1188,7 +1007,7 @@ def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
         returncode=2, stdout="",
         stderr="ci-check: --value-flags: --track declares nargs='+'\n",
     )
-    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
     err = capsys.readouterr().err
     assert "ci-check --value-flags" in err
     assert "--track declares nargs='+'" in err
@@ -1197,13 +1016,13 @@ def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
 @patch("pr_cli.proc.run")
 def test_delegate_value_flags_stays_quiet_when_the_probe_says_nothing(mock_run, capsys):
     mock_run.return_value = proc.CmdResult(returncode=2, stdout="", stderr="  \n")
-    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
     assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize(
     "command",
-    sorted(name for name, entry in pr_cli._COMMANDS.items() if entry.get("script")),
+    sorted(name for name, spec in registry.COMMANDS.items() if spec.script),
 )
 def test_every_delegate_answers_the_probe(command):
     """CI gate for the arity protocol: a flag it cannot describe fails here first.
@@ -1212,7 +1031,7 @@ def test_every_delegate_answers_the_probe(command):
     ambiguous form of the command, so this asserts the whole registry up front —
     adding an unsupported nargs to any delegate breaks the build, not a user.
     """
-    script = str(BIN_DIR / pr_cli._COMMANDS[command]["script"])
+    script = str(BIN_DIR / registry.COMMANDS[command].script)
     probe = _REAL_SUBPROCESS_RUN(
         [script, pr_cli.VALUE_FLAGS_FLAG],
         capture_output=True, text=True, timeout=timeouts.QUICK,
@@ -1378,24 +1197,19 @@ def test_create_still_forwards_valueless_flags(mock_resolve, mock_run):
     assert _forwarded_args(mock_run) == ["--no-issue", "--draft"]
 
 
-def test_no_target_commands_are_registered_commands():
-    """The set names commands, so a rename cannot leave a stale entry behind."""
-    assert pr_cli._NO_TARGET_COMMANDS <= set(pr_cli._COMMANDS)
-
-
-# The commands whose scan is arity-blind by construction: no "script", so
+# The commands whose scan is arity-blind by construction: no script, so
 # _delegate_value_flags has no parser to probe, and not excused from the scan by
-# _NO_TARGET_COMMANDS. Derived from the registry so a new one is covered on the
+# `takes_target=False`. Derived from the registry so a new one is covered on the
 # commit that adds it.
 _ARITY_BLIND_COMMANDS = sorted(
-    name for name, entry in pr_cli._COMMANDS.items()
-    if "script" not in entry and name not in pr_cli._NO_TARGET_COMMANDS
+    name for name, spec in registry.COMMANDS.items()
+    if spec.script is None and spec.takes_target
 )
 
 
 @pytest.mark.parametrize("command", _ARITY_BLIND_COMMANDS)
 def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
-    """The guard on _NO_TARGET_COMMANDS being a hand-maintained list.
+    """The guard on `takes_target` being declared by hand.
 
     A command with no delegate has no parser for _delegate_value_flags to probe,
     so its positional scan degrades to "first bare token wins" — exactly what ate
@@ -1411,9 +1225,9 @@ def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
     assert not offenders, (
         f"pr {command} declares value-taking options ({', '.join(offenders)}), but "
         f"{command} has no delegate to read arity from — the value would be classified "
-        f"as the command's target and dropped from the forwarded argv. Either add "
-        f"{command} to _NO_TARGET_COMMANDS if it takes no positional target, or give it "
-        f"a 'script' entry whose parser answers {pr_cli.VALUE_FLAGS_FLAG}."
+        f"as the command's target and dropped from the forwarded argv. Either give "
+        f"{command} takes_target=False if it takes no positional target, or give it "
+        f"a script whose parser answers {pr_cli.VALUE_FLAGS_FLAG}."
     )
 
 
@@ -1714,7 +1528,7 @@ def test_axis_tables_cover_every_command():
     """A new command has to answer all three axes, here as well as in the
     registry — otherwise it ships untested on the axis nobody thought about."""
     for table in (_RESOLVES_LOCALLY, _FETCHES, _LOCKS):
-        assert set(table) == set(pr_cli._COMMANDS)
+        assert set(table) == set(registry.COMMANDS)
 
 
 @pytest.mark.parametrize("command", sorted(_RESOLVES_LOCALLY))
@@ -1883,9 +1697,9 @@ def test_only_the_listing_is_exempt_from_the_trail():
     """The trail is unconditional apart from one hole, and the hole is declared
     by the same three axes as everything else — no command carries a trail
     opt-out of its own for someone to add themselves to."""
-    for name, entry in pr_cli._COMMANDS.items():
-        assert pr_cli._need_for(entry, []).records_a_trail, name
-    listing = pr_cli._need_for(pr_cli._COMMANDS["review"], ["--list"])
+    for name, spec in registry.COMMANDS.items():
+        assert registry.need_for(spec, []).records_a_trail, name
+    listing = registry.need_for(registry.COMMANDS["review"], ["--list"])
     assert not listing.records_a_trail
 
 

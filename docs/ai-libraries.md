@@ -4582,6 +4582,30 @@ Usage:
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
   pr-rebase --repo-dir <path>         # specify worktree directory
 
+### cli/registry.py
+
+Every `pr` subcommand, and the whole of what dispatch needs to know about it.
+
+One spec per subcommand, and the spec is the whole declaration: the help line,
+the backing script, what the invocation needs resolved before its handler runs,
+and whether a bare token in its argv can name a target. Four tables in
+`ai/bin/pr` said those things separately — `_COMMANDS`, `_CUSTOM`,
+`_NO_TARGET_COMMANDS` and the mode table — and `_validate_needs` was the only
+one of them with a check.
+
+Written as a tuple and keyed afterwards, like `agent.registry`: a literal keyed
+by hand spells every subcommand name twice and can drift between the two
+spellings. **The tuple's order is the display order** — `pr --help`, the
+subparsers and the MCP `command` enum all read it in sequence — so reordering
+it is a user-visible change, not a cosmetic one.
+
+No handler field yet. Six of the nine run functions defined inside `ai/bin/pr`,
+which is not an importable module, so a handler here would resolve for the five
+delegates and lie for the other four. It lands with the dispatch that reads it
+(#909 T7 commit 4), where the contract it has to name — how a resolved context
+and a target flag reach an in-process callable — is decided rather than
+guessed.
+
 ### cli/review_modes.py
 
 `pr review`'s mutually-exclusive mode flags, and what each one does.

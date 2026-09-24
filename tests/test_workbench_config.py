@@ -786,7 +786,6 @@ def test_a_global_only_key_is_refused_at_container_scope(roots, container):
     assert not (container / wc.PROJECT_CONFIG_NAME).exists()
 
 
-# passes-at-base: the global write already worked, and this pins that adding a scope check left it alone
 def test_a_global_only_key_is_written_at_global_scope(roots):
     wcw.set_value(wc.WIKI_ROOT_KEY, "/home/someone/vault")
     assert wc.load_config().wiki.root == "/home/someone/vault"
@@ -825,6 +824,7 @@ def test_a_key_that_declares_nothing_is_writable_at_every_scope(roots, container
     assert (container / wc.PROJECT_CONFIG_NAME).exists()
 
 
+# passes-at-base: a misspelled key was already refused, and this pins that the scope check did not get in front of that
 def test_the_key_check_still_runs_before_the_scope_check(roots):
     """A misspelling is a misspelling, wherever it was going to be written."""
     _, project = roots

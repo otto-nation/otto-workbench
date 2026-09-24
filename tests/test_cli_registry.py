@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import command_spec
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -24,14 +26,6 @@ from cli import registry  # noqa: E402
 from cli.needs import LOCAL, NONE, REMOTE, Need  # noqa: E402
 from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
 from core import timeouts, tool_parser  # noqa: E402
-
-
-def _spec(**overrides) -> CommandSpec:
-    """A throwaway spec, for a test about one field."""
-    fields = dict(name="probe", help="a probe",
-                  need=Need(REMOTE, update=False, lock=False))
-    fields.update(overrides)
-    return CommandSpec(**fields)
 
 
 # ── what the registry declares ────────────────────────────────────────────
@@ -218,7 +212,7 @@ def test_a_spec_cannot_be_built_without_a_need():
 def test_a_resolver_returning_a_non_need_is_rejected():
     """A callable declaration is checked by resolving it, not by trusting it."""
     with pytest.raises(RuntimeError, match="listing"):
-        validate_needs({"listing": _spec(name="listing",
+        validate_needs({"listing": command_spec(name="listing",
                                          need=lambda argv: True)})
 
 
@@ -226,7 +220,7 @@ def test_a_need_of_the_wrong_shape_is_rejected():
     """A spec carrying anything but a Need is undeclared too — the axes have to
     be readable off the declaration, not guessed from a truthy."""
     with pytest.raises(RuntimeError, match="listing"):
-        validate_needs({"listing": _spec(name="listing", need=True)})
+        validate_needs({"listing": command_spec(name="listing", need=True)})
 
 
 def test_the_real_registry_passes_its_own_check():

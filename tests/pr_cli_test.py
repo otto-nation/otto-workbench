@@ -13,8 +13,8 @@ import pytest
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import assert_no_worktree_exit, load_script, make_ctx, seed_review
-from test_cli_registry import _spec
+from conftest import (assert_no_worktree_exit, command_spec, load_script,
+                      make_ctx, seed_review)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
@@ -147,7 +147,7 @@ def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
 def test_run_delegate_builds_command(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx()
-    entry = _spec(script="ci-check")
+    entry = command_spec(script="ci-check")
     pr_cli._run_delegate(entry, ["--run", "99"], ctx)
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/ci-check")
@@ -161,7 +161,7 @@ def test_run_delegate_builds_command(mock_run):
 def test_run_delegate_passes_argv_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx()
-    entry = _spec(script="pr-rebase")
+    entry = command_spec(script="pr-rebase")
     pr_cli._run_delegate(entry, ["--fix", "--push", "--unknown-future-flag"], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--fix" in cmd
@@ -173,7 +173,7 @@ def test_run_delegate_passes_argv_through(mock_run):
 def test_run_delegate_returns_exit_code(mock_run):
     mock_run.return_value = MagicMock(returncode=3)
     ctx = make_ctx()
-    entry = _spec(script="pr-rebase")
+    entry = command_spec(script="pr-rebase")
     rc = pr_cli._run_delegate(entry, [], ctx)
     assert rc == 3
 
@@ -359,7 +359,7 @@ def test_run_delegate_forwards_only_original_pr(mock_run):
     """When the user provided --pr, only --pr is forwarded (not --branch)."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=99)
-    entry = _spec(script="review-threads")
+    entry = command_spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx, original_pr="99")
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
@@ -372,7 +372,7 @@ def test_run_delegate_prefers_pr_over_original_branch(mock_run):
     """When the user provided --branch but a PR was resolved, forward --pr."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=99)
-    entry = _spec(script="review-threads")
+    entry = command_spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
@@ -385,7 +385,7 @@ def test_run_delegate_falls_back_to_original_branch_without_pr(mock_run):
     """When the user provided --branch and no PR was resolved, forward --branch."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=None)
-    entry = _spec(script="review-threads")
+    entry = command_spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
     cmd = mock_run.call_args[0][0]
     assert "--branch" in cmd
@@ -398,7 +398,7 @@ def test_run_delegate_auto_detected_forwards_pr(mock_run):
     """When neither flag was given and ctx has a PR, forward --pr (not --branch)."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=99)
-    entry = _spec(script="review-threads")
+    entry = command_spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
@@ -411,7 +411,7 @@ def test_run_delegate_auto_detected_no_pr_forwards_branch(mock_run):
     """When neither flag was given and ctx has no PR, forward --branch."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="feat/my-feature", pr_number=None)
-    entry = _spec(script="review-threads")
+    entry = command_spec(script="review-threads")
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--branch" in cmd
@@ -423,7 +423,7 @@ def test_run_delegate_auto_detected_no_pr_forwards_branch(mock_run):
 def test_run_delegate_omits_branch_when_none(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx(branch="", pr_number=None)
-    entry = _spec(script="ci-check")
+    entry = command_spec(script="ci-check")
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--branch" not in cmd
@@ -969,7 +969,7 @@ def test_delegate_value_flags_is_empty_for_an_internal_command():
 
 
 def test_delegate_value_flags_degrades_when_the_delegate_is_missing():
-    assert pr_cli._delegate_value_flags(_spec(script="no-such-delegate")) == frozenset()
+    assert pr_cli._delegate_value_flags(command_spec(script="no-such-delegate")) == frozenset()
 
 
 @patch("pr_cli.proc.run")
@@ -979,14 +979,14 @@ def test_delegate_value_flags_degrades_on_a_hung_delegate(mock_run, capsys):
         returncode=proc.TIMEOUT_RETURNCODE, stdout="",
         stderr="timed out after 5s: ci-check --value-flags",
     )
-    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
+    assert pr_cli._delegate_value_flags(command_spec(script="ci-check")) == frozenset()
     assert "timed out after 5s" in capsys.readouterr().err
 
 
 @patch("pr_cli.proc.run")
 def test_delegate_value_flags_degrades_on_a_nonzero_exit(mock_run):
     mock_run.return_value = proc.CmdResult(returncode=2, stdout="--reply\n", stderr="")
-    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
+    assert pr_cli._delegate_value_flags(command_spec(script="ci-check")) == frozenset()
 
 
 @patch("pr_cli.proc.run")
@@ -996,7 +996,7 @@ def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
         returncode=2, stdout="",
         stderr="ci-check: --value-flags: --track declares nargs='+'\n",
     )
-    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
+    assert pr_cli._delegate_value_flags(command_spec(script="ci-check")) == frozenset()
     err = capsys.readouterr().err
     assert "ci-check --value-flags" in err
     assert "--track declares nargs='+'" in err
@@ -1005,7 +1005,7 @@ def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
 @patch("pr_cli.proc.run")
 def test_delegate_value_flags_stays_quiet_when_the_probe_says_nothing(mock_run, capsys):
     mock_run.return_value = proc.CmdResult(returncode=2, stdout="", stderr="  \n")
-    assert pr_cli._delegate_value_flags(_spec(script="ci-check")) == frozenset()
+    assert pr_cli._delegate_value_flags(command_spec(script="ci-check")) == frozenset()
     assert capsys.readouterr().err == ""
 
 

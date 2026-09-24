@@ -1367,3 +1367,23 @@ def assert_no_worktree_exit(capsys, branch, fn, *args, **kwargs):
     assert f"No worktree for {branch!r}" in err
     assert f"wt switch {branch}" in err
     assert "--repo-dir" in err
+
+
+def command_spec(**overrides):
+    """A throwaway `cli.registry.CommandSpec`, for a test about one field.
+
+    Here rather than in either suite that wants one: `CommandSpec` requires its
+    declaration in full, so a test interested only in `script` would otherwise
+    restate a need it does not care about — and both `pr_cli_test.py` and
+    `test_cli_registry.py` need that same throwaway. Shared from conftest, not
+    imported across test modules, so neither suite owns the other's helper.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from cli.needs import REMOTE, Need
+    from cli.registry import CommandSpec
+
+    fields = dict(name="probe", help="a probe",
+                  need=Need(REMOTE, update=False, lock=False))
+    fields.update(overrides)
+    return CommandSpec(**fields)

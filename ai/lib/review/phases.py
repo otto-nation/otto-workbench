@@ -572,6 +572,7 @@ def _drain_parallel_batch(
             fut, i, grp, job, group_count, unstarted,
             failed_groups, consecutive, last, abort_msg,
         )
+        unstarted -= 1
     if not abort_msg:
         return next_index, consecutive, last, abort_msg
     skipped_at = _skip_unstarted(groups, next_index, abort_msg, failed_groups)

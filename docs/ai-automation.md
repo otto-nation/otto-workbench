@@ -53,7 +53,7 @@ This creates `~/.config/task/taskfile.env` with:
 |-------|-------------|
 | changelog | Generate categorized release notes and changelogs from git history. Used by task automation. |
 | ci-cd | Generate commit messages and pull request descriptions from git context. Used by task automation. |
-| debugger | Systematic code-level bug diagnosis. Read-only — traces through source code to find root causes. Never modifies anything. |
+| debugger | Systematic code-level bug diagnosis. Read-only — traces through source code to find root causes. Never modifies anything. Dispatch when a bug needs a diagnosis before anyone changes code. Not for a session that will implement the fix: that is superpowers:systematic-debugging, whose last phase implements, and loading both is duplicated process rather than escalation. |
 | explain | Fast text-in/text-out explainer. Answers questions from provided input without exploring files or suggesting edits. |
 | incident | Structured production incident investigation. Read-only triage — gathers symptoms, checks recent changes, forms ranked hypotheses. Never modifies anything. |
 | migrate | Analyze codebases for migration tasks and produce phased upgrade plans. Read-only — plans changes but does not apply them. |

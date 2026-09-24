@@ -24,6 +24,7 @@ if str(LIB_DIR) not in sys.path:
 
 from gh import budget  # noqa: E402
 from gh import client as gh_client  # noqa: E402
+from gh import pr_reads  # noqa: E402
 from core import proc  # noqa: E402
 from core import timeouts  # noqa: E402
 from core.proc import CmdResult  # noqa: E402
@@ -428,6 +429,25 @@ def test_graphql_sends_a_falsy_variable_that_is_not_none(stub_gh):
     assert "-F pr=0" in said
     assert "-F draft=False" in said
     assert "-F q=" in said
+
+
+def test_a_first_page_read_sends_no_cursor_to_gh(stub_gh):
+    """The paging callers now depend on the helper, so test through them.
+
+    `_threads_page` used to carry its own `if cursor:` guard and dropped it
+    once the helper omitted None centrally. Every test above this one asserts
+    on `graphql()` directly, and `test_pr_data.py` patches `gh.client.graphql`
+    outright — so with the helper's omission removed, the real first-page read
+    would send `endCursor=None` to gh and nothing would fail. This is the one
+    test that watches the argv a paging caller actually produces.
+    """
+    calls = stub_gh("echo '{\"data\": {\"repository\": {\"pullRequest\": null}}}'")
+    pr_reads.fetch_review_threads("owner/repo", 7)
+    said = calls.read_text()
+    # The query text declares $endCursor either way, so assert on the fields
+    # gh was handed, not on the whole command line.
+    assert "-F endCursor=" not in said
+    assert "-F owner=owner" in said
 
 
 # ── Reads ───────────────────────────────────────────────────────────────────

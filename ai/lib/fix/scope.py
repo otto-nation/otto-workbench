@@ -78,59 +78,145 @@ def _drop_scratch(paths: set[str], wt_path: str | Path) -> set[str]:
     return paths - scratch
 
 
-def _colocated_tests(sources: set[str]) -> set[str]:
-    """Test files sitting next to `sources`, named for them.
+# Directories a repo keeps its tests in, when they do not sit beside the
+# source. Checked as a leading path component so `tests/` and `ai/tests/`
+# both count and a source file named `tests.py` does not.
+_TEST_DIRS = ("tests", "test", "spec")
 
-    Same directory, stem-matched: `foo.py` admits `foo_test.py`,
-    `test_foo.py`, and `foo.test.py` with the source's own suffix. A
-    test in a different directory is a caller-or-suite edit, which is
-    the intended leave-behind.
+
+def _stem_names(path: Path) -> tuple[str, ...]:
+    """The test filenames that would be named for `path`'s stem."""
+    stem, suffix = path.stem, path.suffix
+    return (
+        f"test_{stem}{suffix}", f"{stem}_test{suffix}", f"{stem}.test{suffix}",
+    )
+
+
+def _in_test_dir(path: Path) -> bool:
+    return any(part in _TEST_DIRS for part in path.parts[:-1])
+
+
+def _colocated_tests(sources: set[str]) -> set[str]:
+    """Test files named for `sources`, beside them or under a test root.
+
+    Two conventions, because a repo picks one and the fix template asks every
+    pass for a regression test either way. A test beside its source
+    (`foo.py` admits `foo_test.py`, `test_foo.py`, `foo.test.py`) is matched by
+    exact path. A repo that keeps tests in a top-level `tests/` instead is
+    matched by name: this repo has 189 such files and none colocated, so
+    requiring the same directory would drop the very test the pass was told to
+    write.
+
+    Only the stem has to match, so an unrelated suite the agent edited in
+    passing is still the intended leave-behind.
     """
-    # ceiling: only same-directory stem-matched tests count as
-    # colocated, so a new tests/foo_test.py for ai/lib/foo.py is left
-    # uncommitted. Upgrade trigger: if a pass is observed leaving a
-    # tests/ file that is the suite for an in-branch module.
     tests: set[str] = set()
     for source in sources:
         path = Path(source)
-        stem = path.stem
-        suffix = path.suffix
-        parent = path.parent
-        for name in (f"test_{stem}{suffix}", f"{stem}_test{suffix}",
-                     f"{stem}.test{suffix}"):
-            tests.add(str(parent / name))
+        for name in _stem_names(path):
+            tests.add(str(path.parent / name))
     return tests
+
+
+def _is_test_for(path: str, sources: set[str]) -> bool:
+    """Whether `path` is a test under a test root named for one of `sources`.
+
+    The directory-independent half of `_colocated_tests`: a path anywhere
+    under a `tests/`-style root whose filename is the test name for an
+    in-branch source. `tests/foo_test.py` and `tests/unit/foo_test.py` both
+    answer for `ai/lib/foo.py`.
+    """
+    candidate = Path(path)
+    if not _in_test_dir(candidate):
+        return False
+    return any(
+        candidate.name in _stem_names(Path(source)) for source in sources
+    )
 
 
 def commit_allowed(
     branch_files: set[str] | frozenset[str],
     anchors: set[str] | frozenset[str],
 ) -> set[str]:
-    """Paths a fix pass may commit: branch ∪ anchors ∪ colocated tests."""
+    """Paths a fix pass may commit: branch ∪ anchors ∪ colocated tests.
+
+    The exact-path half. A test under a `tests/` root is named for its source
+    rather than sitting beside it, so it cannot be enumerated here and is
+    admitted by `drop_outside` instead — which needs the sources to compare
+    against, not just the paths they expand to.
+    """
     sources = {p for p in set(branch_files) | set(anchors) if p}
     return sources | _colocated_tests(sources)
 
 
 def drop_outside(
     paths: set[str], allowed: set[str], wt_path: str | Path,
+    sources: set[str] | frozenset[str] = frozenset(),
 ) -> set[str]:
     """`paths` without those outside `allowed`.
 
-    `allowed` is the set `commit_allowed` builds. Dropped paths stay in
-    the worktree. Reported, never silent — the same contract as
-    `_drop_scratch`, for the same reason: a silent drop is a fix the
-    operator cannot find.
+    `allowed` is the set `commit_allowed` builds. `sources` is what that set
+    was built from, and admits a test named for one of them under a `tests/`
+    root — the convention this repo uses for all 189 of its Python tests, and
+    one no fixed path list can enumerate because the test is new.
+
+    Dropped paths stay in the worktree. Reported, never silent — the same
+    contract as `_drop_scratch`, for the same reason: a silent drop is a fix
+    the operator cannot find.
     """
-    outside = {p for p in paths if p not in allowed}
+    outside = {
+        p for p in paths
+        if p not in allowed and not _is_test_for(p, set(sources))
+    }
     if outside:
         log.warn(
             f"not committing {len(outside)} file(s) outside this branch in "
             f"{wt_path}: {', '.join(sorted(outside))}. A path outside the "
-            f"branch, the finding anchors, and their colocated tests is left "
+            f"branch, the finding anchors, and their tests is left "
             f"in the worktree. Remove them, or move the work onto its own "
             f"branch."
         )
     return paths - outside
+
+
+def rename_partners(
+    dropped: set[str], kept: set[str], wt_path: str | Path,
+) -> set[str]:
+    """The dropped paths that are the other half of a kept path's rename.
+
+    A rename reaches the snapshot as two independent names, and only one of
+    them can be on a branch file list fixed before the agent ran. Dropping the
+    destination while committing the source's deletion leaves a tree that does
+    not build, so the pair is readmitted together.
+
+    Asks git rather than guessing from names: `-M` is the similarity index,
+    which is what distinguishes a rename from a coincidental delete-and-add.
+    A failed read readmits nothing — the pass then commits the half it was
+    always going to and reports the rest, which is the existing outcome rather
+    than a new one.
+    """
+    if not dropped:
+        return set()
+    r = git_client.run(
+        "diff", "HEAD", "-M", "--name-status", "--diff-filter=R",
+        cwd=wt_path,
+    )
+    if not r.ok:
+        log.warn(proc.failure_message(
+            f"Could not check {wt_path} for renames; a renamed file may be "
+            "left half-committed", r,
+        ))
+        return set()
+    partners: set[str] = set()
+    for line in r.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 3:
+            continue
+        _, source, destination = fields
+        pair = {source, destination}
+        if pair & kept:
+            partners |= pair & dropped
+    return partners
 
 
 @dataclass(frozen=True)

@@ -206,12 +206,39 @@ class TestDropOutside:
         )
         assert kept == {"src/foo.py", "src/foo_test.py", "src/test_foo.py"}
 
-    def test_a_test_in_another_directory_is_dropped(self, tmp_path):
-        """`tests/foo_test.py` is a suite edit, not a colocated one."""
+    def test_a_test_under_a_test_root_named_for_the_source_is_kept(
+        self, tmp_path,
+    ):
+        """The convention this repo actually uses for every Python test.
+
+        189 test files live in `tests/` and none beside their source, so a
+        rule that only admits a colocated test drops the regression test the
+        fix template requires of every pass.
+        """
         kept = fix_scope.drop_outside(
             {"tests/foo_test.py"},
-            fix_scope.commit_allowed({"src/foo.py"}, set()),
+            fix_scope.commit_allowed({"ai/lib/foo.py"}, set()),
             tmp_path,
+            {"ai/lib/foo.py"},
+        )
+        assert kept == {"tests/foo_test.py"}
+
+    def test_a_nested_test_root_is_kept(self, tmp_path):
+        kept = fix_scope.drop_outside(
+            {"tests/unit/foo_test.py"},
+            fix_scope.commit_allowed({"ai/lib/foo.py"}, set()),
+            tmp_path,
+            {"ai/lib/foo.py"},
+        )
+        assert kept == {"tests/unit/foo_test.py"}
+
+    def test_an_unrelated_suite_edit_is_still_dropped(self, tmp_path):
+        """Only a test named for an in-branch source is admitted."""
+        kept = fix_scope.drop_outside(
+            {"tests/bar_test.py"},
+            fix_scope.commit_allowed({"ai/lib/foo.py"}, set()),
+            tmp_path,
+            {"ai/lib/foo.py"},
         )
         assert kept == set()
 
@@ -229,3 +256,40 @@ class TestDropOutside:
         )
         assert kept == set()
         assert capsys.readouterr().err == ""
+
+
+class TestRenamePartners:
+    """A rename must not be committed by halves.
+
+    The branch file list is fixed when the PR is collected, so a name the
+    agent invents mid-fix is never on it: the destination reads as out of
+    branch while the source's deletion reads as in it. Committing only the
+    deletion leaves a tree that does not build.
+    """
+
+    def test_a_renamed_destination_rejoins_its_kept_source(self, git_wt):
+        git_out(git_wt, "mv", "src.py", "renamed.py")
+        partners = fix_scope.rename_partners(
+            {"renamed.py"}, {"src.py"}, git_wt,
+        )
+        assert partners == {"renamed.py"}
+
+    def test_an_unrelated_drop_is_not_readmitted(self, git_wt):
+        git_out(git_wt, "mv", "src.py", "renamed.py")
+        (git_wt / "elsewhere.py").write_text("new\n")
+        git_out(git_wt, "add", "-A")
+        partners = fix_scope.rename_partners(
+            {"renamed.py", "elsewhere.py"}, {"src.py"}, git_wt,
+        )
+        assert partners == {"renamed.py"}
+
+    def test_nothing_dropped_asks_git_nothing(self, git_wt):
+        assert fix_scope.rename_partners(set(), {"src.py"}, git_wt) == set()
+
+    def test_a_failed_read_readmits_nothing(self, git_wt):
+        failed = CmdResult(returncode=1, stdout="", stderr="boom")
+        with patch("fix.scope.git_client.run", return_value=failed):
+            partners = fix_scope.rename_partners(
+                {"renamed.py"}, {"src.py"}, git_wt,
+            )
+        assert partners == set()

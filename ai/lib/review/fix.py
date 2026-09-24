@@ -515,14 +515,25 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         A snapshot that failed arrives as None and lands an empty scope, which
         commits nothing — `record` is what then says where the work was left.
 
-        Paths outside the branch, the finding anchors, and their colocated
-        tests are dropped here — the same warn-and-leave contract as
-        `_drop_scratch`, applied after attribution so a file already dirty
-        when the pass started is still never credited.
+        Paths outside the branch, the finding anchors, and their tests are
+        dropped here — the same warn-and-leave contract as `_drop_scratch`,
+        applied after attribution so a file already dirty when the pass
+        started is still never credited.
+
+        A rename is exempt, because dropping half of one is worse than
+        committing the whole: the branch file set is fixed when the PR is
+        collected and cannot contain a name the agent invents mid-fix, so the
+        destination reads as out of branch while the source's deletion reads
+        as in it. Committing only the deletion leaves a tree that does not
+        build and content stranded in the worktree.
         """
         if changed is not None:
-            changed = fix_scope.drop_outside(
-                changed, self._allowed_paths(), self.workdir,
+            sources = self._branch_files() | self._anchor_files()
+            keep = fix_scope.drop_outside(
+                changed, self._allowed_paths(), self.workdir, sources,
+            )
+            changed = keep | fix_scope.rename_partners(
+                changed - keep, keep, self.workdir,
             )
         self.changed = changed
         self.summary = _summary(outcomes, self.findings, changed)

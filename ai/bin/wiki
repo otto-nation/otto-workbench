@@ -439,8 +439,20 @@ def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
     return 0
 
 
-def _init_target(start: Path, args: argparse.Namespace) -> Path | str:
-    """Where `init` should create a base, or the message explaining why it cannot.
+class InitPlacementError(Exception):
+    """`init` cannot tell where the base goes, and says what would settle it.
+
+    An exception rather than a second return type: the alternative is a union of
+    ``Path`` and an error string, and both are path-shaped enough that an
+    ``isinstance`` check between them is one refactor away from treating a
+    message as a directory.
+    """
+
+
+def _init_target(start: Path, args: argparse.Namespace) -> Path:
+    """Where `init` should create a base.
+
+    Raises ``InitPlacementError`` when the placement is not determinable.
 
     The two placements differ in who can read the result: a base in the repo is
     committed and shared with whoever clones it, a base in the vault is private
@@ -459,7 +471,7 @@ def _init_target(start: Path, args: argparse.Namespace) -> Path | str:
     if args.vault:
         entry = vault if vault is not None else vault_entry(default_vault_root(), root)
         if entry is None:
-            return (
+            raise InitPlacementError(
                 "this repo has no origin remote, so it has no name in the vault\n"
                 "  two local repos sharing a name would share one base\n"
                 "  keep it in the repo with --in-repo, or name a directory with --wiki DIR"
@@ -472,7 +484,7 @@ def _init_target(start: Path, args: argparse.Namespace) -> Path | str:
         return (start / configured_dirname(start)).resolve()
     if vault is not None:
         return vault
-    return (
+    raise InitPlacementError(
         "no knowledge base location chosen for this repo\n"
         "  private to this machine:  wiki init --vault\n"
         "  committed with the repo:  wiki init --in-repo\n"
@@ -503,11 +515,11 @@ def _record_vault_root(root: Path) -> str | None:
 
 def cmd_init(start: Path, args: argparse.Namespace) -> int:
     """Create a knowledge base. The one command that runs without one existing."""
-    resolved = _init_target(start, args)
-    if isinstance(resolved, str):
-        print(f"{SCRIPT}: {resolved}", file=sys.stderr)
+    try:
+        target = _init_target(start, args)
+    except InitPlacementError as exc:
+        print(f"{SCRIPT}: {exc}", file=sys.stderr)
         return 2
-    target = resolved
 
     # `--wiki` names one directory outright and is the documented way to keep a
     # second base, so it is not held to the one-base-per-repo guard below.

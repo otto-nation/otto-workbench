@@ -1226,6 +1226,26 @@ _blocked() {
   done
 }
 
+@test "review-guard: a commit reached through a wrapper is refused" {
+  # The recursion that catches these served the git rule too, not only the
+  # write-verb rules removed alongside it — cutting it silently reopened
+  # `bash -c 'git commit'`. A wrapped commit lands outside the engine's scope
+  # as squarely as a bare one.
+  for bad in "bash -c 'git commit -m x'" "eval 'git commit -m x'" \
+             'eval git commit -m x' "sh -c \"sh -c 'git push'\"" \
+             "bash -ce 'git add -A'"; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed: $bad"; false; }
+  done
+  # Rescanned, not refused on sight: a wrapper around a read is still a read,
+  # and a wrapper around a plain filesystem write is not this guard's business.
+  for ok in "bash -c 'pytest tests/'" "eval 'pytest'" \
+            "eval awk 'length > 80' f" "bash -c 'rm -rf x'"; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused: $ok ($output)"; false; }
+  done
+}
+
 @test "review-guard: a read-only git subcommand is allowed" {
   # `\b` after the subcommand made `merge` match `merge-base` — the same
   # hyphen-boundary bug WRITE_COMMANDS warns about. `git merge-base` is how a

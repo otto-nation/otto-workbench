@@ -42,7 +42,7 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { statements } from "../extensions/_shared/statements.ts";
-import { hasUnparsed, tokenize, type Token } from "../extensions/_shared/tokenize.ts";
+import { hasUnparsed, span, tokenize, type Token } from "../extensions/_shared/tokenize.ts";
 
 /**
  * `git` subcommands that move the branch, the index or the worktree.
@@ -267,6 +267,54 @@ export function isScratchPath(path: string): boolean {
 /** Grouping operators that precede a command rather than being one. */
 const GROUPING = new Set(["(", "{"]);
 
+/** Shells whose `-c` argument is a command in its own right. */
+const SHELL_NAMES = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
+
+/**
+ * The command inside `sh -c "..."` or `eval "..."`, or null when there is none.
+ *
+ * Kept when the write-verb rules around it were removed, because the git rule
+ * needs it: `bash -c 'git commit -m x'` and `eval 'git commit -m x'` reach a
+ * commit as squarely as the bare form, and cutting the recursion with the rest
+ * silently reopened them. That is the whole justification — it is not here to
+ * catch `bash -c 'rm -rf x'`, which this guard permits like any other
+ * filesystem write.
+ *
+ * The payload is the token after the flag, already dequoted by the scan.
+ * Reading it from the tokens rather than by re-splitting the raw text is what
+ * makes nesting cost nothing: the regex this replaces stripped one quote pair
+ * off a string it had re-split itself, so `sh -c "sh -c \"git commit\""` came
+ * back as a fragment that matched nothing.
+ */
+function nestedCommand(statement: string): string | null {
+  const tokens = commandTokens(statement);
+  const name = tokens[0]?.value.split("/").pop() ?? "";
+
+  if (name === "eval") {
+    const rest = tokens.slice(1);
+    if (rest.length === 0) return null;
+    // A single quoted word is the whole payload, already dequoted.
+    if (rest.length === 1 && rest[0].quoted) return rest[0].value;
+    // Otherwise sliced from the source, never rejoined from tokens: a join
+    // drops the quotes the scan resolved, so `eval awk 'length > 80' f` came
+    // back as `awk length > 80 f` and its bare `>` read as a redirect to a
+    // file named `80`.
+    return span(statement, rest);
+  }
+
+  if (!SHELL_NAMES.has(name)) return null;
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.quoted || tok.operator || !tok.value.startsWith("-")) break;
+    // `-c`, or `-c` inside a cluster such as `-ce`. A long flag (`--norc`)
+    // carries no payload and is stepped over.
+    if (!tok.value.startsWith("--") && tok.value.includes("c")) {
+      return tokens[i + 1]?.value ?? null;
+    }
+  }
+  return null;
+}
+
 /**
  * The tokens of the command actually being run, env assignments stripped.
  *
@@ -304,13 +352,13 @@ function commandTokens(statement: string): Token[] {
  * the trailing redirect that was the actual match, and the refusal read as
  * though it had blocked the `cd` in front of it.
  */
-export function bypassesTheCommitScope(command: string): string | null {
+export function bypassesTheCommitScope(command: string, depth = 0): string | null {
   // An unbalanced quote means the scan cannot see where the command ends, so
   // both rules below would be reading fragments. Against the whole command,
   // not each statement: `statements()` splits on newlines, so a quoted string
   // spanning two lines arrives already torn into halves that each look
   // unbalanced.
-  if (hasUnparsed(tokenize(command))) {
+  if (depth === 0 && hasUnparsed(tokenize(command))) {
     return `unbalanced quote, so the command cannot be read: ${command.trim()}`;
   }
 
@@ -320,6 +368,16 @@ export function bypassesTheCommitScope(command: string): string | null {
     const subcommand = gitWrite(commandTokens(statement));
     if (subcommand) {
       return `\`git ${subcommand}\` writes: ${statement.trim()}`;
+    }
+
+    // A wrapped command reaches a commit as squarely as a bare one. Rescanned
+    // rather than refused on sight: `bash -c 'pytest'` is an ordinary thing to
+    // run. Depth-limited so a pathological nesting cannot spin — the limit is
+    // about termination, not about a depth an agent is expected to reach.
+    const nested = depth < 4 ? nestedCommand(statement) : null;
+    if (nested) {
+      const reason = bypassesTheCommitScope(nested, depth + 1);
+      if (reason) return `${reason} (inside: ${statement.trim()})`;
     }
 
     // A statement can carry more than one redirect (e.g. `cmd > a.txt 2>b.txt`),

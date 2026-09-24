@@ -314,6 +314,11 @@ class TestMergeSmallestGroups:
         ]
         result = merge_smallest_groups(groups, 8)
         assert all(g.lines <= MAX_GROUP_LINES for g in result)
+        merged = [g for g in result if "+" in g.name][0]
+        assert "docs" in merged.name
+        assert "docz" in merged.name
+        assert "zzz" not in merged.name
+        assert len(result) == 2
 
     # passes-at-base: termination held before and must keep holding — the
     # rewrite moved the exit from a size check to an empty candidate list,

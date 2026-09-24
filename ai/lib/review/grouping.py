@@ -36,7 +36,9 @@ MAX_GROUP_FILES = 15
 # MAX_GROUP_LINES — well under one agent's budget, but above a leftover
 # file or a 30-line directory. A 681-line review that split five ways
 # averaged ~136 lines per group; 150 would still leave a ~160-line
-# remainder its own agent.
+# remainder its own agent. There is no formula pinning 200 over, say, 175
+# or 250 — it is a judgment call from that one observation, not a derived
+# value, and a future revisit is free to move it with new evidence.
 MIN_GROUP_LINES = 200
 HOLISTIC_MIN_GROUPS = 8
 
@@ -193,9 +195,10 @@ def merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
 
     Each round merges the pair sharing the longest name prefix, breaking ties on
     combined size, so a cap is spent on neighbouring directories before it costs
-    an unrelated group its own agent. Floor merges stop rather than produce a
-    group over ``MAX_GROUP_LINES``; the agent-count cap still merges in that
-    case, because too many agents is worse than one slightly large one.
+    an unrelated group its own agent. A floor merge stops when no remaining pair
+    fits under ``MAX_GROUP_LINES`` — not on the first pair that doesn't fit —
+    while the agent-count cap still merges in that case, because too many
+    agents is worse than one slightly large one.
     """
     groups = list(groups)
     while len(groups) > 1:

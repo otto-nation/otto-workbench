@@ -222,7 +222,7 @@ claude-review post <pr_url_or_number>
 | `--json-summary` | Suppress human output; emit JSON summary to stdout | — |
 | `--issue <link>` | Attach an issue link for reviewer context | — |
 | `--base <branch>`, `--onto <branch>` | Branch to review against, as a bare name — see "Which base a review measures against" below | derived |
-| `--max-parallel <N>` | Max concurrent group reviews | `4` |
+| `--max-parallel <N>` | Max concurrent group reviews | `1` |
 | `--max-cost <USD>` | Max total review cost in USD | `20` |
 | `--model <name>` | Override model for all agents (e.g., `sonnet`, `opus`) | — |
 | `--repo-dir <path>` | Path to local repo or worktree (aliases: `--repo`, `--worktree`) | auto-detected |

@@ -27,11 +27,11 @@ tool is worth reaching for instead of growing this one.
 from __future__ import annotations
 
 import hashlib
-import os
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core import serde
 from core import workbench_paths
 
 from .paths import BACKUPS_DIRNAME, is_wiki
@@ -135,7 +135,7 @@ def snapshot(root: Path, keep: int = KEEP_DEFAULT, now: datetime | None = None) 
     try:
         with tarfile.open(partial, "w:gz") as archive:
             archive.add(root, arcname=root.name)
-        os.replace(partial, target)
+        serde.replace_file(partial, target)
     finally:
         partial.unlink(missing_ok=True)
 

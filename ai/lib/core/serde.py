@@ -144,6 +144,21 @@ def load_file(cls, path: Path):
         return None
 
 
+def replace_file(tmp: Path, path: Path) -> None:
+    """Move a fully-written temp file onto *path*, atomically.
+
+    The single owner of the rename half of write-temp-then-rename, so that the
+    dance has one implementation however the temp file was produced. ``os.replace``
+    appears here and nowhere else in ``ai/`` — ``serde_test`` fails on a second
+    copy — because the four hand-rolled versions this replaced had already drifted
+    into one that was not atomic at all.
+
+    Callers that write JSON want ``write_json`` instead; this is for the ones
+    producing something else, like an archive.
+    """
+    os.replace(tmp, path)
+
+
 def write_json(path: Path, data) -> None:
     """Write `data` to `path` as JSON, atomically, creating parent directories.
 
@@ -179,7 +194,7 @@ def write_json(path: Path, data) -> None:
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
-        os.replace(tmp, path)
+        replace_file(Path(tmp), path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise

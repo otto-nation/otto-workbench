@@ -6,7 +6,6 @@ importable, which is the point of the move: what a command needs, what backs
 it, and whether it takes a target are all readable without executing anything.
 """
 
-import importlib.util
 import subprocess
 import sys
 import textwrap
@@ -14,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import command_spec
+from conftest import command_spec, exec_fresh
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
@@ -227,13 +226,17 @@ def test_the_real_registry_passes_its_own_check():
     validate_needs(COMMANDS)
 
 
-def test_the_check_runs_at_this_module_s_import():
+def test_the_check_runs_at_this_module_s_import(tmp_path):
     """A consumer that imports COMMANDS without running `pr` still gets a
     checked registry — which is what commit 6's MCP discovery will be.
 
-    Driven by importing a copy of the module with an undeclared command spliced
+    Driven by executing a copy of the module with an undeclared command spliced
     in, rather than by reading the source for the call: the question is whether
     a bad registry can survive an import, and only an import answers it.
+
+    Through `exec_fresh`, which conftest owns — it is the "throwaway copy, for a
+    test about import time" case by construction, and building the module here
+    would be the second executor `validate-script-loading` forbids.
     """
     source = (LIB_DIR / "cli" / "registry.py").read_text()
     broken = source.replace(
@@ -245,10 +248,10 @@ def test_the_check_runs_at_this_module_s_import():
     )
     assert broken != source, "the registry no longer keys _SPECS as expected"
 
-    spec = importlib.util.spec_from_loader("_registry_probe", loader=None)
-    module = importlib.util.module_from_spec(spec)
+    copy = tmp_path / "registry_probe.py"
+    copy.write_text(broken)
     with pytest.raises(RuntimeError, match="listing"):
-        exec(compile(broken, "registry.py", "exec"), module.__dict__)
+        exec_fresh("registry_probe", copy)
 
 
 # ── the entry point stays cheap ───────────────────────────────────────────

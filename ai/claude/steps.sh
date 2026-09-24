@@ -290,6 +290,20 @@ _claude_mirror_env() {
 # The committed template carries handwritten permissions only; registry-derived
 # ones are collected here, so the live file is where the two halves meet.
 step_claude_settings() {
+  # One registry scan for the whole step. Two collectors run below —
+  # collect_registry_permissions here and collect_claude_env_vars inside
+  # _claude_mirror_env — and each re-scans on its own, so the yq parse of every
+  # registry ran twice per sync and the second threw away what the first had
+  # cached. Safe because the step only reads the registry tree; see
+  # `reg_scan_hold` in lib/registries.sh for the bound that makes it so.
+  if ! declare -F reg_scan_hold >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    . "$LIB_SRC_DIR/registries.sh"
+  fi
+  reg_scan_hold _step_claude_settings
+}
+
+_step_claude_settings() {
   mkdir -p "$CLAUDE_DIR"
 
   local existing="{}" content

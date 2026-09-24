@@ -163,22 +163,62 @@ function gitWrite(tokens: Token[]): string | null {
  *
  * `g?sed` because GNU sed is `gsed` on macOS and edits in place just the same.
  */
-const FLAG_WRITES: { commands: Set<string>; writes: (flag: string) => boolean }[] = [
+/**
+ * What a matched flag says about where the command writes.
+ *
+ * `destination` is the file named in the flag itself (`-ofile`); `needsNext`
+ * asks the caller for the following word (`-o file`). A flag that writes in
+ * place names no destination and sets neither.
+ */
+interface FlagWrite {
+  destination?: string;
+  needsNext?: boolean;
+}
+
+const FLAG_WRITES: {
+  commands: Set<string>;
+  writes: (flag: string) => FlagWrite | null;
+}[] = [
   {
     commands: new Set(["sed", "gsed", "perl"]),
-    // `-i` alone, in a cluster (`-ni`), with a suffix (`-i.bak`), or spelled out.
-    writes: (flag) =>
-      flag === "--in-place" ||
-      (/^-[a-zA-Z]*i/.test(flag) && !flag.startsWith("--")),
+    // `-i` alone, in a cluster (`-ni`), with a suffix (`-i.bak`), or spelled
+    // out. In-place editing names no destination — it rewrites the operands.
+    writes: (flag) => {
+      if (flag === "--in-place" || flag.startsWith("--in-place=")) return {};
+      if (flag.startsWith("--")) return null;
+      // Trailing `i`, or `i` followed by a backup suffix (`-i.bak`, `-ni.bak`).
+      return /^-[a-zA-Z]*i$/.test(flag) || /^-[a-zA-Z]*i\.[^\s]*$/.test(flag)
+        ? {}
+        : null;
+    },
   },
   {
     commands: new Set(["curl", "wget"]),
-    // The long spellings are not optional extras: `curl --output f` and
-    // `wget --output-document f` write a file and matched nothing before.
-    writes: (flag) =>
-      flag === "--output" || flag === "--output-document" ||
-      flag === "--remote-name" ||
-      (/^-[a-zA-Z]*[oO]/.test(flag) && !flag.startsWith("--")),
+    writes: (flag) => {
+      // The long spellings are not optional extras: `curl --output f` and
+      // `wget --output-document f` write a file and matched nothing before.
+      for (const long of ["--output", "--output-document"]) {
+        if (flag === long) return { needsNext: true };
+        if (flag.startsWith(long + "=")) return { destination: flag.slice(long.length + 1) };
+      }
+      // `-O` and `--remote-name` derive the filename from the URL, so there is
+      // no destination to inspect and no way for it to be scratch.
+      if (flag === "--remote-name") return {};
+      if (flag.startsWith("--")) return null;
+      // The letter must *end* the cluster, so `-o` and `-so` are an output flag
+      // and `-XPOST` is not. Matching the letter anywhere refused `curl -XPOST`
+      // and `curl -XOPTIONS` for containing an `O`, while `-XGET` and `-XPUT`
+      // passed — a refusal that discriminated on nothing but the HTTP verb's
+      // spelling. That is the false-positive class this file exists to remove.
+      if (/^-[a-zA-Z]*[oO]$/.test(flag)) {
+        return flag.endsWith("O") ? {} : { needsNext: true };
+      }
+      // An attached destination, but only where `-o` opens the cluster:
+      // `curl -ofile.txt`. Anything later in a cluster is ambiguous with a
+      // value-taking flag such as `-X`, and guessing is what went wrong above.
+      const attached = /^-o(.+)$/.exec(flag);
+      return attached ? { destination: attached[1] } : null;
+    },
   },
 ];
 
@@ -196,10 +236,12 @@ function flagWrite(tokens: Token[]): string | null {
   if (!rule) return null;
   for (let i = 1; i < tokens.length; i++) {
     const tok = tokens[i];
-    if (tok.quoted || tok.operator || !rule.writes(tok.value)) continue;
-    // An attached destination (`-oFILE`) or the next word, whichever it is.
-    const attached = tok.value.replace(/^-[a-zA-Z]*[oO]/, "");
-    const destination = attached || tokens[i + 1]?.value;
+    if (tok.quoted || tok.operator) continue;
+    const write = rule.writes(tok.value);
+    if (!write) continue;
+    // The flag names its own destination, or takes the following word. A flag
+    // that writes in place names neither, and is a write outright.
+    const destination = write.destination ?? (write.needsNext ? tokens[i + 1]?.value : undefined);
     if (destination && isScratchTarget(destination)) continue;
     return tok.value;
   }
@@ -539,6 +581,22 @@ const SHELL_DASH_C =
   /^(?:sh|bash|zsh|dash|ksh|fish)\s+(?:(?:-[a-zA-Z]*|--[a-zA-Z-]+)\s+)*-[a-zA-Z]*c[a-zA-Z]*\s+(.*)$/s;
 
 /**
+ * The command `eval` was asked to run, or null when there is none.
+ *
+ * A quoted payload is taken dequoted — `eval 'rm -rf x'` runs `rm -rf x` — and
+ * an unquoted one is sliced from the source so its operators survive intact.
+ */
+function evalPayload(statement: string): string | null {
+  const tokens = commandTokens(statement);
+  if (tokens[0]?.value !== "eval") return null;
+  const rest = tokens.slice(1);
+  if (rest.length === 0) return null;
+  // A single quoted word is the whole payload, already dequoted by the scan.
+  if (rest.length === 1 && rest[0].quoted) return rest[0].value;
+  return span(statement, rest);
+}
+
+/**
  * Commands inside `$(...)` or backticks, which run in their own right.
  *
  * `echo $(rm -rf x)` deletes the file however harmless the outer command is,
@@ -577,8 +635,13 @@ function envDashS(tokens: Token[]): string | null {
   for (let i = 1; i < tokens.length; i++) {
     const value = tokens[i].value;
     if (value === "-S" || value === "--split-string") return tokens[i + 1]?.value ?? null;
-    if (value.startsWith("-S")) return value.slice(2);
     if (value.startsWith("--split-string=")) return value.slice("--split-string=".length);
+    if (value.startsWith("--")) continue;
+    // `-S` anywhere in a short cluster, not only at its head: `env -vS 'rm x'`
+    // splits the string just as `env -S` does, and reading only the head left
+    // that silently unscanned.
+    const clustered = /^-([a-zA-Z]*)S(.*)$/.exec(value);
+    if (clustered) return clustered[2] || tokens[i + 1]?.value || null;
   }
   return null;
 }
@@ -665,9 +728,13 @@ export function blockedWriteCommand(command: string, depth = 0): string | null {
     // the `sh -c` shape without the shell: rescanned rather than refused
     // outright, for the same reason — a payload that only reads is still a
     // read. `env -S` is why `-S` is absent from WRAPPER_VALUE_FLAGS.env.
+    // Sliced from the source, never rejoined from tokens: a join reshapes the
+    // payload before it is rescanned, so `eval 'pytest 2>&1'` would arrive as
+    // `pytest 2 > & 1` and its redirect would read as a write to a file named
+    // `1`. Same reason `statements()` slices — see `span` in tokenize.ts.
     const nested = depth < 4
       ? (command_[0]?.value === "eval"
-          ? tokenize(statement).slice(1).map((t) => t.value).join(" ")
+          ? evalPayload(statement)
           : envDashS(tokenize(statement)))
       : null;
     if (nested) {

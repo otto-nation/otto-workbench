@@ -25,11 +25,18 @@
  * the way it loads each detect.ts.
  */
 
-/** The control operators that end one statement and begin the next. */
-const OPERATORS = new Set([";", "&&", "||", "|", "&", "(", ")", "{", "}", ";;"]);
-
 /** Redirect operators, longest first so `>>` is not read as two `>`. */
 const REDIRECTS = [">>", "&>>", "&>", ">|", ">", "<<<", "<<", "<"];
+
+/**
+ * Control operators, longest first so `&&` is not read as two `&`.
+ *
+ * The braces are absent deliberately: a brace is only a group when it stands
+ * as its own word, which `matchOperator` checks separately. There is one list
+ * per operator kind and no third enumerating both — a spare copy is one a
+ * maintainer can edit without the others noticing.
+ */
+const CONTROL = [";;", "&&", "||", ";", "|", "&", "(", ")"];
 
 export interface Token {
   /** The word with its quotes removed, which is what the shell passes along. */
@@ -223,7 +230,7 @@ function matchOperator(line: string, i: number): string | null {
   for (const redirect of REDIRECTS) {
     if (line.startsWith(redirect, i)) return redirect;
   }
-  for (const op of [";;", "&&", "||", ";", "|", "&", "(", ")"]) {
+  for (const op of CONTROL) {
     if (line.startsWith(op, i)) return op;
   }
   // A brace is only a group when it stands as its own word: bash requires the

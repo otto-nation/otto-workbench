@@ -1445,12 +1445,63 @@ _blocked() {
   done
 }
 
+# passes-at-base: braces were not operators at all before this change, so `xargs -I{}` was never split and this held by the absence of the feature; the case exists because adding brace-group detection broke it once, and it fails if the stands-alone check is dropped
 @test "review-guard: a brace is only a group when it stands alone" {
   # Splitting every brace broke `xargs -I{} rm {}`, whose {} is a placeholder:
   # bash requires the spaces in `{ cmd; }`.
   _blocked 'xargs -I{} rm {}'
   [ -n "$output" ]
   _blocked 'xargs -I{} grep {} f'
+  [ -z "$output" ]
+}
+
+@test "review-guard: an output flag is one ending in o, not one containing it" {
+  # /^-[a-zA-Z]*[oO]/ matched the letter anywhere in a cluster, so `curl -XPOST`
+  # and `curl -XOPTIONS` were refused for containing an O while `-XGET` and
+  # `-XPUT` passed — a refusal discriminating on nothing but the HTTP verb's
+  # spelling, which is the false-positive class this file exists to remove.
+  for ok in 'curl -XPOST https://x' 'curl -XOPTIONS https://x' \
+            'curl -XGET https://x' 'curl -XDELETE https://x'; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
+  done
+  # The real output flags still write, in every spelling.
+  for bad in 'curl -o out.bin https://x' 'curl -so out.bin https://x' \
+             'curl -O https://x' 'curl --output f https://x' \
+             'curl --output=f https://x' 'curl -ofile.txt https://x' \
+             'wget -O f https://x' 'wget --output-document f https://x'; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed a write: $bad"; false; }
+  done
+}
+
+@test "review-guard: eval's payload is rescanned without being reshaped" {
+  # The payload was rejoined from tokens with spaces before the recursive scan,
+  # which drops the quotes the scan had already resolved: `awk 'length > 80' f`
+  # came back as `awk length > 80 f`, and the now-bare `>` read as a redirect
+  # to a file named `80`. The same reshaping tokenize.ts's span() exists to
+  # prevent, reintroduced one level down in the recursion.
+  _blocked "eval awk 'length > 80' f"
+  [ -z "$output" ]
+  _blocked "eval grep -rn 'a->b' src/"
+  [ -z "$output" ]
+  # A payload that really writes is still refused, quoted or not.
+  _blocked "eval 'rm -rf x'"
+  [ -n "$output" ]
+  _blocked "eval rm -rf x"
+  [ -n "$output" ]
+  _blocked "eval 'echo a > /etc/x'"
+  [ -n "$output" ]
+}
+
+@test "review-guard: env -S is found anywhere in a short cluster" {
+  # `env -vS 'rm -rf x'` splits the string just as `env -S` does; reading only
+  # the head of the cluster left the payload silently unscanned.
+  _blocked "env -vS 'rm -rf x'"
+  [ -n "$output" ]
+  _blocked "env -S 'rm -f /tmp/x'"
+  [ -n "$output" ]
+  _blocked "env -vS 'pytest tests/'"
   [ -z "$output" ]
 }
 

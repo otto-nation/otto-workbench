@@ -54,9 +54,9 @@ from review import gc as review_gc
 EXIT_BUDGET_EXHAUSTED = 75
 
 
-def _target_flags(ctx: pr_context.ResolvedContext, *,
-                  original_pr: str | None = None,
-                  original_branch: str | None = None) -> list[str]:
+def target_flags(ctx: pr_context.ResolvedContext, *,
+                 original_pr: str | None = None,
+                 original_branch: str | None = None) -> list[str]:
     """The one target flag a child is told to resolve, in priority order.
 
     Shared by every spawn rather than written out at each: a child that
@@ -65,7 +65,9 @@ def _target_flags(ctx: pr_context.ResolvedContext, *,
     run lock exists to prevent. Naming the target is what keeps the two
     agreeing, so there is one owner of what that name is.
 
-    `ai/bin/pr._run_delegate` imports this rather than keeping a second copy.
+    Public rather than underscore-prefixed: `ai/bin/pr._run_delegate` imports
+    this rather than keeping a second copy, so it has two legitimate callers
+    in two modules and the leading underscore stopped describing anything.
     The two spawn sites (the binary's general dispatch, and `cmd_fix` below)
     have to inject the same flags; splitting them into two functions that
     merely look alike would drop the adjacency that was enforcing that.
@@ -90,13 +92,13 @@ def _spawn(script: str, argv: list[str], ctx: pr_context.ResolvedContext, *,
     Still a subprocess. The binary's `_run_delegate` is the one every
     delegating command uses; this copy exists so `cmd_fix` can spawn
     `ci-check` and `pr-describe` without importing the binary. Both inject
-    `--repo-dir` and `_target_flags`. Commit 4c deletes the spawn.
+    `--repo-dir` and `target_flags`. Commit 4c deletes the spawn.
     """
     cmd = [str(bin_dir / script)]
     if ctx.worktree_root:
         cmd += ["--repo-dir", str(ctx.worktree_root)]
-    cmd += _target_flags(ctx, original_pr=original_pr,
-                         original_branch=original_branch)
+    cmd += target_flags(ctx, original_pr=original_pr,
+                        original_branch=original_branch)
     cmd += list(argv)
     return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
 
@@ -143,7 +145,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
         # Named, not left to the child to re-derive: without a target it
         # resolves the worktree's current branch, which is not always the one
         # this run locked, and the two then hold separate locks on one checkout.
-        review_args += _target_flags(
+        review_args += target_flags(
             ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),

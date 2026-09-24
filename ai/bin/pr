@@ -30,11 +30,11 @@ from cli import review_modes
 from cli.needs import Need
 from cli.pr_commands import (
     EXIT_BUDGET_EXHAUSTED,
-    _target_flags,
     cmd_create,
     cmd_fix,
     cmd_gc,
     cmd_status,
+    target_flags,
 )
 from cli.registry import COMMANDS, CommandSpec, need_for
 from pr import context as pr_context
@@ -68,8 +68,8 @@ def _run_delegate(spec: CommandSpec, argv: list[str],
     cmd = [str(BIN_DIR / spec.script)]
     if ctx.worktree_root:
         cmd += ["--repo-dir", str(ctx.worktree_root)]
-    cmd += _target_flags(ctx, original_pr=original_pr,
-                         original_branch=original_branch)
+    cmd += target_flags(ctx, original_pr=original_pr,
+                        original_branch=original_branch)
     cmd += list(argv)
     return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
 

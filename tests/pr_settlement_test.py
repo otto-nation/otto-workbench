@@ -16,7 +16,7 @@ above it.
 import sys
 from unittest.mock import patch
 
-from conftest import REPO_ROOT
+from conftest import REPO_ROOT, make_ctx
 
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -636,3 +636,31 @@ class TestWhatTheOperatorIsToldTheyRecorded:
                 outcome, FixOutcome.DISMISSED, FixOutcome.DEFERRED, "",
             )
         assert len(info.call_args_list) == 1
+
+
+class TestSettleRearmsThroughTheOwner:
+    """`--settle` raises both closeout flags on the type that owns them."""
+
+    # passes-at-base: asserts the flags --settle already raised; this change only moves the write
+    def test_a_settlement_re_arms_the_closeout_finish_reads(self, tmp_path):
+        ctx = make_ctx(
+            branch="feature", worktree_root=tmp_path / "wt",
+            head_sha="abc1234", target_dir=tmp_path / "target",
+        )
+        item = ItemOutcome(
+            id="t1", outcome=FixOutcome.NEEDS_HUMAN,
+            summary="contested", reason="too complex",
+            file="a.py", line=1,
+        )
+        state = _state(item)
+        state.fix.updated_at = "2026-07-14T00:00:00+00:00"
+        pr_state.save_state(ctx.target_dir, state)
+
+        assert settlement.run_settle(
+            ctx, ["t1"], "dismissed", "not our layer", "",
+        ) == 0
+
+        fix = pr_state.load_state(ctx.target_dir).fix
+        assert fix.replies_pending is True
+        assert fix.summary_deferred is True
+        assert any("closeout owed" in line for line in fix.render_status())

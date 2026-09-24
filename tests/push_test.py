@@ -1166,16 +1166,38 @@ def test_a_remote_with_no_url_is_not_probed(monkeypatch):
     assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
-@pytest.mark.parametrize("url,host", [
-    ("git@github.com:o/r.git", "git@github.com"),
-    ("ssh://git@github.com/o/r.git", "git@github.com"),
-    ("ssh://git@ghe.acme.com:2222/o/r.git", "git@ghe.acme.com:2222"),
-    ("https://github.com/o/r.git", ""),
-    ("/srv/local/repo.git", ""),
+@pytest.mark.parametrize("url,host,port", [
+    ("git@github.com:o/r.git", "git@github.com", ""),
+    ("ssh://git@github.com/o/r.git", "git@github.com", ""),
+    ("ssh://git@ghe.acme.com:2222/o/r.git", "git@ghe.acme.com", "2222"),
+    # A colon in the path rather than the authority, which is not a port.
+    ("ssh://git@ghe.acme.com/o/r:x.git", "git@ghe.acme.com", ""),
+    ("https://github.com/o/r.git", "", ""),
+    ("/srv/local/repo.git", "", ""),
 ])
-def test_the_ssh_host_is_read_from_the_remote_url(monkeypatch, url, host):
+def test_the_ssh_host_is_read_from_the_remote_url(monkeypatch, url, host, port):
     monkeypatch.setattr(push.git_client, "out", lambda *a, **k: url)
-    assert push._ssh_host("/tmp/wt", "origin") == host
+    target = push._ssh_host("/tmp/wt", "origin")
+    assert (target.host, target.port) == (host, port)
+
+
+def test_a_port_reaches_ssh_as_a_flag_not_part_of_the_hostname():
+    """`host:2222` is not an ssh destination — it resolves as a hostname.
+
+    Passed through whole, ssh answers "Could not resolve hostname
+    ghe.acme.com:2222" and the probe reports a DNS fault for every enterprise
+    remote on a non-default port. That is the wrong-diagnosis class this change
+    exists to remove, so it must not be reintroduced by the diagnosis itself.
+    """
+    target = push.SshTarget("git@ghe.acme.com", "2222")
+    assert target.args == ["-p", "2222", "git@ghe.acme.com"]
+    assert not any(":" in arg for arg in target.args)
+
+
+def test_an_unprobeable_target_builds_no_ssh_arguments():
+    """Empty rather than a destination of "", which ssh would try to resolve."""
+    assert push.SshTarget().args == []
+    assert not push.SshTarget().probeable
 
 
 def test_an_auth_refusal_reports_the_agent_hint(monkeypatch, capsys):

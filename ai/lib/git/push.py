@@ -602,22 +602,63 @@ _AUTH_SUCCEEDED = (
 )
 
 
-def _ssh_host(wt_path: str | Path, remote: str) -> str:
-    """The ssh destination for *remote*, or empty when it is not an ssh remote.
+@dataclass(frozen=True)
+class SshTarget:
+    """Where an ssh probe should connect, split the way ssh's argv wants it.
+
+    The port is separate because ssh takes it as `-p`, not as part of the
+    destination: handed `host:2222` it resolves the whole string as a hostname
+    and fails with "Could not resolve hostname host:2222". A probe that failed
+    that way would report a DNS fault for every enterprise remote on a
+    non-default port — which is precisely the wrong-diagnosis class this whole
+    change exists to remove.
+    """
+
+    host: str = ""
+    port: str = ""
+
+    @property
+    def probeable(self) -> bool:
+        return bool(self.host)
+
+    @property
+    def args(self) -> list[str]:
+        """The destination and port as ssh's own arguments.
+
+        Empty for an unprobeable target rather than a bare `""` destination,
+        so a caller that skipped `probeable` builds no argv at all instead of
+        one ssh would read as a hostname of nothing.
+        """
+        if not self.probeable:
+            return []
+        return (["-p", self.port] if self.port else []) + [self.host]
+
+
+def _ssh_host(wt_path: str | Path, remote: str) -> SshTarget:
+    """Where to probe for *remote*, or an unprobeable target when it is not ssh.
 
     Only `git@host` scp-style and `ssh://` URLs answer. An https remote returns
-    empty, because its credentials are a helper's business and an ssh probe
+    nothing, because its credentials are a helper's business and an ssh probe
     would say nothing true about them.
+
+    The two forms spell a port differently, which is the whole reason this is
+    parsed rather than passed through: `ssh://host:2222/path` carries it in the
+    authority, while scp-style `host:path` uses the same colon for the path and
+    cannot express one at all.
     """
     url = git_client.out("remote", "get-url", remote, cwd=wt_path)
     if not url:
-        return ""
+        return SshTarget()
     if url.startswith("ssh://"):
-        without_scheme = url[len("ssh://"):]
-        return without_scheme.split("/", 1)[0]
+        authority = url[len("ssh://"):].split("/", 1)[0]
+        host, _, port = authority.rpartition(":")
+        # No colon at all leaves `host` empty and the whole authority in `port`.
+        if not host:
+            return SshTarget(authority)
+        return SshTarget(host, port) if port.isdigit() else SshTarget(authority)
     if "@" in url and ":" in url and not url.startswith("http"):
-        return url.split(":", 1)[0]
-    return ""
+        return SshTarget(url.split(":", 1)[0])
+    return SshTarget()
 
 
 def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
@@ -636,12 +677,12 @@ def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
     Best-effort and never fatal: a probe that cannot run leaves the report as it
     was rather than replacing a true error with a speculative one.
     """
-    host = _ssh_host(wt_path, remote)
-    if not host:
+    target = _ssh_host(wt_path, remote)
+    if not target.probeable:
         return ""
     probe = proc.run(
         ["ssh", "-v", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
-         "-T", host],
+         "-T", *target.args],
         timeout=_AUTH_PROBE_TIMEOUT,
     )
     output = probe.combined_output.lower()

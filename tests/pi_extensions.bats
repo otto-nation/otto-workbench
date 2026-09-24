@@ -1455,6 +1455,22 @@ _blocked() {
   [ -z "$output" ]
 }
 
+@test "review-guard: a command with an unbalanced quote is refused" {
+  # The scan cannot see where such a command ends, so every rule is reading
+  # fragments rather than the command. tokenize.ts documented `hasUnparsed` as
+  # the thing a caller should consult and nothing consulted it — a promise the
+  # code did not keep. Bash rejects most of these before running anything, so
+  # this is a small hole rather than a live bypass, but a predicate that cannot
+  # read its input must not answer "allow".
+  _blocked "echo 'unterminated; rm -rf x"
+  [ -n "$output" ]
+  _blocked "bash -c 'rm -rf x"
+  [ -n "$output" ]
+  # A balanced quote spanning two lines is readable, and stays readable.
+  _blocked "$(printf "echo 'a\nb'\npytest tests/")"
+  [ -z "$output" ]
+}
+
 @test "review-guard: an output flag is one ending in o, not one containing it" {
   # /^-[a-zA-Z]*[oO]/ matched the letter anywhere in a cluster, so `curl -XPOST`
   # and `curl -XOPTIONS` were refused for containing an O while `-XGET` and

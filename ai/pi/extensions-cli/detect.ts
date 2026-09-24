@@ -19,7 +19,7 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { statements } from "../extensions/_shared/statements.ts";
-import { span, tokenize, type Token } from "../extensions/_shared/tokenize.ts";
+import { hasUnparsed, span, tokenize, type Token } from "../extensions/_shared/tokenize.ts";
 
 /**
  * Commands that write, matched at a statement head.
@@ -678,6 +678,25 @@ function shellPayload(statement: string): string | null {
  * though it had blocked the `cd` in front of it.
  */
 export function blockedWriteCommand(command: string, depth = 0): string | null {
+  // An unbalanced quote means the scan cannot see where the command ends, so
+  // every rule below would be reading fragments rather than the command.
+  // `hasUnparsed` documented this as what a caller should consult and nothing
+  // consulted it — a promise in a docstring the code did not keep.
+  //
+  // Against the whole command, not each statement: `statements()` splits on
+  // newlines, so a quoted string spanning two lines arrives here already torn
+  // into halves that each look unbalanced. Checked per statement, every
+  // multi-line quote would be refused; checked here, the quote is closed and
+  // only a genuinely unterminated one is caught.
+  //
+  // Bash rejects most of these as syntax errors before running anything, so
+  // this is a small hole in practice rather than a live bypass. It is closed
+  // because a predicate that cannot read its input must not answer "allow",
+  // whatever the shell would have done with it.
+  if (depth === 0 && hasUnparsed(tokenize(command))) {
+    return `unbalanced quote, so the command cannot be read: ${command.trim()}`;
+  }
+
   for (const statement of statements(command)) {
     if (!statement.trim()) continue;
 

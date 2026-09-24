@@ -11,7 +11,6 @@ call at all.
 
 import ast
 import json
-import re
 import subprocess
 import sys
 import types
@@ -123,7 +122,13 @@ class TestBuildFixCmd:
         result = subprocess.run(
             ["node", "--experimental-strip-types", "--input-type=module",
              "-e", script, "--", command],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True,
+        )
+        # Not check=True: a CalledProcessError reports the exit status and
+        # swallows node's stderr, so a syntax error in detect.ts or a node too
+        # old to strip types fails every case here with nothing saying why.
+        assert result.returncode == 0, (
+            f"could not run detect.ts against {command!r}:\n{result.stderr}"
         )
         return result.stdout == "1"
 

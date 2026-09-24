@@ -47,7 +47,6 @@ def test_the_pr_review_argv_is_exactly_this(tmp_path):
         "--target-dir", str(tmp_path / "state"),
         "--session-log", "/log",
         "--pr", "42",
-        "--max-parallel", "1",
         "--generator-version", "claude-review 1.2.3",
     ]
 
@@ -77,7 +76,6 @@ def test_the_self_review_argv_carries_mode_fix_and_publish(tmp_path):
         "--pr", "42",
         "--mode", "self",
         "--base", "feat/parent",
-        "--max-parallel", "1",
         "--generator-version", "claude-review 1.2.3",
         "--fix",
         "--post",
@@ -106,6 +104,13 @@ def test_an_unset_effort_is_omitted_rather_than_defaulted(tmp_path):
     """
     assert "--effort" not in review_invoke.build_argv(_request(tmp_path))
     assert "--effort" in review_invoke.build_argv(_request(tmp_path, effort="medium"))
+
+
+def test_an_unset_max_parallel_is_omitted_rather_than_defaulted(tmp_path):
+    """No flag means review-orchestrate derives the worker count itself."""
+    assert "--max-parallel" not in review_invoke.build_argv(_request(tmp_path))
+    argv = review_invoke.build_argv(_request(tmp_path, max_parallel=2))
+    assert argv[argv.index("--max-parallel") + 1] == "2"
 
 
 def test_a_prior_review_is_forwarded_only_when_it_exists(tmp_path):

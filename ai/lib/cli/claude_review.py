@@ -43,12 +43,11 @@ from review import completion as review_completion
 from review import run as review_run
 from review import worktree as review_worktree
 from review.paths import review_file_path
+from review.pipeline import DEFAULT_MAX_PARALLEL
 from review.summary import json_summary
 
 SCRIPT = "claude-review"
 BIN_DIR = Path(__file__).resolve().parent.parent.parent / "bin"
-
-DEFAULT_MAX_PARALLEL = 1
 
 # The subcommands this binary used to carry, and where each went. Kept as a
 # refusal rather than dropped: the names were in people's shell history and in
@@ -91,7 +90,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Branch to review against, as a bare name. Default: "
                              "the PR's base, else the branch this one is stacked "
                              "on, else the repo's default branch")
-    parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
+    parser.add_argument(
+        "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
+        help="Max concurrent group reviews (default: derived from free CPU, cap 4)",
+    )
     parser.add_argument("--max-cost", type=float)
     parser.add_argument("--model")
     parser.add_argument("--effort", choices=["low", "medium", "high"], default=None,

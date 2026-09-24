@@ -617,3 +617,70 @@ class TestReadScan:
         """
         with pytest.raises(ValueError, match="declares no scan of its own"):
             review_phases.read_scan(Phase.SINGLE, "some content")
+
+
+class TestParallelWorkerCount:
+    """Free capacity, not a fixed 1, decides how many group agents run."""
+
+    @pytest.mark.parametrize(
+        "cores, load, group_count, expected",
+        [
+            (18, 0.5, 5, 4),
+            (18, 0.5, 2, 2),
+            (8, 5.2, 5, 2),
+            (4, 3.5, 5, 1),
+            (8, 10.0, 5, 1),
+            (2, 0.0, 5, 2),
+            (18, 14.0, 5, 4),
+            (18, 15.0, 5, 3),
+        ],
+    )
+    def test_free_capacity_clamps_between_one_and_four(
+        self, cores, load, group_count, expected,
+    ):
+        assert review_pipeline.parallel_worker_count(
+            group_count, cores, load,
+        ) == expected
+
+    def test_an_explicit_count_wins_over_capacity(self):
+        assert review_pipeline.resolve_max_parallel(5, requested=1, cores=18, load=0.1) == 1
+
+    def test_an_explicit_count_still_cannot_exceed_the_group_count(self):
+        assert review_pipeline.resolve_max_parallel(2, requested=8, cores=18, load=0.1) == 2
+
+    def test_derived_count_uses_the_injected_machine(self):
+        assert review_pipeline.resolve_max_parallel(5, cores=8, load=5.2) == 2
+
+
+class TestParallelFailFast:
+    """A systemic fault must not burn every queued group agent."""
+
+    def test_queued_groups_are_skipped_after_consecutive_same_failures(
+        self, tmp_path, monkeypatch,
+    ):
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.retry import GroupFailure
+        from review.types import Group
+
+        started = []
+        boom = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="boom")
+
+        def fake_review(i, grp, *args, **kwargs):
+            started.append(grp.name)
+            return i, "out", GroupFailure(grp.name, boom)
+
+        monkeypatch.setattr(review_phases, "_review_group", fake_review)
+        groups = [
+            Group(name=f"g{i}", files=[f"{i}.py"], lines=10)
+            for i in range(1, 7)
+        ]
+        failed = review_phases._run_parallel_reviews(
+            groups, _job(tmp_path), len(groups), "holistic", workers=3,
+            skip_groups={}, pipeline_state=None,
+        )
+        # In-flight groups may finish after the abort fires; groups not yet
+        # submitted must not start. Without the fail-fast, all six run.
+        assert len(started) < len(groups)
+        assert "g6" not in started
+        skipped = {f.group for f in failed if f.diagnosis.kind is DiagnosisKind.SKIPPED}
+        assert skipped

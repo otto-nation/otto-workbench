@@ -1730,10 +1730,14 @@ def test_the_generator_version_comes_from_the_injected_resolver(cr, reviews_dir,
 
 def test_constants_match_expected(cr):
     from review.types import SEVERITIES
-    assert cr.DEFAULT_MAX_PARALLEL == 1
     assert review_gc.GC_STALE_DAYS == 7
     assert review_gc.PRUNE_MAX_FILES == 10
     assert len(SEVERITIES) == 4
+
+
+def test_max_parallel_defaults_to_derived_capacity(cr):
+    args = cr.build_parser().parse_args(["42"])
+    assert args.max_parallel is None
 
 
 def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None:

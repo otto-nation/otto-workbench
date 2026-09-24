@@ -59,7 +59,7 @@ class OrchestrateRequest:
     prior_review_path: str = ""
     issue_link: str = ""
     issue_context: str = ""
-    max_parallel: int = 1
+    max_parallel: int | None = None
     max_cost: float | None = None
     model: str | None = None
     effort: str | None = None
@@ -100,7 +100,10 @@ def build_argv(request: OrchestrateRequest) -> list[str]:
         args += ["--issue", request.issue_link]
     if request.issue_context:
         args += ["--issue-context", request.issue_context]
-    args += ["--max-parallel", str(request.max_parallel)]
+    # Forwarded only when asked for: an absent flag lets review-orchestrate
+    # derive the worker count from free capacity.
+    if request.max_parallel is not None:
+        args += ["--max-parallel", str(request.max_parallel)]
     args += ["--generator-version", request.generator_version]
     if request.fix_pass:
         args.append("--fix")

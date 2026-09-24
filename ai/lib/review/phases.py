@@ -26,7 +26,7 @@ run is `review.steps`', and writing the result to the review file is
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -492,6 +492,114 @@ def _run_serial_reviews(
     return failed_groups
 
 
+def _collect_parallel_result(
+    fut, i: int, grp: Group, job: ReviewJob, group_count: int, remaining: int,
+    failed_groups: list[GroupFailure], consecutive: int, last: Diagnosis | None,
+    abort_msg: str,
+) -> tuple[int, Diagnosis | None, str]:
+    """Record one finished future, and abort remaining groups on a systemic fault.
+
+    The serial path checks this after each group. Without it here, a shared
+    fault (wrong credentials, model gone) burns every in-flight agent before
+    the post-hoc breaker notices.
+    """
+    if fut.cancelled():
+        failed_groups.append(GroupFailure(
+            grp.name, Diagnosis(DiagnosisKind.SKIPPED, detail=abort_msg),
+        ))
+        return consecutive, last, abort_msg
+    _, _, failed = fut.result()
+    if not failed:
+        return 0, None, abort_msg
+    failed_groups.append(failed)
+    if abort_msg:
+        return consecutive, last, abort_msg
+    group_log = phase_log_path(job.review_file, Phase.GROUP, i)
+    new_msg, consecutive, last = _check_serial_abort(
+        group_count - remaining, group_count, failed.diagnosis, group_log,
+        consecutive, last,
+    )
+    if new_msg:
+        log.warn(new_msg)
+    return consecutive, last, new_msg or abort_msg
+
+
+def _fill_parallel_slots(
+    pool: ThreadPoolExecutor, groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str, skip_groups: dict[int, GroupSkip],
+    pipeline_state: PipelineState | None, workers: int, next_index: int,
+    in_flight: dict, abort_msg: str,
+) -> int:
+    """Keep ``workers`` reviews in flight, unless the run is already aborting."""
+    if abort_msg:
+        return next_index
+    while next_index < group_count and len(in_flight) < workers:
+        i = next_index + 1
+        grp = groups[next_index]
+        fut = pool.submit(
+            _review_group, i, grp, job, group_count, holistic_content,
+            skip=skip_groups.get(i), pipeline_state=pipeline_state,
+        )
+        in_flight[fut] = (i, grp)
+        next_index += 1
+    return next_index
+
+
+def _skip_unstarted(
+    groups: list[Group], next_index: int, abort_msg: str,
+    failed_groups: list[GroupFailure],
+) -> int:
+    for idx in range(next_index, len(groups)):
+        failed_groups.append(GroupFailure(
+            groups[idx].name,
+            Diagnosis(DiagnosisKind.SKIPPED, detail=abort_msg),
+        ))
+    return len(groups)
+
+
+def _drain_parallel_batch(
+    in_flight: dict, job: ReviewJob, group_count: int, next_index: int,
+    failed_groups: list[GroupFailure], consecutive: int, last: Diagnosis | None,
+    abort_msg: str, groups: list[Group],
+) -> tuple[int, int, Diagnosis | None, str]:
+    if not in_flight:
+        return next_index, consecutive, last, abort_msg
+    done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+    unstarted = group_count - next_index
+    for fut in done:
+        i, grp = in_flight.pop(fut)
+        consecutive, last, abort_msg = _collect_parallel_result(
+            fut, i, grp, job, group_count, unstarted,
+            failed_groups, consecutive, last, abort_msg,
+        )
+    if not abort_msg:
+        return next_index, consecutive, last, abort_msg
+    skipped_at = _skip_unstarted(groups, next_index, abort_msg, failed_groups)
+    return skipped_at, consecutive, last, abort_msg
+
+
+def _run_parallel_loop(
+    pool: ThreadPoolExecutor, groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str, skip_groups: dict[int, GroupSkip],
+    pipeline_state: PipelineState | None, workers: int,
+    failed_groups: list[GroupFailure],
+) -> None:
+    consecutive = 0
+    last: Diagnosis | None = None
+    abort_msg = ""
+    next_index = 0
+    in_flight: dict = {}
+    while next_index < group_count or in_flight:
+        next_index = _fill_parallel_slots(
+            pool, groups, job, group_count, holistic_content, skip_groups,
+            pipeline_state, workers, next_index, in_flight, abort_msg,
+        )
+        next_index, consecutive, last, abort_msg = _drain_parallel_batch(
+            in_flight, job, group_count, next_index, failed_groups,
+            consecutive, last, abort_msg, groups,
+        )
+
+
 def _run_parallel_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, workers: int,
@@ -500,18 +608,14 @@ def _run_parallel_reviews(
 ) -> list[GroupFailure]:
     log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
     log.blank()
+    failed_groups: list[GroupFailure] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [
-            pool.submit(
-                _review_group, i, grp, job, group_count, holistic_content,
-                skip=skip_groups.get(i),
-                pipeline_state=pipeline_state,
-            )
-            for i, grp in enumerate(groups, 1)
-        ]
-        results = [f.result() for f in futures]
+        _run_parallel_loop(
+            pool, groups, job, group_count, holistic_content, skip_groups,
+            pipeline_state, workers, failed_groups,
+        )
     log.blank()
-    return [failure for _, _, failure in results if failure]
+    return failed_groups
 
 
 def _retry_turns(diagnosis: Diagnosis, job: ReviewJob) -> int:

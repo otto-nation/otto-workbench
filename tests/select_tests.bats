@@ -37,6 +37,15 @@ setup_file() {
   # — the restore would appear to work and leave the caller with an empty
   # graph. It is the same trap _build_dep_graph documents for its own
   # declaration, one step removed.
+  # An empty graph is the failure mode both comments above describe, and it is
+  # silent: every restore succeeds and every closure case reads "no dependents",
+  # so five tests fail on their assertions rather than one fixture failing to
+  # build. Checked here, where the cause is still visible.
+  if [[ ${#_REVERSE_DEPS[@]} -eq 0 ]]; then
+    echo "FATAL: _build_dep_graph produced no edges for $repo_root" >&2
+    return 1
+  fi
+
   declare -p _REVERSE_DEPS \
     | sed 's/^declare -A /declare -gA /' > "$BATS_FILE_TMPDIR/dep_graph"
 }

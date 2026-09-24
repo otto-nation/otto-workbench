@@ -106,6 +106,25 @@ for stem in sorted(totals):
 PY
 }
 
+# _measure_locally OUT_DIR — run the suite into OUT_DIR, emit the reports it left.
+#
+# A failing test does not invalidate the timings of the ones that ran, and a
+# bare call under `set -e` would abort with the EXIT trap deleting the reports
+# on the way out — one flaky case costing a whole-suite measurement. Weights
+# degrade, never fail outright, so the status is reported and the run salvaged.
+_measure_locally() {
+  local out_dir="$1"
+  warn "Measuring locally. Figures from a loaded machine are not worth committing."
+  local run_status=0
+  TEST_JOBS=1 "$WORKBENCH_DIR/bin/local/run-tests" --bats -- \
+    --report-formatter junit --output "$out_dir" >/dev/null || run_status=$?
+  if (( run_status != 0 )); then
+    warn "The suite exited $run_status. Weighing whatever it did report;"
+    warn "a file whose tests failed may be timed short."
+  fi
+  find "$out_dir" -name '*.xml' | LC_ALL=C sort
+}
+
 main() {
   local -a reports=()
   local out_dir=""
@@ -116,11 +135,8 @@ main() {
         out_dir=$(mktemp -d)
         # shellcheck disable=SC2064  # expand now: the path must survive the trap
         trap "rm -rf '$out_dir'" EXIT
-        warn "Measuring locally. Figures from a loaded machine are not worth committing."
-        TEST_JOBS=1 "$WORKBENCH_DIR/bin/local/run-tests" --bats -- \
-          --report-formatter junit --output "$out_dir" >/dev/null
         while IFS= read -r f; do reports+=("$f"); done \
-          < <(find "$out_dir" -name '*.xml' | LC_ALL=C sort)
+          < <(_measure_locally "$out_dir")
         ;;
       *) reports+=("$1") ;;
     esac

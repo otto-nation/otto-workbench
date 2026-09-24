@@ -15,6 +15,14 @@ setup_file() {
   mkdir -p "$BATS_FILE_TMPDIR/snapshot"
   "$repo_root/bin/local/generate-public-surface" \
     --out-dir "$BATS_FILE_TMPDIR/snapshot" --quiet
+
+  # The generator exiting 0 having written nothing would leave nine cases
+  # reading an absent file, which fails them one at a time on whatever each
+  # asserts rather than naming the fixture as the cause.
+  if [[ ! -s "$BATS_FILE_TMPDIR/snapshot/public-surface.json" ]]; then
+    echo "FATAL: generate-public-surface wrote no root snapshot" >&2
+    return 1
+  fi
 }
 
 setup() {

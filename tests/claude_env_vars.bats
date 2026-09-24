@@ -18,6 +18,18 @@ setup_file() {
 
   local -a sources=() targets=()
   collect_claude_env_vars sources targets "$repo_root"
+
+  # An empty scan has to stop the file here. Every case below asserts that some
+  # name is present, so an empty allowlist turns all six into greps that match
+  # nothing and fail — which reads as six broken assertions rather than as one
+  # fixture that never got built. A collector erroring outright already fails
+  # the file, since bats runs setup_file under errexit; this covers the shape
+  # that exits 0 with nothing in it.
+  if [[ ${#sources[@]} -eq 0 || ${#targets[@]} -eq 0 ]]; then
+    echo "FATAL: collect_claude_env_vars returned nothing for $repo_root" >&2
+    return 1
+  fi
+
   printf '%s\n' "${sources[@]}" > "$BATS_FILE_TMPDIR/real_sources.list"
   printf '%s\n' "${targets[@]}" > "$BATS_FILE_TMPDIR/real_targets.list"
 }

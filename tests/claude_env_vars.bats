@@ -2,12 +2,48 @@
 # Tests for collect_claude_env_vars — the allowlist of env vars that
 # ai/claude/steps.sh mirrors from ~/.env.local into ~/.claude/settings.json.
 
+# The six cases below assert against the real registry tree, and a scan of it
+# costs ~1.9s — the same 1.9s six times, for one read-only answer that cannot
+# differ between them. Taken once here and replayed from a file, because bats
+# runs each test in its own subshell and an array set in setup_file() does not
+# survive into one.
+setup_file() {
+  load 'test_helper'
+  common_setup
+  local repo_root
+  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
+  # shellcheck source=/dev/null
+  source "$repo_root/lib/registries.sh"
+
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$repo_root"
+  printf '%s\n' "${sources[@]}" > "$BATS_FILE_TMPDIR/real_sources.list"
+  printf '%s\n' "${targets[@]}" > "$BATS_FILE_TMPDIR/real_targets.list"
+}
+
 setup() {
   load 'test_helper'
   common_setup
 
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/registries.sh"
+}
+
+# _load_real_allowlist SOURCES_REF TARGETS_REF — the scan setup_file took.
+#
+# Read back into arrays so each case reads exactly as it did when it called the
+# collector itself. The two lists are written in step, so index N of one still
+# pairs with index N of the other — which the target-mapping case depends on.
+_load_real_allowlist() {
+  local -n __src=$1
+  local -n __tgt=$2
+  __src=(); __tgt=()
+  local line
+  while IFS= read -r line; do [[ -n "$line" ]] && __src+=("$line"); done \
+    < "$BATS_FILE_TMPDIR/real_sources.list"
+  while IFS= read -r line; do [[ -n "$line" ]] && __tgt+=("$line"); done \
+    < "$BATS_FILE_TMPDIR/real_targets.list"
 }
 
 teardown() {
@@ -207,7 +243,7 @@ tools: []'
 
 @test "the Vertex routing vars are on the allowlist" {
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$REPO_ROOT"
+  _load_real_allowlist sources targets
   printf '%s\n' "${sources[@]}" | grep -qx CLAUDE_CODE_USE_VERTEX
   printf '%s\n' "${sources[@]}" | grep -qx GOOGLE_CLOUD_PROJECT
   printf '%s\n' "${sources[@]}" | grep -qx CLOUD_ML_REGION
@@ -215,7 +251,7 @@ tools: []'
 
 @test "the Vertex project id maps to Claude Code's own name" {
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$REPO_ROOT"
+  _load_real_allowlist sources targets
   printf '%s\n' "${targets[@]}" | grep -qx ANTHROPIC_VERTEX_PROJECT_ID
 }
 
@@ -226,14 +262,14 @@ tools: []'
   # mirrored into settings.json cannot be overridden from a shell afterwards —
   # which would foreclose the divergence the entry exists to allow.
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$REPO_ROOT"
+  _load_real_allowlist sources targets
   run bash -c 'printf "%s\n" "$@" | grep -qx GOOGLE_CLOUD_LOCATION' _ "${sources[@]}" "${targets[@]}"
   [ "$status" -ne 0 ]
 }
 
 @test "the model routing vars use generic AI_* names" {
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$REPO_ROOT"
+  _load_real_allowlist sources targets
   # Source names (what ~/.env.local carries)
   printf '%s\n' "${sources[@]}" | grep -qx AI_MODEL
   printf '%s\n' "${sources[@]}" | grep -qx AI_OPUS_MODEL
@@ -243,7 +279,7 @@ tools: []'
 
 @test "model vars map to Claude Code's ANTHROPIC_* target names" {
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$REPO_ROOT"
+  _load_real_allowlist sources targets
   # Assert each source is paired with the correct target at the same index,
   # not just that both names appear somewhere in their arrays.
   local i
@@ -262,7 +298,7 @@ tools: []'
   # set — a registry that gains the flag by mistake fails here rather than in a
   # settings file someone reads a token out of.
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$REPO_ROOT"
+  _load_real_allowlist sources targets
   run bash -c 'printf "%s\n" "$@" | grep -Ex "(JIRA_API_TOKEN|LINEAR_API_KEY|CONTEXT7_API_KEY|AWS_PROFILE)"' _ "${sources[@]}"
   [ "$status" -ne 0 ]
 }

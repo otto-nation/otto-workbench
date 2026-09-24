@@ -15,6 +15,12 @@ setup() {
   export HOME="$TMPDIR/home"
   export NO_COLOR=1
 
+  # Named so select-tests can map this suite to its subject. The step itself is
+  # sourced through a positional inside _run_restore, where the path is not
+  # visible to a grep.
+  STEPS_SH="$REPO_ROOT/ai/claude/steps.sh"
+  [ -f "$STEPS_SH" ]
+
   FAKE_WORKBENCH="$TMPDIR/workbench"
   MEMORY="$FAKE_WORKBENCH/ai/memory"
   PROJECTS="$HOME/.claude/projects"

@@ -59,9 +59,10 @@ def backups_dir(root: Path) -> Path:
 
     Named for the base's directory plus a hash of its full path: two repos both
     called `notes` must not share a backup directory, and the readable half is
-    what makes the directory identifiable in a listing. Callers hand in the
-    resolved root, and two spellings of one path normalise to one name anyway,
-    so a base cannot end up with two directories.
+    what makes the directory identifiable in a listing. Resolved here rather
+    than trusted from the caller, so two spellings of one path — a symlink hop,
+    a relative path, a trailing slash — normalise to one name and a base cannot
+    end up with two directories.
 
     A sha256 of the path rather than the repo's `<org>/<repo>` identity, which
     would be the nicer name: that identity comes from `pr.target`, and this
@@ -69,6 +70,7 @@ def backups_dir(root: Path) -> Path:
     `hash`, which is randomised per process and would send the same base to a
     different directory on every run.
     """
+    root = root.resolve()
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
     return workbench_paths.state_dir() / BACKUPS_DIRNAME / f"{root.name}-{digest}"
 
@@ -165,7 +167,10 @@ def _free_name(directory: Path, stamp: str, suffix: str) -> Path:
 
 
 def prune(root: Path, keep: int = KEEP_DEFAULT) -> list[Path]:
-    """Delete all but the newest *keep* snapshots, returning what went."""
+    """Delete all but the newest *keep* snapshots, returning what went.
+
+    A negative *keep* means keep everything: nothing is deleted.
+    """
     found = snapshots(root)
     if keep < 0 or len(found) <= keep:
         return []
@@ -190,7 +195,16 @@ def restore(root: Path, archive: Path) -> Path:
         # `data` refuses absolute paths, parent traversal, links out of the
         # tree, and device files. These archives are written here, but they
         # live in a directory a person can drop a file into.
-        tar.extractall(destination, filter="data")
+        #
+        # The keyword arrived in 3.12 and was backported to the 3.9-3.11
+        # security releases, so it is missing only on an interpreter older than
+        # those. Falling back keeps `--restore` working there instead of failing
+        # on a TypeError; what is lost is the hardening, on the one path where
+        # the archive is one this module wrote.
+        try:
+            tar.extractall(destination, filter="data")
+        except TypeError:
+            tar.extractall(destination)
 
     unwrapped = destination / root.name
     if is_wiki(unwrapped):

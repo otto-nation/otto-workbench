@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import add_worktree, frontmatter_keys, git_in, load_script
+from conftest import add_worktree, frontmatter_keys, git_in, load_script, remote_repo
 
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 
@@ -241,15 +241,7 @@ class TestVaultResolution:
     """
 
     def _repo(self, tmp_path: Path) -> Path:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(repo), "remote", "add", "origin",
-             "git@github.com:acme/widget.git"],
-            check=True,
-        )
-        return repo
+        return remote_repo(tmp_path / "repo")
 
     def _vault(self, tmp_path: Path, monkeypatch, *, create: bool = True) -> Path:
         """Point `wiki.root` at a vault, and optionally put acme/widget in it."""
@@ -321,7 +313,7 @@ class TestVaultResolution:
         """No identity, no folder — two local `notes` repos must not share one."""
         repo = tmp_path / "repo"
         repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        git_in(repo, "init", "-q")
         self._vault(tmp_path, monkeypatch, create=False)
         assert wiki.vault_dir(repo) is None
 
@@ -349,15 +341,7 @@ class TestInitModes:
     """
 
     def _repo(self, tmp_path: Path) -> Path:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(repo), "remote", "add", "origin",
-             "git@github.com:acme/widget.git"],
-            check=True,
-        )
-        return repo
+        return remote_repo(tmp_path / "repo")
 
     def _vault_root(self, tmp_path: Path, monkeypatch) -> Path:
         """Point the data root at a temp dir and record what init should adopt."""
@@ -432,7 +416,7 @@ class TestInitModes:
     def test_vault_refuses_a_repo_with_no_origin_remote(self, tmp_path, capsys, monkeypatch):
         repo = tmp_path / "repo"
         repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        git_in(repo, "init", "-q")
         vault = self._vault_root(tmp_path, monkeypatch)
         monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
         assert wiki.main(["init", "--vault", str(repo)]) == 2
@@ -559,7 +543,10 @@ class TestBackup:
         def explode(*_args, **_kwargs):
             raise OSError("disk full")
 
-        monkeypatch.setattr(wiki.wiki_backup.tarfile, "open", explode)
+        # Patches the `tarfile` module directly, imported by this file, rather than
+        # reaching it through `wiki.wiki_backup.tarfile` — two levels of indirection
+        # that would break silently if `backup.py`'s import structure changed.
+        monkeypatch.setattr(tarfile, "open", explode)
         with pytest.raises(OSError):
             wiki.snapshot(root)
         assert wiki.snapshots(root) == []
@@ -621,6 +608,19 @@ class TestBackup:
         """A process-randomised hash would send one base to a new directory a run."""
         root = self._base(tmp_path)
         assert wiki.backups_dir(root) == wiki.backups_dir(root)
+
+    def test_reaching_a_base_through_a_symlink_gets_the_same_directory(self, tmp_path):
+        """A caller that skips `.resolve()` must not land on a second directory.
+
+        Through a symlink, because that is the spelling `.resolve()` is actually
+        for: pathlib collapses `.` and `..` when the path is built, so a dotted
+        spelling is already identical before anything resolves it and would pass
+        this whether `backups_dir` resolved or not.
+        """
+        root = self._base(tmp_path)
+        link = tmp_path / "link-to-wiki"
+        link.symlink_to(root, target_is_directory=True)
+        assert wiki.backups_dir(link) == wiki.backups_dir(root)
 
     def test_a_base_with_no_snapshot_is_overdue(self, tmp_path):
         assert wiki.is_overdue(self._base(tmp_path))
@@ -763,14 +763,7 @@ class TestBrowsingLink:
         assert (container / "wiki").resolve() == other.resolve()
 
     def test_a_plain_clone_says_it_has_nowhere_to_put_one(self, tmp_path, monkeypatch, capsys):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(repo), "remote", "add", "origin",
-             "git@github.com:acme/widget.git"],
-            check=True,
-        )
+        repo = remote_repo(tmp_path / "repo")
         vault = tmp_path / "vault"
         monkeypatch.setattr(
             wiki, "load_config_or_default",

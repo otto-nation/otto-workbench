@@ -308,7 +308,7 @@ def container_link_path(root: Path) -> Path | None:
     to put a link in, and so gets none.
     """
     container = container_dir(str(root))
-    if container is None and (root / ".git").is_dir() and not (root / ".git").is_file():
+    if container is None and (root / ".git").is_dir():
         # Standing in the container itself, which is where the link appears and
         # so where someone is likely to run this. `container_dir` answers None
         # here rather than naming it: it asks git for a toplevel, and a bare

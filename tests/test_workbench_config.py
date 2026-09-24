@@ -822,6 +822,9 @@ def test_a_key_that_declares_nothing_is_writable_at_every_scope(roots, container
     wcw.set_container_value("reuse.level", "ultra", container / "main")
     assert (project / wc.PROJECT_CONFIG_NAME).exists()
     assert (container / wc.PROJECT_CONFIG_NAME).exists()
+    assert wc.load_config().reuse.level == wc.ReuseLevel.ULTRA
+    assert wc.load_config(project).reuse.level == wc.ReuseLevel.ULTRA
+    assert wc.load_config(container / "main").reuse.level == wc.ReuseLevel.ULTRA
 
 
 # passes-at-base: a misspelled key was already refused, and this pins that the scope check did not get in front of that

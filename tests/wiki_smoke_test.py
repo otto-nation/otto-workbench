@@ -50,6 +50,27 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def fake_workbench_launcher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Put a stub `otto-workbench` ahead of the real one on PATH, and return it.
+
+    Writing `wiki.root` is checked against the schema of the workbench installed
+    on the machine, and a branch adding a key is one the install has not learned
+    yet. Without this the write is refused for a reason that has nothing to do
+    with the behaviour under test — and the refusal would disappear on its own
+    once the branch merged, leaving a test that had never exercised the path it
+    names.
+    """
+    launcher_dir = tmp_path / "installed"
+    (launcher_dir / "bin").mkdir(parents=True)
+    shutil.copy2(WIKI_BIN.parent.parent.parent / "config.schema.json",
+                 launcher_dir / "config.schema.json")
+    launcher = launcher_dir / "bin" / "otto-workbench"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{launcher.parent}:{os.environ['PATH']}")
+    return launcher
+
+
 class TestLifecycle:
     def test_init_ingest_compile_index_lint(self, project):
         """The path a real knowledge base takes, from empty directory to clean lint."""
@@ -222,14 +243,7 @@ class TestInitModes:
         disappear on its own once the branch merged, leaving a test that had
         never exercised the path it names.
         """
-        launcher_dir = tmp_path / "installed"
-        (launcher_dir / "bin").mkdir(parents=True)
-        shutil.copy2(WIKI_BIN.parent.parent.parent / "config.schema.json",
-                     launcher_dir / "config.schema.json")
-        launcher = launcher_dir / "bin" / "otto-workbench"
-        launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        launcher.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{launcher.parent}:{os.environ['PATH']}")
+        fake_workbench_launcher(tmp_path, monkeypatch)
 
         subprocess.run(
             ["git", "-C", str(project), "remote", "add", "origin",
@@ -299,14 +313,7 @@ class TestBrowsingLink:
         A link inside a worktree would go with the worktree, which is the whole
         reason it is not put there.
         """
-        launcher_dir = tmp_path / "installed"
-        (launcher_dir / "bin").mkdir(parents=True)
-        shutil.copy2(WIKI_BIN.parent.parent.parent / "config.schema.json",
-                     launcher_dir / "config.schema.json")
-        launcher = launcher_dir / "bin" / "otto-workbench"
-        launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        launcher.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{launcher.parent}:{os.environ['PATH']}")
+        launcher = fake_workbench_launcher(tmp_path, monkeypatch)
 
         seed = tmp_path / "seed"
         subprocess.run(["git", "init", "-q", str(seed)], check=True)
@@ -331,11 +338,15 @@ class TestBrowsingLink:
         main = container / "main"
         assert run("init", "--vault", "--domain", "Payments", cwd=main).returncode == 0
         assert subprocess.run(
-            [str(launcher_dir / "bin" / "otto-workbench")], capture_output=True,
+            [str(launcher)], capture_output=True,
         ).returncode == 0
         base = run("path", cwd=main).stdout.strip()
 
-        # Turn the key on through the real writer, then link.
+        # Turn the key on through the real writer, then link. Read from the
+        # environment rather than rebuilt from `tmp_path`: conftest's autouse
+        # fixture owns where the sandboxed config root goes, and spelling its
+        # directory name a second time here is a copy that goes stale silently
+        # if that fixture ever moves it.
         config = Path(os.environ["WORKBENCH_CONFIG_DIR"]) / "config.yml"
         config.write_text(config.read_text(encoding="utf-8") + "  link: true\n", encoding="utf-8")
         linked = run("link", cwd=main)

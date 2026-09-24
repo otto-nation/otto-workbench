@@ -15,7 +15,7 @@ who can read the result, so this is the user's call, not yours:
 
 | | Flag | Where it lands | Who sees it |
 |---|---|---|---|
-| Private to this machine | `--vault` | The machine's vault, one folder per repo | Only this machine |
+| Private to this machine | `--vault` | The machine's vault, in a folder named for the repo | Only this machine |
 | Committed with the repo | `--in-repo` | `wiki/` in the repo, or `wiki.dir` | Everyone who clones |
 | A specific directory | `--wiki DIR` | Exactly there | Depends where you point it |
 

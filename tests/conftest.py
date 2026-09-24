@@ -955,6 +955,20 @@ def add_self_origin(path) -> None:
     git_in(path, "fetch", "-q", "origin", "main")
 
 
+def remote_repo(path, remote: str = "git@github.com:acme/widget.git") -> Path:
+    """An empty repo at *path*, with *remote* set as `origin`.
+
+    For code that reads a repo's identity from its origin remote rather than
+    from any commit in it — `git init` plus `remote add` is all such a test
+    needs.
+    """
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    git_in(path, "init", "-q")
+    git_in(path, "remote", "add", "origin", remote)
+    return path
+
+
 @pytest.fixture
 def container(tmp_path) -> Path:
     """The bare-repo worktree layout: worktrees as peers of a bare `.git`.

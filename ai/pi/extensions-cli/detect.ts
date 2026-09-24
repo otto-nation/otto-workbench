@@ -577,8 +577,7 @@ const INTERACTIVE_SHELLS = new Set([
  * read, it is a refusal. `fish` is in the alternation for the same reason — it
  * is in INTERACTIVE_SHELLS, so omitting it here refuses `fish -c 'pytest'`.
  */
-const SHELL_DASH_C =
-  /^(?:sh|bash|zsh|dash|ksh|fish)\s+(?:(?:-[a-zA-Z]*|--[a-zA-Z-]+)\s+)*-[a-zA-Z]*c[a-zA-Z]*\s+(.*)$/s;
+const SHELL_NAMES = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
 
 /**
  * The command `eval` was asked to run, or null when there is none.
@@ -610,13 +609,18 @@ function evalPayload(statement: string): string | null {
  */
 function substitutions(statement: string): string[] {
   const found: string[] = [];
-  for (const match of statement.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) {
+  // `[^`]*` stops at an escaped backtick, so a nested `` `echo \`rm -rf x\`` ``
+  // yielded two fragments that matched no rule and the delete was permitted.
+  // `(?:\\.|[^`])*` steps over an escaped character instead of ending on it.
+  for (const match of statement.matchAll(/\$\(([^()]*)\)|`((?:\\.|[^`])*)`/g)) {
     // A `$(` inside single quotes is literal. Checked against the scan rather
     // than by counting quotes, so the answer matches every other rule's.
     const literal = tokenize(statement).some(
       (t) => t.quoted && t.raw.startsWith("'") && t.raw.includes(match[0]),
     );
-    const inner = (match[1] ?? match[2] ?? "").trim();
+    // A nested substitution is unescaped one level as the shell unescapes it,
+    // so the recursive scan sees the command that will actually run.
+    const inner = (match[1] ?? match[2] ?? "").replace(/\\`/g, "`").trim();
     if (inner && !literal) found.push(inner);
   }
   return found;
@@ -656,17 +660,28 @@ function envDashS(tokens: Token[]): string | null {
  * rather than on what it does.
  */
 function shellPayload(statement: string): string | null {
-  // Path-stripped the way `commandHead` strips it, so `/bin/sh -c` matches.
-  const unwrapped = unwrap(statement);
-  const [first, ...rest] = unwrapped.split(/\s+/).filter(Boolean);
-  const pathless = first ? [first.split("/").pop(), ...rest].join(" ") : unwrapped;
-  const match = SHELL_DASH_C.exec(pathless);
-  if (!match) return null;
-  const payload = match[1].trim();
-  // An unbalanced quote means the split above cut through a quoted span, so the
-  // payload is a fragment. Strip a matched pair only.
-  const quoted = /^(['"])([\s\S]*)\1$/.exec(payload);
-  return quoted ? quoted[2] : payload;
+  const tokens = commandTokens(statement);
+  const name = tokens[0]?.value.split("/").pop() ?? "";
+  if (!SHELL_NAMES.has(name)) return null;
+
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.quoted || tok.operator) break;
+    if (!tok.value.startsWith("-")) break;
+    // `-c`, or `-c` inside a cluster such as `-ce`. A long flag (`--norc`)
+    // carries no payload and is stepped over.
+    if (!tok.value.startsWith("--") && tok.value.includes("c")) {
+      // The payload is the next *token*, already dequoted by the scan. Read
+      // from the tokens rather than by re-splitting the raw text: the regex
+      // this replaces stripped one matched quote pair off a string it had
+      // re-split itself, so `sh -c "sh -c \"rm -rf x\""` came back as a
+      // fragment that matched no rule and the delete was permitted. Re-parsing
+      // text the scan has already resolved is the mistake this file exists to
+      // stop making.
+      return tokens[i + 1]?.value ?? null;
+    }
+  }
+  return null;
 }
 
 /**

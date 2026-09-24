@@ -1455,6 +1455,25 @@ _blocked() {
   [ -z "$output" ]
 }
 
+@test "review-guard: a write nested two wrappers deep is refused" {
+  # Both of these really delete the file — verified by running them against a
+  # scratch directory, not inferred. `shellPayload` re-split the raw statement
+  # with a regex and stripped one matched quote pair off the result, so an
+  # inner `sh -c \"...\"` came back as a fragment matching no rule; the
+  # backtick pattern `[^\`]*` ended at the escaped backtick and produced two
+  # fragments for the same reason. Both were re-parsing text the token scan had
+  # already resolved, which is the mistake this whole change removes.
+  _blocked 'sh -c "sh -c \"rm -rf x\""'
+  [ -n "$output" ]
+  _blocked 'echo `echo \`rm -rf x\``'
+  [ -n "$output" ]
+  # The read-only forms of the same shapes stay allowed.
+  _blocked 'sh -c "sh -c \"pytest tests/\""'
+  [ -z "$output" ]
+  _blocked 'echo `echo \`git rev-parse HEAD\``'
+  [ -z "$output" ]
+}
+
 @test "review-guard: a command with an unbalanced quote is refused" {
   # The scan cannot see where such a command ends, so every rule is reading
   # fragments rather than the command. tokenize.ts documented `hasUnparsed` as

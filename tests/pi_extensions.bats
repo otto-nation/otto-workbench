@@ -1378,6 +1378,93 @@ _blocked() {
   [ -n "$output" ]
 }
 
+@test "review-guard: a quoted or escaped command name is the command" {
+  # `'rm' -rf x` and `\rm -rf x` both run rm. Matching raw text read them as an
+  # unknown command — a one-character rewrite of the refused form.
+  for bad in "'rm' -rf x" '"rm" -rf x' '\rm -rf x' "r''m -rf x" "'git' commit -m x"; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed: $bad"; false; }
+  done
+}
+
+@test "review-guard: creating, linking and unpacking are writes too" {
+  # WRITE_COMMANDS named only the verbs that move file contents, so an agent
+  # could create, delete, relink or unpack a tree freely.
+  for bad in 'touch f' 'mkdir -p d' 'rmdir d' 'ln -s a b' 'chmod +x f' \
+             'chown u f' 'shred f' 'rsync a b' 'tar -xf a.tar' 'unzip a.zip'; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed: $bad"; false; }
+  done
+}
+
+@test "review-guard: the git subcommands that stage and move refs are writes" {
+  # `git rm -rf .` deletes the worktree and stages the deletion, and was
+  # allowed while a bare `rm -rf .` was refused.
+  for bad in 'git add -A' 'git rm -rf .' 'git mv a b' 'git branch -D x' \
+             'git tag -f v1' 'git config user.name x' 'git update-ref HEAD x' \
+             'git worktree add /tmp/w'; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed: $bad"; false; }
+  done
+}
+
+@test "review-guard: a read-only git subcommand is allowed" {
+  # `\b` after the subcommand made `merge` match `merge-base` — the same
+  # hyphen-boundary bug WRITE_COMMANDS warns about. `git merge-base` is how a
+  # review establishes its base, and ai/lib calls it in fifteen places.
+  for ok in 'git merge-base origin/main HEAD' 'git merge-base --is-ancestor A B' \
+            'git merge-tree a b' 'git stash list' 'git stash show -p' \
+            'git apply --check p.diff' 'git clean -n' 'git push --dry-run' \
+            'git branch --list' 'git config --get user.name' \
+            'git remote -v' 'git worktree list'; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
+  done
+}
+
+@test "review-guard: a write reached through a nesting construct is refused" {
+  # Subshells, brace groups, eval, env -S and command substitution each run a
+  # command the outer scan never saw.
+  for bad in '(rm -rf x)' '{ rm -rf x; }' "eval 'rm -rf x'" \
+             "env -S 'rm -f /tmp/x'" 'echo $(rm -rf x)' 'echo `rm -rf x`' \
+             'exec rm -rf x' 'command rm -rf x' 'timeout 10 rm -rf x' \
+             'setsid rm -rf x'; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed: $bad"; false; }
+  done
+}
+
+# passes-at-base: nesting constructs were invisible before this change, so these passed by the hole rather than by the rule; the case stops the new rescanning being written as a blanket refusal of eval, env -S and $(), and it fails if any of them is turned into one
+@test "review-guard: a read inside a nesting construct is still a read" {
+  # Rescanned, not refused on sight: `echo $(git rev-parse HEAD)` is ordinary.
+  for ok in 'echo $(git rev-parse HEAD)' 'x=$(date)' \
+            "echo 'literal \$(rm -rf x)'" 'timeout 10 pytest tests/' \
+            'xargs -I{} grep {} f'; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a read: $ok ($output)"; false; }
+  done
+}
+
+@test "review-guard: a brace is only a group when it stands alone" {
+  # Splitting every brace broke `xargs -I{} rm {}`, whose {} is a placeholder:
+  # bash requires the spaces in `{ cmd; }`.
+  _blocked 'xargs -I{} rm {}'
+  [ -n "$output" ]
+  _blocked 'xargs -I{} grep {} f'
+  [ -z "$output" ]
+}
+
+@test "review-guard: a curl that writes nowhere is allowed" {
+  # The status-code probe, and the scratch destination the redirect rule has
+  # always permitted in its own spelling.
+  _blocked "curl -so /dev/null -w '%{http_code}' https://x"
+  [ -z "$output" ]
+  _blocked 'curl -o /tmp/out.bin https://x'
+  [ -z "$output" ]
+  _blocked 'curl -o /etc/passwd https://x'
+  [ -n "$output" ]
+}
+
 @test "review-guard: a quoted > is an argument, not a redirect" {
   # The redirect rule read a regex over the raw statement, so any `>` inside a
   # quoted argument was a write target. A review agent greps constantly, and

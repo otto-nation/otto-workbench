@@ -223,10 +223,21 @@ function matchOperator(line: string, i: number): string | null {
   for (const redirect of REDIRECTS) {
     if (line.startsWith(redirect, i)) return redirect;
   }
-  for (const op of [";;", "&&", "||", ";", "|", "&", "(", ")", "{", "}"]) {
+  for (const op of [";;", "&&", "||", ";", "|", "&", "(", ")"]) {
     if (line.startsWith(op, i)) return op;
   }
+  // A brace is only a group when it stands as its own word: bash requires the
+  // space in `{ cmd; }`, and everywhere else a brace is content. Splitting it
+  // unconditionally broke `xargs -I{} rm {}`, whose `{}` is a placeholder.
+  if ((line[i] === "{" || line[i] === "}") && standsAlone(line, i)) return line[i];
   return null;
+}
+
+/** True when the character at `i` is delimited by whitespace on both sides. */
+function standsAlone(line: string, i: number): boolean {
+  const before = i === 0 || /\s/.test(line[i - 1]);
+  const after = i + 1 >= line.length || /\s/.test(line[i + 1]);
+  return before && after;
 }
 
 /**

@@ -19,7 +19,7 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { statements } from "../extensions/_shared/statements.ts";
-import { tokenize, type Token } from "../extensions/_shared/tokenize.ts";
+import { span, tokenize, type Token } from "../extensions/_shared/tokenize.ts";
 
 /**
  * Commands that write, matched at a statement head.
@@ -39,54 +39,172 @@ const WRITE_COMMANDS = [
   "dd",
   "truncate",
   "install",
+  // Creating, removing and linking are writes as much as copying is; the
+  // original list named only the verbs that move file *contents* around, so a
+  // fix agent could create or delete a path freely.
+  "touch",
+  "mkdir",
+  "rmdir",
+  "ln",
+  "unlink",
+  "shred",
+  // Metadata is content too: a mode or owner change is a tree modification a
+  // review is not entitled to make.
+  "chmod",
+  "chown",
+  "chgrp",
+  // Each of these writes a tree from an archive or another tree, which is the
+  // largest write shape available and was the least guarded.
+  "rsync",
+  "patch",
+  "tar",
+  "unzip",
 ];
 
 /**
- * A `git` subcommand reached past any global flags in front of it.
+ * `git` subcommands that move the branch, the index or the worktree.
  *
- * `git -C /repo commit`, `git --no-pager commit` and `git -c user.name=x commit`
- * all run a commit, and a pattern anchored straight to `git\s+(?:commit|...)`
- * matches none of them — so the denial this list exists to enforce was a
- * one-flag rewrite away from doing nothing. That matters more here than a
- * missed `sed`: backend_claude.FIX_DENIED_TOOLS names the same subcommands and
- * says Pi enforces them by this mechanism, and the fix engine's accountability
- * rests on the claim. An agent that commits for itself lands work outside the
- * scope `fix.scope` watched it produce.
+ * backend_claude.FIX_DENIED_TOOLS names the same set and says Pi enforces them
+ * by this mechanism, and the fix engine's accountability rests on the claim:
+ * an agent that commits for itself lands work outside the scope `fix.scope`
+ * watched it produce.
  *
- * `-c` and `-C` take a separate argument, so the value after them is consumed
- * rather than read as the subcommand — otherwise `git -C commit` would name a
- * directory and be treated as one.
+ * Compared against a whole token, never matched as a prefix. A `\b` after the
+ * subcommand made `merge` match `merge-base` — the same hyphen-boundary bug
+ * the WRITE_COMMANDS comment describes, and an expensive one: `git merge-base`
+ * is how a review establishes its own base, and this repo's `ai/lib/` calls it
+ * in fifteen places.
  */
-const GIT_WRITE_SUBCOMMANDS =
-  /^\s*git\s+(?:(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S*|\s+\S+)|-[a-zA-Z]+|--[a-zA-Z-]+)\s+)*(?:commit|push|checkout|switch|restore|reset|clean|stash|rebase|merge|apply|am|cherry-pick|revert)\b/;
+const GIT_WRITE_SUBCOMMANDS = new Set([
+  "commit", "push", "checkout", "switch", "restore", "reset", "clean", "stash",
+  "rebase", "merge", "apply", "am", "cherry-pick", "revert",
+  // Absent before, and each writes: `git rm -rf .` deletes the worktree and
+  // stages the deletion while a bare `rm -rf .` is refused.
+  "add", "rm", "mv", "branch", "tag", "config", "update-ref", "symbolic-ref",
+  "worktree", "notes", "replace", "filter-branch", "gc", "prune",
+  "sparse-checkout", "submodule", "bisect", "fetch", "pull", "remote", "init",
+]);
 
 /**
- * Write constructs that are not a bare command name, matched against each
- * statement rather than the whole command string.
+ * `git` global flags that take their value as a separate word.
  *
- * Anchored to a *flag position*, not to "the letter appears somewhere". The
- * first spelling of the sed rule was /^\s*sed\s+[^|]*-i/, and `[^|]*` crosses
- * into the arguments: a read-only `sed -n '1,5p' doc-internal/CLAUDE.md` was
- * refused because the path contains `-i`, as was any `s///` expression carrying
- * one. 18 tracked paths in this repo trip that, and the directory under review
- * when it was found was named `doc-internal`, so it fired on nearly every read
- * the agent attempted against its own subject tree. This is the same bug the
- * WRITE_COMMANDS comment above describes for `\b`, which had already cost a
- * session once; the reasoning had not been carried across to these patterns,
- * and neither had a negative-case test.
+ * Consumed with their value so `git -C commit` reads as a directory named
+ * `commit` rather than as the subcommand.
  */
-const WRITE_STATEMENT_PATTERNS = [
-  // `-i` as a flag: alone, in a cluster (`-ni`), with a suffix (`-i.bak`), or
-  // spelled out. `g?sed` because GNU sed is `gsed` on macOS and edits in place
-  // just the same.
-  /^\s*(?:g?sed|perl)\s+(?:[^|]*\s)?-(?:[a-zA-Z]*i|-in-place)\b/,
-  // The long spellings are not optional extras: `curl --output f` and
-  // `wget --output-document f` write a file and matched nothing before.
-  /^\s*(?:curl|wget)\s+(?:[^|]*\s)?(?:-[a-zA-Z]*[oO]\b|--output(?:-document)?\b|--remote-name\b)/,
-  // `apply` and `am` write arbitrary file content straight out of a patch,
-  // which is the shape a fix pass reaches for when it wants a diff on disk.
-  GIT_WRITE_SUBCOMMANDS,
+const GIT_VALUE_FLAGS = new Set(["-c", "-C", "--git-dir", "--work-tree",
+                                 "--namespace", "--exec-path", "--config-env"]);
+
+/**
+ * Flags that make a mutating subcommand read-only.
+ *
+ * `git apply --check`, `git clean -n` and `git push --dry-run` report what
+ * they would do and change nothing, and refusing them cost a review the
+ * cheapest way to answer its own questions.
+ */
+const GIT_DRY_RUN_FLAGS = new Set(["--dry-run", "-n", "--check", "--stat",
+                                   "--numstat", "--summary", "--help"]);
+
+/**
+ * Subcommand pairs that only read, despite the first word being a write verb.
+ *
+ * `git stash list` and `git branch --list` are reads; `git stash` and
+ * `git branch -D` are not. Keyed on the second word, which is the only thing
+ * that tells them apart.
+ */
+const GIT_READ_ONLY_ACTIONS: Record<string, Set<string>> = {
+  stash: new Set(["list", "show"]),
+  branch: new Set(["--list", "-l", "--show-current", "-v", "--verbose"]),
+  tag: new Set(["--list", "-l"]),
+  remote: new Set(["show", "get-url", "-v", "--verbose"]),
+  notes: new Set(["list", "show"]),
+  config: new Set(["--get", "--get-all", "--list", "-l", "--get-regexp"]),
+  submodule: new Set(["status", "summary", "foreach"]),
+  worktree: new Set(["list"]),
+  bisect: new Set(["log", "view"]),
+};
+
+/**
+ * Why this `git` invocation writes, or null when it only reads.
+ *
+ * Token-based because every previous spelling of this rule failed on the
+ * boundary between a subcommand and the text around it: anchored to `git\s+`
+ * it missed `git -C /r commit`, and loosened with `\b` it caught
+ * `git merge-base`.
+ */
+function gitWrite(tokens: Token[]): string | null {
+  if (tokens[0]?.value.split("/").pop() !== "git") return null;
+  let i = 1;
+  while (i < tokens.length) {
+    const word = tokens[i].value;
+    if (!word.startsWith("-")) break;
+    // `--git-dir=/x` carries its value; `--git-dir /x` takes the next word.
+    i += GIT_VALUE_FLAGS.has(word) ? 2 : 1;
+  }
+  const subcommand = tokens[i]?.value;
+  if (!subcommand || !GIT_WRITE_SUBCOMMANDS.has(subcommand)) return null;
+
+  const rest = tokens.slice(i + 1).map((t) => t.value);
+  if (rest.some((word) => GIT_DRY_RUN_FLAGS.has(word))) return null;
+  if (rest[0] && GIT_READ_ONLY_ACTIONS[subcommand]?.has(rest[0])) return null;
+  return subcommand;
+}
+
+/**
+ * Commands that write only when a particular flag is present, by command name.
+ *
+ * A flag is looked for among the *tokens*, so it is a flag when the shell
+ * would read it as one and an argument otherwise. The first spelling of the
+ * sed rule was /^\s*sed\s+[^|]*-i/, and `[^|]*` crosses into the arguments: a
+ * read-only `sed -n '1,5p' doc-internal/CLAUDE.md` was refused because the
+ * path contains `-i`, as was any `s///` expression carrying one. 18 tracked
+ * paths in this repo trip that. Quoting settles both directions now —
+ * `sed -e "s/a/it's/" -i '' f` really does edit in place and is refused,
+ * `sed -n "s/a-i/b/p" f` does not and is not.
+ *
+ * `g?sed` because GNU sed is `gsed` on macOS and edits in place just the same.
+ */
+const FLAG_WRITES: { commands: Set<string>; writes: (flag: string) => boolean }[] = [
+  {
+    commands: new Set(["sed", "gsed", "perl"]),
+    // `-i` alone, in a cluster (`-ni`), with a suffix (`-i.bak`), or spelled out.
+    writes: (flag) =>
+      flag === "--in-place" ||
+      (/^-[a-zA-Z]*i/.test(flag) && !flag.startsWith("--")),
+  },
+  {
+    commands: new Set(["curl", "wget"]),
+    // The long spellings are not optional extras: `curl --output f` and
+    // `wget --output-document f` write a file and matched nothing before.
+    writes: (flag) =>
+      flag === "--output" || flag === "--output-document" ||
+      flag === "--remote-name" ||
+      (/^-[a-zA-Z]*[oO]/.test(flag) && !flag.startsWith("--")),
+  },
 ];
+
+/**
+ * Why this command writes by virtue of a flag, or null when it does not.
+ *
+ * A destination of `/dev/null` or a scratch path is not a write, which is what
+ * keeps `curl -so /dev/null -w '%{http_code}' https://x` — the standard
+ * status-code probe — out of the refusals, alongside the `curl -o /tmp/x`
+ * that the redirect rule has always permitted in its own spelling.
+ */
+function flagWrite(tokens: Token[]): string | null {
+  const name = tokens[0]?.value.split("/").pop() ?? "";
+  const rule = FLAG_WRITES.find((r) => r.commands.has(name));
+  if (!rule) return null;
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.quoted || tok.operator || !rule.writes(tok.value)) continue;
+    // An attached destination (`-oFILE`) or the next word, whichever it is.
+    const attached = tok.value.replace(/^-[a-zA-Z]*[oO]/, "");
+    const destination = attached || tokens[i + 1]?.value;
+    if (destination && isScratchTarget(destination)) continue;
+    return tok.value;
+  }
+  return null;
+}
 
 /**
  * Command wrappers that take another command as their argument.
@@ -104,7 +222,12 @@ const WRITE_STATEMENT_PATTERNS = [
  * and is allowed. Skipping value and flag together is the difference between
  * this failing closed and failing open.
  */
-const COMMAND_WRAPPERS = new Set(["sudo", "env", "time", "xargs", "nohup", "nice", "doas"]);
+const COMMAND_WRAPPERS = new Set([
+  "sudo", "env", "time", "xargs", "nohup", "nice", "doas",
+  // Same shape, and each was a one-word prefix that hid every write behind it:
+  // `exec rm -rf x` and `timeout 10 rm -rf x` were both permitted.
+  "exec", "command", "timeout", "stdbuf", "setsid", "builtin",
+]);
 
 /**
  * Wrapper flags that consume the word after them.
@@ -122,11 +245,19 @@ const COMMAND_WRAPPERS = new Set(["sudo", "env", "time", "xargs", "nohup", "nice
  * parser if a wrapper invocation ever gets past this that mattered.
  */
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
-  sudo: new Set(["-u", "-g", "-p", "-C", "-U", "-T", "-r", "-t", "--user", "--group"]),
+  // `-S` is deliberately absent, unlike every other value-taking flag here:
+  // `env -S 'rm -f x'` takes a whole *command* as its value, so skipping the
+  // value would skip the write. Left unlisted, the value lands where the
+  // command is expected and is scanned as one, which is the correct reading.
+  sudo: new Set(["-u", "-g", "-p", "-C", "-U", "-T", "-r", "-t", "--user", "--group",
+                 "-D", "--chdir", "-R", "--chroot", "-h", "--host", "--prompt",
+                 "--close-from"]),
   doas: new Set(["-u", "-C"]),
-  env: new Set(["-u", "-C", "-S", "--unset", "--chdir"]),
+  env: new Set(["-u", "-C", "--unset", "--chdir"]),
   time: new Set(["-f", "-o", "--format", "--output"]),
   nice: new Set(["-n", "--adjustment"]),
+  timeout: new Set(["-s", "--signal", "-k", "--kill-after"]),
+  stdbuf: new Set(["-i", "-o", "-e", "--input", "--output", "--error"]),
   xargs: new Set(["-I", "-L", "-n", "-P", "-s", "-E", "-a", "-d", "-i", "--replace",
                   "--max-args", "--max-procs", "--arg-file", "--delimiter"]),
   nohup: new Set(),
@@ -274,7 +405,51 @@ export function isScratchPath(path: string): boolean {
 
 /** The leading command word of a statement, with env assignments skipped. */
 function commandHead(statement: string): string {
-  return unwrap(statement).split(/\s+/).filter(Boolean)[0]?.split("/").pop() ?? "";
+  return commandTokens(statement)[0]?.value.split("/").pop() ?? "";
+}
+
+/** Grouping operators that precede a command rather than being one. */
+const GROUPING = new Set(["(", "{"]);
+
+/**
+ * The tokens of the command actually being run, wrappers and env stripped.
+ *
+ * Reads the token scan, so the command name is the word the shell would run
+ * rather than the characters that spell it. `'rm' -rf x` and `\rm -rf x` both
+ * run rm, and both read as an unknown command to anything matching raw text —
+ * a one-character rewrite of the refused form, which is the class of hole the
+ * COMMAND_WRAPPERS comment says a guard must not leave open.
+ *
+ * A leading `(` or `{` is stepped over for the same reason: `(rm -rf x)` runs
+ * rm in a subshell, and the parenthesis is syntax rather than the command.
+ */
+function commandTokens(statement: string): Token[] {
+  const tokens = tokenize(statement);
+  let wrapper = "";
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    // A subshell or brace group opens with an operator that is not a command.
+    if (tok.operator && GROUPING.has(tok.value)) continue;
+    if (tok.operator) break;
+    // `FOO=bar cmd` — an assignment prefix is not the command being run.
+    if (!tok.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tok.value)) continue;
+    const name = tok.value.split("/").pop() ?? "";
+    if (COMMAND_WRAPPERS.has(name)) {
+      wrapper = name;
+      continue;
+    }
+    // `timeout 10 rm -rf x` — the duration is positional, not a flag, so the
+    // flag-skipping below never reaches it and `10` reads as the command.
+    if (wrapper === "timeout" && /^[\d.]+[smhd]?$/.test(tok.value)) continue;
+    // A wrapper's own flags belong to the wrapper, not the command it runs.
+    // Quoted, they are an argument: `sudo '-u'` is not sudo's flag.
+    if (!tok.quoted && tok.value.startsWith("-")) {
+      if (WRAPPER_VALUE_FLAGS[wrapper]?.has(tok.value)) i++;
+      continue;
+    }
+    return tokens.slice(i);
+  }
+  return [];
 }
 
 /**
@@ -285,29 +460,9 @@ function commandHead(statement: string): string {
  * pattern anchored with `^\s*sed` sees the `sudo` and declines.
  */
 function unwrap(statement: string): string {
-  const words = statement.trim().split(/\s+/).filter(Boolean);
-  // The wrapper whose flags are currently being skipped, so `-u` is read
-  // against the right one. Empty until a wrapper has been seen.
-  let wrapper = "";
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
-    // `FOO=bar cmd` — an assignment prefix is not the command being run.
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-    // Strip a path so `/bin/rm` and `rm` read the same.
-    const name = word.split("/").pop() ?? "";
-    if (COMMAND_WRAPPERS.has(name)) {
-      wrapper = name;
-      continue;
-    }
-    // A wrapper's own flags belong to the wrapper, not to the command it runs.
-    if (word.startsWith("-")) {
-      // A value written separately is the flag's, not the command being run.
-      if (WRAPPER_VALUE_FLAGS[wrapper]?.has(word)) i++;
-      continue;
-    }
-    return words.slice(i).join(" ");
-  }
-  return "";
+  const tokens = commandTokens(statement);
+  // Sliced from the source, so the flag patterns match the text as written.
+  return tokens.length ? span(statement, tokens) : "";
 }
 
 /**
@@ -361,28 +516,10 @@ function lastWrapper(statement: string): string {
  */
 const INTERACTIVE_SHELLS = new Set([
   "sudo", "doas", "su", "sh", "bash", "zsh", "dash", "ksh", "fish",
+  // csh and tcsh are shells on the same terms; rbash is a restricted bash,
+  // which is still a shell this predicate cannot read.
+  "csh", "tcsh", "rbash",
 ]);
-
-/**
- * `statement` with quoted spans blanked, for the flag patterns to match against.
- *
- * A flag letter inside a quoted argument is data, not a flag: `curl -s URL -H
- * 'A: -o'` is a read, and `sed -n "s/a-i/b/p" f` is a read. The same two passes
- * ai/claude/bin/claude-bash-guard makes, and they inherit the same ceiling it
- * documents — an escaped quote ends a span early and an unpaired apostrophe
- * re-pairs with a later one. Replaced with a placeholder rather than deleted,
- * so `sed -i '' s/a/b/ f` keeps an argument where the empty string was and the
- * words on either side do not run together.
- *
- * ceiling: two regex passes, not a tokenizer, so both misreadings above are
- * possible. Each costs at most one refused or one permitted statement in a
- * review session, and the redirect rule below is unaffected because it reads
- * the raw statement. Upgrade to a real tokenizer if either misfire shows up on
- * a command worth running.
- */
-function blankQuoted(statement: string): string {
-  return statement.replace(/'[^']*'/g, "QUOTEDARG").replace(/"[^"]*"/g, "QUOTEDARG");
-}
 
 /**
  * A `sh -c "..."` payload, which is a command in its own right.
@@ -400,6 +537,51 @@ function blankQuoted(statement: string): string {
  */
 const SHELL_DASH_C =
   /^(?:sh|bash|zsh|dash|ksh|fish)\s+(?:(?:-[a-zA-Z]*|--[a-zA-Z-]+)\s+)*-[a-zA-Z]*c[a-zA-Z]*\s+(.*)$/s;
+
+/**
+ * Commands inside `$(...)` or backticks, which run in their own right.
+ *
+ * `echo $(rm -rf x)` deletes the file however harmless the outer command is,
+ * and the substitution is invisible to a scan that reads the outer words only.
+ * Each one is returned for rescanning rather than refused on sight, for the
+ * same reason `sh -c` is: a substitution that only reads is still a read, and
+ * `echo $(git rev-parse HEAD)` is an ordinary thing to run.
+ *
+ * Single quotes suppress substitution, so a `$(` inside them is literal and is
+ * skipped — the token scan has already marked that span quoted.
+ */
+function substitutions(statement: string): string[] {
+  const found: string[] = [];
+  for (const match of statement.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) {
+    // A `$(` inside single quotes is literal. Checked against the scan rather
+    // than by counting quotes, so the answer matches every other rule's.
+    const literal = tokenize(statement).some(
+      (t) => t.quoted && t.raw.startsWith("'") && t.raw.includes(match[0]),
+    );
+    const inner = (match[1] ?? match[2] ?? "").trim();
+    if (inner && !literal) found.push(inner);
+  }
+  return found;
+}
+
+/**
+ * The command `env -S "..."` was asked to run, or null when there is none.
+ *
+ * `-S` is the one wrapper flag whose value is a whole command rather than a
+ * setting, so it can be neither skipped (the write goes unseen) nor read as
+ * the command name (it is a whole string, not a word). Returned for rescanning
+ * instead, the same treatment `sh -c` gets.
+ */
+function envDashS(tokens: Token[]): string | null {
+  if (tokens[0]?.value.split("/").pop() !== "env") return null;
+  for (let i = 1; i < tokens.length; i++) {
+    const value = tokens[i].value;
+    if (value === "-S" || value === "--split-string") return tokens[i + 1]?.value ?? null;
+    if (value.startsWith("-S")) return value.slice(2);
+    if (value.startsWith("--split-string=")) return value.slice("--split-string=".length);
+  }
+  return null;
+}
 
 /**
  * The command inside a `sh -c "..."` wrapper, or null when there is none.
@@ -464,12 +646,45 @@ export function blockedWriteCommand(command: string, depth = 0): string | null {
       return `write-capable command inside a shell wrapper: ${statement.trim()} (${innerReason})`;
     }
 
-    // Against the unwrapped, quote-blanked statement: `sudo sed -i` and
-    // `xargs rm` are the writes they wrap, and a flag letter inside a quoted
-    // argument is data rather than a flag.
-    const unwrapped = blankQuoted(unwrap(statement));
-    for (const pattern of WRITE_STATEMENT_PATTERNS) {
-      if (pattern.test(unwrapped)) return `write-capable command: ${statement.trim()}`;
+    // Against the unwrapped command's tokens, so `sudo sed -i` and `xargs rm`
+    // are the writes they wrap, and a flag letter inside a quoted argument is
+    // data rather than a flag.
+    const command_ = commandTokens(statement);
+
+    const flag = flagWrite(command_);
+    if (flag) {
+      return `\`${commandHead(statement)} ${flag}\` writes: ${statement.trim()}`;
+    }
+
+    const subcommand = gitWrite(command_);
+    if (subcommand) {
+      return `\`git ${subcommand}\` writes: ${statement.trim()}`;
+    }
+
+    // `eval` and `env -S` both take their argument as a command, so both are
+    // the `sh -c` shape without the shell: rescanned rather than refused
+    // outright, for the same reason — a payload that only reads is still a
+    // read. `env -S` is why `-S` is absent from WRAPPER_VALUE_FLAGS.env.
+    const nested = depth < 4
+      ? (command_[0]?.value === "eval"
+          ? tokenize(statement).slice(1).map((t) => t.value).join(" ")
+          : envDashS(tokenize(statement)))
+      : null;
+    if (nested) {
+      const reason = blockedWriteCommand(nested, depth + 1);
+      if (reason) {
+        return `write-capable command inside a wrapper: ${statement.trim()} (${reason})`;
+      }
+    }
+
+    // A substitution runs whatever it contains, whatever the outer command is.
+    if (depth < 4) {
+      for (const inner of substitutions(statement)) {
+        const reason = blockedWriteCommand(inner, depth + 1);
+        if (reason) {
+          return `write-capable command substitution: ${statement.trim()} (${reason})`;
+        }
+      }
     }
 
     // A statement can carry more than one redirect (e.g. `cmd > a.txt 2>b.txt`),

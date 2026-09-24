@@ -84,7 +84,8 @@ def excluded(repo_root: Path) -> bool:
     if not repo_root.is_absolute():
         return True
     roots = [Path(r) for r in TEMP_ROOTS]
-    roots += [workbench_paths.state_dir(), workbench_paths.cache_dir()]
+    roots += [workbench_paths.state_dir(), workbench_paths.cache_dir(),
+              workbench_paths.data_dir()]
     tmpdir = os.environ.get("TMPDIR")
     if tmpdir:
         roots.append(Path(tmpdir))

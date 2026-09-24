@@ -483,11 +483,12 @@ registry_passes_install_check() {
   if [[ -n "$check_symlink" && "$check_symlink" != "null" ]]; then
     # Expand ~ to $HOME, and the workbench roots to their resolved values.
     # Literal substitution rather than eval — the value comes from a registry
-    # file, and only these three names are recognised.
+    # file, and only these four names are recognised.
     check_symlink="${check_symlink/#\~/$HOME}"
     check_symlink="${check_symlink//\$\{WORKBENCH_CONFIG_DIR\}/$WORKBENCH_CONFIG_DIR}"
     check_symlink="${check_symlink//\$\{WORKBENCH_STATE_DIR\}/$WORKBENCH_STATE_DIR}"
     check_symlink="${check_symlink//\$\{WORKBENCH_CACHE_DIR\}/$WORKBENCH_CACHE_DIR}"
+    check_symlink="${check_symlink//\$\{WORKBENCH_DATA_DIR\}/$WORKBENCH_DATA_DIR}"
     local symlink_target
     symlink_target=$(readlink "$check_symlink" 2>/dev/null || true)
     [[ "$symlink_target" == *"$check_contains"* ]] && return 0 || return 1

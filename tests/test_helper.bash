@@ -389,6 +389,7 @@ gate_sandbox() {
   export WORKBENCH_STATE_DIR="$TEST_HOME/state"
   export WORKBENCH_CACHE_DIR="$TEST_HOME/cache"
   export WORKBENCH_CONFIG_DIR="$TEST_HOME/config"
+  export WORKBENCH_DATA_DIR="$TEST_HOME/data"
   mkdir -p "$WORKBENCH_STATE_DIR"
   : > "$WORKBENCH_STATE_DIR/projects.registry"
 }

@@ -3671,8 +3671,8 @@ must wrap a child process rather than be claimed and returned from.
 
 Where the workbench keeps things.
 
-Three user-level roots — config, state, and cache — each resolving through the
-same chain:
+Four user-level roots — config, state, cache, and data — each resolving through
+the same chain:
 
     WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 

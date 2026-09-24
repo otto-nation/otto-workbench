@@ -1183,6 +1183,24 @@ def _isolate_cache_root(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path / "cache"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_data_root(tmp_path, monkeypatch):
+    """Point the data root at a temp dir, where the stakes are highest.
+
+    The other two roots are sandboxed so a test cannot read the developer's
+    state or cache by accident. This one is sandboxed so a test cannot *write*
+    into the developer's knowledge base: `wiki init --vault` creates a directory
+    under this root, and the data root is the one tree with no producer that
+    could rebuild what a test scribbled over.
+
+    Set here rather than in the wiki tests alone, for the reason the cache root
+    is: the roots resolve per call, so one setenv covers every present and
+    future consumer, and `WORKBENCH_DATA_DIR` is an override a subprocess
+    inherits — which is what the smoke tests rely on, since they pass no `env=`.
+    """
+    monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path / "data"))
+
+
 def _last_event() -> dict:
     """The most recent record in the sandboxed trail root."""
     if LIB_DIR not in sys.path:

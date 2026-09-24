@@ -1,7 +1,7 @@
 """Where the workbench keeps things.
 
-Three user-level roots — config, state, and cache — each resolving through the
-same chain:
+Four user-level roots — config, state, cache, and data — each resolving through
+the same chain:
 
     WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 
@@ -25,12 +25,13 @@ import os
 from pathlib import Path
 
 # The directory the workbench claims inside each XDG home, and the built-in
-# default for each root when no XDG home is set. lib/constants.sh spells the
-# same four; tests/workbench_roots.bats fails when a pair drifts.
+# default for each root when no XDG home is set. lib/roots.sh spells the same
+# five; tests/workbench_roots.bats fails when a pair drifts.
 WORKBENCH_DIRNAME = "workbench"
 DEFAULT_CONFIG_DIR = "~/.config/workbench"
 DEFAULT_STATE_DIR = "~/.local/state/workbench"
 DEFAULT_CACHE_DIR = "~/.cache/workbench"
+DEFAULT_DATA_DIR = "~/.local/share/workbench"
 
 # Subtrees of the state root that more than one tool has to agree on.
 TRAIL_DIRNAME = "trail"
@@ -90,6 +91,23 @@ def cache_dir(consumer: str | None = None) -> Path:
     itself, which is what a wipe-the-cache operation wants.
     """
     root = _root("WORKBENCH_CACHE_DIR", "XDG_CACHE_HOME", DEFAULT_CACHE_DIR)
+    return _subdir(root, consumer)
+
+
+def data_dir(consumer: str | None = None) -> Path:
+    """Authored data the workbench cannot regenerate: ``wiki/``.
+
+    Apart from the state root in what losing it costs. Everything under state
+    is written by a tool and can be written again — ``ai/lib/review/gc.py``
+    sweeps parts of it on a schedule, and the generated rules file is rewritten
+    by every sync. A knowledge base is typed by a person and has no producer to
+    re-run, so it is the one tree here that a stray delete ends rather than
+    delays. XDG draws the same line, which is why this is ``XDG_DATA_HOME``
+    rather than a subtree of state.
+
+    ``consumer`` selects one consumer's subtree, as it does for the cache root.
+    """
+    root = _root("WORKBENCH_DATA_DIR", "XDG_DATA_HOME", DEFAULT_DATA_DIR)
     return _subdir(root, consumer)
 
 

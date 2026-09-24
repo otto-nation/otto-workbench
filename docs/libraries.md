@@ -744,7 +744,7 @@ Loaded via `ui.sh`.
 
 ### roots.sh
 
-The three user-level roots the workbench writes to, each resolved through the
+The four user-level roots the workbench writes to, each resolved through the
 same chain:
 
 ```
@@ -756,6 +756,7 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 | `WORKBENCH_CONFIG_DIR` | Hand-authored settings: config.yml, overrides/ | `XDG_CONFIG_HOME` | `~/.config/workbench` |
 | `WORKBENCH_STATE_DIR` | Generated, machine-local data: reviews/, trail/, usage/, install.yml, migrations.applied | `XDG_STATE_HOME` | `~/.local/state/workbench` |
 | `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: vertex-quota/ | `XDG_CACHE_HOME` | `~/.cache/workbench` |
+| `WORKBENCH_DATA_DIR` | Authored data the workbench cannot regenerate: wiki/ | `XDG_DATA_HOME` | `~/.local/share/workbench` |
 
 `install.yml` sits under state despite the name: `lib/state.sh` owns every
 write to it, and it is what the old `installed.components` file migrated into.

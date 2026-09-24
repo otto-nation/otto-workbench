@@ -173,9 +173,16 @@ _make_dirs() {
   run bash "$GEN_ANATOMY" "$REPO"
   [ "$status" -eq 0 ]
 
+  # Back-dated rather than slept. file_mtime has one-second granularity, so the
+  # second run has to land in a different second for an unchanged mtime to mean
+  # anything — waiting for the clock costs a second, moving the file's own
+  # timestamp back costs nothing and makes the gap larger and deterministic.
+  # A generator that rewrote the file would stamp it with now and the
+  # comparison would fail, which is what the case is for.
+  touch -t 200001010000 "$REPO/.claude/anatomy.md"
+
   local before after
   before="$(file_mtime "$REPO/.claude/anatomy.md")"
-  sleep 1
   run bash "$GEN_ANATOMY" "$REPO"
   [ "$status" -eq 0 ]
 

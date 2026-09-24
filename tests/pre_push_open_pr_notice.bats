@@ -180,7 +180,16 @@ EOF
   local grandchild
   grandchild="$(cat "$TMPDIR/grandchild.pid")"
   [ -n "$grandchild" ]
-  sleep 1
+  # Polled rather than slept: the deadline has already fired by the time
+  # _run_briefly returns, so the grandchild is normally gone within
+  # milliseconds and a flat second is a second the suite spends either way.
+  # The loop still allows a full second before it gives up, so a slow machine
+  # is no more likely to fail here than it was.
+  local waited=0
+  while kill -0 "$grandchild" 2> /dev/null && [[ $waited -lt 20 ]]; do
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
   if kill -0 "$grandchild" 2> /dev/null; then
     kill -9 "$grandchild" 2> /dev/null
     printf 'grandchild %s survived the deadline\n' "$grandchild" >&2

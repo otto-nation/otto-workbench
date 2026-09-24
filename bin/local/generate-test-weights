@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# generate-test-weights — write tests/weights.tsv from a bats junit report.
+#
+# `shard_files` in bin/local/run-tests packs the bats suite into CI shards, and
+# it needs to know what each file costs. Counting `@test` lines is the obvious
+# proxy and it is a bad one: measured on this repo, a case in
+# claude_settings.bats cost 2.2s and one in migrations.bats 0.26s, so a
+# count-weighted split put 1193s of work on shard 1 and 242s on shard 3 — a
+# 440s critical path against a 165s one. Nothing readable from a test file
+# predicts its runtime, so the weight has to be measured.
+#
+# The numbers belong to the machine the imbalance is on, which is CI: a laptop
+# under load produces figures that swing 2x between runs. Regenerate from a
+# junit report a CI shard uploaded, not from a local run, unless you are
+# bootstrapping the file.
+#
+# Usage:
+#   bin/local/generate-test-weights REPORT.xml [REPORT.xml...]
+#   bin/local/generate-test-weights --run          # measure locally, serially
+#
+# Output: tests/weights.tsv, two tab-separated columns (basename, seconds),
+# LC_ALL=C sorted so the diff is one line per file whose cost moved.
+#
+# Exit code: 0 on success, 1 when no report yielded a usable timing.
+
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=../../lib/ui.sh
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") REPORT.xml [REPORT.xml...]
+       $(basename "$0") --run
+
+Write tests/weights.tsv from bats junit report(s), for the shard packer in
+bin/local/run-tests.
+
+  REPORT.xml   A junit report from \`bats --report-formatter junit\`. Several
+               may be given — CI runs three shards, each producing one — and
+               their timings are summed per file.
+  --run        Measure locally instead, with a serial full-suite run. Slow, and
+               only as good as an idle machine; prefer CI reports.
+  -h, --help   Show this help
+EOF
+}
+
+# _weights_from_reports REPORT... — emit "basename<TAB>seconds" per test file.
+#
+# A junit <testsuite> is one bats file, and its `time` attribute is the whole
+# file's wall time. Summed across reports so a file that somehow appears in two
+# is counted once at its total, rather than the last one read silently winning.
+_weights_from_reports() {
+  python3 - "$@" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from pathlib import Path
+
+totals = defaultdict(float)
+for report in sys.argv[1:]:
+    try:
+        root = ET.parse(report).getroot()
+    except (ET.ParseError, OSError) as exc:
+        print(f"could not read {report}: {exc}", file=sys.stderr)
+        continue
+    # A report is either a <testsuites> holding many, or a bare <testsuite>.
+    suites = root.iter('testsuite')
+    for suite in suites:
+        name = suite.get('name') or ''
+        # bats names the suite after the file, with or without the extension
+        # depending on how it was invoked. Normalise to a basename either way.
+        stem = Path(name).name
+        if not stem:
+            continue
+        if not stem.endswith('.bats'):
+            stem += '.bats'
+        try:
+            totals[stem] += float(suite.get('time') or 0.0)
+        except ValueError:
+            continue
+
+if not totals:
+    sys.exit(1)
+
+for stem in sorted(totals):
+    print(f"{stem}\t{totals[stem]:.2f}")
+PY
+}
+
+main() {
+  local -a reports=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage; exit 0 ;;
+      --run)
+        local out_dir
+        out_dir=$(mktemp -d)
+        # shellcheck disable=SC2064  # expand now: the path must survive the trap
+        trap "rm -rf '$out_dir'" EXIT
+        warn "Measuring locally. Figures from a loaded machine are not worth committing."
+        TEST_JOBS=1 "$WORKBENCH_DIR/bin/local/run-tests" --bats -- \
+          --report-formatter junit --output "$out_dir" >/dev/null
+        while IFS= read -r f; do reports+=("$f"); done \
+          < <(find "$out_dir" -name '*.xml' | LC_ALL=C sort)
+        ;;
+      *) reports+=("$1") ;;
+    esac
+    shift
+  done
+
+  if [[ ${#reports[@]} -eq 0 ]]; then
+    err "No report given."
+    usage >&2
+    exit 1
+  fi
+
+  local tmp
+  tmp=$(mktemp "${TMPDIR:-/tmp}/weights.XXXXXX")
+  # shellcheck disable=SC2064  # expand now: the path must survive the trap
+  trap "rm -f '$tmp'" EXIT
+
+  if ! _weights_from_reports "${reports[@]}" > "$tmp"; then
+    err "No usable timings in: ${reports[*]}"
+    exit 1
+  fi
+
+  # Written through a temp file and moved, so an interrupted run cannot leave a
+  # half-written weights file for the packer to read.
+  mv "$tmp" "$WEIGHTS_FILE"
+  trap - EXIT
+  success "Wrote $(wc -l < "$WEIGHTS_FILE" | tr -d ' ') weights to ${WEIGHTS_FILE#"$WORKBENCH_DIR"/}"
+}
+
+main "$@"

@@ -269,6 +269,134 @@ report_for() {
 
 # ── Sharding ─────────────────────────────────────────────────────────────────
 
+# ── Shard weights ────────────────────────────────────────────────────────────
+# The packer weighs each file by its measured runtime from tests/weights.tsv.
+# These cases pin the weighting itself against a synthetic tree, so they say
+# what they mean regardless of what the real suite currently costs — a test
+# asserting on the real numbers would fail every time someone made a test
+# slower, which is not a defect.
+
+# _weighted_tree WEIGHTS — a fake WORKBENCH_DIR whose tests/ holds one .bats
+# file per line of WEIGHTS ("name<TAB>seconds"), and a matching weights.tsv.
+#
+# Each stub carries a single @test so a count-weighted packer would see them as
+# identical — which is how these cases tell measured weighting apart from the
+# count weighting it replaced.
+_weighted_tree() {
+  local dir="$TMPDIR/tree"
+  mkdir -p "$dir/tests"
+  local name secs
+  : > "$dir/tests/weights.tsv"
+  while IFS=$'\t' read -r name secs; do
+    [[ -n "$name" ]] || continue
+    printf '@test "%s case" {\n  true\n}\n' "$name" > "$dir/tests/$name"
+    printf '%s\t%s\n' "$name" "$secs" >> "$dir/tests/weights.tsv"
+  done
+  printf '%s' "$dir"
+}
+
+@test "the heavy file is packed against all the light ones" {
+  # One file costing more than the rest combined has to end up alone, with
+  # everything else on the other shard. A packer weighing @test counts splits
+  # these five identical-looking stubs 3/2 and puts the heavy one with two
+  # others.
+  WORKBENCH_DIR=$(_weighted_tree <<'EOF'
+heavy.bats	100
+light_a.bats	1
+light_b.bats	1
+light_c.bats	1
+light_d.bats	1
+EOF
+)
+  TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+
+  local -a first=() second=()
+  while IFS= read -r f; do first+=("$(basename "$f")"); done < <(shard_files 1 2)
+  while IFS= read -r f; do second+=("$(basename "$f")"); done < <(shard_files 2 2)
+
+  [ "${#first[@]}" -eq 1 ]
+  [ "${first[0]}" = "heavy.bats" ]
+  [ "${#second[@]}" -eq 4 ]
+}
+
+@test "files the weights do not name are spread, not piled on one shard" {
+  # A test file added since the last weights regeneration has no measurement
+  # and never will until CI runs it. It takes the median of the known weights.
+  #
+  # Asserted with several unweighted files, because that is the only way to
+  # tell the median apart from a zero: a zero-weight file does not raise the
+  # bucket it lands in, so every subsequent one is assigned to that same
+  # still-lightest bucket and the whole batch of new files ends up on one
+  # shard. A single unweighted file lands in exactly one shard either way, so a
+  # test using one would pass against the very fallback this rejects.
+  WORKBENCH_DIR=$(_weighted_tree <<'EOF'
+known_a.bats	10
+known_b.bats	10
+EOF
+)
+  TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+  local i
+  for i in 1 2 3 4; do
+    printf '@test "new case %s" {\n  true\n}\n' "$i" > "$WORKBENCH_DIR/tests/new_$i.bats"
+  done
+
+  local -a first=() second=()
+  while IFS= read -r f; do first+=("$(basename "$f")"); done < <(shard_files 1 2)
+  while IFS= read -r f; do second+=("$(basename "$f")"); done < <(shard_files 2 2)
+
+  # Every file placed exactly once.
+  [ $(( ${#first[@]} + ${#second[@]} )) -eq 6 ]
+
+  # The four unweighted files did not all land together.
+  local new_first new_second
+  new_first=$(printf '%s\n' "${first[@]}" | grep -c '^new_' || true)
+  new_second=$(printf '%s\n' "${second[@]}" | grep -c '^new_' || true)
+  [ "$new_first" -gt 0 ]
+  [ "$new_second" -gt 0 ]
+}
+
+@test "a tests directory holding one file still shards" {
+  # `grep -c` over a single file prints a bare count with no filename, so a
+  # weight reader parsing "path:count" would read the count as the path and
+  # emit nothing. The one-file tree is the degenerate case that catches it, and
+  # a repo is one `rm` away from it at any time.
+  WORKBENCH_DIR=$(_weighted_tree <<'EOF'
+solo.bats	7
+EOF
+)
+  TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+
+  local -a only=()
+  while IFS= read -r f; do only+=("$(basename "$f")"); done < <(shard_files 1 1)
+  [ "${#only[@]}" -eq 1 ]
+  [ "${only[0]}" = "solo.bats" ]
+}
+
+@test "a missing weights file still partitions every test file" {
+  # Weights are data, not a dependency. A checkout without them — or a stale
+  # generation — must degrade to a worse split, never to a run that shards
+  # nothing.
+  WORKBENCH_DIR=$(_weighted_tree <<'EOF'
+one.bats	5
+two.bats	5
+three.bats	5
+four.bats	5
+EOF
+)
+  # shellcheck disable=SC2034  # read by _shard_weights in bin/local/run-tests
+  TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/nonexistent.tsv"
+
+  local -a seen=()
+  local shard
+  for shard in 1 2; do
+    while IFS= read -r f; do seen+=("$(basename "$f")"); done < <(shard_files "$shard" 2)
+  done
+  [ "${#seen[@]}" -eq 4 ]
+  local unique
+  unique=$(printf '%s\n' "${seen[@]}" | sort -u | wc -l | tr -d ' ')
+  [ "$unique" -eq 4 ]
+}
+
 @test "shard_files partitions every test file exactly once" {
   local total=3
   local -a all_files=()

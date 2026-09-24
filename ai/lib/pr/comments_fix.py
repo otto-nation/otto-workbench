@@ -411,3 +411,23 @@ class FixSummary(Domain):
         """
         self.summary_url = url
         self.summary_deferred = False
+
+    def rearm_closeout(self) -> None:
+        """The PR is owed a reply and a corrected summary again.
+
+        `--finish` early-returns unless replies are pending and a summary is
+        deferred; re-arming both is also what puts the closeout back on
+        `pr status`. Named rather than assigned at the call site so a future
+        writer cannot re-arm one and skip the other.
+
+        Does not stamp `updated_at`. A domain is not stamped automatically —
+        only the writer knows whether a write occurred — and this is a
+        field-level write the way `replies_sent` and `summary_posted` are.
+        `--settle` persists without bumping the domain clock; this keeps that.
+
+        Not the only code that writes these fields. Construction, `merge_into`,
+        the discharges, and `review.closeout` (summary only) still do. This is
+        the named write that raises both together.
+        """
+        self.replies_pending = True
+        self.summary_deferred = True

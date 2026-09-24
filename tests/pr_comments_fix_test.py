@@ -373,3 +373,39 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
 
         assert merged.replies_pending is False
         assert merged.summary_deferred is False
+
+    def test_re_arming_raises_both_debts_finish_reads(self):
+        summary = pr_comments_fix.FixSummary()
+
+        summary.rearm_closeout()
+
+        assert summary.replies_pending is True
+        assert summary.summary_deferred is True
+
+    def test_re_arming_does_not_stamp_the_domain(self):
+        """A field-level write, like the discharges: the caller persists."""
+        summary = pr_comments_fix.FixSummary(updated_at="already")
+
+        summary.rearm_closeout()
+
+        assert summary.updated_at == "already"
+
+    def test_re_arming_leaves_the_summary_url_alone(self):
+        """The inverse of the discharges, not of `summary_posted`'s url write."""
+        summary = pr_comments_fix.FixSummary(
+            summary_url="https://example.test/c/1",
+        )
+
+        summary.rearm_closeout()
+
+        assert summary.summary_url == "https://example.test/c/1"
+
+    def test_re_arming_puts_the_closeout_back_on_status(self):
+        summary = _fix_with_closeout()
+        assert _closeout_line(summary.render_status()) is None
+
+        summary.rearm_closeout()
+
+        assert _closeout_line(summary.render_status()) == (
+            f"  ⚠ closeout owed: summary + 3 replies — run: {CLOSEOUT_COMMAND}"
+        )

@@ -663,13 +663,7 @@ def run_settle(
     if not settled:
         return 0
 
-    # Both flags are what --finish reads before it does anything: the reply queue
-    # early-returns unless replies are pending, and the summary renderer
-    # early-returns unless one is deferred. Re-arming them is also what puts the
-    # closeout back on `pr status`, which is correct — the PR is owed a reply and
-    # a corrected summary again.
-    state.fix.replies_pending = True
-    state.fix.summary_deferred = True
+    state.fix.rearm_closeout()
     pr_state.save_state(ctx.target_dir, state)
     log.info(
         f"Recorded {settled} settled thread(s) — next: "

@@ -695,6 +695,16 @@ declare -g _REG_SCAN_HOLD_OPEN=""
 # settings sync whose write failed carried on and printed its success line.
 # The release therefore has to happen in a trap, which is what lets the call
 # stay bare and the status propagate on its own.
+#
+# A collector running inside a command substitution reads the keys the block
+# has already recorded but cannot record its own, since its assignments die
+# with the subshell. So a block whose *first* collector runs in one re-scans
+# for every later collector and the hold buys nothing — measured at 0.99s
+# against 0.63s for the same pair the other way round. It costs time rather
+# than correctness, but it means the collector order in a held block is load
+# bearing: `step_claude_settings` calls collect_registry_permissions directly
+# before reaching _claude_mirror_env inside a `$(...)`, and swapping those two
+# would quietly undo this.
 reg_scan_hold() {
   if [[ -n "$_REG_SCAN_HOLD_OPEN" ]]; then
     "$@"
@@ -723,6 +733,15 @@ _reg_scan_release() {
 #
 # Returns 1 when a file cannot be parsed, which is the collector's own failure
 # to propagate.
+#
+# The hold key is the two directories joined on `_REG_SEP`, uncanonicalised: a
+# caller spelling one of them differently between collectors (relative against
+# absolute, a trailing slash, a symlinked parent) gets a second key and a
+# second scan, which is the unheld behaviour and so costs time rather than
+# correctness. Two genuinely different directory pairs can only collide if a
+# path contains `_REG_SEP` itself, which is the delimiter assumption the whole
+# module already rests on — `reg_load` rejects that byte in a registry key for
+# the same reason.
 _reg_collect_scan() {
   local -n __rg_regs_out=$1
   local __rg_scan_dir="$2" __rg_brew_dir="$3"

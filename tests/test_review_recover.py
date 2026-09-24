@@ -122,12 +122,14 @@ def job(tmp_path):
         path.write_text("x = 1\n" * 20)
     (tmp_path / "reviews").mkdir()
 
-    files = [{"path": p, "additions": 20, "deletions": 0} for p in _FILES]
+    # Two files per top-level dir; 150 lines each keeps a/ and b/ above
+    # MIN_GROUP_LINES so they remain separate groups.
+    files = [{"path": p, "additions": 150, "deletions": 0} for p in _FILES]
     return review_pipeline.ReviewJob(
         repo="org/repo", pr_number="1",
         pr=review_pipeline.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc123",
-            additions=80, deletions=0, changed_files=len(files), files=files,
+            additions=600, deletions=0, changed_files=len(files), files=files,
         ),
         ctx=review_pipeline.PRContext(),
         wt_path=str(tmp_path),

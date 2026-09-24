@@ -32,6 +32,14 @@ except ImportError:
 
 MAX_GROUP_LINES = 800
 MAX_GROUP_FILES = 15
+# A group below this does not earn its own agent. 200 is a quarter of
+# MAX_GROUP_LINES — well under one agent's budget, but above a leftover
+# file or a 30-line directory. A 681-line review that split five ways
+# averaged ~136 lines per group; 150 would still leave a ~160-line
+# remainder its own agent. There is no formula pinning 200 over, say, 175
+# or 250 — it is a judgment call from that one observation, not a derived
+# value, and a future revisit is free to move it with new evidence.
+MIN_GROUP_LINES = 200
 HOLISTIC_MIN_GROUPS = 8
 
 GROUP_TIER1 = "tier1-critical"
@@ -103,8 +111,9 @@ def group_files(pr: PRMetadata) -> list[Group]:
     """The PR's changed files divided into the groups one agent each reviews.
 
     Tier 1 and tier 3 each become a single group; tier 2 is grouped by
-    top-level directory, and a directory over `MAX_GROUP_LINES` or
-    `MAX_GROUP_FILES` is split into numbered sub-groups.
+    top-level directory (repo-root files share one bucket), and a directory
+    over `MAX_GROUP_LINES` or `MAX_GROUP_FILES` is split into numbered
+    sub-groups.
     """
     file_lines = {f["path"]: f["additions"] + f["deletions"] for f in pr.files}
 
@@ -125,7 +134,9 @@ def group_files(pr: PRMetadata) -> list[Group]:
     dir_lines: dict[str, int] = {}
     dir_order: list[str] = []
     for f in tiers[2]:
-        d = f.split("/")[0]
+        # Repo-root files have no directory component; share one bucket so
+        # each filename does not become its own group.
+        d = f.split("/")[0] if "/" in f else "."
         if d not in dir_files:
             dir_files[d] = []
             dir_lines[d] = 0
@@ -155,26 +166,63 @@ def _merge_score(a: Group, b: Group) -> tuple[int, int]:
     return (-shared, a.lines + b.lines)
 
 
-def _find_best_merge_pair(groups: list[Group]) -> tuple[int, int]:
+def _find_best_merge_pair(
+    groups: list[Group], max_lines: int | None = None,
+) -> tuple[int, int] | None:
+    """The best pair to merge, or None when `max_lines` excludes every pair.
+
+    `max_lines` bounds the combined size. A floor merge passes it so that one
+    unmergeable pair does not decide the fate of the rest: the affinity-best
+    pair may be two large neighbours whose combination would overflow, while
+    two unrelated small groups elsewhere would merge perfectly. Ranking only
+    the pairs that fit keeps the affinity order among the candidates that are
+    actually available.
+    """
     pairs = [(i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]
+    if max_lines is not None:
+        pairs = [
+            p for p in pairs
+            if groups[p[0]].lines + groups[p[1]].lines <= max_lines
+        ]
+    if not pairs:
+        return None
     return min(pairs, key=lambda p: _merge_score(groups[p[0]], groups[p[1]]))
 
 
 def merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
-    """``groups`` reduced to at most ``max_groups`` by repeatedly merging a pair.
+    """``groups`` reduced to at most ``max_groups``, and until none is below
+    ``MIN_GROUP_LINES``, by repeatedly merging a pair.
 
     Each round merges the pair sharing the longest name prefix, breaking ties on
     combined size, so a cap is spent on neighbouring directories before it costs
-    an unrelated group its own agent.
+    an unrelated group its own agent. A floor merge stops when no remaining pair
+    fits under ``MAX_GROUP_LINES`` — not on the first pair that doesn't fit —
+    while the agent-count cap still merges in that case, because too many
+    agents is worse than one slightly large one.
     """
     groups = list(groups)
-    while len(groups) > max_groups:
-        i, j = _find_best_merge_pair(groups)
+    while len(groups) > 1:
+        over_cap = len(groups) > max_groups
+        undersized = min(g.lines for g in groups) < MIN_GROUP_LINES
+        if not over_cap and not undersized:
+            break
+        # The agent-count cap accepts an oversized group, because too many
+        # agents is worse than one large one; a floor merge does not, and asks
+        # for the best pair that fits. None back means no pair fits, which is
+        # the loop's other exit: every remaining undersized group has only
+        # neighbours it would overflow.
+        pair = _find_best_merge_pair(
+            groups, None if over_cap else MAX_GROUP_LINES,
+        )
+        if pair is None:
+            break
+        i, j = pair
         a, b = groups[i], groups[j]
+        combined = a.lines + b.lines
         merged = Group(
             name=f"{a.name}+{b.name}",
             files=a.files + b.files,
-            lines=a.lines + b.lines,
+            lines=combined,
         )
         groups = [g for k, g in enumerate(groups) if k not in (i, j)]
         groups.append(merged)

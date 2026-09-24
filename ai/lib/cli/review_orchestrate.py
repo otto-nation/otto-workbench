@@ -242,6 +242,31 @@ def _review_scale(job) -> ReviewScale:
     return ReviewScale(job.pr.changed_files, job.pr.total_lines, "pr")
 
 
+def _pipeline_thresholds(job) -> tuple[int, int]:
+    """Line and file counts that push this job onto the multi-phase path.
+
+    A self-review uses ``review.self_effort`` for these two numbers only —
+    phase skips, thinking, and budgets still follow ``job.effort``. Unset,
+    that key takes low's thresholds so a small local diff stays on the
+    single-agent path without dropping disprove.
+    """
+    preset = EFFORT_PRESETS[job.effort]
+    if job.mode != Mode.SELF:
+        return preset.multi_phase_line_threshold, preset.multi_phase_file_threshold
+    self_effort = job.config.review.self_effort or Effort.LOW
+    chosen = EFFORT_PRESETS[self_effort]
+    return chosen.multi_phase_line_threshold, chosen.multi_phase_file_threshold
+
+
+def _choose_pipeline(job) -> tuple[Pipeline, ReviewScale, int, int]:
+    """Which pipeline this job runs, and the numbers that chose it."""
+    line_threshold, file_threshold = _pipeline_thresholds(job)
+    scale = _review_scale(job)
+    is_large = scale.lines > line_threshold or scale.files > file_threshold
+    pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
+    return pipeline, scale, line_threshold, file_threshold
+
+
 def _run_phases(trail, args, job) -> Pipeline:
     """Every phase of one run, in order, returning the pipeline it chose.
 
@@ -263,15 +288,7 @@ def _run_phases(trail, args, job) -> Pipeline:
         write_unchanged_review(job)
         return Pipeline.SINGLE
 
-    preset = EFFORT_PRESETS[job.effort]
-    line_threshold = preset.multi_phase_line_threshold
-    file_threshold = preset.multi_phase_file_threshold
-    scale = _review_scale(job)
-    is_large = (
-        scale.lines > line_threshold
-        or scale.files > file_threshold
-    )
-    pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
+    pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job)
 
     trail.decision(
         "select_pipeline",
@@ -283,7 +300,7 @@ def _run_phases(trail, args, job) -> Pipeline:
         },
     )
 
-    if is_large:
+    if pipeline is Pipeline.MULTI:
         with trail.span("multi_phase"):
             run_multi_phase(
                 job, max_parallel=args.max_parallel,
@@ -416,8 +433,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
     parser.add_argument("--issue", default="", help="Issue URL")
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
-    parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
-                        help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
+    parser.add_argument(
+        "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
+        help="Max concurrent group reviews (default: derived from free CPU, cap 4)",
+    )
     add_phase_skip_flags(parser)
     parser.add_argument("--disprove", action="store_true", default=None,
                         help="Enable disprove-it gate (default: effort-based)")

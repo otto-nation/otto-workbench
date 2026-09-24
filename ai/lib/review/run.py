@@ -67,7 +67,7 @@ class ReviewFlags:
     # gets the PR's base or the derived stack parent.
     base: str = ""
     issue_link: str = ""
-    max_parallel: int = 1
+    max_parallel: int | None = None
     max_cost: float | None = None
     model: str | None = None
     effort: str | None = None

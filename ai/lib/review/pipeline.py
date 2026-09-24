@@ -13,6 +13,7 @@ to review.gc, which the orchestrator runs once every phase is done.
 
 from __future__ import annotations
 
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -48,10 +49,67 @@ from review.state import PipelineState, _resolve_recovery, _write_pipeline_state
 
 DEFAULT_MAX_COST = 20.0
 
-# One group review at a time by default. Concurrency here multiplies the agent
-# spend against a budget the run checks between phases, so raising it is the
-# caller's call rather than the pipeline's.
-DEFAULT_MAX_PARALLEL = 1
+# Concurrent group agents used to hit 429 rate limits, so the default became
+# one. Concurrency does not multiply spend: every group in a phase launches
+# before the next gate regardless, so raising it only changes when the money
+# is spent, not how much. The count is now derived from free capacity unless
+# --max-parallel pins it. A second pipeline raises the load average, so the
+# clamp yields to it.
+DEFAULT_MAX_PARALLEL = None
+
+# ceiling: cap of 4 group agents. Upgrade trigger: once the trail shows quota
+# diagnoses staying rare at 4 on a busy machine, raise the cap toward the
+# core count.
+MAX_PARALLEL_CAP = 4
+MAX_PARALLEL_FLOOR = 1
+
+
+def parallel_worker_count(
+    group_count: int, cores: int, load: float,
+    cap: int = MAX_PARALLEL_CAP,
+) -> int:
+    """How many group agents free capacity can take, given a measured machine.
+
+    ``min(group_count, clamp(cores - load, 1, cap))``. Truncates toward zero
+    so a fraction of a free core does not round up into another agent.
+    """
+    free = int(cores - load)
+    return min(group_count, max(MAX_PARALLEL_FLOOR, min(cap, free)))
+
+
+def resolve_max_parallel(
+    group_count: int, requested: int | None = None,
+    *,
+    cores: int | None = None,
+    load: float | None = None,
+) -> int:
+    """The worker count this run will use, and a line saying why.
+
+    An explicit ``--max-parallel`` wins, like ``TEST_JOBS`` on the test runner.
+    Otherwise free capacity: cores minus the one-minute load average, clamped
+    to 1..4. Prints the choice because an invisible wait is indistinguishable
+    from a slow model, and a run sized down by another process looks exactly
+    like a slow one unless something says so.
+    """
+    if requested is not None:
+        workers = min(requested, group_count)
+        log.info(f"Group parallelism: {workers} worker(s) — set by --max-parallel")
+        return workers
+    if cores is None:
+        cores = os.cpu_count() or 1
+    if load is None:
+        try:
+            load = os.getloadavg()[0]
+        except (OSError, AttributeError):
+            # Unreadable load is treated as a full box so we stay serial rather
+            # than fan out on a machine we cannot size.
+            load = float(cores)
+    workers = parallel_worker_count(group_count, cores, load)
+    log.info(
+        f"Group parallelism: {workers} worker(s) "
+        f"({cores} cores, load {load:.2f}, capped at {MAX_PARALLEL_CAP})"
+    )
+    return workers
 
 
 # ── Review pipelines ──────────────────────────────────────────────────────────
@@ -145,7 +203,7 @@ def _consolidate_logs(
 
 
 def run_multi_phase(
-    job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
+    job: ReviewJob, max_parallel: int | None = DEFAULT_MAX_PARALLEL,
     max_cost: float = DEFAULT_MAX_COST,
     max_groups: int | None = None,
     disprove: bool | None = None,
@@ -226,8 +284,9 @@ def run_multi_phase(
             GroupFailure(g.name, unrun) for g in groups
         ]
     else:
+        workers = resolve_max_parallel(group_count, max_parallel)
         group_phase = _run_group_phase(
-            job, groups, group_count, holistic.content, max_parallel,
+            job, groups, group_count, holistic.content, workers,
             group_skips, state,
         )
         group_outputs, failed_groups = group_phase.outputs, group_phase.failures

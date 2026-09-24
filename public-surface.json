@@ -81,6 +81,10 @@
     "config:review.effort=high",
     "config:review.effort=low",
     "config:review.effort=medium",
+    "config:review.self_effort",
+    "config:review.self_effort=high",
+    "config:review.self_effort=low",
+    "config:review.self_effort=medium",
     "config:wiki",
     "config:wiki.dir"
   ]

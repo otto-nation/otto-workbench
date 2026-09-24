@@ -175,6 +175,7 @@ Every key any of them accepts:
 | `agent.phases.<phase>.model` | string | — |
 | `agent.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
 | `review.effort` | `low`, `medium`, `high` | — |
+| `review.self_effort` | `low`, `medium`, `high` | — |
 | `issues.provider` | `linear`, `github`, `jira` | — |
 | `issues.team` | string | — |
 | `issues.base_url` | string | — |

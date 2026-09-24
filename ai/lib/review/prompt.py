@@ -515,8 +515,10 @@ def _measured_tokens(
 
 # ceiling: process-local lock, upgrade to fcntl.flock on a sidecar if
 # writers become separate processes. Group agents share a process today
-# (ThreadPoolExecutor); a sidecar lock is the extra file gc would then
-# have to know about.
+# (ThreadPoolExecutor, see _run_parallel_reviews in phases.py); a sidecar
+# lock is the extra file gc would then have to know about. If that call
+# site ever moves to subprocess-per-group or multiprocessing, this lock
+# stops protecting anything and needs to move with it.
 _prompt_stats_lock = threading.Lock()
 
 

@@ -36,6 +36,7 @@ from config.workbench_config import (
     deep_merge,
     read_yaml,
     schema_accepts,
+    scope_rules,
     surface_schema,
 )
 
@@ -217,7 +218,28 @@ def docs_reference() -> str:
     if placeholders:
         lines.append("")
         lines += [f"`{name}` is one of: {values}" for name, values in placeholders]
+    lines += _scope_restriction_lines()
     return "\n".join(lines)
+
+
+def _scope_restriction_lines() -> list[str]:
+    """The note naming keys that only one scope may hold, or nothing.
+
+    Rendered from the same ``scope_rules`` the writer refuses against, so the
+    table cannot promise a scope the write would reject. A column in the key
+    table would read better and costs more than it is worth here: the rows come
+    back as plain tuples, and widening them is a change to every caller of
+    ``_reference_rows`` for something only two keys have.
+    """
+    rules = scope_rules()
+    if not rules:
+        return []
+    lines = []
+    for key in sorted(rules):
+        allowed = ", ".join(sorted(rules[key].allowed))
+        lines.append("")
+        lines.append(f"`{key}` may only be written at {allowed} scope: {rules[key].reason}.")
+    return lines
 
 
 @dataclasses.dataclass(frozen=True)

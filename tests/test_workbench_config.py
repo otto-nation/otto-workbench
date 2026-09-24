@@ -765,6 +765,88 @@ def test_an_enum_keyed_section_is_writable_by_its_declared_keys(roots):
         wcw.set_value("agent.phases.nosuchphase.model", "sonnet")
 
 
+# ── Scope restrictions ─────────────────────────────────────────────────
+#
+# A key may declare which files are allowed to hold it. Declaring nothing means
+# any of them, which is what every key did before the rules existed.
+
+
+def test_a_global_only_key_is_refused_at_project_scope(roots):
+    """An absolute machine path in a committed file is meaningless elsewhere."""
+    _, project = roots
+    with pytest.raises(wc.ConfigScopeError):
+        wcw.set_project_value(wc.WIKI_ROOT_KEY, "/home/someone/vault", project)
+    assert not (project / wc.PROJECT_CONFIG_NAME).exists()
+
+
+def test_a_global_only_key_is_refused_at_container_scope(roots, container):
+    """The container file is not committed, but it is still not this machine."""
+    with pytest.raises(wc.ConfigScopeError):
+        wcw.set_container_value(wc.WIKI_ROOT_KEY, "/home/someone/vault", container / "main")
+    assert not (container / wc.PROJECT_CONFIG_NAME).exists()
+
+
+# passes-at-base: the global write already worked, and this pins that adding a scope check left it alone
+def test_a_global_only_key_is_written_at_global_scope(roots):
+    wcw.set_value(wc.WIKI_ROOT_KEY, "/home/someone/vault")
+    assert wc.load_config().wiki.root == "/home/someone/vault"
+
+
+def test_a_scope_refusal_names_the_scope_that_would_work(roots):
+    _, project = roots
+    with pytest.raises(wc.ConfigScopeError) as exc:
+        wcw.set_project_value(wc.WIKI_ROOT_KEY, "/home/someone/vault", project)
+    message = str(exc.value)
+    assert "global scope" in message
+    assert f"otto-workbench config set {wc.WIKI_ROOT_KEY}" in message
+
+
+def test_a_scope_refusal_is_not_a_key_error(roots):
+    """What keeps the "here are the keys we accept" hint off a real key.
+
+    `config_cli` catches `ConfigKeyError` first and appends the schema URL,
+    which sends someone hunting a spelling mistake they did not make.
+    """
+    _, project = roots
+    assert issubclass(wc.ConfigScopeError, wc.ConfigError)
+    assert not issubclass(wc.ConfigScopeError, wc.ConfigKeyError)
+    with pytest.raises(wc.ConfigScopeError) as exc:
+        wcw.set_project_value(wc.WIKI_ROOT_KEY, "/x", project)
+    assert not isinstance(exc.value, wc.ConfigKeyError)
+
+
+# passes-at-base: every scope already accepted an undeclared key, and this pins that opt-in did not become opt-out
+def test_a_key_that_declares_nothing_is_writable_at_every_scope(roots, container):
+    _, project = roots
+    wcw.set_value("reuse.level", "ultra")
+    wcw.set_project_value("reuse.level", "ultra", project)
+    wcw.set_container_value("reuse.level", "ultra", container / "main")
+    assert (project / wc.PROJECT_CONFIG_NAME).exists()
+    assert (container / wc.PROJECT_CONFIG_NAME).exists()
+
+
+def test_the_key_check_still_runs_before_the_scope_check(roots):
+    """A misspelling is a misspelling, wherever it was going to be written."""
+    _, project = roots
+    with pytest.raises(wc.ConfigKeyError):
+        wcw.set_project_value("wiki.rooot", "/x", project)
+
+
+def test_scope_rules_finds_a_nested_key_and_skips_an_unrestricted_one(roots):
+    rules = wc.scope_rules()
+    assert wc.WIKI_ROOT_KEY in rules
+    assert rules[wc.WIKI_ROOT_KEY].allowed == frozenset({wc.GLOBAL_SCOPE})
+    assert wc.WIKI_DIR_KEY not in rules
+    assert "reuse.level" not in rules
+
+
+def test_the_network_key_is_refused_at_project_scope(roots):
+    """A second declaring key: the mechanism is not built for one caller."""
+    _, project = roots
+    with pytest.raises(wc.ConfigScopeError):
+        wcw.set_project_value(wc.GITHUB_SSH_443_KEY, "true", project)
+
+
 def test_check_key_says_which_surface_refused(stale_install):
     assert wcw.check_key("reuse.level").ok
     here = wcw.check_key("reuse.levl")

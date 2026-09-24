@@ -401,3 +401,47 @@ _make_repo() {
   run grep -c "ultra" "$CONFIG"
   [ "$status" -eq 0 ]
 }
+
+# ─── Scope restrictions ──────────────────────────────────────────────────────
+
+@test "a global-only key is refused at project scope and writes no file" {
+  git init --quiet "$TMPDIR/repo"
+  cd "$TMPDIR/repo" || return 1
+  _assert_not_real_repo || return 1
+
+  run "$REPO_ROOT/bin/otto-workbench" config set wiki.root /home/someone/vault --project
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"global scope"* ]]
+  [ ! -f "$TMPDIR/repo/.workbench.yml" ]
+  [ ! -f "$CONFIG" ]
+}
+
+@test "a global-only key is refused at container scope" {
+  _make_container
+
+  run "$REPO_ROOT/bin/otto-workbench" config set wiki.root /home/someone/vault --container
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"global scope"* ]]
+  [ ! -f "$TMPDIR/container/.workbench.yml" ]
+}
+
+@test "a scope refusal does not send the reader after a spelling mistake" {
+  # The key is real, so the schema URL a key refusal prints would be the wrong
+  # hint entirely. This is what ConfigScopeError not subclassing ConfigKeyError
+  # buys, asserted where the user actually reads it.
+  git init --quiet "$TMPDIR/repo"
+  cd "$TMPDIR/repo" || return 1
+  _assert_not_real_repo || return 1
+
+  run "$REPO_ROOT/bin/otto-workbench" config set wiki.root /home/someone/vault --project
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"config.schema.json"* ]]
+  [[ "$output" == *"otto-workbench config set wiki.root"* ]]
+}
+
+@test "a global-only key is written at global scope" {
+  run "$REPO_ROOT/bin/otto-workbench" config set wiki.root /home/someone/vault
+  [ "$status" -eq 0 ]
+  run grep -c "/home/someone/vault" "$CONFIG"
+  [ "$status" -eq 0 ]
+}

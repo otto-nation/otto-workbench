@@ -186,6 +186,10 @@ Every key any of them accepts:
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `rebase`, `prepush_fix`, `describe`
 
+`github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
+
+`wiki.root` may only be written at global scope: it is an absolute path on this machine, which means nothing on any other, and a repo's .workbench.yml is read by everyone who clones it.
+
 Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value`
 in Python — and `yq -i` carries it through every later write, so completion and
 enum validation work while the file is hand-edited. A `.workbench.yml` that the

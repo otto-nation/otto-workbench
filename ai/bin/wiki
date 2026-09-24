@@ -65,6 +65,7 @@ from config.workbench_config_write import set_value  # noqa: E402
 from core import proc  # noqa: E402
 from core import workbench_paths  # noqa: E402
 from git import client as git_client  # noqa: E402
+from wiki import backup as wiki_backup  # noqa: E402
 from wiki import create as wiki_create  # noqa: E402
 from wiki import model as wiki_model  # noqa: E402
 from wiki import parsing as wiki_parsing  # noqa: E402
@@ -89,7 +90,9 @@ QueryGap = wiki_parsing.QueryGap
 Wiki = wiki_model.Wiki
 WikiExistsError = wiki_create.WikiExistsError
 archive_article = wiki_create.archive_article
+backups_dir = wiki_backup.backups_dir
 build_index = wiki_report.build_index
+is_overdue = wiki_backup.is_overdue
 collect_lint = wiki_report.collect_lint
 collect_signals = wiki_report.collect_signals
 collect_status = wiki_report.collect_status
@@ -98,8 +101,12 @@ hash_file = wiki_parsing.hash_file
 init_wiki = wiki_create.init_wiki
 is_wiki = wiki_paths.is_wiki
 manifest_row = wiki_create.manifest_row
+prune = wiki_backup.prune
 read_text = wiki_parsing.read_text
+restore = wiki_backup.restore
 slugify_title = wiki_create.slugify_title
+snapshot = wiki_backup.snapshot
+snapshots = wiki_backup.snapshots
 stage_source = wiki_create.stage_source
 vault_subpath = wiki_paths.vault_subpath
 
@@ -127,13 +134,19 @@ __all__ = [
     "collect_lint",
     "collect_signals",
     "apply_link",
+    "backups_dir",
     "collect_status",
     "configured_dirname",
     "container_link_path",
     "find_wiki",
     "hash_file",
     "init_wiki",
+    "is_overdue",
     "main",
+    "prune",
+    "restore",
+    "snapshot",
+    "snapshots",
     "manifest_row",
     "repo_root",
     "resolve_wiki",
@@ -398,6 +411,10 @@ def cmd_status(wiki: Wiki, args: argparse.Namespace) -> int:
         hints.append("/wiki compile — uncompiled sources")
     if status["drafts"]:
         hints.append("/wiki promote — drafts awaiting review")
+    # Text only: the JSON shape is a contract the skill reads, and a prompt is
+    # for a person.
+    if wiki_backup.is_overdue(wiki.root):
+        hints.append(f"wiki backup — no snapshot in the last {wiki_backup.STALE_BACKUP_DAYS} days")
     if hints:
         print()
         for hint in hints:
@@ -653,6 +670,67 @@ def cmd_init(start: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backup(wiki: Wiki, args: argparse.Namespace) -> int:
+    """Snapshot the knowledge base, list snapshots, or restore one.
+
+    Restoring extracts beside the base rather than over it, and prints where it
+    landed. A restore happens when something has already gone wrong, and the
+    wrong snapshot written over the live base is the one mistake here that
+    cannot be undone.
+    """
+    if args.list:
+        return _list_snapshots(wiki)
+    if args.restore:
+        return _restore_snapshot(wiki, args.restore)
+    return _take_snapshot(wiki, args.keep)
+
+
+def _list_snapshots(wiki: Wiki) -> int:
+    found = wiki_backup.snapshots(wiki.root)
+    if not found:
+        print(f"no snapshots yet: {wiki_backup.backups_dir(wiki.root)}")
+        return 0
+    for archive in found:
+        print(f"{archive.name}  {archive.stat().st_size:>10,}  {archive.parent}")
+    return 0
+
+
+def _restore_snapshot(wiki: Wiki, name: str) -> int:
+    archive = _named_snapshot(wiki, name)
+    if archive is None:
+        print(f"{SCRIPT}: no snapshot named '{name}'", file=sys.stderr)
+        return 1
+    try:
+        landed = wiki_backup.restore(wiki.root, archive)
+    except OSError as exc:
+        print(f"{SCRIPT}: cannot restore {archive.name}: {exc}", file=sys.stderr)
+        return 1
+    print(f"{landed}: restored from {archive.name}")
+    print("  the live base is untouched — move this into place yourself")
+    return 0
+
+
+def _take_snapshot(wiki: Wiki, keep: int) -> int:
+    try:
+        created = wiki_backup.snapshot(wiki.root, keep=keep)
+    except OSError as exc:
+        print(f"{SCRIPT}: cannot snapshot {wiki.root}: {exc}", file=sys.stderr)
+        return 1
+    print(f"{created}: {created.stat().st_size:,} bytes")
+    print("  same disk as the base — it survives a bad edit, not a lost drive")
+    return 0
+
+
+def _named_snapshot(wiki: Wiki, name: str) -> Path | None:
+    """The snapshot *name* refers to, where `latest` means the newest."""
+    if name == "latest":
+        return wiki_backup.latest(wiki.root)
+    return next(
+        (a for a in wiki_backup.snapshots(wiki.root) if a.name == name),
+        None,
+    )
+
+
 def cmd_link(wiki: Wiki, args: argparse.Namespace) -> int:
     """Create or remove the browsing symlink from this repo to its base.
 
@@ -728,6 +806,7 @@ _COMMANDS = {
     "signals": (cmd_signals, "Counted evidence for the judgements lint leaves open"),
     "sources": (cmd_sources, "Raw sources with their hashes and compile state"),
     "index": (cmd_index, "Rebuild the master index from article frontmatter"),
+    "backup": (cmd_backup, "Snapshot the knowledge base, list snapshots, or restore one"),
     "link": (cmd_link, "Create or remove the browsing symlink from this repo to its base"),
     "ingest": (cmd_ingest, "Copy a source into raw/ with frontmatter and a real hash"),
     "archive": (cmd_archive, "Retire an article to archive/, keeping it readable"),
@@ -770,6 +849,16 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("--new", action="store_true", help="Only new or changed sources")
         if name == "index":
             sub.add_argument("--check", action="store_true", help="Report staleness without writing")
+        if name == "backup":
+            sub.add_argument("--list", action="store_true", help="List snapshots instead of making one")
+            sub.add_argument(
+                "--restore", metavar="NAME",
+                help="Extract a snapshot beside the base; NAME or 'latest'",
+            )
+            sub.add_argument(
+                "--keep", type=int, default=wiki_backup.KEEP_DEFAULT,
+                help="How many snapshots to keep (default: %(default)s)",
+            )
         if name == "init":
             sub.add_argument("--domain", default="", help="What the knowledge base is about")
             sub.add_argument("--audience", default="", help="Who will use it")

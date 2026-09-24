@@ -47,8 +47,28 @@ It is browsing only. Nothing resolves through it, so a stale or missing link cos
 nothing. `wiki link` with the key off removes a link the workbench made, and never touches
 one it did not.
 
-**Nothing backs the vault up.** It sits outside every repo, so no `git push` covers it. It
-is the one tree here that cannot be regenerated; tell the user to back it up themselves.
+### Backups
+
+A knowledge base sits outside every repo, so no `git push` covers it, and it is the one
+tree here that nothing can regenerate.
+
+```bash
+wiki backup                      # snapshot it
+wiki backup --list               # what snapshots exist
+wiki backup --restore latest     # extract one *beside* the base, never over it
+```
+
+Snapshots go under the state root, ten kept per base. A restore never overwrites the live
+base — it extracts alongside and prints where, and moving it into place is the user's call.
+`wiki status` says when a base has gone 30 days without one.
+
+**This is same-disk.** It survives a bad compile, a stray `rm`, and an editor that ate a
+file. It does not survive losing the drive. For that, point a real backup tool at the
+vault — it is an ordinary directory:
+
+```bash
+restic backup ~/.local/share/workbench/wiki
+```
 
 To keep an in-tree base somewhere other than `wiki/`, set the name once rather than
 passing a path every time:

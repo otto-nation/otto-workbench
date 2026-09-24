@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import tarfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -489,6 +490,133 @@ class TestInitModes:
             wiki.main([*argv, str(repo)])
             assert wiki.is_wiki(entry), f"{argv[0]} damaged the vault base"
         assert (entry / "archive" / "kept.md").is_file()
+
+
+class TestBackup:
+    """Snapshots of the one tree nothing can regenerate."""
+
+    def _base(self, tmp_path: Path) -> Path:
+        root = make_wiki(tmp_path)
+        write_article(root, "kept", body="word " * 20, tags=["x"])
+        (root / "raw" / "source.md").write_text("the source\n", encoding="utf-8")
+        return root
+
+    def test_a_snapshot_lands_under_the_state_root(self, tmp_path, monkeypatch):
+        """State, not data: a snapshot has a producer, and a base does not."""
+        state = tmp_path / "state"
+        data = tmp_path / "data"
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(state))
+        monkeypatch.setenv("WORKBENCH_DATA_DIR", str(data))
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        assert state in archive.parents
+        assert data not in archive.parents
+
+    def test_the_snapshot_holds_what_the_base_held(self, tmp_path):
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        with tarfile.open(archive, "r:gz") as tar:
+            names = tar.getnames()
+        assert f"{root.name}/SCHEMA.md" in names
+        assert f"{root.name}/articles/kept.md" in names
+        assert f"{root.name}/raw/source.md" in names
+
+    def test_restore_brings_back_a_readable_base(self, tmp_path):
+        """The restore path, exercised rather than assumed."""
+        root = self._base(tmp_path)
+        original = (root / "raw" / "source.md").read_bytes()
+        archive = wiki.snapshot(root)
+        shutil.rmtree(root / "raw")
+        (root / "raw").mkdir()
+
+        landed = wiki.restore(root, archive)
+        assert wiki.is_wiki(landed)
+        assert (landed / "raw" / "source.md").read_bytes() == original
+
+    def test_restore_leaves_the_live_base_alone(self, tmp_path):
+        """A restore runs after something went wrong; it must not cause another."""
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        (root / "articles" / "kept.md").write_text("newer", encoding="utf-8")
+        landed = wiki.restore(root, archive)
+        assert landed != root
+        assert (root / "articles" / "kept.md").read_text(encoding="utf-8") == "newer"
+
+    def test_retention_keeps_the_newest_and_drops_the_rest(self, tmp_path):
+        root = self._base(tmp_path)
+        directory = wiki.backups_dir(root)
+        directory.mkdir(parents=True)
+        for day in range(1, 6):
+            (directory / f"2026010{day}T000000Z.tar.gz").write_bytes(b"old")
+        wiki.prune(root, keep=2)
+        survivors = [a.name for a in wiki.snapshots(root)]
+        assert survivors == ["20260104T000000Z.tar.gz", "20260105T000000Z.tar.gz"]
+
+    def test_an_interrupted_snapshot_leaves_nothing_behind(self, tmp_path, monkeypatch):
+        """A truncated archive would restore to a partial base without saying so."""
+        root = self._base(tmp_path)
+
+        def explode(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(wiki.wiki_backup.tarfile, "open", explode)
+        with pytest.raises(OSError):
+            wiki.snapshot(root)
+        assert wiki.snapshots(root) == []
+        assert list(wiki.backups_dir(root).glob("*")) == []
+
+    def test_two_bases_with_one_name_do_not_share_a_directory(self, tmp_path):
+        first = make_wiki(tmp_path / "one", dirname="notes")
+        second = make_wiki(tmp_path / "two", dirname="notes")
+        assert wiki.backups_dir(first) != wiki.backups_dir(second)
+
+    def test_the_backup_directory_is_the_same_on_every_call(self, tmp_path):
+        """A process-randomised hash would send one base to a new directory a run."""
+        root = self._base(tmp_path)
+        assert wiki.backups_dir(root) == wiki.backups_dir(root)
+
+    def test_a_base_with_no_snapshot_is_overdue(self, tmp_path):
+        assert wiki.is_overdue(self._base(tmp_path))
+
+    def test_a_freshly_snapshotted_base_is_not_overdue(self, tmp_path):
+        root = self._base(tmp_path)
+        wiki.snapshot(root)
+        assert not wiki.is_overdue(root)
+
+    def test_an_old_snapshot_is_overdue_again(self, tmp_path):
+        root = self._base(tmp_path)
+        wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        assert wiki.is_overdue(root, now=datetime(2026, 6, 1, tzinfo=timezone.utc))
+
+    def test_status_prompts_when_a_base_has_never_been_snapshotted(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        assert wiki.main(["status", str(root)]) == 0
+        assert "wiki backup" in capsys.readouterr().out
+
+    def test_status_stops_prompting_once_a_snapshot_exists(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        wiki.snapshot(root)
+        assert wiki.main(["status", str(root)]) == 0
+        assert "wiki backup" not in capsys.readouterr().out
+
+    # passes-at-base: pins the JSON contract the status prompt was deliberately kept out of
+    def test_status_json_carries_no_backup_key(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        assert wiki.main(["status", "--json", str(root)]) == 0
+        assert set(json.loads(capsys.readouterr().out)) == set(wiki.collect_status(wiki.Wiki(root)))
+
+    def test_restoring_by_name_picks_that_snapshot(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        first = wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        wiki.snapshot(root, now=datetime(2026, 2, 1, tzinfo=timezone.utc))
+        assert wiki.main(["backup", "--restore", first.name, str(root)]) == 0
+        assert first.name in capsys.readouterr().out
+
+    def test_restoring_an_unknown_name_is_refused(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        wiki.snapshot(root)
+        assert wiki.main(["backup", "--restore", "nosuch.tar.gz", str(root)]) == 1
+        assert "no snapshot named" in capsys.readouterr().err
 
 
 class TestBrowsingLink:

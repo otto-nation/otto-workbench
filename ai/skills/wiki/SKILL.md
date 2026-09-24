@@ -57,6 +57,7 @@ wiki sources --new       # sources that are new or changed since last compile
 wiki index               # rebuild the master index from article frontmatter
 wiki archive <slug>      # retire an article to archive/, keeping it readable
 wiki link                # create or remove the browsing symlink, per wiki.link
+wiki backup              # snapshot the base; --list, --restore NAME|latest
 ```
 
 `wiki sources` computes each source's sha256. **Never write a hash you did not get from

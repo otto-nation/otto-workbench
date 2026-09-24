@@ -32,6 +32,9 @@ META_DIR = "meta"
 
 DEFAULT_WIKI_DIRNAME = "wiki"
 
+# The state-root subtree holding snapshots, one directory per knowledge base.
+BACKUPS_DIRNAME = "wiki-backups"
+
 # How far up from cwd to look. The search stops at a repo root when there is
 # one, so this only bounds the walk outside a repo.
 MAX_PARENT_DEPTH = 8

@@ -4456,6 +4456,31 @@ is least unlike it. An unnormalized count over a whole file answers the second
 question: it grows with the file's vocabulary, so the longest file wins nearly
 every comparison and no finding is ever reported as a gap.
 
+### wiki/backup.py
+
+Snapshots of a knowledge base, and getting one back.
+
+A knowledge base is the one tree the workbench holds that nothing can
+regenerate. Everything else it writes has a producer that can be run again; an
+article was typed by a person, and a stray delete ends it rather than delaying
+it. That is what the data root exists to say, and this is the part that does
+something about it.
+
+What this is honest about: a snapshot here protects against a stray delete, a
+compile that went wrong, and an editor that ate a file. It sits on the same disk
+as the base, so it does not protect against losing the disk. Off-machine
+durability is a backup tool's job, and `references/init.md` names one.
+
+The archives live under the *state* root rather than beside the base. They have
+a producer — this module — so they are exactly what state is for, and putting
+them under the data root would nest the copy inside the tree being copied.
+
+ceiling: whole-tree tarballs, with no deduplication between them. A knowledge
+base is prose measured in megabytes, so ten copies cost less than the machinery
+to avoid them would. Upgrade trigger: once a base is large enough that a
+snapshot is slow enough to notice, which is the point at which an incremental
+tool is worth reaching for instead of growing this one.
+
 ### wiki/create.py
 
 Making a knowledge base, and putting a source into one.

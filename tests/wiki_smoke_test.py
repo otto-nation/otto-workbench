@@ -265,6 +265,33 @@ class TestInitModes:
         assert after.stdout.strip() == base
 
 
+class TestBackup:
+    def test_snapshot_list_and_restore_through_the_binary(self, project):
+        """The restore path a person would actually walk, end to end."""
+        assert run("init", "--in-repo", "--domain", "Payments", cwd=project).returncode == 0
+        source = project / "notes.md"
+        source.write_text("Token refresh rotates a credential.\n", encoding="utf-8")
+        assert run("ingest", "--stage", str(source), "--title", "T", cwd=project).returncode == 0
+
+        made = run("backup", cwd=project)
+        assert made.returncode == 0, made.stderr
+        listed = run("backup", "--list", cwd=project)
+        assert listed.returncode == 0
+        assert ".tar.gz" in listed.stdout
+
+        staged = project / "wiki" / "raw"
+        original = sorted(p.name for p in staged.iterdir())
+        shutil.rmtree(staged)
+        staged.mkdir()
+
+        restored = run("backup", "--restore", "latest", cwd=project)
+        assert restored.returncode == 0, restored.stderr
+        landed = Path(restored.stdout.split(":")[0])
+        assert landed.is_dir()
+        assert sorted(p.name for p in (landed / "raw").iterdir()) == original
+        assert not any(staged.iterdir()), "the live base must be left as it was"
+
+
 class TestBrowsingLink:
     def test_the_link_survives_removing_the_worktree_it_was_made_from(self, tmp_path, monkeypatch):
         """Placement, end to end: beside the worktrees, so `wt remove` cannot reach it.

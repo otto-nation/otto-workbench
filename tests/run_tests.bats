@@ -388,8 +388,10 @@ EOF
   chmod 000 "$WORKBENCH_DIR/tests/unreadable.bats"
 
   local -a seen=()
-  local w fname
-  while IFS=$'\t' read -r w fname; do seen+=("$fname"); done < <(_shard_weights)
+  local fname
+  # The weight column is read into the throwaway `_` so the filename lands in
+  # $fname; only the filenames matter here.
+  while IFS=$'\t' read -r _ fname; do seen+=("$fname"); done < <(_shard_weights)
   chmod 644 "$WORKBENCH_DIR/tests/unreadable.bats"
 
   [ "${#seen[@]}" -eq 2 ]

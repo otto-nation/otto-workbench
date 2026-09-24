@@ -10,8 +10,12 @@ delegate and those five are the five `PhaseDomain` members; the other four
 have no phase domain. `COMMENTS` owns three state fields. `push` and
 `supersession` have state and no subcommand.
 
-A `handler` field is not on `CommandSpec` yet. When it lands (T7 commit 4),
-the clause that belongs here is: every `CommandSpec.handler` path imports.
+One clause of the join is deliberately absent. `CommandSpec.handler` lands in
+T7 commit 4a on a sibling branch, and "every handler path imports" is asserted
+there, beside the field — `tests/test_cli_registry.py`. It moves here once both
+have landed and the two `None` entries (`review`, `comments`, whose wrappers are
+still binary-local) are filled by 4c, because an exemption list is the thing
+this check exists not to have.
 """
 
 import os

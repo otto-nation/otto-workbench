@@ -374,6 +374,28 @@ EOF
   [ "${only[0]}" = "solo.bats" ]
 }
 
+@test "a file grep cannot open is still scheduled with the fallback weight" {
+  # `grep -c` prints nothing at all for a file it can't open (a dangling
+  # symlink, a permissions hiccup), and its stderr is discarded, so such a file
+  # must still get a fallback weight from the directory listing rather than
+  # vanishing from the shard output entirely.
+  WORKBENCH_DIR=$(_weighted_tree <<'EOF'
+known.bats	1
+EOF
+)
+  TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+  printf '@test "unreadable" {\n  true\n}\n' > "$WORKBENCH_DIR/tests/unreadable.bats"
+  chmod 000 "$WORKBENCH_DIR/tests/unreadable.bats"
+
+  local -a seen=()
+  local w fname
+  while IFS=$'\t' read -r w fname; do seen+=("$fname"); done < <(_shard_weights)
+  chmod 644 "$WORKBENCH_DIR/tests/unreadable.bats"
+
+  [ "${#seen[@]}" -eq 2 ]
+  printf '%s\n' "${seen[@]}" | grep -qx 'unreadable.bats'
+}
+
 # passes-at-base: there was no weights file to miss before; pins the degradation
 @test "a missing weights file still partitions every test file" {
   # Weights are data, not a dependency. A checkout without them — or a stale

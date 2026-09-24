@@ -98,6 +98,7 @@ resolve_zsh_state() {
   [ "$(resolve_python data_dir)" = "$TMPDIR/xdg-data/workbench" ]
 }
 
+# passes-at-base: the roots differ at base only because the data one resolves empty there, and this pins that they never converge
 @test "the data root is not reachable by a sweep of the state root" {
   # Why there is a fourth root at all: everything under state has a producer
   # that can write it again, and a knowledge base has none.

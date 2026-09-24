@@ -329,6 +329,7 @@ class TestVaultResolution:
         assert wiki.main(["path", str(repo)]) == 2
         assert str(entry) in capsys.readouterr().err
 
+    # passes-at-base: --wiki already won before there was a vault to lose to, and this pins that adding one did not demote it
     def test_an_explicit_wiki_beats_the_vault(self, tmp_path, monkeypatch, capsys):
         repo = self._repo(tmp_path)
         self._vault(tmp_path, monkeypatch)
@@ -525,10 +526,12 @@ class TestSymlinkedEntry:
         assert wiki.main(["status", "--json", str(repo)]) == 0
         assert json.loads(capsys.readouterr().out)["path"] == str(target)
 
+    # passes-at-base: the explicit branch already resolved, and this pins that it agrees with the walk's new answer
     def test_an_explicit_link_resolves_to_the_same_path(self, tmp_path):
         repo, target = self._linked(tmp_path)
         assert wiki.find_wiki(tmp_path, explicit=str(repo / "wiki")) == target
 
+    # passes-at-base: asserts the pre-existing is_wiki behaviour the vault ordering is built on, which must keep holding rather than start to
     def test_a_dangling_link_is_not_a_wiki(self, tmp_path):
         """Why config has to be consulted before the walk, once a vault exists.
 

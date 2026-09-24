@@ -26,11 +26,13 @@ from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from datetime import date
 from pathlib import Path
+import threading
 
 from git import client as git_client
 import json
 import os
 from core import log
+from core.serde import write_json
 from agent.token_count import count_tokens
 from agent.templates import build_output_block
 from agent.types import EFFORT_PRESETS
@@ -511,6 +513,41 @@ def _measured_tokens(
     return (counted, model) if counted is not None else None
 
 
+# ceiling: process-local lock, upgrade to fcntl.flock on a sidecar if
+# writers become separate processes. Group agents share a process today
+# (ThreadPoolExecutor, see _run_parallel_reviews in phases.py); a sidecar
+# lock is the extra file gc would then have to know about. If that call
+# site ever moves to subprocess-per-group or multiprocessing, this lock
+# stops protecting anything and needs to move with it.
+_prompt_stats_lock = threading.Lock()
+
+
+def _append_prompt_stats(stats_file: str, stats: dict) -> None:
+    """Append one record to prompt-stats.json, atomically and under a lock.
+
+    `write_json` renames a temp file into place, so a reader never sees a
+    truncated file. The lock covers the read-modify-write around that rename:
+    two group agents can otherwise both snapshot the same list, each append
+    one record, and the later rename drop the other's.
+
+    A missing or unreadable file starts a fresh list — the first write of a
+    run, or a truncated file from before this was atomic.
+    """
+    path = Path(stats_file)
+    with _prompt_stats_lock:
+        existing: list = []
+        try:
+            parsed = json.loads(path.read_text())
+            existing = parsed if isinstance(parsed, list) else [parsed]
+        except (OSError, json.JSONDecodeError):
+            pass
+        existing.append(stats)
+        try:
+            write_json(path, existing)
+        except OSError as exc:
+            log.warn(f"{path} could not be written ({exc})")
+
+
 def _log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
     *,
@@ -607,19 +644,8 @@ def _log_prompt_size(
             "included": len(pf.file_contents),
             "omitted": len(pf.omitted_files),
         }
-    # Read existing stats — corrupt files from concurrent writes are discarded
     stats_file = review_artifact_path(job.review_file, FILENAME_PROMPT_STATS)
-    existing: list = []
-    try:
-        parsed = json.loads(Path(stats_file).read_text())
-        existing = parsed if isinstance(parsed, list) else [parsed]
-    except (OSError, json.JSONDecodeError):
-        pass
-    existing.append(stats)
-    try:
-        Path(stats_file).write_text(json.dumps(existing, indent=2))
-    except OSError:
-        pass
+    _append_prompt_stats(stats_file, stats)
 
     return prompt
 

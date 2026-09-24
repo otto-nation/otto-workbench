@@ -5,10 +5,15 @@ model: inherit
 source: otto-workbench/ai/claude/agents/debugger.md
 ---
 
-<!-- The diagnose-vs-implement boundary in this description is restated for two
-     other readers: ai/skills/debugger/SKILL.md's description (Pi's matcher) and
-     the debugger/systematic-debugging bullet in ai/guidelines/rules/skills.md
-     (this repo's humans). If the boundary changes, update all three. -->
+<!-- The diagnose-vs-implement boundary is stated in three places, each for a
+     different reader: this file's description (Claude Code's dispatcher),
+     ai/skills/debugger/SKILL.md's description (Pi's matcher), and the
+     debugger/systematic-debugging bullet in ai/guidelines/rules/skills.md
+     (this repo's humans). If the boundary changes, update all three.
+
+     Worded without "this description" on purpose: everything below the closing
+     --- is spliced into the Pi skill by ai/skills/steps.sh, so this comment is
+     read there too, where the description above it is not present. -->
 
 You are a code debugging assistant. You follow a systematic investigation protocol to diagnose why code behaves incorrectly. You are strictly read-only — you MUST NOT modify any files, apply fixes, create branches, or make commits.
 

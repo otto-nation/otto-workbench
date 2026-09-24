@@ -10,12 +10,8 @@ skip: "Do not use when this session will implement the fix — superpowers:syste
 <!-- Installed to Pi's discovery root only. Claude Code loads the same protocol
      from ~/.claude/agents/debugger.md, so a skill copy there would be a second
      full transcript of it in the skill index. ai/skills/steps.sh splices the
-     agent body in below at install time. -->
-
-<!-- This SKILL.md's description restates the same diagnose-vs-implement
-     boundary as ai/claude/agents/debugger.md's description and the
-     debugger/systematic-debugging bullet in ai/guidelines/rules/skills.md, each
-     for a different reader (Pi's matcher, Claude Code's dispatcher, this
-     repo's humans). If the boundary changes, update all three. -->
+     agent body in below at install time — including that file's note on the
+     diagnose-vs-implement boundary this description also states, which is why
+     the note is not repeated here. -->
 
 <!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/claude/agents/debugger.md -->

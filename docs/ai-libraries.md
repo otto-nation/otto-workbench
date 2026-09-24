@@ -4536,7 +4536,7 @@ as an argument is also what lets a test declare a table of its own.
 
 ### cli/pr_commands.py
 
-The four `pr` subcommands that the binary used to define itself.
+The four `pr` subcommands that used to be defined inside the binary.
 
 `status`, `fix`, `create` and `gc` ran inside `ai/bin/pr`, which is not an
 importable module, so `CommandSpec.handler` could not name them. They live

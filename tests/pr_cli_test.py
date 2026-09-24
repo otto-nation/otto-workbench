@@ -44,6 +44,7 @@ def _cmd_fix(argv, ctx, **kw):
     kw.setdefault("bin_dir", BIN_DIR)
     return pr_cli.cmd_fix(argv, ctx, **kw)
 
+
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
 _TEST_REPLY_ID = "3777767789"

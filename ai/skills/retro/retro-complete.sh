@@ -44,9 +44,13 @@ fi
 # failure this ordering protects against is losing the work, not losing the
 # stamp.
 
+# ceiling-permanent: keeps every archived report, with no pruning. A retro runs
+# at most every 72 hours and writes one ~40KB markdown file, so a decade of
+# them is under 2MB — a retention policy would cost more to maintain than the
+# bytes it reclaims, and the whole point of the archive is that an old proposal
+# is still readable. Deleting on a timer would reintroduce the loss it fixes.
 _archive_report() {
   [[ -f "$RETRO_REPORT_FILE" ]] || return 0
-  mkdir -p "$RETRO_ARCHIVE_DIR"
   local dest="$RETRO_ARCHIVE_DIR/$SCAN_ID.md"
   # Never overwrite an existing archive entry. A second completion quoting the
   # same scan ID is a re-run, and the first copy is the one written while the
@@ -55,7 +59,14 @@ _archive_report() {
     echo "Note: $dest already exists — keeping it, not overwriting." >&2
     return 0
   fi
-  cp "$RETRO_REPORT_FILE" "$dest"
+  # Said explicitly rather than left to `set -e`: a bare exit here names no
+  # step, and the thing that just failed is the one keeping this run's analysis
+  # alive past the next scan.
+  if ! mkdir -p "$RETRO_ARCHIVE_DIR" || ! cp "$RETRO_REPORT_FILE" "$dest"; then
+    echo "Error: could not archive $RETRO_REPORT_FILE to $dest" >&2
+    echo "       The next retro-scan will overwrite it. Copy it by hand." >&2
+    return 1
+  fi
 }
 
 _archive_report

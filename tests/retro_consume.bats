@@ -328,3 +328,19 @@ a later overwrite that must not win"
   [[ "$status" -eq 0 ]]
   [[ -f "$WORKBENCH_STATE_DIR/gates/last-retro" ]]
 }
+
+@test "an archive that cannot be written names the step and the file" {
+  mkdir -p "$TMPDIR/home/.claude"
+  _make_review "mine-self-branch"
+  _write_record "$SCAN_C" "mine-self-branch"
+  _fake_workbench "# Retro Report"
+  # A file where the archive directory needs to be: mkdir -p fails on it.
+  printf 'not a directory\n' > "$TMPDIR/workbench/ai/memory/retro"
+
+  HOME="$TMPDIR/home" WORKBENCH_DIR="$TMPDIR/workbench" \
+    run "$RETRO_COMPLETE" "$SCAN_C"
+  [[ "$status" -ne 0 ]]
+  [[ "$output" == *"could not archive"* ]]
+  # The window is not banked on a run whose analysis was never preserved.
+  [[ ! -f "$WORKBENCH_STATE_DIR/gates/last-retro" ]]
+}

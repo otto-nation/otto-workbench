@@ -12,6 +12,15 @@ agent fixing a finding in one file routinely edits its test, its fixture, or
 the caller that broke — and no pass reports the files it actually touched.
 Asking git afterwards is the only account of that there is.
 
+Attribution is not a statement about the branch. An agent that edits a
+shared validator to satisfy a finding in another file has changed that
+validator, and `agent_changed` reports it; committing it is how a
+behavioural change to a file the branch never touched lands in the
+fix commit. `drop_outside` is the second predicate on the same
+mechanism as `_drop_scratch`: warn, name every dropped path, leave the
+file dirty in the worktree. The intended miss is a legitimate caller
+fix left for a human, not a validator change reaching the branch.
+
 None and the empty set are different answers and both are returned. Empty says
 the agent changed nothing, so there is nothing to commit. None says the
 worktree could not be read, so the pass cannot tell its own work from what was
@@ -67,6 +76,61 @@ def _drop_scratch(paths: set[str], wt_path: str | Path) -> set[str]:
             f"under /tmp. Remove them, or rename one that is real work."
         )
     return paths - scratch
+
+
+def _colocated_tests(sources: set[str]) -> set[str]:
+    """Test files sitting next to `sources`, named for them.
+
+    Same directory, stem-matched: `foo.py` admits `foo_test.py`,
+    `test_foo.py`, and `foo.test.py` with the source's own suffix. A
+    test in a different directory is a caller-or-suite edit, which is
+    the intended leave-behind.
+    """
+    # ceiling: only same-directory stem-matched tests count as
+    # colocated, so a new tests/foo_test.py for ai/lib/foo.py is left
+    # uncommitted. Upgrade trigger: if a pass is observed leaving a
+    # tests/ file that is the suite for an in-branch module.
+    tests: set[str] = set()
+    for source in sources:
+        path = Path(source)
+        stem = path.stem
+        suffix = path.suffix
+        parent = path.parent
+        for name in (f"test_{stem}{suffix}", f"{stem}_test{suffix}",
+                     f"{stem}.test{suffix}"):
+            tests.add(str(parent / name))
+    return tests
+
+
+def commit_allowed(
+    branch_files: set[str] | frozenset[str],
+    anchors: set[str] | frozenset[str],
+) -> set[str]:
+    """Paths a fix pass may commit: branch ∪ anchors ∪ colocated tests."""
+    sources = {p for p in set(branch_files) | set(anchors) if p}
+    return sources | _colocated_tests(sources)
+
+
+def drop_outside(
+    paths: set[str], allowed: set[str], wt_path: str | Path,
+) -> set[str]:
+    """`paths` without those outside `allowed`.
+
+    `allowed` is the set `commit_allowed` builds. Dropped paths stay in
+    the worktree. Reported, never silent — the same contract as
+    `_drop_scratch`, for the same reason: a silent drop is a fix the
+    operator cannot find.
+    """
+    outside = {p for p in paths if p not in allowed}
+    if outside:
+        log.warn(
+            f"not committing {len(outside)} file(s) outside this branch in "
+            f"{wt_path}: {', '.join(sorted(outside))}. A path outside the "
+            f"branch, the finding anchors, and their colocated tests is left "
+            f"in the worktree. Remove them, or move the work onto its own "
+            f"branch."
+        )
+    return paths - outside
 
 
 @dataclass(frozen=True)

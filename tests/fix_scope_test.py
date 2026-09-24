@@ -167,3 +167,65 @@ class TestAgentChanged:
             "tests/test_probe.py", "tests/debugger_test.py",
             "tests/test_debug_output.py", "tests/tmpdir_isolation.py",
         }
+
+
+class TestDropOutside:
+    """The second predicate on the same warn-and-leave mechanism as scratch.
+
+    Attribution still reports the path; this is what stops it reaching the
+    commit. The cost of a false positive is a real fix left uncommitted, so
+    colocated tests are only same-directory stem matches.
+    """
+
+    def test_an_out_of_branch_path_is_dropped_and_reported(self, tmp_path, capsys):
+        kept = fix_scope.drop_outside(
+            {"src.py", "lib/nesting/bash.py"},
+            fix_scope.commit_allowed({"src.py"}, set()),
+            tmp_path,
+        )
+        assert kept == {"src.py"}
+        err = capsys.readouterr().err
+        assert "not committing 1 file(s) outside this branch" in err
+        assert "lib/nesting/bash.py" in err
+
+    def test_an_in_branch_path_is_kept(self, tmp_path, capsys):
+        kept = fix_scope.drop_outside(
+            {"src.py"},
+            fix_scope.commit_allowed({"src.py"}, set()),
+            tmp_path,
+        )
+        assert kept == {"src.py"}
+        assert "not committing" not in capsys.readouterr().err
+
+    def test_a_colocated_test_of_an_in_branch_file_is_kept(self, tmp_path):
+        allowed = fix_scope.commit_allowed({"src/foo.py"}, set())
+        kept = fix_scope.drop_outside(
+            {"src/foo.py", "src/foo_test.py", "src/test_foo.py"},
+            allowed,
+            tmp_path,
+        )
+        assert kept == {"src/foo.py", "src/foo_test.py", "src/test_foo.py"}
+
+    def test_a_test_in_another_directory_is_dropped(self, tmp_path):
+        """`tests/foo_test.py` is a suite edit, not a colocated one."""
+        kept = fix_scope.drop_outside(
+            {"tests/foo_test.py"},
+            fix_scope.commit_allowed({"src/foo.py"}, set()),
+            tmp_path,
+        )
+        assert kept == set()
+
+    def test_a_finding_anchor_not_on_the_branch_is_kept(self, tmp_path):
+        kept = fix_scope.drop_outside(
+            {"helper.py"},
+            fix_scope.commit_allowed(set(), {"helper.py"}),
+            tmp_path,
+        )
+        assert kept == {"helper.py"}
+
+    def test_an_empty_drop_is_silent(self, tmp_path, capsys):
+        kept = fix_scope.drop_outside(
+            set(), fix_scope.commit_allowed({"src.py"}, set()), tmp_path,
+        )
+        assert kept == set()
+        assert capsys.readouterr().err == ""

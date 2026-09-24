@@ -409,6 +409,29 @@ def test_one_stalled_batch_does_not_cost_the_others_their_retry(tmp_path, landed
     assert by_id[f"i{chunk}"] is FixOutcome.FIXED
 
 
+def test_deferred_work_over_the_chunk_size_is_retried_in_batches(
+    tmp_path, landed, head,
+):
+    """Sending every leftover in one invoke is how a retry starved at ~2/item."""
+    adapter = StubAdapter(tmp_path, count=7)
+    first_pass = []
+    retries = []
+
+    def run_fix(phase, prompt, **kwargs):
+        ids = [o.id for o in fix_tracking.parse(adapter.tracking_path)]
+        if prompt.startswith(fix_engine._RESUME_HINT):
+            retries.append(ids)
+            return _answer(adapter)(phase, prompt, **kwargs)
+        first_pass.append(ids)
+        return _answer(adapter, ids=[ids[0]])(phase, prompt, **kwargs)
+
+    with patch.object(fix_engine.agent_phases, "phase_chunk_size", return_value=2):
+        _run(adapter, run_fix=run_fix)
+
+    assert first_pass == [["i0", "i1"], ["i2", "i3"], ["i4", "i5"], ["i6"]]
+    assert retries == [["i1", "i3"], ["i5"]]
+
+
 # ── the landing ─────────────────────────────────────────────────────────────
 
 

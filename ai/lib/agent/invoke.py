@@ -312,6 +312,7 @@ def run_fix(
             task=task or str(phase),
             repo=repo,
             pr=pr,
+            phase=str(phase),
         ))
         return exit_code
 
@@ -319,10 +320,16 @@ def run_fix(
         invoke(prompt, turns)
         return FixResult(exit_code, None, stop=_truncation(session_log))
 
+    def retry_turns(diagnosis: Diagnosis, original: int) -> int:
+        if diagnosis.kind is not DiagnosisKind.MAX_TURNS:
+            return original
+        return agent_phases.phase_retry_turns(phase, original)
+
     unproductive = agent_retry.run_guarded(
         invoke, prompt, session_log,
         label=name, max_turns=turns,
         produced=produced, hint_select=hint_select,
         ceiling=spec.retry.ceiling,
+        turns_fn=retry_turns,
     )
     return FixResult(exit_code, unproductive, stop=_truncation(session_log))

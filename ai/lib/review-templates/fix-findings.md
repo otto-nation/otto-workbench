@@ -114,6 +114,7 @@ in those words. "No test: prose change" is an answer. An empty `<why>` is not.
   test written beside it passes either way
 - If a finding is ambiguous or requires a design choice, tick `needs a person` and say what the choice is — leaving it unticked reports it as unread
 - If the code a finding points at carries a `// ceiling:` or `// ceiling-permanent:` comment naming that exact tradeoff, the tradeoff is a documented decision. Do not "fix" it — tick `declined` and say so
+- Run the named test only. To run a suite, invoke it directly (`pytest tests/foo.py`). Do not invoke `bin/local/run-tests`, `validate-all`, or unscoped `pytest`/`bats` — the pre-push gate reproduces those
 
 ## Generated files
 

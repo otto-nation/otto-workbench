@@ -82,6 +82,9 @@ class SessionUsage:
     cache_write_tokens: int = 0
     duration_ms: int = 0
     cost_by_model: dict[str, float] = field(default_factory=dict)
+    # Turns the session actually spent, from the result record. None when the
+    # log did not say — an absent measurement, not a zero-turn run.
+    num_turns: int | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -148,6 +151,8 @@ def usage_from_records(records: list[dict]) -> SessionUsage:
     """
     cost = 0.0
     duration_ms = 0
+    num_turns = 0
+    saw_turns = False
     totals = dict.fromkeys(_USAGE_KEYS, 0)
     cost_by_model: dict[str, float] = {}
     for rec in records:
@@ -156,10 +161,14 @@ def usage_from_records(records: list[dict]) -> SessionUsage:
         cost += rec.get("total_cost_usd", 0) or 0
         _fold_record(rec, totals, cost_by_model)
         duration_ms += rec.get("duration_ms", 0) or 0
+        if rec.get("num_turns") is not None:
+            saw_turns = True
+            num_turns += rec["num_turns"] or 0
     return SessionUsage(
         cost=cost,
         duration_ms=duration_ms,
         cost_by_model=cost_by_model,
+        num_turns=num_turns if saw_turns else None,
         **totals,
     )
 
@@ -202,6 +211,8 @@ def record(
     task: str | None = None,
     repo: str | None = None,
     pr: str | None = None,
+    phase: str | None = None,
+    num_turns: int | None = None,
 ) -> None:
     """Append one usage record to the global ledger. Never raises."""
     global _warned
@@ -221,8 +232,14 @@ def record(
     }
     if usage.cost_by_model:
         rec["cost_by_model"] = usage.cost_by_model
-    for key, value in (("task", task), ("repo", repo), ("pr", pr)):
-        if value:
+    # Prefer the session's actual turns; the allocated budget is the fallback
+    # when the log did not say how many it spent.
+    turns = usage.num_turns if usage.num_turns is not None else num_turns
+    for key, value in (
+        ("task", task), ("repo", repo), ("pr", pr),
+        ("phase", phase), ("num_turns", turns),
+    ):
+        if value is not None and value != "":
             rec[key] = value
     ledger = ledger_dir()
     try:
@@ -288,6 +305,7 @@ def merge(usages: list[SessionUsage]) -> SessionUsage:
     for u in usages:
         for model, c in u.cost_by_model.items():
             cost_by_model[model] = cost_by_model.get(model, 0.0) + c
+    turns = [u.num_turns for u in usages if u.num_turns is not None]
     return SessionUsage(
         cost=sum(u.cost for u in usages),
         input_tokens=sum(u.input_tokens for u in usages),
@@ -296,4 +314,5 @@ def merge(usages: list[SessionUsage]) -> SessionUsage:
         cache_write_tokens=sum(u.cache_write_tokens for u in usages),
         duration_ms=sum(u.duration_ms for u in usages),
         cost_by_model=cost_by_model,
+        num_turns=sum(turns) if turns else None,
     )

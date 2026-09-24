@@ -36,8 +36,11 @@ For each fix, in order of what the project affords:
 2. **Exercise the changed path directly.** Call the function, run the script,
    invoke the command. A fix to an argument parser is checked by parsing an
    argument; a fix to a shell script is checked by running it.
-3. **Run the project's own checks** — its test suite, its linter, its build,
-   scoped to what changed where that is possible.
+3. **Run a scoped check, not the project's suite.** A linter or a single test
+   file that covers the change. To run a suite, invoke it directly (`pytest
+   tests/foo.py`). Do not invoke `bin/local/run-tests`, `validate-all`, or
+   unscoped `pytest`/`bats` — the pre-push gate reproduces those. A path
+   nothing named covers is **not verified**, not a reason to run everything.
 
 Judge what the reviewer asked for, not whether the code merely runs.
 
@@ -111,6 +114,9 @@ trust. The honest middle answer is available; use it.
   job, and the tool will refuse the call.
 - A command that needs network, credentials, or a service that is not here is a
   **not verified**, not a failure.
+- Run the named test only. To run a suite, invoke it directly (`pytest tests/foo.py`).
+  Do not invoke `bin/local/run-tests`, `validate-all`, or unscoped `pytest`/`bats` —
+  the pre-push gate reproduces those.
 
 ## Tracking file location
 ${tracking_file}

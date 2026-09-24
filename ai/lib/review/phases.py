@@ -148,6 +148,7 @@ class PhaseRunner:
             spec.agent if spec.agent is not None else preset.agent
         )
         self.max_turns = job_turns(phase, job)
+        self.phase = phase
 
     def invocation(
         self, prompt: str, max_turns: int | None = None, *, label: str = "",
@@ -165,6 +166,7 @@ class PhaseRunner:
             thinking=self.thinking,
             provider=self.provider,
             label=label,
+            phase=str(self.phase),
         )
 
     def invoke(

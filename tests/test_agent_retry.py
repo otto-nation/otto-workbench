@@ -191,6 +191,21 @@ class TestRunGuarded:
         )
         assert calls == ["PROMPT", agent_retry.FIX_RETRY_HINT + "PROMPT"]
 
+    def test_turns_fn_replaces_the_shared_doubling(self, tmp_path):
+        """A phase keeps one retry policy across both paths by supplying this."""
+        log = tmp_path / "session.jsonl"
+        log.write_text(json.dumps({
+            "type": "result", "subtype": "error_max_turns", "num_turns": 30,
+        }) + "\n")
+        calls = []
+        agent_retry.retry_unproductive(
+            lambda p, t: calls.append(t) or 0,
+            "PROMPT", str(log),
+            label="fix", max_turns=30, produced=lambda: False,
+            turns_fn=lambda diagnosis, n: 99,
+        )
+        assert calls == [99]
+
 
 class TestRetryBlankResponse:
     """The prompt path has no session log — the answer is the only signal."""

@@ -9,13 +9,12 @@ binary in the way.
 import sys
 from pathlib import Path
 
-from conftest import load_script
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from cli import review_modes as review_modes_module  # noqa: E402
 from cli.needs import (  # noqa: E402
     LOCAL, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED, REVIEW_SELF_NEED,
     Need, ReviewMode, review_modes, review_need,
@@ -152,8 +151,12 @@ def test_a_bare_review_is_unaffected():
 
 
 def test_every_pr_review_mode_declares_a_need():
-    """The binary's own table, checked through the shared resolver."""
-    pr_cli = load_script("pr_cli", REPO_ROOT / "ai" / "bin" / "pr")
-    assert pr_cli._REVIEW_MODES
-    for flag in pr_cli._REVIEW_MODES:
-        assert isinstance(review_need([flag], pr_cli._REVIEW_MODES), Need)
+    """The real table, checked through the shared resolver.
+
+    Reached by import rather than by executing the binary: the table moved to
+    `cli.review_modes` in #909's T7 commit 3a, which is what let this file drop
+    its last `load_script`.
+    """
+    assert review_modes_module.MODES
+    for flag in review_modes_module.MODES:
+        assert isinstance(review_need([flag], review_modes_module.MODES), Need)

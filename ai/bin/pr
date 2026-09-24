@@ -26,9 +26,9 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from cli import needs
-from cli.needs import LOCAL as _LOCAL, NONE as _NONE, REMOTE as _REMOTE
-from cli.needs import Need, ReviewMode
+from cli import review_modes
+from cli.needs import LOCAL as _LOCAL, REMOTE as _REMOTE
+from cli.needs import Need
 from pr import context as pr_context
 from pr import domains as pr_domains
 from pr import state as pr_state
@@ -38,14 +38,11 @@ from review import gc as review_gc
 from gh import budget as gh_budget
 from core import log
 from core import proc
-from review import listing as review_listing
 from pr import supersession
 from core import timeouts
 from config import workbench_projects
 from core import run_lock
-from review.paths import find_review_file, review_file_path
-from review.summary import ReviewSummaryReport, build_review_summary, json_summary
-from pr.review_sync import sync_review_domain
+from review import listing as review_listing
 from core.tool_parser import VALUE_FLAGS_FLAG
 from core.trail import Trail, add_trail_args
 
@@ -56,20 +53,6 @@ from core.trail import Trail, add_trail_args
 # key; internal commands omit it.  "prefix" adds sub-command tokens before the
 # user's argv (e.g. claude-review gc …).
 
-# `_REVIEW_MODES` is defined further down, beside the handlers it names, so
-# both resolvers are given the table rather than reaching for one.
-
-
-def _review_modes(argv: list[str]) -> list[str]:
-    """The mode flags in *argv*, in table order."""
-    return needs.review_modes(argv, _REVIEW_MODES)
-
-
-def _review_need(argv: list[str]) -> Need:
-    """`review`'s need, which its mode flag decides."""
-    return needs.review_need(argv, _REVIEW_MODES)
-
-
 _COMMANDS = {
     "create":   {"help": "Create a PR (wraps task pr:create)",
                  "need": Need(_REMOTE, update=False, lock=True)},
@@ -78,7 +61,7 @@ _COMMANDS = {
     "ci":       {"help": "Check CI failures",                     "script": "ci-check",
                  "need": Need(_REMOTE, update=True,  lock=True)},
     "review":   {"help": "Run code review",                       "script": "claude-review",
-                 "need": _review_need},
+                 "need": review_modes.need_for},
     "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads",
                  "need": Need(_REMOTE, update=True,  lock=True)},
     "fix":      {"help": "Fix CI + review + comments",
@@ -124,6 +107,9 @@ def _validate_needs(commands: dict) -> None:
             "pr: commands declare no dispatch need: " + ", ".join(undeclared)
             + " — add a Need(depth, update=…, lock=…) to each _COMMANDS entry"
         )
+
+
+_validate_needs(_COMMANDS)
 
 
 def _run_delegate(entry: dict, argv: list[str],
@@ -241,52 +227,6 @@ def _positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
     return -1
 
 
-def _parse_review_summary(output: str) -> dict | None:
-    """Extract REVIEW_SUMMARY:{json} from claude-review output."""
-    prefix = "REVIEW_SUMMARY:"
-    lines = [l for l in output.splitlines() if l.startswith(prefix)]
-    if not lines:
-        return None
-    try:
-        return json.loads(lines[0][len(prefix):])
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
-def _update_review_state_from_output(output: str,
-                                     ctx: pr_context.ResolvedContext) -> None:
-    """Parse REVIEW_SUMMARY from output and update pr_state.
-
-    review-rebuild does not emit the marker today, so this is a no-op on that
-    path. The marker protocol itself should be deleted once the JSON-marker
-    protocol it implements is retired.
-    """
-    summary_data = _parse_review_summary(output)
-    if not summary_data:
-        return
-    sync_review_domain(ctx, ReviewSummaryReport(
-        repo=summary_data.get("repo", ""),
-        pr_number=summary_data.get("pr_number"),
-        head_sha=summary_data.get("head_sha"),
-        head_ref=summary_data.get("head_ref"),
-        base_ref=summary_data.get("base_ref"),
-        review_type=summary_data.get("review_type"),
-        review_file=summary_data.get("review_file", ""),
-        review_content=summary_data.get("review_content"),
-        findings=summary_data.get("findings") or {},
-        verdict=summary_data.get("verdict", ""),
-        status=summary_data.get("status", ""),
-        failure_detail=summary_data.get("failure_detail", ""),
-        recoverable=summary_data.get("recoverable"),
-        cost_usd=summary_data.get("cost_usd", 0.0),
-        input_tokens=summary_data.get("input_tokens", 0),
-        output_tokens=summary_data.get("output_tokens", 0),
-        cache_read_tokens=summary_data.get("cache_read_tokens", 0),
-        cache_write_tokens=summary_data.get("cache_write_tokens", 0),
-        duration_ms=summary_data.get("duration_ms", 0),
-    ))
-
-
 def _is_pr_target(target: str | None) -> bool:
     """Check if target looks like a PR URL or number (not a branch name)."""
     if not target:
@@ -328,18 +268,18 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_branch: str | None = None,
                schema_version: int | None = None,
                **_kw) -> int:
-    """Run a review, or handle one of the mode flags in `_REVIEW_MODES`."""
-    given = _review_modes(argv)
+    """Run a review, or handle one of the mode flags in `review_modes.MODES`."""
+    given = review_modes.flags_given(argv)
     if len(given) > 1:
-        log.error(f"{SCRIPT}: {_mode_flags_prose()} are mutually exclusive")
+        log.error(f"{SCRIPT}: {review_modes.flags_prose()} are mutually exclusive")
         return 1
 
     if given:
         flag = given[0]
-        handler = _REVIEW_MODES[flag].handler
+        handler = review_modes.MODES[flag].handler
         if handler:
             return handler([a for a in argv if a != flag], ctx,
-                           schema_version=schema_version)
+                           bin_dir=BIN_DIR, schema_version=schema_version)
 
     has_self = "--self" in argv
     positionals, _ = _split_argv(argv)
@@ -354,127 +294,6 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
-def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
-    """Post an existing review directly to GitHub via review-post."""
-    pr_num = str(ctx.pr_number) if ctx.pr_number else None
-    if not pr_num:
-        log.error("Cannot determine PR number")
-        return 1
-
-    review = find_review_file(ctx.repo, pr_num)
-    if not review:
-        log.error(f"No review file found for {ctx.repo}#{pr_num}")
-        log.dim("Run: pr review")
-        return 1
-
-    cmd = [str(BIN_DIR / "review-post"), "--pr", pr_num, "--review-file", str(review)]
-    # What this run is publishing for. The review file is found by PR number
-    # while the run lock keys on the branch, so naming the branch is what lets
-    # review-post tell this run's review from one written by a run the lock
-    # never made contend with it.
-    if ctx.branch:
-        cmd += ["--expect-ref", ctx.branch]
-    if "--submit" in argv:
-        cmd.append("--submit")
-        argv = [a for a in argv if a != "--submit"]
-    cmd += argv
-    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
-
-
-def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
-    """Repair broken review artifacts via summary or rebuild."""
-    pr_num = str(ctx.pr_number) if ctx.pr_number else None
-    if not pr_num:
-        log.error("Cannot determine PR number")
-        return 1
-
-    review = find_review_file(ctx.repo, pr_num)
-    if review:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review)))
-        return 0
-
-    log.info("No review file found, trying rebuild...")
-    review_dir = review_file_path(ctx.repo, pr_num).parent
-    if not review_dir.is_dir():
-        log.error(f"No review directory found: {review_dir}")
-        return 1
-
-    cmd = [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num]
-    cmd += argv
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeouts.UNBOUNDED)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr, end="")
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.returncode == 0:
-        _update_review_state_from_output(result.stdout, ctx)
-    return result.returncode
-
-
-def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
-    """Output JSON summary of an existing review."""
-    pr_num = str(ctx.pr_number) if ctx.pr_number else None
-    if not pr_num:
-        log.error("Cannot determine PR number")
-        return 1
-
-    review = find_review_file(ctx.repo, pr_num)
-    if not review:
-        log.error(f"No review file found for {ctx.repo}#{pr_num}")
-        return 1
-
-    print(json_summary(ctx.repo, pr_num, str(review)))
-    return 0
-
-
-def _review_list(argv: list[str], _ctx: pr_context.ResolvedContext, *,
-                 schema_version: int | None = None, **_kw) -> int:
-    """List every review in the user's state root.
-
-    The contract other repos read review state through — see
-    `ai/lib/review/listing.py` for what a row carries and why it is a query
-    rather than a path they derive.
-
-    Two audiences, told apart by the handshake. With `--schema-version` this is
-    a consumer, and the versioned document goes to stdout. Without it this is a
-    person, and the table goes to stderr with stdout left empty — so a consumer
-    that forgets the handshake gets a parse failure from an empty stream rather
-    than a table it half-understands.
-
-    The context is unresolved and the parameter is named for it: `--list`
-    declares `ContextDepth.NONE`, so there is no repo, branch, or target here
-    and nothing in this function may look for one.
-    """
-    if schema_version is None:
-        print("\n".join(review_listing.render_table(review_listing.rows())),
-              file=sys.stderr)
-        return 0
-    json.dump(review_listing.document(schema_version), sys.stdout, indent=2)
-    print()
-    return 0
-
-
-_REVIEW_MODES = {
-    "--post":    ReviewMode(_review_post),
-    "--repair":  ReviewMode(_review_repair),
-    "--summary": ReviewMode(_review_summary),
-    "--recover": ReviewMode(),
-    "--list":    ReviewMode(_review_list,
-                            need=Need(_NONE, update=False, lock=False),
-                            schema_versions=review_listing.SCHEMA_VERSIONS),
-}
-
-# Deferred to here rather than run beside _COMMANDS, because `review`'s
-# declaration is a callable that reads the table above.
-_validate_needs(_COMMANDS)
-
-
-def _mode_flags_prose() -> str:
-    """The mode flags as an English list, for the exclusivity error."""
-    flags = list(_REVIEW_MODES)
-    return f"{', '.join(flags[:-1])}, and {flags[-1]}"
-
-
 def _invocation(command: str, argv: list[str]) -> str:
     """This invocation as the user typed it, for an error that quotes it back.
 
@@ -482,7 +301,7 @@ def _invocation(command: str, argv: list[str]) -> str:
     --list` are different commands to everyone but argparse — so an error about
     one has to name the flag or it reads as being about the other.
     """
-    modes = _review_modes(argv) if command == "review" else []
+    modes = review_modes.flags_given(argv) if command == "review" else []
     return " ".join(filter(None, [SCRIPT, command, *modes[:1]]))
 
 
@@ -493,7 +312,7 @@ def _schema_contracts() -> list[str]:
     invocation that no longer serves one. `review` is the only command with
     modes today; a second one gets a branch here rather than a second table.
     """
-    return [f"pr review {flag}" for flag, mode in _REVIEW_MODES.items()
+    return [f"pr review {flag}" for flag, mode in review_modes.MODES.items()
             if mode.schema_versions]
 
 
@@ -501,8 +320,8 @@ def _served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
     if command != "review":
         return ()
-    modes = _review_modes(argv)
-    return _REVIEW_MODES[modes[0]].schema_versions if modes else ()
+    modes = review_modes.flags_given(argv)
+    return review_modes.MODES[modes[0]].schema_versions if modes else ()
 
 
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:

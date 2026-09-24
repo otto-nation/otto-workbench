@@ -12,4 +12,10 @@ skip: "Do not use when this session will implement the fix — superpowers:syste
      full transcript of it in the skill index. ai/skills/steps.sh splices the
      agent body in below at install time. -->
 
+<!-- This SKILL.md's description restates the same diagnose-vs-implement
+     boundary as ai/claude/agents/debugger.md's description and the
+     debugger/systematic-debugging bullet in ai/guidelines/rules/skills.md, each
+     for a different reader (Pi's matcher, Claude Code's dispatcher, this
+     repo's humans). If the boundary changes, update all three. -->
+
 <!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/claude/agents/debugger.md -->

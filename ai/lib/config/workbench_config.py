@@ -262,13 +262,15 @@ class AgentConfig:
 class ReviewConfig:
     """Review pipeline settings.
 
-    ``effort`` is the only knob left here: it selects a depth preset that skips
-    phases, moves thresholds, and scales every phase's turn and dollar budget,
-    and no other domain has one. What a single invocation is sized by otherwise
-    lives under ``agent``.
+    ``effort`` selects a depth preset that skips phases, moves thresholds, and
+    scales every phase's turn and dollar budget. ``self_effort`` is the same
+    enum but only for a self-review's single-vs-multi thresholds — phase skips
+    still follow ``effort``, so disprove stays on. Unset, a self-review uses
+    low's thresholds without taking low's skips.
     """
 
     effort: Effort | None = None
+    self_effort: Effort | None = None
 
 
 @dataclass(frozen=True)

@@ -3052,3 +3052,36 @@ class TestThePublishingGate:
         assert self._gate_at_first_work(
             ro, monkeypatch, tmp_path, ["--fix", "--post"],
         ) is True
+
+
+class TestSelfReviewPipeline:
+    """A small self-review stays single-agent without dropping disprove."""
+
+    def _job(self, ro, tmp_path, mode, lines=681, files=6):
+        from core.phases import Effort
+
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42",
+            pr=ro.PRMetadata(
+                "t", "", "head", "main", "abc123", lines, 0, files, [],
+            ),
+            ctx=ro.PRContext(), wt_path=str(tmp_path),
+            review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            effort=Effort.MEDIUM, mode=mode,
+        )
+
+    def test_self_review_stays_single_where_a_pr_review_goes_multi(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        from review.phases import _should_disprove
+
+        monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "config"))
+        (tmp_path / "config").mkdir()
+        pr_job = self._job(ro, tmp_path, ro.Mode.PR)
+        self_job = self._job(ro, tmp_path, ro.Mode.SELF)
+        pr_pipeline, *_ = ro._choose_pipeline(pr_job)
+        self_pipeline, *_ = ro._choose_pipeline(self_job)
+        assert pr_pipeline is ro.Pipeline.MULTI
+        assert self_pipeline is ro.Pipeline.SINGLE
+        assert _should_disprove(self_job) is True

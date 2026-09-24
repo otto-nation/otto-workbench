@@ -155,6 +155,21 @@
               "type": "null"
             }
           ]
+        },
+        "self_effort": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

@@ -79,8 +79,20 @@ agent:
     cfg = wc.load_config(project)
     assert cfg.reuse.level is wc.ReuseLevel.ULTRA
     assert cfg.review.effort is Effort.HIGH
+    assert cfg.review.self_effort is None
     assert cfg.agent.thinking is Thinking.MEDIUM
     assert cfg.agent.phases[Phase.SCOUT].model == "haiku"
+
+
+def test_self_effort_is_on_the_key_surface():
+    assert wc.defines_key("review.self_effort")
+
+
+def test_self_effort_loads_as_effort(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "review:\n  self_effort: low\n")
+    cfg = wc.load_config(project)
+    assert cfg.review.self_effort is Effort.LOW
 
 
 def test_project_config_wins_over_global(roots):

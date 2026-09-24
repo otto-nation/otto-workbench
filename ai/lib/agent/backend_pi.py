@@ -667,7 +667,11 @@ def _consume_stream(
 
         if event_type == "turn_end":
             # The follow_up sent with abort is a summary, not another turn of
-            # work. Counting it made a cap of N record as N+1.
+            # work. Counting it made a cap of N record as N+1. This assumes
+            # exactly one follow-up turn_end after abort, matching
+            # `_check_limits` today (one `abort` + one `follow_up` per stop);
+            # if the abort protocol ever grows a second round-trip, that turn
+            # would be silently dropped here too.
             if aborted:
                 continue
             turn_count += 1

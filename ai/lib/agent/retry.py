@@ -191,21 +191,20 @@ def retry_unproductive(
     log before the run is written off.  `ceiling` bounds the retry's turn
     budget — see `turns_for`.
 
-    Returns the diagnosis that blocked a retry, or None once something was
-    produced. A produced run is still diagnosed (the log is read either way);
-    that reading is not returned, so callers that only care about the retry
-    keep treating a ticked box as done.
+    Returns the diagnosis, or None once something was produced. A caller that
+    also needs to know *why* a produced run ended — a fix pass distinguishing
+    a finished pass from one that ticked one box and then hit MAX_TURNS —
+    diagnoses its own session log after this returns; that is a second,
+    independent read (see `agent.invoke._truncation`), not something this
+    function threads through, so it does not pay for a diagnosis here that a
+    produced-and-satisfied caller would only discard.
     """
     if not produced() and recover:
         recover()
-
-    # Diagnosed even when the run produced something: a fix pass that ticked
-    # one box and then hit MAX_TURNS is truncated, not finished. produced()
-    # still governs the retry — callers that only read this return value keep
-    # seeing None once work landed.
-    diagnosis = diagnose_missing_output(log_path)
     if produced():
         return None
+
+    diagnosis = diagnose_missing_output(log_path)
     if not is_retryable(diagnosis):
         return diagnosis
 

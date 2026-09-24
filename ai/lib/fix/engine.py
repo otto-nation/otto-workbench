@@ -134,7 +134,11 @@ class FixRun:
     reads `outcomes`.
     `stop` is MAX_TURNS when the last invocation hit the turn cap, even if it
     ticked boxes. Landing reads it so the commit body can tell a truncated pass
-    from a finished one without consulting the trail.
+    from a finished one without consulting the trail. A stalled pass (see
+    `_Batch.unproductive`) can also have `stop` set to MAX_TURNS — a batch the
+    guard already gave up retrying is also the one whose last invocation ran
+    out of turns, and both signals firing together is expected: a stalled pass
+    is a truncated pass too.
     """
 
     outcomes: list[ItemOutcome] = field(default_factory=list)

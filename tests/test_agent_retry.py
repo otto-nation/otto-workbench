@@ -67,10 +67,13 @@ class TestRetryUnproductive:
         assert diagnosis is None
         assert calls == []
 
-    def test_a_productive_max_turns_run_is_diagnosed_but_not_retried(
+    def test_a_productive_run_is_not_diagnosed_by_this_layer(
         self, tmp_path, monkeypatch,
     ):
-        """One ticked box used to skip the diagnosis, so MAX_TURNS was invisible."""
+        """`retry_unproductive` only governs the retry; truncation is the
+        caller's own concern (`agent.invoke._truncation`), diagnosed from its
+        own read of the log rather than threaded through here.
+        """
         log_path = _write_log(tmp_path, {
             "type": "result", "subtype": "max_turns", "num_turns": _TURNS,
         })
@@ -90,7 +93,7 @@ class TestRetryUnproductive:
         )
         assert diagnosis is None
         assert calls == []
-        assert diagnosed == [log_path]
+        assert diagnosed == []
 
     def test_retries_once_when_nothing_was_produced(self, tmp_path):
         """`produced` is False going into the retry and True coming out of it."""

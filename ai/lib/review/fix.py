@@ -126,7 +126,7 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding],
     here so the commit body differs from a finished one without the trail.
     """
     lines: list[str] = []
-    if stop is not None and stop.kind is DiagnosisKind.MAX_TURNS:
+    if _truncated(stop):
         lines.append(f"Pass truncated: {stop.message}")
     _block(lines, "Fixed:", [
         (o.id, _fixed_entry(findings.get(o.id), o))

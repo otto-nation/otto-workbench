@@ -456,7 +456,7 @@ class TestTheCommitScope:
         assert "[M1] body" in spec.message
         assert "[S1] needs design" in spec.message
 
-    def test_a_truncated_pass_commit_differs_from_a_complete_ones(
+    def test_a_truncated_pass_commit_differs_from_a_complete_pass(
         self, git_wt, tmp_path,
     ):
         outcomes = [

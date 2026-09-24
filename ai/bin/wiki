@@ -126,22 +126,22 @@ __all__ = [
     "collect_status",
     "configured_dirname",
     "find_wiki",
-    "repo_root",
-    "resolve_wiki",
-    "vault_dir",
-    "vault_subpath",
     "hash_file",
     "init_wiki",
     "main",
     "manifest_row",
+    "repo_root",
+    "resolve_wiki",
     "slugify_title",
     "stage_source",
+    "vault_dir",
+    "vault_subpath",
 ]
 
 SCRIPT = Path(__file__).name
 
 
-# ── Configuration ────────────────────────────────────────────────────────
+# ── Configuration ───────────────────────────────────────────────────────────
 
 
 def resolve_wiki(start: Path, explicit: str | None) -> tuple[Path | None, Path | None]:
@@ -204,15 +204,14 @@ def wiki_dir_is_declared(root: Path) -> bool:
     reading it as one is what would silently pick a placement.
 
     Asked through ``config_status`` because that is what already knows which
-    file answered for a key; it reports an unreadable config rather than
-    raising, so a broken file here means "not declared" and `init` asks.
+    file answered for a key, and because it reports an unreadable config in
+    ``problems`` rather than raising — so a broken config file leaves the key
+    undeclared and `init` asks, which is the right outcome and needs no
+    handling here.
     """
-    try:
-        status = config_status(root)
-    except Exception:
-        return False
     return any(
-        key.key == WIKI_DIR_KEY and not key.is_default for key in status.keys
+        key.key == WIKI_DIR_KEY and not key.is_default
+        for key in config_status(root).keys
     )
 
 

@@ -41,10 +41,13 @@ MIN_SESSIONS=3
 
 # Two different scopes off one input, and they are not interchangeable. The
 # stamp and the session count belong to the repo, which every worktree shares;
-# `wiki path` walks *up* from where it is told and stops at the first `.git`, so
-# it has to be given a checkout. _gate_repo_dir resolves a bare-repo layout to
-# the container above the worktrees, and a wiki committed inside one is not
-# visible from there.
+# `wiki path` has to be given a checkout either way it resolves. An in-tree base
+# is found by walking *up* and stopping at the first `.git`, so a wiki committed
+# inside a worktree is not visible from the container above it. A vault base is
+# found through the repo's remote, which a bare container cannot be asked for:
+# it has no work tree, so `rev-parse --show-toplevel` fails there.
+# _gate_repo_dir resolves a bare-repo layout to that container, which is why it
+# is used for the stamp and not for this.
 work_tree="${1:-$PWD}"
 repo_dir="$(_gate_repo_dir "$work_tree")"
 

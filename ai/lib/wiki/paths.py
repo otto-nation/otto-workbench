@@ -44,15 +44,14 @@ DEFAULT_SETTINGS = {
     "staleness_threshold_days": 180,
 }
 
-
-
-
-
-
-
 # One repo's folder inside the vault is named from its remote. Same character
 # class as `pr.target.slug`, so the two agree on what a path component is.
 _VAULT_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+
+
+
 
 
 # ── Resolution ──────────────────────────────────────────────────────────────
@@ -83,7 +82,7 @@ def vault_subpath(label: str) -> str | None:
         if not segment or segment in (os.curdir, os.pardir):
             return None
         segments.append(segment)
-    return "/".join(segments) if segments else None
+    return "/".join(segments)
 
 
 def is_wiki(path: Path) -> bool:

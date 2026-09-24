@@ -81,14 +81,33 @@ const GIT_VALUE_FLAGS = new Set(["-c", "-C", "--git-dir", "--work-tree",
                                  "--namespace", "--exec-path", "--config-env"]);
 
 /**
- * Flags that make a mutating subcommand read-only.
+ * Flags that make a mutating subcommand read-only, whichever it is.
  *
- * `git apply --check`, `git clean -n` and `git push --dry-run` report what
- * they would do and change nothing, and refusing them cost a review the
- * cheapest way to answer its own questions.
+ * `git apply --check` and `git push --dry-run` report what they would do and
+ * change nothing, and refusing them cost a review the cheapest way to answer
+ * its own questions.
+ *
+ * `-n` is deliberately absent: it is `--dry-run` for `push`, `clean`, `add`
+ * and `merge`, but `--no-verify` for `commit`, so treating it as read-only
+ * everywhere let `git commit -n -m x` through — a real commit, verified
+ * against a scratch repo. A flag whose meaning depends on the subcommand
+ * belongs in GIT_DRY_RUN_BY_SUBCOMMAND below, not here.
  */
-const GIT_DRY_RUN_FLAGS = new Set(["--dry-run", "-n", "--check", "--stat",
+const GIT_DRY_RUN_FLAGS = new Set(["--dry-run", "--check", "--stat",
                                    "--numstat", "--summary", "--help"]);
+
+/**
+ * Short dry-run flags, by the subcommand that reads them that way.
+ *
+ * Keyed rather than global because `-n` means opposite things: nothing is
+ * committed by `git push -n`, and something certainly is by `git commit -n`.
+ */
+const GIT_DRY_RUN_BY_SUBCOMMAND: Record<string, Set<string>> = {
+  push: new Set(["-n"]),
+  clean: new Set(["-n"]),
+  add: new Set(["-n"]),
+  merge: new Set(["-n"]),
+};
 
 /**
  * Subcommand pairs that only read, despite the first word being a write verb.
@@ -127,6 +146,8 @@ function gitWrite(tokens: Token[]): string | null {
 
   const rest = tokens.slice(i + 1).map((t) => t.value);
   if (rest.some((word) => GIT_DRY_RUN_FLAGS.has(word))) return null;
+  const shortDryRun = GIT_DRY_RUN_BY_SUBCOMMAND[subcommand];
+  if (shortDryRun && rest.some((word) => shortDryRun.has(word))) return null;
   if (rest[0] && GIT_READ_ONLY_ACTIONS[subcommand]?.has(rest[0])) return null;
   return subcommand;
 }

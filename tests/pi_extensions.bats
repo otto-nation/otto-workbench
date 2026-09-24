@@ -1226,6 +1226,21 @@ _blocked() {
   done
 }
 
+@test "review-guard: -n is a dry run for some subcommands and not for others" {
+  # `-n` is --dry-run for push, clean, add and merge, but --no-verify for
+  # commit. Treating it as read-only everywhere let `git commit -n -m x`
+  # through, which makes a real commit — verified against a scratch repo, not
+  # inferred from the manual.
+  for bad in 'git commit -n -m x' 'git commit -nm x' 'git commit --no-verify -m x'; do
+    _blocked "$bad"
+    [ -n "$output" ] || { echo "allowed a commit: $bad"; false; }
+  done
+  for ok in 'git push -n' 'git clean -n' 'git add -n f' 'git merge -n topic'; do
+    _blocked "$ok"
+    [ -z "$output" ] || { echo "refused a dry run: $ok"; false; }
+  done
+}
+
 @test "review-guard: a commit reached through a wrapper is refused" {
   # The recursion that catches these served the git rule too, not only the
   # write-verb rules removed alongside it — cutting it silently reopened

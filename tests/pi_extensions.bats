@@ -1336,7 +1336,10 @@ _blocked() {
 @test "review-guard: a redirect outside the scratch roots is refused" {
   _blocked 'echo hi > /etc/hosts'
   [ -n "$output" ]
-  _blocked 'pytest > ~/notes.txt'
+  # $HOME is unexpanded here the same way ~ is, and for the same reason: this
+  # file does not expand either, so both fall to the same refusal rather than
+  # being read as scratch.
+  _blocked 'pytest > $HOME/notes.txt'
   [ -n "$output" ]
 }
 

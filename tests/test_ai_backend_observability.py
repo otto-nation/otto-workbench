@@ -136,7 +136,13 @@ class TestBuildFixCmd:
         """Two spellings of one rule: `--tools` allowlists tool names and cannot
         bar a single bash command, so Pi enforces this in `detect.ts`, the
         predicate review-guard.ts calls. The lists drifting is how one backend
-        quietly keeps a command the other denies."""
+        quietly keeps a command the other denies.
+
+        One direction only: Pi's GIT_WRITE_SUBCOMMANDS is deliberately a
+        superset of Claude's FIX_DENIED_TOOLS (it also lists `add`, `rm`, `mv`,
+        `branch`, `tag`, `config`, `worktree`, `fetch`, `pull`, none of which
+        Claude denies), so this only checks that nothing Claude denies slips
+        past Pi, not that the two sets are equal."""
         claude_denied = {
             d[len("Bash(git "):-len(":*)")]
             for d in ai_backend_claude.FIX_DENIED_TOOLS.split(",")

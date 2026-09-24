@@ -89,21 +89,31 @@ def _committed_paths(wt: Path) -> set[str]:
     return {line for line in out.strip().splitlines() if line}
 
 
-def _make_job(git_wt, tmp_path, review_content: str = "") -> ReviewJob:
+def _make_job(
+    git_wt, tmp_path, review_content: str = "", *,
+    files: list[str] | None = None, base: str = "main",
+) -> ReviewJob:
     """A review whose deliverable is `review_content`, over `git_wt`.
 
     A real `ReviewJob` rather than a mock: the adapter reads the review's
     effort, model, config and artifact directory off it, and a mock answers
     every one of those with something that is not what a review holds.
+
+    `files` is the branch's changed-file list against `base` — the same
+    shape `job.pr.files` carries for a real PR or stacked self-review.
     """
     review_file = tmp_path / "reviews" / "review.md"
     review_file.parent.mkdir(exist_ok=True)
     review_file.write_text(review_content)
+    file_dicts = [
+        {"path": p, "additions": 1, "deletions": 0} for p in (files or [])
+    ]
     return ReviewJob(
         repo="owner/repo", pr_number="42",
         pr=PRMetadata(
-            title="feat: thing", body="", head="user/feat/thing", base="main",
-            head_sha="abc1234", additions=1, deletions=0, changed_files=1, files=[],
+            title="feat: thing", body="", head="user/feat/thing", base=base,
+            head_sha="abc1234", additions=1, deletions=0,
+            changed_files=len(file_dicts), files=file_dicts,
         ),
         ctx=PRContext(commits="abc1234 feat: thing"),
         wt_path=str(git_wt),
@@ -391,17 +401,35 @@ class TestTheCommitScope:
     and what it says when there is no answer at all.
     """
 
-    def _adapter(self, git_wt, tmp_path):
-        job = _make_job(git_wt, tmp_path, "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n")
+    def _adapter(self, git_wt, tmp_path, *, files=None):
+        job = _make_job(
+            git_wt, tmp_path,
+            "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n",
+            files=files,
+        )
         return review_fix.ReviewFixAdapter(job, [_finding("M1")])
 
     def test_the_scope_is_what_the_engine_attributed_to_the_agent(
         self, git_wt, tmp_path,
     ):
-        adapter = self._adapter(git_wt, tmp_path)
+        adapter = self._adapter(git_wt, tmp_path, files=["helper.py"])
         spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"helper.py"})
 
         assert spec.paths == {"helper.py"}
+
+    def test_an_out_of_branch_edit_is_dropped_from_the_commit(
+        self, git_wt, tmp_path, capsys,
+    ):
+        adapter = self._adapter(git_wt, tmp_path, files=["a.py"])
+        spec = adapter.landing(
+            [_outcome("M1", FixOutcome.FIXED)],
+            {"a.py", "lib/nesting/bash.py"},
+        )
+
+        assert spec.paths == {"a.py"}
+        err = capsys.readouterr().err
+        assert "lib/nesting/bash.py" in err
+        assert "not committing" in err
 
     def test_a_snapshot_that_failed_scopes_the_commit_to_nothing(
         self, git_wt, tmp_path,
@@ -449,6 +477,95 @@ class TestTheCommitScope:
 
         assert "[M1] body" in spec.message
         assert "[S1] needs design" in spec.message
+
+
+class TestBranchScope:
+    """A fix pass cannot commit a file the branch never touched.
+
+    Attribution still reports the edit — `agent_changed` is not a statement
+    about the branch — and landing drops it so the file stays dirty.
+    """
+
+    REVIEW = "## Must fix\n- [ ] **[M1]** `helper.py:1` — Missing helper\n"
+
+    @patch("git.land.push.push", return_value=_PUSHED)
+    def test_an_out_of_branch_edit_is_reported_and_left_uncommitted(
+        self, mock_push, git_wt, tmp_path, capsys,
+    ):
+        job = _make_job(git_wt, tmp_path, self.REVIEW, files=["helper.py"])
+
+        def agent_run():
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+            nesting = git_wt / "lib" / "nesting"
+            nesting.mkdir(parents=True)
+            (nesting / "bash.py").write_text("def too_deep(): pass\n")
+
+        _run(job, {"M1": "fixed"}, work=agent_run)
+
+        assert _committed_paths(git_wt) == {"helper.py"}
+        status = git_out(git_wt, "status", "--porcelain", "-uall")
+        assert "lib/nesting/bash.py" in status
+        err = capsys.readouterr().err
+        assert "not committing" in err
+        assert "lib/nesting/bash.py" in err
+
+    @patch("git.land.push.push", return_value=_PUSHED)
+    def test_an_in_branch_edit_is_committed(
+        self, mock_push, git_wt, tmp_path, capsys,
+    ):
+        job = _make_job(git_wt, tmp_path, self.REVIEW, files=["helper.py"])
+        _run(
+            job, {"M1": "fixed"},
+            work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
+        )
+
+        assert _committed_paths(git_wt) == {"helper.py"}
+        assert "outside this branch" not in capsys.readouterr().err
+
+    @patch("git.land.push.push", return_value=_PUSHED)
+    def test_a_colocated_test_of_an_in_branch_file_is_committed(
+        self, mock_push, git_wt, tmp_path,
+    ):
+        src = git_wt / "src"
+        src.mkdir()
+        (src / "foo.py").write_text("x = 1\n")
+        git_out(git_wt, "add", "src/foo.py")
+        git_out(git_wt, "commit", "-qm", "add foo")
+        job = _make_job(
+            git_wt, tmp_path,
+            "## Must fix\n- [ ] **[M1]** `src/foo.py:1` — Needs a test\n",
+            files=["src/foo.py"],
+        )
+
+        def agent_run():
+            (src / "foo.py").write_text("x = 2\n")
+            (src / "foo_test.py").write_text("def test_foo(): assert True\n")
+
+        _run(job, {"M1": "fixed"}, work=agent_run)
+
+        assert _committed_paths(git_wt) == {"src/foo.py", "src/foo_test.py"}
+
+    def test_the_prompt_carries_the_branch_file_list(self, git_wt, tmp_path):
+        job = _make_job(
+            git_wt, tmp_path, self.REVIEW,
+            files=["src/auth.go", "pkg/util.go"],
+            base="feat/parent",
+        )
+        adapter = review_fix.ReviewFixAdapter(
+            job, [_finding("M1", path="helper.py")],
+        )
+        adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
+        adapter.tracking_path.write_text("- [ ] fixed\n")
+        prompt = fix_engine._prompt(adapter, 15)
+
+        assert "src/auth.go" in prompt
+        assert "pkg/util.go" in prompt
+        assert "helper.py" in prompt
+        assert "feat/parent" in prompt
+        assert "Never bundle unrelated fixes" in prompt
+        assert "${branch_files}" not in prompt
+        assert "${finding_anchors}" not in prompt
+        assert "${branch_base}" not in prompt
 
 
 class TestTheSummary:
@@ -1258,6 +1375,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         job = _make_job(
             git_wt, tmp_path,
             "## Nit\n- [ ] **[N1]** `src.py:1` — Misnamed module\n",
+            files=["src.py", "renamed.py"],
         )
         _run(job, {"N1": "fixed"},
              work=lambda: (git_wt / "src.py").rename(git_wt / "renamed.py"))

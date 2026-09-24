@@ -239,7 +239,9 @@ class FixAdapter(ABC):
 
         The engine supplies `branch_name`, `repo`, `tracking_content`,
         `tracking_file`, `answer_format`, `worktree_block`, `generated_block`,
-        `role_block` and `max_turns`.
+        `role_block` and `max_turns`. A domain that withholds a list the
+        template names — the branch's files, for one — leaves the agent
+        unable to tell an in-scope path from an out-of-scope one.
         """
 
     @abstractmethod

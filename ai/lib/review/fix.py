@@ -56,6 +56,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from fix import engine as fix_engine
+from fix import scope as fix_scope
 from fix import types as fix_types
 from fix import verify as fix_verify
 from core import log, publishing
@@ -403,6 +404,13 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     return "\n".join(lines)
 
 
+def _bullet_paths(paths: set[str]) -> str:
+    """A prompt-ready list of paths, or `(none)` when the set is empty."""
+    if not paths:
+        return "(none)"
+    return "\n".join(f"- {p}" for p in sorted(paths))
+
+
 class ReviewFixAdapter(fix_engine.FixAdapter):
     """The findings pass, in the terms `fix_engine` runs one in.
 
@@ -469,18 +477,53 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
             for f in self.findings.values()
         ]
 
+    def _branch_files(self) -> set[str]:
+        """The files this branch changed against the PR or stack base.
+
+        `job.pr.files` is already that set — collected against `pr.base`, not
+        against main — so a stacked branch whose parent is not main still has
+        the right list, and this does not shell out again.
+        """
+        return {f["path"] for f in self.job.pr.files if f.get("path")}
+
+    def _anchor_files(self) -> set[str]:
+        """The files the findings point at, in scope even off the branch."""
+        return {f.path for f in self.findings.values() if f.path}
+
+    def _allowed_paths(self) -> set[str]:
+        return fix_scope.commit_allowed(self._branch_files(), self._anchor_files())
+
     def template_vars(self) -> dict[str, str]:
-        """Nothing — `fix-findings.md` asks for no substitution the engine withholds."""
-        return {}
+        """The branch file set and finding anchors `fix-findings.md` names.
+
+        Without them the agent cannot tell an in-scope path from an
+        out-of-scope one, and 'a change to files outside this branch' in the
+        template is an instruction it cannot follow. Under Pi the fix agent
+        never loads CLAUDE.md, so Scope Discipline has to arrive here.
+        """
+        return {
+            "branch_base": self.job.pr.base or "HEAD",
+            "branch_files": _bullet_paths(self._branch_files()),
+            "finding_anchors": _bullet_paths(self._anchor_files()),
+        }
 
     def landing(
         self, outcomes: list[ItemOutcome], changed: set[str] | None,
     ) -> fix_engine.LandSpec:
-        """Commit the files the agent touched, and only those.
+        """Commit the files the agent touched that belong on this branch.
 
         A snapshot that failed arrives as None and lands an empty scope, which
         commits nothing — `record` is what then says where the work was left.
+
+        Paths outside the branch, the finding anchors, and their colocated
+        tests are dropped here — the same warn-and-leave contract as
+        `_drop_scratch`, applied after attribution so a file already dirty
+        when the pass started is still never credited.
         """
+        if changed is not None:
+            changed = fix_scope.drop_outside(
+                changed, self._allowed_paths(), self.workdir,
+            )
         self.changed = changed
         self.summary = _summary(outcomes, self.findings, changed)
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)

@@ -4,6 +4,25 @@ Fix review findings for branch ${branch_name} in ${repo}.
 
 ${role_block}
 
+## This branch's files
+
+Measured against `${branch_base}` — the PR or stack base, not necessarily
+main. A stacked branch whose parent is not main still has the right list
+here; do not re-diff against main.
+
+${branch_files}
+
+Finding anchors — the files the findings point at, in scope even when they
+are not in the list above:
+
+${finding_anchors}
+
+A path outside those lists, and a colocated test of either (same directory,
+named `test_<stem>`, `<stem>_test`, or `<stem>.test`), is `needs a person`,
+not an edit. Never bundle unrelated fixes into commits on a feature branch
+— if you spot an issue outside the branch's scope, create a separate branch
+for it. You do not create branches; tick `needs a person` and name the path.
+
 ## Findings to fix
 
 ${tracking_content}
@@ -31,8 +50,10 @@ So for each finding, before editing anything:
 3. **Fix it only if that case fails.** If it holds, tick `declined` and say what
    disproves the finding — name the file and line that settles it.
 
-Default to fixing when you cannot tell. Declining is for a premise you
-disproved, not one you doubt: say what you checked in the box either way.
+Default to fixing when you cannot tell whether the finding's premise holds.
+Declining is for a premise you disproved, not one you doubt: say what you
+checked in the box either way. A path missing from the lists above is not
+a cannot-tell — it is out of scope.
 
 ### "Already correct" means correct before you started
 
@@ -67,7 +88,7 @@ or the finding's own text needs none of this. It is specifically the
 - **declined** — the premise does not hold, the code already does what it asks,
   or the change would be wrong
 - **needs a person** — a design decision, an architectural change, external
-  verification, or a change to files outside this branch
+  verification, or a path not in the branch-file and anchor lists above
 
 ## The test the `fixed` box asks for
 

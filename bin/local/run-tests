@@ -192,45 +192,27 @@ _shard_weights() {
   local -a all_bats_files=()
   local f
   for f in "$WORKBENCH_DIR"/tests/*.bats; do
-    [[ -f "$f" ]] && all_bats_files+=("$f")
+    [[ -f "$f" ]] || continue
+    all_bats_files+=("$f")
   done
   [[ ${#all_bats_files[@]} -eq 0 ]] && return 0
 
-  # One awk over one `grep -c` of every file, not a fork apiece: the count loop
-  # this replaces ran 154 `grep` processes per call, and four tests in
-  # tests/run_tests.bats call this nine times between them.
+  # The file list alone, never the files' contents. The packer weighs a file by
+  # its measured runtime from tests/weights.tsv, so nothing here needs to open a
+  # test file at all — the `grep -c '^@test '` this used to run over all 154 of
+  # them was left from the count-based weighting and its output was already
+  # going unread.
   #
-  # `grep -c` over many files prints `path:count`; with a single file it prints
-  # a bare count, so the glob is passed through /dev/null to force the prefixed
-  # form no matter how many files match.
-  #
-  # `grep -c` prints nothing at all — not even a zero — for a file it cannot
-  # open (a dangling symlink, a permissions hiccup), and its stderr is
-  # discarded below, so that file would otherwise vanish from this function's
-  # output rather than fall back to the median like every other unmeasured
-  # file. The full listing is fed to awk as a second input purely so its
-  # FNR==NR pass can notice which of the glob's own files never got a count
-  # line, and still emit those with the fallback weight.
-  awk -F: -v weights="$TEST_WEIGHTS_FILE" '
-      FNR == NR {
-        path = $0
-        sub(/.*\//, "", path)
-        order[++norder] = path
-        listed[path] = 1
-        next
-      }
-      FNR != NR {
-        # /dev/null is the sentinel that forces grep to prefix every line with
-        # its filename; it is not a test file and must not become a shard entry.
-        if ($1 == "/dev/null") next
-        path = $1
-        sub(/.*\//, "", path)
-        if (path !~ /\.bats$/) next
-        counted[path] = $2
-        next
-      }
-      END {
-        # Read the measured weights first, in ms.
+  # Dropping it also closes the hole that made it worth looking at: `grep -c`
+  # prints no line at all for a file it cannot open, and with stderr discarded
+  # such a file vanished from this function's output rather than falling back to
+  # the median — so it was assigned to no shard and silently stopped running,
+  # with a green build. The glob is the enumeration now, so a file that exists
+  # is scheduled whether or not anything can read it.
+  printf '%s\n' "${all_bats_files[@]}" |
+    awk -v weights="$TEST_WEIGHTS_FILE" '
+      BEGIN {
+        # The measured weights, in ms.
         n = 0
         while ((getline line < weights) > 0) {
           split(line, parts, "\t")
@@ -240,7 +222,10 @@ _shard_weights() {
           sorted[n++] = ms
         }
         close(weights)
-        # The median of what is known, for files that are not.
+        # The median of what is known, for the files that are not. Zero would
+        # pile every unweighted file onto one shard, since a zero-weight file
+        # never raises the bucket it lands in; the maximum would scatter them
+        # and unbalance the split the other way.
         if (n > 0) {
           for (i = 1; i < n; i++) {
             v = sorted[i]
@@ -252,14 +237,15 @@ _shard_weights() {
         # No weights file at all: every file weighs the same, which packs by
         # file count. Worse than measured, better than refusing to shard.
         if (fallback <= 0) fallback = 1000
-        for (i = 1; i <= norder; i++) {
-          path = order[i]
-          w = (path in known) ? known[path] : fallback
-          printf "%d\t%s\n", w, path
-        }
       }
-    ' <(printf '%s\n' "${all_bats_files[@]}") \
-      <(grep -c '^@test ' /dev/null "${all_bats_files[@]}" 2>/dev/null || true)
+      {
+        path = $0
+        sub(/.*\//, "", path)
+        if (path !~ /\.bats$/) next
+        w = (path in known) ? known[path] : fallback
+        printf "%d\t%s\n", w, path
+      }
+    '
 }
 
 # shard_files SHARD TOTAL — emit the test file paths for shard SHARD of TOTAL.

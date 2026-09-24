@@ -116,6 +116,7 @@ from git import client as git_client
 from core import log
 from core import proc
 from core import publishing
+from core import timeouts
 from core.trail import Trail
 
 
@@ -222,15 +223,16 @@ _DIVERGED_MARKERS = (
     "behind its remote",
 )
 
+# Only these two ever reach this check: `classify` tests `_AUTH_MARKERS` and
+# `_UNREACHABLE_MARKERS` first, and between them those cover every other
+# wording this set used to list ("could not resolve host", "connection
+# refused", "connection timed out" moved to `_UNREACHABLE_MARKERS`;
+# "authentication failed", "permission denied", "repository not found" moved
+# to `_AUTH_MARKERS`). Adding a marker here that duplicates one of those sets
+# would be dead on arrival.
 _TRANSPORT_MARKERS = (
     "could not read from remote repository",
-    "could not resolve host",
-    "connection refused",
-    "connection timed out",
     "connection closed",
-    "authentication failed",
-    "permission denied",
-    "repository not found",
 )
 
 # The transport failures that are the operator's credentials rather than the
@@ -580,11 +582,6 @@ def resume_command(result: PushResult, wt_path: str | Path) -> str:
     return _push_command(wt_path, args)
 
 
-# How long to spend asking ssh why it was refused. The probe runs only on the
-# failure path, after a push has already cost a round trip, and it is one more
-# to the same host — but a reader waiting on an error message is owed a bound.
-_AUTH_PROBE_TIMEOUT = 15.0
-
 # What `ssh -v` prints once the server has taken the key. On its own it says the
 # key is authorised and nothing about whether the session then succeeded.
 _KEY_ACCEPTED = "server accepts key"
@@ -655,6 +652,10 @@ def _ssh_host(wt_path: str | Path, remote: str) -> SshTarget:
         return SshTarget()
     if url.startswith("ssh://"):
         authority = url[len("ssh://"):].split("/", 1)[0]
+        # An IPv6 literal authority such as `[::1]:2222` is not handled here:
+        # rpartition(":") would split inside the brackets rather than at the
+        # host/port boundary. Accepted gap rather than an oversight — an
+        # internal tool's ssh remotes are host names in practice.
         host, _, port = authority.rpartition(":")
         # No colon at all leaves `host` empty and the whole authority in `port`.
         if not host:
@@ -679,16 +680,26 @@ def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
     looking in the remote's settings for a fault that is on their own machine.
 
     Best-effort and never fatal: a probe that cannot run leaves the report as it
-    was rather than replacing a true error with a speculative one.
+    was rather than replacing a true error with a speculative one. That covers
+    a nonzero exit or empty output from ssh itself, and — for a container or a
+    sandboxed subprocess with no `ssh` on `PATH` at all — the `FileNotFoundError`
+    `proc.run` does not catch on the caller's behalf the way `gh.client.run`
+    does; this is the one caller of `proc.run` in the module for which a
+    missing binary is an expected, not exceptional, outcome.
     """
     target = _ssh_host(wt_path, remote)
     if not target.probeable:
         return ""
-    probe = proc.run(
-        ["ssh", "-v", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
-         "-T", *target.args],
-        timeout=_AUTH_PROBE_TIMEOUT,
-    )
+    try:
+        probe = proc.run(
+            ["ssh", "-v", "-o", "BatchMode=yes",
+             "-o", "StrictHostKeyChecking=accept-new", "-T", *target.args],
+            # A round trip to a remote host, bounded by latency rather than by
+            # payload — exactly what `timeouts.NETWORK` describes.
+            timeout=timeouts.NETWORK,
+        )
+    except FileNotFoundError:
+        return ""
     output = probe.combined_output.lower()
     if not output:
         return ""

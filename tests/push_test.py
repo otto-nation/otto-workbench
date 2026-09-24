@@ -1192,6 +1192,23 @@ def test_a_remote_with_no_url_is_not_probed(monkeypatch):
     assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
+def test_a_missing_ssh_binary_says_nothing_rather_than_raising(monkeypatch):
+    """A container or sandbox with no `ssh` on `PATH` is a best-effort miss.
+
+    `proc.run` does not catch `FileNotFoundError` the way `gh.client.run` does,
+    so the caller must — otherwise a missing binary crashes the whole refusal
+    report instead of leaving it as it was.
+    """
+    monkeypatch.setattr(push.git_client, "out",
+                         lambda *a, **k: "git@github.com:o/r.git")
+
+    def _raise(*a, **k):
+        raise FileNotFoundError("ssh")
+
+    monkeypatch.setattr(push.proc, "run", _raise)
+    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+
+
 @pytest.mark.parametrize("url,host,port", [
     ("git@github.com:o/r.git", "git@github.com", ""),
     ("ssh://git@github.com/o/r.git", "git@github.com", ""),

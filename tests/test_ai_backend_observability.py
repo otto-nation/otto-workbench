@@ -104,36 +104,44 @@ class TestBuildFixCmd:
         assert f"Bash({command}:*)" in denied
 
     @staticmethod
-    def _pi_git_subcommands(guard):
-        """Find the `(?:commit|...)` alternation detect.ts denies git writes with.
+    def _pi_refuses(command):
+        """Whether detect.ts refuses `command`, by running the predicate.
 
-        Fragile to reordering GIT_WRITE_SUBCOMMANDS: this only anchors on the
-        alternation that starts with `commit`, so putting another subcommand
-        first there would make this stop matching. Shared by the two tests
-        below so that caveat lives in one place.
+        Asked of the behaviour rather than of the source text. These tests used
+        to grep detect.ts for the regex alternation its git denies were spelled
+        as, which tied them to one implementation: the alternation became a Set
+        and both tests failed while the rule they check was intact and broader
+        than before. A parity claim is about what the two backends *refuse*, so
+        that is what is compared.
         """
-        return re.search(r"\(\?:(commit\|[a-z|\-]+)\)", guard)
+        detect = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
+                  / "pi" / "extensions-cli" / "detect.ts")
+        script = (
+            f"const {{ blockedWriteCommand }} = await import({str(detect)!r});"
+            "process.stdout.write(blockedWriteCommand(process.argv[1]) ? '1' : '');"
+        )
+        result = subprocess.run(
+            ["node", "--experimental-strip-types", "--input-type=module",
+             "-e", script, "--", command],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout == "1"
 
     def test_both_backends_bar_the_same_git_commands(self):
         """Two spellings of one rule: `--tools` allowlists tool names and cannot
         bar a single bash command, so Pi enforces this in `detect.ts`, the
         predicate review-guard.ts calls. The lists drifting is how one backend
         quietly keeps a command the other denies."""
-        guard = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
-                 / "pi" / "extensions-cli" / "detect.ts").read_text()
-        # Not anchored to `git\s+` any more: the Pi pattern reaches past global
-        # flags, so `git -C /repo commit` is denied too. This matches the
-        # subcommand alternation wherever in GIT_WRITE_SUBCOMMANDS it sits.
-        pattern = self._pi_git_subcommands(guard)
-        assert pattern, "detect.ts no longer spells its git denies as one alternation"
-        pi_denied = set(pattern.group(1).split("|"))
-
         claude_denied = {
             d[len("Bash(git "):-len(":*)")]
             for d in ai_backend_claude.FIX_DENIED_TOOLS.split(",")
             if d.startswith("Bash(git ")
         }
-        assert claude_denied == pi_denied
+        assert claude_denied, "no git denies found on the Claude side"
+        for subcommand in sorted(claude_denied):
+            assert self._pi_refuses(f"git {subcommand} x"), (
+                f"Claude denies `git {subcommand}` and Pi's detect.ts does not"
+            )
 
     def test_the_pi_guard_reaches_past_a_global_flag(self):
         """`Bash(git commit:*)` is a prefix match, so `git -C /r commit` is not
@@ -141,16 +149,24 @@ class TestBuildFixCmd:
         to say "any flags, then this subcommand". The Pi half can and does, and
         the parity test above would otherwise pass with both halves blind to it.
         """
-        guard = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
-                 / "pi" / "extensions-cli" / "detect.ts").read_text()
-        subcommands = self._pi_git_subcommands(guard)
-        assert subcommands
-        # The alternation is preceded by a flag-skipping group, not by `git\s+`.
-        head = guard[:subcommands.start()]
-        assert head.rstrip().endswith("*"), (
-            "the git subcommand alternation is anchored straight to `git`, so "
-            "`git -C /repo commit` is not denied"
-        )
+        for command in ("git -C /repo commit -m x",
+                        "git --no-pager commit -m x",
+                        "git -c user.name=x commit -m y",
+                        "git --git-dir=/r/.git commit -m x"):
+            assert self._pi_refuses(command), f"a global flag hid the write: {command}"
+
+    def test_the_pi_guard_allows_a_read_only_git_subcommand(self):
+        """The counterpart, and the reason this is asked of behaviour rather than
+        of a subcommand list: `merge` is denied and `merge-base` must not be. A
+        list comparison cannot see the difference, and matching the list against
+        raw text with a `\\b` is exactly how `git merge-base` came to be refused
+        — ai/lib calls it in fifteen places.
+        """
+        for command in ("git merge-base origin/main HEAD",
+                        "git stash list",
+                        "git apply --check p.diff",
+                        "git push --dry-run"):
+            assert not self._pi_refuses(command), f"refused a read: {command}"
 
     def test_the_review_agent_keeps_gh(self):
         """Only the fix pass is barred — a review agent reads the PR with it."""

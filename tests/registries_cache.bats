@@ -314,6 +314,108 @@ EOF
   [ "$(reg_get "$f" tools 0 arr 1)" = "two" ]
 }
 
+# ── the fork-free accessors ──────────────────────────────────────────────────
+# reg_get_into, reg_type_into and reg_len_into exist so a hot loop stops paying
+# a command substitution per read. They are only worth having if they answer
+# exactly what their forking siblings answer, so that is what is asserted —
+# against the same node, rather than against a value spelled twice.
+
+@test "the _into accessors answer what their forking siblings answer" {
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+meta:
+  section: Tools
+  empty:
+tools:
+  - name: alpha
+    arr: ["one", "two"]
+    obj:
+      k: v
+EOF
+)
+  reg_load "$f"
+
+  # Every node shape the encoding distinguishes: a scalar, an explicit null, a
+  # map, a sequence, a sequence entry, and a path that is not there at all.
+  local -a paths=(
+    "meta section" "meta empty" "meta" "tools" "tools 0" "tools 0 name"
+    "tools 0 arr" "tools 0 arr 1" "tools 0 obj" "nope" "tools 9 name"
+  )
+  local p fork into
+  local -a segs
+  for p in "${paths[@]}"; do
+    read -ra segs <<< "$p"
+    fork=$(reg_get "$f" "${segs[@]}")
+    reg_get_into into "$f" "${segs[@]}"
+    [ "$fork" = "$into" ] || { echo "reg_get_into [$p]: fork=[$fork] into=[$into]"; return 1; }
+
+    fork=$(reg_type "$f" "${segs[@]}")
+    reg_type_into into "$f" "${segs[@]}"
+    [ "$fork" = "$into" ] || { echo "reg_type_into [$p]: fork=[$fork] into=[$into]"; return 1; }
+  done
+}
+
+@test "reg_len_into reports a non-sequence the way reg_len does" {
+  # reg_len returns 1 and prints nothing for a path holding something that is
+  # not a list — the case a caller under `set -e` is meant to abort on. An
+  # _into variant that answered 0 there would turn that abort into a silent
+  # zero-entry loop, which is the failure the whole module exists to prevent.
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+tools:
+  first:
+    name: a
+list:
+  - one
+  - two
+EOF
+)
+  reg_load "$f"
+
+  local n status
+  reg_len_into n "$f" list
+  [ "$n" = "2" ]
+
+  # Absent and explicit-null alike are 0 entries, not an error.
+  reg_len_into n "$f" nothing
+  [ "$n" = "0" ]
+
+  status=0
+  reg_len_into n "$f" tools || status=$?
+  [ "$status" -eq 1 ]
+}
+
+@test "an _into accessor writes the caller's variable, not its own local" {
+  # $1 is a nameref to a caller variable, so a local sharing that name is the
+  # one the nameref resolves to — and the caller is handed back an empty string
+  # with no error. `key`, `tag` and `val` were the accessors' own locals and all
+  # three failed this way before they were prefixed.
+  local f
+  f=$(_fixture reg.yml <<'EOF'
+meta:
+  section: Tools
+tools:
+  - name: alpha
+EOF
+)
+  reg_load "$f"
+
+  local name
+  for name in key tag val file path seg count; do
+    unset "$name"
+    reg_get_into "$name" "$f" meta section
+    [ "${!name}" = "Tools" ] || { echo "reg_get_into into '\$$name' gave [${!name}]"; return 1; }
+
+    unset "$name"
+    reg_type_into "$name" "$f" meta section
+    [ "${!name}" = "!!str" ] || { echo "reg_type_into into '\$$name' gave [${!name}]"; return 1; }
+
+    unset "$name"
+    reg_len_into "$name" "$f" tools
+    [ "${!name}" = "1" ] || { echo "reg_len_into into '\$$name' gave [${!name}]"; return 1; }
+  done
+}
+
 @test "one load serves several files without their paths colliding" {
   local a b
   a=$(_fixture a.yml <<'EOF'
@@ -387,6 +489,144 @@ EOF
   reg_invalidate "$a"
   [ -z "$(reg_get "$a" tools 0 name)" ]
   [ "$(reg_get "$b" tools 0 name)" = "from-b" ]
+}
+
+# ── the shared scan ───────────────────────────────────────────────────────────
+# A collector re-scans the tree on every call. `reg_scan_hold` lets one logical
+# operation share a single scan across the collectors it runs — the cost being
+# that a rewrite inside the block is not seen, which is why the block is bounded
+# and why the boundary is what these cases pin.
+
+# _scan_dir_with CONTENT — a scan directory holding one component registry.
+#
+# The registry goes a level down: collect_component_registries globs
+# `$scan_dir/*/registry.yml`, so a file at the root of the scan directory is
+# not found at all and every collector would answer empty.
+_scan_dir_with() {
+  local dir="$TMPDIR/scan"
+  mkdir -p "$dir/component"
+  cat > "$dir/component/registry.yml"
+  printf '%s' "$dir"
+}
+
+@test "a collector outside a hold sees a registry rewritten since the last call" {
+  # The unheld path, and the reason a collector invalidates at all: a sync step
+  # that outlives an edit must answer for the tree as it is now.
+  local dir
+  dir=$(_scan_dir_with <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: FIRST_VAR
+EOF
+)
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  [ "${sources[0]}" = "FIRST_VAR" ]
+
+  cat > "$dir/component/registry.yml" <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: SECOND_VAR
+EOF
+  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  [ "${sources[0]}" = "SECOND_VAR" ]
+}
+
+@test "two collectors in one hold read the same scan" {
+  # Asserted through the hold's own cost rather than its benefit. A second
+  # collector that reused the first's load cannot see a rewrite made between
+  # them, and a second collector that re-scanned can — so the rewrite is the
+  # one observable difference between sharing and not sharing.
+  #
+  # Checking only that both collectors return the right values would pass
+  # either way, which makes it a test of the collectors and not of the hold:
+  # a hold that silently stopped sharing would still be green, and the
+  # optimisation would be gone with nothing to say so.
+  local dir
+  dir=$(_scan_dir_with <<'EOF'
+meta:
+  claude_env: true
+tools:
+  - name: alpha
+    permission: true
+env:
+  - var: HELD_VAR
+EOF
+)
+  local -a perms=() sources=() targets=()
+  _both() {
+    collect_registry_permissions perms "$dir" "$dir/brew"
+    cat > "$dir/component/registry.yml" <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: REWRITTEN_MID_HOLD
+EOF
+    collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  }
+  reg_scan_hold _both
+
+  [ "${perms[0]}" = "Bash(alpha:*)" ]
+  # The scan the hold is holding, not the file as it now stands.
+  [ "${sources[0]}" = "HELD_VAR" ]
+}
+
+@test "a hold does not outlive the block it wrapped" {
+  # The bound that keeps the ceiling honest. A hold that leaked would turn
+  # every later collector in the process into a stale read — the exact failure
+  # reg_invalidate exists to prevent, reintroduced by the optimisation.
+  local dir
+  dir=$(_scan_dir_with <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: BEFORE_VAR
+EOF
+)
+  local -a sources=() targets=()
+  _once() { collect_claude_env_vars sources targets "$dir" "$dir/brew"; }
+  reg_scan_hold _once
+  [ "${sources[0]}" = "BEFORE_VAR" ]
+
+  cat > "$dir/component/registry.yml" <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: AFTER_VAR
+EOF
+  # Outside the hold now, so this must re-scan.
+  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  [ "${sources[0]}" = "AFTER_VAR" ]
+}
+
+@test "a hold is released even when the block fails" {
+  # `reg_scan_hold cmd` propagates cmd's status, and a non-zero one must not
+  # leave the hold open behind it.
+  local dir
+  dir=$(_scan_dir_with <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: ONLY_VAR
+EOF
+)
+  _fails() { return 3; }
+  local status=0
+  reg_scan_hold _fails || status=$?
+  [ "$status" -eq 3 ]
+
+  cat > "$dir/component/registry.yml" <<'EOF'
+meta:
+  claude_env: true
+env:
+  - var: REWRITTEN_VAR
+EOF
+  # shellcheck disable=SC2034  # filled by nameref in collect_claude_env_vars
+  local -a sources=() targets=()
+  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  [ "${sources[0]}" = "REWRITTEN_VAR" ]
 }
 
 @test "reg_load fails loudly on a file yq cannot parse" {

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -195,20 +196,64 @@ def parse_pi_event(data: dict) -> StreamEvent | None:
     return None
 
 
-def pi_write_tool_used(data: dict) -> bool:
-    """Whether a parsed Pi event shows a file-writing tool being invoked."""
+def _write_paths(data: dict) -> list[str] | None:
+    """The paths a write event targets, or None when it is not a write.
+
+    An empty list is a write whose path the event did not carry, which is still
+    a write — the caller decides what an unknown target means.
+    """
     event_type = data.get("type", "")
     if event_type == "tool_execution_start":
-        return is_write_tool(data.get("toolName", "") or data.get("name", ""))
+        if not is_write_tool(data.get("toolName", "") or data.get("name", "")):
+            return None
+        path = (data.get("args") or {}).get("path")
+        return [path] if isinstance(path, str) and path else []
     if event_type != "message_update":
-        return False
+        return None
     content = data.get("content", [])
     if not isinstance(content, list):
+        return None
+    paths: list[str] = []
+    found = False
+    for block in content:
+        if block.get("type") != "toolCall" or not is_write_tool(block.get("name", "")):
+            continue
+        found = True
+        path = (block.get("input") or block.get("args") or {}).get("path")
+        if isinstance(path, str) and path:
+            paths.append(path)
+    return paths if found else None
+
+
+def pi_write_tool_used(data: dict) -> bool:
+    """Whether a parsed Pi event shows a file-writing tool being invoked."""
+    return _write_paths(data) is not None
+
+
+def pi_wrote_output(data: dict, output_path: str) -> bool:
+    """Whether `data` is a write to `output_path` specifically.
+
+    Separate from `pi_write_tool_used` rather than a second parameter on it:
+    that one answers "did a write happen", which `session.py` asks of a whole
+    log, and the single-parameter shape is the contract every stream consumer
+    shares so one `json.loads` feeds them all.
+
+    An agent that probes by writing a scratch script under /tmp has not
+    produced its deliverable, and treating that as progress switched off both
+    the repeat-call steer and the urgent half of the budget warning for the
+    rest of the run.
+
+    An empty `output_path` is a caller with no single deliverable, where any
+    write counts. A write whose event carried no path also counts: the
+    alternative is ignoring a real write because the backend spelled the
+    event differently.
+    """
+    paths = _write_paths(data)
+    if paths is None:
         return False
-    return any(
-        block.get("type") == "toolCall" and is_write_tool(block.get("name", ""))
-        for block in content
-    )
+    if not output_path or not paths:
+        return True
+    return any(Path(p) == Path(output_path) for p in paths)
 
 
 def pi_tool_signature(data: dict) -> str | None:

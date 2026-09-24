@@ -59,6 +59,13 @@ ${output_block}
 
 ## Turn budget
 You have ${max_turns} turns (each turn can include multiple parallel tool calls).${omitted_guidance} Write the review file FIRST based on the diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.
+
+A scratch file is not the review file. Writing a probe script, extracting a
+dependency's source, or redirecting output somewhere to read it back leaves the
+review file empty, and a run that ends there — out of turns, or because you
+decided you were done — reports nothing at all. If a claim needs a shell to
+settle and you have not written the file yet, write the file with the claim
+marked unverified and settle it afterwards.
 ${issue_section}
 ${prior_section}
 ${reply_threads}

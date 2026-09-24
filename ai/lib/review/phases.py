@@ -92,6 +92,23 @@ def job_turns(phase: Phase, job: ReviewJob) -> int:
     return agent_phases.phase_turns(phase, job.effort, _omitted_files(job))
 
 
+def _phase_deliverable(
+    job: ReviewJob, phase: Phase, index: int | None, spec,
+) -> str:
+    """The one file `phase` is judged on having written, or "" if it has none.
+
+    A group or scout phase writes a named artifact. `single` and `synthesis`
+    write the review document itself, which `phase_output_path` refuses to
+    name. A fix-shaped phase edits a tracking file and has no single
+    deliverable, so it opts out and any write counts as progress there.
+    """
+    if spec.shape is PhaseShape.FIX:
+        return ""
+    if not spec.output_filename:
+        return job.review_file
+    return phase_output_path(job.review_file, phase, index)
+
+
 class PhaseRunner:
     """The per-phase values, resolved once.
 
@@ -114,6 +131,15 @@ class PhaseRunner:
         # where the single-agent path already sends every record, and the
         # caller may have pointed it outside the review directory.
         self.session_log = phase_log_path(job.review_file, phase, index) or job.session_log
+        # The deliverable this phase is judged on. The backend measures
+        # progress against it, so a scratch probe is not mistaken for the
+        # agent having produced its output.
+        #
+        # A phase with no artifact of its own writes the review document, and
+        # `phase_output_path` raises rather than deriving a name for it. A
+        # fix-shaped phase edits a tracking file instead and keeps the prior
+        # any-write behaviour, because its deliverable is not one document.
+        self.output_path = _phase_deliverable(job, phase, index, spec)
         self.model = agent_phases.phase_model(phase, job.model, cfg)
         self.thinking = agent_phases.phase_thinking(phase, job.effort, cfg)
         self.provider = agent_phases.phase_provider(cfg)
@@ -130,6 +156,7 @@ class PhaseRunner:
             prompt=prompt,
             cwd=str(self.job.wt_path),
             session_log=self.session_log,
+            output_path=self.output_path,
             add_dirs=build_add_dirs(self.job.wt_path, self.job.artifact_dir),
             agent=self.agent,
             max_turns=self.max_turns if max_turns is None else max_turns,

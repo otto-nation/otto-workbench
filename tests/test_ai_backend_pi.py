@@ -1614,9 +1614,11 @@ class TestNoProgressSteer:
             "args": {"path": path},
         }) + "\n"
 
-    def _run(self, lines):
+    def _run(self, lines, output_path=""):
         proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
-        ai_backend_pi._consume_stream(proc, io.StringIO(), "")
+        ai_backend_pi._consume_stream(
+            proc, io.StringIO(), "", output_path=output_path,
+        )
         return [c for c in proc.stdin.commands if c["type"] == "steer"]
 
     def test_repeating_one_read_earns_a_steer(self):
@@ -1643,6 +1645,39 @@ class TestNoProgressSteer:
     def test_the_steer_fires_once(self):
         steers = self._run([self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT * 3))
         assert len(steers) == 1
+
+    def test_a_scratch_write_does_not_pass_for_the_output(self):
+        """A probe under /tmp is not the deliverable.
+
+        An agent that writes a scratch script to check something has produced
+        nothing the run was asked for. Counting it as output switched off the
+        repeat steer for the rest of the run, which is how three reviews in
+        one sweep spent their whole budget probing and wrote no findings.
+        """
+        lines = [self._write("/tmp/probe.py")]
+        lines += [self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT
+        steers = self._run(lines, output_path="/out/review.md")
+        assert len(steers) == 1
+        assert "write" in steers[0]["message"]
+
+    def test_writing_the_output_file_still_clears_the_count(self):
+        lines = [self._write("/out/review.md")]
+        lines += [self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT
+        assert self._run(lines, output_path="/out/review.md") == []
+
+    def test_the_turn_warning_still_asks_for_the_output_after_a_scratch_write(
+        self,
+    ):
+        """The 80% warning must not downgrade to "wrap up" on a probe."""
+        lines = [self._write("/tmp/probe.py")]
+        lines += [json.dumps({"type": "turn_end"}) + "\n"] * 8
+        proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
+        ai_backend_pi._consume_stream(
+            proc, io.StringIO(), "", max_turns=10,
+            output_path="/out/review.md",
+        )
+        steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
+        assert any(ai_backend_pi._WRITE_FIRST in s["message"] for s in steers)
 
     def test_the_no_progress_steer_is_independent_of_the_turn_warning(self):
         # Different conditions, so a run that loops early and then nears its

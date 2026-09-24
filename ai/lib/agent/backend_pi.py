@@ -62,7 +62,7 @@ from core.proc import _kill_group
 from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
-    pi_tool_signature, pi_write_tool_used,
+    pi_tool_signature, pi_wrote_output,
 )
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -610,10 +610,15 @@ def _consume_stream(
     process: subprocess.Popen, log_file, prefix: str,
     max_turns: int | None = None,
     max_budget: float | None = None,
+    output_path: str = "",
 ) -> StreamResult:
     """Consume the RPC event stream, enforcing turn and budget limits.
 
     stop_reason is one of: "completed", "max_turns", "max_budget", "error".
+
+    `output_path` is the deliverable. Progress is measured against it rather
+    than against any write, so an agent probing with a scratch file under /tmp
+    keeps the steering it needs instead of switching it off.
     """
     prev_tool = ""
     turn_count = 0
@@ -646,7 +651,7 @@ def _consume_stream(
             continue
 
         prev_tool = _display_event(data, prev_tool, prefix)
-        if pi_write_tool_used(data):
+        if pi_wrote_output(data, output_path):
             # Progress: the agent is no longer circling, so nothing it repeated
             # before the write counts against it.
             wrote_output = True
@@ -834,6 +839,7 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
             stream = _consume_stream(
                 proc, log_fh, prefix,
                 max_turns=inv.max_turns, max_budget=inv.max_budget,
+                output_path=inv.output_path,
             )
         else:
             stream = _undelivered_prompt(log_fh)
@@ -901,6 +907,7 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
             stream = _consume_stream(
                 proc, log_file, "",
                 max_turns=inv.max_turns, max_budget=inv.max_budget,
+                output_path=inv.output_path,
             )
         else:
             stream = _undelivered_prompt(log_file)

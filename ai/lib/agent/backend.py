@@ -287,6 +287,12 @@ class AgentInvocation:
     # block forever on one. Nothing else is imposed.
     env: dict[str, str] | None = None
     session_log: str = ""
+    # The file the agent's deliverable goes in, when the caller has one. The Pi
+    # backend steers on whether *this* path was written rather than on whether
+    # any write happened, because a scratch probe under /tmp is not progress
+    # toward the output and used to read as if it were. Empty means the caller
+    # has no single output file, and any write counts — the prior behaviour.
+    output_path: str = ""
     add_dirs: list[str] = field(default_factory=list)
     agent: AgentKind | None = None
     max_turns: int | None = None

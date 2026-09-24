@@ -421,3 +421,40 @@ YML
   value=$(yq '.meta.install_check_symlink' "$REPO_ROOT/docker/registry.yml")
   [[ "$value" == '${WORKBENCH_STATE_DIR}/docker-aliases.zsh' ]]
 }
+
+# ── The retro report the skill writes is the one the archive copies ─────────
+
+@test "RETRO_REPORT_FILE is the path the retro skill declares it writes" {
+  # Two spellings of one file: the skill's `output:` frontmatter is what the
+  # agent follows when writing the report, and RETRO_REPORT_FILE is what
+  # retro-complete.sh archives from. A drift between them does not fail —
+  # `_archive_report` finds no file and returns 0 — so the report is silently
+  # never archived and the next scan destroys it. That is the whole failure
+  # this constant exists to prevent, so it is worth a test rather than trust.
+  # Read the frontmatter block with awk rather than handing the whole markdown
+  # file to yq, which is how validate-skills reads these and the only form that
+  # survives a body containing colons.
+  local declared resolved
+  declared=$(awk '
+    NR==1 && /^---$/ { in_fm=1; next }
+    in_fm && /^---$/ { exit }
+    in_fm && /^output:/ {
+      sub(/^output:[[:space:]]*/, "")
+      gsub(/"/, "")
+      print
+      exit
+    }' "$REPO_ROOT/ai/skills/retro/SKILL.md")
+  resolved=$(resolve_constants RETRO_REPORT_FILE)
+
+  [ -n "$declared" ]
+  # The frontmatter is workbench-relative; the constant is absolute.
+  [ "$resolved" = "$REPO_ROOT/$declared" ]
+}
+
+@test "the retro archive sits beside the report it archives" {
+  local report archive
+  report=$(resolve_constants RETRO_REPORT_FILE)
+  archive=$(resolve_constants RETRO_ARCHIVE_DIR)
+
+  [ "$(dirname "$report")" = "$(dirname "$archive")" ]
+}

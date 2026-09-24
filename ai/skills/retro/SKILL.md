@@ -277,6 +277,13 @@ other scan — a debug run, or a retro that was started and abandoned — is
 refused rather than honoured, and the completion fails without banking the scan
 window. Trace an unexpected record with `otto-log show <its scan-id>`.
 
+The same script first copies `RETRO.md` to `ai/memory/retro/<scan-id>.md`. It
+does that before the consume and before the stamp, so a completion refused for
+a mismatched record still leaves the analysis on disk — the next `retro-scan`
+overwrites `RETRO.md` regardless of how this run ended. An archive entry is
+never overwritten: a second completion quoting the same ID keeps the copy
+written while the analysis was fresh.
+
 A review that was re-run between the scan and this point is kept rather than
 deleted: the retro analysed the older one, so the new review is not its to
 discard.
@@ -296,5 +303,8 @@ Report: <workbench>/ai/memory/RETRO.md
 - **Read-only by default.** Retro never modifies rule files — it only writes the
   report. The user reviews and applies proposals manually.
 - **Idempotent.** Running retro twice overwrites RETRO.md with fresh results.
+  The report it replaces is not lost: `retro-complete.sh` archives each one to
+  `ai/memory/retro/<scan-id>.md` first. Read a past window's proposals from
+  there rather than re-deriving them from the same PRs.
 - **No auto-escalation.** Retro does not create issues, PRs, or branches —
   it produces a document for human review.

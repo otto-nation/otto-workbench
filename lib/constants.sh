@@ -287,6 +287,14 @@ RULES_GLOB="*.md"
 GENERATED_RULES_DIR="$WORKBENCH_STATE_DIR/rules"
 
 AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
+# The retro report, and the archive of the ones it replaces. RETRO.md is a
+# single file every run overwrites, so a proposal not acted on before the next
+# retro is gone — not superseded, gone, because ai/memory/ is gitignored and
+# there is no second copy anywhere. That has already cost one window's
+# proposals and their evidence. retro-complete.sh copies the outgoing report
+# here, keyed by the scan that produced it, before anything can replace it.
+RETRO_REPORT_FILE="$AI_MEMORY_BACKUP_DIR/RETRO.md"
+RETRO_ARCHIVE_DIR="$AI_MEMORY_BACKUP_DIR/retro"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 # PI_SETTINGS_SRC carries only non-model scalars (provider, thinking level,

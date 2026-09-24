@@ -387,6 +387,15 @@ agent fixing a finding in one file routinely edits its test, its fixture, or
 the caller that broke — and no pass reports the files it actually touched.
 Asking git afterwards is the only account of that there is.
 
+Attribution is not a statement about the branch. An agent that edits a
+shared validator to satisfy a finding in another file has changed that
+validator, and `agent_changed` reports it; committing it is how a
+behavioural change to a file the branch never touched lands in the
+fix commit. `drop_outside` is the second predicate on the same
+mechanism as `_drop_scratch`: warn, name every dropped path, leave the
+file dirty in the worktree. The intended miss is a legitimate caller
+fix left for a human, not a validator change reaching the branch.
+
 None and the empty set are different answers and both are returned. Empty says
 the agent changed nothing, so there is nothing to commit. None says the
 worktree could not be read, so the pass cannot tell its own work from what was

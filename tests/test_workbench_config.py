@@ -827,6 +827,19 @@ def test_a_key_that_declares_nothing_is_writable_at_every_scope(roots, container
     assert wc.load_config(container / "main").reuse.level == wc.ReuseLevel.ULTRA
 
 
+def test_a_non_global_path_without_a_matching_scope_is_refused(roots):
+    """A mismatched pair would check a project write against the global rules.
+
+    That is the guard silently not applying rather than failing, which is the
+    failure mode scope enforcement exists to close.
+    """
+    _, project = roots
+    with pytest.raises(wc.ConfigError) as exc:
+        wcw.set_value("reuse.level", "ultra", wc.project_config_path(project))
+    assert "set_project_value" in str(exc.value)
+    assert not (project / wc.PROJECT_CONFIG_NAME).exists()
+
+
 # passes-at-base: a misspelled key was already refused, and this pins that the scope check did not get in front of that
 def test_the_key_check_still_runs_before_the_scope_check(roots):
     """A misspelling is a misspelling, wherever it was going to be written."""

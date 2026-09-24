@@ -302,11 +302,21 @@ def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBA
     ``scope`` names which of the three files ``path`` is, and raises
     ``ConfigScopeError`` for a key that may not live there. It is a separate
     parameter rather than something derived from ``path`` because deriving it
-    needs a repo root this function is never given. The three public setters in
-    this module are the only writers, and each passes the pair that agrees.
+    needs a repo root this function is never given — so the two can be passed
+    disagreeing, and a wrong pair would check a project write against the rules
+    for a global one, which is the guard defeating itself rather than failing.
+    The pair is asserted instead: a caller naming its own ``path`` has to name
+    the matching ``scope``, and the global default only applies to the global
+    file.
     """
     if path is None:
         path = global_config_path()
+    if scope == GLOBAL_SCOPE and path != global_config_path():
+        raise ConfigError(
+            f"not writing {path}: a non-global file needs the scope that names it,"
+            f" and this write did not say which — use set_project_value or"
+            f" set_container_value",
+        )
     check = check_key(key)
     if not check.ok:
         raise ConfigKeyError(f"not writing {path}: {check.reason}")

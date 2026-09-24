@@ -449,6 +449,21 @@ class TestInitModes:
         assert wiki.main(["init", "--wiki", str(second), str(repo)]) == 0
         assert wiki.is_wiki(second)
 
+    def test_an_explicit_wiki_wins_over_a_placement_flag(self, tmp_path, monkeypatch):
+        """`--wiki` is not in the mutually-exclusive group, so the pair is legal.
+
+        It names one directory outright and is checked first, which means
+        `--wiki DIR --vault` creates the named directory and ignores `--vault`.
+        Pinned because nothing in argparse says so and the precedence is silent.
+        """
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        named = tmp_path / "named"
+        assert wiki.main(["init", "--wiki", str(named), "--vault", str(repo)]) == 0
+        assert wiki.is_wiki(named)
+        assert not vault.exists()
+
     def test_no_subcommand_removes_a_vault_base(self, tmp_path, monkeypatch):
         """The vault is the one tree with no producer that could rebuild it.
 

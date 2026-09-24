@@ -33,7 +33,9 @@ computed here or not at all.
 Exit codes:
   0  success; for `lint` and `index --check`, also means no findings
   1  a finding was reported (lint findings, stale index), or the operation failed
-  2  no knowledge base found — `init` is the one command that does not need one
+  2  the knowledge base could not be located: no base found, or — from `init`
+     alone — no location chosen to create one at. Both mean the same thing to a
+     caller, that no base is resolvable here and a person has to say what to do.
 """
 
 from __future__ import annotations

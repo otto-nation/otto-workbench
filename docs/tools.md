@@ -94,6 +94,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
 | `validate-public-surface` | Validates that the committed public surface snapshots match the registries, config schema, and shipped artifacts they are generated from |
+| `generate-test-weights` | Writes tests/weights.tsv from a bats junit report — the measured per-file runtimes the CI shard packer balances on |
 | `select-tests` | Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection |
 | `select-pytest` | Emits the pytest files affected by a set of changed paths, resolved through the import graph — the pytest counterpart of select-tests |
 | `claim-job-slots` | Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them |

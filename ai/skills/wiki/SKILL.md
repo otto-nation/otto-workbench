@@ -38,8 +38,9 @@ The division of labour that follows from that:
 | anything else | A question. Read `references/query.md` |
 
 Locate the knowledge base with `wiki path`. It takes an explicit `--wiki DIR`, otherwise
-walks up from the current directory to the repo root looking for one. Exit code 2 means
-none exists — offer `/wiki init`, do not guess a location.
+checks this machine's vault for the repo's folder and then walks up from the current
+directory to the repo root. Exit code 2 means none exists — offer `/wiki init`, do not
+guess a location.
 
 ## What the CLI already knows
 
@@ -95,6 +96,12 @@ A directory is a knowledge base when it holds `SCHEMA.md`, `articles/`, and `raw
 three, because `SCHEMA.md` is a generic filename and unrelated libraries ship one. The
 schema holds the settings `wiki` reads (`min_article_words`, `staleness_threshold_days`).
 The index is generated: rebuild it with `wiki index` rather than editing it.
+
+A base lives in one of two places, and which one is the user's choice: in the machine's
+vault, private and outside every worktree, or in the repo, committed and shared with
+whoever clones it. `wiki init` refuses until it is told which — see `references/init.md`.
+A repo may hold a symlink to its vault base for browsing, but nothing resolves through
+that link, so a broken one costs nothing.
 
 ## Safety
 

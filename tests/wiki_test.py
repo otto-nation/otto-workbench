@@ -337,6 +337,158 @@ class TestVaultResolution:
         assert capsys.readouterr().out.strip() == str(named)
 
 
+class TestInitModes:
+    """`init` asks which placement a base gets, when the repo has not said.
+
+    The two differ in who can read the result: an in-repo base is committed and
+    shared, a vault base is private to this machine. Neither is a safe guess, so
+    a repo that has said nothing is asked rather than defaulted.
+    """
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "remote", "add", "origin",
+             "git@github.com:acme/widget.git"],
+            check=True,
+        )
+        return repo
+
+    def _vault_root(self, tmp_path: Path, monkeypatch) -> Path:
+        """Point the data root at a temp dir and record what init should adopt."""
+        root = tmp_path / "data" / "wiki"
+        monkeypatch.setattr(wiki, "default_vault_root", lambda: root)
+        return root
+
+    def test_no_mode_refuses_and_names_every_option(self, tmp_path, capsys, monkeypatch):
+        repo = self._repo(tmp_path)
+        self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(wiki, "wiki_dir_is_declared", lambda _r: False)
+        assert wiki.main(["init", str(repo)]) == 2
+        err = capsys.readouterr().err
+        assert "--vault" in err
+        assert "--in-repo" in err
+        assert "--wiki DIR" in err
+        assert not (repo / "wiki").exists()
+
+    def test_vault_creates_under_the_data_root(self, tmp_path, capsys, monkeypatch):
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        recorded = []
+        monkeypatch.setattr(wiki, "set_value", lambda key, value: recorded.append((key, value)))
+        assert wiki.main(["init", "--vault", str(repo)]) == 0
+        assert wiki.is_wiki(vault / "acme" / "widget")
+        assert not (repo / "wiki").exists()
+        assert recorded == [("wiki.root", str(vault))]
+
+    def test_a_vault_base_is_not_created_when_the_key_cannot_be_recorded(
+        self, tmp_path, capsys, monkeypatch,
+    ):
+        """Nothing walks to a vault, so an unrecorded root is an unreachable base.
+
+        Creating it anyway reports success over a directory no command can
+        resolve, which is worse than refusing: the user has a knowledge base
+        they cannot reach and no error saying so.
+        """
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+
+        def refuse(key, value):
+            raise wiki.ConfigWriteError("installed workbench does not define it")
+
+        monkeypatch.setattr(wiki, "set_value", refuse)
+        assert wiki.main(["init", "--vault", str(repo)]) == 1
+        assert not vault.exists()
+        assert "unreachable" in capsys.readouterr().err
+
+    def test_in_repo_creates_in_the_tree_and_records_nothing(self, tmp_path, monkeypatch):
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(
+            wiki, "set_value",
+            lambda *a: pytest.fail("--in-repo must not write machine config"),
+        )
+        assert wiki.main(["init", "--in-repo", str(repo)]) == 0
+        assert wiki.is_wiki(repo / "wiki")
+        assert not vault.exists()
+
+    def test_a_declared_wiki_dir_needs_no_flag(self, tmp_path, monkeypatch):
+        """Setting the key is already the answer: only an in-tree base has a name."""
+        repo = self._repo(tmp_path)
+        self._vault_root(tmp_path, monkeypatch)
+        (repo / ".workbench.yml").write_text("wiki:\n  dir: knowledge\n", encoding="utf-8")
+        assert wiki.main(["init", str(repo)]) == 0
+        assert wiki.is_wiki(repo / "knowledge")
+
+    def test_vault_refuses_a_repo_with_no_origin_remote(self, tmp_path, capsys, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        assert wiki.main(["init", "--vault", str(repo)]) == 2
+        assert "no origin remote" in capsys.readouterr().err
+        assert not vault.exists()
+
+    def test_init_refuses_when_a_base_already_resolves(self, tmp_path, capsys, monkeypatch):
+        """A second placement for one repo is how two divergent bases start."""
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        make_wiki(vault / "acme", dirname="widget")
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
+        )
+        assert wiki.main(["init", "--in-repo", str(repo)]) == 1
+        assert "already has a knowledge base" in capsys.readouterr().err
+        assert not (repo / "wiki").exists()
+
+    def test_an_explicit_wiki_still_creates_a_second_base(self, tmp_path, monkeypatch):
+        """`--wiki` names one directory outright, which is the documented escape."""
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        make_wiki(vault / "acme", dirname="widget")
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
+        )
+        second = tmp_path / "second"
+        assert wiki.main(["init", "--wiki", str(second), str(repo)]) == 0
+        assert wiki.is_wiki(second)
+
+    def test_no_subcommand_removes_a_vault_base(self, tmp_path, monkeypatch):
+        """The vault is the one tree with no producer that could rebuild it.
+
+        Nothing in this CLI should be able to delete a base; `archive` only
+        moves within one. Asserted over every subcommand rather than trusting
+        that, since the cost of being wrong is unrecoverable.
+        """
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        entry = make_wiki(vault / "acme", dirname="widget")
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
+        )
+        write_article(entry, "kept", tags=["x"])
+        source = tmp_path / "note.md"
+        source.write_text("text\n", encoding="utf-8")
+
+        for argv in (
+            ["path"], ["status"], ["lint"], ["signals"], ["sources"], ["index"],
+            ["ingest", "--stage", str(source)], ["archive", "kept"],
+        ):
+            wiki.main([*argv, str(repo)])
+            assert wiki.is_wiki(entry), f"{argv[0]} damaged the vault base"
+        assert (entry / "archive" / "kept.md").is_file()
+
+
 class TestSymlinkedEntry:
     """A base reached through a symlink has one name, whichever side it is entered from.
 
@@ -862,7 +1014,7 @@ def _config(dirname: str) -> WorkbenchConfig:
 
 class TestInit:
     def test_creates_the_full_layout(self, tmp_path, capsys):
-        assert wiki.main(["init", str(tmp_path)]) == 0
+        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
         root = tmp_path / "wiki"
         for name in ("raw", "articles", "drafts", "archive", "meta"):
             assert (root / name).is_dir(), name
@@ -872,32 +1024,32 @@ class TestInit:
 
     def test_the_result_is_findable(self, tmp_path):
         """init and path must agree on what a knowledge base is."""
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         assert wiki.find_wiki(tmp_path) == tmp_path / "wiki"
 
     def test_the_result_lints_clean(self, tmp_path):
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         assert wiki.collect_lint(wiki.Wiki(tmp_path / "wiki")) == []
 
     def test_status_reports_an_empty_base(self, tmp_path):
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
         assert (status["articles"], status["sources"]) == (0, 0)
 
     def test_refuses_an_existing_base(self, tmp_path, capsys):
-        wiki.main(["init", str(tmp_path)])
-        assert wiki.main(["init", str(tmp_path)]) == 1
+        wiki.main(["init", "--in-repo", str(tmp_path)])
+        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 1
         assert "already exists" in capsys.readouterr().err
 
     def test_domain_reaches_the_schema(self, tmp_path):
-        wiki.main(["init", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
         schema = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         assert "Payments" in schema and "the team" in schema
         assert "{DOMAIN}" not in schema and "{AUDIENCE}" not in schema
 
     def test_manifest_header_is_not_read_as_a_source(self, tmp_path):
         """The header init writes must not register as an entry."""
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         assert wiki.Wiki(tmp_path / "wiki").recorded_source_hashes() == {}
 
     def test_explicit_path_is_honoured(self, tmp_path):
@@ -910,7 +1062,7 @@ class TestInit:
         root = tmp_path / "wiki"
         (root / "raw").mkdir(parents=True)
         (root / "_log.md").write_text("# Activity Log\n\nkept\n", encoding="utf-8")
-        assert wiki.main(["init", str(tmp_path)]) == 0
+        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
         assert "kept" in (root / "_log.md").read_text(encoding="utf-8")
         assert (root / "SCHEMA.md").is_file()
 
@@ -931,7 +1083,7 @@ class TestInit:
 
 class TestIngestStage:
     def _base(self, tmp_path: Path) -> Path:
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         return tmp_path / "wiki"
 
     def test_stages_a_markdown_source(self, tmp_path, capsys):
@@ -1116,7 +1268,7 @@ class TestSchemaTemplateSubstitution:
         reader to replace them, so substitution produced 'Replace Payments and
         the team' in every new schema.
         """
-        wiki.main(["init", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
         body = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         prose = [ln for ln in body.splitlines() if not ln.strip().startswith("<!--")]
         assert not any("Replace" in ln for ln in prose)
@@ -1131,7 +1283,7 @@ class TestDomainSkipsNonProse:
 
     def test_init_output_reports_the_real_domain(self, tmp_path):
         """End to end against the template init actually copies."""
-        wiki.main(["init", str(tmp_path), "--domain", "Payments"])
+        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments"])
         status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
         assert status["domain"] == "A knowledge base about Payments, for whoever works on it."
 

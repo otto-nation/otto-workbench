@@ -6,27 +6,55 @@ Create a knowledge base.
 /wiki init [path]
 ```
 
-Default path is `wiki/` in the current directory, or whatever `wiki.dir` is set to. Run
-`wiki path` first — if it resolves, one already exists; say where and stop.
+Run `wiki path` first — if it resolves, one already exists; say where and stop.
 
-To keep the base somewhere else, set the name once rather than passing a path every time:
+## 1. Ask where it goes
+
+Two placements, and `wiki init` refuses rather than guessing between them. They differ in
+who can read the result, so this is the user's call, not yours:
+
+| | Flag | Where it lands | Who sees it |
+|---|---|---|---|
+| Private to this machine | `--vault` | The machine's vault, one folder per repo | Only this machine |
+| Committed with the repo | `--in-repo` | `wiki/` in the repo, or `wiki.dir` | Everyone who clones |
+| A specific directory | `--wiki DIR` | Exactly there | Depends where you point it |
+
+A repo that has already set `wiki.dir` has answered: its base is in-tree, and no flag is
+needed.
+
+The vault is found through `wiki.root`, not by searching, so it reads the same from every
+worktree of a repo and survives `wt remove`. `wiki init --vault` sets that key the first
+time it is used, defaulting to `~/.local/share/workbench/wiki`. A repo with no origin
+remote gets no vault folder — it has no name to file under, and two local repos sharing a
+name would share one base.
+
+**Nothing backs the vault up.** It sits outside every repo, so no `git push` covers it. It
+is the one tree here that cannot be regenerated; tell the user to back it up themselves.
+
+To keep an in-tree base somewhere other than `wiki/`, set the name once rather than
+passing a path every time:
 
 ```bash
 otto-workbench config set wiki.dir docs/knowledge --project
 ```
 
-## 1. Ask two questions
+Set `wiki.dir` per project, but never `wiki.root` — it is an absolute path on one machine,
+and a repo's `.workbench.yml` is read by everyone who clones it.
+
+## 2. Ask two questions
 
 1. **What is this wiki about?** The domain.
 2. **Who will use it?** The audience.
 
 If the user skips, use generic defaults and move on. `SCHEMA.md` is editable.
 
-## 2. Create it
+## 3. Create it
 
 ```bash
-wiki init --domain "{domain}" --audience "{audience}"
+wiki init --vault --domain "{domain}" --audience "{audience}"
 ```
+
+or `--in-repo` in place of `--vault`, per the choice above.
 
 That writes the whole layout — `SCHEMA.md` from the template with the domain and audience
 filled in, the empty `_index.md`, the `_sources.md` header, the first `_log.md` entry, and
@@ -36,7 +64,7 @@ manifest header in particular has a shape `wiki` parses.
 It refuses if a knowledge base is already there, and completes one left half-written by an
 interrupted run rather than starting over.
 
-## 3. Check it
+## 4. Check it
 
 ```bash
 wiki path      # should print the new directory
@@ -48,7 +76,7 @@ If `wiki path` does not resolve, one of `SCHEMA.md`, `articles/`, or `raw/` is m
 misplaced — all three identify the base. Fix that before going further; every other
 operation depends on it.
 
-## 4. Report
+## 5. Report
 
 ```
 Knowledge base created at {path}/

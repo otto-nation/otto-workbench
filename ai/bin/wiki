@@ -2,7 +2,7 @@
 """Mechanical operations over a compiled knowledge base.
 
 Usage:
-  wiki init   [--wiki DIR] [--domain TEXT] [--audience TEXT] [DIR]
+  wiki init   [--vault|--in-repo|--wiki DIR] [--domain TEXT] [--audience TEXT] [DIR]
   wiki path   [--wiki DIR] [DIR]
   wiki status [--wiki DIR] [--json] [DIR]
   wiki lint   [--wiki DIR] [--json] [--signals] [DIR]
@@ -15,6 +15,12 @@ Usage:
 A knowledge base is a directory holding SCHEMA.md, an `articles/` tree of compiled
 markdown, and a `raw/` tree of the immutable sources they were compiled from.
 `_index.md`, `_sources.md`, and `_log.md` are the generated bookkeeping.
+
+It lives in one of two places, and `init` asks which when a repo has not said.
+In the repo, committed and shared with whoever clones it; or in this machine's
+vault, private, outside every worktree, and one folder per repo. The vault is
+found through `wiki.root` rather than by searching, so it reads the same from
+every worktree of a repo and survives the worktree being removed.
 
 This CLI owns only what is decidable without reading for meaning: link graphs,
 word counts, file hashes, dates. Compiling a source into an article, answering a
@@ -49,8 +55,12 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 from _version import version_string as _version_string  # noqa: E402
-from config.workbench_config import load_config_or_default  # noqa: E402
+from config.workbench_config import WIKI_DIR_KEY, WIKI_ROOT_KEY, load_config_or_default  # noqa: E402
+from config.workbench_config_report import config_status  # noqa: E402
+from config.workbench_config_write import ConfigError as ConfigWriteError  # noqa: E402
+from config.workbench_config_write import set_value  # noqa: E402
 from core import proc  # noqa: E402
+from core import workbench_paths  # noqa: E402
 from git import client as git_client  # noqa: E402
 from wiki import create as wiki_create  # noqa: E402
 from wiki import model as wiki_model  # noqa: E402
@@ -186,6 +196,26 @@ def configured_dirname(start: Path) -> str:
     return configured or DEFAULT_WIKI_DIRNAME
 
 
+def wiki_dir_is_declared(root: Path) -> bool:
+    """Whether some config file names `wiki.dir`, rather than it defaulting.
+
+    Setting the key is a repo saying its base is committed, which is a choice
+    `init` can act on. Relying on the default is not a choice at all, and
+    reading it as one is what would silently pick a placement.
+
+    Asked through ``config_status`` because that is what already knows which
+    file answered for a key; it reports an unreadable config rather than
+    raising, so a broken file here means "not declared" and `init` asks.
+    """
+    try:
+        status = config_status(root)
+    except Exception:
+        return False
+    return any(
+        key.key == WIKI_DIR_KEY and not key.is_default for key in status.keys
+    )
+
+
 def vault_dir(root: Path) -> Path | None:
     """This repo's folder inside the machine's vault, or ``None``.
 
@@ -207,7 +237,21 @@ def vault_dir(root: Path) -> Path | None:
     configured = load_config_or_default(root).wiki.root.strip()
     if not configured:
         return None
+    return vault_entry(Path(configured).expanduser(), root)
 
+
+def vault_entry(vault: Path, root: Path) -> Path | None:
+    """Where *root*'s base sits inside *vault*, or ``None`` with no safe name.
+
+    Split from ``vault_dir`` so `init --vault` can name a folder in a vault this
+    machine has not adopted yet, while resolution stays strict: an unset
+    `wiki.root` is no vault, never a default one.
+
+    The identity import is deferred to here because it is only needed once a
+    vault is in play: `pr.target` costs an import and a `git remote` subprocess,
+    and `wiki path` runs on every session exit through the capture hook. The
+    config module defers its schema generator the same way, for the same reason.
+    """
     from pr import target as pr_target
 
     identity = pr_target.repo_identity_from_origin(str(root))
@@ -216,7 +260,18 @@ def vault_dir(root: Path) -> Path | None:
     subpath = wiki_paths.vault_subpath(identity.label)
     if subpath is None:
         return None
-    return (Path(configured).expanduser() / subpath).resolve()
+    return (vault / subpath).resolve()
+
+
+def default_vault_root() -> Path:
+    """The vault `init --vault` adopts when this machine has not named one.
+
+    Under the data root rather than state: a knowledge base is authored and has
+    no producer that could rebuild it. Recorded into `wiki.root` once used, so
+    a later change to XDG_DATA_HOME cannot move a vault that already holds
+    articles.
+    """
+    return workbench_paths.data_dir(DEFAULT_WIKI_DIRNAME)
 
 
 # ── Commands ────────────────────────────────────────────────────────────────
@@ -385,11 +440,96 @@ def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
     return 0
 
 
+def _init_target(start: Path, args: argparse.Namespace) -> Path | str:
+    """Where `init` should create a base, or the message explaining why it cannot.
+
+    The two placements differ in who can read the result: a base in the repo is
+    committed and shared with whoever clones it, a base in the vault is private
+    to this machine. Neither is a safe guess — guessing the vault hides a team's
+    knowledge base, guessing the repo commits someone's private notes — so a
+    repo that has said nothing is asked, once.
+
+    An explicitly set `wiki.dir` is already that answer: a repo only names the
+    directory when its base is in-tree. Relying on the default is not.
+    """
+    if args.wiki:
+        return Path(args.wiki).expanduser().resolve()
+
+    root = repo_root(start)
+    vault = vault_dir(root)
+    if args.vault:
+        entry = vault if vault is not None else vault_entry(default_vault_root(), root)
+        if entry is None:
+            return (
+                "this repo has no origin remote, so it has no name in the vault\n"
+                "  two local repos sharing a name would share one base\n"
+                "  keep it in the repo with --in-repo, or name a directory with --wiki DIR"
+            )
+        return entry
+    if args.in_repo:
+        return (start / configured_dirname(start)).resolve()
+
+    if wiki_dir_is_declared(root):
+        return (start / configured_dirname(start)).resolve()
+    if vault is not None:
+        return vault
+    return (
+        "no knowledge base location chosen for this repo\n"
+        "  private to this machine:  wiki init --vault\n"
+        "  committed with the repo:  wiki init --in-repo\n"
+        "  a specific directory:     wiki init --wiki DIR"
+    )
+
+
+def _record_vault_root(root: Path) -> str | None:
+    """Write `wiki.root` globally, returning the reason it could not be written.
+
+    Global scope on purpose: the value is an absolute path on this machine, and
+    a repo's `.workbench.yml` is read by everyone who clones it.
+
+    This has to happen before the base is created, not after. `wiki.root` is the
+    only thing that makes a vault base findable — nothing walks to it — so a
+    write that fails after the directory exists leaves a knowledge base on disk
+    that no command can resolve, reported as a success. One such failure is
+    routine rather than broken: ``check_key`` refuses a key the *installed*
+    workbench has not learned yet, which is what a branch adding one looks like
+    until it reaches main.
+    """
+    try:
+        set_value(WIKI_ROOT_KEY, str(root))
+    except ConfigWriteError as exc:
+        return str(exc)
+    return None
+
+
 def cmd_init(start: Path, args: argparse.Namespace) -> int:
     """Create a knowledge base. The one command that runs without one existing."""
-    target = (
-        Path(args.wiki).expanduser() if args.wiki else start / configured_dirname(start)
-    ).resolve()
+    resolved = _init_target(start, args)
+    if isinstance(resolved, str):
+        print(f"{SCRIPT}: {resolved}", file=sys.stderr)
+        return 2
+    target = resolved
+
+    # `--wiki` names one directory outright and is the documented way to keep a
+    # second base, so it is not held to the one-base-per-repo guard below.
+    existing, _ = (None, None) if args.wiki else resolve_wiki(start, None)
+    if existing is not None and existing != target:
+        print(
+            f"{SCRIPT}: this repo already has a knowledge base at {existing}",
+            file=sys.stderr,
+        )
+        print("  move it yourself, or pass --wiki DIR to create a second one", file=sys.stderr)
+        return 1
+
+    adopting = args.vault and not load_config_or_default(repo_root(start)).wiki.root.strip()
+    if adopting:
+        problem = _record_vault_root(default_vault_root())
+        if problem is not None:
+            print(f"{SCRIPT}: cannot record {WIKI_ROOT_KEY}, so a vault base would be", file=sys.stderr)
+            print("  unreachable — nothing walks to a vault, config is what finds it", file=sys.stderr)
+            print(f"  {problem}", file=sys.stderr)
+            return 1
+
     try:
         root = init_wiki(target, args.domain, args.audience, template=_schema_template())
     except WikiExistsError as exc:
@@ -496,6 +636,15 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "init":
             sub.add_argument("--domain", default="", help="What the knowledge base is about")
             sub.add_argument("--audience", default="", help="Who will use it")
+            placement = sub.add_mutually_exclusive_group()
+            placement.add_argument(
+                "--vault", action="store_true",
+                help="Keep it in the machine-level vault, private to this machine",
+            )
+            placement.add_argument(
+                "--in-repo", action="store_true", dest="in_repo",
+                help="Keep it in the repo, committed and shared with whoever clones it",
+            )
         if name == "ingest":
             sub.add_argument("--stage", metavar="SRC", required=True, help="File to copy into raw/")
             sub.add_argument(

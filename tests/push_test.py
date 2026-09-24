@@ -1088,6 +1088,10 @@ def _ssh_probe(monkeypatch, output: str, *, url: str = "git@github.com:o/r.git")
     )
 
 
+_KEY_ACCEPTED_LINE = (
+    "debug1: Server accepts key: /home/u/.ssh/id_ed25519 ED25519 SHA256:abc\n"
+)
+
 _KEY_ACCEPTED_TRACE = (
     "debug1: Offering public key: /home/u/.ssh/id_ed25519 ED25519 SHA256:abc\n"
     "debug1: Server accepts key: /home/u/.ssh/id_ed25519 ED25519 SHA256:abc\n"
@@ -1132,6 +1136,28 @@ def test_a_working_agent_is_not_blamed_for_a_missing_repository(monkeypatch):
     the remote path instead.
     """
     _ssh_probe(monkeypatch, _AUTH_WORKS_TRACE)
+    hint = push.diagnose_ssh_auth("/tmp/wt", "origin")
+    assert "credentials are not the problem" in hint
+    assert "agent" not in hint
+
+
+@pytest.mark.parametrize("greeting", [
+    "Hi someone! You've successfully authenticated, but GitHub does not "
+    "provide shell access.",
+    "Welcome to Gitea, someone!",
+    "logged in as someone.",
+    "a greeting from a forge nobody here has seen",
+])
+def test_any_authenticated_host_clears_the_agent(monkeypatch, greeting):
+    """Safe by default for a forge whose success wording is not known here.
+
+    Deciding this by listing the greetings that mean success is a guess about
+    text every forge spells differently, and one missing from the list reads as
+    a failure — blaming a healthy agent on a host that authenticated fine. A
+    Gitea remote did exactly that. Matching the denial instead puts every
+    unrecognised greeting on the safe side.
+    """
+    _ssh_probe(monkeypatch, _KEY_ACCEPTED_LINE + greeting + "\n")
     hint = push.diagnose_ssh_auth("/tmp/wt", "origin")
     assert "credentials are not the problem" in hint
     assert "agent" not in hint

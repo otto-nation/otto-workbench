@@ -589,16 +589,20 @@ _AUTH_PROBE_TIMEOUT = 15.0
 # key is authorised and nothing about whether the session then succeeded.
 _KEY_ACCEPTED = "server accepts key"
 
-# How a host answers an authenticated session it will not give a shell to. Both
-# GitHub's greeting and the generic denial are checked, because reaching the
-# accept line above says only that the key was taken — a working agent goes on
-# to authenticate, and an agent that cannot sign stops at the denial. Without
-# this the probe calls every auth failure an agent fault, including a repository
-# that does not exist, whose key was equally accepted.
-_AUTH_SUCCEEDED = (
-    "successfully authenticated",
-    "does not provide shell access",
-    "logged in as",
+# How ssh says the authentication itself failed, whoever the host is. This is
+# the signal the agent diagnosis turns on, and it is matched positively for a
+# reason: the opposite test — listing the greetings that mean success — is a
+# guess about wording every forge spells differently, and a greeting missing
+# from such a list reads as a failure and earns a healthy agent the blame. A
+# Gitea host answering "Welcome to Gitea" did exactly that while the list held
+# GitHub's, GitLab's and Bitbucket's phrasings.
+#
+# ssh's exit code cannot stand in for it: a host that authenticates and then
+# refuses a shell exits 1, which is what a refused key exits too.
+_AUTH_DENIED = (
+    "permission denied",
+    "no more authentication methods",
+    "authentication failed",
 )
 
 
@@ -688,10 +692,11 @@ def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
     output = probe.combined_output.lower()
     if not output:
         return ""
-    if any(marker in output for marker in _AUTH_SUCCEEDED):
-        # ssh authenticates fine from here, so the credentials are not what the
-        # push tripped over — a missing repository denies access with the same
-        # sentence. Naming the agent here would be a confident wrong answer.
+    if not any(marker in output for marker in _AUTH_DENIED):
+        # ssh authenticated, so the credentials are not what the push tripped
+        # over — a missing repository denies access with the same sentence git
+        # printed. Naming the agent here would be a confident wrong answer, and
+        # this is the branch an unrecognised greeting falls into.
         return ("ssh authenticates to this host, so the credentials are not the "
                 "problem — check the remote path exists and you have write access")
     if _KEY_ACCEPTED not in output:

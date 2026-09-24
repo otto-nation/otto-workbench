@@ -36,6 +36,30 @@ if [[ -z "$SCAN_ID" ]]; then
   exit 2
 fi
 
+# ── Archive the report ──────────────────────────────────────────────────────
+# First, and unconditionally: the next `retro-scan` overwrites RETRO.md whether
+# or not this completion succeeds, and ai/memory/ is gitignored, so an
+# un-archived report has no second copy to recover from. Archiving before the
+# consume means a refused record still leaves the analysis on disk — the
+# failure this ordering protects against is losing the work, not losing the
+# stamp.
+
+_archive_report() {
+  [[ -f "$RETRO_REPORT_FILE" ]] || return 0
+  mkdir -p "$RETRO_ARCHIVE_DIR"
+  local dest="$RETRO_ARCHIVE_DIR/$SCAN_ID.md"
+  # Never overwrite an existing archive entry. A second completion quoting the
+  # same scan ID is a re-run, and the first copy is the one written while the
+  # analysis was fresh.
+  if [[ -e "$dest" ]]; then
+    echo "Note: $dest already exists — keeping it, not overwriting." >&2
+    return 0
+  fi
+  cp "$RETRO_REPORT_FILE" "$dest"
+}
+
+_archive_report
+
 # ── Clean up consumed reviews ───────────────────────────────────────────────
 # Before the timestamp, so a refused record fails the completion rather than
 # banking the window on the strength of a cleanup that did not happen.

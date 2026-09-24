@@ -164,8 +164,26 @@ def _merge_score(a: Group, b: Group) -> tuple[int, int]:
     return (-shared, a.lines + b.lines)
 
 
-def _find_best_merge_pair(groups: list[Group]) -> tuple[int, int]:
+def _find_best_merge_pair(
+    groups: list[Group], max_lines: int | None = None,
+) -> tuple[int, int] | None:
+    """The best pair to merge, or None when `max_lines` excludes every pair.
+
+    `max_lines` bounds the combined size. A floor merge passes it so that one
+    unmergeable pair does not decide the fate of the rest: the affinity-best
+    pair may be two large neighbours whose combination would overflow, while
+    two unrelated small groups elsewhere would merge perfectly. Ranking only
+    the pairs that fit keeps the affinity order among the candidates that are
+    actually available.
+    """
     pairs = [(i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]
+    if max_lines is not None:
+        pairs = [
+            p for p in pairs
+            if groups[p[0]].lines + groups[p[1]].lines <= max_lines
+        ]
+    if not pairs:
+        return None
     return min(pairs, key=lambda p: _merge_score(groups[p[0]], groups[p[1]]))
 
 
@@ -185,16 +203,19 @@ def merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
         undersized = min(g.lines for g in groups) < MIN_GROUP_LINES
         if not over_cap and not undersized:
             break
-        i, j = _find_best_merge_pair(groups)
+        # The agent-count cap accepts an oversized group, because too many
+        # agents is worse than one large one; a floor merge does not, and asks
+        # for the best pair that fits. None back means no pair fits, which is
+        # the loop's other exit: every remaining undersized group has only
+        # neighbours it would overflow.
+        pair = _find_best_merge_pair(
+            groups, None if over_cap else MAX_GROUP_LINES,
+        )
+        if pair is None:
+            break
+        i, j = pair
         a, b = groups[i], groups[j]
         combined = a.lines + b.lines
-        # ceiling: only the affinity-best pair is considered for a floor merge;
-        # an undersized group whose best neighbour would overflow MAX_GROUP_LINES
-        # is left as its own agent rather than searching for a smaller neighbour.
-        # Upgrade trigger: if reviews still spawn sub-floor groups that had a
-        # fitting neighbour the affinity rank skipped, consider other pairs.
-        if not over_cap and combined > MAX_GROUP_LINES:
-            break
         merged = Group(
             name=f"{a.name}+{b.name}",
             files=a.files + b.files,

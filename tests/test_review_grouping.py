@@ -284,6 +284,48 @@ class TestMergeSmallestGroups:
         result = merge_smallest_groups(groups, 8)
         assert len(result) == 2
 
+    def test_an_overflowing_best_pair_does_not_strand_the_other_small_groups(self):
+        """One unmergeable pair must not decide the fate of the rest.
+
+        The affinity-best pair here is the two `pkg/*` groups, whose combined
+        size overflows. Two unrelated small groups would merge perfectly, and
+        a floor that abandons the whole pass on the first overflow leaves them
+        holding an agent each — the outcome the floor exists to prevent.
+        """
+        groups = [
+            Group("pkg/alpha", ["a.go"], 500),
+            Group("pkg/alphabeta", ["b.go"], 500),
+            Group("misc1", ["c.md"], 10),
+            Group("misc2", ["d.md"], 10),
+        ]
+        result = merge_smallest_groups(groups, 8)
+        assert [g for g in result if g.lines < MIN_GROUP_LINES] == []
+        assert all(g.lines <= MAX_GROUP_LINES for g in result)
+
+    # passes-at-base: the old code reached the same shape by abandoning the
+    # pass, this one by picking a fitting pair. It pins the invariant both
+    # spellings must keep, not the change.
+    def test_a_floor_merge_takes_a_fitting_pair_over_the_affinity_best(self):
+        """Affinity orders the candidates; it does not override the cap."""
+        groups = [
+            Group("docs", ["d.md"], 50),
+            Group("docz", ["z.md"], 700),
+            Group("zzz", ["a.go"], 60),
+        ]
+        result = merge_smallest_groups(groups, 8)
+        assert all(g.lines <= MAX_GROUP_LINES for g in result)
+
+    # passes-at-base: termination held before and must keep holding — the
+    # rewrite moved the exit from a size check to an empty candidate list,
+    # which is exactly the kind of change that can lose it.
+    def test_merging_terminates_when_no_remaining_pair_fits(self):
+        groups = [
+            Group("small", ["s.py"], 50),
+            Group("nearly-full", ["n.py"], MAX_GROUP_LINES - 10),
+        ]
+        result = merge_smallest_groups(groups, 8)
+        assert len(result) == 2
+
 
 # ── load_profiles ────────────────────────────────────────────────────────────
 

@@ -31,7 +31,7 @@ import {
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { delimiter } from "node:path";
-import { blockedWriteCommand, isScratchPath, within } from "./detect.ts";
+import { bypassesTheCommitScope, isScratchPath, within } from "./detect.ts";
 
 // No `context` hook prunes the superpowers bootstrap here, though the shape of
 // this extension invites one. The package injects it through its own `context`
@@ -86,22 +86,22 @@ export default function (pi: ExtensionAPI) {
       }
     } else if (isToolCallEventType("bash", event)) {
       summary = event.input.command.slice(0, 120);
-      const offending = blockedWriteCommand(event.input.command);
+      const offending = bypassesTheCommitScope(event.input.command);
       if (offending) {
         // The offending statement, not a slice of the whole command: a 120-char
         // summary truncated the trailing redirect that was the real match, so
         // the refusal looked like it had blocked the `cd` in front of it.
-        // The scratch sentence names the route that actually exists. The
-        // refusal used to prescribe only a redirect, which does not help an
-        // agent trying to *delete* a file — and since `rm`, `mv` and `cp` are
-        // all refused here, an agent that had written into the worktree had no
-        // permitted way to clean up and left the file behind to be committed.
+        // Names what the refusal is actually protecting, rather than claiming
+        // the session forbids writing — it does not, and an agent told
+        // otherwise by a guard it can trivially route around learns to ignore
+        // the guard. The engine commits what it watched the agent touch; a
+        // commit the agent makes itself lands outside that scope.
         blocked =
-          `write-capable command in a review session — ${offending}. ` +
-          `A review reads; it does not modify the tree. To run a suite, invoke it ` +
-          `directly (\`pytest tests/foo.py\`) or redirect to /tmp ` +
-          `(\`pytest tests/ > /tmp/out.txt 2>&1\`). A scratch file belongs under ` +
-          `/tmp, where the write tool may create it and nothing needs deleting.`;
+          `${offending}. The fix engine commits what it watched you change, so ` +
+          `a commit made here lands outside the only scope the pass can account ` +
+          `for — edit the files and let the engine commit them. To capture ` +
+          `output, redirect to /tmp (\`pytest tests/ > /tmp/out.txt 2>&1\`); a ` +
+          `scratch file belongs there too.`;
       }
     } else if (isToolCallEventType("read", event)) {
       summary = event.input.path;

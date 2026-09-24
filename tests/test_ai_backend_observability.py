@@ -116,8 +116,8 @@ class TestBuildFixCmd:
         detect = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
                   / "pi" / "extensions-cli" / "detect.ts")
         script = (
-            f"const {{ blockedWriteCommand }} = await import({str(detect)!r});"
-            "process.stdout.write(blockedWriteCommand(process.argv[1]) ? '1' : '');"
+            f"const {{ bypassesTheCommitScope }} = await import({str(detect)!r});"
+            "process.stdout.write(bypassesTheCommitScope(process.argv[1]) ? '1' : '');"
         )
         result = subprocess.run(
             ["node", "--experimental-strip-types", "--input-type=module",

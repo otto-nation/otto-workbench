@@ -1877,9 +1877,11 @@ def test_a_file_resolved_in_two_commits_is_one_repair_candidate():
     once per commit, and the repair wants the set rather than the occurrences.
     """
     ctx = mock.MagicMock()
-    tally = rebase_types.ResolutionTally(
-        files=["go.sum", "go.sum"], commits=2,
-    )
+    tally = rebase_types.ResolutionTally()
+    tally.absorb(rebase_types.Resolution(files=["go.sum"]))
+    tally.commits += 1
+    tally.absorb(rebase_types.Resolution(files=["go.sum"]))
+    tally.commits += 1
 
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
          mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \

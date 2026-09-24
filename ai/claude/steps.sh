@@ -489,6 +489,13 @@ step_claude_restore_memory() {
   for slug_dir in "$backup_dir"/*/; do
     [[ -d "$slug_dir" ]] || continue
     slug=$(basename "$slug_dir")
+    # Not every directory under ai/memory/ is a project slug. The retro archive
+    # (ai/memory/retro/) and the machine profile backup (ai/memory/machine/)
+    # live here too, and a project slug is always a path-derived name starting
+    # with '-'. Restoring a non-slug directory would invent
+    # ~/.claude/projects/<name>/memory and fill it with files that are not that
+    # project's memory.
+    [[ "$slug" == -* ]] || continue
     dest_base="$CLAUDE_DIR/projects/$slug/memory"
     # Only restore if memory dir is absent or empty — never overwrite existing session learning
     if [[ -d "$dest_base" ]] && [[ -n "$(ls -A "$dest_base" 2>/dev/null)" ]]; then

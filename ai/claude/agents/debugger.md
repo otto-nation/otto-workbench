@@ -6,8 +6,8 @@ source: otto-workbench/ai/claude/agents/debugger.md
 ---
 
 <!-- The diagnose-vs-implement boundary is stated in three places, each for a
-     different reader: this file's description (Claude Code's dispatcher),
-     ai/skills/debugger/SKILL.md's description (Pi's matcher), and the
+     different reader: ai/claude/agents/debugger.md's description (Claude Code's
+     dispatcher), ai/skills/debugger/SKILL.md's description (Pi's matcher), and the
      debugger/systematic-debugging bullet in ai/guidelines/rules/skills.md
      (this repo's humans). If the boundary changes, update all three.
 

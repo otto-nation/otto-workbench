@@ -13,5 +13,4 @@ skip: "Do not use when this session will implement the fix — superpowers:syste
      agent body in below at install time — including that file's note on the
      diagnose-vs-implement boundary this description also states, which is why
      the note is not repeated here. -->
-
 <!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/claude/agents/debugger.md -->

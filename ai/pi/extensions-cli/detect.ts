@@ -92,6 +92,15 @@ const GIT_VALUE_FLAGS = new Set(["-c", "-C", "--git-dir", "--work-tree",
  * everywhere let `git commit -n -m x` through — a real commit, verified
  * against a scratch repo. A flag whose meaning depends on the subcommand
  * belongs in GIT_DRY_RUN_BY_SUBCOMMAND below, not here.
+ *
+ * ceiling: a read-only flag *anywhere* in the arguments disarms the rule, so
+ * `git branch --list -D x` and `git clean --dry-run -f` read as reads. Every
+ * such pair probed against a scratch repo turned out safe — git rejects the
+ * contradictory combinations outright, and treats dry-run as sticky for
+ * `clean` whichever order the flags come in — so this is loose logic rather
+ * than a live bypass, and tightening it would mean modelling each
+ * subcommand's flag precedence. Upgrade if a combination is ever found that
+ * git accepts and that writes.
  */
 const GIT_DRY_RUN_FLAGS = new Set(["--dry-run", "--check", "--stat",
                                    "--numstat", "--summary", "--help"]);

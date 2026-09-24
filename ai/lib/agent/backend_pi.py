@@ -665,22 +665,19 @@ def _consume_stream(
             accumulated_cost += msg_cost
             model = data.get("message", {}).get("model") or model
 
-        if event_type == "turn_end":
-            # The follow_up sent with abort is a summary, not another turn of
-            # work. Counting it made a cap of N record as N+1. This assumes
-            # exactly one follow-up turn_end after abort, matching
-            # `_check_limits` today (one `abort` + one `follow_up` per stop);
-            # if the abort protocol ever grows a second round-trip, that turn
-            # would be silently dropped here too.
-            if aborted:
-                continue
+        # A turn_end after the abort is the summary follow-up, not another
+        # turn of work. Counting it made a cap of N record as N+1. This
+        # assumes exactly one follow-up turn_end after abort, matching
+        # `_check_limits` today (one `abort` + one `follow_up` per stop); if
+        # the abort protocol ever grows a second round-trip, that turn would
+        # be silently dropped here too.
+        if event_type == "turn_end" and not aborted:
             turn_count += 1
             stop, steered = _check_limits(
                 process, turn_count, accumulated_cost,
                 max_turns, max_budget, steered, wrote_output,
             )
-            if stop:
-                stop_reason, aborted = stop, True
+            stop_reason, aborted = (stop, True) if stop else (stop_reason, aborted)
 
         if event_type == "agent_end":
             break

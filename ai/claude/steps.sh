@@ -321,11 +321,9 @@ _step_claude_settings() {
       '$base * $user')
   fi
 
-  # Inject registry-derived permissions into the template
-  # shellcheck source=/dev/null
-  if ! declare -F collect_registry_permissions >/dev/null 2>&1; then
-    . "$LIB_SRC_DIR/registries.sh"
-  fi
+  # Inject registry-derived permissions into the template. No source guard
+  # here: step_claude_settings above sources the module before opening the
+  # scan hold, so by this line the collectors are always defined.
   local -a registry_perms=()
   collect_registry_permissions registry_perms "$WORKBENCH_STABLE_DIR"
   if [[ ${#registry_perms[@]} -eq 0 ]]; then

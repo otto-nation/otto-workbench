@@ -136,7 +136,7 @@ Options:
   --bats          Run only the bats suite
   --pytest        Run only the pytest suite
   --shard N/M     Run only shard N of M (1-indexed). Partitions bats files
-                  via longest-processing-time packing on @test count.
+                  via longest-processing-time packing on measured runtime weights.
   --files LIST    Run only the bats files in LIST (newline-separated paths).
                   Used by the pre-push hook for change-based selection.
   --pytest-files LIST

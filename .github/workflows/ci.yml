@@ -96,6 +96,7 @@ jobs:
 
       - name: Run bats tests (shard ${{ matrix.shard }}/3)
         run: |
+          mkdir -p "$RUNNER_TEMP/junit"
           bin/local/run-tests --bats --shard ${{ matrix.shard }}/3 -- \
             --report-formatter junit --output "$RUNNER_TEMP/junit"
 

@@ -108,11 +108,11 @@ PY
 
 main() {
   local -a reports=()
+  local out_dir=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) usage; exit 0 ;;
       --run)
-        local out_dir
         out_dir=$(mktemp -d)
         # shellcheck disable=SC2064  # expand now: the path must survive the trap
         trap "rm -rf '$out_dir'" EXIT
@@ -135,8 +135,10 @@ main() {
 
   local tmp
   tmp=$(mktemp "${TMPDIR:-/tmp}/weights.XXXXXX")
-  # shellcheck disable=SC2064  # expand now: the path must survive the trap
-  trap "rm -f '$tmp'" EXIT
+  # shellcheck disable=SC2064  # expand now: the path must survive the trap. Also
+  # removes out_dir (from --run, empty otherwise): the first trap set above
+  # only covers the window before this one replaces it.
+  trap "rm -f '$tmp'; [[ -n '$out_dir' ]] && rm -rf '$out_dir'" EXIT
 
   if ! _weights_from_reports "${reports[@]}" > "$tmp"; then
     err "No usable timings in: ${reports[*]}"

@@ -621,9 +621,7 @@ def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict | 
     None rather than `{}`: an empty node is what a PR with no threads returns,
     and the caller has to tell that from a page it failed to fetch.
     """
-    variables: dict = {"owner": owner, "name": name, "pr": pr}
-    if cursor:
-        variables["endCursor"] = cursor
+    variables = {"owner": owner, "name": name, "pr": pr, "endCursor": cursor}
     r = gh_client.graphql(_THREADS_PAGE_QUERY, variables=variables)
     if not r.ok:
         log.warn(proc.failure_message(

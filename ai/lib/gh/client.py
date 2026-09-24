@@ -440,6 +440,13 @@ def graphql(
     page requested with ``after: "None"`` is rejected as an invalid cursor, so
     a paging caller's opening request fails and any REST fallback behind it
     silently becomes the only path that ever runs.
+
+    That omission-equals-null equivalence only holds for a variable with no
+    default in the schema. A query that declares one (``$cursor: String =
+    "x"``) sees the two diverge: an omitted variable falls back to the
+    default, an explicit ``null`` does not. None of today's callers declare
+    defaults, so this does not bite yet, but a future query that does would
+    get the default's behavior here regardless of what its caller asked for.
     """
     argv: list[str] = ["api", "graphql"]
     if input_text is not None:

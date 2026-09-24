@@ -985,7 +985,7 @@ def test_build_chunked_prompt_names_the_resolved_ref():
 
 def test_parse_chunked_resolutions_single():
     stdout = "<<<RESOLVED>>>_1\nresolved line\n<<<END_RESOLVED>>>_1\n"
-    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 1)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, [_block()])
     assert reason == ""
     assert result == ["resolved line\n"]
 
@@ -995,21 +995,25 @@ def test_parse_chunked_resolutions_multiple():
         "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
         "<<<RESOLVED>>>_2\nsecond\n<<<END_RESOLVED>>>_2\n"
     )
-    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 2)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(
+        stdout, [_block(index=1), _block(index=2)],
+    )
     assert reason == ""
     assert result == ["first\n", "second\n"]
 
 
 def test_parse_chunked_resolutions_missing_marker():
     stdout = "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
-    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 2)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(
+        stdout, [_block(index=1), _block(index=2)],
+    )
     assert result is None
     assert "block_2" in reason
 
 
 def test_parse_chunked_resolutions_surviving_markers():
     stdout = "<<<RESOLVED>>>_1\n<<<<<<< HEAD\nstill broken\n<<<END_RESOLVED>>>_1\n"
-    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, 1)
+    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, [_block()])
     assert result is None
     assert "surviving_conflict_marker" in reason
 
@@ -1809,17 +1813,14 @@ def test_rebase_success_emits_stale_files():
     assert mock_emit.call_args[0][0]["files_stale"] == ["pnpm-lock.yaml"]
 
 
-def test_rebase_success_emits_replayed_files_apart_from_resolved():
-    """The skill parses both keys and reports them differently.
+def test_rebase_success_emits_the_files_it_resolved():
+    """The skill parses these keys, so they survive into the JSON.
 
-    `files_replayed` is what tells a consumer a conflict cost no AI call, so it
-    has to survive into the JSON rather than only into the log line, and it must
-    not be folded into `conflicts_resolved`.
+    Every conflict a run meets is one it resolved: rerere is held off, so there
+    is no second class of file that arrived from a recorded resolution.
     """
     ctx = mock.MagicMock()
-    tally = rebase_types.ResolutionTally(
-        files=["a.py"], commits=1, replayed=["b.py"],
-    )
+    tally = rebase_types.ResolutionTally(files=["a.py"], commits=1)
     saved = []
 
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
@@ -1833,45 +1834,23 @@ def test_rebase_success_emits_replayed_files_apart_from_resolved():
         )
 
     report = mock_emit.call_args[0][0]
-    assert report["files_replayed"] == ["b.py"]
     assert report["files_resolved"] == ["a.py"]
     assert report["conflicts_resolved"] == 1
-    assert saved[0].files_replayed == ["b.py"]
+    assert "files_replayed" not in report
+    assert saved[0].files_resolved == ["a.py"]
 
 
-def test_rebase_success_emits_replays_when_nothing_was_resolved():
-    """A rebase that met conflicts and resolved none of them itself.
-
-    Every conflict came back from the cache, so `conflicts_resolved` is 0 while
-    `files_replayed` is not — the shape the skill is told not to call clean.
-    """
-    ctx = mock.MagicMock()
-    tally = rebase_types.ResolutionTally(replayed=["a.py", "b.py"])
-
-    with mock.patch.object(git_client, "commits_ahead", return_value=4), \
-         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
-         mock.patch.object(core_report, "emit_json") as mock_emit:
-        lifecycle.rebase_success(
-            "/fake", ctx, rebase_types.RunMode.PUSH, tally, target_ref=_TARGET,
-        )
-
-    report = mock_emit.call_args[0][0]
-    assert report["conflicts_resolved"] == 0
-    assert report["files_replayed"] == ["a.py", "b.py"]
-
-
-def test_replayed_files_are_candidates_for_the_prepush_repair():
-    """A replayed file can be what trips the pre-push hook.
+# passes-at-base: the repair candidate set this change narrowed but did not alter
+def test_resolved_files_are_candidates_for_the_prepush_repair():
+    """A resolved file can be what trips the pre-push hook.
 
     `resolved_files` is the candidate set `fix_push_failures` matches a failing
     hook's output against, and a file absent from it is dropped from `targets`
     entirely — the no-match fallback re-adds the candidates, not the omission.
-    A rerere replay whose recorded resolution has gone stale against the current
-    base is exactly that case, so it has to be a candidate like any other.
     """
     ctx = mock.MagicMock()
     tally = rebase_types.ResolutionTally(
-        files=["a.py"], commits=1, replayed=["pnpm-lock.yaml"],
+        files=["a.py", "pnpm-lock.yaml"], commits=1,
     )
 
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
@@ -1890,16 +1869,19 @@ def test_replayed_files_are_candidates_for_the_prepush_repair():
     ]
 
 
-def test_a_file_both_resolved_and_replayed_is_one_repair_candidate():
-    """Deduplicated across the two lists, as `fix_push_failures` expects.
+# passes-at-base: the dedup this change kept after dropping the replayed list
+def test_a_file_resolved_in_two_commits_is_one_repair_candidate():
+    """Deduplicated, as `fix_push_failures` expects.
 
-    The lists are disjoint for one file in one step, but a file resolved in an
-    early commit and replayed in a later one lands in both over a whole rebase.
+    One file conflicting in several replayed commits is absorbed into the tally
+    once per commit, and the repair wants the set rather than the occurrences.
     """
     ctx = mock.MagicMock()
-    tally = rebase_types.ResolutionTally(
-        files=["go.sum"], commits=1, replayed=["go.sum"],
-    )
+    tally = rebase_types.ResolutionTally()
+    tally.absorb(rebase_types.Resolution(files=["go.sum"]))
+    tally.commits += 1
+    tally.absorb(rebase_types.Resolution(files=["go.sum"]))
+    tally.commits += 1
 
     with mock.patch.object(git_client, "commits_ahead", return_value=2), \
          mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
@@ -4419,7 +4401,6 @@ def _push_state(lease_expect="abc123"):
     state.rebase.conflicts_resolved = 0
     state.rebase.files_resolved = []
     state.rebase.files_stale = []
-    state.rebase.files_replayed = []
     return state
 
 

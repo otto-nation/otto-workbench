@@ -447,40 +447,31 @@ def test_rebase_render_not_pushed():
     assert "force-pushed" not in result[0]
 
 
-def test_rebase_render_counts_replays_apart_from_resolutions():
-    """A replayed file is not one this run resolved, and the line says so."""
+# passes-at-base: the resolved-count wording this change was careful to keep
+def test_rebase_render_counts_every_conflict_as_resolved_here():
+    """There is no second class of conflict to report.
+
+    rerere is held off for the whole rebase, so a run resolves every conflict it
+    meets and none is carried in from a recorded resolution.
+    """
     result = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["a.py"],
-        files_replayed=["b.py", "c.py"],
         force_pushed=True, updated_at=_REBASE_RUN,
     ).render_status()
     assert "resolved 1 file(s)" in result[0]
-    assert "2 file(s) from a recorded resolution" in result[0]
+    assert "recorded resolution" not in result[0]
 
 
-def test_rebase_render_replays_on_a_run_that_resolved_nothing():
-    """The case the bare label gets wrong: conflicts met, none resolved here.
-
-    `conflicts_resolved` is 0 because every conflict was replayed from the
-    cache, so the clean-rebase wording is the only thing left to describe a run
-    that was not clean.
-    """
-    result = pr_domains.RebaseSummary(
-        status="completed", target_base="origin/main", commits_replayed=5,
-        conflicts_resolved=0, files_resolved=[],
-        files_replayed=["a.py"],
-        force_pushed=True, updated_at=_REBASE_RUN,
-    ).render_status()
-    assert "1 file(s) from a recorded resolution" in result[0]
-
-
-def test_rebase_render_omits_replays_when_there_were_none():
+# passes-at-base: the clean-rebase wording never carried a replay clause
+def test_rebase_render_says_nothing_about_replays_on_a_clean_run():
+    """The clean-rebase wording, which never had a replay clause to drop."""
     result = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=5,
         conflicts_resolved=0, files_resolved=[],
         force_pushed=True, updated_at=_REBASE_RUN,
     ).render_status()
+    assert "clean rebase" in result[0]
     assert "recorded resolution" not in result[0]
 
 

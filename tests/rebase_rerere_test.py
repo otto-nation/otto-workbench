@@ -1,10 +1,12 @@
-"""Reuse of recorded conflict resolutions, and folding fixup! commits.
+"""Holding rerere off an AI-resolved rebase, and folding fixup! commits.
 
 Driven against real repositories rather than stubs. Both behaviours are git's
 rather than ours — what is under test is that the flags reach git, that git does
 what the rebase driver assumes, and that the driver reads the result correctly.
 A stub asserting on argv would pass whatever git actually did with it, which is
-the half that has broken here before.
+the half that has broken here before, and the rerere behaviour below is one no
+argv assertion could have caught: the defect was in what git does on its own
+when the config says nothing.
 """
 
 import os
@@ -26,7 +28,6 @@ if str(LIB_DIR) not in sys.path:
 from git import client as git_client  # noqa: E402
 from rebase import inspect as rebase_inspect  # noqa: E402
 from rebase import lifecycle  # noqa: E402
-from rebase import types as rebase_types  # noqa: E402
 
 
 def _write(repo: Path, name: str, body: str) -> None:
@@ -63,122 +64,96 @@ def _resolve_and_continue(repo: Path, body: str) -> None:
     lifecycle.rebase_continue(str(repo))
 
 
-class TestRerereRecordsAndReplays:
-    """The cache is written by our own resolution path and read back later."""
+def _rr_cache(repo: Path) -> Path:
+    """The repo's rerere cache, wherever git puts it.
 
-    def test_replays_a_resolution_recorded_by_the_resolver(self, tmp_path):
-        """The second encounter of a conflict costs no resolver call.
+    Resolved through git rather than assumed to be `.git/rr-cache`: it lives in
+    the *common* directory, so in a worktree it is not under the worktree's own
+    git dir at all — which is the property that let one AI resolution reach
+    every other worktree of the repo.
 
-        This is the whole point of the feature: the file is staged, so
-        `detect_conflicts` no longer reports it and the driver never routes it
-        to the AI.
-        """
+    `git_out` hands back raw stdout, so the newline has to come off here. Left
+    on, every path built from it is one that cannot exist, and an existence
+    check against it answers "no cache" for a repo that has one — which is a
+    test that passes whatever the code does.
+    """
+    raw = git_out(repo, "rev-parse", "--git-path", "rr-cache").strip()
+    path = Path(raw)
+    return path if path.is_absolute() else repo / path
+
+
+def _cached_resolutions(repo: Path) -> list[Path]:
+    """Recorded resolutions in the cache — the entries a later rebase replays.
+
+    A resolution is a directory holding a `preimage`; the `postimage` that makes
+    it replayable is only written once the conflicted commit lands. Both are
+    counted, because a preimage recorded now becomes a replayable resolution at
+    the next `--continue` without anything else being decided.
+    """
+    cache = _rr_cache(repo)
+    if not cache.exists():
+        return []
+    return sorted(p for p in cache.iterdir() if p.is_dir())
+
+
+class TestRerereIsHeldOff:
+    """An AI-resolved rebase records nothing a later rebase could replay.
+
+    The resolution the driver commits has been read by nobody. Recording it as
+    the answer for that hunk hands it to every future rebase in the repo —
+    including a plain `git rebase` run by hand, which replays from the cache
+    with no AI in the loop and no prompt. That is not a hypothetical: a merge
+    that duplicated a shell function came back this way after being fixed.
+    """
+
+    def test_the_resolver_s_own_output_is_not_recorded(self, tmp_path):
         repo = _diverged(tmp_path)
         git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
                        config=lifecycle.REBASE_CONFIG)
         assert rebase_inspect.detect_conflicts(str(repo)) == ["f.txt"]
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
-        # The same branch cut again from the same base: an identical conflict.
-        git_in(repo, "checkout", "-q", "-b", "feat2", "main~1")
-        _write(repo, "f.txt", "a\nBRANCH\nc\n")
-        git_in(repo, "commit", "-q", "-am", "feat: branch edit again")
-        result = git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                                config=lifecycle.REBASE_CONFIG)
+        assert _cached_resolutions(repo) == []
 
-        assert rebase_inspect.rerere_replayed(result.combined_output) == ["f.txt"]
-        # Staged, not merely rewritten in the worktree. Without autoUpdate the
-        # file is still unmerged here and the resolver pays for it again.
-        assert rebase_inspect.detect_conflicts(str(repo)) == []
-        assert (repo / "f.txt").read_text() == "a\nMAIN+BRANCH\nc\n"
+    def test_an_existing_cache_does_not_re_enable_it(self, tmp_path):
+        """The reason the config says `false` rather than saying nothing.
 
-    def test_records_nothing_without_the_config(self, tmp_path):
-        """Confirms the replay above is the config's doing and not git's default.
-
-        A guard against the test passing because the machine running it has
-        rerere on globally, which would make the assertion above vacuous.
+        git turns rerere on by itself whenever `rr-cache` exists — documented,
+        and the state every worktree on a machine that has ever run this is
+        already in. Omitting the key inherits that; only an explicit `false`
+        overrides it. This test fails against a config that drops the key.
         """
         repo = _diverged(tmp_path)
-        git_client.run("rebase", "main", cwd=str(repo))
-        _write(repo, "f.txt", "a\nMAIN+BRANCH\nc\n")
-        git_in(repo, "add", "f.txt")
-        git_client.run("rebase", "--continue", cwd=str(repo),
-                       config={"core.editor": "true"})
+        cache = _rr_cache(repo)
+        cache = cache if cache.is_absolute() else repo / cache
+        cache.mkdir(parents=True, exist_ok=True)
+
+        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=lifecycle.REBASE_CONFIG)
+        _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
+
+        assert _cached_resolutions(repo) == []
+
+    def test_a_later_plain_rebase_meets_the_conflict_itself(self, tmp_path):
+        """The consequence, end to end: nothing is replayed into a hand rebase.
+
+        The second branch is an identical conflict, so a recorded resolution
+        would be applied here with no AI and no prompt. Asserting on the
+        conflict rather than on the cache is what makes this about the operator
+        rather than about a directory.
+        """
+        repo = _diverged(tmp_path)
+        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=lifecycle.REBASE_CONFIG)
+        _resolve_and_continue(repo, "a\nAI-WROTE-THIS\nc\n")
 
         git_in(repo, "checkout", "-q", "-b", "feat2", "main~1")
         _write(repo, "f.txt", "a\nBRANCH\nc\n")
         git_in(repo, "commit", "-q", "-am", "feat: branch edit again")
-        result = git_client.run("rebase", "main", cwd=str(repo))
+        git_client.run("rebase", "main", cwd=str(repo))
 
-        assert rebase_inspect.rerere_replayed(result.combined_output) == []
         assert rebase_inspect.detect_conflicts(str(repo)) == ["f.txt"]
-
-
-class TestRerereReplayedParsing:
-    """Reading git's replay lines out of its output."""
-
-    def test_reads_the_autoupdate_wording(self):
-        out = "Rebasing (1/2)\nStaged 'src/a.py' using previous resolution.\n"
-        assert rebase_inspect.rerere_replayed(out) == ["src/a.py"]
-
-    def test_reads_the_wording_without_autoupdate(self):
-        """A worktree whose own config enables rerere but not auto-staging."""
-        out = "Resolved 'src/a.py' using previous resolution.\n"
-        assert rebase_inspect.rerere_replayed(out) == ["src/a.py"]
-
-    def test_reads_several_in_order(self):
-        out = (
-            "Staged 'b.py' using previous resolution.\n"
-            "Staged 'a.py' using previous resolution.\n"
-        )
-        assert rebase_inspect.rerere_replayed(out) == ["b.py", "a.py"]
-
-    def test_ignores_unrelated_output(self):
-        out = (
-            "Auto-merging f\n"
-            "CONFLICT (content): Merge conflict in f\n"
-            "hint: Resolve all conflicts manually\n"
-        )
-        assert rebase_inspect.rerere_replayed(out) == []
-
-    def test_ignores_a_line_it_cannot_parse(self):
-        """Presentation output — an unparsed line yields nothing, not a guess."""
-        assert rebase_inspect.rerere_replayed("Staged '' using previous resolution.") == []
-        assert rebase_inspect.rerere_replayed("Staged 'f' using some other thing.") == []
-
-
-class TestTallyReplays:
-    """Replayed files are counted apart from resolved ones."""
-
-    def test_records_without_touching_resolved_files(self):
-        tally = rebase_types.ResolutionTally()
-        tally.record_replays(["a.py"])
-
-        assert tally.replayed == ["a.py"]
-        # `conflicts_resolved` counts `files`, and a replay is not a resolution
-        # this run performed.
-        assert tally.files == []
-
-    def test_deduplicates_across_steps(self):
-        """One file replayed in three commits is one file that cost nothing."""
-        tally = rebase_types.ResolutionTally()
-        tally.record_replays(["a.py", "b.py"])
-        tally.record_replays(["a.py"])
-
-        assert tally.replayed == ["a.py", "b.py"]
-
-    def test_note_replays_logs_each_file_once(self):
-        """The trail gets one event per newly replayed file, not per step."""
-        tally = rebase_types.ResolutionTally()
-        trail = mock.MagicMock()
-        result = mock.MagicMock(
-            combined_output="Staged 'a.py' using previous resolution.\n")
-
-        lifecycle.note_replays(result, tally, trail=trail)
-        lifecycle.note_replays(result, tally, trail=trail)
-
-        assert tally.replayed == ["a.py"]
-        assert trail.info.call_count == 1
+        assert "AI-WROTE-THIS" not in (repo / "f.txt").read_text()
 
 
 class TestUnattendedEditor:

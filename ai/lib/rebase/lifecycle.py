@@ -36,24 +36,28 @@ ResolutionTally = rebase_types.ResolutionTally
 RunMode = rebase_types.RunMode
 
 
-# Reuse of a conflict resolution already recorded in this repo, scoped to the
-# run rather than written into anyone's git config.
+# rerere is held off for the whole of an AI-resolved rebase, and the `false` is
+# load bearing — omitting the key does not do this.
 #
-# `autoUpdate` is not a nicety on top of `enabled` — it is the whole feature
-# here. With `enabled` alone git rewrites the worktree and leaves the index
-# unmerged, so `detect_conflicts` still reports the file, and the resolver then
-# pays a full AI call on content that holds no conflict markers to resolve.
-# With `autoUpdate` the file is staged, `detect_conflicts` no longer sees it,
-# and the step advances for free.
+# git enables rerere on its own whenever `$GIT_DIR/rr-cache` exists, so once any
+# run has created that directory the feature is on for good, with no config
+# entry anywhere naming it. Only an explicit `false` overrides the auto-detect.
 #
-# Deliberately passed per-call instead of set in `git/gitconfig.shared`: this
-# stages a resolution nobody looked at, which is right for an unattended rebase
-# the operator reviews as a diff afterwards, and wrong as a silent default under
-# every interactive `git merge` on the machine.
-RERERE_CONFIG = {
-    "rerere.enabled": "true",
-    "rerere.autoUpdate": "true",
-}
+# What that cost when it was on: every conflict the AI resolved was recorded
+# into the cache as the postimage for that hunk, unreviewed. `rr-cache` lives in
+# the *common* directory, so one cache is shared by every worktree of the repo,
+# and a later plain `git rebase` — no AI, no prompt, rerere unset in the
+# operator's own config — silently replays it. That is how a resolution that
+# duplicated a shell function came back after being fixed by hand.
+#
+# The reuse this gives up was measured before it was removed rather than assumed
+# away: at the time, the trail held 371 conflict resolutions and no replay at
+# all. The standing reason behind that number is structural — rerere keys on the
+# exact hunk and a rebase meets each distinct conflict once, so the cache can
+# only pay off across runs, which is the same cross-run reach that made it
+# unsafe. Re-measure with `otto-log` before reviving this; do not trust the
+# count above to have stayed true.
+RERERE_CONFIG = {"rerere.enabled": "false"}
 
 # `core.editor=true` is what keeps an unattended run unattended: git opens the
 # editor for a commit whose message it wants confirmed, and `true` exits zero
@@ -84,33 +88,6 @@ def rebase_continue(cwd: str) -> CmdResult:
     return git_client.run(
         "rebase", "--continue", cwd=cwd, config=REBASE_CONFIG,
         env=unattended_env(),
-    )
-
-
-def note_replays(
-    result: CmdResult, tally: ResolutionTally, *, trail: Trail | None = None,
-) -> None:
-    """Record any rerere replays *result* reported into *tally* and the trail.
-
-    Called for every git invocation that can apply a commit, since any of them
-    can hit a recorded resolution. Reads both streams: the replay line is on
-    stderr, and pinning that is not worth a second reader.
-    """
-    replayed = rebase_inspect.rerere_replayed(result.combined_output)
-    if not replayed:
-        return
-    fresh_paths = [p for p in replayed if p not in tally.replayed]
-    tally.record_replays(replayed)
-    if not fresh_paths:
-        return
-    log.info(
-        f"Reused a recorded resolution for {len(fresh_paths)} file(s) "
-        f"— no resolver needed: {', '.join(fresh_paths)}"
-    )
-    tinfo(
-        trail, "rerere_replay",
-        f"reused a recorded resolution for {len(fresh_paths)} file(s)",
-        data={"files": fresh_paths},
     )
 
 
@@ -260,7 +237,6 @@ def step_conflicts(
         git_client.run("add", "-u", cwd=cwd)
 
     r = rebase_continue(cwd)
-    note_replays(r, tally, trail=trail)
     if r.ok:
         return None
 
@@ -300,14 +276,12 @@ def step_advance(
             "rebase", "--skip", cwd=cwd, config=REBASE_CONFIG,
             env=unattended_env(),
         )
-        note_replays(r, tally, trail=trail)
         if not r.ok:
             log.error(f"git rebase --skip failed (exit {r.returncode})")
             return 1
         return None
 
     r = rebase_continue(cwd)
-    note_replays(r, tally, trail=trail)
     if r.ok:
         return None
 
@@ -419,11 +393,10 @@ def fresh(
         "rebase", "--autosquash", target_ref, cwd=cwd, config=REBASE_CONFIG,
         env=unattended_env(),
     )
-    # Threaded into the loop below rather than tallied locally: this call can
-    # replay a recorded resolution for the very first commit, and a tally made
-    # inside the loop would start after that had already happened.
+    # Threaded into the loop below rather than created there: the loop's first
+    # action may be to resolve a conflict this call left behind, and a tally
+    # made inside it would not be the one the whole run accumulates into.
     tally = ResolutionTally()
-    note_replays(r, tally, trail=trail)
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
@@ -468,13 +441,6 @@ def rebase_success(
         f"Rebase complete — resolved {len(tally.files)} file(s) "
         f"across {tally.commits} commit(s)"
     )
-    # A rebase whose conflicts were all replayed from the cache resolves nothing
-    # and conflicts on no commit, so the bare label above would report it as
-    # clean and say nothing about the conflicts that were met and handled.
-    if tally.replayed:
-        label += (f", reused {len(tally.replayed)} recorded resolution(s)"
-                  if tally.commits else
-                  f" — reused {len(tally.replayed)} recorded resolution(s)")
 
     if lands_here and lease is None:
         # Nothing safe to name: the remote has the branch and this run never
@@ -492,7 +458,6 @@ def rebase_success(
             conflicts_resolved=len(tally.files),
             files_resolved=tally.files,
             files_stale=tally.stale,
-            files_replayed=tally.replayed,
             force_pushed=False,
             target_base=target_ref,
         ).save(ctx)
@@ -505,12 +470,10 @@ def rebase_success(
         if mode.reaches_remote:
             rebase_pr_snapshot.name_the_open_pr(snapshot, trail=trail)
             log.info(f"{label} — force-pushing...")
-        # Replayed files go in alongside resolved ones: this is the candidate
-        # set the pre-push repair matches a failing hook's output against, and
-        # a file missing from it is dropped rather than fixed. A replay whose
-        # recorded resolution has gone stale against the current base is as
-        # able to fail a check as anything the resolver wrote.
-        repairable = list(dict.fromkeys(tally.files + tally.replayed))
+        # Deduplicated: this is the candidate set the pre-push repair matches a
+        # failing hook's output against, and a file conflicting in several
+        # replayed commits is listed once per commit in the tally.
+        repairable = list(dict.fromkeys(tally.files))
         landed = rebase_land.land_rebased(
             cwd, resolved_files=repairable or None, args=lease.args, trail=trail,
         )
@@ -525,7 +488,6 @@ def rebase_success(
         conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
-        files_replayed=tally.replayed,
         # None rather than False for a run that never tried: a held landing did
         # exactly what --no-push asked for, and recording it as a failed push
         # would be the summary's own invention.

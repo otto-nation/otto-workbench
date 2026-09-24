@@ -64,6 +64,30 @@ class TestPiWriteToolUsed:
         assert not events.pi_write_tool_used({})
 
 
+class TestPiWroteOutput:
+    def test_lexically_different_but_same_path_still_matches(self):
+        """A `..` segment normalizes to the same file `Path.resolve()` sees.
+
+        `Path.__eq__` is purely lexical, so `/out/sub/../review.md` would not
+        equal `/out/review.md` without resolving both sides first, even
+        though they name the same file.
+        """
+        data = {
+            "type": "tool_execution_start",
+            "toolName": "write",
+            "args": {"path": "/out/sub/../review.md"},
+        }
+        assert events.pi_wrote_output(data, "/out/review.md")
+
+    def test_a_different_file_does_not_match(self):
+        data = {
+            "type": "tool_execution_start",
+            "toolName": "write",
+            "args": {"path": "/out/other.md"},
+        }
+        assert not events.pi_wrote_output(data, "/out/review.md")
+
+
 class TestSingleParsePerLine:
     def test_pi_consumers_all_take_a_parsed_event(self):
         """One json.loads per stream line — the consumers share the dict."""

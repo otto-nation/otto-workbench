@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Unified PR lifecycle CLI.
 
-Thin dispatch layer — subcommands delegate to external scripts via _COMMANDS
-registry.  Flags pass through to the backing script untouched; run
-'pr <command> --help' to see each script's flags.
+Thin dispatch layer — subcommands delegate to external scripts named by
+`cli.registry.COMMANDS`.  Flags pass through to the backing script untouched;
+run 'pr <command> --help' to see each script's flags.
 """
 
 import argparse
@@ -26,9 +26,9 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from cli import needs
-from cli.needs import LOCAL as _LOCAL, NONE as _NONE, REMOTE as _REMOTE
-from cli.needs import Need, ReviewMode
+from cli import review_modes
+from cli.needs import Need
+from cli.registry import COMMANDS, CommandSpec, need_for
 from pr import context as pr_context
 from pr import domains as pr_domains
 from pr import state as pr_state
@@ -38,95 +38,16 @@ from review import gc as review_gc
 from gh import budget as gh_budget
 from core import log
 from core import proc
-from review import listing as review_listing
 from pr import supersession
 from core import timeouts
 from config import workbench_projects
 from core import run_lock
-from review.paths import find_review_file, review_file_path
-from review.summary import ReviewSummaryReport, build_review_summary, json_summary
-from pr.review_sync import sync_review_domain
+from review import listing as review_listing
 from core.tool_parser import VALUE_FLAGS_FLAG
 from core.trail import Trail, add_trail_args
 
 
-# ── Command registry ────────────────────────────────────────────────────────
-#
-# Single source of truth for subcommands.  Delegating commands have a "script"
-# key; internal commands omit it.  "prefix" adds sub-command tokens before the
-# user's argv (e.g. claude-review gc …).
-
-# `_REVIEW_MODES` is defined further down, beside the handlers it names, so
-# both resolvers are given the table rather than reaching for one.
-
-
-def _review_modes(argv: list[str]) -> list[str]:
-    """The mode flags in *argv*, in table order."""
-    return needs.review_modes(argv, _REVIEW_MODES)
-
-
-def _review_need(argv: list[str]) -> Need:
-    """`review`'s need, which its mode flag decides."""
-    return needs.review_need(argv, _REVIEW_MODES)
-
-
-_COMMANDS = {
-    "create":   {"help": "Create a PR (wraps task pr:create)",
-                 "need": Need(_REMOTE, update=False, lock=True)},
-    "status":   {"help": "Show CI, review, and comment status dashboard",
-                 "need": Need(_LOCAL,  update=False, lock=False)},
-    "ci":       {"help": "Check CI failures",                     "script": "ci-check",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "review":   {"help": "Run code review",                       "script": "claude-review",
-                 "need": _review_need},
-    "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "fix":      {"help": "Fix CI + review + comments",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "rebase":   {"help": "Rebase onto the branch's base",         "script": "pr-rebase",
-                 "need": Need(_REMOTE, update=False, lock=True)},
-    "describe": {"help": "Revise the PR description",             "script": "pr-describe",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
-    "gc":       {"help": "Clean up stale PR artifacts",
-                 "need": Need(_REMOTE, update=False, lock=True)},
-}
-
-
-def _need_for(entry: dict, argv: list[str]) -> Need:
-    """The Need this invocation declares.
-
-    A command whose axes vary by flag declares a callable over its argv instead
-    of a constant; every other one declares the constant. One reader for both
-    shapes, so nothing downstream has to know which kind an entry carries.
-    """
-    need = entry.get("need")
-    return need(argv) if callable(need) else need
-
-
-def _validate_needs(commands: dict) -> None:
-    """Raise unless every command declares a Need.
-
-    The check that replaces "remember to edit two opt-out sets": a command that
-    declares nothing fails at import, where the old sets silently handed it
-    whatever not being listed happened to mean. A raise rather than an assert,
-    so the invariant survives -O.
-
-    A callable declaration is resolved over an empty argv and its answer
-    checked, so a resolver that returns something other than a Need for the
-    plain invocation fails here too rather than at the first dispatch.
-    """
-    undeclared = sorted(
-        name for name, entry in commands.items()
-        if not isinstance(_need_for(entry, []), Need)
-    )
-    if undeclared:
-        raise RuntimeError(
-            "pr: commands declare no dispatch need: " + ", ".join(undeclared)
-            + " — add a Need(depth, update=…, lock=…) to each _COMMANDS entry"
-        )
-
-
-def _run_delegate(entry: dict, argv: list[str],
+def _run_delegate(spec: CommandSpec, argv: list[str],
                   ctx: pr_context.ResolvedContext, *,
                   original_pr: str | None = None,
                   original_branch: str | None = None) -> int:
@@ -140,7 +61,7 @@ def _run_delegate(entry: dict, argv: list[str],
     in the delegate — and prevents mismatched --repo-dir/--branch when
     the worktree is on a different branch than the target.
     """
-    cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
+    cmd = [str(BIN_DIR / spec.script)]
     if ctx.worktree_root:
         cmd += ["--repo-dir", str(ctx.worktree_root)]
     cmd += _target_flags(ctx, original_pr=original_pr,
@@ -181,7 +102,7 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
     return positionals, flags
 
 
-def _delegate_value_flags(entry: dict) -> frozenset[str]:
+def _delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
     """Ask a delegate which of its option strings consume a following value.
 
     The delegate's own argparse parser is the single source of truth for its
@@ -189,7 +110,7 @@ def _delegate_value_flags(entry: dict) -> frozenset[str]:
     of mirroring a list here that would rot the next time a delegate grows a
     flag.  Internal commands have no delegate and answer empty.
     """
-    script = entry.get("script")
+    script = spec.script
     if not script:
         return frozenset()
     # Arity is an improvement on the historical arity-blind scan, not a
@@ -241,52 +162,6 @@ def _positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
     return -1
 
 
-def _parse_review_summary(output: str) -> dict | None:
-    """Extract REVIEW_SUMMARY:{json} from claude-review output."""
-    prefix = "REVIEW_SUMMARY:"
-    lines = [l for l in output.splitlines() if l.startswith(prefix)]
-    if not lines:
-        return None
-    try:
-        return json.loads(lines[0][len(prefix):])
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
-def _update_review_state_from_output(output: str,
-                                     ctx: pr_context.ResolvedContext) -> None:
-    """Parse REVIEW_SUMMARY from output and update pr_state.
-
-    review-rebuild does not emit the marker today, so this is a no-op on that
-    path. The marker protocol itself should be deleted once the JSON-marker
-    protocol it implements is retired.
-    """
-    summary_data = _parse_review_summary(output)
-    if not summary_data:
-        return
-    sync_review_domain(ctx, ReviewSummaryReport(
-        repo=summary_data.get("repo", ""),
-        pr_number=summary_data.get("pr_number"),
-        head_sha=summary_data.get("head_sha"),
-        head_ref=summary_data.get("head_ref"),
-        base_ref=summary_data.get("base_ref"),
-        review_type=summary_data.get("review_type"),
-        review_file=summary_data.get("review_file", ""),
-        review_content=summary_data.get("review_content"),
-        findings=summary_data.get("findings") or {},
-        verdict=summary_data.get("verdict", ""),
-        status=summary_data.get("status", ""),
-        failure_detail=summary_data.get("failure_detail", ""),
-        recoverable=summary_data.get("recoverable"),
-        cost_usd=summary_data.get("cost_usd", 0.0),
-        input_tokens=summary_data.get("input_tokens", 0),
-        output_tokens=summary_data.get("output_tokens", 0),
-        cache_read_tokens=summary_data.get("cache_read_tokens", 0),
-        cache_write_tokens=summary_data.get("cache_write_tokens", 0),
-        duration_ms=summary_data.get("duration_ms", 0),
-    ))
-
-
 def _is_pr_target(target: str | None) -> bool:
     """Check if target looks like a PR URL or number (not a branch name)."""
     if not target:
@@ -328,18 +203,18 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_branch: str | None = None,
                schema_version: int | None = None,
                **_kw) -> int:
-    """Run a review, or handle one of the mode flags in `_REVIEW_MODES`."""
-    given = _review_modes(argv)
+    """Run a review, or handle one of the mode flags in `review_modes.MODES`."""
+    given = review_modes.flags_given(argv)
     if len(given) > 1:
-        log.error(f"{SCRIPT}: {_mode_flags_prose()} are mutually exclusive")
+        log.error(f"{SCRIPT}: {review_modes.flags_prose()} are mutually exclusive")
         return 1
 
     if given:
         flag = given[0]
-        handler = _REVIEW_MODES[flag].handler
+        handler = review_modes.MODES[flag].handler
         if handler:
             return handler([a for a in argv if a != flag], ctx,
-                           schema_version=schema_version)
+                           bin_dir=BIN_DIR, schema_version=schema_version)
 
     has_self = "--self" in argv
     positionals, _ = _split_argv(argv)
@@ -349,130 +224,9 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
         or ctx.pr_number is not None
     )
     inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
-    return _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
+    return _run_delegate(COMMANDS["review"], inject + list(argv), ctx,
                          original_pr=original_pr,
                          original_branch=original_branch)
-
-
-def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
-    """Post an existing review directly to GitHub via review-post."""
-    pr_num = str(ctx.pr_number) if ctx.pr_number else None
-    if not pr_num:
-        log.error("Cannot determine PR number")
-        return 1
-
-    review = find_review_file(ctx.repo, pr_num)
-    if not review:
-        log.error(f"No review file found for {ctx.repo}#{pr_num}")
-        log.dim("Run: pr review")
-        return 1
-
-    cmd = [str(BIN_DIR / "review-post"), "--pr", pr_num, "--review-file", str(review)]
-    # What this run is publishing for. The review file is found by PR number
-    # while the run lock keys on the branch, so naming the branch is what lets
-    # review-post tell this run's review from one written by a run the lock
-    # never made contend with it.
-    if ctx.branch:
-        cmd += ["--expect-ref", ctx.branch]
-    if "--submit" in argv:
-        cmd.append("--submit")
-        argv = [a for a in argv if a != "--submit"]
-    cmd += argv
-    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
-
-
-def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
-    """Repair broken review artifacts via summary or rebuild."""
-    pr_num = str(ctx.pr_number) if ctx.pr_number else None
-    if not pr_num:
-        log.error("Cannot determine PR number")
-        return 1
-
-    review = find_review_file(ctx.repo, pr_num)
-    if review:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review)))
-        return 0
-
-    log.info("No review file found, trying rebuild...")
-    review_dir = review_file_path(ctx.repo, pr_num).parent
-    if not review_dir.is_dir():
-        log.error(f"No review directory found: {review_dir}")
-        return 1
-
-    cmd = [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num]
-    cmd += argv
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeouts.UNBOUNDED)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr, end="")
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.returncode == 0:
-        _update_review_state_from_output(result.stdout, ctx)
-    return result.returncode
-
-
-def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
-    """Output JSON summary of an existing review."""
-    pr_num = str(ctx.pr_number) if ctx.pr_number else None
-    if not pr_num:
-        log.error("Cannot determine PR number")
-        return 1
-
-    review = find_review_file(ctx.repo, pr_num)
-    if not review:
-        log.error(f"No review file found for {ctx.repo}#{pr_num}")
-        return 1
-
-    print(json_summary(ctx.repo, pr_num, str(review)))
-    return 0
-
-
-def _review_list(argv: list[str], _ctx: pr_context.ResolvedContext, *,
-                 schema_version: int | None = None, **_kw) -> int:
-    """List every review in the user's state root.
-
-    The contract other repos read review state through — see
-    `ai/lib/review/listing.py` for what a row carries and why it is a query
-    rather than a path they derive.
-
-    Two audiences, told apart by the handshake. With `--schema-version` this is
-    a consumer, and the versioned document goes to stdout. Without it this is a
-    person, and the table goes to stderr with stdout left empty — so a consumer
-    that forgets the handshake gets a parse failure from an empty stream rather
-    than a table it half-understands.
-
-    The context is unresolved and the parameter is named for it: `--list`
-    declares `ContextDepth.NONE`, so there is no repo, branch, or target here
-    and nothing in this function may look for one.
-    """
-    if schema_version is None:
-        print("\n".join(review_listing.render_table(review_listing.rows())),
-              file=sys.stderr)
-        return 0
-    json.dump(review_listing.document(schema_version), sys.stdout, indent=2)
-    print()
-    return 0
-
-
-_REVIEW_MODES = {
-    "--post":    ReviewMode(_review_post),
-    "--repair":  ReviewMode(_review_repair),
-    "--summary": ReviewMode(_review_summary),
-    "--recover": ReviewMode(),
-    "--list":    ReviewMode(_review_list,
-                            need=Need(_NONE, update=False, lock=False),
-                            schema_versions=review_listing.SCHEMA_VERSIONS),
-}
-
-# Deferred to here rather than run beside _COMMANDS, because `review`'s
-# declaration is a callable that reads the table above.
-_validate_needs(_COMMANDS)
-
-
-def _mode_flags_prose() -> str:
-    """The mode flags as an English list, for the exclusivity error."""
-    flags = list(_REVIEW_MODES)
-    return f"{', '.join(flags[:-1])}, and {flags[-1]}"
 
 
 def _invocation(command: str, argv: list[str]) -> str:
@@ -482,7 +236,7 @@ def _invocation(command: str, argv: list[str]) -> str:
     --list` are different commands to everyone but argparse — so an error about
     one has to name the flag or it reads as being about the other.
     """
-    modes = _review_modes(argv) if command == "review" else []
+    modes = review_modes.flags_given(argv) if command == "review" else []
     return " ".join(filter(None, [SCRIPT, command, *modes[:1]]))
 
 
@@ -493,7 +247,7 @@ def _schema_contracts() -> list[str]:
     invocation that no longer serves one. `review` is the only command with
     modes today; a second one gets a branch here rather than a second table.
     """
-    return [f"pr review {flag}" for flag, mode in _REVIEW_MODES.items()
+    return [f"pr review {flag}" for flag, mode in review_modes.MODES.items()
             if mode.schema_versions]
 
 
@@ -501,8 +255,8 @@ def _served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
     if command != "review":
         return ()
-    modes = _review_modes(argv)
-    return _REVIEW_MODES[modes[0]].schema_versions if modes else ()
+    modes = review_modes.flags_given(argv)
+    return review_modes.MODES[modes[0]].schema_versions if modes else ()
 
 
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -550,7 +304,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         log.blank()
         log.info(f"Fixing {ci_fixable} CI failure(s)...")
         rc = _run_delegate(
-            _COMMANDS["ci"], ["--fix"] + list(argv), ctx,
+            COMMANDS["ci"], ["--fix"] + list(argv), ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
         )
@@ -574,7 +328,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     # its commits and post its replies and then draft the description alone.
     log.blank()
     describe_argv = ["--post"] if "--post" in argv else []
-    if _run_delegate(_COMMANDS["describe"], describe_argv, ctx,
+    if _run_delegate(COMMANDS["describe"], describe_argv, ctx,
                      original_pr=_kw.get("original_pr"),
                      original_branch=_kw.get("original_branch")) != 0:
         exit_code = 1
@@ -587,7 +341,7 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                  original_branch: str | None = None,
                  **_kw) -> int:
     """Delegate to review-threads, routing --triage, --fix, --settle and --finish flags."""
-    return _run_delegate(_COMMANDS["comments"], list(argv), ctx,
+    return _run_delegate(COMMANDS["comments"], list(argv), ctx,
                          original_pr=original_pr,
                          original_branch=original_branch)
 
@@ -656,16 +410,6 @@ _CUSTOM = {
     "gc":       cmd_gc,
 }
 
-# Commands that accept no positional target, so every bare token in their argv
-# belongs to the flag before it. 'create' always operates on the current branch
-# and `task pr:create` has no way to accept a target, so the positional scan has
-# nothing to find there — only flag values to swallow. Skipping the scan is what
-# keeps `pr create --title "…"` from arriving as a dangling --title, and it needs
-# no arity list of its own: the flags are parsed by parse_pr_flags in
-# lib/ai/pr.sh, which stays their single source of truth.
-_NO_TARGET_COMMANDS = {"create"}
-
-
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command parser.
 
@@ -673,7 +417,7 @@ def _build_parser() -> argparse.ArgumentParser:
     forwarded whole and `pr <command> --help` is answered by the delegate — so
     add_help is left off for those. The subparsers are not returned alongside:
     what a command declares is read back off the built parser with
-    tool_parser.subparsers, which is what keeps _NO_TARGET_COMMANDS honest.
+    tool_parser.subparsers, which is what keeps `takes_target` honest.
     """
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
@@ -683,16 +427,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-h", "--help", action="store_true", dest="help")
 
     sub = parser.add_subparsers(dest="command")
-    for name, entry in _COMMANDS.items():
-        sub.add_parser(name, help=entry["help"], add_help="script" not in entry)
+    for name, spec in COMMANDS.items():
+        sub.add_parser(name, help=spec.help, add_help=spec.script is None)
     return parser
 
 
 def _build_usage() -> str:
-    max_name = max(len(n) for n in _COMMANDS)
+    max_name = max(len(n) for n in COMMANDS)
     cmd_lines = "\n".join(
-        f"  {name:<{max_name + 2}}{entry['help']}"
-        for name, entry in _COMMANDS.items()
+        f"  {name:<{max_name + 2}}{spec.help}"
+        for name, spec in COMMANDS.items()
     )
     contracts = ", ".join(_schema_contracts())
     versions = ", ".join(str(v) for v in review_listing.SCHEMA_VERSIONS)
@@ -733,7 +477,7 @@ def _tool_schema() -> dict:
             "properties": {
                 "command": {
                     "type": "string",
-                    "enum": list(_COMMANDS.keys()),
+                    "enum": list(COMMANDS),
                     "description": "Subcommand to run",
                 },
                 "repo_dir": {"type": "string", "description": "Git worktree directory", "x-context": True},
@@ -828,9 +572,9 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
                            original_pr=original_pr,
                            original_branch=original_branch,
                            schema_version=global_args.schema_version)
-        assert "script" in _COMMANDS[args.command], \
-            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
-        return _run_delegate(_COMMANDS[args.command], extra, ctx,
+        assert COMMANDS[args.command].script, \
+            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or give its CommandSpec a script"
+        return _run_delegate(COMMANDS[args.command], extra, ctx,
                              original_pr=original_pr,
                              original_branch=original_branch)
     except Exception as exc:
@@ -905,9 +649,9 @@ def main():
     except Exception as exc:
         log.warn(f"could not reconcile recorded pushes: {exc}")
 
-    entry = _COMMANDS[args.command]
-    if {"-h", "--help"} & set(extra) and "script" in entry:
-        cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", []) + ["--help"]
+    spec = COMMANDS[args.command]
+    if {"-h", "--help"} & set(extra) and spec.script:
+        cmd = [str(BIN_DIR / spec.script), "--help"]
         sys.exit(subprocess.run(cmd, timeout=timeouts.LOCAL).returncode)
 
     original_pr = getattr(args, "pr", None)
@@ -919,9 +663,9 @@ def main():
     # ambiguous about, so the common case (`pr review`, `pr comments --triage`)
     # spawns nothing.
     ambiguous = (original_pr is None and original_branch is None
-                 and args.command not in _NO_TARGET_COMMANDS)
+                 and spec.takes_target)
     if ambiguous and any(not a.startswith("-") for a in extra):
-        idx = _positional_index(extra, _delegate_value_flags(entry))
+        idx = _positional_index(extra, _delegate_value_flags(spec))
         if idx >= 0:
             original_pr, original_branch = pr_context.classify_target(extra[idx])
             extra.pop(idx)
@@ -934,7 +678,7 @@ def main():
     # The command's declaration drives all three axes from here. Read after the
     # positional scan above, because that scan is what turns a bare token into
     # the --pr that can escalate the declared depth.
-    need = _need_for(entry, extra)
+    need = need_for(spec, extra)
     _reject_a_target_that_resolves_to_nothing(
         args.command, extra, need, original_pr, original_branch,
     )

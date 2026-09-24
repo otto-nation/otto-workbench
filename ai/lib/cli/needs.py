@@ -4,10 +4,10 @@
 flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
 import them and no test could reach them without executing the binary.
 
-The mode table itself stays with the handlers it names — a mode is a need and a
-callable, and only the need half has a home below the entry point. The
-resolvers therefore take the table rather than reaching for one, which is also
-what lets a test declare a table of its own.
+The mode table itself lives in `cli.review_modes`, beside the handlers it
+names. The resolvers here still take a table rather than reaching for one:
+`review_modes` would otherwise have to be imported from below it, and taking it
+as an argument is also what lets a test declare a table of its own.
 """
 
 # doc-group: cli

@@ -4529,10 +4529,10 @@ What a `pr` subcommand needs of dispatch before its handler runs.
 flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
 import them and no test could reach them without executing the binary.
 
-The mode table itself stays with the handlers it names — a mode is a need and a
-callable, and only the need half has a home below the entry point. The
-resolvers therefore take the table rather than reaching for one, which is also
-what lets a test declare a table of its own.
+The mode table itself lives in `cli.review_modes`, beside the handlers it
+names. The resolvers here still take a table rather than reaching for one:
+`review_modes` would otherwise have to be imported from below it, and taking it
+as an argument is also what lets a test declare a table of its own.
 
 ### cli/pr_describe.py
 
@@ -4581,6 +4581,49 @@ Usage:
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
   pr-rebase --repo-dir <path>         # specify worktree directory
+
+### cli/registry.py
+
+Every `pr` subcommand, and the whole of what dispatch needs to know about it.
+
+One spec per subcommand, and the spec is the whole declaration: the help line,
+the backing script, what the invocation needs resolved before its handler runs,
+and whether a bare token in its argv can name a target. Four tables in
+`ai/bin/pr` said those things separately — `_COMMANDS`, `_CUSTOM`,
+`_NO_TARGET_COMMANDS` and the mode table — and `_validate_needs` was the only
+one of them with a check.
+
+Written as a tuple and keyed afterwards, like `agent.registry`: a literal keyed
+by hand spells every subcommand name twice and can drift between the two
+spellings. **The tuple's order is the display order** — `pr --help`, the
+subparsers and the MCP `command` enum all read it in sequence — so reordering
+it is a user-visible change, not a cosmetic one.
+
+No handler field yet. Six of the nine run functions defined inside `ai/bin/pr`,
+which is not an importable module, so a handler here would resolve for the five
+delegates and lie for the other four. It lands with the dispatch that reads it
+(#909 T7 commit 4), where the contract it has to name — how a resolved context
+and a target flag reach an in-process callable — is decided rather than
+guessed.
+
+### cli/review_modes.py
+
+`pr review`'s mutually-exclusive mode flags, and what each one does.
+
+The table and the four handlers it names, in one importable module. They were
+written inside `ai/bin/pr`, where `review`'s need — the one command declaration
+an argv resolves rather than a constant — could not be stated anywhere a
+library module could read it. `cli.registry` imports `need_for` from here for
+exactly that reason.
+
+Still spawning: `--post` and `--repair` run `review-post` and `review-rebuild`
+as child processes, exactly as the binary did. #909 T7 commit 4 makes them
+calls.
+
+Each handler is *given* the directory to spawn from rather than deriving one,
+matching `review.publish.post`. Under `WORKBENCH_AI_LIB_DIR` this module sits
+in the pinned checkout while the entry point does not, so a path derived here
+would spawn a different tree's delegates than `ai/bin/pr` does.
 
 ### cli/review_orchestrate.py
 

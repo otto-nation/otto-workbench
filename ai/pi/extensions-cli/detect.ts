@@ -39,26 +39,15 @@ const WRITE_COMMANDS = [
   "dd",
   "truncate",
   "install",
-  // Creating, removing and linking are writes as much as copying is; the
-  // original list named only the verbs that move file *contents* around, so a
-  // fix agent could create or delete a path freely.
+  // Creating a path is a write as much as copying into one is. Kept to what a
+  // fix agent reaches for; this list enumerates members rather than fixing a
+  // class, so it earns entries one observed failure at a time and is not an
+  // inventory of the system's write verbs.
   "touch",
   "mkdir",
-  "rmdir",
   "ln",
-  "unlink",
-  "shred",
-  // Metadata is content too: a mode or owner change is a tree modification a
-  // review is not entitled to make.
   "chmod",
-  "chown",
-  "chgrp",
-  // Each of these writes a tree from an archive or another tree, which is the
-  // largest write shape available and was the least guarded.
-  "rsync",
   "patch",
-  "tar",
-  "unzip",
 ];
 
 /**
@@ -78,11 +67,12 @@ const WRITE_COMMANDS = [
 const GIT_WRITE_SUBCOMMANDS = new Set([
   "commit", "push", "checkout", "switch", "restore", "reset", "clean", "stash",
   "rebase", "merge", "apply", "am", "cherry-pick", "revert",
-  // Absent before, and each writes: `git rm -rf .` deletes the worktree and
-  // stages the deletion while a bare `rm -rf .` is refused.
-  "add", "rm", "mv", "branch", "tag", "config", "update-ref", "symbolic-ref",
-  "worktree", "notes", "replace", "filter-branch", "gc", "prune",
-  "sparse-checkout", "submodule", "bisect", "fetch", "pull", "remote", "init",
+  // `git rm -rf .` deletes the worktree and stages the deletion while a bare
+  // `rm -rf .` is refused, and `git add` is what an agent reaches for when it
+  // decides to finish the job itself. The porcelain's long tail is absent for
+  // the reason WRITE_COMMANDS gives: what contains an agent here is the engine
+  // committing by watched scope (`fix.scope`), not this list being complete.
+  "add", "rm", "mv", "branch", "tag", "config", "worktree", "fetch", "pull",
 ]);
 
 /**
@@ -266,9 +256,9 @@ function flagWrite(tokens: Token[]): string | null {
  */
 const COMMAND_WRAPPERS = new Set([
   "sudo", "env", "time", "xargs", "nohup", "nice", "doas",
-  // Same shape, and each was a one-word prefix that hid every write behind it:
-  // `exec rm -rf x` and `timeout 10 rm -rf x` were both permitted.
-  "exec", "command", "timeout", "stdbuf", "setsid", "builtin",
+  // One-word prefixes that hid every write behind them: `exec rm -rf x` and
+  // `timeout 10 rm -rf x` were both permitted.
+  "exec", "command", "timeout",
 ]);
 
 /**
@@ -292,14 +282,12 @@ const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   // value would skip the write. Left unlisted, the value lands where the
   // command is expected and is scanned as one, which is the correct reading.
   sudo: new Set(["-u", "-g", "-p", "-C", "-U", "-T", "-r", "-t", "--user", "--group",
-                 "-D", "--chdir", "-R", "--chroot", "-h", "--host", "--prompt",
-                 "--close-from"]),
+                 "-D", "--chdir"]),
   doas: new Set(["-u", "-C"]),
   env: new Set(["-u", "-C", "--unset", "--chdir"]),
   time: new Set(["-f", "-o", "--format", "--output"]),
   nice: new Set(["-n", "--adjustment"]),
   timeout: new Set(["-s", "--signal", "-k", "--kill-after"]),
-  stdbuf: new Set(["-i", "-o", "-e", "--input", "--output", "--error"]),
   xargs: new Set(["-I", "-L", "-n", "-P", "-s", "-E", "-a", "-d", "-i", "--replace",
                   "--max-args", "--max-procs", "--arg-file", "--delimiter"]),
   nohup: new Set(),
@@ -558,9 +546,9 @@ function lastWrapper(statement: string): string {
  */
 const INTERACTIVE_SHELLS = new Set([
   "sudo", "doas", "su", "sh", "bash", "zsh", "dash", "ksh", "fish",
-  // csh and tcsh are shells on the same terms; rbash is a restricted bash,
-  // which is still a shell this predicate cannot read.
-  "csh", "tcsh", "rbash",
+  // Ship with macOS at /bin and are in /etc/shells, so they are reachable by
+  // name on every machine this runs on.
+  "csh", "tcsh",
 ]);
 
 /**

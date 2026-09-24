@@ -1387,11 +1387,13 @@ _blocked() {
   done
 }
 
-@test "review-guard: creating, linking and unpacking are writes too" {
+@test "review-guard: creating and patching are writes too" {
   # WRITE_COMMANDS named only the verbs that move file contents, so an agent
-  # could create, delete, relink or unpack a tree freely.
-  for bad in 'touch f' 'mkdir -p d' 'rmdir d' 'ln -s a b' 'chmod +x f' \
-             'chown u f' 'shred f' 'rsync a b' 'tar -xf a.tar' 'unzip a.zip'; do
+  # could create a path or apply a diff freely. Scoped to what an agent
+  # actually reaches for — the list is not an inventory of write verbs, and
+  # every speculative entry is one someone maintains for a case that never
+  # arrives.
+  for bad in 'touch f' 'mkdir -p d' 'ln -s a b' 'chmod +x f' 'patch -p1 < d'; do
     _blocked "$bad"
     [ -n "$output" ] || { echo "allowed: $bad"; false; }
   done
@@ -1401,7 +1403,7 @@ _blocked() {
   # `git rm -rf .` deletes the worktree and stages the deletion, and was
   # allowed while a bare `rm -rf .` was refused.
   for bad in 'git add -A' 'git rm -rf .' 'git mv a b' 'git branch -D x' \
-             'git tag -f v1' 'git config user.name x' 'git update-ref HEAD x' \
+             'git tag -f v1' 'git config user.name x' \
              'git worktree add /tmp/w'; do
     _blocked "$bad"
     [ -n "$output" ] || { echo "allowed: $bad"; false; }
@@ -1427,8 +1429,7 @@ _blocked() {
   # command the outer scan never saw.
   for bad in '(rm -rf x)' '{ rm -rf x; }' "eval 'rm -rf x'" \
              "env -S 'rm -f /tmp/x'" 'echo $(rm -rf x)' 'echo `rm -rf x`' \
-             'exec rm -rf x' 'command rm -rf x' 'timeout 10 rm -rf x' \
-             'setsid rm -rf x'; do
+             'exec rm -rf x' 'command rm -rf x' 'timeout 10 rm -rf x'; do
     _blocked "$bad"
     [ -n "$output" ] || { echo "allowed: $bad"; false; }
   done

@@ -1360,6 +1360,86 @@ _blocked() {
   [[ "$output" == *"/etc/out.txt"* ]]
 }
 
+# _unscoped COMMAND — prints the unscoped-runner refusal, or the empty string.
+_unscoped() {
+  run node --input-type=module -e "
+    const { unscopedTestRun } = await import('$REPO_ROOT/ai/pi/extensions-cli/detect.ts');
+    process.stdout.write(unscopedTestRun(process.argv[1]) ?? '');
+  " -- "$1"
+}
+
+@test "review-guard: an unscoped pytest is refused" {
+  _unscoped 'pytest'
+  [ -n "$output" ]
+  [[ "$output" == *"invoke it directly"* ]]
+  [[ "$output" == *"pytest tests/foo.py"* ]]
+  _unscoped 'pytest -q'
+  [ -n "$output" ]
+  _unscoped 'pytest -v --tb=short'
+  [ -n "$output" ]
+}
+
+@test "review-guard: pytest with a path is allowed" {
+  _unscoped 'pytest tests/foo.py'
+  [ -z "$output" ]
+  _unscoped 'pytest tests/'
+  [ -z "$output" ]
+  _unscoped 'pytest -q tests/foo.py'
+  [ -z "$output" ]
+  _unscoped 'pytest tests/foo.py > /tmp/out.txt 2>&1'
+  [ -z "$output" ]
+}
+
+@test "review-guard: run-tests and validate-all are refused" {
+  # These wrappers exist to run the project's gate, which pre-push reproduces.
+  # A path flag does not make them the cheap named-test form.
+  _unscoped 'bin/local/run-tests'
+  [ -n "$output" ]
+  [[ "$output" == *"invoke it directly"* ]]
+  _unscoped './bin/local/run-tests --bats --files tests/foo.bats'
+  [ -n "$output" ]
+  _unscoped 'bin/local/validate-all'
+  [ -n "$output" ]
+  _unscoped 'validate-all --quiet'
+  [ -n "$output" ]
+}
+
+@test "review-guard: a selector flag or node id is scoped" {
+  _unscoped 'pytest -k test_foo'
+  [ -z "$output" ]
+  _unscoped 'pytest --last-failed'
+  [ -z "$output" ]
+  _unscoped 'pytest --lf'
+  [ -z "$output" ]
+  _unscoped 'pytest tests/foo.py::test_bar'
+  [ -z "$output" ]
+  _unscoped 'bats --filter some_case'
+  [ -z "$output" ]
+}
+
+@test "review-guard: unscoped bats is refused, bats with a file is allowed" {
+  _unscoped 'bats'
+  [ -n "$output" ]
+  [[ "$output" == *"invoke it directly"* ]]
+  _unscoped 'bats tests/foo.bats'
+  [ -z "$output" ]
+}
+
+@test "review-guard: a wrapped unscoped pytest is refused" {
+  _unscoped "bash -c 'pytest'"
+  [ -n "$output" ]
+  _unscoped "bash -c 'pytest tests/foo.py'"
+  [ -z "$output" ]
+}
+
+@test "review-guard: the unscoped-runner predicate is the one review-guard calls" {
+  # review-guard.ts imports the SDK and cannot be loaded here. The wiring is
+  # the one thing this file cannot assert by running the function.
+  run grep -q 'unscopedTestRun(event.input.command)' \
+    "$REPO_ROOT/ai/pi/extensions-cli/review-guard.ts"
+  [ "$status" -eq 0 ]
+}
+
 # _scratch PATH — prints "true" when write and edit may target PATH.
 _scratch() {
   run node --input-type=module -e "

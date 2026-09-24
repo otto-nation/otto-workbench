@@ -19,14 +19,19 @@
  *     (`fix.scope.agent_changed`), so stray writes are never staged
  *   - the push consults the publishing gate (`land.land(gated=True)`)
  *
- * So this is left with the one job those three cannot do, and it is a narrow
- * one: keep the engine's scoped commit the *only* commit. An agent that runs
+ * So this is left with two jobs those three cannot do. The first is narrow:
+ * keep the engine's scoped commit the *only* commit. An agent that runs
  * `git commit` itself lands work outside the scope `fix.scope` watched, under a
  * message nothing in this codebase wrote — and that is invisible to all three
  * mechanisms above, because by the time they look the work is already in a
  * commit. The redirect rule is here for the same reason in miniature: a
  * redirect names a destination, so it is one of the few shapes where the text
  * really does say where the write goes.
+ *
+ * The second is refusing an unscoped test runner. A fix pass that spends its
+ * turn budget on a bare `pytest` or on `bin/local/run-tests` is re-running
+ * what pre-push will run anyway, and none of the three mechanisms above can
+ * see it, because those commands do not write. See `unscopedTestRun`.
  *
  * Read the refusals as ergonomics with one exception, not as enforcement with
  * gaps. They steer an agent toward the tools the pipeline can account for.
@@ -417,6 +422,95 @@ export function bypassesTheCommitScope(command: string, depth = 0): string | nul
       if (!isScratchTarget(target)) {
         return `redirect writes to ${target}: ${statement.trim()}`;
       }
+    }
+  }
+  return null;
+}
+
+/**
+ * Wrappers that exist to run the project's gate. Refused even with path
+ * flags — invoke the runner directly (`pytest tests/foo.py`) instead.
+ */
+const GATE_RUNNERS = new Set(["run-tests", "validate-all"]);
+
+/** Runners that are allowed once the agent names a subject. */
+const SUBJECT_RUNNERS = new Set(["pytest", "bats"]);
+
+/**
+ * Flags that name a subject without a path.
+ *
+ * `-k` / `--keyword` and bats `--filter` / `-f` take a pattern; `--last-failed`
+ * / `--lf` select the previous failures. Any of these means the agent named
+ * something, which is the distinction that matters.
+ */
+const SELECTOR_FLAGS = new Set([
+  "-k", "--keyword",
+  "--last-failed", "--lf",
+  "-f", "--filter",
+]);
+
+/**
+ * True when the tokens after the command name a subject.
+ *
+ * Scoped means the agent named something: a positional path, directory or
+ * `::` node id, or a selector flag above. A bare `pytest` or `pytest -q`
+ * names nothing. Redirect tails are not arguments — `pytest > /tmp/out`
+ * must not read `/tmp/out` as a path, and `pytest 2>&1` must not read the
+ * descriptor `2` as one either.
+ *
+ * ceiling: a value-taking flag spelled as two words (`pytest --tb short`,
+ * no path) looks like a positional and would pass. `python -m pytest` is a
+ * different command name and is not this. Upgrade if a fix pass is observed
+ * running the whole suite either way.
+ */
+function namesASubject(tokens: Token[]): boolean {
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.operator) break;
+    const word = tok.value;
+    if (word === "--") continue;
+    if (SELECTOR_FLAGS.has(word)) return true;
+    if (word.startsWith("--keyword=") || word.startsWith("--filter=")) return true;
+    if (word.length > 2 && word.startsWith("-k") && !word.startsWith("-k-")) {
+      return true;
+    }
+    if (word.startsWith("-")) continue;
+    const next = tokens[i + 1];
+    if (next?.operator && next.value.includes(">") && /^\d+$/.test(word)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function commandBase(tokens: Token[]): string {
+  return tokens[0]?.value.split("/").pop() ?? "";
+}
+
+/**
+ * Why `command` is an unscoped test runner in a review session, or null.
+ *
+ * Token-based for the same reason as gitWrite: a regex over the raw command
+ * cannot see quoting, and is what the tokenizer replaced.
+ *
+ * The refusal names the form the templates already ask for, rather than
+ * inventing a competing spelling.
+ */
+export function unscopedTestRun(command: string, depth = 0): string | null {
+  for (const statement of statements(command)) {
+    if (!statement.trim()) continue;
+
+    const nested = depth < 4 ? nestedCommand(statement) : null;
+    if (nested) {
+      const reason = unscopedTestRun(nested, depth + 1);
+      if (reason) return `${reason} (inside: ${statement.trim()})`;
+    }
+
+    const tokens = commandTokens(statement);
+    const name = commandBase(tokens);
+    if (GATE_RUNNERS.has(name) || (SUBJECT_RUNNERS.has(name) && !namesASubject(tokens))) {
+      return `unscoped \`${name}\`: invoke it directly (\`pytest tests/foo.py\`)`;
     }
   }
   return null;

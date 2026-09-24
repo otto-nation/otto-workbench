@@ -4,6 +4,7 @@ import json
 import re
 import string
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,7 @@ from dataclasses import asdict
 from unittest.mock import patch
 
 from review.grammar import parse_ledger_line
-from review.prompt import BudgetLever, Cut, _build_common_sections
+from review.prompt import BudgetLever, Cut, _build_common_sections, _log_prompt_size
 from review.prompt import _fit_budget as _fit_budget_impl
 from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
 from review.prompt_sections import (
@@ -1319,3 +1320,25 @@ class TestTheLadderDoesNotReserveTwice:
         # the difference would be 100_000, and not at all it would be 0.
         lost = small.diff_allowance_bytes - large.diff_allowance_bytes
         assert lost == grew_by
+
+
+class TestPromptStatsConcurrentAppends:
+    """Concurrent group agents must not drop each other's prompt-stats records."""
+
+    def test_every_concurrent_append_is_kept(self, tmp_path):
+        job = _make_job()
+        job.review_file = str(tmp_path / "review.md")
+        n = 32
+
+        def write(i):
+            _log_prompt_size(
+                f"t{i}", f"p{i}", {}, job,
+                budget_bytes=10_000, model=TEST_MODEL,
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(write, range(n)))
+
+        stats = json.loads((tmp_path / "prompt-stats.json").read_text())
+        assert len(stats) == n
+        assert {row["template"] for row in stats} == {f"t{i}" for i in range(n)}

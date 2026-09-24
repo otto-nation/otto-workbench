@@ -1415,6 +1415,19 @@ _unscoped() {
   [ -z "$output" ]
   _unscoped 'bats --filter some_case'
   [ -z "$output" ]
+  _unscoped 'bats -f some_case'
+  [ -z "$output" ]
+}
+
+@test "review-guard: a selector flag belongs to one runner, not both" {
+  # -f is --filter to bats and --looponfail to pytest, which re-runs the whole
+  # suite on every file change. Reading it as a subject would allow the worst
+  # case this predicate exists to refuse.
+  _unscoped 'pytest -f'
+  [ -n "$output" ]
+  # --lf is pytest's; bats has no such flag, so it names nothing there.
+  _unscoped 'bats --lf'
+  [ -n "$output" ]
 }
 
 @test "review-guard: unscoped bats is refused, bats with a file is allowed" {

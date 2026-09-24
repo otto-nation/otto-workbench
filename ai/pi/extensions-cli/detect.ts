@@ -433,20 +433,15 @@ export function bypassesTheCommitScope(command: string, depth = 0): string | nul
  */
 const GATE_RUNNERS = new Set(["run-tests", "validate-all"]);
 
-/** Runners that are allowed once the agent names a subject. */
-const SUBJECT_RUNNERS = new Set(["pytest", "bats"]);
-
 /**
- * Flags that name a subject without a path.
- *
- * `-k` / `--keyword` and bats `--filter` / `-f` take a pattern; `--last-failed`
- * / `--lf` select the previous failures. Any of these means the agent named
- * something, which is the distinction that matters.
+ * Flags that name a subject, per runner. The sets are not interchangeable:
+ * `-f` is `--filter` to bats and `--looponfail` to pytest, which re-runs the
+ * whole suite on every file change — the worst case this predicate exists to
+ * refuse. A shared set would read that as the agent naming something.
  */
-const SELECTOR_FLAGS = new Set([
-  "-k", "--keyword",
-  "--last-failed", "--lf",
-  "-f", "--filter",
+const SUBJECT_RUNNERS = new Map<string, Set<string>>([
+  ["pytest", new Set(["-k", "--keyword", "--last-failed", "--lf"])],
+  ["bats", new Set(["-f", "--filter"])],
 ]);
 
 /**
@@ -463,15 +458,23 @@ const SELECTOR_FLAGS = new Set([
  * different command name and is not this. Upgrade if a fix pass is observed
  * running the whole suite either way.
  */
-function namesASubject(tokens: Token[]): boolean {
+function namesASubject(tokens: Token[], selectors: Set<string>): boolean {
+  const attached = selectors.has("-k") ? "-k" : null;
   for (let i = 1; i < tokens.length; i++) {
     const tok = tokens[i];
     if (tok.operator) break;
     const word = tok.value;
     if (word === "--") continue;
-    if (SELECTOR_FLAGS.has(word)) return true;
-    if (word.startsWith("--keyword=") || word.startsWith("--filter=")) return true;
-    if (word.length > 2 && word.startsWith("-k") && !word.startsWith("-k-")) {
+    if (selectors.has(word)) return true;
+    if (
+      [...selectors].some(
+        (flag) => flag.startsWith("--") && word.startsWith(`${flag}=`),
+      )
+    ) {
+      return true;
+    }
+    if (attached && word.length > 2 && word.startsWith(attached)
+        && !word.startsWith(`${attached}-`)) {
       return true;
     }
     if (word.startsWith("-")) continue;
@@ -509,7 +512,9 @@ export function unscopedTestRun(command: string, depth = 0): string | null {
 
     const tokens = commandTokens(statement);
     const name = commandBase(tokens);
-    if (GATE_RUNNERS.has(name) || (SUBJECT_RUNNERS.has(name) && !namesASubject(tokens))) {
+    const selectors = SUBJECT_RUNNERS.get(name);
+    if (GATE_RUNNERS.has(name)
+        || (selectors && !namesASubject(tokens, selectors))) {
       return `unscoped \`${name}\`: invoke it directly (\`pytest tests/foo.py\`)`;
     }
   }

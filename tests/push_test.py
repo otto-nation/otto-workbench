@@ -1192,6 +1192,64 @@ def test_a_remote_with_no_url_is_not_probed(monkeypatch):
     assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
+@pytest.mark.parametrize("output", [
+    "Host key verification failed.",
+    "ssh: Could not resolve hostname ghe.acme.com",
+    "ssh: connect to host ghe.acme.com port 22: Connection refused",
+    "ssh: connect to host ghe.acme.com port 22: Operation timed out",
+])
+def test_a_probe_that_never_reached_auth_says_nothing(monkeypatch, output):
+    """Silence is not evidence the credentials are fine.
+
+    Every one of these is a probe that failed before authentication was ever
+    attempted, so it carries no denial — and the "no denial found" branch reads
+    that as success and tells the operator their credentials are good. A host
+    key it will not verify is the live case: GitLab and Bitbucket both answer
+    that way from a machine that has never connected to them.
+    """
+    _ssh_probe(monkeypatch, output)
+    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+
+
+def test_a_timed_out_probe_says_nothing(monkeypatch):
+    """`proc.run` reports a timeout as a return code, not an exception.
+
+    Its stderr names the bound rather than anything ssh said, so the output is
+    non-empty and carries no denial — which lands on the "credentials are fine"
+    branch unless the code is checked.
+    """
+    monkeypatch.setattr(push.git_client, "out",
+                         lambda *a, **k: "git@github.com:o/r.git")
+    monkeypatch.setattr(
+        push.proc, "run",
+        lambda *a, **k: proc.CmdResult(
+            proc.TIMEOUT_RETURNCODE, "", "timed out after 30.0s"),
+    )
+    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+
+
+def test_the_probe_does_not_write_to_known_hosts(monkeypatch):
+    """A diagnostic must not pin trust as a side effect of explaining an error.
+
+    `StrictHostKeyChecking=accept-new` writes an unknown host into known_hosts,
+    which changes the machine's trust state because a push failed — and makes
+    the probe's second run behave differently from its first.
+    """
+    seen = {}
+    monkeypatch.setattr(push.git_client, "out",
+                         lambda *a, **k: "git@github.com:o/r.git")
+
+    def _capture(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return proc.CmdResult(255, "", "Permission denied (publickey).")
+
+    monkeypatch.setattr(push.proc, "run", _capture)
+    push.diagnose_ssh_auth("/tmp/wt", "origin")
+
+    assert "accept-new" not in seen["cmd"]
+    assert "UserKnownHostsFile=/dev/null" in seen["cmd"]
+
+
 def test_a_missing_ssh_binary_says_nothing_rather_than_raising(monkeypatch):
     """A container or sandbox with no `ssh` on `PATH` is a best-effort miss.
 

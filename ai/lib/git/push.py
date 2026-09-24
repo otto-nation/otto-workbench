@@ -602,6 +602,21 @@ _AUTH_DENIED = (
     "authentication failed",
 )
 
+# Probe outcomes that answer nothing about credentials. Without them the "no
+# denial found" branch below reads silence as success and tells the operator
+# their credentials are fine — on a timeout, on a host key it will not verify,
+# on a connection that never opened. Each is a different failure and none of
+# them is evidence either way, so the probe says nothing at all.
+_PROBE_INCONCLUSIVE = (
+    "host key verification failed",
+    "could not resolve hostname",
+    "connection refused",
+    "connection timed out",
+    "operation timed out",
+    "no route to host",
+    "network is unreachable",
+)
+
 
 @dataclass(frozen=True)
 class SshTarget:
@@ -693,7 +708,14 @@ def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
     try:
         probe = proc.run(
             ["ssh", "-v", "-o", "BatchMode=yes",
-             "-o", "StrictHostKeyChecking=accept-new", "-T", *target.args],
+             # `no` rather than `accept-new`: this is a diagnostic, and
+             # `accept-new` writes an unknown host into known_hosts. Pinning
+             # trust as a side effect of explaining an error is a change the
+             # operator never asked for, and it would make the probe's second
+             # run behave differently from its first.
+             "-o", "StrictHostKeyChecking=no",
+             "-o", "UserKnownHostsFile=/dev/null",
+             "-T", *target.args],
             # A round trip to a remote host, bounded by latency rather than by
             # payload — exactly what `timeouts.NETWORK` describes.
             timeout=timeouts.NETWORK,
@@ -702,6 +724,10 @@ def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
         return ""
     output = probe.combined_output.lower()
     if not output:
+        return ""
+    if probe.returncode == proc.TIMEOUT_RETURNCODE:
+        return ""
+    if any(marker in output for marker in _PROBE_INCONCLUSIVE):
         return ""
     if not any(marker in output for marker in _AUTH_DENIED):
         # ssh authenticated, so the credentials are not what the push tripped

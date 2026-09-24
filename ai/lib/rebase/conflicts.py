@@ -37,15 +37,33 @@ CONFLICT_CONTEXT_LINES = 30
 CHUNKED_MIN_LINES = 200
 CHUNKED_MAX_CONFLICT_RATIO = 0.5
 
-# How many lines of a block's own context a resolution may repeat before it is
-# read as having echoed the context back rather than resolved the conflict.
+# How many *substantive* context lines a resolution may repeat before it is read
+# as having echoed the context back rather than resolved the conflict.
 #
-# One is ordinary and innocent: a resolution legitimately ends with a blank line
-# or a closing brace that the following context also starts with. Two identical
-# lines in sequence, at exactly the block boundary, is not a coincidence worth
-# accommodating — and the cost of being wrong is one retry, against a corrupted
-# merge for the miss in the other direction.
-MAX_ECHOED_CONTEXT_LINES = 1
+# Zero, because the count this is measured against already discounts everything
+# that matches by coincidence: lines the conflict region itself held, and the
+# blank lines and bare block-closers below. What is left is a line that says
+# something, sitting outside the region being replaced and reproduced anyway —
+# for which there is no innocent explanation, so one is enough.
+#
+# The budget belongs here rather than on raw matched lines. Against raw lines it
+# has to be loose enough for a resolution that ends where the context begins,
+# and a threshold loose enough for two coincidental blanks is also loose enough
+# for a real one-line echo to pass.
+#
+# ceiling: an exact-match line filter, which cannot see a resolution that echoes
+# its context with the indentation changed or a comment reflowed. Upgrade to a
+# similarity ratio if a rejected-then-retried resolution is ever traced to an
+# echo this missed on the first pass.
+MAX_ECHOED_CONTEXT_LINES = 0
+
+# Lines that carry no evidence of an echo when they match. A run of blank lines
+# or bare block-closers is filler both sides produce independently: a resolution
+# ending in two blanks where the context also opens with two is a coincidence,
+# not a model repeating what it was shown. Counting them made the guard reject
+# correct resolutions in ordinary C-like and Go code, which costs a retry every
+# time and trains no one to trust it.
+_STRUCTURAL_LINES = frozenset({"", "}", "};", ")", ");", "]", "];", "{", "end"})
 
 
 # ── Generated-file detection ──────────────────────────────────────────────
@@ -265,6 +283,18 @@ def _overlap(first: list[str], second: list[str]) -> int:
     return longest
 
 
+def _substantive(lines: list[str], owned: set[str]) -> int:
+    """How many of *lines* are evidence of an echo rather than coincidence.
+
+    Discounts what the conflict region already held and what both sides produce
+    independently — see ``_STRUCTURAL_LINES``.
+    """
+    return sum(
+        1 for line in lines
+        if line not in owned and line.strip() not in _STRUCTURAL_LINES
+    )
+
+
 def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
     """How many lines of *block*'s context *resolution* repeated back.
 
@@ -279,6 +309,11 @@ def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
     Lines the conflict region itself contains are not counted. A resolution
     ending with a line that was genuinely part of the conflict is doing its job,
     even when the following context happens to open with that same line.
+
+    Neither are blank lines and bare block-closers, for the same reason one line
+    of overlap is tolerated at all: they are filler that matches by coincidence.
+    What is counted is substance — a line that says something, reproduced from
+    the context on the other side of the boundary.
     """
     owned = set(block.conflict.splitlines())
     res = resolution.splitlines()
@@ -290,9 +325,14 @@ def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
     n_tail = _overlap(res, after)
     n_head = _overlap(before, res)
 
-    novel_tail = sum(1 for line in after[:n_tail] if line not in owned)
-    novel_head = sum(1 for line in before[len(before) - n_head:] if line not in owned)
-    return max(novel_tail, novel_head)
+    return max(
+        _substantive(after[:n_tail], owned),
+        # The *tail* of the preceding context, which is the part adjacent to the
+        # conflict's start — mirroring `after`'s head being adjacent to its end.
+        # Both are the lines that sit just outside what `splice_resolutions`
+        # replaces, so both are the ones a resolution can duplicate.
+        _substantive(before[len(before) - n_head:], owned),
+    )
 
 
 def parse_chunked_resolutions(

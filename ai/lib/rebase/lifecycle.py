@@ -50,11 +50,13 @@ RunMode = rebase_types.RunMode
 # operator's own config — silently replays it. That is how a resolution that
 # duplicated a shell function came back after being fixed by hand.
 #
-# The reuse this gives up was measured before it was removed: across 371
-# recorded conflict resolutions in this machine's trail, the replay path fired
-# 0 times. rerere keys on the exact hunk, and a rebase meets each distinct
-# conflict once, so the cache only ever pays off across runs — which is the
-# same cross-run reach that made it unsafe here.
+# The reuse this gives up was measured before it was removed rather than assumed
+# away: at the time, the trail held 371 conflict resolutions and no replay at
+# all. The standing reason behind that number is structural — rerere keys on the
+# exact hunk and a rebase meets each distinct conflict once, so the cache can
+# only pay off across runs, which is the same cross-run reach that made it
+# unsafe. Re-measure with `otto-log` before reviving this; do not trust the
+# count above to have stayed true.
 RERERE_CONFIG = {"rerere.enabled": "false"}
 
 # `core.editor=true` is what keeps an unattended run unattended: git opens the

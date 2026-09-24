@@ -154,6 +154,41 @@ class TestEchoedContextLines:
         n = conflicts.echoed_context_lines("    x();\n}\n", block)
         assert n <= conflicts.MAX_ECHOED_CONTEXT_LINES
 
+    def test_a_run_of_blank_lines_is_not_an_echo(self):
+        """Filler both sides produce independently, not content repeated back.
+
+        Counting raw matched lines rejected this: a resolution ending in two
+        blank lines where the context also opens with two scores a two-line
+        overlap while nothing was echoed at all.
+        """
+        block = _ctx_block(after="\n\n# next\ndef g():\n")
+        n = conflicts.echoed_context_lines("    return x\n\n\n", block)
+        assert n <= conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_stacked_closing_braces_are_not_an_echo(self):
+        """The C-like and Go shape: several bare closers in a row.
+
+        Three of them overlap exactly where a nested block ends and the next
+        declaration begins, which is ordinary code rather than a model
+        repeating its context.
+        """
+        block = _ctx_block(after="}\n}\n}\nint main(void) {\n")
+        n = conflicts.echoed_context_lines("    x();\n}\n}\n}\n", block)
+        assert n <= conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_one_substantive_line_is_an_echo(self):
+        """The budget is zero once filler is discounted.
+
+        A line that says something, sitting outside the region being replaced
+        and reproduced anyway, has no innocent explanation — so it does not need
+        a second line beside it to be read as an echo.
+        """
+        block = _ctx_block(after="\n# next thing\ndef other():\n")
+        n = conflicts.echoed_context_lines(
+            "    return a + b\n\n# next thing\n", block,
+        )
+        assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
+
     def test_two_echoed_lines_are_caught(self):
         n = conflicts.echoed_context_lines(
             "    return a + b\n\n# next thing\n", _ctx_block(),
@@ -168,6 +203,25 @@ class TestEchoedContextLines:
         """A model can echo the context it was shown on either side."""
         n = conflicts.echoed_context_lines(
             _BEFORE + "    return a + b\n", _ctx_block(),
+        )
+        assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_an_echo_on_both_sides_at_once_is_caught(self):
+        """Why `max` of the two sides is enough, rather than their sum.
+
+        A resolution can echo the context at its head and its tail in the same
+        answer. `max` reports the larger of the two rather than the total, which
+        would matter if a single echoed line were tolerated — with the budget at
+        zero, either side alone already fails, so the two can never combine into
+        a verdict neither reaches.
+        """
+        block = rebase_types.ConflictBlock(
+            index=1, start=0, end=4, conflict=_CONFLICT,
+            context_before="import os\nCONST = 1\n",
+            context_after="def tail():\n    pass\n",
+        )
+        n = conflicts.echoed_context_lines(
+            "CONST = 1\n    merged\ndef tail():\n", block,
         )
         assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
 

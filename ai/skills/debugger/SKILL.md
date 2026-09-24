@@ -4,7 +4,6 @@ description: "Systematic code-level bug diagnosis — traces through source code
 source: otto-workbench/ai/skills/debugger/SKILL.md
 agent: debugger
 trigger: "Loaded automatically for debugging work. Pi has no agent files, so the protocol arrives as a skill."
-skip: "Do not use when this session will implement the fix — superpowers:systematic-debugging owns that path and its fourth phase is the implementation. This protocol ends at a diagnosis and modifies nothing."
 ---
 
 <!-- Installed to Pi's discovery root only. Claude Code loads the same protocol

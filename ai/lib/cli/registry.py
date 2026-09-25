@@ -63,8 +63,8 @@ class CommandSpec:
       is *not* because True is the safer side — it is the side that ate
       `pr create --title`. What makes the default acceptable is that the one
       dangerous combination is already asserted against: a command that is
-      scriptless (so `_delegate_value_flags` has no parser to probe and the
-      scan degrades to "first bare token wins") *and* target-taking is covered
+      scriptless (so `_delegate_value_flags` has no delegate parser to read and
+      the scan degrades to "first bare token wins") *and* target-taking is covered
       by `test_a_command_with_no_delegate_declares_no_value_taking_flag`, which
       is parametrized over exactly that set and fails the build the moment one
       of them grows a value-taking flag. `need` has no such check available —

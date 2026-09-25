@@ -5,20 +5,21 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from conftest import add_worktree, frontmatter_keys, git_in, load_script, remote_repo
+from conftest import add_worktree, frontmatter_keys, git_in, remote_repo
 
-BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = REPO_ROOT / "ai" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
 
-wiki = load_script("wiki_cli", BIN_DIR / "wiki")
-
-# `wiki` inserts `ai/lib` onto sys.path as a side effect of loading, which is
-# what makes this importable without a second sys.path.insert of its own.
+from cli import wiki  # noqa: E402
 from config.workbench_config import WikiConfig, WorkbenchConfig  # noqa: E402
 
 # Comfortably past the 180-day `staleness_threshold_days` default, so a test
@@ -323,7 +324,6 @@ class TestVaultResolution:
         assert wiki.main(["path", str(repo)]) == 2
         assert str(entry) in capsys.readouterr().err
 
-    # passes-at-base: --wiki already won before there was a vault to lose to, and this pins that adding one did not demote it
     def test_an_explicit_wiki_beats_the_vault(self, tmp_path, monkeypatch, capsys):
         repo = self._repo(tmp_path)
         self._vault(tmp_path, monkeypatch)
@@ -661,7 +661,6 @@ class TestBackup:
         assert wiki.main(["status", str(root)]) == 0
         assert "wiki backup" not in capsys.readouterr().out
 
-    # passes-at-base: pins the JSON contract the status prompt was deliberately kept out of
     def test_status_json_carries_no_backup_key(self, tmp_path, capsys):
         root = self._base(tmp_path)
         assert wiki.main(["status", "--json", str(root)]) == 0
@@ -864,12 +863,10 @@ class TestSymlinkedEntry:
         assert wiki.main(["status", "--json", str(repo)]) == 0
         assert json.loads(capsys.readouterr().out)["path"] == str(target)
 
-    # passes-at-base: the explicit branch already resolved, and this pins that it agrees with the walk's new answer
     def test_an_explicit_link_resolves_to_the_same_path(self, tmp_path):
         repo, target = self._linked(tmp_path)
         assert wiki.find_wiki(tmp_path, explicit=str(repo / "wiki")) == target
 
-    # passes-at-base: asserts the pre-existing is_wiki behaviour the vault ordering is built on, which must keep holding rather than start to
     def test_a_dangling_link_is_not_a_wiki(self, tmp_path):
         """Why config has to be consulted before the walk, once a vault exists.
 

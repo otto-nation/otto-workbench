@@ -682,6 +682,7 @@ class TestTail:
         assert proc.tail("", limit=10) == ""
 
 
+# passes-at-base: proc was stdlib-only before this branch too — the point is that it still is, after a commit that briefly made it not
 def test_proc_imports_nothing_from_ai_lib_but_timeouts():
     """The module docstring's stdlib-only claim, made structural.
 

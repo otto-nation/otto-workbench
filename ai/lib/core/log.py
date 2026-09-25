@@ -56,3 +56,15 @@ def dim(msg: str) -> None:
 def blank() -> None:
     with _print_lock:
         print(file=sys.stderr)
+
+
+def interrupted() -> None:
+    """What an entry point says when SIGINT arrives.
+
+    Here rather than beside `proc.install_interrupt_handler`, which takes it as
+    a callback: `proc` is stdlib-only by declaration and cannot reach `log`,
+    while every entry point installing a handler already depends on this
+    module.
+    """
+    blank()
+    info("Interrupted")

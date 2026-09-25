@@ -995,8 +995,8 @@ def test_every_command_with_a_delegate_has_a_parser_factory():
             == {name for name, spec in registry.COMMANDS.items() if spec.script})
 
 
-@pytest.mark.parametrize("factory", sorted(pr_cli._PARSER_FACTORIES.values()))
-def test_a_parser_factory_takes_no_arguments(factory):
+@pytest.mark.parametrize("command", sorted(registry.COMMANDS))
+def test_a_parser_factory_takes_no_arguments(command):
     """`pr` calls these with none, mid-classification, before dispatch.
 
     A factory that grew a parameter — even a defaulted one — would be a
@@ -1004,7 +1004,14 @@ def test_a_parser_factory_takes_no_arguments(factory):
     grew a *required* parameter would surface as a TypeError traceback out of
     `pr`'s positional scan rather than from the delegate that owns it. Nothing
     else makes this contract structural.
+
+    Parametrized over the registry rather than over `_PARSER_FACTORIES`, whose
+    absence at the merge base would fail collection for this whole file and
+    take every other test's base result with it.
     """
+    factory = pr_cli._PARSER_FACTORIES.get(command)
+    if factory is None:
+        pytest.skip(f"{command} has no delegate parser")
     module_name, attr = factory.split(":", 1)
     build = getattr(importlib.import_module(module_name), attr)
     assert inspect.signature(build).parameters == {}

@@ -412,18 +412,13 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
         trail.finish()
 
 
-def _announce_interrupt() -> None:
-    log.blank()
-    log.info("Interrupted")
-
-
 def main():
     if "--tool-schema" in sys.argv:
         json.dump(_tool_schema(), sys.stdout, indent=2)
         sys.stdout.write("\n")
         sys.exit(0)
 
-    proc.install_interrupt_handler(_announce_interrupt)
+    proc.install_interrupt_handler(log.interrupted)
 
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so

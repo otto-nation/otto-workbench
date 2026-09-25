@@ -2842,11 +2842,14 @@ def test_an_in_process_caller_can_keep_its_own_signal_handler(cr, monkeypatch):
     silently replacing its caller's for the rest of the run.
     """
     installed = []
-    monkeypatch.setattr(signal, "signal",
-                        lambda *a: installed.append(a[0]))
+    monkeypatch.setattr(signal, "signal", lambda *a: installed.append(a[0]))
+
+    def signals_installed_by(flag):
+        installed.clear()
+        with pytest.raises(RuntimeError):
+            cr.main([], install_signal_handler=flag)
+        return list(installed)
+
     with patch.object(cr, "build_parser", side_effect=RuntimeError("stop")):
-        for flag, expected in ((False, []), (True, [signal.SIGINT])):
-            installed.clear()
-            with pytest.raises(RuntimeError):
-                cr.main([], install_signal_handler=flag)
-            assert installed == expected
+        assert signals_installed_by(False) == []
+        assert signals_installed_by(True) == [signal.SIGINT]

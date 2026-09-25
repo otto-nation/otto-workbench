@@ -350,13 +350,17 @@ def test_no_cli_module_installs_a_signal_handler():
     legitimate installer is the entry point that owns the process —
     `proc.install_interrupt_handler`, called from a `main` or a shim.
     """
-    offenders = []
-    for path in sorted((LIB_DIR / "cli").glob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text())):
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "signal"
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "signal"):
-                offenders.append(f"{path.name}:{node.lineno}")
+    def installs_a_handler(node):
+        return (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "signal"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "signal")
+
+    offenders = [
+        f"{path.name}:{node.lineno}"
+        for path in sorted((LIB_DIR / "cli").glob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text()))
+        if installs_a_handler(node)
+    ]
     assert offenders == [], offenders

@@ -64,11 +64,26 @@ no lock: it would report success while excluding nobody. They run under a
 ``pr review`` that holds the real lock across the subprocess, and a direct
 invocation of either is undocumented.
 
-The pass-through is an exact string match on the target and does not prove the
-flock is ours. A value exported into a shell by hand, or left behind by a run
-killed before its ``finally``, therefore reads as ownership. Proving it would
-mean re-probing a lock we already hold, which fails precisely because we hold
-it; the marker is the only thing that can answer, so it is trusted.
+Ownership is asked twice, in order, and the two questions differ in what they
+can prove. First a process-local registry of the flocks this process itself
+took: that one *is* proof — we opened the descriptor and took the flock here,
+so a hit is a lock we hold and re-taking it is a no-op rather than a refusal.
+Only on a miss is the env marker consulted, and it remains an exact string
+match that does not prove the flock is ours. A value exported into a shell by
+hand, or left behind by a run killed before its ``finally``, therefore still
+reads as ownership. Proving it would mean re-probing a lock another process in
+our tree holds, which fails precisely because it is held; the marker is the
+only thing that can answer for that case, so it is trusted there — and only
+there.
+
+That registry is what lets one process hold locks on several targets at once.
+``flock`` is not re-entrant across file descriptors, and the marker is a single
+value, so a process taking a second lock would otherwise lose the name of the
+first and refuse its own lock on re-entry. The marker is still written, because
+it is the only channel a subprocess delegate can read, but it is derived from
+the registry rather than saved and restored per call: a ``claim_for_process``
+take outlives the block that was holding the value it displaced, so restoring
+that value would clear a marker whose flock is still held.
 """
 
 # doc-group: platform
@@ -77,11 +92,13 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import dataclasses
 import fcntl
 import json
 import os
 import subprocess
 import sys
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -99,9 +116,38 @@ LOCK_ENV = "WORKBENCH_RUN_LOCK"
 TREE_LOCK_FILE = "workbench-run-tree.lock"
 TREE_LOCK_ENV = "WORKBENCH_RUN_LOCK_TREE"
 
-# Handles held for the lifetime of the process by claim_for_process. Kept
-# only so they stay open — the kernel drops their flocks when we exit.
-_HELD: list = []
+@dataclasses.dataclass
+class _Held:
+    """One flock this process holds, and how many takers are counted on it.
+
+    ``depth`` is what makes a take and its release symmetric without demanding
+    that they nest. ``claim_for_process`` contributes a taker it never returns,
+    so a surrounding ``acquire`` block ending cannot drop a lock the claim
+    promised to hold for the life of the process.
+    """
+
+    handle: object
+    path: Path
+    value: str
+    var: str
+    depth: int = 1
+
+
+# The flocks this process holds, keyed on the lock file's path and ordered by
+# recency of use rather than insertion — a re-claim moves its key to the end,
+# so the last entry is always the innermost lock this process still holds.
+# Keyed on the path rather than the marker value because the path is the thing
+# flock is taken on, so "is this already ours" and "is this key present" are
+# one question — and because it keeps a target dir and a git dir that happen
+# to be the same directory as two distinct locks.
+_HELD: OrderedDict[str, _Held] = OrderedDict()
+
+# What each marker said before this process took its first lock for that var,
+# so releasing the last one hands back what a parent exported rather than
+# clearing it.
+_INHERITED: dict[str, str | None] = {}
+
+_ATEXIT_REGISTERED = False
 
 
 class LockBusy(RuntimeError):
@@ -196,18 +242,130 @@ def _restore_env(previous: str | None, var: str = LOCK_ENV) -> None:
     os.environ[var] = previous
 
 
-def _prepare(target_dir: Path):
-    """Open the target's lock file, or return None when it is already ours."""
+@dataclasses.dataclass(frozen=True)
+class _LockSpec:
+    """Which flock to take, and what to call it when it is refused."""
+
+    value: str
+    path: Path
+    var: str
+    subject: str
+
+
+def _target_spec(target_dir: Path) -> _LockSpec:
+    """Name the target's lock. Resolution only — nothing is opened here."""
     root = Path(target_dir)
-    target = str(root)
-    # Already ours: pass through rather than deadlock on our own parent.
-    if os.environ.get(LOCK_ENV) == target:
-        return None
-    root.mkdir(parents=True, exist_ok=True)
-    path = root / LOCK_FILE
+    return _LockSpec(str(root), root / LOCK_FILE, LOCK_ENV, "target")
+
+
+def _sync_marker(var: str) -> None:
+    """Point *var* at the innermost lock this process still holds for it.
+
+    Derived rather than saved-and-restored per call, because
+    ``claim_for_process`` takes a lock it never gives back: a take can outlive
+    the block that was holding the value it displaced, and restoring that value
+    would clear a marker whose flock is still held. "Innermost" is recency of
+    use, not of first acquisition — ``_HELD`` is kept ordered by that via
+    ``move_to_end`` on every take, so the last matching entry, found by walking
+    from the end, is the one a re-claim most recently touched.
+    """
+    # ceiling: the marker stays a single value, so a subprocess sees only the
+    # single innermost lock this process holds for that var, not every key it
+    # holds. That is safe as long as a lock-taking delegate is only ever
+    # spawned to work on the one target (or checkout) named by that innermost
+    # lock — true today, since the five that lock are spawned only by `pr`'s
+    # dispatch and by `cmd_fix`, which resolve a single target and forward it.
+    # Upgrade to a separated multi-value marker if that stops holding.
+    for held in reversed(_HELD.values()):
+        if held.var == var:
+            os.environ[var] = held.value
+            return
+    _restore_env(_INHERITED.pop(var, None), var)
+
+
+def _register_atexit() -> None:
+    """Arrange for the exit walker to run, once however many locks we take."""
+    global _ATEXIT_REGISTERED
+    if _ATEXIT_REGISTERED:
+        return
+    atexit.register(_release_all)
+    _ATEXIT_REGISTERED = True
+
+
+def _take(spec: _LockSpec, command: str, started: str) -> bool:
+    """Take one lock, and say whether this call owes a matching ``_drop``.
+
+    Ownership is asked registry-first and marker-second, and the order is the
+    correctness argument: the registry is proof that the flock is ours, while
+    the marker is hearsay that a stale or hand-exported value can forge. Asking
+    the registry first means such a value can no longer shadow a real entry.
+
+    Returns False only for the marker pass-through — a lock some other process
+    in our tree holds, which is not ours to release.
+    """
+    key = str(spec.path)
+    held = _HELD.get(key)
+    if held is not None:
+        held.depth += 1
+        _HELD.move_to_end(key)
+        _sync_marker(spec.var)
+        return True
+    if os.environ.get(spec.var) == spec.value:
+        return False
+    spec.path.parent.mkdir(parents=True, exist_ok=True)
     # "a+" rather than "w": opening must not destroy the current holder's
     # record before we know whether we can take the lock away from them.
-    return open(path, "a+"), path, target
+    handle = open(spec.path, "a+")
+    try:
+        _claim(handle, spec.path, command, started, spec.subject)
+    except BaseException:
+        # Closed without a release stamp: we never held this flock, and
+        # annotating it would write "released" onto the live holder's record.
+        handle.close()
+        raise
+    _INHERITED.setdefault(spec.var, os.environ.get(spec.var))
+    _HELD[key] = _Held(handle, spec.path, spec.value, spec.var)
+    _register_atexit()
+    _sync_marker(spec.var)
+    return True
+
+
+def _drop(key: str) -> None:
+    """Return one taker's hold, releasing the flock when it was the last."""
+    held = _HELD.get(key)
+    if held is None:
+        return
+    held.depth -= 1
+    if held.depth > 0:
+        return
+    del _HELD[key]
+    _sync_marker(held.var)
+    # The record stays on disk: flock releases on close, and the text is what
+    # makes the next contender's error message readable. Stamped as released
+    # first, so what stays is not mistaken for a live holder by anyone reading
+    # the file later.
+    _note_release(held.handle, held.path)
+    fcntl.flock(held.handle, fcntl.LOCK_UN)
+    held.handle.close()
+
+
+def _release_all() -> None:
+    """Stamp and drop every lock this process still holds, innermost first.
+
+    Reverse of the order they were taken, mirroring the target-then-checkout
+    order ``acquire`` nests them in. Best-effort per entry: one bad descriptor
+    must not strand the records of the locks beside it.
+    """
+    global _ATEXIT_REGISTERED
+    for key in reversed(list(_HELD)):
+        held = _HELD.get(key)
+        if held is not None:
+            held.depth = 1
+        with contextlib.suppress(OSError, ValueError):
+            _drop(key)
+    _HELD.clear()
+    atexit.unregister(_release_all)
+    _ATEXIT_REGISTERED = False
 
 
 def _git_dir(worktree: Path) -> Path | None:
@@ -237,47 +395,37 @@ def _git_dir(worktree: Path) -> Path | None:
     return Path(path) if path else None
 
 
-def _prepare_tree(worktree: Path | None):
-    """Open the checkout's lock file, or None when there is nothing to lock.
+def _tree_spec(worktree: Path | None) -> _LockSpec | None:
+    """Name the checkout's lock, or None when there is nothing to lock.
 
-    None covers three cases that all mean the same thing here — no worktree was
-    named, git cannot answer for the path, or this process tree already holds
-    that checkout. A run whose worktree cannot be resolved keeps the target
-    lock alone, which is what it had before this lock existed.
+    None covers the two cases that mean there is no checkout lock to take — no
+    worktree was named, or git cannot answer for the path. A run whose worktree
+    cannot be resolved keeps the target lock alone, which is what it had before
+    this lock existed. Whether we already hold it is a different question and
+    ``_take`` answers it.
     """
     if worktree is None:
         return None
     git_dir = _git_dir(Path(worktree))
     if git_dir is None:
         return None
-    tree = str(git_dir)
-    if os.environ.get(TREE_LOCK_ENV) == tree:
-        return None
-    return open(git_dir / TREE_LOCK_FILE, "a+"), git_dir / TREE_LOCK_FILE, tree
+    return _LockSpec(
+        str(git_dir), git_dir / TREE_LOCK_FILE, TREE_LOCK_ENV, "checkout",
+    )
 
 
 @contextlib.contextmanager
-def _holding(prepared, command: str, started: str, var: str,
-             subject: str = "target"):
-    """Hold one prepared lock, restoring *var* however the block ends."""
-    if prepared is None:
+def _holding(spec: _LockSpec | None, command: str, started: str):
+    """Hold one lock for the block, returning our taker however it ends."""
+    if spec is None:
         yield
         return
-    handle, path, value = prepared
-    previous = os.environ.get(var)
+    mine = _take(spec, command, started)
     try:
-        _claim(handle, path, command, started, subject)
-        os.environ[var] = value
         yield
     finally:
-        _restore_env(previous, var)
-        # The record stays on disk: flock releases on close, and the text is
-        # what makes the next contender's error message readable. Stamped as
-        # released first, so what stays is not mistaken for a live holder by
-        # anyone reading the file later.
-        _note_release(handle, path)
-        fcntl.flock(handle, fcntl.LOCK_UN)
-        handle.close()
+        if mine:
+            _drop(str(spec.path))
 
 
 @contextlib.contextmanager
@@ -297,9 +445,8 @@ def acquire(target_dir: Path, command: str, started: str, *,
     Target first, then checkout, always in that order and both non-blocking, so
     two runs taking the pair cannot deadlock against each other.
     """
-    with _holding(_prepare(target_dir), command, started, LOCK_ENV):
-        with _holding(_prepare_tree(worktree), command, started,
-                      TREE_LOCK_ENV, "checkout"):
+    with _holding(_target_spec(target_dir), command, started):
+        with _holding(_tree_spec(worktree), command, started):
             yield
 
 
@@ -315,24 +462,24 @@ def claim_for_process(target_dir: Path, command: str, started: str, *,
     hook does that part explicitly, the same way ``_holding`` does for
     ``acquire``'s context-manager path.
 
+    Re-claiming a lock this process already holds is a no-op, and claiming a
+    second target does not disturb the first. A caller that wants its lock
+    released at the end of a phase rather than at exit wants ``acquire``.
+
     ``worktree`` is the checkout this run writes to; see ``acquire``.
     """
-    for prepared, var, subject in (
-        (_prepare(target_dir), LOCK_ENV, "target"),
-        (_prepare_tree(worktree), TREE_LOCK_ENV, "checkout"),
-    ):
-        if prepared is None:
+    for spec in (_target_spec(target_dir), _tree_spec(worktree)):
+        if spec is None:
             continue
-        handle, path, value = prepared
         try:
-            _claim(handle, path, command, started, subject)
+            # The taker is deliberately never returned: holding for the life of
+            # the process is this function's whole contract, and the uncounted
+            # depth is what stops an enclosing ``acquire`` block from dropping
+            # the flock when it ends.
+            _take(spec, command, started)
         except LockBusy as exc:
-            handle.close()
             report_busy(exc)
             sys.exit(1)
-        os.environ[var] = value
-        _HELD.append(handle)
-        atexit.register(_note_release, handle, path)
 
 
 def is_held(target_dir: Path) -> bool:
@@ -345,8 +492,12 @@ def is_held(target_dir: Path) -> bool:
     exclusive lock is what distinguishes them: it fails precisely when someone
     holds it.
 
-    Deliberately ignores the env markers: a caller inside a holder's own process
-    tree is asking about the lock, not about its own ancestry.
+    Deliberately ignores the env markers *and* the process-local registry: a
+    caller inside a holder's own process tree is asking about the lock, not
+    about its own ancestry, and the registry is only a more reliable form of
+    the same ancestry. Consulting it would add no correct answer either —
+    ``flock`` conflicts across open file descriptions, so probing from a second
+    descriptor already reports our own lock as held.
     """
     path = Path(target_dir) / LOCK_FILE
     if not path.exists():

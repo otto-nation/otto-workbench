@@ -2339,8 +2339,14 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     assert record["command"].startswith("claude-review")
     assert record["started"]
 
-    # A fresh run, with none of our env inherited, must be turned away.
+    # A fresh run, with none of our bookkeeping inherited, must be turned away.
+    # Both the marker and the registry entry go: either alone would pass it
+    # through as the holder rather than letting the flock decide. The popped
+    # entry stays bound — it is the only reference to the open file, and a
+    # collected handle would close the descriptor and free the lock.
     monkeypatch.delenv(run_lock.LOCK_ENV, raising=False)
+    disowned = run_lock._HELD.pop(str(target / run_lock.LOCK_FILE), None)
+    assert disowned is not None
     with pytest.raises(SystemExit) as exc:
         run_lock.claim_for_process(target, command="claude-review --self", started="t")
     assert exc.value.code == 1

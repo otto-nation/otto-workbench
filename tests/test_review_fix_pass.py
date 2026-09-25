@@ -27,6 +27,7 @@ from agent import invoke as agent_invoke
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
 from fix import engine as fix_engine
+from fix import gate as fix_gate
 from git import land
 from git import push
 from review import document as review_document
@@ -327,7 +328,7 @@ class TestTheVerifyGate:
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
-            verdicts={"M1": fix_engine.Verdict(
+            verdicts={"M1": fix_gate.Verdict(
                 ok=False, detail="test_helper does not exist",
             )},
         )
@@ -350,7 +351,7 @@ class TestTheVerifyGate:
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
-            verdicts={"M1": fix_engine.Verdict(ok=True, detail="suite green")},
+            verdicts={"M1": fix_gate.Verdict(ok=True, detail="suite green")},
         )
 
         assert "- [x] **[M1]**" in Path(job.review_file).read_text()

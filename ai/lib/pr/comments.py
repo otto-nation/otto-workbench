@@ -572,45 +572,24 @@ def fetch_issue_comments(
 
 
 def fetch_review_body_comments(
-    repo: str, pr_number: int, my_login: str,
-    pr_data: PRData | None = None,
+    repo: str, pr_number: int, my_login: str, pr_data: PRData,
 ) -> list[dict]:
-    """Fetch review-level body comments (reviews with substantive body text).
+    """Review-level body comments — reviews carrying substantive body text.
 
-    These are top-level review bodies — distinct from inline code comments
-    (review threads) and issue-level discussion comments.
+    Top-level review bodies, distinct from inline code comments (review
+    threads) and from issue-level discussion.
+
+    ``pr_data`` is required rather than optional, which is the one thing worth
+    explaining. This had a REST fallback for a caller holding no ``PRData``,
+    and no such caller exists. Keeping it would have been worse than dead: the
+    reviews REST payload carries no edit stamp — not ``lastEditedAt``, not even
+    ``updated_at`` — so a run taking that path could not tell an edited review
+    body from an untouched one, and would have reported a reviewer's added
+    demand as already seen. A path that silently degrades a correctness check
+    is not a fallback; the type now says the data is required and the caller
+    that cannot supply it fails loudly instead.
     """
-    if pr_data is not None:
-        return pr_data.review_body_comments(my_login)
-
-    reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100", default=[])
-    result = []
-    my_login_lower = my_login.lower()
-    for r in reviews:
-        user = r.get("user", {}).get("login", "")
-        if user.lower() == my_login_lower:
-            continue
-        state = r.get("state", "")
-        if state == "PENDING":
-            continue
-        body = (r.get("body") or "").strip()
-        if not body:
-            continue
-        result.append({
-            "id": r.get("id"),
-            "user": user,
-            "body": body,
-            "state": state,
-            "submitted_at": r.get("submitted_at", ""),
-            # The reviews REST payload carries no edit stamp at all — not an
-            # equivalent of `lastEditedAt`, and not `updated_at`. So an edited
-            # review body is undetectable on this path, and "" says the stamp
-            # is unknown rather than claiming the review is unedited. The
-            # GraphQL path above is the one every real run takes; this fallback
-            # is for a caller holding no PRData.
-            "last_edited_at": "",
-        })
-    return result
+    return pr_data.review_body_comments(my_login)
 
 
 def resolve_thread(thread_id: str) -> bool:

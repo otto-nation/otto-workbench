@@ -812,18 +812,30 @@ class TestRestEditStamp:
     def test_a_payload_missing_both_fields_has_no_stamp(self):
         assert pr_comments._rest_edit_stamp({}) == ""
 
-    def test_the_paths_agree_on_an_untouched_comment(self):
-        """The regression this normalisation exists to prevent.
-
-        Both spellings of "never edited" must reduce to the same recorded
-        stamp, or seen-ness flips every time the fetch path changes.
-        """
-        graphql_stamp = None or ""       # what non_self_issue_comments records
-        rest_stamp = pr_comments._rest_edit_stamp({
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-        })
-        assert graphql_stamp == rest_stamp
+    # The payloads below are real, taken from cli/cli#9000: comment 2082656785
+    # was edited, the other two were not. Both APIs were queried for the same
+    # three comments so the two columns are the same comments, not a guess at
+    # what GitHub sends.
+    @pytest.mark.parametrize("graphql_last_edited,rest,expected", [
+        # An untouched comment: GraphQL nulls the field, REST equates the two
+        # timestamps. Both must reduce to "" or seen-ness flips whenever the
+        # fetch path changes, and every comment is re-reported forever.
+        (None,
+         {"created_at": "2024-04-26T21:44:55Z", "updated_at": "2024-04-26T21:44:55Z"},
+         ""),
+        # An edited one: both APIs report the same instant, so the recorded
+        # stamp is the same string either way.
+        ("2024-04-29T13:04:57Z",
+         {"created_at": "2024-04-29T12:56:41Z", "updated_at": "2024-04-29T13:04:57Z"},
+         "2024-04-29T13:04:57Z"),
+    ])
+    def test_the_two_fetch_paths_record_the_same_stamp(
+        self, graphql_last_edited, rest, expected,
+    ):
+        """The regression this normalisation exists to prevent."""
+        graphql_stamp = graphql_last_edited or ""   # non_self_issue_comments
+        assert graphql_stamp == expected
+        assert pr_comments._rest_edit_stamp(rest) == expected
 
 
 # ── A demand added by editing a comment is not "addressed" ──────────────────

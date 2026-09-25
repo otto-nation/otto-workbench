@@ -729,10 +729,10 @@ def test_merge_readiness_gathers_blockers_and_unchecked_from_every_domain():
 
 def test_merge_readiness_is_empty_when_every_domain_is_clean():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, CIDomain(conclusion="success", updated_at="t"))
-    apply(state, ReviewSummary(finding_counts={"S": 1}, updated_at="t"))
-    apply(state, CommentsSummary(updated_at="t"))
-    apply(state, PushDomain(ahead=0, updated_at="t"))
+    apply(state, CIDomain(conclusion="success", updated_at=_JUST_NOW))
+    apply(state, ReviewSummary(finding_counts={"S": 1}, updated_at=_JUST_NOW))
+    apply(state, CommentsSummary(updated_at=_JUST_NOW))
+    apply(state, PushDomain(ahead=0, updated_at=_JUST_NOW))
 
     assert merge_readiness(state).blockers == ()
     assert merge_readiness(state).unchecked == ()
@@ -746,14 +746,22 @@ def test_render_merge_readiness_delegates_to_readiness_render():
     assert "CI failing" in render_merge_readiness(state)
 
 
+# A stamp recent enough that the staleness fold vouches for it. A bare "t"
+# parses as no time at all, which now reads as a domain nobody can date — fine
+# for a test that only needs "this domain was written", wrong for one whose
+# subject is whether the PR reads as ready.
+_JUST_NOW = datetime.now(timezone.utc).isoformat()
+
+
 def _green_state():
-    """Everything checked and clean — anything blocked here is the closeout."""
+    """Everything checked, clean and current — anything blocked is the closeout."""
     state = new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    apply(state, CIDomain(conclusion="success", updated_at="t"))
+    apply(state, CIDomain(conclusion="success", updated_at=_JUST_NOW))
     apply(state, ReviewSummary(
-        finding_counts={"S": 1}, verdict=ReviewVerdict.APPROVE.value, updated_at="t",
+        finding_counts={"S": 1}, verdict=ReviewVerdict.APPROVE.value,
+        updated_at=_JUST_NOW,
     ))
-    apply(state, CommentsSummary(blocking_reviewers=[], updated_at="t"))
+    apply(state, CommentsSummary(blocking_reviewers=[], updated_at=_JUST_NOW))
     return state
 
 
@@ -787,7 +795,8 @@ def test_render_merge_readiness_ignores_a_drained_closeout():
         fix=FixRecord(
             items=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED)],
         ),
-        summary_url="https://example.test/c/1", replies_posted=1, updated_at="t",
+        summary_url="https://example.test/c/1", replies_posted=1,
+        updated_at=_JUST_NOW,
     ))
     result = render_merge_readiness(state)
     assert "closeout" not in result
@@ -1975,3 +1984,88 @@ class TestTerminalSummary:
 
     def test_the_action_name_is_published(self):
         assert pr_state.TERMINAL_SUMMARY_ACTION == "pr_outcome"
+
+
+# ── A stale verdict is not a clean bill of health ───────────────────────────
+#
+# The dashboard marks a week-old line [STALE] and the readiness line two lines
+# below used to declare the PR ready on the strength of it. "We looked a week
+# ago and it was fine" is not "it is fine", and only one of them is what
+# `ready` is read as.
+
+
+def _clean_but_aged(**age) -> PRState:
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", failure_count=0, updated_at=_ago(**age)))
+    apply(state, ReviewSummary(verdict=ReviewVerdict.APPROVE.value,
+                               finding_counts={}, updated_at=_ago(**age)))
+    apply(state, CommentsSummary(total_threads=0, updated_at=_ago(**age)))
+    return state
+
+
+def test_a_stale_clean_domain_is_unchecked_not_ready():
+    answer = merge_readiness(_clean_but_aged(days=9))
+    assert answer.blockers == ()
+    assert any(u.startswith("CI (") for u in answer.unchecked)
+    assert "ready" not in answer.render().lower()
+
+
+def test_the_readiness_line_dates_what_it_could_not_vouch_for():
+    """The operator has to know how old, not merely that it was not checked."""
+    line = merge_readiness(_clean_but_aged(days=9)).render()
+    assert "CI (last checked 9 days ago)" in line
+
+
+def test_a_fresh_clean_domain_is_still_ready():
+    """The gate must not turn every PR into a permanent 'not checked'."""
+    assert merge_readiness(_clean_but_aged(minutes=2)).render() == (
+        "**Merge readiness**: ready"
+    )
+
+
+def test_a_stale_failure_stays_a_blocker():
+    """An old failure is still a reason not to merge.
+
+    Downgrading it to "unchecked" would make a stale failing domain quieter
+    than a fresh one, which is the wrong direction for the same asymmetry the
+    rest of this change follows.
+    """
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", failure_count=3,
+                          updated_at=_ago(days=9)))
+    answer = merge_readiness(state)
+    assert "CI failing" in answer.blockers
+    assert not any(u.startswith("CI (last checked") for u in answer.unchecked)
+
+
+def test_an_unwritten_domain_is_unchecked_without_an_age():
+    """It has no answer to be stale about; its own readiness already says so."""
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    answer = merge_readiness(state)
+    assert "CI" in answer.unchecked
+    assert not any("last checked" in u for u in answer.unchecked)
+
+
+def test_a_domain_whose_stamp_cannot_be_read_is_not_vouched_for():
+    """Unreadable is unknown, and unknown must not read as current."""
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", failure_count=0,
+                          updated_at="garbage"))
+    assert any(u.startswith("CI (") for u in merge_readiness(state).unchecked)
+
+
+def test_the_stale_threshold_is_the_one_the_dashboard_marks():
+    """One threshold, so the [STALE] marker and the readiness line agree.
+
+    A domain the dashboard marks stale must be one the fold declines to vouch
+    for, and a domain it leaves unmarked must be one the fold accepts.
+    """
+    for age, marked in [(dict(hours=23), False), (dict(hours=24), True)]:
+        state = _clean_but_aged(**age)
+        vouched = merge_readiness(state).render() == "**Merge readiness**: ready"
+        assert vouched is not marked
+        assert bool(age_suffix(state.ci.updated_at).count("STALE")) is marked

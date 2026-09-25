@@ -399,6 +399,15 @@ def merge_readiness(state: PRState) -> Readiness:
     push domain from a branch that is up to date — both say nothing — so a
     caller that skips the refresh reports a branch with unpushed commits as
     ready to merge.
+
+    A domain that is stale and says nothing is wrong is folded in as
+    *unchecked* rather than as clean. "We looked a week ago and it was fine"
+    is not the same claim as "it is fine", and `ready` is read as the second:
+    the whole trap is a dashboard marking a line ``[STALE]`` and then declaring
+    the PR mergeable on the strength of it two lines below. A domain that found
+    something wrong keeps its blocker whatever its age — an old failure is
+    still a reason not to merge, and downgrading it to "unchecked" would make
+    a stale domain *quieter* than a fresh one.
     """
     blockers: list[str] = []
     unchecked: list[str] = []
@@ -406,6 +415,8 @@ def merge_readiness(state: PRState) -> Readiness:
         answer = domain.readiness()
         blockers.extend(answer.blockers)
         unchecked.extend(answer.unchecked)
+        if not answer.blockers and not answer.unchecked and _is_stale(domain):
+            unchecked.append(f"{_domain_label(domain)} ({_last_checked(domain)})")
     return Readiness(blockers=tuple(blockers), unchecked=tuple(unchecked))
 
 
@@ -425,6 +436,48 @@ def render_merge_readiness(state: PRState) -> str:
 # a week-old one is worth refusing to present as current.
 _AGE_VISIBLE = timedelta(hours=1)
 _AGE_STALE = timedelta(hours=24)
+
+
+def _is_stale(domain: Domain) -> bool:
+    """Whether this domain's answer is too old to be reported as current.
+
+    The same threshold the dashboard marks ``[STALE]`` with, read from the same
+    place, so the marker above the readiness line and the readiness line itself
+    cannot disagree about which domains are past it.
+
+    An unwritten domain is not stale — it has no answer to go off, and its own
+    ``readiness`` already reports it unchecked. An unreadable stamp is stale,
+    for the reason `age_suffix` gives.
+    """
+    if not domain.updated_at:
+        return False
+    age = text.age_of(domain.updated_at)
+    return age is None or age >= _AGE_STALE
+
+
+def _domain_label(domain: Domain) -> str:
+    """What the readiness line calls this domain.
+
+    Derived from the field name in the registry rather than a second table of
+    display names, so a domain added to `PRState` is named here without anyone
+    remembering to add it. Upper-cased for the domains that spell themselves
+    that way in their own ``readiness``, so one line does not name the same
+    subsystem two ways.
+    """
+    name = _domain_names().get(type(domain), type(domain).__name__)
+    return "CI" if name == "ci" else name
+
+
+def _last_checked(domain: Domain) -> str:
+    """How long ago this domain was written, for the readiness line.
+
+    A stamp that will not parse has no age to report, and "last checked "
+    trailing into nothing reads as a bug rather than as the unknown it is. It
+    is still not vouched for — `_is_stale` says so — so the clause says which
+    of the two it is instead of leaving a blank.
+    """
+    ago = text.relative_time(domain.updated_at)
+    return f"last checked {ago}" if ago else "last checked at an unreadable time"
 
 
 def age_suffix(updated_at: str) -> str:

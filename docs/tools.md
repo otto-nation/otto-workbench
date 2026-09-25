@@ -635,12 +635,17 @@ the id and does not move the comment, so a reviewer who rewrites a comment to
 add a demand would otherwise have it silently discarded as already handled.
 
 The stamp is GitHub's `lastEditedAt`, which is null until the first edit. The
-REST fallback has no such field and reconstructs it from `updated_at`,
-collapsing the never-edited case (`updated_at == created_at`) to the same empty
-stamp — without that, the two fetch paths would disagree about an untouched
-comment and re-report it on every round. An edited *review body* is
-undetectable on the REST path, which carries no edit stamp at all; the GraphQL
-path every real run takes does carry one.
+issue-comment REST path has no such field and reconstructs it from
+`updated_at`, collapsing the never-edited case (`updated_at == created_at`) to
+the same empty stamp — without that, the two fetch paths would disagree about
+an untouched comment and re-report it on every round.
+
+`fetch_review_body_comments` takes its `PRData` as a required argument for the
+same reason. It had a REST fallback and no caller for it, and the reviews REST
+payload carries no edit stamp at all — not `lastEditedAt`, not `updated_at` —
+so a run down that path could not have told an edited review body from an
+untouched one. A path that silently degrades a correctness check is worse than
+a missing one, so it is gone rather than documented.
 
 A state file written before the stamps existed reads as "nothing seen" and
 re-reports one round's comments. That is the deliberate direction: a false
@@ -730,9 +735,21 @@ the exception and not by special case: `pr status` observes it live rather than
 reading it back, so its stamp is always seconds old.
 
 The age is wall-clock, not commit-aware. `[STALE]` says nobody has re-run that
-subcommand lately; it does not say the branch has moved since. Merge readiness
-folds the same cached answers and does not yet weigh their age — a stale green
-CI still reads as ready.
+subcommand lately; it does not say the branch has moved since.
+
+**Merge readiness will not vouch for a stale answer.** A domain past the same
+threshold that says nothing is wrong is folded in as *unchecked* rather than as
+clean, so the readiness line reads `blocked — not checked: CI (last checked 9
+days ago)` instead of `ready`. "We looked a week ago and it was fine" is not
+the same claim as "it is fine", and `ready` is read as the second — a dashboard
+that marks a line `[STALE]` and then declares the PR mergeable two lines below
+is the trap this closes.
+
+A domain that found something wrong keeps its blocker whatever its age. An old
+failure is still a reason not to merge, and downgrading it to "unchecked" would
+make a stale failing domain quieter than a fresh one. Both readings come from
+the one threshold, so the `[STALE]` marker above and the readiness line below
+cannot disagree about which domains are past it.
 
 **Push status in `pr status`:**
 

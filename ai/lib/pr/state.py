@@ -17,7 +17,7 @@ imports it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from functools import cache
 from pathlib import Path
@@ -40,6 +40,7 @@ from pr.domains import (
     TriageSummary,
 )
 
+from core import text
 from core.serde import (
     from_dict as _serde_from_dict,
     load_file as _serde_load_file,
@@ -418,6 +419,42 @@ def render_merge_readiness(state: PRState) -> str:
     return merge_readiness(state).render()
 
 
+# When a snapshot stops being reported bare, and when it is called stale. The
+# dashboard is a read of a cache, so every line on it is an answer from
+# whenever its subcommand last ran — an hour-old CI verdict is worth dating and
+# a week-old one is worth refusing to present as current.
+_AGE_VISIBLE = timedelta(hours=1)
+_AGE_STALE = timedelta(hours=24)
+
+
+def age_suffix(updated_at: str) -> str:
+    """What dates a domain's line on the dashboard, or "" when nothing does.
+
+    Three outcomes, because the dashboard is a cache read and the reader cannot
+    otherwise tell which of them they are looking at:
+
+    * fresh, or never written — nothing, since the domain's own line already
+      says "not checked yet" for the unwritten case
+    * an hour or more old — dated, so the answer is read as of when it was taken
+    * a day or more old — ``[STALE]``, because by then the likeliest reading of
+      "CI: 65 failures" is a branch that has been pushed to since
+
+    An unparseable stamp is dated ``unknown`` rather than passed over. A stamp
+    exists, so the domain was written; not knowing when is a worse position than
+    knowing it was long ago, and silence here would render it as fresh.
+    """
+    if not updated_at:
+        return ""
+    age = text.age_of(updated_at)
+    if age is None:
+        return " [STALE — age unknown]"
+    if age >= _AGE_STALE:
+        return f" [STALE — {text.relative_time(updated_at)}]"
+    if age >= _AGE_VISIBLE:
+        return f" (as of {text.relative_time(updated_at)})"
+    return ""
+
+
 def render_dashboard(
     state: PRState | None,
     push: PushDomain,
@@ -438,6 +475,12 @@ def render_dashboard(
     command did not act on would date the file by looking at it. Refresh
     ``push`` before folding merge readiness: nothing in the fold can tell an
     unobserved push domain from a branch that is up to date.
+
+    Each domain's first line is dated here rather than by the domain, so a
+    domain cannot report an answer without saying when it was taken — including
+    one added later, which gets the marker by being in the registry. ``push`` is
+    the one domain this never marks, and not by exception: it is observed a few
+    lines above, so its stamp is always minutes old.
 
     A missing state is still a dashboard: the header, a "no status data yet"
     notice, and whatever the live push observation says.
@@ -460,7 +503,10 @@ def render_dashboard(
     for domain in domains_of(state):
         rendered = domain.render_status()
         if rendered:
-            lines += rendered
+            # Copied rather than written through: a domain returning a shared
+            # list would otherwise accumulate a suffix per render.
+            lines.append(rendered[0] + age_suffix(domain.updated_at))
+            lines += rendered[1:]
             lines.append("")
     lines.append(render_merge_readiness(state))
     return lines

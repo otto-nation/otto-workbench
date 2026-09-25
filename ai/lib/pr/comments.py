@@ -48,7 +48,6 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gh import client as gh_client
@@ -57,7 +56,7 @@ from core import publishing
 from pr.comments_state import ThreadRecord, ThreadState
 from core.proc import CmdResult
 from gh.pr_reads import PRData, ThreadSet, fetch_review_threads
-from core.text import plural
+from core.text import relative_time
 
 
 # ── Thread lifecycle states ────────────────────────────────────────────────
@@ -621,22 +620,6 @@ def sync_threads(
 
 # ── Dashboard ──────────────────────────────────────────────────────────────
 
-def _relative_time(iso_str: str) -> str:
-    """Convert ISO timestamp to relative time string."""
-    try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        delta = datetime.now(timezone.utc) - dt
-        hours = delta // timedelta(hours=1)
-        if hours < 1:
-            return f"{delta // timedelta(minutes=1)} minutes ago"
-        days = delta // timedelta(days=1)
-        if not days:
-            return f"{hours} hours ago"
-        return f"{days} day{plural(days)} ago"
-    except (ValueError, TypeError):
-        return ""
-
-
 def render_dashboard(
     pr_number: int,
     threads: dict[str, ThreadRecord],
@@ -650,7 +633,7 @@ def render_dashboard(
 
     lines.append("Reviewers:")
     for v in sorted(verdicts, key=lambda x: x.get("submitted_at", ""), reverse=True):
-        time_str = _relative_time(v.get("submitted_at", ""))
+        time_str = relative_time(v.get("submitted_at", ""))
         lines.append(f"  @{v['user']} — {v['state']} ({time_str})")
     lines.append("")
 

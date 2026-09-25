@@ -11,11 +11,49 @@ import the review layer to say it.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 
 def plural(n: int) -> str:
     """Return the plural suffix for a count — `f"{total} finding{plural(total)}"`."""
     return "" if n == 1 else "s"
+
+
+def age_of(iso_str: str) -> timedelta | None:
+    """How long ago `iso_str` was, or `None` when nothing can be read from it.
+
+    `None` rather than a zero delta, because a caller deciding whether a
+    snapshot is too old to trust must not read an unreadable stamp as fresh —
+    which is the direction that hides a week-old answer rather than an hour-old
+    one. An empty stamp, a stamp in a format this does not parse, and a state
+    file written before the field existed are all the same unknown.
+    """
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    except (AttributeError, ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - dt
+
+
+def relative_time(iso_str: str) -> str:
+    """How long ago `iso_str` was, as a human reads it — `"3 days ago"`.
+
+    An unparseable or empty stamp is the empty string rather than an error: a
+    caller is rendering a line either way, and a state file written by an older
+    version is a missing age, not a failure to print the line it sat on.
+    """
+    delta = age_of(iso_str)
+    if delta is None:
+        return ""
+    hours = delta // timedelta(hours=1)
+    if hours < 1:
+        return f"{delta // timedelta(minutes=1)} minutes ago"
+    days = delta // timedelta(days=1)
+    if not days:
+        return f"{hours} hours ago"
+    return f"{days} day{plural(days)} ago"
 
 
 def join_or(items: list[str]) -> str:

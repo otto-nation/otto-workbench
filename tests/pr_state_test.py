@@ -2,8 +2,10 @@
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -26,7 +28,7 @@ from pr.fix import FixOutcome, FixRecord, ItemOutcome
 from pr.state import (
     PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
-    apply, _domains, domains_of, merge_readiness,
+    age_suffix, apply, _domains, domains_of, merge_readiness,
     render_dashboard, render_merge_readiness,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
@@ -794,6 +796,126 @@ def test_render_dashboard_push_refresh_is_visible_in_state_to_dict():
     assert dumped["push"]["ahead"] == 2
     assert dumped["push"]["updated_at"] == "now"
     assert state.push is push
+
+
+# ── Dating the snapshot ─────────────────────────────────────────────────────
+#
+# Every line on the dashboard is as old as the last run of the subcommand that
+# wrote it, and nothing on it used to say so — a week-old "CI: 65 failure(s)"
+# read exactly like one taken a minute ago.
+
+
+def _ago(**kwargs) -> str:
+    return (datetime.now(timezone.utc) - timedelta(**kwargs)).isoformat()
+
+
+def _ci_line(updated_at: str) -> str:
+    """The CI line as `pr status` prints it for a domain written at `updated_at`."""
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", failure_count=65,
+                          updated_at=updated_at))
+    lines = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    return next(l for l in lines if l.startswith("**CI**"))
+
+
+def test_a_fresh_domain_is_not_dated():
+    """An answer taken minutes ago is the one case a reader may assume."""
+    assert _ci_line(_ago(minutes=2)) == "**CI** (red): failure — 65 failure(s)"
+
+
+def test_an_hour_old_domain_says_when_it_was_taken():
+    assert _ci_line(_ago(hours=3)).endswith(" (as of 3 hours ago)")
+
+
+def test_a_day_old_domain_is_marked_stale():
+    """The trap this exists to close: a week-old red CI presented as current."""
+    line = _ci_line(_ago(days=7))
+    assert "65 failure(s)" in line
+    assert line.endswith(" [STALE — 7 days ago]")
+
+
+def test_an_unwritten_domain_is_not_dated():
+    """Its own line already says "not checked yet"; an age would contradict it."""
+    assert _ci_line("") == "**CI**: not checked yet"
+
+
+def test_a_stamp_that_cannot_be_read_is_stale_rather_than_fresh():
+    """Something wrote the domain, so the answer is old-of-unknown-age — not new."""
+    assert _ci_line("garbage").endswith(" [STALE — age unknown]")
+
+
+def test_only_the_first_line_of_a_domain_is_dated():
+    """The age belongs to the domain, not to each count it breaks out."""
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", failure_count=3,
+                          failure_kinds={"test": 3}, last_run_number=12,
+                          updated_at=_ago(days=7)))
+    lines = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    dated = [l for l in lines if "STALE" in l]
+    assert dated == ["**CI** (red): failure — 3 failure(s) [STALE — 7 days ago]"]
+    assert "  test: 3" in lines
+    assert "  run #12" in lines
+
+
+def test_the_live_push_observation_is_never_dated():
+    """`cmd_status` observes push now, so its stamp cannot be old."""
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    push = PushDomain(ahead=2, updated_at=pr_state.now_iso())
+    lines = render_dashboard(state, push, repo="acme/widget", branch="feat/x")
+    assert "**Push**: 2 commit(s) not pushed" in lines
+
+
+@pytest.mark.parametrize("name,cls", sorted(_domains().items()))
+def test_every_domain_in_the_registry_is_dated(name, cls):
+    """The marker is applied by the fold, so a domain added later gets it too.
+
+    A domain that renders nothing has nothing to date and is exempt; one that
+    speaks must say when it last spoke. Push is exempt for a second reason,
+    pinned by the test above: the dashboard overwrites it with a live
+    observation, so the stamp reaching the fold is always the one taken here.
+    """
+    if cls is PushDomain:
+        pytest.skip("push is observed live, never read from the cache")
+    domain = cls(updated_at=_ago(days=7))
+    if not domain.render_status():
+        pytest.skip(f"{name} renders no line to date")
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    apply(state, domain)
+    lines = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    assert any("[STALE — 7 days ago]" in l for l in lines)
+
+
+def test_dating_a_domain_does_not_write_back_into_what_it_returned():
+    """Rendering twice must not stack two suffixes on one line.
+
+    Every domain builds a fresh list today, so writing through `rendered[0]`
+    happens to work; one returning a shared or cached list would grow a suffix
+    per render, and the second `pr status` of a session would be the one that
+    showed it.
+    """
+    stale = _ago(days=7)
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    shared = ["**CI** (red): failure — 65 failure(s)"]
+    domain = CIDomain(conclusion="failure", failure_count=65, updated_at=stale)
+    with patch.object(CIDomain, "render_status", return_value=shared):
+        apply(state, domain)
+        first = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+        second = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    assert first == second
+    assert shared == ["**CI** (red): failure — 65 failure(s)"]
+
+
+def test_age_suffix_boundaries():
+    """The two thresholds, taken from either side."""
+    assert age_suffix(_ago(minutes=59)) == ""
+    assert age_suffix(_ago(hours=1)) == " (as of 1 hours ago)"
+    assert age_suffix(_ago(hours=23)) == " (as of 23 hours ago)"
+    assert age_suffix(_ago(hours=24)) == " [STALE — 1 day ago]"
 
 
 def test_apply_rejects_a_type_no_field_holds():

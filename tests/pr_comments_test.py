@@ -710,30 +710,19 @@ class TestIssueTrackerGate:
         assert "the issue title" in capsys.readouterr().err
 
 
-# ── _relative_time ──────────────────────────────────────────────────────────
+# ── The reviewer age column ─────────────────────────────────────────────────
+#
+# `relative_time` itself is pinned in `text_test.py`, where it lives. What is
+# here is that the dashboard still reaches it.
 
 
-class TestRelativeTime:
-    """The dashboard's age column, at each unit boundary it crosses."""
-
-    @staticmethod
-    def _ago(**kwargs) -> str:
-        stamp = datetime.now(timezone.utc) - timedelta(**kwargs)
-        return pr_comments._relative_time(stamp.isoformat())
-
-    @pytest.mark.parametrize("kwargs,expected", [
-        ({"minutes": 5}, "5 minutes ago"),
-        ({"minutes": 59}, "59 minutes ago"),
-        ({"hours": 1}, "1 hours ago"),
-        ({"hours": 23}, "23 hours ago"),
-        ({"hours": 24}, "1 day ago"),
-        ({"days": 3}, "3 days ago"),
-    ])
-    def test_each_unit_boundary(self, kwargs, expected):
-        assert self._ago(**kwargs) == expected
-
-    def test_an_unparseable_stamp_reads_as_no_age(self):
-        assert pr_comments._relative_time("not a timestamp") == ""
+# passes-at-base: behaviour this change moved rather than added — the helper left this module for core.text, and the case holds that the dashboard still reaches it
+def test_reviewer_verdicts_are_dated():
+    submitted = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    out = render_dashboard(
+        7, {}, [{"user": "alice", "state": "APPROVED", "submitted_at": submitted}], [],
+    )
+    assert "@alice — APPROVED (3 days ago)" in out
 
 
 # ── An incomplete fetch must not erase what it could not see ────────────────

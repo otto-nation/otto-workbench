@@ -528,6 +528,35 @@ root, and `docs/`, and takes the first that exists. A repo with none of them get
 built-in fallback (Summary / Changes / Testing only). A differently-named template,
 and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
 
+**Every line is dated:**
+
+`pr status` makes no network calls — it reads the state file each subcommand
+wrote when it last ran, so a line on the dashboard is as old as that run. The
+age is printed beside the domain it belongs to:
+
+| Age of the domain's last write | What the line carries |
+|---|---|
+| Under an hour | nothing — the one case a reader may take as current |
+| An hour or more | `(as of 3 hours ago)` |
+| A day or more | `[STALE — 7 days ago]` |
+| A stamp that cannot be parsed | `[STALE — age unknown]` |
+
+```
+**CI** (red): failure — 65 failure(s) [STALE — 7 days ago]
+  test: 65
+  run #12
+```
+
+The marker is applied by the dashboard's fold over the domain registry, not by
+each domain, so a domain added later is dated without doing anything. Push is
+the exception and not by special case: `pr status` observes it live rather than
+reading it back, so its stamp is always seconds old.
+
+The age is wall-clock, not commit-aware. `[STALE]` says nobody has re-run that
+subcommand lately; it does not say the branch has moved since. Merge readiness
+folds the same cached answers and does not yet weigh their age — a stale green
+CI still reads as ready.
+
 **Push status in `pr status`:**
 
 `pr status` detects unpushed commits by comparing local HEAD against `origin/<branch>`.

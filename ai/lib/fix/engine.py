@@ -63,10 +63,11 @@ from fix.gate import VerifyFn
 # of it is what keeps the sweep and the write from drifting apart.
 TRACKING_FILENAME = "fix-tracking.md"
 
-# The gate's own checklist, published for the same reason: a review's sweep
-# removes both files by name, and a gate running inside a review directory
-# would otherwise leave its answers beside the deliverable.
-VERIFY_TRACKING_FILENAME = "verify-tracking.md"
+# The gate's own checklists, published for the same reason: a review's sweep
+# removes every chunk file by this glob, and a gate running inside a review
+# directory would otherwise leave its answers beside the deliverable. Always
+# suffixed, including chunk 1, so the sweep is one pattern rather than two names.
+VERIFY_TRACKING_GLOB = "verify-tracking-*.md"
 
 # What a retry is told about the file it is handed. The first pass's settled
 # items are not in it, and an agent that assumes otherwise re-reads work that is
@@ -222,20 +223,20 @@ class FixAdapter(ABC):
         """Where the agent streams its session, so a thrash can be diagnosed."""
         return self.artifacts / "fix-session.jsonl"
 
-    @property
-    def verify_tracking_path(self) -> Path:
-        """The checklist the verify gate answers on.
+    def verify_tracking_path(self, chunk: int) -> Path:
+        """The checklist this verify chunk answers on.
 
-        Beside the fix pass's rather than replacing it: the two are answered in
-        different vocabularies, and the fix file is the evidence for what the
-        gate was asked about. Overwriting it would destroy the record of what
-        was claimed at the moment the claim is being checked.
+        Indexed so two chunks cannot share a file. Always suffixed, including
+        chunk 1, so gc and _batch_scope glob one pattern.
         """
-        return self.artifacts / VERIFY_TRACKING_FILENAME
+        if chunk < 1:
+            raise ValueError(f"verify chunk is 1-based, got {chunk}")
+        return self.artifacts / f"verify-tracking-{chunk}.md"
 
-    @property
-    def verify_session_log(self) -> Path:
-        return self.artifacts / "verify-session.jsonl"
+    def verify_session_log(self, chunk: int) -> Path:
+        if chunk < 1:
+            raise ValueError(f"verify chunk is 1-based, got {chunk}")
+        return self.artifacts / f"verify-session-{chunk}.jsonl"
 
     @abstractmethod
     def items(self) -> list[FixItem]:
@@ -471,7 +472,10 @@ def _batch_scope(
         return scope
     artifacts = {
         _relative_to(adapter.workdir, path)
-        for path in (adapter.tracking_path, adapter.verify_tracking_path)
+        for path in (
+            [adapter.tracking_path]
+            + sorted(adapter.artifacts.glob(VERIFY_TRACKING_GLOB))
+        )
     }
     return fix_scope.BatchScope(files=scope.files - {a for a in artifacts if a})
 

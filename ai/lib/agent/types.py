@@ -49,15 +49,16 @@ from core.phases import (
 # ceiling sits above it rather than clamping the retry to what just ran out.
 DEFAULT_RETRY_CEILING = 30
 
-# The phases that write no findings artifact of their own, and the one fan-out
-# phase whose artifacts carry an index. Both are read by `PhaseSpec` below.
+# The phases that write no findings artifact of their own, and the fan-out
+# phases whose artifacts carry an index. Both are read by `PhaseSpec` below.
 # `single` and `synthesis` write the review document; `fix` edits it in place;
 # the verify gate writes neither — its checklist is the fix engine's file, named
-# by the engine rather than derived from a phase.
+# by the engine rather than derived from a phase. Its session log is indexed
+# the same way `group` is, one file per chunk.
 _NO_FINDINGS_ARTIFACT = frozenset(
     {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX, Phase.FIX_VERIFY},
 )
-_INDEXED = frozenset({Phase.GROUP})
+_INDEXED = frozenset({Phase.GROUP, Phase.FIX_VERIFY})
 
 
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -293,7 +294,7 @@ class PhaseSpec:
     def _stem(self) -> str:
         """The filename stem this phase's artifacts share: the phase's own name.
 
-        ``group`` is the one fan-out phase, so its stem carries the index.
+        ``group`` and ``fix_verify`` fan out, so their stems carry the index.
         """
         if self.domain is not PhaseDomain.REVIEW:
             raise ValueError(

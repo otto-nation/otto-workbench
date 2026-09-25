@@ -479,6 +479,33 @@ def test_the_engine_hands_the_domain_what_the_agent_changed(
     assert adapter.landing_scope == {"ours.py"}
 
 
+def test_every_verify_chunk_is_taken_back_out_of_the_batch_scope(
+    tmp_path, landed, head, snapshots,
+):
+    """The subtraction globs the chunk files; it does not name one.
+
+    A gate that ran in two chunks leaves two checklists. Subtracting only the
+    first lets the second read as a code change the agent made, and the item
+    anchored at that file can then contradict itself — a verdict derived from
+    the checklist rather than from the fix. The failure is silent, so this
+    pins the difference rather than the reconciler's eventual answer.
+    """
+    adapter = StubAdapter(tmp_path)
+    adapter.artifacts.mkdir(parents=True, exist_ok=True)
+    for chunk in (1, 2):
+        adapter.verify_tracking_path(chunk).write_text("## answers\n")
+    inside = {
+        fix_engine._relative_to(adapter.workdir, adapter.verify_tracking_path(n))
+        for n in (1, 2)
+    }
+    assert all(inside), "the stub's artifacts must sit inside the worktree"
+    snapshots.return_value = {"ours.py", *inside}
+
+    scope = fix_engine._batch_scope(adapter, before=set())
+
+    assert scope.files == {"ours.py"}
+
+
 def test_an_unreadable_second_snapshot_reaches_the_domain_as_none(
     tmp_path, landed, head, snapshots,
 ):

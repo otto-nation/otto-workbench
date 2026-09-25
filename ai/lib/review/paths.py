@@ -137,8 +137,8 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
     writes into that entry point's own tracking directory, and asking it for an
     artifact name raises rather than minting one that would never match.
     """
-    # Only GROUP's stem carries a "{}" placeholder (see PhaseSpec._stem); the
-    # format call is a no-op for every other phase's plain filename.
+    # GROUP and FIX_VERIFY stems carry a "{}" placeholder (see PhaseSpec._stem);
+    # the format call is a no-op for every other phase's plain filename.
     patterns = [
         name.format("*")
         for p in REVIEW_PHASES

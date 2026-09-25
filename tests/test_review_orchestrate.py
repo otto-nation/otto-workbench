@@ -2953,6 +2953,32 @@ class TestCleanupScope:
             "meta.json", "review.md", "session.jsonl",
         ]
 
+    def test_every_verify_chunk_is_swept_not_just_the_first(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """The sweep globs the gate's checklists; it does not name one.
+
+        A gate that ran in two chunks leaves two files. Unlinking one by name
+        leaves the rest beside the deliverable, which is the leak the exact
+        listing below is here to catch.
+        """
+        def _two_chunk_gate(job, **_kwargs):
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}\n")
+            review_dir = Path(job.artifact_dir)
+            (review_dir / "meta.json").write_text("{}")
+            for chunk in (1, 2):
+                (review_dir / f"verify-tracking-{chunk}.md").write_text(
+                    "## answers\n")
+
+        review_dir = self._run(
+            ro, monkeypatch, tmp_path, pipeline=_two_chunk_gate, fix=True,
+        )
+
+        assert sorted(p.name for p in review_dir.iterdir()) == [
+            "meta.json", "review.md", "session.jsonl",
+        ]
+
     def test_a_run_without_the_fix_pass_is_swept_too(self, ro, monkeypatch, tmp_path):
         review_dir = self._run(ro, monkeypatch, tmp_path)
 

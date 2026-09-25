@@ -34,13 +34,11 @@ class _Adapter:
     def add_dirs(self):
         return [self.workdir]
 
-    @property
-    def verify_tracking_path(self):
-        return self.artifacts / "verify-tracking.md"
+    def verify_tracking_path(self, chunk: int):
+        return self.artifacts / f"verify-tracking-{chunk}.md"
 
-    @property
-    def verify_session_log(self):
-        return self.artifacts / "verify-session.jsonl"
+    def verify_session_log(self, chunk: int):
+        return self.artifacts / f"verify-session-{chunk}.jsonl"
 
 
 def _items(count):
@@ -84,3 +82,42 @@ def test_a_single_chunk_is_not_numbered(tmp_path):
         )
 
     assert labels == ["Verify gate"]
+
+
+def test_each_chunk_writes_its_own_tracking_file(tmp_path):
+    adapter = _Adapter(tmp_path)
+    chunk = agent_phases.phase_chunk_size(Phase.FIX_VERIFY)
+    seen = []
+
+    def run_fix(_phase, _prompt, **kwargs):
+        seen.append(kwargs["session_log"])
+        return agent_invoke.FixResult(0, None)
+
+    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=run_fix):
+        fix_verify.run(
+            Phase.FIX_VERIFY, "", items=_items(chunk + 1), adapter=adapter,
+        )
+
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
+    assert seen[0].endswith("verify-session-1.jsonl")
+    assert seen[1].endswith("verify-session-2.jsonl")
+    assert (adapter.artifacts / "verify-tracking-1.md").exists()
+    assert (adapter.artifacts / "verify-tracking-2.md").exists()
+    assert not (adapter.artifacts / "verify-tracking.md").exists()
+
+
+def test_a_single_chunk_still_uses_the_suffixed_name(tmp_path):
+    adapter = _Adapter(tmp_path)
+
+    def run_fix(_phase, _prompt, **kwargs):
+        assert kwargs["session_log"].endswith("verify-session-1.jsonl")
+        return agent_invoke.FixResult(0, None)
+
+    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=run_fix):
+        fix_verify.run(
+            Phase.FIX_VERIFY, "", items=_items(1), adapter=adapter,
+        )
+
+    assert (adapter.artifacts / "verify-tracking-1.md").exists()
+    assert not (adapter.artifacts / "verify-tracking.md").exists()

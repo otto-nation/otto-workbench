@@ -51,10 +51,10 @@ def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
 
 
 def _run_chunk(
-    phase: Phase, items: list[FixItem], adapter, label: str,
+    phase: Phase, items: list[FixItem], adapter, label: str, chunk: int,
 ) -> dict[str, "Verdict"]:
     """One gate invoke, budgeted for this chunk's size."""
-    path = adapter.verify_tracking_path
+    path = adapter.verify_tracking_path(chunk)
     fix_tracking.write(path, "Verify Fixes", items, fix_tracking.VERIFY_BOXES)
 
     turns = agent_phases.phase_turns(phase, items=len(items))
@@ -76,7 +76,7 @@ def _run_chunk(
     agent_invoke.run_fix(
         phase, prompt,
         cwd=adapter.workdir,
-        session_log=str(adapter.verify_session_log),
+        session_log=str(adapter.verify_session_log(chunk)),
         # Any verdict at all is production. A gate that reached none is the
         # unproductive case the retry exists for, and a gate that answered
         # "not verified" everywhere did its job.
@@ -125,5 +125,5 @@ def run(
     verdicts: dict[str, "Verdict"] = {}
     for n, chunk in enumerate(batched, start=1):
         label = name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})"
-        verdicts.update(_run_chunk(phase, chunk, adapter, label))
+        verdicts.update(_run_chunk(phase, chunk, adapter, label, n))
     return verdicts

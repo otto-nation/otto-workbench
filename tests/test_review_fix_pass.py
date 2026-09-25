@@ -391,10 +391,10 @@ class TestTheVerifyGate:
         job = _make_job(git_wt, tmp_path, self.REVIEW)
         adapter = review_fix.ReviewFixAdapter(job, [_finding("M1")])
 
-        assert adapter.verify_session_log == Path(
-            review_paths.phase_log_path(job.review_file, Phase.FIX_VERIFY),
+        assert adapter.verify_session_log(1) == Path(
+            review_paths.phase_log_path(job.review_file, Phase.FIX_VERIFY, 1),
         )
-        assert adapter.verify_session_log.parent == Path(job.artifact_dir)
+        assert adapter.verify_session_log(1).parent == Path(job.artifact_dir)
 
 
 # ── what the pass commits ───────────────────────────────────────────────────

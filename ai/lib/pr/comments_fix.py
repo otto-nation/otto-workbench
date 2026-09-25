@@ -29,6 +29,7 @@ issue it had accumulated rather than resuming from an empty one.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
+from typing import ClassVar
 
 from pr.domains import Domain, Readiness
 from pr.fix import FixOutcome
@@ -316,6 +317,12 @@ class FixSummary(Domain):
         if self.deferred_issue_id:
             lines.append(f"  tracked in {self.deferred_issue_id}")
         return lines
+
+    # Bookkeeping, not a measurement: `closeout_debt` reads the record this
+    # file already holds, so its answer is as true a week later as it was when
+    # written, and re-running the pass cannot refresh it. Ageing it would block
+    # a PR whose closeout was delivered yesterday.
+    ages: ClassVar[bool] = False
 
     def readiness(self) -> Readiness:
         # A summary or reply queue the fix pass rendered and never sent. The PR

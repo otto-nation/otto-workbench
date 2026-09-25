@@ -664,3 +664,50 @@ class TestSettleRearmsThroughTheOwner:
         assert fix.replies_pending is True
         assert fix.summary_deferred is True
         assert any("closeout owed" in line for line in fix.render_status())
+
+
+# ── A thread rewritten after our reply must not grade as settled ────────────
+
+
+class TestRewrittenThreadIsNotSettled:
+    """The consequence of the state change in `pr.comments`, graded here.
+
+    ADDRESSED is evidence the thread ended — `settlement_for` grades it
+    SETTLED_ELSEWHERE, and `adopt_settled_threads` then records it as answered
+    and closes it out. So a reviewer's demand added by editing their comment
+    was not merely missed by triage; it was filed as resolved. The state change
+    is only a fix because it moves the thread out of that grade.
+    """
+
+    @staticmethod
+    def _thread(state: ThreadState) -> ReportThread:
+        return ReportThread(
+            id="T_rewritten", state=state, my_login="me", file="f.py",
+            comments=[
+                {"author": {"login": "alice"}, "body": "nit: rename this",
+                 "createdAt": "2026-01-01T00:00:00Z",
+                 "lastEditedAt": "2026-01-03T00:00:00Z"},
+                {"author": {"login": "me"}, "body": "Renamed in abc123",
+                 "createdAt": "2026-01-02T00:00:00Z"},
+            ],
+        )
+
+    # passes-at-base: the grade that made the defect costly, pinned so the pair below reads as a contrast
+    def test_an_addressed_thread_grades_as_settled(self):
+        """The grade that made the defect costly \u2014 pinned so the pair reads."""
+        assert settlement.settlement_for(
+            self._thread(ThreadState.ADDRESSED)) is FixOutcome.SETTLED_ELSEWHERE
+
+    # passes-at-base: settlement_for is handed the state, so this grades the map rather than the new computation
+    def test_a_rewritten_thread_grades_as_nothing(self):
+        """AMBIGUOUS carries no settlement, so nothing closes it out."""
+        assert settlement.settlement_for(self._thread(ThreadState.AMBIGUOUS)) is None
+
+    # passes-at-base: same — the state is constructed, so this holds adoption's contract for it
+    def test_a_rewritten_thread_is_not_adopted_as_answered(self):
+        state = pr_state.new_state(
+            "owner/repo", "feat", pr_number=1, head_sha="a", worktree_root="/wt")
+        thread = self._thread(ThreadState.AMBIGUOUS)
+        adopted = settlement.adopt_settled_threads(state, {thread.id: thread})
+        assert adopted == 0
+        assert state.fix.fix.items == []

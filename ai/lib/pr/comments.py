@@ -48,7 +48,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 from gh import client as gh_client
@@ -57,7 +57,7 @@ from core import publishing
 from pr.comments_state import ThreadRecord, ThreadState
 from core.proc import CmdResult
 from gh.pr_reads import PRData, ThreadSet, fetch_review_threads
-from core.text import plural
+from core.text import relative_time
 
 
 # ── Thread lifecycle states ────────────────────────────────────────────────
@@ -108,6 +108,74 @@ def last_comment_is_mine(comments: list[dict], my_login: str) -> bool:
     return last_author.lower() == my_login.lower()
 
 
+def _instant(stamp: str | None) -> datetime | None:
+    """An ISO stamp as a comparable instant, or None when it cannot be read.
+
+    Thread comments arrive as raw GraphQL nodes, so the keys here are camelCase
+    (`createdAt`, `lastEditedAt`) rather than the snake_case the normalised
+    issue-comment dicts carry.
+    """
+    try:
+        return datetime.fromisoformat((stamp or "").replace("Z", "+00:00"))
+    except (AttributeError, ValueError, TypeError):
+        return None
+
+
+def _rewritten_since_my_reply(comments: list[dict], my_login: str) -> bool:
+    """Whether anyone edited their comment after our last word on the thread.
+
+    An edit posts nothing and moves nothing, so a thread whose reviewer rewrote
+    their comment to add a demand still ends with our reply and still reads as
+    ADDRESSED — and an ADDRESSED thread is grade SETTLED_ELSEWHERE, closed out
+    and never triaged. The added demand is not merely missed, it is recorded as
+    answered.
+
+    Compared against the time we last spoke, not against the whole thread: a
+    reviewer who fixed a typo in their comment *before* we answered was already
+    answered, and reopening that would reopen every thread with a tidied
+    comment in it.
+
+    "When we last spoke" counts our own edits, and it has to. We answer a
+    thread whose last comment is ours by *patching* that comment — see
+    `thread_replies.upsert_thread_reply`, which PATCHes whenever we already
+    have a reply, which in this state we always do. A PATCH moves
+    `lastEditedAt` and leaves `createdAt` where it was, so reading only
+    `createdAt` here would freeze our side at the original reply and leave the
+    reviewer's edit permanently "after" it: the thread would re-enter triage
+    every round forever, never settling, burning an agent pass each time.
+    Taking our edits into account does not let us reopen anything — our own
+    stamp only ever moves the bar we are compared against.
+
+    Timestamps are compared as instants, not as strings. GitHub's GraphQL
+    `DateTime` is uniformly `...Z` today, so lexical order happens to work, but
+    it breaks in both directions the moment a differently-spelled stamp reaches
+    here: `+00:00` sorts below `Z` for the same instant (a false reopen), and a
+    fractional second sorts below a bare `Z` (a *missed* rewrite, which loses
+    the reviewer's demand).
+
+    A comment with no stamp on either side cannot be placed, so it does not
+    count as a rewrite — the same direction the rest of this change takes, since
+    a false reopen is noise and a false close loses the demand.
+    """
+    my_login_lower = my_login.lower()
+
+    def mine(comment: dict) -> bool:
+        return (comment.get("author") or {}).get("login", "").lower() == my_login_lower
+
+    my_last = max(
+        (t for c in comments if mine(c)
+         for t in (_instant(c.get("createdAt")), _instant(c.get("lastEditedAt")))
+         if t is not None),
+        default=None,
+    )
+    if my_last is None:
+        return False
+    return any(
+        (edited := _instant(c.get("lastEditedAt"))) is not None and edited > my_last
+        for c in comments if not mine(c)
+    )
+
+
 def compute_thread_state(
     comments: list[dict],
     is_resolved: bool,
@@ -116,6 +184,10 @@ def compute_thread_state(
     """Compute the lifecycle state of a thread from its comments.
 
     Returns one of: new, addressed, verified, contested, resolved, ambiguous.
+
+    An unresolved thread someone rewrote after our reply is AMBIGUOUS rather
+    than ADDRESSED: our answer is older than the text it answers, so whether it
+    still answers it is exactly the question a person has to look at.
     """
     if is_resolved:
         return ThreadState.RESOLVED
@@ -135,6 +207,8 @@ def compute_thread_state(
         return ThreadState.NEW
 
     if last_comment_is_mine(comments, my_login):
+        if _rewritten_since_my_reply(comments, my_login):
+            return ThreadState.AMBIGUOUS
         return ThreadState.ADDRESSED
 
     # Reviewer replied after me — classify the reply
@@ -476,6 +550,17 @@ def fetch_reviewer_verdicts(
     return list(by_user.values())
 
 
+def _rest_edit_stamp(comment: dict) -> str:
+    """A REST comment's last-edited stamp, in the GraphQL path's vocabulary.
+
+    `""` for a comment never edited, so the two fetch paths agree. See the call
+    site for why the equality check is the whole point.
+    """
+    created = comment.get("created_at", "") or ""
+    updated = comment.get("updated_at", "") or ""
+    return "" if updated == created else updated
+
+
 def fetch_issue_comments(
     repo: str, pr_number: int, my_login: str,
     pr_data: PRData | None = None,
@@ -509,43 +594,38 @@ def fetch_issue_comments(
             "user": user,
             "body": c.get("body", ""),
             "created_at": c.get("created_at", ""),
+            # REST has no `lastEditedAt`, so it is reconstructed: `updated_at`
+            # equals `created_at` until the first edit and moves with each one
+            # after. The equality is what makes it a *last edited* stamp rather
+            # than a modification time, and collapsing that case to "" is what
+            # keeps this path agreeing with the GraphQL one, which sends null
+            # for a comment nobody has edited. Without the collapse the two
+            # paths record different stamps for the same untouched comment, and
+            # a run that alternates between them re-reports it every round.
+            "last_edited_at": _rest_edit_stamp(c),
         })
     return result
 
 
 def fetch_review_body_comments(
-    repo: str, pr_number: int, my_login: str,
-    pr_data: PRData | None = None,
+    repo: str, pr_number: int, my_login: str, pr_data: PRData,
 ) -> list[dict]:
-    """Fetch review-level body comments (reviews with substantive body text).
+    """Review-level body comments — reviews carrying substantive body text.
 
-    These are top-level review bodies — distinct from inline code comments
-    (review threads) and issue-level discussion comments.
+    Top-level review bodies, distinct from inline code comments (review
+    threads) and from issue-level discussion.
+
+    ``pr_data`` is required rather than optional, which is the one thing worth
+    explaining. This had a REST fallback for a caller holding no ``PRData``,
+    and no such caller exists. Keeping it would have been worse than dead: the
+    reviews REST payload carries no edit stamp — not ``lastEditedAt``, not even
+    ``updated_at`` — so a run taking that path could not tell an edited review
+    body from an untouched one, and would have reported a reviewer's added
+    demand as already seen. A path that silently degrades a correctness check
+    is not a fallback; the type now says the data is required and the caller
+    that cannot supply it fails loudly instead.
     """
-    if pr_data is not None:
-        return pr_data.review_body_comments(my_login)
-
-    reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100", default=[])
-    result = []
-    my_login_lower = my_login.lower()
-    for r in reviews:
-        user = r.get("user", {}).get("login", "")
-        if user.lower() == my_login_lower:
-            continue
-        state = r.get("state", "")
-        if state == "PENDING":
-            continue
-        body = (r.get("body") or "").strip()
-        if not body:
-            continue
-        result.append({
-            "id": r.get("id"),
-            "user": user,
-            "body": body,
-            "state": state,
-            "submitted_at": r.get("submitted_at", ""),
-        })
-    return result
+    return pr_data.review_body_comments(my_login)
 
 
 def resolve_thread(thread_id: str) -> bool:
@@ -621,22 +701,6 @@ def sync_threads(
 
 # ── Dashboard ──────────────────────────────────────────────────────────────
 
-def _relative_time(iso_str: str) -> str:
-    """Convert ISO timestamp to relative time string."""
-    try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        delta = datetime.now(timezone.utc) - dt
-        hours = delta // timedelta(hours=1)
-        if hours < 1:
-            return f"{delta // timedelta(minutes=1)} minutes ago"
-        days = delta // timedelta(days=1)
-        if not days:
-            return f"{hours} hours ago"
-        return f"{days} day{plural(days)} ago"
-    except (ValueError, TypeError):
-        return ""
-
-
 def render_dashboard(
     pr_number: int,
     threads: dict[str, ThreadRecord],
@@ -650,7 +714,7 @@ def render_dashboard(
 
     lines.append("Reviewers:")
     for v in sorted(verdicts, key=lambda x: x.get("submitted_at", ""), reverse=True):
-        time_str = _relative_time(v.get("submitted_at", ""))
+        time_str = relative_time(v.get("submitted_at", ""))
         lines.append(f"  @{v['user']} — {v['state']} ({time_str})")
     lines.append("")
 

@@ -19,6 +19,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr import domains as pr_domains
 from pr import state as pr_state
+from pr.ci_failures import RunState
 from pr.comments_state import ThreadState
 from core.proc import CmdResult
 
@@ -632,3 +633,56 @@ def test_push_readiness_branch_never_pushed():
 def test_push_readiness_unobserved_blocks_nothing():
     assert pr_domains.PushDomain().readiness() == pr_domains.Readiness()
 
+
+# ── Which commit a verdict is about ─────────────────────────────────────────
+#
+# `pr fix` decides whether to run a pass from these domains, so a domain has to
+# be able to say which commit its answer was measured against. The default is
+# "cannot say", which `describes` reads as no rather than as a match.
+
+
+def test_a_domain_that_records_no_commit_says_so():
+    assert pr_domains.Domain(updated_at="t").verdict_sha() == ""
+
+
+@pytest.mark.parametrize("mine,asked", [
+    ("abc123", "def456"),   # a verdict about another commit
+    ("", "def456"),         # a verdict that names no commit
+    ("abc123", ""),         # a caller that could not resolve HEAD
+    ("", ""),               # both unknown — must not read as equal
+])
+def test_describes_is_false_unless_both_sides_name_the_same_commit(mine, asked):
+    assert not pr_domains.ReviewSummary(head_sha=mine, updated_at="t").describes(asked)
+
+
+def test_describes_is_true_for_the_commit_it_was_measured_on():
+    assert pr_domains.ReviewSummary(head_sha="abc123", updated_at="t").describes("abc123")
+
+
+def test_review_reports_the_commit_it_reviewed():
+    assert pr_domains.ReviewSummary(head_sha="abc123").verdict_sha() == "abc123"
+
+
+def test_ci_reports_the_commit_of_its_latest_run():
+    """Read off the run, so it cannot drift from `latest_run_id`."""
+    ci = pr_domains.CIDomain(updated_at="t", latest_run_id=7)
+    ci.runs[7] = RunState(run_id=7, run_number=1, head_sha="abc123",
+                          status="completed", conclusion="success",
+                          fetched_at="t", failures={})
+    assert ci.verdict_sha() == "abc123"
+
+
+def test_ci_says_nothing_when_the_run_its_pointer_names_is_gone():
+    """A dangling pointer is unknown, not a match.
+
+    `_MAX_RUNS` pruning always keeps the newest run, so `latest_run_id` is not
+    normally left dangling — this is the defensive read for a truncated or
+    hand-edited state file, where the alternative is a KeyError on a cache.
+    """
+    ci = pr_domains.CIDomain(updated_at="t", latest_run_id=999)
+    assert ci.verdict_sha() == ""
+    assert not ci.describes("abc123")
+
+
+def test_ci_says_nothing_before_any_run_is_stored():
+    assert pr_domains.CIDomain(updated_at="t").verdict_sha() == ""

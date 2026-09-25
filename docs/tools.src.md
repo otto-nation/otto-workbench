@@ -508,6 +508,77 @@ counted as `N carried over`, and logged. An edit never drops a row it is the
 only comment holding; a row an earlier comment also carries is scoped like any
 other, since the chain still holds it.
 
+**An edited comment is read again:**
+
+A comment `pr comments` has already read is dropped from triage decomposition,
+so the record of what was read decides what an agent ever sees. That record is
+keyed on the comment id *and* the time its body was last edited — an edit keeps
+the id and does not move the comment, so a reviewer who rewrites a comment to
+add a demand would otherwise have it silently discarded as already handled.
+
+The stamp is GitHub's `lastEditedAt`, which is null until the first edit. The
+issue-comment REST path has no such field and reconstructs it from
+`updated_at`, collapsing the never-edited case (`updated_at == created_at`) to
+the same empty stamp — without that, the two fetch paths would disagree about
+an untouched comment and re-report it on every round.
+
+`fetch_review_body_comments` takes its `PRData` as a required argument for the
+same reason. It had a REST fallback and no caller for it, and the reviews REST
+payload carries no edit stamp at all — not `lastEditedAt`, not `updated_at` —
+so a run down that path could not have told an edited review body from an
+untouched one. A path that silently degrades a correctness check is worse than
+a missing one, so it is gone rather than documented.
+
+A state file written before the stamps existed reads as "nothing seen" and
+re-reports one round's comments. That is the deliberate direction: a false
+unseen is noise once, a false seen loses a reviewer's words for good.
+
+The same edit reopens a *thread*. A thread whose last comment is ours is
+`addressed`, which `settlement_for` grades `settled_elsewhere` — so a reviewer
+who edits their comment to add a demand after we replied had it recorded as
+answered and closed out, not merely missed. A thread anyone other than us
+rewrote after our last word is `ambiguous` instead, which carries no settlement
+and is included in triage.
+
+The comparison is against the time we last spoke, so a reviewer who tidied
+their comment *before* we answered leaves the thread addressed — we answered
+the text as it now stands. Our own later edit does not reopen anything, and a
+resolved thread stays resolved: the button is the reviewer's own word on how it
+ended.
+
+**`pr fix` only trusts a clean verdict about the commit in hand:**
+
+`pr fix` decides whether to run each pass by reading the same cached state
+`pr status` prints. A cached "nothing to do" is honoured only when the domain
+can say it was measured against the current HEAD — `ReviewSummary.head_sha` for
+the review, the latest stored run's `headSha` for CI. A verdict about another
+commit, or one that names no commit, re-runs the pass and says why.
+
+The two ways of being wrong are not symmetrical, which is what sets the
+default:
+
+| Cache says | Truth | Outcome |
+|---|---|---|
+| clean, same commit | clean | pass skipped — the saving this gate preserves |
+| clean, **another commit** | broken | pass **runs**; without the check it was silently skipped |
+| work pending | already fixed | pass runs, re-fetches, finds nothing, says so |
+
+Running an unnecessary pass costs one spawn, and every pass re-fetches its own
+subject before acting. Skipping a necessary one is silent and permanent:
+nothing downstream looks again, and `pr fix` reports success having done
+nothing. So the gate errs toward running whenever it cannot place the verdict.
+
+Each pass is asked about the commit *its own child* will act on, and under
+`--pr` those differ. `ctx.head_sha` is then the PR's remote head — the right
+question for CI, whose runs are about what was pushed, and the wrong one for
+the review, which `--self` runs against the worktree. Asking the review about
+the remote head skips it after a clean review followed by unpushed commits,
+leaving the local tree nobody has read unexamined.
+
+The comment hint is not gated this way. It never spawns the comment pass, and
+`CommentsSummary` records no commit, so a stale count there costs a misleading
+line rather than skipped work.
+
 **`pr describe` is commit-aware:**
 
 The pass records the HEAD it described. A repeated run against an unchanged
@@ -527,6 +598,60 @@ line. It checks `pull_request_template.md`, in either case, in `.github/`, the r
 root, and `docs/`, and takes the first that exists. A repo with none of them gets the
 built-in fallback (Summary / Changes / Testing only). A differently-named template,
 and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
+
+**Every line is dated:**
+
+`pr status` makes no network calls — it reads the state file each subcommand
+wrote when it last ran, so a line on the dashboard is as old as that run. The
+age is printed beside the domain it belongs to:
+
+| Age of the domain's last write | What the line carries |
+|---|---|
+| Under an hour | nothing — the one case a reader may take as current |
+| An hour or more | `(as of 3 hours ago)` |
+| A day or more | `[STALE — 7 days ago]` |
+| A stamp that cannot be parsed | `[STALE — age unknown]` |
+
+```
+**CI** (red): failure — 65 failure(s) [STALE — 7 days ago]
+  test: 65
+  run #12
+```
+
+The marker is applied by the dashboard's fold over the domain registry, not by
+each domain, so a domain added later is dated without doing anything. Push is
+the exception and not by special case: `pr status` observes it live rather than
+reading it back, so its stamp is always seconds old.
+
+A verdict is also refused when it was measured against another commit, however
+recent it is: run `pr ci`, commit, push, and the CI line is minutes old and
+describes the commit before yours. That reads `[STALE — checked another
+commit]`, and the commit outranks the clock — dating a superseded verdict "as
+of 5 minutes ago" would argue it is still current. A domain that records no
+commit (`comments`, `triage`) is judged by the clock alone, and so is every
+domain when HEAD cannot be resolved: unknown on either side is not evidence of
+a mismatch.
+
+**Merge readiness will not vouch for either.** A domain the dashboard marks —
+for age or for commit — that says nothing is wrong is folded in as *unchecked*
+rather than as clean, so the line reads `blocked — not checked: CI (last
+checked 9 days ago)` instead of `ready`. "We looked a week ago and it was fine"
+is not the same claim as "it is fine", and `ready` is read as the second: a
+dashboard that marks a line `[STALE]` and then declares the PR mergeable two
+lines below is the trap this closes. Both surfaces read the same two checks, so
+the marker above and the readiness line below cannot disagree.
+
+A domain that found something wrong keeps its blocker either way. An old
+failure is still a reason not to merge, and downgrading it to "unchecked" would
+make an unvouchable domain quieter than a current one.
+
+Two kinds of domain are judged on content alone. One has no say in merging at
+all — a description, a rebase record, a supersession verdict — so the age of
+its snapshot is not a reason to block. The other answers from bookkeeping
+rather than from a measurement: `pr fix`'s closeout debt is recorded in the
+state file itself, so it is as true a week later as when written and
+re-running the pass could not refresh it. An undelivered closeout still blocks
+at any age; a delivered one never starts to.
 
 **Push status in `pr status`:**
 

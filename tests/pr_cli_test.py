@@ -33,13 +33,27 @@ from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
 from core import run_lock  # noqa: E402
 from core import tool_parser  # noqa: E402
+from cli import pr_commands  # noqa: E402
 from review import gc as review_gc  # noqa: E402
 
 
-def _cmd_fix(argv, ctx, **kw):
-    """Call cmd_fix with the entry point's BIN_DIR, as `_dispatch` does."""
+def _cmd_fix(argv, ctx, *, worktree_head=None, **kw):
+    """Call cmd_fix with the entry point's BIN_DIR, as `_dispatch` does.
+
+    `worktree_head` pins what the review gate believes the checkout's HEAD is.
+    It has to be injected rather than left to run: `cmd_fix` asks git for it
+    (the review child reads the worktree, not the PR's remote head), the tests
+    point `worktree_root` at a path that does not exist, and the ones that
+    patch `cli.pr_commands.subprocess.run` patch the attribute on the *shared*
+    `subprocess` module — so the real call would come back a MagicMock rather
+    than a SHA. Defaults to the context's own head, which is what a checkout
+    sitting on the reviewed commit would answer.
+    """
     kw.setdefault("bin_dir", BIN_DIR)
-    return pr_cli.cmd_fix(argv, ctx, **kw)
+    with patch("cli.pr_commands._worktree_head",
+               return_value=worktree_head if worktree_head is not None
+               else ctx.head_sha):
+        return pr_cli.cmd_fix(argv, ctx, **kw)
 
 
 # Shared fixture values for the positional-vs-flag-value tests below.
@@ -668,18 +682,168 @@ def test_cmd_fix_prefers_the_target_the_operator_named(mock_load, mock_run):
 
 @patch("cli.pr_commands.subprocess.run")
 @patch("cli.pr_commands.pr_state.load_state")
-def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
+def test_cmd_fix_skips_review_when_no_findings_on_this_commit(mock_load, mock_run):
+    """A clean verdict suppresses the pass only when it was about this commit."""
     from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.ReviewSummary(
-        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value, updated_at="t",
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="abc123", updated_at="t",
     ))
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = make_ctx()
-    rc = _cmd_fix([], ctx)
+    rc = _cmd_fix([], make_ctx(head_sha="abc123"))
     assert rc == 0
     assert not _calls_containing(mock_run, "claude-review")
+
+
+# ── A cached "nothing to do" is only about the commit it was measured on ─────
+#
+# `pr fix` decides whether to run its passes from the state file, and used to
+# ask only "were there findings / failures?". A clean answer from a week ago
+# suppressed the pass on a branch that had been pushed to since — silently, and
+# with nothing downstream to re-check. Running when unsure costs a spawn that
+# re-fetches and no-ops; skipping when unsure loses the work altogether.
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_again_when_the_clean_verdict_was_another_commit(
+    mock_load, mock_run,
+):
+    """The false negative this gate exists to close."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="0ldc0mmit", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_again_when_the_verdict_names_no_commit(mock_load, mock_run):
+    """A state file written before head_sha was recorded is unknown, not clean."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_again_when_head_cannot_be_resolved(mock_load, mock_run):
+    """Unknown on the caller's side is unknown too — it must not read as a match.
+
+    Both sides empty is the case a bare equality check gets wrong: "" == ""
+    would call a verdict that names no commit an answer about a HEAD nobody
+    could resolve.
+    """
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha=""))
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_checks_ci_again_when_the_green_run_was_another_commit(
+    mock_load, mock_run,
+):
+    """The costly half: a stale-green CI cache used to skip the spawn entirely.
+
+    The child re-fetches before it fixes anything, so spawning on a stale red
+    is self-correcting. Skipping on a stale green is not — nothing downstream
+    looks again, and `pr fix` reports success having checked nothing.
+    """
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    ci = pr_domains.CIDomain(
+        conclusion="success", failure_count=0, updated_at="t", latest_run_id=7,
+    )
+    ci.runs[7] = RunState(
+        run_id=7, run_number=1, head_sha="0ldc0mmit", status="completed",
+        conclusion="success", fetched_at="t", failures={},
+    )
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "ci-check")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_trusts_a_green_ci_run_for_this_commit(mock_load, mock_run):
+    """The gate must still save the spawn it is there to save."""
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    ci = pr_domains.CIDomain(
+        conclusion="success", failure_count=0, updated_at="t", latest_run_id=7,
+    )
+    ci.runs[7] = RunState(
+        run_id=7, run_number=1, head_sha="abc123", status="completed",
+        conclusion="success", fetched_at="t", failures={},
+    )
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert not _calls_containing(mock_run, "ci-check")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_still_spawns_ci_on_a_stale_red_cache(mock_load, mock_run):
+    """Cached work outranks the commit check: the child re-fetches either way."""
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    ci = pr_domains.CIDomain(
+        conclusion="failure", failure_count=3, failure_kinds={"test": 3},
+        updated_at="t", latest_run_id=7,
+    )
+    ci.runs[7] = RunState(
+        run_id=7, run_number=1, head_sha="0ldc0mmit", status="completed",
+        conclusion="failure", fetched_at="t", failures={},
+    )
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "ci-check")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_does_not_check_ci_that_never_ran_against_a_matching_sha(
+    mock_load, mock_run,
+):
+    """An unwritten domain is an absent verdict, so the pass runs."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "ci-check")
 
 
 def _calls_containing(mock_run, script: str) -> list[list[str]]:
@@ -1861,3 +2025,159 @@ def test_cmd_fix_still_withholds_its_other_flags_from_describe(tmp_path):
     cmd = _describe_cmd(["--post", "--fix", "--wait"], tmp_path)
     assert "--fix" not in cmd
     assert "--wait" not in cmd
+
+
+# ── The review gate asks about the commit the review will read ──────────────
+#
+# `ctx.head_sha` is the PR's *remote* head under `--pr`, while `claude-review
+# --self` reads the worktree (`review.pipeline._with_local_diff`). Asking the
+# review gate about the remote head skipped the review after a clean pass
+# followed by unpushed commits — the local tree nobody had read was the one it
+# declined to look at.
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_unpushed_local_commits(mock_load, mock_run):
+    """A clean verdict for the remote head says nothing about local work."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="remote",
+                               worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="remote", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+
+    # `--pr` resolves ctx.head_sha to the remote head; the checkout has moved on.
+    _cmd_fix([], make_ctx(head_sha="remote"), worktree_head="local")
+
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_still_skips_when_the_checkout_is_on_the_reviewed_commit(
+    mock_load, mock_run,
+):
+    """The saving survives: nothing to review when the worktree matches."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="remote",
+                               worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="local", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+
+    _cmd_fix([], make_ctx(head_sha="remote"), worktree_head="local")
+
+    assert not _calls_containing(mock_run, "claude-review")
+
+
+def test_the_review_subject_falls_back_when_the_checkout_is_gone():
+    """A gate deciding what to run must not be what ends the run.
+
+    `pr_context.head_sha` shells out with `cwd=` set, which raises rather than
+    returning "" when the directory is not there.
+    """
+    from pathlib import Path as _Path
+    assert pr_commands._worktree_head(
+        _Path("/definitely/not/here"), "ctxsha") == "ctxsha"
+
+
+# ── `pr status` compares against the checkout, not the last write ───────────
+#
+# `identity.head_sha` is from whenever state was last written. A commit made
+# since leaves it naming the very SHA the domains were measured at, so the
+# supersession check would be asking a stale value about itself and a verdict
+# about the previous commit would render as current.
+
+
+@patch("cli.pr_commands.pr_state.load_state")
+@patch("cli.pr_commands.pr_domains.PushDomain.observed")
+def test_cmd_status_marks_a_verdict_left_behind_by_a_local_commit(
+    observed, mock_load, capsys,
+):
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("acme/w", "feat/x", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    ci = pr_domains.CIDomain(conclusion="success", failure_count=0,
+                             updated_at=pr_state.now_iso(), latest_run_id=1)
+    ci.runs[1] = RunState(run_id=1, run_number=1, head_sha="A",
+                          status="completed", conclusion="success",
+                          fetched_at="t", failures={})
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    observed.return_value = pr_domains.PushDomain(ahead=1,
+                                                  updated_at=pr_state.now_iso())
+
+    # The checkout has moved on since `pr ci` wrote the state.
+    with patch("cli.pr_commands._worktree_head", return_value="B"):
+        pr_cli.cmd_status([], make_ctx(worktree_root=Path("/wt")))
+
+    err = capsys.readouterr().err
+    assert "[STALE — checked another commit]" in err
+
+
+@patch("cli.pr_commands.pr_state.load_state")
+@patch("cli.pr_commands.pr_domains.PushDomain.observed")
+def test_cmd_status_leaves_a_current_verdict_unmarked(observed, mock_load, capsys):
+    """The checkout is on the commit the run was about, so nothing is stale."""
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("acme/w", "feat/x", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    ci = pr_domains.CIDomain(conclusion="success", failure_count=0,
+                             updated_at=pr_state.now_iso(), latest_run_id=1)
+    ci.runs[1] = RunState(run_id=1, run_number=1, head_sha="A",
+                          status="completed", conclusion="success",
+                          fetched_at="t", failures={})
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    observed.return_value = pr_domains.PushDomain(ahead=0,
+                                                  updated_at=pr_state.now_iso())
+
+    with patch("cli.pr_commands._worktree_head", return_value="A"):
+        pr_cli.cmd_status([], make_ctx(worktree_root=Path("/wt")))
+
+    assert "STALE" not in capsys.readouterr().err
+
+
+@patch("cli.pr_commands.pr_state.load_state")
+@patch("cli.pr_commands.pr_domains.PushDomain.observed")
+def test_cmd_status_dumps_the_head_it_compared_against(observed, mock_load, capsys):
+    """The JSON must agree with the dashboard rendered from the same object."""
+    from pr import state as pr_state
+    state = pr_state.new_state("acme/w", "feat/x", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    pr_state.apply(state, pr_domains.CIDomain(conclusion="success",
+                                              updated_at=pr_state.now_iso()))
+    mock_load.return_value = state
+    observed.return_value = pr_domains.PushDomain(ahead=0,
+                                                  updated_at=pr_state.now_iso())
+
+    with patch("cli.pr_commands._worktree_head", return_value="B"):
+        pr_cli.cmd_status([], make_ctx(worktree_root=Path("/wt")))
+
+    assert json.loads(capsys.readouterr().out)["identity"]["head_sha"] == "B"
+
+
+@pytest.mark.parametrize("boom", [
+    OSError("no such directory"),
+    subprocess.TimeoutExpired(cmd="git rev-parse HEAD", timeout=10.0),
+])
+def test_the_worktree_head_read_never_ends_the_command(boom):
+    """Both ways the shell-out can fail, since they are not one exception.
+
+    `pr_context.head_sha` runs git with a cwd and a timeout. A removed
+    worktree or a missing git binary raises OSError; a hung rev-parse raises
+    TimeoutExpired, which is a SubprocessError and NOT an OSError. Catching
+    only the first would let a hung git take down a read-only `pr status`.
+    """
+    from pathlib import Path as _Path
+    with patch("cli.pr_commands.pr_context.head_sha", side_effect=boom):
+        assert pr_commands._worktree_head(_Path("/wt"), "ctxsha") == "ctxsha"

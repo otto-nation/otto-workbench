@@ -79,6 +79,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import Enum, StrEnum
 from pathlib import Path
+from typing import ClassVar
 
 # get_type_hints(CIDomain) resolves its `runs` annotation against the namespace
 # of the module CIDomain is defined in, so RunState must be bound here;
@@ -143,6 +144,19 @@ class Domain:
     nothing and blocks nothing.
     """
 
+    # Whether this domain's answer can go out of date, which is a question
+    # about what the answer *is* rather than about how old it is.
+    #
+    # Most domains report a measurement of something outside the state file —
+    # a CI run, a review of the tree, a fetch of the threads — and a
+    # measurement taken long enough ago stops describing the world. Some
+    # report bookkeeping the file itself owns: `FixSummary` answers "does this
+    # record show an undelivered closeout", which is as true a week later as
+    # the minute it was written, and which re-running the pass cannot change.
+    # Ageing the second kind blocks a PR on a delivered closeout, so a domain
+    # that reports bookkeeping turns this off and is judged on content alone.
+    ages: ClassVar[bool] = True
+
     updated_at: str = ""
     fix: FixRecord = field(default_factory=FixRecord)
 
@@ -170,6 +184,33 @@ class Domain:
         being absent from a list someone maintains.
         """
         return []
+
+    def verdict_sha(self) -> str:
+        """The commit this domain's answer was measured against, if it knows.
+
+        `""` means the domain cannot say — either it was never written, or it
+        records no commit at all. A caller deciding whether to trust a cached
+        "nothing to do" must treat that as *unknown*, never as a match: the
+        whole point is that a verdict about some other commit is not an answer
+        about this one.
+
+        Declared here rather than on the two domains that have the field so
+        that `describes()` below can ask every domain the same question, and so
+        a domain that gains a commit-keyed verdict answers it by overriding one
+        method rather than by being added to a table.
+        """
+        return ""
+
+    def describes(self, head_sha: str) -> bool:
+        """Whether this domain's answer is about `head_sha`.
+
+        False when either side cannot say. An unwritten domain, a domain that
+        records no commit, and a caller that could not resolve HEAD all reach
+        the same answer, and it is the conservative one: act, rather than skip
+        work on the strength of a verdict nobody can place.
+        """
+        mine = self.verdict_sha()
+        return bool(mine) and bool(head_sha) and mine == head_sha
 
     def readiness(self) -> Readiness:
         """This domain's answer to whether the PR may merge.
@@ -200,6 +241,16 @@ class CIDomain(Domain):
     # restores the ints on the way back in.
     runs: dict[int, RunState] = field(default_factory=dict)
     latest_run_id: int | None = None
+
+    def verdict_sha(self) -> str:
+        """The commit the latest stored run was for.
+
+        Read off the run rather than held on the domain: GitHub reports the SHA
+        per run, `sync_ci_domain` already stores it there, and a second copy on
+        the summary is one more field to keep in step with `latest_run_id`.
+        """
+        run = self.runs.get(self.latest_run_id) if self.latest_run_id is not None else None
+        return run.head_sha if run else ""
 
     def render_status(self) -> list[str]:
         if not self.updated_at:
@@ -349,6 +400,9 @@ class ReviewSummary(Domain):
     cost_usd: float = 0.0
     total_tokens: int = 0
 
+    def verdict_sha(self) -> str:
+        return self.head_sha
+
     @property
     def _incomplete(self) -> bool:
         """Whether the run this describes did not finish its phases."""
@@ -409,8 +463,20 @@ class CommentsSummary(Domain):
     by_state: dict[str, int] = field(default_factory=dict)
     blocking_reviewers: list[str] = field(default_factory=list)
     has_approvals: bool = False
-    seen_issue_comment_ids: list[int] = field(default_factory=list)
-    seen_review_body_comment_ids: list[int] = field(default_factory=list)
+    # What the last round read, as {comment id: the edit stamp it carried}.
+    #
+    # Keyed by id *and* dated, because an edit keeps the id: a reviewer who
+    # rewrites a comment to add a demand produces the same id with a new
+    # stamp, and an id-only record read that as already handled and dropped it
+    # from triage. The value is `lastEditedAt`, or "" for a comment never
+    # edited — so an unedited comment matches on "" == "" and stays seen.
+    #
+    # These replace the former `seen_*_ids` lists rather than sitting beside
+    # them. A state file written before this deserializes without them, which
+    # reads as "nothing seen" and re-reports one round's comments — noise, and
+    # the direction that cannot silently drop a reviewer's words.
+    seen_issue_comments: dict[int, str] = field(default_factory=dict)
+    seen_review_body_comments: dict[int, str] = field(default_factory=dict)
     # Whether the fetch behind these counts reached every thread. Defaulted
     # True so a state file written before the field reads as it always did;
     # a short tally that claimed to be the whole PR is what this exists to

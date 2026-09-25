@@ -2,8 +2,10 @@
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -17,7 +19,7 @@ from git.land import CommitStatus
 from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
 from pr.domains import (
     CIDomain,
-    CommentsSummary, TriageSummary, RebaseSummary,
+    CommentsSummary, DescribeSummary, TriageSummary, RebaseSummary,
     PushDomain,
     ReviewSummary, ReviewVerdict, ReviewStatus,
     SupersessionDomain, SupersessionKind, SupersessionSignal,
@@ -26,7 +28,7 @@ from pr.fix import FixOutcome, FixRecord, ItemOutcome
 from pr.state import (
     PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
-    apply, _domains, domains_of, merge_readiness,
+    age_suffix, apply, _domains, domains_of, merge_readiness,
     render_dashboard, render_merge_readiness,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
@@ -72,13 +74,13 @@ def test_comments_summary_defaults():
     assert c.by_state == {}
     assert c.blocking_reviewers == []
     assert c.has_approvals is False
-    assert c.seen_issue_comment_ids == []
-    assert c.seen_review_body_comment_ids == []
+    assert c.seen_issue_comments == {}
+    assert c.seen_review_body_comments == {}
 
 
 def test_comments_summary_with_seen_ids():
-    c = CommentsSummary(seen_issue_comment_ids=[111, 222, 333])
-    assert c.seen_issue_comment_ids == [111, 222, 333]
+    c = CommentsSummary(seen_issue_comments={111: "", 222: "2026-01-01T00:00:00Z"})
+    assert c.seen_issue_comments == {111: "", 222: "2026-01-01T00:00:00Z"}
 
 
 def test_triage_summary_defaults():
@@ -194,7 +196,7 @@ def test_state_roundtrip_with_data():
     assert restored.comments.by_state == {"new": 2, "addressed": 3}
     assert restored.comments.blocking_reviewers == ["alice"]
     assert restored.comments.has_approvals is True
-    assert restored.comments.seen_issue_comment_ids == []
+    assert restored.comments.seen_issue_comments == {}
 
 
 def test_commit_status_wire_values_are_the_strings_state_files_hold():
@@ -233,28 +235,51 @@ def test_a_status_read_from_an_older_state_file_still_compares():
     assert state.fix.fix.commit_status == CommitStatus.PUSH_HELD
 
 
-def test_state_roundtrip_with_seen_issue_comment_ids():
+def test_state_roundtrip_with_seen_issue_comments():
+    """The stamps survive JSON, which turns every mapping key into a string."""
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
     apply(state, CommentsSummary(
         total_threads=3, by_state={"new": 1, "addressed": 2},
-        seen_issue_comment_ids=[111, 222, 333],
+        seen_issue_comments={111: "", 222: "2026-07-02T00:00:00Z"},
         updated_at="2026-07-02T00:00:00+00:00",
     ))
     d = state_to_dict(state)
-    restored = state_from_dict(d)
-    assert restored.comments.seen_issue_comment_ids == [111, 222, 333]
+    restored = state_from_dict(json.loads(json.dumps(d)))
+    assert restored.comments.seen_issue_comments == {
+        111: "", 222: "2026-07-02T00:00:00Z",
+    }
 
 
-def test_state_roundtrip_with_seen_review_body_comment_ids():
+def test_state_roundtrip_with_seen_review_body_comments():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
     apply(state, CommentsSummary(
         total_threads=3, by_state={"new": 1, "addressed": 2},
-        seen_review_body_comment_ids=[444, 555, 666],
+        seen_review_body_comments={444: "2026-07-13T00:00:00Z", 555: ""},
         updated_at="2026-07-13T00:00:00+00:00",
     ))
     d = state_to_dict(state)
-    restored = state_from_dict(d)
-    assert restored.comments.seen_review_body_comment_ids == [444, 555, 666]
+    restored = state_from_dict(json.loads(json.dumps(d)))
+    assert restored.comments.seen_review_body_comments == {
+        444: "2026-07-13T00:00:00Z", 555: "",
+    }
+
+
+def test_a_state_file_from_before_the_stamps_reads_as_nothing_seen():
+    """The migration, such as it is: one round re-reports, nothing is dropped.
+
+    The old field was a list of bare ids. serde drops what no field claims, so
+    the mapping comes back empty and every comment reads unseen — noisy once,
+    and the only direction that cannot silently swallow a reviewer's words.
+    """
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    apply(state, CommentsSummary(total_threads=1, updated_at="t"))
+    d = state_to_dict(state)
+    d["comments"]["seen_issue_comment_ids"] = [111, 222]
+    d["comments"].pop("seen_issue_comments", None)
+
+    restored = state_from_dict(json.loads(json.dumps(d)))
+
+    assert restored.comments.seen_issue_comments == {}
 
 
 def test_state_roundtrip_with_triage_data():
@@ -702,12 +727,19 @@ def test_merge_readiness_gathers_blockers_and_unchecked_from_every_domain():
     assert answer.unchecked == ("review",)
 
 
+# A stamp recent enough that the staleness fold vouches for it. A bare "t"
+# parses as no time at all, which now reads as a domain nobody can date — fine
+# for a test that only needs "this domain was written", wrong for one whose
+# subject is whether the PR reads as ready.
+_JUST_NOW = datetime.now(timezone.utc).isoformat()
+
+
 def test_merge_readiness_is_empty_when_every_domain_is_clean():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, CIDomain(conclusion="success", updated_at="t"))
-    apply(state, ReviewSummary(finding_counts={"S": 1}, updated_at="t"))
-    apply(state, CommentsSummary(updated_at="t"))
-    apply(state, PushDomain(ahead=0, updated_at="t"))
+    apply(state, CIDomain(conclusion="success", updated_at=_JUST_NOW))
+    apply(state, ReviewSummary(finding_counts={"S": 1}, updated_at=_JUST_NOW))
+    apply(state, CommentsSummary(updated_at=_JUST_NOW))
+    apply(state, PushDomain(ahead=0, updated_at=_JUST_NOW))
 
     assert merge_readiness(state).blockers == ()
     assert merge_readiness(state).unchecked == ()
@@ -722,13 +754,14 @@ def test_render_merge_readiness_delegates_to_readiness_render():
 
 
 def _green_state():
-    """Everything checked and clean — anything blocked here is the closeout."""
+    """Everything checked, clean and current — anything blocked is the closeout."""
     state = new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    apply(state, CIDomain(conclusion="success", updated_at="t"))
+    apply(state, CIDomain(conclusion="success", updated_at=_JUST_NOW))
     apply(state, ReviewSummary(
-        finding_counts={"S": 1}, verdict=ReviewVerdict.APPROVE.value, updated_at="t",
+        finding_counts={"S": 1}, verdict=ReviewVerdict.APPROVE.value,
+        updated_at=_JUST_NOW,
     ))
-    apply(state, CommentsSummary(blocking_reviewers=[], updated_at="t"))
+    apply(state, CommentsSummary(blocking_reviewers=[], updated_at=_JUST_NOW))
     return state
 
 
@@ -762,7 +795,8 @@ def test_render_merge_readiness_ignores_a_drained_closeout():
         fix=FixRecord(
             items=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED)],
         ),
-        summary_url="https://example.test/c/1", replies_posted=1, updated_at="t",
+        summary_url="https://example.test/c/1", replies_posted=1,
+        updated_at=_JUST_NOW,
     ))
     result = render_merge_readiness(state)
     assert "closeout" not in result
@@ -794,6 +828,126 @@ def test_render_dashboard_push_refresh_is_visible_in_state_to_dict():
     assert dumped["push"]["ahead"] == 2
     assert dumped["push"]["updated_at"] == "now"
     assert state.push is push
+
+
+# ── Dating the snapshot ─────────────────────────────────────────────────────
+#
+# Every line on the dashboard is as old as the last run of the subcommand that
+# wrote it, and nothing on it used to say so — a week-old "CI: 65 failure(s)"
+# read exactly like one taken a minute ago.
+
+
+def _ago(**kwargs) -> str:
+    return (datetime.now(timezone.utc) - timedelta(**kwargs)).isoformat()
+
+
+def _ci_line(updated_at: str) -> str:
+    """The CI line as `pr status` prints it for a domain written at `updated_at`."""
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", failure_count=65,
+                          updated_at=updated_at))
+    lines = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    return next(l for l in lines if l.startswith("**CI**"))
+
+
+def test_a_fresh_domain_is_not_dated():
+    """An answer taken minutes ago is the one case a reader may assume."""
+    assert _ci_line(_ago(minutes=2)) == "**CI** (red): failure — 65 failure(s)"
+
+
+def test_an_hour_old_domain_says_when_it_was_taken():
+    assert _ci_line(_ago(hours=3)).endswith(" (as of 3 hours ago)")
+
+
+def test_a_day_old_domain_is_marked_stale():
+    """The trap this exists to close: a week-old red CI presented as current."""
+    line = _ci_line(_ago(days=7))
+    assert "65 failure(s)" in line
+    assert line.endswith(" [STALE — 7 days ago]")
+
+
+def test_an_unwritten_domain_is_not_dated():
+    """Its own line already says "not checked yet"; an age would contradict it."""
+    assert _ci_line("") == "**CI**: not checked yet"
+
+
+def test_a_stamp_that_cannot_be_read_is_stale_rather_than_fresh():
+    """Something wrote the domain, so the answer is old-of-unknown-age — not new."""
+    assert _ci_line("garbage").endswith(" [STALE — age unknown]")
+
+
+def test_only_the_first_line_of_a_domain_is_dated():
+    """The age belongs to the domain, not to each count it breaks out."""
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", failure_count=3,
+                          failure_kinds={"test": 3}, last_run_number=12,
+                          updated_at=_ago(days=7)))
+    lines = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    dated = [l for l in lines if "STALE" in l]
+    assert dated == ["**CI** (red): failure — 3 failure(s) [STALE — 7 days ago]"]
+    assert "  test: 3" in lines
+    assert "  run #12" in lines
+
+
+def test_the_live_push_observation_is_never_dated():
+    """`cmd_status` observes push now, so its stamp cannot be old."""
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    push = PushDomain(ahead=2, updated_at=pr_state.now_iso())
+    lines = render_dashboard(state, push, repo="acme/widget", branch="feat/x")
+    assert "**Push**: 2 commit(s) not pushed" in lines
+
+
+@pytest.mark.parametrize("name,cls", sorted(_domains().items()))
+def test_every_domain_in_the_registry_is_dated(name, cls):
+    """The marker is applied by the fold, so a domain added later gets it too.
+
+    A domain that renders nothing has nothing to date and is exempt; one that
+    speaks must say when it last spoke. Push is exempt for a second reason,
+    pinned by the test above: the dashboard overwrites it with a live
+    observation, so the stamp reaching the fold is always the one taken here.
+    """
+    if cls is PushDomain:
+        pytest.skip("push is observed live, never read from the cache")
+    domain = cls(updated_at=_ago(days=7))
+    if not domain.render_status():
+        pytest.skip(f"{name} renders no line to date")
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    apply(state, domain)
+    lines = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    assert any("[STALE — 7 days ago]" in l for l in lines)
+
+
+def test_dating_a_domain_does_not_write_back_into_what_it_returned():
+    """Rendering twice must not stack two suffixes on one line.
+
+    Every domain builds a fresh list today, so writing through `rendered[0]`
+    happens to work; one returning a shared or cached list would grow a suffix
+    per render, and the second `pr status` of a session would be the one that
+    showed it.
+    """
+    stale = _ago(days=7)
+    state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                      worktree_root="/wt")
+    shared = ["**CI** (red): failure — 65 failure(s)"]
+    domain = CIDomain(conclusion="failure", failure_count=65, updated_at=stale)
+    with patch.object(CIDomain, "render_status", return_value=shared):
+        apply(state, domain)
+        first = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+        second = render_dashboard(state, PushDomain(), repo="acme/widget", branch="feat/x")
+    assert first == second
+    assert shared == ["**CI** (red): failure — 65 failure(s)"]
+
+
+def test_age_suffix_boundaries():
+    """The two thresholds, taken from either side."""
+    assert age_suffix(_ago(minutes=59)) == ""
+    assert age_suffix(_ago(hours=1)) == " (as of 1 hour ago)"
+    assert age_suffix(_ago(hours=23)) == " (as of 23 hours ago)"
+    assert age_suffix(_ago(hours=24)) == " [STALE — 1 day ago]"
 
 
 def test_apply_rejects_a_type_no_field_holds():
@@ -861,13 +1015,14 @@ def test_apply_replaces_comments():
 def test_apply_comments_with_seen_ids():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, CommentsSummary(
-        total_threads=2, seen_issue_comment_ids=[100, 200], updated_at="t1",
+        total_threads=2, seen_issue_comments={100: "", 200: ""}, updated_at="t1",
     ))
-    assert state.comments.seen_issue_comment_ids == [100, 200]
+    assert state.comments.seen_issue_comments == {100: "", 200: ""}
     apply(state, CommentsSummary(
-        total_threads=3, seen_issue_comment_ids=[100, 200, 300], updated_at="t2",
+        total_threads=3, seen_issue_comments={100: "", 200: "", 300: ""},
+        updated_at="t2",
     ))
-    assert state.comments.seen_issue_comment_ids == [100, 200, 300]
+    assert state.comments.seen_issue_comments == {100: "", 200: "", 300: ""}
 
 
 def test_apply_replaces_triage():
@@ -971,42 +1126,35 @@ def test_save_preserves_rebase_data(worktree):
     assert loaded.rebase.files_resolved == ["f.py"]
 
 
-def test_save_preserves_seen_issue_comment_ids(worktree):
+def test_save_preserves_seen_issue_comments(worktree):
+    """Through a real file, where the mapping's int keys go out as strings."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     apply(state, CommentsSummary(
-        total_threads=2, seen_issue_comment_ids=[111, 222],
+        total_threads=2, seen_issue_comments={111: "", 222: "2026-07-02T00:00:00Z"},
         updated_at="2026-07-02T00:00:00+00:00",
     ))
     save_state(worktree, state)
     loaded = load_state(worktree)
     assert loaded is not None
-    assert loaded.comments.seen_issue_comment_ids == [111, 222]
+    assert loaded.comments.seen_issue_comments == {
+        111: "", 222: "2026-07-02T00:00:00Z",
+    }
 
 
-def test_load_state_without_seen_ids_defaults_empty(worktree):
-    """Old state files without seen_issue_comment_ids should deserialize with []."""
+@pytest.mark.parametrize("field_name", [
+    "seen_issue_comments", "seen_review_body_comments",
+])
+def test_load_state_without_seen_stamps_defaults_empty(worktree, field_name):
+    """A file missing the mapping loads with an empty one, not a failure."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
     path = worktree / "state.json"
     data = json.loads(path.read_text())
-    del data["comments"]["seen_issue_comment_ids"]
+    del data["comments"][field_name]
     path.write_text(json.dumps(data))
     loaded = load_state(worktree)
     assert loaded is not None
-    assert loaded.comments.seen_issue_comment_ids == []
-
-
-def test_load_state_without_seen_review_body_comment_ids_defaults_empty(worktree):
-    """Old state files without seen_review_body_comment_ids should deserialize with []."""
-    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
-    save_state(worktree, state)
-    path = worktree / "state.json"
-    data = json.loads(path.read_text())
-    del data["comments"]["seen_review_body_comment_ids"]
-    path.write_text(json.dumps(data))
-    loaded = load_state(worktree)
-    assert loaded is not None
-    assert loaded.comments.seen_review_body_comment_ids == []
+    assert getattr(loaded.comments, field_name) == {}
 
 
 # ── load_or_init ───────────────────────────────────────────────────────────
@@ -1836,3 +1984,232 @@ class TestTerminalSummary:
 
     def test_the_action_name_is_published(self):
         assert pr_state.TERMINAL_SUMMARY_ACTION == "pr_outcome"
+
+
+# ── A stale verdict is not a clean bill of health ───────────────────────────
+#
+# The dashboard marks a week-old line [STALE] and the readiness line two lines
+# below used to declare the PR ready on the strength of it. "We looked a week
+# ago and it was fine" is not "it is fine", and only one of them is what
+# `ready` is read as.
+
+
+def _clean_but_aged(**age) -> PRState:
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", failure_count=0, updated_at=_ago(**age)))
+    apply(state, ReviewSummary(verdict=ReviewVerdict.APPROVE.value,
+                               finding_counts={}, updated_at=_ago(**age)))
+    apply(state, CommentsSummary(total_threads=0, updated_at=_ago(**age)))
+    return state
+
+
+def test_a_stale_clean_domain_is_unchecked_not_ready():
+    answer = merge_readiness(_clean_but_aged(days=9))
+    assert answer.blockers == ()
+    assert any(u.startswith("CI (") for u in answer.unchecked)
+    assert "ready" not in answer.render().lower()
+
+
+def test_the_readiness_line_dates_what_it_could_not_vouch_for():
+    """The operator has to know how old, not merely that it was not checked."""
+    line = merge_readiness(_clean_but_aged(days=9)).render()
+    assert "CI (last checked 9 days ago)" in line
+
+
+def test_a_fresh_clean_domain_is_still_ready():
+    """The gate must not turn every PR into a permanent 'not checked'."""
+    assert merge_readiness(_clean_but_aged(minutes=2)).render() == (
+        "**Merge readiness**: ready"
+    )
+
+
+def test_a_stale_failure_stays_a_blocker():
+    """An old failure is still a reason not to merge.
+
+    Downgrading it to "unchecked" would make a stale failing domain quieter
+    than a fresh one, which is the wrong direction for the same asymmetry the
+    rest of this change follows.
+    """
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", failure_count=3,
+                          updated_at=_ago(days=9)))
+    answer = merge_readiness(state)
+    assert "CI failing" in answer.blockers
+    assert not any(u.startswith("CI (last checked") for u in answer.unchecked)
+
+
+def test_an_unwritten_domain_is_unchecked_without_an_age():
+    """It has no answer to be stale about; its own readiness already says so."""
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    answer = merge_readiness(state)
+    assert "CI" in answer.unchecked
+    assert not any("last checked" in u for u in answer.unchecked)
+
+
+def test_a_domain_whose_stamp_cannot_be_read_is_not_vouched_for():
+    """Unreadable is unknown, and unknown must not read as current."""
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha="abc",
+                      worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", failure_count=0,
+                          updated_at="garbage"))
+    assert any(u.startswith("CI (") for u in merge_readiness(state).unchecked)
+
+
+def test_the_stale_threshold_is_the_one_the_dashboard_marks():
+    """One threshold, so the [STALE] marker and the readiness line agree.
+
+    A domain the dashboard marks stale must be one the fold declines to vouch
+    for, and a domain it leaves unmarked must be one the fold accepts.
+    """
+    for age, marked in [(dict(hours=23), False), (dict(hours=24), True)]:
+        state = _clean_but_aged(**age)
+        vouched = merge_readiness(state).render() == "**Merge readiness**: ready"
+        assert vouched is not marked
+        assert bool(age_suffix(state.ci.updated_at).count("STALE")) is marked
+
+
+# ── The clock and the commit are different questions ────────────────────────
+#
+# `pr ci`, then a commit, then a push: the CI line is minutes old and describes
+# the commit before this one. Fresh by every reading of `updated_at`, and not
+# an answer about the branch as it now stands. The age check cannot see it and
+# the commit check cannot see a week-old verdict about an unchanged tree, so
+# the dashboard and the readiness fold ask both.
+
+
+def _ci_for(commit: str, **age) -> CIDomain:
+    ci = CIDomain(conclusion="success", failure_count=0,
+                  updated_at=_ago(**age), latest_run_id=1)
+    ci.runs[1] = RunState(run_id=1, run_number=1, head_sha=commit,
+                          status="completed", conclusion="success",
+                          fetched_at="t", failures={})
+    return ci
+
+
+def _state_at(head: str, domain) -> PRState:
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha=head,
+                      worktree_root="/wt")
+    apply(state, domain)
+    return state
+
+
+def test_a_recent_verdict_about_another_commit_is_marked_superseded():
+    """The gap a wall-clock check cannot close."""
+    state = _state_at("newsha", _ci_for("oldsha", minutes=2))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    ci_line = next(l for l in lines if l.startswith("**CI**"))
+    assert ci_line.endswith(" [STALE — checked another commit]")
+
+
+def test_a_recent_verdict_about_this_commit_is_not_marked():
+    state = _state_at("newsha", _ci_for("newsha", minutes=2))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    assert not any("STALE" in l for l in lines)
+
+
+def test_the_commit_marker_outranks_the_age_one():
+    """Dating a superseded verdict would argue it is still current."""
+    state = _state_at("newsha", _ci_for("oldsha", days=9))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    ci_line = next(l for l in lines if l.startswith("**CI**"))
+    assert ci_line.endswith(" [STALE — checked another commit]")
+    assert "9 days ago" not in ci_line
+
+
+def test_readiness_will_not_vouch_for_a_superseded_verdict():
+    state = _state_at("newsha", _ci_for("oldsha", minutes=2))
+    answer = merge_readiness(state)
+    assert "CI (checked another commit)" in answer.unchecked
+
+
+def test_a_superseded_failure_stays_a_blocker():
+    """Same asymmetry as the age check: an unvouchable domain is not quieter."""
+    ci = _ci_for("oldsha", minutes=2)
+    ci.conclusion, ci.failure_count = "failure", 2
+    answer = merge_readiness(_state_at("newsha", ci))
+    assert "CI failing" in answer.blockers
+    assert not any("checked another commit" in u for u in answer.unchecked)
+
+
+def test_a_domain_that_records_no_commit_is_judged_by_the_clock_alone():
+    """CommentsSummary cannot place its answer, so it keeps its old reading."""
+    fresh = _state_at("newsha", CommentsSummary(total_threads=0,
+                                                updated_at=_ago(minutes=2)))
+    # The other domains are unwritten and report themselves unchecked; what
+    # matters is that comments is not among them and is never called superseded.
+    assert not any("comments" in u for u in merge_readiness(fresh).unchecked)
+    stale = _state_at("newsha", CommentsSummary(total_threads=0,
+                                                updated_at=_ago(days=9)))
+    unchecked = merge_readiness(stale).unchecked
+    assert any("comments (last checked" in u for u in unchecked)
+    assert not any("comments (checked another commit)" in u for u in unchecked)
+
+
+def test_an_unresolvable_head_does_not_supersede_everything():
+    """With no HEAD to compare against, the commit check must stay silent.
+
+    `describes` is false when either side is unknown, so a naive check would
+    mark every domain superseded the moment HEAD could not be read.
+    """
+    state = _state_at("", _ci_for("oldsha", minutes=2))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    assert not any("checked another commit" in l for l in lines)
+
+
+def test_a_domain_that_does_not_gate_merging_never_blocks_on_its_age():
+    """`pr describe` has no bearing on whether the PR may merge.
+
+    The staleness fold runs over the whole registry, and the domains that
+    return an empty `Readiness()` do so precisely because they have no say.
+    Blocking on one leaves the line permanently red on any branch old enough
+    to carry a stale describe snapshot, and a readiness line that always says
+    blocked is one nobody reads.
+    """
+    state = _clean_but_aged(minutes=2)
+    apply(state, DescribeSummary(head_sha="abc", updated_at=_ago(days=30)))
+    assert merge_readiness(state).render() == "**Merge readiness**: ready"
+
+
+def test_a_stale_merge_relevant_domain_still_blocks_alongside_an_inert_one():
+    """Exempting the inert domains must not exempt the ones that do gate."""
+    state = _clean_but_aged(days=9)
+    apply(state, DescribeSummary(head_sha="abc", updated_at=_ago(days=30)))
+    unchecked = merge_readiness(state).unchecked
+    assert any(u.startswith("CI (last checked") for u in unchecked)
+    assert not any("describe" in u for u in unchecked)
+
+
+def test_a_delivered_closeout_does_not_go_stale():
+    """`FixSummary` answers from bookkeeping, not from a measurement.
+
+    Its readiness reads the record this very file holds, so it is as true a
+    week later as when written, and re-running the pass could not refresh it.
+    Ageing it blocks a PR whose closeout was delivered yesterday.
+    """
+    state = _clean_but_aged(minutes=2)
+    apply(state, FixSummary(updated_at=_ago(hours=30)))
+    assert merge_readiness(state).render() == "**Merge readiness**: ready"
+
+
+def test_an_undelivered_closeout_blocks_however_old_it_is():
+    """Exempting it from the clock must not exempt it from its own verdict."""
+    state = _clean_but_aged(minutes=2)
+    apply(state, FixSummary(summary_deferred=True, updated_at=_ago(hours=30)))
+    assert "closeout not delivered" in merge_readiness(state).render()
+
+
+@pytest.mark.parametrize("name,cls", sorted(_domains().items()))
+def test_every_domain_declares_whether_its_answer_can_go_stale(name, cls):
+    """`ages` is read off the class, so a new domain inherits the default.
+
+    True is the safe default \u2014 a domain reporting a measurement it forgot to
+    mark is aged, which is noisy rather than unsound. This pins that the flag
+    is a real class attribute on every domain rather than a field that
+    serialises, which would put it in the state file.
+    """
+    import dataclasses
+    assert isinstance(cls.ages, bool)
+    assert "ages" not in {f.name for f in dataclasses.fields(cls)}

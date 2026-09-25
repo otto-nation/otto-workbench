@@ -9829,3 +9829,119 @@ class TestTruncatedThreadFetch:
         assert code == 1
         resolve.assert_not_called()
         fin.assert_not_called()
+
+
+# ── Seen-ness is about the text, not the comment id ─────────────────────────
+#
+# A comment marked seen is dropped from triage decomposition entirely
+# (`triage.collect_unseen_comments`), so a reviewer who edits a comment to add
+# a demand used to have that demand silently discarded: the id was unchanged,
+# so the rewritten comment still read as already handled.
+
+
+class TestSeenTracking:
+    """`_mark_seen` and `_seen_record`, the pair that decides what triage sees."""
+
+    @staticmethod
+    def _comment(cid: int, edited: str = "") -> dict:
+        """A comment as the fetch layer hands it over.
+
+        No body: seen-tracking reads the id and the edit stamp and nothing
+        else, and carrying text here would imply the comparison looks at it.
+        """
+        return {"id": cid, "last_edited_at": edited}
+
+    def test_a_comment_the_last_round_read_is_seen(self):
+        comments = [self._comment(1)]
+        cli_review_threads._mark_seen(comments, {1: ""})
+        assert comments[0]["seen"] is True
+
+    def test_a_comment_never_read_is_unseen(self):
+        comments = [self._comment(1)]
+        cli_review_threads._mark_seen(comments, {})
+        assert comments[0]["seen"] is False
+
+    def test_an_edited_comment_is_unseen_again(self):
+        """The defect: same id, new text, and it used to stay seen."""
+        comments = [self._comment(1, edited="2026-02-01T00:00:00Z")]
+        cli_review_threads._mark_seen(comments, {1: ""})
+        assert comments[0]["seen"] is False
+
+    def test_a_comment_edited_again_since_the_last_round_is_unseen(self):
+        """A second edit must not match the stamp recorded for the first."""
+        comments = [self._comment(1, edited="2026-03-01T00:00:00Z")]
+        cli_review_threads._mark_seen(comments, {1: "2026-02-01T00:00:00Z"})
+        assert comments[0]["seen"] is False
+
+    def test_an_edit_already_read_stays_seen(self):
+        """Re-reporting every edited comment on every round would be noise."""
+        comments = [self._comment(1, edited="2026-02-01T00:00:00Z")]
+        cli_review_threads._mark_seen(comments, {1: "2026-02-01T00:00:00Z"})
+        assert comments[0]["seen"] is True
+
+    def test_a_missing_edit_field_reads_as_never_edited(self):
+        """A payload without the field must not differ from one carrying ''."""
+        comments = [{"id": 1, "body": "t"}]
+        cli_review_threads._mark_seen(comments, {1: ""})
+        assert comments[0]["seen"] is True
+        assert cli_review_threads._seen_record(comments) == {1: ""}
+
+    def test_a_null_edit_field_reads_as_never_edited(self):
+        """GitHub sends null, not '', for a comment nobody has edited."""
+        comments = [{"id": 1, "body": "t", "last_edited_at": None}]
+        cli_review_threads._mark_seen(comments, {1: ""})
+        assert comments[0]["seen"] is True
+
+    def test_the_record_carries_the_stamp_each_comment_arrived_with(self):
+        record = cli_review_threads._seen_record([
+            self._comment(1),
+            self._comment(2, edited="2026-02-01T00:00:00Z"),
+        ])
+        assert record == {1: "", 2: "2026-02-01T00:00:00Z"}
+
+    def test_a_round_that_records_what_it_read_sees_it_seen_next_time(self):
+        """The two halves agree: what one writes, the other reads as seen."""
+        comments = [self._comment(1), self._comment(2, edited="2026-02-01T00:00:00Z")]
+        record = cli_review_threads._seen_record(comments)
+        fresh = [self._comment(1), self._comment(2, edited="2026-02-01T00:00:00Z")]
+        cli_review_threads._mark_seen(fresh, record)
+        assert [c["seen"] for c in fresh] == [True, True]
+
+    def test_a_comment_with_no_id_is_left_out_of_the_record(self):
+        """A None key would cost the whole state file, not one field.
+
+        Both builders take the id from `databaseId`, which GraphQL can omit.
+        The mapping is keyed `int`, so a None key serialises to the JSON string
+        "null", which serde refuses to coerce back — and `load_state` discards
+        an unreadable file wholesale, losing every verdict and round with it.
+        """
+        record = cli_review_threads._seen_record([
+            {"id": None, "last_edited_at": ""},
+            {"id": 5, "last_edited_at": ""},
+        ])
+        assert record == {5: ""}
+
+    def test_a_comment_with_no_id_is_unseen_rather_than_a_crash(self):
+        comments = [{"id": None}, {"last_edited_at": ""}]
+        cli_review_threads._mark_seen(comments, {5: ""})
+        assert [c["seen"] for c in comments] == [False, False]
+
+    def test_the_record_survives_a_state_file_round_trip(self, tmp_path):
+        """End to end: what _seen_record writes must load back unchanged."""
+        from pr import state as pr_state
+        from pr import domains as pr_domains
+        record = cli_review_threads._seen_record([
+            {"id": None, "last_edited_at": ""},
+            {"id": 111, "last_edited_at": ""},
+            {"id": 222, "last_edited_at": "2026-02-01T00:00:00Z"},
+        ])
+        state = pr_state.new_state("acme/w", "feat/x", pr_number=1,
+                                   head_sha="a", worktree_root=str(tmp_path))
+        pr_state.apply(state, pr_domains.CommentsSummary(
+            seen_issue_comments=record, updated_at=pr_state.now_iso()))
+        pr_state.save_state(tmp_path, state)
+        loaded = pr_state.load_state(tmp_path)
+        assert loaded is not None, "state file was discarded as unreadable"
+        assert loaded.comments.seen_issue_comments == {
+            111: "", 222: "2026-02-01T00:00:00Z",
+        }

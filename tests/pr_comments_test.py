@@ -710,30 +710,19 @@ class TestIssueTrackerGate:
         assert "the issue title" in capsys.readouterr().err
 
 
-# ── _relative_time ──────────────────────────────────────────────────────────
+# ── The reviewer age column ─────────────────────────────────────────────────
+#
+# `relative_time` itself is pinned in `text_test.py`, where it lives. What is
+# here is that the dashboard still reaches it.
 
 
-class TestRelativeTime:
-    """The dashboard's age column, at each unit boundary it crosses."""
-
-    @staticmethod
-    def _ago(**kwargs) -> str:
-        stamp = datetime.now(timezone.utc) - timedelta(**kwargs)
-        return pr_comments._relative_time(stamp.isoformat())
-
-    @pytest.mark.parametrize("kwargs,expected", [
-        ({"minutes": 5}, "5 minutes ago"),
-        ({"minutes": 59}, "59 minutes ago"),
-        ({"hours": 1}, "1 hours ago"),
-        ({"hours": 23}, "23 hours ago"),
-        ({"hours": 24}, "1 day ago"),
-        ({"days": 3}, "3 days ago"),
-    ])
-    def test_each_unit_boundary(self, kwargs, expected):
-        assert self._ago(**kwargs) == expected
-
-    def test_an_unparseable_stamp_reads_as_no_age(self):
-        assert pr_comments._relative_time("not a timestamp") == ""
+# passes-at-base: behaviour this change moved rather than added — the helper left this module for core.text, and the case holds that the dashboard still reaches it
+def test_reviewer_verdicts_are_dated():
+    submitted = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    out = render_dashboard(
+        7, {}, [{"user": "alice", "state": "APPROVED", "submitted_at": submitted}], [],
+    )
+    assert "@alice — APPROVED (3 days ago)" in out
 
 
 # ── An incomplete fetch must not erase what it could not see ────────────────
@@ -795,3 +784,178 @@ def test_sync_prefers_the_fetched_record_over_the_carried_one():
 
     assert result["T_abc"].state == ThreadState.RESOLVED
     assert result["T_abc"].summary == "stale"
+
+
+# ── The two fetch paths must date a comment the same way ────────────────────
+#
+# GraphQL sends `lastEditedAt: null` for a comment nobody has edited; REST has
+# no such field and sends `updated_at == created_at`. Seen-tracking compares
+# the recorded stamp against the fetched one, so if the paths disagree about an
+# untouched comment, a run that alternates between them re-reports it forever.
+
+
+class TestRestEditStamp:
+
+    def test_an_unedited_comment_has_no_stamp(self):
+        """`updated_at == created_at` is REST's way of saying "never edited"."""
+        assert pr_comments._rest_edit_stamp({
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }) == ""
+
+    def test_an_edited_comment_carries_the_edit_time(self):
+        assert pr_comments._rest_edit_stamp({
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-02-01T00:00:00Z",
+        }) == "2026-02-01T00:00:00Z"
+
+    def test_a_payload_missing_both_fields_has_no_stamp(self):
+        assert pr_comments._rest_edit_stamp({}) == ""
+
+    # The payloads below are real, taken from cli/cli#9000: comment 2082656785
+    # was edited, the other two were not. Both APIs were queried for the same
+    # three comments so the two columns are the same comments, not a guess at
+    # what GitHub sends.
+    @pytest.mark.parametrize("graphql_last_edited,rest,expected", [
+        # An untouched comment: GraphQL nulls the field, REST equates the two
+        # timestamps. Both must reduce to "" or seen-ness flips whenever the
+        # fetch path changes, and every comment is re-reported forever.
+        (None,
+         {"created_at": "2024-04-26T21:44:55Z", "updated_at": "2024-04-26T21:44:55Z"},
+         ""),
+        # An edited one: both APIs report the same instant, so the recorded
+        # stamp is the same string either way.
+        ("2024-04-29T13:04:57Z",
+         {"created_at": "2024-04-29T12:56:41Z", "updated_at": "2024-04-29T13:04:57Z"},
+         "2024-04-29T13:04:57Z"),
+    ])
+    def test_the_two_fetch_paths_record_the_same_stamp(
+        self, graphql_last_edited, rest, expected,
+    ):
+        """The regression this normalisation exists to prevent."""
+        graphql_stamp = graphql_last_edited or ""   # non_self_issue_comments
+        assert graphql_stamp == expected
+        assert pr_comments._rest_edit_stamp(rest) == expected
+
+
+# ── A demand added by editing a comment is not "addressed" ──────────────────
+#
+# An edit posts nothing and moves nothing, so a thread whose reviewer rewrote
+# their comment after our reply still ended with us and still read as
+# ADDRESSED. `settlement_for` grades an ADDRESSED thread SETTLED_ELSEWHERE, so
+# the added demand was not merely missed — it was recorded as answered and
+# closed out.
+
+
+class TestRewrittenAfterOurReply:
+
+    @staticmethod
+    def _thread(reviewer_edit=None, my_edit=None) -> list[dict]:
+        return [
+            {"author": {"login": "alice"}, "body": "nit: rename this",
+             "createdAt": "2026-01-01T00:00:00Z", "lastEditedAt": reviewer_edit},
+            {"author": {"login": "me"}, "body": "Renamed in abc123",
+             "createdAt": "2026-01-02T00:00:00Z", "lastEditedAt": my_edit},
+        ]
+
+    def test_an_edit_after_our_reply_reopens_the_thread(self):
+        """The defect: the reviewer's new demand used to read as answered."""
+        state = compute_thread_state(
+            self._thread(reviewer_edit="2026-01-03T00:00:00Z"), False, "me")
+        assert state is ThreadState.AMBIGUOUS
+
+    # passes-at-base: the case the fix must NOT catch — we answered the current text, and reopening it would reopen every thread with a tidied comment
+    def test_an_edit_before_our_reply_stays_addressed(self):
+        """We answered the text as it now stands, so nothing is owed."""
+        state = compute_thread_state(
+            self._thread(reviewer_edit="2026-01-01T12:00:00Z"), False, "me")
+        assert state is ThreadState.ADDRESSED
+
+    # passes-at-base: the ordinary thread, held unchanged by the fix
+    def test_a_thread_nobody_edited_stays_addressed(self):
+        assert compute_thread_state(self._thread(), False, "me") is ThreadState.ADDRESSED
+
+    # passes-at-base: our own edit is not a reviewer demand; holds the author filter in _rewritten_since_my_reply
+    def test_editing_our_own_reply_does_not_reopen_the_thread(self):
+        """Our own later edit is us tidying our answer, not a new demand."""
+        state = compute_thread_state(
+            self._thread(my_edit="2026-01-05T00:00:00Z"), False, "me")
+        assert state is ThreadState.ADDRESSED
+
+    # passes-at-base: RESOLVED is answered before the edit check runs, and must stay that way
+    def test_resolution_still_outranks_a_later_edit(self):
+        """The button is the reviewer's own word on how the thread ended."""
+        state = compute_thread_state(
+            self._thread(reviewer_edit="2026-01-09T00:00:00Z"), True, "me")
+        assert state is ThreadState.RESOLVED
+
+    # passes-at-base: NEW already says everything is owed; holds the check from masking it
+    def test_a_thread_we_never_answered_is_new_not_reopened(self):
+        """NEW already says everything is owed; the edit check must not mask it."""
+        thread = [{"author": {"login": "alice"}, "body": "nit",
+                   "createdAt": "2026-01-01T00:00:00Z",
+                   "lastEditedAt": "2026-01-03T00:00:00Z"}]
+        assert compute_thread_state(thread, False, "me") is ThreadState.NEW
+
+    # passes-at-base: a payload with no stamps must behave exactly as before the field was fetched
+    def test_an_unstamped_thread_is_not_treated_as_rewritten(self):
+        """A payload with no edit stamps at all must behave as it always did."""
+        thread = [
+            {"author": {"login": "alice"}, "body": "nit"},
+            {"author": {"login": "me"}, "body": "done"},
+        ]
+        assert compute_thread_state(thread, False, "me") is ThreadState.ADDRESSED
+
+    # passes-at-base: holds the check under last_comment_is_mine, where a real reviewer reply still classifies normally
+    def test_a_reviewer_reply_after_ours_is_classified_not_reopened(self):
+        """The edit check sits under `last_comment_is_mine` and must not
+        intercept a thread where the reviewer actually spoke last."""
+        thread = self._thread(reviewer_edit="2026-01-03T00:00:00Z")
+        thread.append({"author": {"login": "alice"}, "body": "thanks, looks good",
+                       "createdAt": "2026-01-04T00:00:00Z"})
+        assert compute_thread_state(thread, False, "me") is ThreadState.VERIFIED
+
+    def test_answering_by_editing_our_own_reply_closes_the_thread(self):
+        """The convergence case, and it is not hypothetical.
+
+        `thread_replies.upsert_thread_reply` answers a thread whose last
+        comment is ours by PATCHing that comment, which moves `lastEditedAt`
+        and leaves `createdAt` alone. Reading only our `createdAt` freezes our
+        side at the original reply, so the reviewer's edit stays permanently
+        "after" it and the thread re-enters triage every round forever.
+        """
+        thread = self._thread(reviewer_edit="2026-01-03T00:00:00Z")
+        assert compute_thread_state(thread, False, "me") is ThreadState.AMBIGUOUS
+        answered = self._thread(reviewer_edit="2026-01-03T00:00:00Z",
+                                my_edit="2026-01-04T00:00:00Z")
+        assert compute_thread_state(answered, False, "me") is ThreadState.ADDRESSED
+
+    @pytest.mark.parametrize("ours,theirs,rewritten", [
+        # The same instant in two spellings. '+' sorts below 'Z', so a string
+        # compare calls this a rewrite and reopens a thread nobody touched.
+        ("2026-01-02T00:00:00+00:00", "2026-01-02T00:00:00Z", False),
+        # Half a second later, with a fraction. '.' sorts below 'Z', so a
+        # string compare misses it — and a missed rewrite loses the demand.
+        ("2026-01-02T00:00:00Z", "2026-01-02T00:00:00.500Z", True),
+        # A fractional stamp that is genuinely earlier.
+        ("2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00Z", False),
+        # Plain, unambiguous ordering.
+        ("2026-01-02T00:00:00Z", "2026-01-03T00:00:00Z", True),
+    ])
+    def test_stamps_are_compared_as_instants_not_as_strings(
+        self, ours, theirs, rewritten,
+    ):
+        thread = [
+            {"author": {"login": "alice"}, "createdAt": "2026-01-01T00:00:00Z",
+             "lastEditedAt": theirs},
+            {"author": {"login": "me"}, "createdAt": ours},
+        ]
+        assert pr_comments._rewritten_since_my_reply(thread, "me") is rewritten
+
+    def test_an_unreadable_stamp_is_not_a_rewrite(self):
+        thread = [
+            {"author": {"login": "alice"}, "createdAt": "2026-01-01T00:00:00Z",
+             "lastEditedAt": "not a timestamp"},
+            {"author": {"login": "me"}, "createdAt": "2026-01-02T00:00:00Z"},
+        ]
+        assert pr_comments._rewritten_since_my_reply(thread, "me") is False

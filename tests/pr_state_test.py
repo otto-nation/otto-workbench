@@ -913,7 +913,7 @@ def test_dating_a_domain_does_not_write_back_into_what_it_returned():
 def test_age_suffix_boundaries():
     """The two thresholds, taken from either side."""
     assert age_suffix(_ago(minutes=59)) == ""
-    assert age_suffix(_ago(hours=1)) == " (as of 1 hours ago)"
+    assert age_suffix(_ago(hours=1)) == " (as of 1 hour ago)"
     assert age_suffix(_ago(hours=23)) == " (as of 23 hours ago)"
     assert age_suffix(_ago(hours=24)) == " [STALE — 1 day ago]"
 

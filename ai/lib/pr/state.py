@@ -478,9 +478,10 @@ def render_dashboard(
 
     Each domain's first line is dated here rather than by the domain, so a
     domain cannot report an answer without saying when it was taken — including
-    one added later, which gets the marker by being in the registry. ``push`` is
-    the one domain this never marks, and not by exception: it is observed a few
-    lines above, so its stamp is always minutes old.
+    one added later, which gets the marker by being in the registry. ``push``
+    goes through this same dating as every other domain, but its marker never
+    fires in practice: it is observed a few lines above, so its stamp is always
+    minutes old at render time.
 
     A missing state is still a dashboard: the header, a "no status data yet"
     notice, and whatever the live push observation says.
@@ -503,8 +504,10 @@ def render_dashboard(
     for domain in domains_of(state):
         rendered = domain.render_status()
         if rendered:
-            # Copied rather than written through: a domain returning a shared
-            # list would otherwise accumulate a suffix per render.
+            # Rebuilt into a new list rather than written through: `rendered`
+            # is concatenated into a new string and appended to `lines`, never
+            # mutated in place — a domain returning a shared list would
+            # otherwise accumulate a suffix per render.
             lines.append(rendered[0] + age_suffix(domain.updated_at))
             lines += rendered[1:]
             lines.append("")

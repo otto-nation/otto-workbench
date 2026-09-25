@@ -52,7 +52,7 @@ def relative_time(iso_str: str) -> str:
         return f"{delta // timedelta(minutes=1)} minutes ago"
     days = delta // timedelta(days=1)
     if not days:
-        return f"{hours} hours ago"
+        return f"{hours} hour{plural(hours)} ago"
     return f"{days} day{plural(days)} ago"
 
 

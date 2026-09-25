@@ -25,7 +25,6 @@ dependency between that surface and this one.
 
 from __future__ import annotations
 
-import sys
 
 from config import workbench_config
 from core import log
@@ -80,8 +79,8 @@ def deferred_outcomes(state: pr_state.PRState) -> list:
     return [o for o in state.fix.fix.items if o.outcome == FixOutcome.DEFERRED]
 
 
-def validate_track(state: pr_state.PRState, track) -> None:
-    """Exit if --track named anything that is not a deferred thread.
+def validate_track(state: pr_state.PRState, track) -> bool:
+    """False once it has said that --track named a thread that is not deferred.
 
     A typo'd id would otherwise be indistinguishable from a thread the tool
     chose not to file, and the user would read "filed nothing" as agreement.
@@ -90,19 +89,17 @@ def validate_track(state: pr_state.PRState, track) -> None:
     and says nothing, so the guard costs an ordinary no-op run no noise while
     still catching the id that could never have matched.
 
-    ceiling: this exits rather than returning a complaint, which is why it can
-    only be called from a path the CLI owns. The alternative — returning the
-    unknown ids and letting the caller exit — is what `pr.settlement`'s
-    `settle_targets` does, and is the better shape for a library. Upgrade
-    trigger: when `cli/review_threads.py` lands and `main` must return rather
-    than exit, convert this with it.
+    Reports rather than exits, matching `pr.settlement.settle_targets`: the
+    caller owns the exit, so nothing here can end a process that called this
+    in passing.
     """
     if track is TRACK_ALL:
-        return
+        return True
     unknown = set(track) - {o.id for o in deferred_outcomes(state)}
-    if unknown:
-        log.error(f"--track named threads that are not deferred: {sorted(unknown)}")
-        sys.exit(1)
+    if not unknown:
+        return True
+    log.error(f"--track named threads that are not deferred: {sorted(unknown)}")
+    return False
 
 
 def finalize_deferred(
@@ -112,8 +109,11 @@ def finalize_deferred(
     trail: Trail | None = None,
     *,
     track=frozenset(),
-) -> None:
+) -> bool:
     """Create tracking issue and post deferred replies for threads named by --track.
+
+    False once it has reported a `--track` id naming no deferred thread, having
+    written nothing: the caller turns that into the exit status.
 
     Mutates `state` and leaves the save to the caller, which mutates the same
     object either side of this call. Reading the file again here and saving
@@ -139,10 +139,11 @@ def finalize_deferred(
     # would say so — filing nothing there is indistinguishable from success.
     # The ordinary no-op stays silent on its own: no `--track` selects nothing,
     # so there is no unknown id to report.
-    validate_track(state, track)
+    if not validate_track(state, track):
+        return False
 
     if not state.fix.fix.items:
-        return
+        return True
 
     # `reason` carries why the thread was held back, and it is the only column
     # in the tracking issue that distinguishes an agent that gave up from a
@@ -154,7 +155,7 @@ def finalize_deferred(
         if o.id in track
     ]
     if not deferred or not ctx.pr_number:
-        return
+        return True
 
     result = create_or_update_deferred_issue(
         deferred, ctx.repo, ctx.pr_number, threads_by_id,
@@ -176,6 +177,7 @@ def finalize_deferred(
     # reads the trail to decide whether a PR is safe to merge — they read
     # `pr status`, which reads this.
     state.fix.deferred_issue_pending = result.owed
+    return True
 
 
 def report_unfiled_deferrals(state: pr_state.PRState, track) -> None:

@@ -73,8 +73,11 @@ def finish_deferred_work(
     trail: Trail | None = None,
     *,
     track=frozenset(),
-) -> None:
+) -> bool:
     """Close out what the fix pass held back: replies, tracking issue, summary.
+
+    False once a `--track` id naming no deferred thread has been reported; the
+    caller turns that into the exit status.
 
     A phase of its own rather than a tail of `--fix`, because the summary is
     withheld until the needs_human threads have been discussed — which by
@@ -86,10 +89,10 @@ def finish_deferred_work(
     """
     wt_path = ctx.require_worktree()
     if not ctx.pr_number:
-        return
+        return True
     state = pr_state.load_state(ctx.target_dir)
     if state is None:
-        return
+        return True
     threads_by_id = {t.id: t for t in report.threads}
     history_rewrite.follow_history_rewrite(state, wt_path)
     push_held_commit(state, wt_path, trail)
@@ -111,15 +114,22 @@ def finish_deferred_work(
         state.fix.summary_deferred = True
         state.fix.updated_at = pr_state.now_iso()
     # Order is load-bearing twice over: `validate_track` inside the first call
-    # exits on a typo'd --track before the second prints a list the operator
+    # refuses a typo'd --track before the second prints a list the operator
     # would read as the whole story, and the summary below renders the issue
     # link from the ids the first call writes into `state.fix`.
-    deferred_issue.finalize_deferred(state, ctx, threads_by_id, trail=trail, track=track)
+    if not deferred_issue.finalize_deferred(
+            state, ctx, threads_by_id, trail=trail, track=track):
+        # Nothing was filed, so the reports below would describe a run that did
+        # not happen. The state written above this line is settlement work that
+        # did happen and is saved on the way out.
+        pr_state.save_state(ctx.target_dir, state)
+        return False
     deferred_issue.report_unfiled_deferrals(state, track)
     summary_publish.render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id,
     )
     pr_state.save_state(ctx.target_dir, state)
+    return True
 
 
 def push_held_commit(

@@ -12,10 +12,9 @@ phase body lives in the module that owns its subject — `pr.triage`,
 this module knows only which one to call and in what order.
 
 `main` returns rather than exits, as every module under `cli/` does; the shim at
-`ai/bin/review-threads` owns the process exit. The one exception is deliberate
-and lives a layer down: `deferred_issue.validate_track` still calls `sys.exit`,
-because library modules at every layer in this repo do, and the rule that holds
-uniformly is about `cli/`, not about libraries.
+`ai/bin/review-threads` owns the process exit. That now holds through the
+phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
+than exiting from under this module.
 
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
@@ -269,7 +268,8 @@ def _run_threads(trail, args, ctx) -> int:
 
     if args.finish:
         track = TRACK_ALL if args.track_all else frozenset(args.track)
-        closeout.finish_deferred_work(ctx, report, trail=trail, track=track)
+        if not closeout.finish_deferred_work(ctx, report, trail=trail, track=track):
+            return 1
 
     json.dump(output, sys.stdout, indent=2)
     print()

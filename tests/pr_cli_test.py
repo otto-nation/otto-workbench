@@ -3,6 +3,7 @@
 import ast
 import contextlib
 import importlib
+import inspect
 import json
 import os
 import subprocess
@@ -800,6 +801,10 @@ def _record_arity_reads():
     The point of these tests is that the wrapper reads arity off the delegate's
     own parser, so the real parser has to be the one answering — this spies on
     the read rather than replacing it.
+
+    Not nestable: the inner block would capture the outer spy as `real` and
+    double-count every read. Nothing nests it, and a second recorder in one
+    test would be asking two questions of one run anyway.
     """
     read: list[str] = []
     real = pr_cli._delegate_value_flags
@@ -988,6 +993,21 @@ def test_every_command_with_a_delegate_has_a_parser_factory():
     """A delegate `pr` cannot read arity from misclassifies its own target."""
     assert (set(pr_cli._PARSER_FACTORIES)
             == {name for name, spec in registry.COMMANDS.items() if spec.script})
+
+
+@pytest.mark.parametrize("factory", sorted(pr_cli._PARSER_FACTORIES.values()))
+def test_a_parser_factory_takes_no_arguments(factory):
+    """`pr` calls these with none, mid-classification, before dispatch.
+
+    A factory that grew a parameter — even a defaulted one — would be a
+    delegate answering about a parser its caller cannot configure, and one that
+    grew a *required* parameter would surface as a TypeError traceback out of
+    `pr`'s positional scan rather than from the delegate that owns it. Nothing
+    else makes this contract structural.
+    """
+    module_name, attr = factory.split(":", 1)
+    build = getattr(importlib.import_module(module_name), attr)
+    assert inspect.signature(build).parameters == {}
 
 
 def test_delegate_value_flags_lets_a_broken_delegate_raise():
@@ -1189,14 +1209,14 @@ _ARITY_BLIND_COMMANDS = sorted(
 def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
     """The guard on `takes_target` being declared by hand.
 
-    A command with no delegate has no parser for _delegate_value_flags to probe,
+    A command with no delegate has no parser for _delegate_value_flags to read,
     so its positional scan degrades to "first bare token wins" — exactly what ate
     `pr create --title`. None of these declares an option that consumes a value
     today, which is the only reason create was the only one broken. Asserting it
     means the next one fails here rather than at a user's dangling flag.
 
-    Read off the same function the --value-flags probe answers with, so this
-    cannot drift from the arity the wrapper acts on.
+    Read off the same function the wrapper classifies with, so this cannot drift
+    from the arity it acts on.
     """
     subparser = tool_parser.subparsers(pr_cli._build_parser())[command]
     offenders = tool_parser.value_taking_options(subparser)
@@ -1205,7 +1225,7 @@ def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
         f"{command} has no delegate to read arity from — the value would be classified "
         f"as the command's target and dropped from the forwarded argv. Either give "
         f"{command} takes_target=False if it takes no positional target, or give it "
-        f"a script whose parser answers {pr_cli.VALUE_FLAGS_FLAG}."
+        f"a delegate whose build_parser is registered in _PARSER_FACTORIES."
     )
 
 

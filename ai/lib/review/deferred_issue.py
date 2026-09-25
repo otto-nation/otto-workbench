@@ -91,7 +91,10 @@ def validate_track(state: pr_state.PRState, track) -> bool:
 
     Reports rather than exits, matching `pr.settlement.settle_targets`: the
     caller owns the exit, so nothing here can end a process that called this
-    in passing.
+    in passing. The complaint is logged here rather than by the caller, which
+    is why the callers that forward the `False` up — `finalize_deferred`,
+    `closeout.finish_deferred_work` — log nothing themselves: the id that was
+    wrong is known here and nowhere above.
     """
     if track is TRACK_ALL:
         return True

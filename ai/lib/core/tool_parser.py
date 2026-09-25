@@ -37,7 +37,9 @@ process — at 85-152 ms a call, with three degradation paths for a child that
 might be missing, hang, or exit non-zero. ``pr`` now imports the parser and
 asks it directly, and a delegate that will not import is left to raise: it
 cannot run either, so degrading would misclassify the target and then fail
-dispatch anyway.
+dispatch anyway. ``--tool-schema`` is unaffected — it shares this module with
+that protocol and nothing else, and MCP discovery still enrols a script by
+finding it.
 
 One constraint comes with a flat list of option strings: every *option* the
 parser declares must consume exactly one value. It cannot express ``nargs='?'``,

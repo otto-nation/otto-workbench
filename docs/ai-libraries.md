@@ -3558,7 +3558,9 @@ process — at 85-152 ms a call, with three degradation paths for a child that
 might be missing, hang, or exit non-zero. ``pr`` now imports the parser and
 asks it directly, and a delegate that will not import is left to raise: it
 cannot run either, so degrading would misclassify the target and then fail
-dispatch anyway.
+dispatch anyway. ``--tool-schema`` is unaffected — it shares this module with
+that protocol and nothing else, and MCP discovery still enrols a script by
+finding it.
 
 One constraint comes with a flat list of option strings: every *option* the
 parser declares must consume exactly one value. It cannot express ``nargs='?'``,
@@ -4547,9 +4549,10 @@ The signal handler is process-level state, so it is installed only when this
 module is the process — `install_signal_handler=False` for an in-process caller
 that has already installed its own, since `signal.signal` overwrites without
 chaining and nothing restores it. The run lock is claimed between resolving the
-self-review target and switching the checkout to it — a resolver that did both would take a process-lifetime lock
-from inside the library. And `version_string` lives in `ai/bin`, which nothing
-under `ai/lib` can import, so the caller passes it in.
+self-review target and switching the checkout to it — a resolver that did both
+would take a process-lifetime lock from inside the library. And `version_string`
+lives in `ai/bin`, which nothing under `ai/lib` can import, so the caller passes
+it in.
 
 Usage:
   claude-review <pr_url_or_number>

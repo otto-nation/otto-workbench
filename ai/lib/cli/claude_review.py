@@ -9,9 +9,10 @@ The signal handler is process-level state, so it is installed only when this
 module is the process — `install_signal_handler=False` for an in-process caller
 that has already installed its own, since `signal.signal` overwrites without
 chaining and nothing restores it. The run lock is claimed between resolving the
-self-review target and switching the checkout to it — a resolver that did both would take a process-lifetime lock
-from inside the library. And `version_string` lives in `ai/bin`, which nothing
-under `ai/lib` can import, so the caller passes it in.
+self-review target and switching the checkout to it — a resolver that did both
+would take a process-lifetime lock from inside the library. And `version_string`
+lives in `ai/bin`, which nothing under `ai/lib` can import, so the caller passes
+it in.
 
 Usage:
   claude-review <pr_url_or_number>
@@ -336,6 +337,11 @@ def _run_self_review_body(
             review_worktree.cleanup_self_review_worktree(wt_cleanup, repo_dir)
 
 
+def _announce_interrupt() -> None:
+    log.blank()
+    log.info("Interrupted")
+
+
 def main(argv: list[str] | None = None, *,
          version_string: Callable[[str], str] | None = None,
          install_signal_handler: bool = True) -> int:
@@ -356,7 +362,7 @@ def main(argv: list[str] | None = None, *,
     # installed the identical handler at its own entry point, and a second
     # install would replace the caller's without chaining or restoring it.
     if install_signal_handler:
-        proc.install_interrupt_handler()
+        proc.install_interrupt_handler(_announce_interrupt)
 
     parsed = build_parser().parse_args(argv)
 

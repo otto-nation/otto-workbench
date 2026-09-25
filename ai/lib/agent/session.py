@@ -20,7 +20,7 @@ from pathlib import Path
 
 from core import log
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from agent.backend_events import PI_RPC_EVENT_TYPES, is_write_tool, pi_write_tool_used
+from agent.backend_events import PI_RPC_EVENT_TYPES, is_write_tool, pi_wrote_output
 
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
@@ -131,22 +131,32 @@ def _is_pi_log(records: list[dict]) -> bool:
     return any(record.get("type") in PI_RPC_EVENT_TYPES for record in records)
 
 
-def _pi_wrote_output(records: list[dict]) -> bool:
-    """Whether a Pi RPC log shows a file-writing tool being invoked.
+def _pi_wrote_output(records: list[dict], output_path: str = "") -> bool:
+    """Whether a Pi RPC log shows a write to the declared deliverable.
 
     The Pi half of the no-write diagnosis. Without it a Pi agent that ran to
     its own conclusion having written nothing was indistinguishable from one
     that worked, so the only thing that ever triggered a retry was exhausting
     the turn cap — and a run that circled and gave up early was written off as
     a completed review with an empty file.
+
+    A scratch write under /tmp is not the deliverable. Counting any write here
+    cleared `no_write_tool`, diagnosed as bare COMPLETED, and skipped the retry
+    the live stream would still have steered. An empty `output_path` keeps the
+    any-write reading, the same contract `pi_wrote_output` already documents.
     """
-    return any(pi_write_tool_used(record) for record in records)
+    return any(pi_wrote_output(record, output_path) for record in records)
 
 
-def diagnose_missing_output(log_path: str) -> Diagnosis:
+def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     """Why an agent run left no output, read from its session log.
 
     Public because `agent.retry` decides retryability from the returned kind.
+
+    `output_path` is the declared deliverable. Empty means the caller has no
+    single file, so any write counts — the same contract `pi_wrote_output`
+    already has. Only the Pi branch reads it: the Claude branch has tool names
+    to go on, not paths.
 
     A caller with no log to name is the same answer as a log that is not there.
     `is_file` rather than `exists`: an empty path becomes `Path(".")`, which
@@ -172,7 +182,7 @@ def diagnose_missing_output(log_path: str) -> Diagnosis:
     if crashed:
         return diagnosis
     if _is_pi_log(records):
-        if _pi_wrote_output(records):
+        if _pi_wrote_output(records, output_path):
             return diagnosis
         return replace(diagnosis, no_write_tool=True)
     if not _tool_use_is_observable(records):

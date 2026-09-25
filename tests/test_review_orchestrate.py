@@ -1743,7 +1743,7 @@ class TestRetryFailedGroups:
         monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(
             review_phases, "diagnose_missing_output",
-            lambda *a: ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=30),
+            lambda *a, **kw: ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=30),
         )
 
         failed = [

@@ -183,6 +183,7 @@ def retry_unproductive(
     hint_select: Callable[[Diagnosis], str] = hint_for,
     ceiling: int = DEFAULT_RETRY_CEILING,
     turns_fn: Callable[[Diagnosis, int], int] | None = None,
+    output_path: str = "",
 ) -> Diagnosis | None:
     """Give an agent that produced nothing a second attempt.
 
@@ -201,13 +202,16 @@ def retry_unproductive(
     independent read (see `agent.invoke._truncation`), not something this
     function threads through, so it does not pay for a diagnosis here that a
     produced-and-satisfied caller would only discard.
+
+    `output_path` is the declared deliverable the diagnosis judges writes
+    against. Empty means any write counts — see `session.diagnose_missing_output`.
     """
     if not produced() and recover:
         recover()
     if produced():
         return None
 
-    diagnosis = diagnose_missing_output(log_path)
+    diagnosis = diagnose_missing_output(log_path, output_path=output_path)
     if not is_retryable(diagnosis):
         return diagnosis
 
@@ -228,7 +232,10 @@ def retry_unproductive(
         recover()
     # Diagnose before restoring: in a merged log the first attempt's tool calls
     # would mask what the retry actually did.
-    retry_diagnosis = None if produced() else diagnose_missing_output(log_path)
+    retry_diagnosis = (
+        None if produced()
+        else diagnose_missing_output(log_path, output_path=output_path)
+    )
     restore_preserved(log_path, prior)
     return retry_diagnosis
 
@@ -245,6 +252,7 @@ def run_guarded(
     hint_select: Callable[[Diagnosis], str] = hint_for,
     ceiling: int = DEFAULT_RETRY_CEILING,
     turns_fn: Callable[[Diagnosis, int], int] | None = None,
+    output_path: str = "",
 ) -> Diagnosis | None:
     """Run an agent and guard the result with `retry_unproductive`.
 
@@ -258,7 +266,7 @@ def run_guarded(
         invoke, prompt, log_path,
         label=label, max_turns=max_turns,
         produced=produced, recover=recover, hint_select=hint_select,
-        ceiling=ceiling, turns_fn=turns_fn,
+        ceiling=ceiling, turns_fn=turns_fn, output_path=output_path,
     )
 
 
@@ -273,6 +281,7 @@ def retry_missing_output(
         label=label, max_turns=max_turns,
         produced=lambda: has_output(output_path),
         recover=lambda: try_recover_output(log_path, output_path),
+        output_path=output_path,
     )
 
 

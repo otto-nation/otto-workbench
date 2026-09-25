@@ -333,6 +333,23 @@ class TestSharedRetryability:
             Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded"),
         ) == ""
 
+    def test_a_probe_only_pi_log_is_retryable(self, tmp_path):
+        """The flag still overrides COMPLETED when the write was not the file."""
+        from agent.session import diagnose_missing_output
+
+        log = tmp_path / "session.jsonl"
+        log.write_text(
+            json.dumps({"type": "tool_execution_start",
+                        "toolName": "write", "args": {"path": "/tmp/probe.py"}})
+            + "\n"
+            + json.dumps({"type": "result", "subtype": "success"})
+            + "\n"
+        )
+        diagnosis = diagnose_missing_output(str(log), output_path="/out/review.md")
+        assert diagnosis.kind is DiagnosisKind.COMPLETED
+        assert diagnosis.no_write_tool
+        assert agent_retry.is_retryable(diagnosis)
+
 
 class TestCIFixRetryHint:
     """ci-check's fallback hint, for when the diagnosis suggests nothing better."""

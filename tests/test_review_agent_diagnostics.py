@@ -356,3 +356,36 @@ class TestPiLogsAreReadableForWrites:
         log_path = _write_log(tmp_path, _result())
         diagnosis = review_agent.diagnose_missing_output(log_path)
         assert not diagnosis.no_write_tool
+
+    def test_a_scratch_write_is_not_the_deliverable(self, tmp_path):
+        """A /tmp probe must not clear no_write_tool for the declared output.
+
+        The live stream already asks pi_wrote_output(data, output_path); the
+        post-run diagnosis still asked pi_write_tool_used (any write). A probe
+        then diagnosed as bare COMPLETED and was not retried.
+        """
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_tool("write", path="/tmp/probe.py"),
+            json.dumps({"type": "turn_end"}),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(
+            log_path, output_path="/out/review.md",
+        )
+        assert diagnosis.kind is DiagnosisKind.COMPLETED
+        assert diagnosis.no_write_tool
+
+    def test_a_write_to_the_deliverable_still_clears_the_flag(self, tmp_path):
+        """The counterpart: the declared file being written is not a thrash."""
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path="/out/review.md"),
+            json.dumps({"type": "turn_end"}),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(
+            log_path, output_path="/out/review.md",
+        )
+        assert not diagnosis.no_write_tool

@@ -30,6 +30,7 @@ setup() {
   export REPO_ROOT="$FIXTURE"
 
   # The hook's own colour and error helpers, which the functions below call.
+  # shellcheck disable=SC2034  # read by _fail_if_tree_moved, eval'd from the hook below
   RED='' NC=''
   err() { printf 'ERR: %s\n' "$*" >&2; }
   export -f err

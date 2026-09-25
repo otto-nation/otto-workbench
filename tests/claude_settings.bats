@@ -475,8 +475,7 @@ _hold_tree() {
   "$REPO_ROOT/bin/local/with-tree-lock" "$tree" -- \
     sh -c 'while true; do sleep 30; done' >/dev/null 2>&1 &
   local wrapper=$!
-  local i
-  for i in $(seq 1 50); do
+  for _ in $(seq 1 50); do
     if "$REPO_ROOT/bin/local/with-tree-lock" --check "$tree" >/dev/null 2>&1; then
       printf '%s' "$wrapper"
       return 0

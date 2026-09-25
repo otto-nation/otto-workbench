@@ -113,10 +113,14 @@ def finish_deferred_work(
     if flipped or adopted:
         state.fix.summary_deferred = True
         state.fix.updated_at = pr_state.now_iso()
-    # Order is load-bearing twice over: `validate_track` inside the first call
-    # refuses a typo'd --track before the second prints a list the operator
-    # would read as the whole story, and the summary below renders the issue
-    # link from the ids the first call writes into `state.fix`.
+    # Order is load-bearing twice over: `finalize_deferred` (which itself
+    # refuses a typo'd --track via `validate_track` before writing anything)
+    # runs before `report_unfiled_deferrals` prints a list the operator would
+    # read as the whole story, and the summary below renders the issue link
+    # from the ids `finalize_deferred` writes into `state.fix`. A `False`
+    # return here means `finalize_deferred` refused outright and wrote
+    # nothing, so both of those are skipped rather than describing a run that
+    # did not happen.
     if not deferred_issue.finalize_deferred(
             state, ctx, threads_by_id, trail=trail, track=track):
         # Nothing was filed, so the reports below would describe a run that did

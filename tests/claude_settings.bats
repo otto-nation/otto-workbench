@@ -462,6 +462,99 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+# ── edit-guard: the tree-validation lock ────────────────────────────────────
+# The Pi half of this is tree-lock-guard in tests/pi_extensions.bats. Both read
+# ai/lib/core/tree_lock.py through `with-tree-lock --check`, so the two
+# harnesses cannot disagree about whether a tree is under validation.
+
+# _hold_tree TREE — hold LOCK_SH on TREE until killed; prints the wrapper pid.
+# The holder's output goes to /dev/null so a `$(...)` caller is not left
+# waiting on a pipe the background child keeps open.
+_hold_tree() {
+  local tree="$1"
+  "$REPO_ROOT/bin/local/with-tree-lock" "$tree" -- \
+    sh -c 'while true; do sleep 30; done' >/dev/null 2>&1 &
+  local wrapper=$!
+  local i
+  for i in $(seq 1 50); do
+    if "$REPO_ROOT/bin/local/with-tree-lock" --check "$tree" >/dev/null 2>&1; then
+      printf '%s' "$wrapper"
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill "$wrapper" 2>/dev/null || true
+  echo "tree $tree never became locked" >&2
+  return 1
+}
+
+@test "edit-guard: blocks an edit to a tree a validator holds" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+  [[ "$output" != *[Pp]id* ]]
+}
+
+@test "edit-guard: a gitignored path is still refused while the tree is held" {
+  # The gitignore exemption belongs to the main-branch rule, not to this one:
+  # a suite reads ignored build output too, and rewriting it underneath a
+  # running gate invalidates the same run.
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  echo "ignore/" > "$repo/.gitignore"
+  git -C "$repo" add .gitignore
+  git -C "$repo" commit -m "init" --quiet
+  mkdir -p "$repo/ignore"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/ignore/out.md\"}}"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+}
+
+@test "edit-guard: WORKBENCH_TREE_LOCK does not suppress the refusal" {
+  # That variable is the writers' reentrancy marker. A reader honouring it
+  # would let anything that inherited it edit straight through the lock.
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run env WORKBENCH_TREE_LOCK="$repo" bash -c \
+    "echo '{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}' | '$REPO_ROOT/ai/claude/bin/claude-edit-guard' 2>&1"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+}
+
+@test "edit-guard: a free tree is not refused" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}"
+  [ "$status" -eq 0 ]
+}
+
 # ── gh pr create block ──────────────────────────────────────────────────────
 
 @test "pr create hook: blocks gh pr create" {

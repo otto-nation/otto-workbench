@@ -975,6 +975,170 @@ _probe() {
   [ "$status" -eq 2 ]
 }
 
+# ── tree-lock-guard ──────────────────────────────────────────────────────────
+# Same split as issue-defer-guard: the predicate is in detect.ts, which imports
+# nothing but node builtins, so node can load it directly. index.ts is the
+# wiring no test can reach.
+#
+# The probe is with-tree-lock --check, which is is_locked(). Tests hold a real
+# flock rather than stubbing the CLI, so an inverted probe fails here the same
+# way it fails in tests/tree_lock_test.py.
+
+# _lock_refusal FILE — prints the refusal string, or "null".
+_lock_refusal() {
+  run node --input-type=module -e "
+    const { lockRefusal } = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
+    const msg = lockRefusal(process.argv[1]);
+    process.stdout.write(msg === null ? 'null' : msg);
+  " -- "$1"
+}
+
+# _hold_tree TREE — hold LOCK_SH on TREE in the background until killed.
+# Prints the wrapper pid. Polls --check rather than sleeping.
+#
+# The holder's stdout and stderr go to /dev/null on purpose. A caller reads
+# this through `holder=$(_hold_tree ...)`, and a background child that inherits
+# the command substitution's pipe keeps its write end open — the substitution
+# then blocks until the holder exits, which is never, so the test hangs before
+# it reaches its first assertion.
+_hold_tree() {
+  local tree="$1"
+  "$REPO_ROOT/bin/local/with-tree-lock" "$tree" -- \
+    sh -c 'while true; do sleep 30; done' >/dev/null 2>&1 &
+  local wrapper=$!
+  local i
+  for i in $(seq 1 50); do
+    if "$REPO_ROOT/bin/local/with-tree-lock" --check "$tree" >/dev/null 2>&1; then
+      printf '%s' "$wrapper"
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill "$wrapper" 2>/dev/null || true
+  echo "tree $tree never became locked" >&2
+  return 1
+}
+
+@test "tree-lock-guard: a free tree is not a refusal" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  _lock_refusal "$repo/file.txt"
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
+}
+
+@test "tree-lock-guard: a held tree is a refusal that names no pid" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  _lock_refusal "$repo/file.txt"
+  local result_status=$status result_out=$output
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$result_status" -eq 0 ]
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+  [[ "$result_out" != *[Pp]id* ]]
+}
+
+@test "tree-lock-guard: WORKBENCH_TREE_LOCK does not suppress the refusal" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  WORKBENCH_TREE_LOCK="$repo" _lock_refusal "$repo/file.txt"
+  local result_out=$output
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+}
+
+@test "tree-lock-guard: inherited GIT_DIR does not retarget the probe" {
+  local repo="$TMPDIR/repo" other="$TMPDIR/other"
+  mkdir -p "$repo" "$other"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  git -C "$other" init -q -b feat
+  git -C "$other" config user.email t@t
+  git -C "$other" config user.name t
+  git -C "$other" commit -q --allow-empty -m init
+  local holder other_git
+  holder="$(_hold_tree "$repo")"
+  other_git=$(git -C "$other" rev-parse --absolute-git-dir)
+  GIT_DIR="$other_git" GIT_WORK_TREE="$other" _lock_refusal "$repo/file.txt"
+  local result_out=$output
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+}
+
+@test "tree-lock-guard: a torn record still refuses without naming a pid" {
+  # holders() can be [] while is_locked() is true. Take LOCK_SH without
+  # writing a JSONL line, which is the state acquire()'s _record can tear into.
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  local git_dir lock
+  git_dir=$(git -C "$repo" rev-parse --absolute-git-dir)
+  lock="$git_dir/workbench-validate.lock"
+  python3 -c "
+import fcntl, sys, time
+h = open(sys.argv[1], 'a+')
+fcntl.flock(h, fcntl.LOCK_SH)
+time.sleep(30)
+" "$lock" >/dev/null 2>&1 &
+  local py=$!
+  local i
+  for i in $(seq 1 50); do
+    if "$REPO_ROOT/bin/local/with-tree-lock" --check "$repo" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  _lock_refusal "$repo/file.txt"
+  local result_out=$output
+  kill "$py" 2>/dev/null || true
+  wait "$py" 2>/dev/null || true
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+  [[ "$result_out" != *[Pp]id* ]]
+}
+
+@test "tree-lock-guard: missing path or non-git path fails open" {
+  _lock_refusal "$TMPDIR/no-such-parent/file.txt"
+  [ "$output" = "null" ]
+  mkdir -p "$TMPDIR/plain"
+  _lock_refusal "$TMPDIR/plain/file.txt"
+  [ "$output" = "null" ]
+}
+
+@test "tree-lock-guard: detect.ts imports no SDK" {
+  run grep -E '@earendil-works/pi-coding-agent|isToolCallEventType' \
+    "$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts"
+  [ "$status" -ne 0 ]
+}
+
 # ─── exit-status-guard ────────────────────────────────────────────────────
 # The trailing-report half of the no-masked-status rule. Same split as the
 # other guards: the predicate is in detect.ts, which pulls in only ../_shared.

@@ -15,6 +15,7 @@
     "command:ceiling-scan",
     "command:ci-check",
     "command:claude-bash-guard",
+    "command:claude-edit-guard",
     "command:claude-review",
     "command:dream-scan",
     "command:dream-verify",

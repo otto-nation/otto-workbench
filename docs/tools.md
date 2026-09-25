@@ -51,6 +51,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `gcloud-reauth` | Check GCP application-default credentials and re-login if expired, with self-managed launchd agent |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
+| `claude-edit-guard` | PreToolUse hook for Edit/Write — blocks edits on main/master unless gitignored, and edits to a tree a validator holds |
 | `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |

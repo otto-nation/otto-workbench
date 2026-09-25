@@ -98,6 +98,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -132,12 +133,14 @@ class _Held:
     depth: int = 1
 
 
-# The flocks this process holds, keyed on the lock file's path and in the order
-# they were taken. Keyed on the path rather than the marker value because the
-# path is the thing flock is taken on, so "is this already ours" and "is this
-# key present" are one question — and because it keeps a target dir and a git
-# dir that happen to be the same directory as two distinct locks.
-_HELD: dict[str, _Held] = {}
+# The flocks this process holds, keyed on the lock file's path and ordered by
+# recency of use rather than insertion — a re-claim moves its key to the end,
+# so the last entry is always the innermost lock this process still holds.
+# Keyed on the path rather than the marker value because the path is the thing
+# flock is taken on, so "is this already ours" and "is this key present" are
+# one question — and because it keeps a target dir and a git dir that happen
+# to be the same directory as two distinct locks.
+_HELD: OrderedDict[str, _Held] = OrderedDict()
 
 # What each marker said before this process took its first lock for that var,
 # so releasing the last one hands back what a parent exported rather than
@@ -261,15 +264,21 @@ def _sync_marker(var: str) -> None:
     Derived rather than saved-and-restored per call, because
     ``claim_for_process`` takes a lock it never gives back: a take can outlive
     the block that was holding the value it displaced, and restoring that value
-    would clear a marker whose flock is still held.
+    would clear a marker whose flock is still held. "Innermost" is recency of
+    use, not of first acquisition — ``_HELD`` is kept ordered by that via
+    ``move_to_end`` on every take, so the last matching entry, found by walking
+    from the end, is the one a re-claim most recently touched.
     """
     # ceiling: the marker stays a single value, so a subprocess sees only the
-    # innermost lock this process holds for that var. Upgrade to a separated
-    # multi-value marker if a lock-taking delegate is ever spawned from a point
-    # where this process holds more than one key for one var — today the five
-    # that lock are spawned only by `pr`'s dispatch and by `cmd_fix`, which
-    # resolve a single target and forward it.
-    for held in reversed(list(_HELD.values())):
+    # single innermost lock this process holds for that var, not every key it
+    # holds. That is safe as long as a lock-taking delegate is only ever
+    # spawned to work on the one target (or checkout) named by that innermost
+    # lock — true today, since the five that lock are spawned only by `pr`'s
+    # dispatch and by `cmd_fix`, which resolve a single target and forward it.
+    # Upgrade to a separated multi-value marker if that stops holding.
+    # (Recency here is tracked by `_HELD`'s order, not by insertion — see the
+    # docstring above.)
+    for held in reversed(_HELD.values()):
         if held.var == var:
             os.environ[var] = held.value
             return
@@ -300,6 +309,8 @@ def _take(spec: _LockSpec, command: str, started: str) -> bool:
     held = _HELD.get(key)
     if held is not None:
         held.depth += 1
+        _HELD.move_to_end(key)
+        _sync_marker(spec.var)
         return True
     if os.environ.get(spec.var) == spec.value:
         return False

@@ -1,6 +1,6 @@
 """The agent behind the verify gate: does a claimed fix actually work?
 
-`fix.engine` owns when the gate runs and what its verdicts mean; this owns the
+`fix.gate` owns when the gate runs and what its verdicts mean; this owns the
 one call that produces them. The split is the same one the engine already makes
 for the fix pass itself — the pipeline is domain-neutral, and what it dispatches
 is swappable, which is what lets `engine.run(verify=...)` be a stub in a test
@@ -29,8 +29,6 @@ execution as the operator, with their credentials and their network.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from agent import invoke as agent_invoke
 from agent import phases as agent_phases
 from agent import templates as agent_templates
@@ -38,14 +36,8 @@ from fix import tracking as fix_tracking
 from agent.registry import PHASES
 from core import log
 from core.phases import Phase
+from fix.gate import Verdict
 from fix.types import FixItem
-
-if TYPE_CHECKING:
-    # Only under the type checker: `fix.engine` imports this module's runner at
-    # call time, so a real import here would close the cycle. The Verdict type
-    # lives there because it is the engine's contract with every domain rather
-    # than this runner's own.
-    from fix.engine import Verdict
 
 # What the gate calls one unit of its work, in the prompt's own words.
 _NOUN = "fix"
@@ -62,8 +54,6 @@ def _run_chunk(
     phase: Phase, items: list[FixItem], adapter, label: str,
 ) -> dict[str, "Verdict"]:
     """One gate invoke, budgeted for this chunk's size."""
-    from fix.engine import Verdict
-
     path = adapter.verify_tracking_path
     fix_tracking.write(path, "Verify Fixes", items, fix_tracking.VERIFY_BOXES)
 
@@ -126,7 +116,7 @@ def run(
     thirty-nine claims into a 40-turn budget.
 
     An id the agent did not answer is simply absent from the result. The engine
-    reads that as unverified rather than as falsified — see `engine._verify`,
+    reads that as unverified rather than as falsified — see `gate._verify`,
     which is where the decision not to demote on silence is argued.
     """
     chunk_size = agent_phases.phase_chunk_size(phase)

@@ -23,6 +23,7 @@ if str(LIB_DIR) not in sys.path:
 
 from agent import invoke as agent_invoke  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
+from fix import gate as fix_gate  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from git import land  # noqa: E402
 from agent.diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
@@ -774,7 +775,7 @@ def test_a_decline_the_gate_falsifies_becomes_a_person_s_call(tmp_path, landed, 
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(
+        verify=_verdicts(("i0", fix_gate.Verdict(
             ok=False, detail="true only with the pass's own diff applied"))),
         run_fix=_answer(adapter, tick="declined",
                         reason="the code already does this"),
@@ -790,7 +791,7 @@ def test_a_decline_the_gate_upholds_stays_declined(tmp_path, landed, head):
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(ok=True, detail="scope holds"))),
+        verify=_verdicts(("i0", fix_gate.Verdict(ok=True, detail="scope holds"))),
         run_fix=_answer(adapter, tick="declined", reason="out of scope here"),
     )
 
@@ -821,7 +822,7 @@ def test_a_fix_the_gate_falsifies_does_not_reach_the_commit(tmp_path, landed, he
     adapter = StubAdapter(tmp_path, count=1)
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(ok=False, detail="repro still exits 3"))),
+        verify=_verdicts(("i0", fix_gate.Verdict(ok=False, detail="repro still exits 3"))),
     )
 
     assert run.outcomes[0].outcome is FixOutcome.NEEDS_HUMAN
@@ -833,7 +834,7 @@ def test_a_fix_the_gate_confirms_stays_fixed(tmp_path, landed, head):
     adapter = StubAdapter(tmp_path, count=1)
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(ok=True, detail="suite green"))),
+        verify=_verdicts(("i0", fix_gate.Verdict(ok=True, detail="suite green"))),
     )
 
     assert run.outcomes[0].outcome is FixOutcome.FIXED
@@ -848,7 +849,7 @@ def test_a_fix_the_gate_cannot_judge_stays_fixed_but_unverified(tmp_path, landed
     the claim that anything ran.
     """
     adapter = StubAdapter(tmp_path, count=1)
-    run, _ = _run(adapter, verify=_verdicts(("i0", fix_engine.Verdict(ok=None, detail="no runnable check"))))
+    run, _ = _run(adapter, verify=_verdicts(("i0", fix_gate.Verdict(ok=None, detail="no runnable check"))))
 
     assert run.outcomes[0].outcome is FixOutcome.FIXED
     assert run.outcomes[0].verified is False
@@ -862,7 +863,7 @@ def test_an_id_the_gate_never_answered_is_unverified_not_falsified(tmp_path, lan
     demoting on absence would punish a fix for the gate running out of turns.
     """
     adapter = StubAdapter(tmp_path, count=2)
-    run, _ = _run(adapter, verify=_verdicts(("i0", fix_engine.Verdict(ok=True))))
+    run, _ = _run(adapter, verify=_verdicts(("i0", fix_gate.Verdict(ok=True))))
 
     by_id = {o.id: o for o in run.outcomes}
     assert by_id["i1"].outcome is FixOutcome.FIXED
@@ -970,7 +971,7 @@ def test_the_gate_is_told_what_the_fix_pass_claimed(tmp_path, landed, head):
 
     body = seen["items"][0].body
     assert "test_foo_rejects_an_empty_name" in body
-    assert fix_engine._CLAIM_HEADING in body
+    assert fix_gate._CLAIM_HEADING in body
 
 
 def test_the_reviewers_words_survive_beside_the_claim(tmp_path, landed, head):
@@ -1015,7 +1016,7 @@ def test_a_fix_with_no_claim_says_so_to_the_gate(tmp_path, landed, head):
     _run(adapter, verify=run_verify, run_fix=_answer(adapter))
 
     body = seen["items"][0].body
-    assert fix_engine._CLAIM_HEADING not in body
+    assert fix_gate._CLAIM_HEADING not in body
     assert "named nothing that holds this change" in body
     # And it is not on its own grounds to call the fix broken.
     assert "not on its own a reason to call the fix broken" in body
@@ -1031,10 +1032,10 @@ def test_an_id_the_pass_never_handed_out_still_carries_its_claim():
     outcome = ItemOutcome(id="x", file="a.py", line=2,
                           outcome=FixOutcome.FIXED, reason="test_orphan")
 
-    item = fix_engine._verify_item(outcome, None, StubAdapter.item_noun)
+    item = fix_gate._verify_item(outcome, None, StubAdapter.item_noun)
 
     assert "test_orphan" in item.body
-    assert fix_engine._CLAIM_HEADING in item.body
+    assert fix_gate._CLAIM_HEADING in item.body
 
 
 def test_the_gate_is_asked_under_its_own_phase(tmp_path, landed, head):
@@ -1244,7 +1245,7 @@ class TestAfterVerifyRunsBeforeTheCommit:
         adapter.after_verify = lambda outcomes: seen.append(list(outcomes))
 
         _run(adapter, verify=_verdicts(
-            ("i0", fix_engine.Verdict(ok=False, detail="the repro fails"))))
+            ("i0", fix_gate.Verdict(ok=False, detail="the repro fails"))))
 
         assert [o.outcome for o in seen[0]] == [FixOutcome.NEEDS_HUMAN]
 
@@ -1302,7 +1303,7 @@ def test_a_deferral_the_gate_confirms_becomes_a_fix(tmp_path, landed, head, snap
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(ok=True, detail="the repro passes"))),
+        verify=_verdicts(("i0", fix_gate.Verdict(ok=True, detail="the repro passes"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 
@@ -1325,7 +1326,7 @@ def test_a_deferral_the_gate_cannot_settle_stands_as_recorded(
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(ok=None, detail="belongs to i1"))),
+        verify=_verdicts(("i0", fix_gate.Verdict(ok=None, detail="belongs to i1"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 
@@ -1347,7 +1348,7 @@ def test_a_deferral_the_gate_finds_half_applied_goes_to_a_person(
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(ok=False, detail="half applied"))),
+        verify=_verdicts(("i0", fix_gate.Verdict(ok=False, detail="half applied"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 
@@ -1448,7 +1449,7 @@ def test_a_contradiction_the_gate_could_not_settle_keeps_the_gate_s_words(
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_engine.Verdict(ok=None, detail="belongs to i1"))),
+        verify=_verdicts(("i0", fix_gate.Verdict(ok=None, detail="belongs to i1"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 

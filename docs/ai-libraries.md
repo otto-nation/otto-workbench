@@ -332,6 +332,16 @@ the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
 
+### fix/gate.py
+
+The verify gate: when it runs, and what its verdicts mean.
+
+``fix.verify`` owns the one call that produces verdicts. This module owns
+everything around it — what the gate is shown for a fix, a decline and a
+contradicted deferral, and how an answer it gives (or withholds) changes an
+item's outcome. Split from ``fix.engine``, which owns the batch/invoke/retry
+pipeline and nothing about judgement.
+
 ### fix/reconcile.py
 
 What the agent said against what the worktree shows, per item.
@@ -406,7 +416,7 @@ committing everything is how unreviewed content reaches a branch.
 
 The agent behind the verify gate: does a claimed fix actually work?
 
-`fix.engine` owns when the gate runs and what its verdicts mean; this owns the
+`fix.gate` owns when the gate runs and what its verdicts mean; this owns the
 one call that produces them. The split is the same one the engine already makes
 for the fix pass itself — the pipeline is domain-neutral, and what it dispatches
 is swappable, which is what lets `engine.run(verify=...)` be a stub in a test

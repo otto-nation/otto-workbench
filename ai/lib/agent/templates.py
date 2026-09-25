@@ -72,23 +72,34 @@ def render(name: str, **kwargs) -> str:
 # rather than `old_string`, and an empty `oldText` is rejected outright. An
 # agent handed the Claude block on Pi spends its turns failing to write and
 # finishes with an empty file, which is what this split exists to stop.
+#
+# Both recipes ask for a complete document early and further complete rewrites
+# after it. An earlier wording banned building the file up in pieces, which the
+# templates' own "write first, then investigate" reads as a ban on rewriting —
+# so an agent that expected to learn more deferred the write entirely and a run
+# that died mid-investigation left nothing. Incremental appends are still out:
+# Pi's `edit` rejects an empty `oldText` and Claude has no Write under --bare,
+# so a whole-document overwrite is what both backends can actually do.
 _WRITE_RECIPES: Mapping[Backend, str] = MappingProxyType({
     Backend.CLAUDE: (
         "The file already exists and is empty — Read it, then use the Edit tool "
-        "with an empty `old_string` to insert the complete contents. That Read "
-        "plus one Edit is the entire write; do not build the file up in pieces.\n"
+        "with an empty `old_string` to insert a complete document on the first "
+        "write, within the first few turns. Further complete rewrites via Edit "
+        "are expected as findings accumulate; never leave the file in a state "
+        "that is not a complete document.\n"
         "The Write tool is NOT available in this environment — do not attempt it, "
         "and do not fall back to Bash (`cat`, heredoc, python). Do NOT create "
         "directories or empty files."
     ),
     Backend.PI: (
-        "The file already exists and is empty — use the `write` tool to put the "
-        "complete contents into it in one call. That single write is the entire "
-        "write; do not build the file up in pieces.\n"
+        "The file already exists and is empty — use the `write` tool to put a "
+        "complete document into it on the first write, within the first few "
+        "turns. Further complete rewrites are expected as findings accumulate; "
+        "never leave the file in a state that is not a complete document.\n"
         "Do not use `edit` to populate the empty file — its `oldText` must match "
         "existing text and must not be empty, so it cannot insert into an empty "
-        "file. Do not fall back to Bash (`cat`, heredoc, python). Do NOT create "
-        "directories or empty files."
+        "file. Subsequent rewrites may use `write` or `edit`. Do not fall back "
+        "to Bash (`cat`, heredoc, python). Do NOT create directories or empty files."
     ),
 })
 

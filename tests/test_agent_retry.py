@@ -470,6 +470,22 @@ class TestWriteRecipesMatchTheBackend:
         assert "empty `old_string`" not in pi
         assert "Write tool is NOT available" not in pi
 
+    def test_both_recipes_expect_rewrites_not_a_single_write(self):
+        """A ban on building the file up in pieces also banned rewriting it.
+
+        The templates tell an agent to write first and keep investigating;
+        the recipe told it that write was its only one. Deferring the write
+        is the rational response to being told both.
+        """
+        pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
+        claude = agent_templates.build_output_block(
+            "/tmp/out.md", backend=Backend.CLAUDE,
+        )
+        for text in (pi, claude):
+            assert "do not build the file up in pieces" not in text
+            assert "complete document" in text
+            assert "never leave the file" in text
+
     def test_the_retry_hint_follows_the_same_split(self):
         """A hint naming the other CLI re-issues the recipe that just failed."""
         pi = agent_retry.no_write_hint(Backend.PI)

@@ -58,7 +58,7 @@ Rules:
 ${output_block}
 
 ## Turn budget
-You have ${max_turns} turns (each turn can include multiple parallel tool calls).${omitted_guidance} Write the review file FIRST based on the diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.
+You have ${max_turns} turns (each turn can include multiple parallel tool calls).${omitted_guidance} Write a complete review file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify Must-fix and Should-fix claims against the source and rewrite the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.
 
 A scratch file is not the review file. Writing a probe script, extracting a
 dependency's source, or redirecting output somewhere to read it back leaves the

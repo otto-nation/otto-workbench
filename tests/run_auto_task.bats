@@ -86,6 +86,10 @@ _wait_for_argv() {
   _wait_for _argv_log_exists
 }
 
+_stub_started() {
+  [[ -f "$TMPDIR/stub-started" ]]
+}
+
 # ── The invocation ───────────────────────────────────────────────────────────
 
 @test "run-auto-task: does not pass --bare" {
@@ -117,24 +121,34 @@ _wait_for_argv() {
 @test "run-auto-task: returns immediately without waiting for the session" {
   # A Stop hook must not block on a multi-minute agent. The default stub
   # returns in milliseconds regardless of backgrounding, so it can't tell a
-  # detached call from a blocking one — swap in a stub that sleeps long
-  # enough for a blocking call to visibly miss the bound below.
-  cat > "$STUB_BIN/claude" <<'EOF'
+  # detached call from a blocking one — swap in a stub that stays alive long
+  # enough for the assertion below to catch it still running.
+  #
+  # Asserted by overlap, not by a stopwatch. An earlier version bounded
+  # elapsed wall-clock at 1s against a 3s stub, which fails on a loaded
+  # machine for reasons that have nothing to do with backgrounding — it was
+  # observed taking 73s under a parallel suite run, reporting a detach bug
+  # that did not exist. Whether the caller returned while the child was still
+  # running is the actual claim, and it is a fact about two files rather than
+  # about how fast this machine happens to be.
+  cat > "$STUB_BIN/claude" <<EOF
 #!/usr/bin/env bash
+touch "\$TMPDIR/stub-started"
 sleep 3
+touch "\$TMPDIR/stub-finished"
 EOF
   chmod +x "$STUB_BIN/claude"
 
-  local start elapsed
-  start="$(date +%s)"
   run "$RUN_AUTO_TASK" retro
-  elapsed=$(( $(date +%s) - start ))
-
   [[ "$status" -eq 0 ]]
-  # Blocking on the 3s stub would put elapsed at 3; a detached call finishes
-  # in well under a second, leaving room for the boundary rounding a
-  # whole-second clock can add.
-  [[ "$elapsed" -le 1 ]]
+
+  # The child must have been reached — otherwise "still running" below is
+  # satisfied by a stub that never started.
+  _wait_for _stub_started
+
+  # The caller has already returned (run completed above) while the child is
+  # mid-sleep. A blocking call could not observe this state at all.
+  [[ ! -f "$TMPDIR/stub-finished" ]]
 }
 
 # ── The outcome nobody was asserting ─────────────────────────────────────────

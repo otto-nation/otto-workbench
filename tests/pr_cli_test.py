@@ -894,6 +894,7 @@ def test_review_takes_a_bare_pr_number(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
+# passes-at-base: the common path skipped the subprocess probe too, and reading arity in-process must not start charging every invocation
 def test_no_positional_candidate_skips_the_arity_read(mock_resolve, mock_run):
     """The common case must not pay for a delegate import."""
     mock_resolve.return_value = make_ctx()
@@ -1004,6 +1005,7 @@ def test_delegate_value_flags_lets_a_broken_delegate_raise():
     "command",
     sorted(name for name, spec in registry.COMMANDS.items() if spec.script),
 )
+# passes-at-base: the registry-wide gate the probe had — the contract survives the mechanism change, so it holds on both sides
 def test_every_delegate_answers_the_arity_question(command):
     """CI gate for the arity contract: a flag it cannot describe fails here first.
 
@@ -1017,6 +1019,7 @@ def test_every_delegate_answers_the_arity_question(command):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
+# passes-at-base: an empty answer degraded to the arity-blind scan before and still does; the change removed the ways of producing one, not the handling
 def test_an_empty_arity_answer_still_dispatches_the_command(mock_resolve, mock_run):
     """A command whose delegate names no value-taking flag still runs."""
     mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))

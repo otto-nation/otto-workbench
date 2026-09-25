@@ -263,6 +263,7 @@ def test_value_taking_options_still_ignores_multi_value_positionals():
     assert value_taking_options(parser) == ["--reply"]
 
 
+# passes-at-base: value_taking_options raised this same ValueError before — only the flag that caught it and exited 2 went, not the refusal
 def test_the_refusal_names_the_flag_and_the_fix():
     """Loud, not silent: the refusal names the option it cannot describe."""
     parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
@@ -273,6 +274,7 @@ def test_the_refusal_names_the_flag_and_the_fix():
     assert "_positional_index" in str(exc_info.value), "the message must name the fix"
 
 
+# passes-at-base: the arity constraint was never on the delegate's own CLI, and deleting the protocol must not narrow what one may declare
 def test_a_multi_value_option_does_not_break_normal_parsing():
     """The constraint is on the introspection, not on the delegate's own CLI."""
     parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)

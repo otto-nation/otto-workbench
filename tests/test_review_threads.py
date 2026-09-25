@@ -9868,3 +9868,42 @@ class TestSeenTracking:
         fresh = [self._comment(1), self._comment(2, edited="2026-02-01T00:00:00Z")]
         cli_review_threads._mark_seen(fresh, record)
         assert [c["seen"] for c in fresh] == [True, True]
+
+    def test_a_comment_with_no_id_is_left_out_of_the_record(self):
+        """A None key would cost the whole state file, not one field.
+
+        Both builders take the id from `databaseId`, which GraphQL can omit.
+        The mapping is keyed `int`, so a None key serialises to the JSON string
+        "null", which serde refuses to coerce back — and `load_state` discards
+        an unreadable file wholesale, losing every verdict and round with it.
+        """
+        record = cli_review_threads._seen_record([
+            {"id": None, "last_edited_at": ""},
+            {"id": 5, "last_edited_at": ""},
+        ])
+        assert record == {5: ""}
+
+    def test_a_comment_with_no_id_is_unseen_rather_than_a_crash(self):
+        comments = [{"id": None}, {"last_edited_at": ""}]
+        cli_review_threads._mark_seen(comments, {5: ""})
+        assert [c["seen"] for c in comments] == [False, False]
+
+    def test_the_record_survives_a_state_file_round_trip(self, tmp_path):
+        """End to end: what _seen_record writes must load back unchanged."""
+        from pr import state as pr_state
+        from pr import domains as pr_domains
+        record = cli_review_threads._seen_record([
+            {"id": None, "last_edited_at": ""},
+            {"id": 111, "last_edited_at": ""},
+            {"id": 222, "last_edited_at": "2026-02-01T00:00:00Z"},
+        ])
+        state = pr_state.new_state("acme/w", "feat/x", pr_number=1,
+                                   head_sha="a", worktree_root=str(tmp_path))
+        pr_state.apply(state, pr_domains.CommentsSummary(
+            seen_issue_comments=record, updated_at=pr_state.now_iso()))
+        pr_state.save_state(tmp_path, state)
+        loaded = pr_state.load_state(tmp_path)
+        assert loaded is not None, "state file was discarded as unreadable"
+        assert loaded.comments.seen_issue_comments == {
+            111: "", 222: "2026-02-01T00:00:00Z",
+        }

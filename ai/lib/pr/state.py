@@ -439,6 +439,15 @@ def merge_readiness(state: PRState) -> Readiness:
         answer = domain.readiness()
         blockers.extend(answer.blockers)
         unchecked.extend(answer.unchecked)
+        if type(domain).readiness is Domain.readiness:
+            # A domain that does not answer the merge question at all — a
+            # description, a supersession verdict, a rebase record. Whether its
+            # snapshot is current has no bearing on whether the PR may merge,
+            # and blocking on one would make the line permanently red on any
+            # branch old enough to have a stale `pr describe` behind it. A
+            # readiness line that always says blocked is one nobody reads,
+            # which would cost the CI and review signal this exists to sharpen.
+            continue
         if answer.blockers or answer.unchecked:
             continue
         if _superseded(domain, state.identity.head_sha):

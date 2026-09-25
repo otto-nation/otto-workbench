@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from gh import client as gh_client
@@ -107,6 +108,19 @@ def last_comment_is_mine(comments: list[dict], my_login: str) -> bool:
     return last_author.lower() == my_login.lower()
 
 
+def _instant(stamp: str | None) -> datetime | None:
+    """An ISO stamp as a comparable instant, or None when it cannot be read.
+
+    Thread comments arrive as raw GraphQL nodes, so the keys here are camelCase
+    (`createdAt`, `lastEditedAt`) rather than the snake_case the normalised
+    issue-comment dicts carry.
+    """
+    try:
+        return datetime.fromisoformat((stamp or "").replace("Z", "+00:00"))
+    except (AttributeError, ValueError, TypeError):
+        return None
+
+
 def _rewritten_since_my_reply(comments: list[dict], my_login: str) -> bool:
     """Whether anyone edited their comment after our last word on the thread.
 
@@ -121,22 +135,44 @@ def _rewritten_since_my_reply(comments: list[dict], my_login: str) -> bool:
     answered, and reopening that would reopen every thread with a tidied
     comment in it.
 
+    "When we last spoke" counts our own edits, and it has to. We answer a
+    thread whose last comment is ours by *patching* that comment — see
+    `thread_replies.upsert_thread_reply`, which PATCHes whenever we already
+    have a reply, which in this state we always do. A PATCH moves
+    `lastEditedAt` and leaves `createdAt` where it was, so reading only
+    `createdAt` here would freeze our side at the original reply and leave the
+    reviewer's edit permanently "after" it: the thread would re-enter triage
+    every round forever, never settling, burning an agent pass each time.
+    Taking our edits into account does not let us reopen anything — our own
+    stamp only ever moves the bar we are compared against.
+
+    Timestamps are compared as instants, not as strings. GitHub's GraphQL
+    `DateTime` is uniformly `...Z` today, so lexical order happens to work, but
+    it breaks in both directions the moment a differently-spelled stamp reaches
+    here: `+00:00` sorts below `Z` for the same instant (a false reopen), and a
+    fractional second sorts below a bare `Z` (a *missed* rewrite, which loses
+    the reviewer's demand).
+
     A comment with no stamp on either side cannot be placed, so it does not
     count as a rewrite — the same direction the rest of this change takes, since
     a false reopen is noise and a false close loses the demand.
     """
     my_login_lower = my_login.lower()
+
+    def mine(comment: dict) -> bool:
+        return (comment.get("author") or {}).get("login", "").lower() == my_login_lower
+
     my_last = max(
-        (c.get("createdAt", "") or "" for c in comments
-         if (c.get("author") or {}).get("login", "").lower() == my_login_lower),
-        default="",
+        (t for c in comments if mine(c)
+         for t in (_instant(c.get("createdAt")), _instant(c.get("lastEditedAt")))
+         if t is not None),
+        default=None,
     )
-    if not my_last:
+    if my_last is None:
         return False
     return any(
-        (c.get("lastEditedAt") or "") > my_last
-        for c in comments
-        if (c.get("author") or {}).get("login", "").lower() != my_login_lower
+        (edited := _instant(c.get("lastEditedAt"))) is not None and edited > my_last
+        for c in comments if not mine(c)
     )
 
 

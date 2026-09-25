@@ -914,3 +914,48 @@ class TestRewrittenAfterOurReply:
         thread.append({"author": {"login": "alice"}, "body": "thanks, looks good",
                        "createdAt": "2026-01-04T00:00:00Z"})
         assert compute_thread_state(thread, False, "me") is ThreadState.VERIFIED
+
+    def test_answering_by_editing_our_own_reply_closes_the_thread(self):
+        """The convergence case, and it is not hypothetical.
+
+        `thread_replies.upsert_thread_reply` answers a thread whose last
+        comment is ours by PATCHing that comment, which moves `lastEditedAt`
+        and leaves `createdAt` alone. Reading only our `createdAt` freezes our
+        side at the original reply, so the reviewer's edit stays permanently
+        "after" it and the thread re-enters triage every round forever.
+        """
+        thread = self._thread(reviewer_edit="2026-01-03T00:00:00Z")
+        assert compute_thread_state(thread, False, "me") is ThreadState.AMBIGUOUS
+        answered = self._thread(reviewer_edit="2026-01-03T00:00:00Z",
+                                my_edit="2026-01-04T00:00:00Z")
+        assert compute_thread_state(answered, False, "me") is ThreadState.ADDRESSED
+
+    @pytest.mark.parametrize("ours,theirs,rewritten", [
+        # The same instant in two spellings. '+' sorts below 'Z', so a string
+        # compare calls this a rewrite and reopens a thread nobody touched.
+        ("2026-01-02T00:00:00+00:00", "2026-01-02T00:00:00Z", False),
+        # Half a second later, with a fraction. '.' sorts below 'Z', so a
+        # string compare misses it — and a missed rewrite loses the demand.
+        ("2026-01-02T00:00:00Z", "2026-01-02T00:00:00.500Z", True),
+        # A fractional stamp that is genuinely earlier.
+        ("2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00Z", False),
+        # Plain, unambiguous ordering.
+        ("2026-01-02T00:00:00Z", "2026-01-03T00:00:00Z", True),
+    ])
+    def test_stamps_are_compared_as_instants_not_as_strings(
+        self, ours, theirs, rewritten,
+    ):
+        thread = [
+            {"author": {"login": "alice"}, "createdAt": "2026-01-01T00:00:00Z",
+             "lastEditedAt": theirs},
+            {"author": {"login": "me"}, "createdAt": ours},
+        ]
+        assert pr_comments._rewritten_since_my_reply(thread, "me") is rewritten
+
+    def test_an_unreadable_stamp_is_not_a_rewrite(self):
+        thread = [
+            {"author": {"login": "alice"}, "createdAt": "2026-01-01T00:00:00Z",
+             "lastEditedAt": "not a timestamp"},
+            {"author": {"login": "me"}, "createdAt": "2026-01-02T00:00:00Z"},
+        ]
+        assert pr_comments._rewritten_since_my_reply(thread, "me") is False

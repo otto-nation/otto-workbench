@@ -19,7 +19,7 @@ from git.land import CommitStatus
 from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
 from pr.domains import (
     CIDomain,
-    CommentsSummary, TriageSummary, RebaseSummary,
+    CommentsSummary, DescribeSummary, TriageSummary, RebaseSummary,
     PushDomain,
     ReviewSummary, ReviewVerdict, ReviewStatus,
     SupersessionDomain, SupersessionKind, SupersessionSignal,
@@ -2157,3 +2157,26 @@ def test_an_unresolvable_head_does_not_supersede_everything():
     state = _state_at("", _ci_for("oldsha", minutes=2))
     lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
     assert not any("checked another commit" in l for l in lines)
+
+
+def test_a_domain_that_does_not_gate_merging_never_blocks_on_its_age():
+    """`pr describe` has no bearing on whether the PR may merge.
+
+    The staleness fold runs over the whole registry, and the domains that
+    return an empty `Readiness()` do so precisely because they have no say.
+    Blocking on one leaves the line permanently red on any branch old enough
+    to carry a stale describe snapshot, and a readiness line that always says
+    blocked is one nobody reads.
+    """
+    state = _clean_but_aged(minutes=2)
+    apply(state, DescribeSummary(head_sha="abc", updated_at=_ago(days=30)))
+    assert merge_readiness(state).render() == "**Merge readiness**: ready"
+
+
+def test_a_stale_merge_relevant_domain_still_blocks_alongside_an_inert_one():
+    """Exempting the inert domains must not exempt the ones that do gate."""
+    state = _clean_but_aged(days=9)
+    apply(state, DescribeSummary(head_sha="abc", updated_at=_ago(days=30)))
+    unchecked = merge_readiness(state).unchecked
+    assert any(u.startswith("CI (last checked") for u in unchecked)
+    assert not any("describe" in u for u in unchecked)

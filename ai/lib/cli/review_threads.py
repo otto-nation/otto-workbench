@@ -103,12 +103,22 @@ def _mark_seen(comments: list[dict], prior: dict[int, str]) -> None:
     false unseen re-reports something once, a false seen drops it for good.
     """
     for c in comments:
-        c["seen"] = c["id"] in prior and prior[c["id"]] == _edit_stamp(c)
+        cid = c.get("id")
+        c["seen"] = cid is not None and cid in prior and prior[cid] == _edit_stamp(c)
 
 
 def _seen_record(comments: list[dict]) -> dict[int, str]:
-    """What this round read, for the next round to compare against."""
-    return {c["id"]: _edit_stamp(c) for c in comments}
+    """What this round read, for the next round to compare against.
+
+    A comment with no id is left out rather than recorded under one. Both
+    builders take the id from `databaseId`, which GraphQL can omit, and the key
+    type here is `int`: a `None` key serialises to the JSON string `"null"`,
+    which `serde` then refuses to coerce back on load, so `load_state`
+    discards the whole file as unreadable. Under the former `list[int]` shape
+    the bad entry cost one dropped field; under this one it would cost every
+    verdict, round and outcome the PR had accumulated.
+    """
+    return {c["id"]: _edit_stamp(c) for c in comments if c.get("id") is not None}
 
 
 def _run_threads(trail, args, ctx) -> int:

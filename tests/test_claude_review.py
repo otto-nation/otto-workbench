@@ -1286,6 +1286,110 @@ def test_prune_removes_old_failed_review(mock_run, cr, reviews_dir):
     assert not d.exists(), "failed review older than 30 days should be pruned"
 
 
+# ── a self-review, which carries a head ref and no PR number ────────────────
+
+
+def _seed_self_review(reviews_dir, name, *, head_ref, age_days, repo="org/my-repo"):
+    """A self-review directory: a head ref, no PR number, aged past a gate."""
+    d = reviews_dir / name
+    d.mkdir()
+    (d / "review.md").write_text("review content")
+    (d / "meta.json").write_text(json.dumps({
+        "repo": repo, "head_ref": head_ref, "head_sha": "abc", "mode": "self",
+    }))
+    old = time.time() - age_days * 86400
+    for f in d.iterdir():
+        os.utime(f, (old, old))
+    return d
+
+
+def _pr_list_returning(*states):
+    """Stub `gh pr list --head` with one row per state in *states*."""
+    rows = json.dumps([{"state": s} for s in states])
+    return lambda cmd, **kw: MagicMock(returncode=0, stdout=rows)
+
+
+@patch("core.proc.subprocess.run")
+def test_prune_removes_a_self_review_whose_branch_has_only_merged_prs(
+    mock_run, cr, reviews_dir,
+):
+    d = _seed_self_review(reviews_dir, "my-repo-self-done", head_ref="x/done", age_days=40)
+    mock_run.side_effect = _pr_list_returning("MERGED")
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert not d.exists(), "a branch whose every PR has ended leaves nothing to keep"
+
+
+@patch("core.proc.subprocess.run")
+def test_prune_keeps_a_self_review_whose_branch_never_opened_a_pr(
+    mock_run, cr, reviews_dir,
+):
+    """The safety case: no PR history reads the same as not yet pushed.
+
+    A self-review runs before the PR exists, so "this branch has no PR" is the
+    ordinary state of live work rather than evidence the work is over.
+    """
+    d = _seed_self_review(reviews_dir, "my-repo-self-wip", head_ref="x/wip", age_days=400)
+    mock_run.side_effect = _pr_list_returning()
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert d.exists(), "a branch with no PR history is indistinguishable from unpushed work"
+
+
+@patch("core.proc.subprocess.run")
+def test_prune_keeps_a_self_review_whose_branch_still_has_an_open_pr(
+    mock_run, cr, reviews_dir,
+):
+    d = _seed_self_review(reviews_dir, "my-repo-self-open", head_ref="x/open", age_days=40)
+    mock_run.side_effect = _pr_list_returning("MERGED", "OPEN")
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert d.exists(), "a reopened branch is live however many earlier PRs ended"
+
+
+@patch("core.proc.subprocess.run")
+def test_prune_keeps_a_self_review_inside_the_unlinked_window(mock_run, cr, reviews_dir):
+    """A PR-less review gets 30 days, not the 7 a PR-attributed one gets."""
+    d = _seed_self_review(reviews_dir, "my-repo-self-recent", head_ref="x/recent", age_days=10)
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert d.exists(), "10 days is inside the unlinked window"
+    # The age gate answers before anything is asked.
+    mock_run.assert_not_called()
+
+
+@patch("core.proc.subprocess.run")
+def test_prune_keeps_a_self_review_when_gh_cannot_be_asked(mock_run, cr, reviews_dir):
+    d = _seed_self_review(reviews_dir, "my-repo-self-offline", head_ref="x/offline", age_days=40)
+    mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=1, stdout="", stderr="boom")
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert d.exists(), "a question we could not ask keeps the artifacts"
+
+
+@patch("core.proc.subprocess.run")
+def test_prune_asks_about_the_head_ref_including_closed_prs(mock_run, cr, reviews_dir):
+    """The query must name the ref and span every state.
+
+    `--state all` is load-bearing: the default lists open PRs only, so a merged
+    branch would come back with no rows and read as "never opened a PR" — the
+    one answer that is never collected.
+    """
+    _seed_self_review(reviews_dir, "my-repo-self-q", head_ref="x/asked", age_days=40)
+    mock_run.side_effect = _pr_list_returning("MERGED")
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    cmd = mock_run.call_args[0][0]
+    assert "--head" in cmd and "x/asked" in cmd
+    assert cmd[cmd.index("--state") + 1] == "all"
+
+
 # ── the shared walk of the reviews tree ──────────────────────────────────────
 
 # 2021-06-01T00:00:00Z, as (atime, mtime) — old enough to be stale for every

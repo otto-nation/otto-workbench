@@ -283,7 +283,13 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
     return 0 if run.exit_code == 0 else 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> ToolParser:
+    """This command's parser, before anything has been parsed with it.
+
+    Public because `pr` reads it to learn which of these options consume a
+    following token, which is how a bare positional is classified as a PR
+    number or a branch.
+    """
     parser = ToolParser(
         prog=SCRIPT,
         description="CI failure status",
@@ -305,6 +311,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wait-interval", type=int, default=30,
                         help="Poll interval in seconds (default: 30)")
     add_trail_args(parser)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
 

@@ -3779,17 +3779,17 @@ class TestUnfiledDeferralsAreNamed:
 
 class TestTrackFlagParsing:
     def test_track_is_repeatable(self):
-        args = cli_review_threads._build_parser().parse_args(
+        args = cli_review_threads.build_parser().parse_args(
             ["--finish", "--track", "t1", "--track", "t2"])
         assert args.track == ["t1", "t2"]
 
     def test_track_all_is_separate(self):
-        args = cli_review_threads._build_parser().parse_args(["--finish", "--track-all"])
+        args = cli_review_threads.build_parser().parse_args(["--finish", "--track-all"])
         assert args.track_all is True
         assert args.track == []
 
     def test_track_defaults_to_empty(self):
-        args = cli_review_threads._build_parser().parse_args(["--finish"])
+        args = cli_review_threads.build_parser().parse_args(["--finish"])
         assert args.track == []
         assert args.track_all is False
 
@@ -4172,17 +4172,17 @@ class TestFinishFlag:
     """
 
     def test_finish_sets_finish(self):
-        assert cli_review_threads._build_parser().parse_args(["--finish"]).finish
+        assert cli_review_threads.build_parser().parse_args(["--finish"]).finish
 
     def test_it_is_off_by_default(self):
-        assert not cli_review_threads._build_parser().parse_args([]).finish
+        assert not cli_review_threads.build_parser().parse_args([]).finish
 
     @pytest.mark.parametrize("alias", ["--resolve", "--resolve-verified"])
     def test_the_old_aliases_are_rejected(self, alias):
         # Exit 2 specifically: argparse's unknown-flag code, not any SystemExit
         # a broken parser might raise on the way past.
         with pytest.raises(SystemExit) as exc:
-            cli_review_threads._build_parser().parse_args([alias])
+            cli_review_threads.build_parser().parse_args([alias])
         assert exc.value.code == 2
 
 
@@ -4406,27 +4406,27 @@ def _hand_fixed(tmp_path, *, pushed=True):
 
 class TestSettleFlagParsing:
     def test_settle_is_repeatable(self):
-        args = cli_review_threads._build_parser().parse_args(["--settle", "t1", "--settle", "t2"])
+        args = cli_review_threads.build_parser().parse_args(["--settle", "t1", "--settle", "t2"])
         assert args.settle == ["t1", "t2"]
 
     def test_settle_records_a_fix_unless_told_otherwise(self):
         """The ending an operator who was offered "fix it" chose."""
-        args = cli_review_threads._build_parser().parse_args(["--settle", "t1"])
+        args = cli_review_threads.build_parser().parse_args(["--settle", "t1"])
         assert args.settle_as == FixOutcome.FIXED.value
 
     @pytest.mark.parametrize("outcome", [o.value for o in (
         FixOutcome.FIXED, FixOutcome.DISMISSED, FixOutcome.ALREADY_ADDRESSED)])
     def test_every_bucket_the_closeout_can_reply_to_is_offered(self, outcome):
-        args = cli_review_threads._build_parser().parse_args(["--settle", "t1", "--as", outcome])
+        args = cli_review_threads.build_parser().parse_args(["--settle", "t1", "--as", outcome])
         assert args.settle_as == outcome
 
     def test_deferral_is_not_a_settlement(self):
         """--track already files work still owed; --settle records work finished."""
         with pytest.raises(SystemExit):
-            cli_review_threads._build_parser().parse_args(["--settle", "t1", "--as", "deferred"])
+            cli_review_threads.build_parser().parse_args(["--settle", "t1", "--as", "deferred"])
 
     def test_nothing_is_settled_unless_asked(self):
-        assert cli_review_threads._build_parser().parse_args(["--finish"]).settle == []
+        assert cli_review_threads.build_parser().parse_args(["--finish"]).settle == []
 
 
 class TestSettleFlagValidation:
@@ -9729,7 +9729,7 @@ class TestTruncatedThreadFetch:
     def _run(self, tmp_path, threads, *, complete, finish=False):
         ctx = self._ctx(tmp_path)
         state_path = self._seed_ledger(ctx)
-        args = cli_review_threads._build_parser().parse_args(
+        args = cli_review_threads.build_parser().parse_args(
             ["--finish"] if finish else [])
         with patch.object(cli_review_threads, "fetch_pr_data",
                           return_value=self._pr_data(threads, complete=complete)), \
@@ -9779,7 +9779,7 @@ class TestTruncatedThreadFetch:
         before --finish bails out."""
         ctx = self._ctx(tmp_path)
         self._seed_ledger(ctx)
-        args = cli_review_threads._build_parser().parse_args(["--finish"])
+        args = cli_review_threads.build_parser().parse_args(["--finish"])
         with patch.object(
                 cli_review_threads, "fetch_pr_data",
                 return_value=self._pr_data(

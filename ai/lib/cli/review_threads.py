@@ -278,7 +278,7 @@ def _run_threads(trail, args, ctx) -> int:
 
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     # Two axes, and the help text has to keep them apart: --triage/--fix/--finish
     # /--reply/--settle choose the work, --post decides whether it leaves the
     # machine. Read as peers, `--finish --post` looks like it says publish twice,
@@ -344,7 +344,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
+    parser = build_parser()
     handle_value_flags(parser)
     args = parser.parse_args(argv)
 

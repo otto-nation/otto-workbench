@@ -66,6 +66,35 @@ _run_step() {
   fi
 }
 
+# ── Tree self-invalidation ───────────────────────────────────────────────────
+
+# What the working tree looked like when this gate started.
+#
+# The tree lock (ai/lib/core/tree_lock.py) covers the case where a reader asks
+# first: every validator below runs under it, so a guard-aware agent is refused
+# while this is running. This covers what the lock cannot — a human in vim, an
+# editor autosaving, or a writer that never declared. A gate whose inputs moved
+# underneath it reports on a tree that no longer exists, and its green is
+# exactly as green as a real one.
+#
+# No exclude list is needed: the generators this hook runs write only gitignored
+# paths, which porcelain does not report by default.
+_tree_snapshot() { git -C "$REPO_ROOT" status --porcelain; }
+
+# _fail_if_tree_moved BEFORE — fail the gate when the tree changed during it.
+_fail_if_tree_moved() {
+  local before="$1" after
+  after=$(_tree_snapshot)
+  [[ "$before" == "$after" ]] && return 0
+
+  printf "${RED}✗${NC} the working tree changed while the gate ran\n" >&2
+  diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") >&2 || true
+  err "Everything above validated a tree that no longer exists. Re-run the push."
+  exit 1
+}
+
+_start_tree=$(_tree_snapshot)
+
 # ── Secret scan ──────────────────────────────────────────────────────────────
 
 if ! command -v gitleaks >/dev/null 2>&1; then
@@ -385,6 +414,13 @@ else
   _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
   _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
 fi
+
+# ── Tree unchanged ───────────────────────────────────────────────────────────
+
+# After the last validator and before the notice: everything above has now had
+# its say about a specific tree, and this is where we find out whether that is
+# still the tree being pushed.
+_fail_if_tree_moved "$_start_tree"
 
 # ── Open PR notice ───────────────────────────────────────────────────────────
 

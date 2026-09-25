@@ -107,13 +107,53 @@ def _split_large_dir(name: str, files: list[str], file_lines: dict[str, int]) ->
     return groups
 
 
+_TEST_ROOTS = frozenset({"tests", "test", "spec", "__tests__"})
+
+
+def _is_test_file(path: str) -> bool:
+    """Whether ``path`` is a test by name or by sitting under a test root.
+
+    Lexical on purpose: grouping runs on arbitrary PRs in arbitrary repos,
+    and ``bin/local/select-pytest`` is hardcoded to this one.
+    """
+    parts = path.split("/")
+    if any(seg in _TEST_ROOTS for seg in parts[:-1]):
+        return True
+    name = parts[-1].lower()
+    if name.startswith("test_") or "_test." in name:
+        return True
+    if ".test." in name or ".spec." in name:
+        return True
+    return False
+
+
+def _subject_stem(path: str) -> str:
+    """The source stem a test file is named for, else the file's own stem."""
+    name = path.rsplit("/", 1)[-1]
+    lower = name.lower()
+    for token in (".test.", ".spec."):
+        idx = lower.find(token)
+        if idx != -1:
+            return name[:idx]
+    stem = name.rsplit(".", 1)[0]
+    if stem.startswith("test_") and len(stem) > 5:
+        return stem[5:]
+    if stem.endswith("_test") and len(stem) > 5:
+        return stem[:-5]
+    return stem
+
+
 def group_files(pr: PRMetadata) -> list[Group]:
     """The PR's changed files divided into the groups one agent each reviews.
 
     Tier 1 and tier 3 each become a single group; tier 2 is grouped by
-    top-level directory (repo-root files share one bucket), and a directory
-    over `MAX_GROUP_LINES` or `MAX_GROUP_FILES` is split into numbered
-    sub-groups.
+    top-level directory (repo-root files share one bucket), then a test file
+    whose subject stem matches a file already bucketed under another
+    directory joins that directory's group, and finally a directory over
+    `MAX_GROUP_LINES` or `MAX_GROUP_FILES` is split into numbered sub-groups.
+
+    Affinity runs before the split so the caps still bound the result: a
+    directory that affinity pushes over a cap is split like any other.
     """
     file_lines = {f["path"]: f["additions"] + f["deletions"] for f in pr.files}
 
@@ -133,16 +173,37 @@ def group_files(pr: PRMetadata) -> list[Group]:
     dir_files: dict[str, list[str]] = {}
     dir_lines: dict[str, int] = {}
     dir_order: list[str] = []
-    for f in tiers[2]:
-        # Repo-root files have no directory component; share one bucket so
-        # each filename does not become its own group.
-        d = f.split("/")[0] if "/" in f else "."
+
+    def _bucket(d: str, f: str) -> None:
         if d not in dir_files:
             dir_files[d] = []
             dir_lines[d] = 0
             dir_order.append(d)
         dir_files[d].append(f)
         dir_lines[d] += file_lines[f]
+
+    tests: list[str] = []
+    for f in tiers[2]:
+        if _is_test_file(f):
+            tests.append(f)
+            continue
+        # Repo-root files have no directory component; share one bucket so
+        # each filename does not become its own group.
+        d = f.split("/")[0] if "/" in f else "."
+        _bucket(d, f)
+
+    stem_owner: dict[str, str] = {}
+    for d in dir_order:
+        for f in dir_files[d]:
+            stem_owner.setdefault(_subject_stem(f), d)
+
+    for f in tests:
+        owner = stem_owner.get(_subject_stem(f))
+        if owner is not None:
+            _bucket(owner, f)
+            continue
+        d = f.split("/")[0] if "/" in f else "."
+        _bucket(d, f)
 
     for d in dir_order:
         files = dir_files[d]

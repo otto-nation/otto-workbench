@@ -44,6 +44,7 @@ def _stamp(**kwargs) -> str:
 
 
 @pytest.mark.parametrize("kwargs,expected", [
+    ({"minutes": 1}, "1 minute ago"),
     ({"minutes": 5}, "5 minutes ago"),
     ({"minutes": 59}, "59 minutes ago"),
     ({"hours": 1}, "1 hour ago"),

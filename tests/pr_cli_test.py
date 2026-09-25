@@ -671,18 +671,171 @@ def test_cmd_fix_prefers_the_target_the_operator_named(mock_load, mock_run):
 
 @patch("cli.pr_commands.subprocess.run")
 @patch("cli.pr_commands.pr_state.load_state")
-def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
+# passes-at-base: the saving the gate preserves — a clean verdict for this very commit skipped the pass before the change and must still skip it
+def test_cmd_fix_skips_review_when_no_findings_on_this_commit(mock_load, mock_run):
+    """A clean verdict suppresses the pass only when it was about this commit."""
     from pr import state as pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.apply(state, pr_domains.ReviewSummary(
-        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value, updated_at="t",
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="abc123", updated_at="t",
     ))
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = make_ctx()
-    rc = _cmd_fix([], ctx)
+    rc = _cmd_fix([], make_ctx(head_sha="abc123"))
     assert rc == 0
     assert not _calls_containing(mock_run, "claude-review")
+
+
+# ── A cached "nothing to do" is only about the commit it was measured on ─────
+#
+# `pr fix` decides whether to run its passes from the state file, and used to
+# ask only "were there findings / failures?". A clean answer from a week ago
+# suppressed the pass on a branch that had been pushed to since — silently, and
+# with nothing downstream to re-check. Running when unsure costs a spawn that
+# re-fetches and no-ops; skipping when unsure loses the work altogether.
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_again_when_the_clean_verdict_was_another_commit(
+    mock_load, mock_run,
+):
+    """The false negative this gate exists to close."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="0ldc0mmit", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_again_when_the_verdict_names_no_commit(mock_load, mock_run):
+    """A state file written before head_sha was recorded is unknown, not clean."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_again_when_head_cannot_be_resolved(mock_load, mock_run):
+    """Unknown on the caller's side is unknown too — it must not read as a match.
+
+    Both sides empty is the case a bare equality check gets wrong: "" == ""
+    would call a verdict that names no commit an answer about a HEAD nobody
+    could resolve.
+    """
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha=""))
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_checks_ci_again_when_the_green_run_was_another_commit(
+    mock_load, mock_run,
+):
+    """The costly half: a stale-green CI cache used to skip the spawn entirely.
+
+    The child re-fetches before it fixes anything, so spawning on a stale red
+    is self-correcting. Skipping on a stale green is not — nothing downstream
+    looks again, and `pr fix` reports success having checked nothing.
+    """
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    ci = pr_domains.CIDomain(
+        conclusion="success", failure_count=0, updated_at="t", latest_run_id=7,
+    )
+    ci.runs[7] = RunState(
+        run_id=7, run_number=1, head_sha="0ldc0mmit", status="completed",
+        conclusion="success", fetched_at="t", failures={},
+    )
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "ci-check")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+# passes-at-base: holds the gate from over-correcting into spawning always — the skip existed before and must survive
+def test_cmd_fix_trusts_a_green_ci_run_for_this_commit(mock_load, mock_run):
+    """The gate must still save the spawn it is there to save."""
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    ci = pr_domains.CIDomain(
+        conclusion="success", failure_count=0, updated_at="t", latest_run_id=7,
+    )
+    ci.runs[7] = RunState(
+        run_id=7, run_number=1, head_sha="abc123", status="completed",
+        conclusion="success", fetched_at="t", failures={},
+    )
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert not _calls_containing(mock_run, "ci-check")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+# passes-at-base: cached work already spawned before the change; this holds the commit check from suppressing a spawn that used to happen
+def test_cmd_fix_still_spawns_ci_on_a_stale_red_cache(mock_load, mock_run):
+    """Cached work outranks the commit check: the child re-fetches either way."""
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    ci = pr_domains.CIDomain(
+        conclusion="failure", failure_count=3, failure_kinds={"test": 3},
+        updated_at="t", latest_run_id=7,
+    )
+    ci.runs[7] = RunState(
+        run_id=7, run_number=1, head_sha="0ldc0mmit", status="completed",
+        conclusion="failure", fetched_at="t", failures={},
+    )
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "ci-check")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_does_not_check_ci_that_never_ran_against_a_matching_sha(
+    mock_load, mock_run,
+):
+    """An unwritten domain is an absent verdict, so the pass runs."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_run, "ci-check")
 
 
 def _calls_containing(mock_run, script: str) -> list[list[str]]:

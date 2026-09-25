@@ -127,6 +127,40 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return 0
 
 
+def _worth_running(domain: pr_domains.Domain, head_sha: str, *,
+                   has_work: bool, name: str) -> bool:
+    """Whether to run a pass, given what the cache last said about `domain`.
+
+    The two ways of being wrong here are not symmetrical, and that asymmetry is
+    the whole reason this exists:
+
+    * Running a pass that turns out to be unnecessary costs one spawn. Every
+      pass re-fetches its own subject — `ci-check` refetches the run,
+      `claude-review` re-reads the tree — so it finds nothing and says so.
+    * *Skipping* a pass that was necessary is silent and permanent. Nothing
+      downstream re-checks, and `pr fix` reports success having done nothing.
+
+    So a cached "nothing to do" is honoured only when it was measured against
+    the commit in hand. A verdict about another commit, or one that cannot name
+    its commit at all, is not evidence about this one — the pass runs and finds
+    out. That is the rule `pr-describe` already applies to itself, extended to
+    the two passes whose skip costs more than their spawn.
+
+    Cached work outranks the commit check: a stale red is still a reason to
+    look, and the child decides what is actually broken.
+    """
+    if has_work:
+        return True
+    if not domain.updated_at:
+        # Never written. That is an absent verdict, not a clean one.
+        return True
+    if domain.describes(head_sha):
+        return False
+    log.dim(f"{name}: the last check was against a different commit — "
+            f"re-running rather than trusting it")
+    return True
+
+
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
             bin_dir: Path, **_kw) -> int:
     """Run fix passes for CI, review, and comments."""
@@ -138,8 +172,11 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
 
     exit_code = 0
 
-    if state.review.updated_at and sum(state.review.finding_counts.values()) > 0:
-        log.info("Fixing review findings...")
+    review_findings = sum(state.review.finding_counts.values())
+    if _worth_running(state.review, ctx.head_sha,
+                      has_work=review_findings > 0, name="Review"):
+        log.info(f"Fixing {review_findings} review finding(s)..." if review_findings
+                 else "Reviewing...")
         review_args = [str(bin_dir / "claude-review"), "--self", "--fix"]
         review_args += ["--repo-dir", str(wt)]
         # Named, not left to the child to re-derive: without a target it
@@ -169,9 +206,13 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
         infra_count = state.ci.failure_kinds.get("infra", 0) + state.ci.failure_kinds.get("flaky", 0)
         ci_fixable = state.ci.failure_count - infra_count
 
-    if ci_fixable > 0:
+    if _worth_running(state.ci, ctx.head_sha, has_work=ci_fixable > 0, name="CI"):
         log.blank()
-        log.info(f"Fixing {ci_fixable} CI failure(s)...")
+        # The count is what the cache last saw, and the child re-fetches before
+        # fixing anything — so it is reported as the reason for running, not as
+        # the work about to be done.
+        log.info(f"Fixing {ci_fixable} CI failure(s)..." if ci_fixable > 0
+                 else "Checking CI...")
         rc = _spawn(
             COMMANDS["ci"].script, ["--fix"] + list(argv), ctx,
             bin_dir=bin_dir,
@@ -181,6 +222,10 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
         if rc != 0:
             exit_code = 1
 
+    # Only ever a hint — this never spawns the comment pass — so a stale count
+    # costs a misleading line rather than skipped work, and the gate above
+    # would buy nothing: CommentsSummary records no commit, so it could never
+    # say a verdict was about this one.
     actionable = state.comments.by_state.get("new", 0) + state.comments.by_state.get("contested", 0)
     if state.comments.updated_at and actionable > 0:
         log.blank()

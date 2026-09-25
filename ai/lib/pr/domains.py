@@ -171,6 +171,33 @@ class Domain:
         """
         return []
 
+    def verdict_sha(self) -> str:
+        """The commit this domain's answer was measured against, if it knows.
+
+        `""` means the domain cannot say — either it was never written, or it
+        records no commit at all. A caller deciding whether to trust a cached
+        "nothing to do" must treat that as *unknown*, never as a match: the
+        whole point is that a verdict about some other commit is not an answer
+        about this one.
+
+        Declared here rather than on the two domains that have the field so
+        that `describes()` below can ask every domain the same question, and so
+        a domain that gains a commit-keyed verdict answers it by overriding one
+        method rather than by being added to a table.
+        """
+        return ""
+
+    def describes(self, head_sha: str) -> bool:
+        """Whether this domain's answer is about `head_sha`.
+
+        False when either side cannot say. An unwritten domain, a domain that
+        records no commit, and a caller that could not resolve HEAD all reach
+        the same answer, and it is the conservative one: act, rather than skip
+        work on the strength of a verdict nobody can place.
+        """
+        mine = self.verdict_sha()
+        return bool(mine) and bool(head_sha) and mine == head_sha
+
     def readiness(self) -> Readiness:
         """This domain's answer to whether the PR may merge.
 
@@ -200,6 +227,16 @@ class CIDomain(Domain):
     # restores the ints on the way back in.
     runs: dict[int, RunState] = field(default_factory=dict)
     latest_run_id: int | None = None
+
+    def verdict_sha(self) -> str:
+        """The commit the latest stored run was for.
+
+        Read off the run rather than held on the domain: GitHub reports the SHA
+        per run, `sync_ci_domain` already stores it there, and a second copy on
+        the summary is one more field to keep in step with `latest_run_id`.
+        """
+        run = self.runs.get(self.latest_run_id) if self.latest_run_id is not None else None
+        return run.head_sha if run else ""
 
     def render_status(self) -> list[str]:
         if not self.updated_at:
@@ -348,6 +385,9 @@ class ReviewSummary(Domain):
     unpushed_fix_commit: str = ""
     cost_usd: float = 0.0
     total_tokens: int = 0
+
+    def verdict_sha(self) -> str:
+        return self.head_sha
 
     @property
     def _incomplete(self) -> bool:

@@ -626,6 +626,32 @@ counted as `N carried over`, and logged. An edit never drops a row it is the
 only comment holding; a row an earlier comment also carries is scoped like any
 other, since the chain still holds it.
 
+**`pr fix` only trusts a clean verdict about the commit in hand:**
+
+`pr fix` decides whether to run each pass by reading the same cached state
+`pr status` prints. A cached "nothing to do" is honoured only when the domain
+can say it was measured against the current HEAD — `ReviewSummary.head_sha` for
+the review, the latest stored run's `headSha` for CI. A verdict about another
+commit, or one that names no commit, re-runs the pass and says why.
+
+The two ways of being wrong are not symmetrical, which is what sets the
+default:
+
+| Cache says | Truth | Outcome |
+|---|---|---|
+| clean, same commit | clean | pass skipped — the saving this gate preserves |
+| clean, **another commit** | broken | pass **runs**; without the check it was silently skipped |
+| work pending | already fixed | pass runs, re-fetches, finds nothing, says so |
+
+Running an unnecessary pass costs one spawn, and every pass re-fetches its own
+subject before acting. Skipping a necessary one is silent and permanent:
+nothing downstream looks again, and `pr fix` reports success having done
+nothing. So the gate errs toward running whenever it cannot place the verdict.
+
+The comment hint is not gated this way. It never spawns the comment pass, and
+`CommentsSummary` records no commit, so a stale count there costs a misleading
+line rather than skipped work.
+
 **`pr describe` is commit-aware:**
 
 The pass records the HEAD it described. A repeated run against an unchanged

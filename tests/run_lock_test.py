@@ -288,6 +288,35 @@ def test_two_targets_and_a_re_claim_of_the_first_all_hold(tmp_path):
         assert json.loads((first / LOCK_FILE).read_text())["command"] == "pr fix"
         assert json.loads((second / LOCK_FILE).read_text())["command"] == "ci-check"
 
+        # The marker has to follow the re-claim, not stay on B. A subprocess
+        # spawned for A now reads this value to decide whether A is already
+        # held — and a stale B sends it to flock a path its own ancestor holds.
+        assert os.environ[LOCK_ENV] == str(first)
+
+
+def test_the_marker_follows_a_re_claim_rather_than_the_order_taken(tmp_path):
+    """The innermost lock is the most recently used, not the first acquired.
+
+    Insertion order and recency agree until a lock is re-claimed, and only then
+    do they diverge: the re-claim touches no ordering, so a marker derived from
+    insertion order keeps naming whichever lock was taken last. The on-disk
+    records cannot catch this — a pass-through leaves them untouched either
+    way, which is what the sibling tests assert — so the marker is the only
+    observable that distinguishes the two.
+    """
+    first, second = tmp_path / "t-a", tmp_path / "t-b"
+
+    run_lock.claim_for_process(first, command="claude-review", started="t")
+    run_lock.claim_for_process(second, command="ci-check", started="t")
+    assert os.environ[LOCK_ENV] == str(second)
+
+    run_lock.claim_for_process(first, command="pr-describe", started="t")
+    assert os.environ[LOCK_ENV] == str(first)
+
+    # And back again: recency tracks every take, not just the first re-claim.
+    run_lock.claim_for_process(second, command="pr-describe", started="t")
+    assert os.environ[LOCK_ENV] == str(second)
+
 
 def test_a_claim_passes_through_a_lock_this_process_holds_with_no_marker(worktree):
     """Ownership is proven by the registry, not reported by the marker.
@@ -328,6 +357,11 @@ def test_a_second_checkout_does_not_displace_the_first(worktree, tmp_path):
         record = json.loads((_git_dir(worktree) / TREE_LOCK_FILE).read_text())
         assert record["command"] == "pr fix"
         assert (_git_dir(second) / TREE_LOCK_FILE).exists()
+
+        # And the tree marker names the checkout we came back to, not the one
+        # claimed in between — the same recency question as the target marker,
+        # which `pr fix` reaches by switching worktrees mid-run.
+        assert os.environ[TREE_LOCK_ENV] == str(_git_dir(worktree))
 
 
 def test_a_claim_inside_an_acquire_survives_the_block(worktree):

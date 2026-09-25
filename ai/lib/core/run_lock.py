@@ -276,8 +276,6 @@ def _sync_marker(var: str) -> None:
     # lock — true today, since the five that lock are spawned only by `pr`'s
     # dispatch and by `cmd_fix`, which resolve a single target and forward it.
     # Upgrade to a separated multi-value marker if that stops holding.
-    # (Recency here is tracked by `_HELD`'s order, not by insertion — see the
-    # docstring above.)
     for held in reversed(_HELD.values()):
         if held.var == var:
             os.environ[var] = held.value

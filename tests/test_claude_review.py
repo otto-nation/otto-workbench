@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -2831,3 +2832,21 @@ def test_a_derived_base_that_does_not_resolve_is_not_refused(tmp_path, monkeypat
     )
 
     assert seen["ran"] is True
+
+
+def test_an_in_process_caller_can_keep_its_own_signal_handler(cr, monkeypatch):
+    """The entry point that owns the process owns SIGINT.
+
+    `signal.signal` overwrites without chaining and nothing restores it, so a
+    `main` called in-process must be able to decline to install one rather than
+    silently replacing its caller's for the rest of the run.
+    """
+    installed = []
+    monkeypatch.setattr(signal, "signal",
+                        lambda *a: installed.append(a[0]))
+    with patch.object(cr, "build_parser", side_effect=RuntimeError("stop")):
+        for flag, expected in ((False, []), (True, [signal.SIGINT])):
+            installed.clear()
+            with pytest.raises(RuntimeError):
+                cr.main([], install_signal_handler=flag)
+            assert installed == expected

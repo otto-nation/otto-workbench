@@ -4543,9 +4543,11 @@ the signal handler, the run lock, and the choice of which flow to run. The
 review itself is `review.run`'s.
 
 Three things stay here rather than moving down a layer, each for its own reason.
-The signal handler is process-level state, which a library must not install.
-The run lock is claimed between resolving the self-review target and switching
-the checkout to it — a resolver that did both would take a process-lifetime lock
+The signal handler is process-level state, so it is installed only when this
+module is the process — `install_signal_handler=False` for an in-process caller
+that has already installed its own, since `signal.signal` overwrites without
+chaining and nothing restores it. The run lock is claimed between resolving the
+self-review target and switching the checkout to it — a resolver that did both would take a process-lifetime lock
 from inside the library. And `version_string` lives in `ai/bin`, which nothing
 under `ai/lib` can import, so the caller passes it in.
 

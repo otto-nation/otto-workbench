@@ -5,9 +5,11 @@ the signal handler, the run lock, and the choice of which flow to run. The
 review itself is `review.run`'s.
 
 Three things stay here rather than moving down a layer, each for its own reason.
-The signal handler is process-level state, which a library must not install.
-The run lock is claimed between resolving the self-review target and switching
-the checkout to it — a resolver that did both would take a process-lifetime lock
+The signal handler is process-level state, so it is installed only when this
+module is the process — `install_signal_handler=False` for an in-process caller
+that has already installed its own, since `signal.signal` overwrites without
+chaining and nothing restores it. The run lock is claimed between resolving the
+self-review target and switching the checkout to it — a resolver that did both would take a process-lifetime lock
 from inside the library. And `version_string` lives in `ai/bin`, which nothing
 under `ai/lib` can import, so the caller passes it in.
 
@@ -24,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import signal
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -336,20 +337,26 @@ def _run_self_review_body(
 
 
 def main(argv: list[str] | None = None, *,
-         version_string: Callable[[str], str] | None = None) -> int:
+         version_string: Callable[[str], str] | None = None,
+         install_signal_handler: bool = True) -> int:
     """Parse *argv* and run the review it asks for.
 
     `version_string` is injected because it resolves the release manifest next
     to `ai/bin`, which this layer cannot import. The default keeps `--version`
     answering rather than crashing when a caller does not supply one — a test,
     or an import that only wants the parser.
+
+    `install_signal_handler` defaults True because the common caller is the
+    `ai/bin/claude-review` shim, for which this is the whole process. An
+    in-process caller that owns its own handler passes False.
     """
     version_of = version_string or (lambda name: f"{name} unknown")
 
-    signal.signal(
-        signal.SIGINT,
-        lambda *_: (log.blank(), log.info("Interrupted"),
-                    sys.exit(proc.INTERRUPT_RETURNCODE)))
+    # Only when this module is the process. `pr review` reaches here having
+    # installed the identical handler at its own entry point, and a second
+    # install would replace the caller's without chaining or restoring it.
+    if install_signal_handler:
+        proc.install_interrupt_handler()
 
     parsed = build_parser().parse_args(argv)
 

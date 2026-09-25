@@ -104,7 +104,7 @@ def _delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
 
     The delegate's own parser is the single source of truth, and it is an
     import away. This used to spawn the delegate to ask the same question
-    through a pipe, at 83-156 ms a call, with three degradation paths for a
+    through a pipe, at 85-152 ms a call, with three degradation paths for a
     subprocess that might be missing, hang, or exit non-zero — none of which a
     function call can do.
 

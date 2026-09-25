@@ -684,3 +684,31 @@ class TestParallelFailFast:
         assert "g6" not in started
         skipped = {f.group for f in failed if f.diagnosis.kind is DiagnosisKind.SKIPPED}
         assert skipped
+
+
+class TestValidateGroupOutputTolerance:
+    """A6b's net: _validate_group_output already accepts a short complete
+    doc, an empty doc, and whatever is on disk at the call.
+    """
+
+    # passes-at-base: one known heading is already enough for the merge to read
+    def test_a_short_complete_group_doc_validates(self, tmp_path):
+        f = tmp_path / "group.md"
+        f.write_text("## Must fix\n- **[M1]** **`a.py:1`** — issue\n")
+        assert review_phases._validate_group_output(str(f), "g") is True
+
+    # passes-at-base: empty output is already not a failure here
+    def test_an_empty_group_doc_validates(self, tmp_path):
+        f = tmp_path / "group.md"
+        f.write_text("")
+        assert review_phases._validate_group_output(str(f), "g") is True
+
+    # passes-at-base: the function reads the path each call, so a rewrite is a later read
+    def test_a_doc_rewritten_mid_run_validates_the_current_bytes(self, tmp_path):
+        f = tmp_path / "group.md"
+        f.write_text("## Must fix\n- **[M1]** finding\n")
+        assert review_phases._validate_group_output(str(f), "g") is True
+        f.write_text("not a document")
+        assert review_phases._validate_group_output(str(f), "g") is False
+        f.write_text("## Nit\n- **[N1]** nit\n")
+        assert review_phases._validate_group_output(str(f), "g") is True

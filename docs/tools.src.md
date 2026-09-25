@@ -616,22 +616,27 @@ each domain, so a domain added later is dated without doing anything. Push is
 the exception and not by special case: `pr status` observes it live rather than
 reading it back, so its stamp is always seconds old.
 
-The age is wall-clock, not commit-aware. `[STALE]` says nobody has re-run that
-subcommand lately; it does not say the branch has moved since.
+A verdict is also refused when it was measured against another commit, however
+recent it is: run `pr ci`, commit, push, and the CI line is minutes old and
+describes the commit before yours. That reads `[STALE — checked another
+commit]`, and the commit outranks the clock — dating a superseded verdict "as
+of 5 minutes ago" would argue it is still current. A domain that records no
+commit (`comments`, `triage`) is judged by the clock alone, and so is every
+domain when HEAD cannot be resolved: unknown on either side is not evidence of
+a mismatch.
 
-**Merge readiness will not vouch for a stale answer.** A domain past the same
-threshold that says nothing is wrong is folded in as *unchecked* rather than as
-clean, so the readiness line reads `blocked — not checked: CI (last checked 9
-days ago)` instead of `ready`. "We looked a week ago and it was fine" is not
-the same claim as "it is fine", and `ready` is read as the second — a dashboard
-that marks a line `[STALE]` and then declares the PR mergeable two lines below
-is the trap this closes.
+**Merge readiness will not vouch for either.** A domain the dashboard marks —
+for age or for commit — that says nothing is wrong is folded in as *unchecked*
+rather than as clean, so the line reads `blocked — not checked: CI (last
+checked 9 days ago)` instead of `ready`. "We looked a week ago and it was fine"
+is not the same claim as "it is fine", and `ready` is read as the second: a
+dashboard that marks a line `[STALE]` and then declares the PR mergeable two
+lines below is the trap this closes. Both surfaces read the same two checks, so
+the marker above and the readiness line below cannot disagree.
 
-A domain that found something wrong keeps its blocker whatever its age. An old
+A domain that found something wrong keeps its blocker either way. An old
 failure is still a reason not to merge, and downgrading it to "unchecked" would
-make a stale failing domain quieter than a fresh one. Both readings come from
-the one threshold, so the `[STALE]` marker above and the readiness line below
-cannot disagree about which domains are past it.
+make an unvouchable domain quieter than a current one.
 
 **Push status in `pr status`:**
 

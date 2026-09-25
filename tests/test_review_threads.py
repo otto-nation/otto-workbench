@@ -9806,7 +9806,12 @@ class TestSeenTracking:
 
     @staticmethod
     def _comment(cid: int, edited: str = "") -> dict:
-        return {"id": cid, "body": "text", "last_edited_at": edited}
+        """A comment as the fetch layer hands it over.
+
+        No body: seen-tracking reads the id and the edit stamp and nothing
+        else, and carrying text here would imply the comparison looks at it.
+        """
+        return {"id": cid, "last_edited_at": edited}
 
     def test_a_comment_the_last_round_read_is_seen(self):
         comments = [self._comment(1)]

@@ -389,6 +389,27 @@ def domains_of(state: PRState) -> list[Domain]:
     return [getattr(state, name) for name in _domains()]
 
 
+def _superseded(domain: Domain, head_sha: str) -> bool:
+    """Whether this domain's answer was measured against some other commit.
+
+    The clock and the commit are different questions and a verdict can fail
+    either one. `pr ci`, a commit, a push, and the CI line is minutes old and
+    about the commit before yours — fresh by every reading of `updated_at`, and
+    not an answer about the branch as it now stands.
+
+    Both sides must be known. A domain that records no commit returns "" from
+    `verdict_sha` and is left to the clock alone, which is the reading it had
+    before it could be asked. A caller that could not resolve HEAD is the same
+    unknown from the other direction, and it is the one that bites: `describes`
+    is false whenever either side is missing, so testing it alone would mark
+    every domain superseded the moment HEAD could not be read — turning an
+    unreadable checkout into a dashboard where nothing is trusted.
+    """
+    if not head_sha or not domain.verdict_sha():
+        return False
+    return not domain.describes(head_sha)
+
+
 def merge_readiness(state: PRState) -> Readiness:
     """Every domain's answer to whether the PR may merge, folded into one.
 
@@ -400,14 +421,17 @@ def merge_readiness(state: PRState) -> Readiness:
     caller that skips the refresh reports a branch with unpushed commits as
     ready to merge.
 
-    A domain that is stale and says nothing is wrong is folded in as
-    *unchecked* rather than as clean. "We looked a week ago and it was fine"
-    is not the same claim as "it is fine", and `ready` is read as the second:
-    the whole trap is a dashboard marking a line ``[STALE]`` and then declaring
-    the PR mergeable on the strength of it two lines below. A domain that found
-    something wrong keeps its blocker whatever its age — an old failure is
-    still a reason not to merge, and downgrading it to "unchecked" would make
-    a stale domain *quieter* than a fresh one.
+    A domain that says nothing is wrong is folded in as *unchecked* rather than
+    as clean when its answer cannot be vouched for, which happens two ways. It
+    may be too old — "we looked a week ago and it was fine" is not "it is
+    fine", and `ready` is read as the second. Or it may be recent and about
+    another commit: `pr ci`, a commit, a push, and the verdict is minutes old
+    and describes the commit before this one. The clock cannot see the second
+    and the commit check cannot see the first, so both are asked.
+
+    A domain that found something wrong keeps its blocker either way — an old
+    failure is still a reason not to merge, and downgrading it to "unchecked"
+    would make an unvouchable domain *quieter* than a current one.
     """
     blockers: list[str] = []
     unchecked: list[str] = []
@@ -415,7 +439,11 @@ def merge_readiness(state: PRState) -> Readiness:
         answer = domain.readiness()
         blockers.extend(answer.blockers)
         unchecked.extend(answer.unchecked)
-        if not answer.blockers and not answer.unchecked and _is_stale(domain):
+        if answer.blockers or answer.unchecked:
+            continue
+        if _superseded(domain, state.identity.head_sha):
+            unchecked.append(f"{_domain_label(domain)} (checked another commit)")
+        elif _is_stale(domain):
             unchecked.append(f"{_domain_label(domain)} ({_last_checked(domain)})")
     return Readiness(blockers=tuple(blockers), unchecked=tuple(unchecked))
 
@@ -478,6 +506,22 @@ def _last_checked(domain: Domain) -> str:
     """
     ago = text.relative_time(domain.updated_at)
     return f"last checked {ago}" if ago else "last checked at an unreadable time"
+
+
+def domain_suffix(domain: Domain, head_sha: str) -> str:
+    """What qualifies a domain's line on the dashboard, or "" when nothing does.
+
+    The commit outranks the clock. A verdict about another commit is not made
+    trustworthy by being recent, and dating it "(as of 5 minutes ago)" would
+    argue the opposite — so that case is marked as the supersession it is, and
+    its age is not mentioned.
+
+    A domain that records no commit is left to the clock alone, which is the
+    reading it had before there was anything else to ask it.
+    """
+    if _superseded(domain, head_sha):
+        return " [STALE — checked another commit]"
+    return age_suffix(domain.updated_at)
 
 
 def age_suffix(updated_at: str) -> str:
@@ -561,7 +605,8 @@ def render_dashboard(
             # is concatenated into a new string and appended to `lines`, never
             # mutated in place — a domain returning a shared list would
             # otherwise accumulate a suffix per render.
-            lines.append(rendered[0] + age_suffix(domain.updated_at))
+            lines.append(rendered[0]
+                         + domain_suffix(domain, state.identity.head_sha))
             lines += rendered[1:]
             lines.append("")
     lines.append(render_merge_readiness(state))

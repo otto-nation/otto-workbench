@@ -727,6 +727,13 @@ def test_merge_readiness_gathers_blockers_and_unchecked_from_every_domain():
     assert answer.unchecked == ("review",)
 
 
+# A stamp recent enough that the staleness fold vouches for it. A bare "t"
+# parses as no time at all, which now reads as a domain nobody can date — fine
+# for a test that only needs "this domain was written", wrong for one whose
+# subject is whether the PR reads as ready.
+_JUST_NOW = datetime.now(timezone.utc).isoformat()
+
+
 def test_merge_readiness_is_empty_when_every_domain_is_clean():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, CIDomain(conclusion="success", updated_at=_JUST_NOW))
@@ -744,13 +751,6 @@ def test_render_merge_readiness_delegates_to_readiness_render():
 
     assert render_merge_readiness(state) == merge_readiness(state).render()
     assert "CI failing" in render_merge_readiness(state)
-
-
-# A stamp recent enough that the staleness fold vouches for it. A bare "t"
-# parses as no time at all, which now reads as a domain nobody can date — fine
-# for a test that only needs "this domain was written", wrong for one whose
-# subject is whether the PR reads as ready.
-_JUST_NOW = datetime.now(timezone.utc).isoformat()
 
 
 def _green_state():
@@ -2069,3 +2069,91 @@ def test_the_stale_threshold_is_the_one_the_dashboard_marks():
         vouched = merge_readiness(state).render() == "**Merge readiness**: ready"
         assert vouched is not marked
         assert bool(age_suffix(state.ci.updated_at).count("STALE")) is marked
+
+
+# ── The clock and the commit are different questions ────────────────────────
+#
+# `pr ci`, then a commit, then a push: the CI line is minutes old and describes
+# the commit before this one. Fresh by every reading of `updated_at`, and not
+# an answer about the branch as it now stands. The age check cannot see it and
+# the commit check cannot see a week-old verdict about an unchanged tree, so
+# the dashboard and the readiness fold ask both.
+
+
+def _ci_for(commit: str, **age) -> CIDomain:
+    ci = CIDomain(conclusion="success", failure_count=0,
+                  updated_at=_ago(**age), latest_run_id=1)
+    ci.runs[1] = RunState(run_id=1, run_number=1, head_sha=commit,
+                          status="completed", conclusion="success",
+                          fetched_at="t", failures={})
+    return ci
+
+
+def _state_at(head: str, domain) -> PRState:
+    state = new_state("acme/w", "feat/x", pr_number=7, head_sha=head,
+                      worktree_root="/wt")
+    apply(state, domain)
+    return state
+
+
+def test_a_recent_verdict_about_another_commit_is_marked_superseded():
+    """The gap a wall-clock check cannot close."""
+    state = _state_at("newsha", _ci_for("oldsha", minutes=2))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    ci_line = next(l for l in lines if l.startswith("**CI**"))
+    assert ci_line.endswith(" [STALE — checked another commit]")
+
+
+def test_a_recent_verdict_about_this_commit_is_not_marked():
+    state = _state_at("newsha", _ci_for("newsha", minutes=2))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    assert not any("STALE" in l for l in lines)
+
+
+def test_the_commit_marker_outranks_the_age_one():
+    """Dating a superseded verdict would argue it is still current."""
+    state = _state_at("newsha", _ci_for("oldsha", days=9))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    ci_line = next(l for l in lines if l.startswith("**CI**"))
+    assert ci_line.endswith(" [STALE — checked another commit]")
+    assert "9 days ago" not in ci_line
+
+
+def test_readiness_will_not_vouch_for_a_superseded_verdict():
+    state = _state_at("newsha", _ci_for("oldsha", minutes=2))
+    answer = merge_readiness(state)
+    assert "CI (checked another commit)" in answer.unchecked
+
+
+def test_a_superseded_failure_stays_a_blocker():
+    """Same asymmetry as the age check: an unvouchable domain is not quieter."""
+    ci = _ci_for("oldsha", minutes=2)
+    ci.conclusion, ci.failure_count = "failure", 2
+    answer = merge_readiness(_state_at("newsha", ci))
+    assert "CI failing" in answer.blockers
+    assert not any("checked another commit" in u for u in answer.unchecked)
+
+
+def test_a_domain_that_records_no_commit_is_judged_by_the_clock_alone():
+    """CommentsSummary cannot place its answer, so it keeps its old reading."""
+    fresh = _state_at("newsha", CommentsSummary(total_threads=0,
+                                                updated_at=_ago(minutes=2)))
+    # The other domains are unwritten and report themselves unchecked; what
+    # matters is that comments is not among them and is never called superseded.
+    assert not any("comments" in u for u in merge_readiness(fresh).unchecked)
+    stale = _state_at("newsha", CommentsSummary(total_threads=0,
+                                                updated_at=_ago(days=9)))
+    unchecked = merge_readiness(stale).unchecked
+    assert any("comments (last checked" in u for u in unchecked)
+    assert not any("comments (checked another commit)" in u for u in unchecked)
+
+
+def test_an_unresolvable_head_does_not_supersede_everything():
+    """With no HEAD to compare against, the commit check must stay silent.
+
+    `describes` is false when either side is unknown, so a naive check would
+    mark every domain superseded the moment HEAD could not be read.
+    """
+    state = _state_at("", _ci_for("oldsha", minutes=2))
+    lines = render_dashboard(state, PushDomain(), repo="acme/w", branch="feat/x")
+    assert not any("checked another commit" in l for l in lines)

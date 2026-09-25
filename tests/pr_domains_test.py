@@ -634,7 +634,6 @@ def test_push_readiness_unobserved_blocks_nothing():
     assert pr_domains.PushDomain().readiness() == pr_domains.Readiness()
 
 
-
 # ── Which commit a verdict is about ─────────────────────────────────────────
 #
 # `pr fix` decides whether to run a pass from these domains, so a domain has to

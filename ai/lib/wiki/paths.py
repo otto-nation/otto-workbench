@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -31,6 +32,9 @@ META_DIR = "meta"
 
 DEFAULT_WIKI_DIRNAME = "wiki"
 
+# The state-root subtree holding snapshots, one directory per knowledge base.
+BACKUPS_DIRNAME = "wiki-backups"
+
 # How far up from cwd to look. The search stops at a repo root when there is
 # one, so this only bounds the walk outside a repo.
 MAX_PARENT_DEPTH = 8
@@ -43,6 +47,10 @@ DEFAULT_SETTINGS = {
     "staleness_threshold_days": 180,
 }
 
+# One repo's folder inside the vault is named from its remote. Same character
+# class as `pr.target.slug`, so the two agree on what a path component is.
+_VAULT_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
 
 
 
@@ -50,6 +58,34 @@ DEFAULT_SETTINGS = {
 
 
 # ── Resolution ──────────────────────────────────────────────────────────────
+
+
+def vault_subpath(label: str) -> str | None:
+    """One repo's folder inside the vault, as ``<org>/<repo>``, or ``None``.
+
+    *label* is a repo's canonical ``org/repo`` identity. Every segment is
+    slugged and then checked, because slugging alone does not make a path
+    component safe: the slug character class keeps ``.``, so ``..`` passes
+    through unchanged and would climb out of the vault. A segment that slugs
+    away to nothing — a repo named only in non-ASCII — is rejected for the same
+    reason, since dropping it silently would merge two repos' folders.
+
+    Nested rather than the ``owner-repo-hash`` form the review store uses: a
+    vault is browsed, and the sidebar of an editor opened on it should read as
+    directories. Every segment is kept, so a nested group path stays nested and
+    cannot collide across orgs.
+
+    ``None`` means no safe name, and the caller must refuse rather than fall
+    back to one it invented. Two unrelated repos that both reduced to the same
+    invented name would write into one base without either saying so.
+    """
+    segments = []
+    for raw in label.split("/"):
+        segment = _VAULT_SEGMENT_RE.sub("-", raw).strip("-")
+        if not segment or segment in (os.curdir, os.pardir):
+            return None
+        segments.append(segment)
+    return "/".join(segments)
 
 
 def is_wiki(path: Path) -> bool:
@@ -84,6 +120,12 @@ def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = No
     `config` and `git`, which sit at this layer and so cannot be imported from
     it. The CLI resolves the name and hands it down, which also keeps this
     function answerable without a config file at all.
+
+    What comes back is always resolved. A base reached through a symlink would
+    otherwise carry two names — the link's when the caller entered above it, the
+    target's when the caller entered inside it, because *start* is resolved
+    before the walk. Every write is relative to the root this returns, so two
+    names for one wiki reach the manifest and the log.
     """
     if explicit:
         candidate = Path(explicit).expanduser().resolve()
@@ -95,9 +137,9 @@ def find_wiki(start: Path, explicit: str | None = None, dirname: str | None = No
         if depth > MAX_PARENT_DEPTH:
             break
         if is_wiki(directory / name):
-            return directory / name
+            return (directory / name).resolve()
         if is_wiki(directory):
-            return directory
+            return directory.resolve()
         if (directory / ".git").exists():
             break
     return None

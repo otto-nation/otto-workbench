@@ -765,7 +765,7 @@ print(*workbench_projects.registered())
     if [[ "$prefix" == "${TMPDIR%/}" || "$prefix" == "$WORKBENCH_STATE_DIR" ]]; then
       continue
     fi
-    if [[ "$prefix" == "$WORKBENCH_CACHE_DIR" ]]; then
+    if [[ "$prefix" == "$WORKBENCH_CACHE_DIR" || "$prefix" == "$WORKBENCH_DATA_DIR" ]]; then
       continue
     fi
     fixed+=("$prefix")

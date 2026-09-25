@@ -2,18 +2,24 @@
 
 import hashlib
 import json
+import os
+import shutil
 import subprocess
+import sys
+import tarfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from conftest import frontmatter_keys, load_script
+import pytest
 
-BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
+from conftest import add_worktree, frontmatter_keys, git_in, remote_repo
 
-wiki = load_script("wiki_cli", BIN_DIR / "wiki")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = REPO_ROOT / "ai" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
 
-# `wiki` inserts `ai/lib` onto sys.path as a side effect of loading, which is
-# what makes this importable without a second sys.path.insert of its own.
+from cli import wiki  # noqa: E402
 from config.workbench_config import WikiConfig, WorkbenchConfig  # noqa: E402
 
 # Comfortably past the 180-day `staleness_threshold_days` default, so a test
@@ -196,6 +202,684 @@ class TestConfiguredDirectory:
         assert wiki.find_wiki(tmp_path, explicit=str(root), dirname="knowledge") == root
 
 
+class TestVaultSubpath:
+    """A repo's folder name inside the vault, derived from its remote identity."""
+
+    @pytest.mark.parametrize("label,expected", [
+        ("otto-nation/otto-workbench", "otto-nation/otto-workbench"),
+        ("acme/widget", "acme/widget"),
+        ("group/sub/widget", "group/sub/widget"),
+        ("acme/widget.js", "acme/widget.js"),
+    ])
+    def test_a_usable_label_nests_by_segment(self, label, expected):
+        assert wiki.vault_subpath(label) == expected
+
+    @pytest.mark.parametrize("label", ["", ".", "..", "acme/", "/widget", "a//b"])
+    def test_an_unusable_label_is_refused(self, label):
+        assert wiki.vault_subpath(label) is None
+
+    @pytest.mark.parametrize("label", ["../evil", "acme/../../etc/passwd", "acme/.."])
+    def test_a_traversal_segment_is_refused(self, label):
+        """Slugging is not enough on its own, which is easy to assume it is.
+
+        The slug character class keeps `.`, so `..` comes through it unchanged
+        and would climb out of the vault. A simplification to slug-only fails
+        here rather than in a directory above the vault.
+        """
+        assert wiki.vault_subpath(label) is None
+
+    def test_a_segment_that_slugs_away_is_refused(self, label="acme/\u6587\u6863"):
+        """Dropping an empty segment would merge two repos into one folder."""
+        assert wiki.vault_subpath(label) is None
+
+
+class TestVaultResolution:
+    """The vault is a config read, consulted before any walk.
+
+    Every case here drives `main` or `resolve_wiki` rather than `find_wiki`:
+    the vault is resolved by the CLI, and `find_wiki` is only handed the
+    in-tree half of the answer.
+    """
+
+    def _repo(self, tmp_path: Path) -> Path:
+        return remote_repo(tmp_path / "repo")
+
+    def _vault(self, tmp_path: Path, monkeypatch, *, create: bool = True) -> Path:
+        """Point `wiki.root` at a vault, and optionally put acme/widget in it."""
+        root = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _root: WorkbenchConfig(wiki=WikiConfig(root=str(root))),
+        )
+        entry = root / "acme" / "widget"
+        if create:
+            make_wiki(entry.parent, dirname="widget")
+        return entry.resolve()
+
+    def test_a_vault_base_resolves_from_the_repo(self, tmp_path, monkeypatch, capsys):
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_it_resolves_the_same_from_a_nested_directory(self, tmp_path, monkeypatch, capsys):
+        """Stands in for a second worktree: no walk runs, so depth cannot matter."""
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        nested = repo / "src" / "deep"
+        nested.mkdir(parents=True)
+        assert wiki.main(["path", str(nested)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_the_vault_wins_over_an_in_tree_base(self, tmp_path, monkeypatch, capsys):
+        """The case that pins the ordering, and the only one that can.
+
+        Where only one base exists either ordering finds it, so precedence is
+        unobservable until the two disagree. A vault folder exists only where
+        someone deliberately made one; an in-tree directory can be a leftover.
+        """
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        make_wiki(repo)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_a_dangling_link_still_resolves_from_config(self, tmp_path, monkeypatch, capsys):
+        """A broken browsing link costs nothing, because no link is consulted.
+
+        The repo holds a symlink at `wiki/` and the vault has moved out from
+        under it. A walk sees a directory that is not a wiki; config still knows
+        where the base is. This holds whichever order the two are tried in —
+        what it pins is that the link is not the mechanism.
+        """
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch)
+        (repo / "wiki").symlink_to(tmp_path / "gone", target_is_directory=True)
+        assert not wiki.is_wiki(repo / "wiki")
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(entry)
+
+    def test_no_vault_configured_falls_through_to_the_walk(self, tmp_path, monkeypatch, capsys):
+        """An unset `wiki.root` is no vault, not a default one."""
+        repo = self._repo(tmp_path)
+        monkeypatch.setattr(
+            wiki, "load_config_or_default", lambda _root: WorkbenchConfig(),
+        )
+        root = make_wiki(repo)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(root)
+        assert wiki.vault_dir(repo) is None
+
+    def test_a_repo_with_no_remote_gets_no_vault_folder(self, tmp_path, monkeypatch):
+        """No identity, no folder — two local `notes` repos must not share one."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git_in(repo, "init", "-b", "main", "-q")
+        self._vault(tmp_path, monkeypatch, create=False)
+        assert wiki.vault_dir(repo) is None
+
+    def test_an_empty_vault_reports_the_path_it_checked(self, tmp_path, monkeypatch, capsys):
+        repo = self._repo(tmp_path)
+        entry = self._vault(tmp_path, monkeypatch, create=False)
+        assert wiki.main(["path", str(repo)]) == 2
+        assert str(entry) in capsys.readouterr().err
+
+    def test_an_explicit_wiki_beats_the_vault(self, tmp_path, monkeypatch, capsys):
+        repo = self._repo(tmp_path)
+        self._vault(tmp_path, monkeypatch)
+        named = make_wiki(tmp_path / "elsewhere", dirname="kb")
+        assert wiki.main(["path", "--wiki", str(named), str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(named)
+
+
+class TestInitModes:
+    """`init` asks which placement a base gets, when the repo has not said.
+
+    The two differ in who can read the result: an in-repo base is committed and
+    shared, a vault base is private to this machine. Neither is a safe guess, so
+    a repo that has said nothing is asked rather than defaulted.
+    """
+
+    def _repo(self, tmp_path: Path) -> Path:
+        return remote_repo(tmp_path / "repo")
+
+    def _vault_root(self, tmp_path: Path, monkeypatch) -> Path:
+        """Point the data root at a temp dir and record what init should adopt."""
+        root = tmp_path / "data" / "wiki"
+        monkeypatch.setattr(wiki, "default_vault_root", lambda: root)
+        return root
+
+    def test_no_mode_refuses_and_names_every_option(self, tmp_path, capsys, monkeypatch):
+        repo = self._repo(tmp_path)
+        self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(wiki, "wiki_dir_is_declared", lambda _r: False)
+        assert wiki.main(["init", str(repo)]) == 2
+        err = capsys.readouterr().err
+        assert "--vault" in err
+        assert "--in-repo" in err
+        assert "--wiki DIR" in err
+        assert not (repo / "wiki").exists()
+
+    def test_vault_creates_under_the_data_root(self, tmp_path, capsys, monkeypatch):
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        recorded = []
+        monkeypatch.setattr(wiki, "set_value", lambda key, value: recorded.append((key, value)))
+        assert wiki.main(["init", "--vault", str(repo)]) == 0
+        assert wiki.is_wiki(vault / "acme" / "widget")
+        assert not (repo / "wiki").exists()
+        assert recorded == [("wiki.root", str(vault))]
+
+    def test_a_vault_base_is_not_created_when_the_key_cannot_be_recorded(
+        self, tmp_path, capsys, monkeypatch,
+    ):
+        """Nothing walks to a vault, so an unrecorded root is an unreachable base.
+
+        Creating it anyway reports success over a directory no command can
+        resolve, which is worse than refusing: the user has a knowledge base
+        they cannot reach and no error saying so.
+        """
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+
+        def refuse(key, value):
+            raise wiki.ConfigWriteError("installed workbench does not define it")
+
+        monkeypatch.setattr(wiki, "set_value", refuse)
+        assert wiki.main(["init", "--vault", str(repo)]) == 1
+        assert not vault.exists()
+        assert "unreachable" in capsys.readouterr().err
+
+    def test_in_repo_creates_in_the_tree_and_records_nothing(self, tmp_path, monkeypatch):
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(
+            wiki, "set_value",
+            lambda *a: pytest.fail("--in-repo must not write machine config"),
+        )
+        assert wiki.main(["init", "--in-repo", str(repo)]) == 0
+        assert wiki.is_wiki(repo / "wiki")
+        assert not vault.exists()
+
+    def test_a_declared_wiki_dir_needs_no_flag(self, tmp_path, monkeypatch):
+        """Setting the key is already the answer: only an in-tree base has a name."""
+        repo = self._repo(tmp_path)
+        self._vault_root(tmp_path, monkeypatch)
+        (repo / ".workbench.yml").write_text("wiki:\n  dir: knowledge\n", encoding="utf-8")
+        assert wiki.main(["init", str(repo)]) == 0
+        assert wiki.is_wiki(repo / "knowledge")
+
+    def test_vault_refuses_a_repo_with_no_origin_remote(self, tmp_path, capsys, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git_in(repo, "init", "-b", "main", "-q")
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        assert wiki.main(["init", "--vault", str(repo)]) == 2
+        assert "no origin remote" in capsys.readouterr().err
+        assert not vault.exists()
+
+    def test_init_refuses_when_a_base_already_resolves(self, tmp_path, capsys, monkeypatch):
+        """A second placement for one repo is how two divergent bases start."""
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        make_wiki(vault / "acme", dirname="widget")
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
+        )
+        assert wiki.main(["init", "--in-repo", str(repo)]) == 1
+        assert "already has a knowledge base" in capsys.readouterr().err
+        assert not (repo / "wiki").exists()
+
+    def test_an_explicit_wiki_still_creates_a_second_base(self, tmp_path, monkeypatch):
+        """`--wiki` names one directory outright, which is the documented escape."""
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        make_wiki(vault / "acme", dirname="widget")
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
+        )
+        second = tmp_path / "second"
+        assert wiki.main(["init", "--wiki", str(second), str(repo)]) == 0
+        assert wiki.is_wiki(second)
+
+    def test_an_explicit_wiki_wins_over_a_placement_flag(self, tmp_path, monkeypatch):
+        """`--wiki` is not in the mutually-exclusive group, so the pair is legal.
+
+        It names one directory outright and is checked first, which means
+        `--wiki DIR --vault` creates the named directory and ignores `--vault`.
+        Pinned because nothing in argparse says so and the precedence is silent.
+        """
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        named = tmp_path / "named"
+        assert wiki.main(["init", "--wiki", str(named), "--vault", str(repo)]) == 0
+        assert wiki.is_wiki(named)
+        assert not vault.exists()
+
+    def test_no_subcommand_removes_a_vault_base(self, tmp_path, monkeypatch):
+        """The vault is the one tree with no producer that could rebuild it.
+
+        Nothing in this CLI should be able to delete a base; `archive` only
+        moves within one. Asserted over every subcommand rather than trusting
+        that, since the cost of being wrong is unrecoverable.
+        """
+        repo = self._repo(tmp_path)
+        vault = self._vault_root(tmp_path, monkeypatch)
+        entry = make_wiki(vault / "acme", dirname="widget")
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
+        )
+        write_article(entry, "kept", tags=["x"])
+        source = tmp_path / "note.md"
+        source.write_text("text\n", encoding="utf-8")
+
+        for argv in (
+            ["path"], ["status"], ["lint"], ["signals"], ["sources"], ["index"],
+            ["link"], ["ingest", "--stage", str(source)], ["archive", "kept"],
+        ):
+            wiki.main([*argv, str(repo)])
+            assert wiki.is_wiki(entry), f"{argv[0]} damaged the vault base"
+        assert (entry / "archive" / "kept.md").is_file()
+
+
+class TestBackup:
+    """Snapshots of the one tree nothing can regenerate."""
+
+    def _base(self, tmp_path: Path) -> Path:
+        root = make_wiki(tmp_path)
+        write_article(root, "kept", body="word " * 20, tags=["x"])
+        (root / "raw" / "source.md").write_text("the source\n", encoding="utf-8")
+        return root
+
+    def test_a_snapshot_lands_under_the_state_root(self, tmp_path, monkeypatch):
+        """State, not data: a snapshot has a producer, and a base does not."""
+        state = tmp_path / "state"
+        data = tmp_path / "data"
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(state))
+        monkeypatch.setenv("WORKBENCH_DATA_DIR", str(data))
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        assert state in archive.parents
+        assert data not in archive.parents
+
+    def test_the_snapshot_holds_what_the_base_held(self, tmp_path):
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        with tarfile.open(archive, "r:gz") as tar:
+            names = tar.getnames()
+        assert f"{root.name}/SCHEMA.md" in names
+        assert f"{root.name}/articles/kept.md" in names
+        assert f"{root.name}/raw/source.md" in names
+
+    def test_restore_brings_back_a_readable_base(self, tmp_path):
+        """The restore path, exercised rather than assumed."""
+        root = self._base(tmp_path)
+        original = (root / "raw" / "source.md").read_bytes()
+        archive = wiki.snapshot(root)
+        shutil.rmtree(root / "raw")
+        (root / "raw").mkdir()
+
+        landed = wiki.restore(root, archive)
+        assert wiki.is_wiki(landed)
+        assert (landed / "raw" / "source.md").read_bytes() == original
+
+    def test_restore_leaves_the_live_base_alone(self, tmp_path):
+        """A restore runs after something went wrong; it must not cause another."""
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        (root / "articles" / "kept.md").write_text("newer", encoding="utf-8")
+        landed = wiki.restore(root, archive)
+        assert landed != root
+        assert (root / "articles" / "kept.md").read_text(encoding="utf-8") == "newer"
+
+    def test_retention_keeps_the_newest_and_drops_the_rest(self, tmp_path):
+        root = self._base(tmp_path)
+        directory = wiki.backups_dir(root)
+        directory.mkdir(parents=True)
+        for day in range(1, 6):
+            (directory / f"2026010{day}T000000Z.tar.gz").write_bytes(b"old")
+        wiki.prune(root, keep=2)
+        survivors = [a.name for a in wiki.snapshots(root)]
+        assert survivors == ["20260104T000000Z.tar.gz", "20260105T000000Z.tar.gz"]
+
+    def test_an_interrupted_snapshot_leaves_nothing_behind(self, tmp_path, monkeypatch):
+        """A truncated archive would restore to a partial base without saying so."""
+        root = self._base(tmp_path)
+
+        def explode(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        # Patches the `tarfile` module directly, imported by this file, rather than
+        # reaching it through `wiki.wiki_backup.tarfile` — two levels of indirection
+        # that would break silently if `backup.py`'s import structure changed.
+        monkeypatch.setattr(tarfile, "open", explode)
+        with pytest.raises(OSError):
+            wiki.snapshot(root)
+        assert wiki.snapshots(root) == []
+        assert list(wiki.backups_dir(root).glob("*")) == []
+
+    def test_two_snapshots_in_one_second_are_both_kept(self, tmp_path):
+        """The stamp is per-second, so the second would otherwise overwrite the first."""
+        root = self._base(tmp_path)
+        when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        first = wiki.snapshot(root, now=when)
+        second = wiki.snapshot(root, now=when)
+        assert first != second
+        assert len(wiki.snapshots(root)) == 2
+
+    def test_retention_within_one_second_drops_the_earlier_snapshot(self, tmp_path):
+        """Retention deletes from the front, so a wrong order deletes the newest.
+
+        Asserted on *which file survives*, not on the list being sorted:
+        `snapshots` sorts on the way out, so comparing it against `sorted()` is
+        a tautology that passes whatever the names are. Names are ordered as
+        text, and an unsuffixed name sorts after its own `-2` sibling — so with
+        two snapshots in one second, the one pruned was the later of the two.
+        """
+        root = self._base(tmp_path)
+        when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        first = wiki.snapshot(root, now=when)
+        second = wiki.snapshot(root, now=when)
+        first.write_bytes(b"earlier")
+        second.write_bytes(b"later")
+
+        wiki.prune(root, keep=1)
+        survivors = wiki.snapshots(root)
+        assert len(survivors) == 1
+        assert survivors[0].read_bytes() == b"later"
+
+    def test_a_same_second_snapshot_still_carries_its_date(self, tmp_path):
+        """An unparsed stamp would read as never-backed-up and always prompt."""
+        root = self._base(tmp_path)
+        when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        wiki.snapshot(root, now=when)
+        wiki.snapshot(root, now=when)
+        assert not wiki.is_overdue(root, now=datetime(2026, 5, 2, tzinfo=timezone.utc))
+
+    def test_restoring_twice_in_one_second_does_not_collide(self, tmp_path):
+        """The second restore raised FileExistsError at the user rather than landing."""
+        root = self._base(tmp_path)
+        archive = wiki.snapshot(root)
+        first = wiki.restore(root, archive)
+        second = wiki.restore(root, archive)
+        assert first != second
+        assert wiki.is_wiki(first) and wiki.is_wiki(second)
+
+    def test_two_bases_with_one_name_do_not_share_a_directory(self, tmp_path):
+        first = make_wiki(tmp_path / "one", dirname="notes")
+        second = make_wiki(tmp_path / "two", dirname="notes")
+        assert wiki.backups_dir(first) != wiki.backups_dir(second)
+
+    def test_the_backup_directory_is_the_same_on_every_call(self, tmp_path):
+        """A process-randomised hash would send one base to a new directory a run."""
+        root = self._base(tmp_path)
+        assert wiki.backups_dir(root) == wiki.backups_dir(root)
+
+    def test_reaching_a_base_through_a_symlink_gets_the_same_directory(self, tmp_path):
+        """A caller that skips `.resolve()` must not land on a second directory.
+
+        Through a symlink, because that is the spelling `.resolve()` is actually
+        for: pathlib collapses `.` and `..` when the path is built, so a dotted
+        spelling is already identical before anything resolves it and would pass
+        this whether `backups_dir` resolved or not.
+        """
+        root = self._base(tmp_path)
+        link = tmp_path / "link-to-wiki"
+        link.symlink_to(root, target_is_directory=True)
+        assert wiki.backups_dir(link) == wiki.backups_dir(root)
+
+    def test_a_base_with_no_snapshot_is_overdue(self, tmp_path):
+        assert wiki.is_overdue(self._base(tmp_path))
+
+    def test_a_freshly_snapshotted_base_is_not_overdue(self, tmp_path):
+        root = self._base(tmp_path)
+        wiki.snapshot(root)
+        assert not wiki.is_overdue(root)
+
+    def test_an_old_snapshot_is_overdue_again(self, tmp_path):
+        root = self._base(tmp_path)
+        wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        assert wiki.is_overdue(root, now=datetime(2026, 6, 1, tzinfo=timezone.utc))
+
+    def test_status_prompts_when_a_base_has_never_been_snapshotted(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        assert wiki.main(["status", str(root)]) == 0
+        assert "wiki backup" in capsys.readouterr().out
+
+    def test_status_stops_prompting_once_a_snapshot_exists(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        wiki.snapshot(root)
+        assert wiki.main(["status", str(root)]) == 0
+        assert "wiki backup" not in capsys.readouterr().out
+
+    def test_status_json_carries_no_backup_key(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        assert wiki.main(["status", "--json", str(root)]) == 0
+        assert set(json.loads(capsys.readouterr().out)) == set(wiki.collect_status(wiki.Wiki(root)))
+
+    def test_restoring_by_name_picks_that_snapshot(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        first = wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        wiki.snapshot(root, now=datetime(2026, 2, 1, tzinfo=timezone.utc))
+        assert wiki.main(["backup", "--restore", first.name, str(root)]) == 0
+        assert first.name in capsys.readouterr().out
+
+    def test_restoring_an_unknown_name_is_refused(self, tmp_path, capsys):
+        root = self._base(tmp_path)
+        wiki.snapshot(root)
+        assert wiki.main(["backup", "--restore", "nosuch.tar.gz", str(root)]) == 1
+        assert "no snapshot named" in capsys.readouterr().err
+
+
+class TestBrowsingLink:
+    """The link lives beside the worktrees and nothing resolves through it.
+
+    Placement is the whole point: inside a worktree it would need a `.gitignore`
+    entry in every repo, `wt remove` would strand it, and committing one stores
+    an absolute machine-specific path as the blob.
+    """
+
+    def _linked_container(self, container: Path, tmp_path: Path, monkeypatch) -> Path:
+        """A container whose repo has a real remote, and a vault holding its base."""
+        git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        return make_wiki(vault / "acme", dirname="widget").resolve()
+
+    def test_the_link_is_placed_beside_the_worktrees(self, container, tmp_path, monkeypatch):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container / "main")]) == 0
+        link = container / "wiki"
+        assert link.is_symlink()
+        assert link.resolve() == entry
+        assert not (container / "main" / "wiki").exists()
+
+    def test_a_second_worktree_shares_the_one_link(self, container, tmp_path, monkeypatch):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        second = add_worktree(container, "second")
+        assert wiki.main(["link", str(second)]) == 0
+        assert (container / "wiki").resolve() == entry
+        assert not (second / "wiki").exists()
+
+    def test_linking_twice_changes_nothing(self, container, tmp_path, monkeypatch, capsys):
+        self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container / "main")]) == 0
+        first = os.readlink(container / "wiki")
+        capsys.readouterr()
+        assert wiki.main(["link", str(container / "main")]) == 0
+        assert "already linked" in capsys.readouterr().out
+        assert os.readlink(container / "wiki") == first
+
+    def test_running_from_the_container_puts_it_in_the_same_place(
+        self, container, tmp_path, monkeypatch,
+    ):
+        """The container is where the link appears, so it is where people will cd."""
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container)]) == 0
+        assert (container / "wiki").resolve() == entry
+
+    def test_a_symlink_pointing_elsewhere_is_refused_not_replaced(
+        self, container, tmp_path, monkeypatch, capsys,
+    ):
+        self._linked_container(container, tmp_path, monkeypatch)
+        other = make_wiki(tmp_path / "other", dirname="kb")
+        (container / "wiki").symlink_to(other, target_is_directory=True)
+        assert wiki.main(["link", str(container / "main")]) == 1
+        assert "already points at" in capsys.readouterr().err
+        assert (container / "wiki").resolve() == other.resolve()
+
+    def test_a_real_directory_is_refused_and_survives(
+        self, container, tmp_path, monkeypatch, capsys,
+    ):
+        """No browsing convenience is worth deleting a directory somebody made."""
+        self._linked_container(container, tmp_path, monkeypatch)
+        occupied = container / "wiki"
+        occupied.mkdir()
+        (occupied / "keep.md").write_text("mine", encoding="utf-8")
+        assert wiki.main(["link", str(container / "main")]) == 1
+        assert "not a symlink" in capsys.readouterr().err
+        assert (occupied / "keep.md").read_text(encoding="utf-8") == "mine"
+
+    def test_the_key_being_off_removes_a_link_we_made(self, container, tmp_path, monkeypatch):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        assert wiki.main(["link", str(container / "main")]) == 0
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(entry.parent.parent), link=False)),
+        )
+        assert wiki.main(["link", str(container / "main")]) == 0
+        assert not (container / "wiki").exists()
+        assert not (container / "wiki").is_symlink()
+
+    def test_the_key_being_off_leaves_a_link_we_did_not_make(
+        self, container, tmp_path, monkeypatch,
+    ):
+        entry = self._linked_container(container, tmp_path, monkeypatch)
+        other = make_wiki(tmp_path / "other", dirname="kb")
+        (container / "wiki").symlink_to(other, target_is_directory=True)
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(entry.parent.parent), link=False)),
+        )
+        assert wiki.main(["link", str(container / "main")]) == 0
+        assert (container / "wiki").resolve() == other.resolve()
+
+    def test_a_plain_clone_says_it_has_nowhere_to_put_one(self, tmp_path, monkeypatch, capsys):
+        repo = remote_repo(tmp_path / "repo")
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        make_wiki(vault / "acme", dirname="widget")
+        assert wiki.main(["link", str(repo)]) == 0
+        assert "plain clone" in capsys.readouterr().out
+        assert not (repo / "wiki").exists()
+
+    def test_an_in_tree_base_has_nothing_to_link_to(self, container, capsys, monkeypatch):
+        """A link beside the worktrees would point inside one of them."""
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(link=True)),
+        )
+        make_wiki(container / "main")
+        assert wiki.main(["link", str(container / "main")]) == 1
+        assert "not this repo's vault base" in capsys.readouterr().err
+        assert not (container / "wiki").exists()
+
+    def test_init_vault_places_the_link_when_the_key_is_on(
+        self, container, tmp_path, monkeypatch,
+    ):
+        git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        assert wiki.main(["init", "--vault", str(container / "main")]) == 0
+        assert (container / "wiki").resolve() == (vault / "acme" / "widget").resolve()
+
+    def test_init_still_succeeds_when_the_link_cannot_be_placed(
+        self, container, tmp_path, monkeypatch, capsys,
+    ):
+        """The base is what init promised; the affordance is not."""
+        git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+        vault = tmp_path / "vault"
+        monkeypatch.setattr(
+            wiki, "load_config_or_default",
+            lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
+        )
+        (container / "wiki").mkdir()
+        assert wiki.main(["init", "--vault", str(container / "main")]) == 0
+        assert wiki.is_wiki(vault / "acme" / "widget")
+        assert "not a symlink" in capsys.readouterr().err
+
+
+class TestSymlinkedEntry:
+    """A base reached through a symlink has one name, whichever side it is entered from.
+
+    The placement this covers is a link in the repo pointing at a base kept
+    elsewhere. `find_wiki` resolves *start* before walking, so entering inside
+    the link already yielded the target's path while entering above it yielded
+    the link's — two names for one wiki in console output, and in the `root`
+    every write is relative to.
+    """
+
+    def _linked(self, tmp_path: Path) -> tuple[Path, Path]:
+        """A base at `vault/kb`, and a `repo/wiki` symlink pointing at it."""
+        target = make_wiki(tmp_path / "vault", dirname="kb")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "wiki").symlink_to(target, target_is_directory=True)
+        return repo, target.resolve()
+
+    def test_entering_above_the_link_returns_the_real_path(self, tmp_path):
+        repo, target = self._linked(tmp_path)
+        assert wiki.find_wiki(repo) == target
+
+    def test_both_entry_points_agree_on_one_path(self, tmp_path):
+        repo, _ = self._linked(tmp_path)
+        assert wiki.find_wiki(repo) == wiki.find_wiki(repo / "wiki")
+
+    def test_path_prints_the_real_path(self, tmp_path, capsys):
+        repo, target = self._linked(tmp_path)
+        assert wiki.main(["path", str(repo)]) == 0
+        assert capsys.readouterr().out.strip() == str(target)
+
+    def test_status_reports_the_real_path(self, tmp_path, capsys):
+        repo, target = self._linked(tmp_path)
+        assert wiki.main(["status", "--json", str(repo)]) == 0
+        assert json.loads(capsys.readouterr().out)["path"] == str(target)
+
+    def test_an_explicit_link_resolves_to_the_same_path(self, tmp_path):
+        repo, target = self._linked(tmp_path)
+        assert wiki.find_wiki(tmp_path, explicit=str(repo / "wiki")) == target
+
+    def test_a_dangling_link_is_not_a_wiki(self, tmp_path):
+        """Why config has to be consulted before the walk, once a vault exists.
+
+        `is_wiki` follows the link to decide, so a link whose target has moved
+        answers exactly as a directory with no wiki in it does. Nothing in the
+        walk can tell the two apart.
+        """
+        repo, target = self._linked(tmp_path)
+        shutil.move(str(target), str(tmp_path / "moved"))
+        assert not wiki.is_wiki(repo / "wiki")
+        assert wiki.find_wiki(repo) is None
+
+
 class TestConfiguredDirnameResolvesTheRepoRoot:
     """`wiki.dir` is read from the repo root, whatever directory the walk starts in.
 
@@ -210,7 +894,7 @@ class TestConfiguredDirnameResolvesTheRepoRoot:
     """
 
     def _repo(self, tmp_path: Path, dirname: str) -> Path:
-        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        subprocess.run(["git", "init", "-b", "main", "-q", str(tmp_path)], check=True)
         (tmp_path / ".workbench.yml").write_text(f"wiki:\n  dir: {dirname}\n", encoding="utf-8")
         return tmp_path
 
@@ -668,7 +1352,7 @@ def _config(dirname: str) -> WorkbenchConfig:
 
 class TestInit:
     def test_creates_the_full_layout(self, tmp_path, capsys):
-        assert wiki.main(["init", str(tmp_path)]) == 0
+        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
         root = tmp_path / "wiki"
         for name in ("raw", "articles", "drafts", "archive", "meta"):
             assert (root / name).is_dir(), name
@@ -678,32 +1362,32 @@ class TestInit:
 
     def test_the_result_is_findable(self, tmp_path):
         """init and path must agree on what a knowledge base is."""
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         assert wiki.find_wiki(tmp_path) == tmp_path / "wiki"
 
     def test_the_result_lints_clean(self, tmp_path):
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         assert wiki.collect_lint(wiki.Wiki(tmp_path / "wiki")) == []
 
     def test_status_reports_an_empty_base(self, tmp_path):
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
         assert (status["articles"], status["sources"]) == (0, 0)
 
     def test_refuses_an_existing_base(self, tmp_path, capsys):
-        wiki.main(["init", str(tmp_path)])
-        assert wiki.main(["init", str(tmp_path)]) == 1
+        wiki.main(["init", "--in-repo", str(tmp_path)])
+        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 1
         assert "already exists" in capsys.readouterr().err
 
     def test_domain_reaches_the_schema(self, tmp_path):
-        wiki.main(["init", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
         schema = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         assert "Payments" in schema and "the team" in schema
         assert "{DOMAIN}" not in schema and "{AUDIENCE}" not in schema
 
     def test_manifest_header_is_not_read_as_a_source(self, tmp_path):
         """The header init writes must not register as an entry."""
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         assert wiki.Wiki(tmp_path / "wiki").recorded_source_hashes() == {}
 
     def test_explicit_path_is_honoured(self, tmp_path):
@@ -716,7 +1400,7 @@ class TestInit:
         root = tmp_path / "wiki"
         (root / "raw").mkdir(parents=True)
         (root / "_log.md").write_text("# Activity Log\n\nkept\n", encoding="utf-8")
-        assert wiki.main(["init", str(tmp_path)]) == 0
+        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
         assert "kept" in (root / "_log.md").read_text(encoding="utf-8")
         assert (root / "SCHEMA.md").is_file()
 
@@ -737,7 +1421,7 @@ class TestInit:
 
 class TestIngestStage:
     def _base(self, tmp_path: Path) -> Path:
-        wiki.main(["init", str(tmp_path)])
+        wiki.main(["init", "--in-repo", str(tmp_path)])
         return tmp_path / "wiki"
 
     def test_stages_a_markdown_source(self, tmp_path, capsys):
@@ -922,7 +1606,7 @@ class TestSchemaTemplateSubstitution:
         reader to replace them, so substitution produced 'Replace Payments and
         the team' in every new schema.
         """
-        wiki.main(["init", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
         body = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         prose = [ln for ln in body.splitlines() if not ln.strip().startswith("<!--")]
         assert not any("Replace" in ln for ln in prose)
@@ -937,7 +1621,7 @@ class TestDomainSkipsNonProse:
 
     def test_init_output_reports_the_real_domain(self, tmp_path):
         """End to end against the template init actually copies."""
-        wiki.main(["init", str(tmp_path), "--domain", "Payments"])
+        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments"])
         status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
         assert status["domain"] == "A knowledge base about Payments, for whoever works on it."
 

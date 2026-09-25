@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The three user-level roots the workbench writes to, each resolved through the
+# The four user-level roots the workbench writes to, each resolved through the
 # same chain:
 #
 # ```
@@ -131,13 +131,14 @@ _wb_mark() {
   fi
 }
 
-# shellcheck disable=SC2034  # All three roots are used by sourcing scripts
+# shellcheck disable=SC2034  # All four roots are used by sourcing scripts
 
 # What each root already holds, captured before the resolver overwrites it —
 # _wb_mark needs to know whether a caller named the value or this file did.
 _wb_had_config="${WORKBENCH_CONFIG_DIR:-}"
 _wb_had_state="${WORKBENCH_STATE_DIR:-}"
 _wb_had_cache="${WORKBENCH_CACHE_DIR:-}"
+_wb_had_data="${WORKBENCH_DATA_DIR:-}"
 
 # Hand-authored settings: config.yml, overrides/.
 WORKBENCH_CONFIG_DIR="$(_wb_root "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
@@ -156,9 +157,15 @@ _wb_mark "$_wb_had_state" "${_WB_DERIVED_STATE_DIR:-}" _WB_DERIVED_STATE_DIR "$W
 WORKBENCH_CACHE_DIR="$(_wb_root "$_wb_had_cache" "${_WB_DERIVED_CACHE_DIR:-}" "${XDG_CACHE_HOME:-}" "$HOME/.cache/workbench")"
 _wb_mark "$_wb_had_cache" "${_WB_DERIVED_CACHE_DIR:-}" _WB_DERIVED_CACHE_DIR "$WORKBENCH_CACHE_DIR"
 
+# Authored data the workbench cannot regenerate: wiki/.
+# Apart from the state root in what losing it costs — everything under state has
+# a producer that can write it again, and a knowledge base has none.
+WORKBENCH_DATA_DIR="$(_wb_root "$_wb_had_data" "${_WB_DERIVED_DATA_DIR:-}" "${XDG_DATA_HOME:-}" "$HOME/.local/share/workbench")"
+_wb_mark "$_wb_had_data" "${_WB_DERIVED_DATA_DIR:-}" _WB_DERIVED_DATA_DIR "$WORKBENCH_DATA_DIR"
+
 # The resolver has done its work. This file is sourced into every script that
 # loads lib/ui.sh, so leaving the helpers defined would leak them into all of
-# them. The three _WB_DERIVED_* variables outlive the helpers by design — they
+# them. The four _WB_DERIVED_* variables outlive the helpers by design — they
 # are the record the next source in this process reads.
 unset -f _wb_root _wb_mark
-unset _wb_had_config _wb_had_state _wb_had_cache
+unset _wb_had_config _wb_had_state _wb_had_cache _wb_had_data

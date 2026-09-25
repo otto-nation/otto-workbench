@@ -24,9 +24,11 @@ ROOT_VARS = (
     "WORKBENCH_CONFIG_DIR",
     "WORKBENCH_STATE_DIR",
     "WORKBENCH_CACHE_DIR",
+    "WORKBENCH_DATA_DIR",
     "XDG_CONFIG_HOME",
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
 )
 
 
@@ -54,6 +56,14 @@ class TestDefaults:
     def test_cache_falls_back_to_dot_cache(self, clean_env):
         assert workbench_paths.cache_dir() == clean_env / ".cache/workbench"
 
+    def test_data_falls_back_to_dot_local_share(self, clean_env):
+        assert workbench_paths.data_dir() == clean_env / ".local/share/workbench"
+
+    def test_data_is_not_a_subtree_of_state(self, clean_env):
+        # The whole point of the fourth root: a sweep of the state root must not
+        # be able to reach authored data.
+        assert workbench_paths.state_dir() not in workbench_paths.data_dir().parents
+
 
 class TestXdgRung:
     def test_xdg_config_home_moves_config(self, monkeypatch, tmp_path):
@@ -68,6 +78,10 @@ class TestXdgRung:
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
         assert workbench_paths.state_dir() == tmp_path / "xdg-state/workbench"
 
+    def test_xdg_data_home_moves_data(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+        assert workbench_paths.data_dir() == tmp_path / "xdg-data/workbench"
+
     def test_empty_xdg_var_falls_through_to_the_default(self, monkeypatch, clean_env):
         # An exported-but-empty XDG variable is the same as unset, per the spec.
         monkeypatch.setenv("XDG_CONFIG_HOME", "")
@@ -79,6 +93,7 @@ class TestOverrideRung:
         ("WORKBENCH_CONFIG_DIR", "config_dir"),
         ("WORKBENCH_STATE_DIR", "state_dir"),
         ("WORKBENCH_CACHE_DIR", "cache_dir"),
+        ("WORKBENCH_DATA_DIR", "data_dir"),
     ])
     def test_override_wins_over_the_default(self, monkeypatch, tmp_path, var, func):
         monkeypatch.setenv(var, str(tmp_path / "explicit"))
@@ -93,6 +108,7 @@ class TestOverrideRung:
         ("WORKBENCH_CONFIG_DIR", "config_dir", ".config/workbench"),
         ("WORKBENCH_STATE_DIR", "state_dir", ".local/state/workbench"),
         ("WORKBENCH_CACHE_DIR", "cache_dir", ".cache/workbench"),
+        ("WORKBENCH_DATA_DIR", "data_dir", ".local/share/workbench"),
     ])
     def test_an_empty_override_falls_through(self, monkeypatch, clean_env, var, func, default):
         # `export WORKBENCH_STATE_DIR=` in a shell profile leaves the variable

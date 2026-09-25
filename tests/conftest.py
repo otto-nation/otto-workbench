@@ -955,6 +955,20 @@ def add_self_origin(path) -> None:
     git_in(path, "fetch", "-q", "origin", "main")
 
 
+def remote_repo(path, remote: str = "git@github.com:acme/widget.git") -> Path:
+    """An empty repo at *path*, with *remote* set as `origin`.
+
+    For code that reads a repo's identity from its origin remote rather than
+    from any commit in it — `git init` plus `remote add` is all such a test
+    needs.
+    """
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    git_in(path, "init", "-b", "main", "-q")
+    git_in(path, "remote", "add", "origin", remote)
+    return path
+
+
 @pytest.fixture
 def container(tmp_path) -> Path:
     """The bare-repo worktree layout: worktrees as peers of a bare `.git`.
@@ -1181,6 +1195,24 @@ def _isolate_cache_root(tmp_path, monkeypatch):
     subprocess inherits it.
     """
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path / "cache"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_data_root(tmp_path, monkeypatch):
+    """Point the data root at a temp dir, where the stakes are highest.
+
+    The other two roots are sandboxed so a test cannot read the developer's
+    state or cache by accident. This one is sandboxed so a test cannot *write*
+    into the developer's knowledge base: `wiki init --vault` creates a directory
+    under this root, and the data root is the one tree with no producer that
+    could rebuild what a test scribbled over.
+
+    Set here rather than in the wiki tests alone, for the reason the cache root
+    is: the roots resolve per call, so one setenv covers every present and
+    future consumer, and `WORKBENCH_DATA_DIR` is an override a subprocess
+    inherits — which is what the smoke tests rely on, since they pass no `env=`.
+    """
+    monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path / "data"))
 
 
 def _last_event() -> dict:

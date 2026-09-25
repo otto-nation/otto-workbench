@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Cross-validates the three definitions of the workbench roots (SSOT guard):
+# — the data root has no zsh spelling, so it is cross-validated across two.
 #   lib/roots.sh                     — bash, sourced via lib/constants.sh
 #   ai/lib/core/workbench_paths.py    — Python
 #   zsh/config.d/aliases/docker.zsh  — inline, because it cannot source
@@ -19,8 +20,8 @@ setup() {
   common_setup
   export HOME="$TMPDIR/home"
   mkdir -p "$HOME"
-  unset WORKBENCH_CONFIG_DIR WORKBENCH_STATE_DIR WORKBENCH_CACHE_DIR
-  unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME
+  unset WORKBENCH_CONFIG_DIR WORKBENCH_STATE_DIR WORKBENCH_CACHE_DIR WORKBENCH_DATA_DIR
+  unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME XDG_DATA_HOME
 }
 
 teardown() {
@@ -67,6 +68,7 @@ resolve_zsh_state() {
   [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$HOME/.config/workbench" ]
   [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.local/state/workbench" ]
   [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$HOME/.cache/workbench" ]
+  [ "$(resolve_shell WORKBENCH_DATA_DIR)"   = "$HOME/.local/share/workbench" ]
 }
 
 # ─── XDG rung ───────────────────────────────────────────────────────────────
@@ -90,6 +92,24 @@ resolve_zsh_state() {
   [ "$(resolve_zsh_state)" = "$TMPDIR/xdg-state/workbench" ]
 }
 
+@test "XDG_DATA_HOME moves the data root" {
+  export XDG_DATA_HOME="$TMPDIR/xdg-data"
+  [ "$(resolve_shell WORKBENCH_DATA_DIR)" = "$TMPDIR/xdg-data/workbench" ]
+  [ "$(resolve_python data_dir)" = "$TMPDIR/xdg-data/workbench" ]
+}
+
+# passes-at-base: the roots differ at base only because the data one resolves empty there, and this pins that they never converge
+@test "the data root is not reachable by a sweep of the state root" {
+  # Why there is a fourth root at all: everything under state has a producer
+  # that can write it again, and a knowledge base has none.
+  local state data
+  state="$(resolve_shell WORKBENCH_STATE_DIR)"
+  data="$(resolve_shell WORKBENCH_DATA_DIR)"
+  [ "$data" != "$state" ]
+  [[ "$data" != "$state"/* ]]
+  [ "$(resolve_python data_dir)" = "$data" ]
+}
+
 @test "the state root no longer shares the config root's default" {
   # The whole point of the split: generated data that used to sit beside
   # hand-authored config now has a home of its own.
@@ -102,29 +122,35 @@ resolve_zsh_state() {
 @test "WORKBENCH_<ROOT>_DIR overrides both the XDG rung and the default" {
   export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
   export XDG_CACHE_HOME="$TMPDIR/xdg-cache"
+  export XDG_DATA_HOME="$TMPDIR/xdg-data"
   export WORKBENCH_CONFIG_DIR="$TMPDIR/explicit-config"
   export WORKBENCH_STATE_DIR="$TMPDIR/explicit-state"
   export WORKBENCH_CACHE_DIR="$TMPDIR/explicit-cache"
+  export WORKBENCH_DATA_DIR="$TMPDIR/explicit-data"
 
   [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$TMPDIR/explicit-config" ]
   [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$TMPDIR/explicit-state" ]
   [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$TMPDIR/explicit-cache" ]
+  [ "$(resolve_shell WORKBENCH_DATA_DIR)"   = "$TMPDIR/explicit-data" ]
   [ "$(resolve_python config_dir)" = "$TMPDIR/explicit-config" ]
   [ "$(resolve_python state_dir)"  = "$TMPDIR/explicit-state" ]
   [ "$(resolve_python cache_dir)"  = "$TMPDIR/explicit-cache" ]
+  [ "$(resolve_python data_dir)"   = "$TMPDIR/explicit-data" ]
 }
 
 @test "an override that is exported but empty falls through to the default" {
   # `export WORKBENCH_STATE_DIR=` in a shell profile leaves the variable present
   # and empty. Reading that as a real override would resolve the root to `/` and
   # write the workbench's data to the filesystem root.
-  export WORKBENCH_CONFIG_DIR="" WORKBENCH_STATE_DIR="" WORKBENCH_CACHE_DIR=""
+  export WORKBENCH_CONFIG_DIR="" WORKBENCH_STATE_DIR="" WORKBENCH_CACHE_DIR="" WORKBENCH_DATA_DIR=""
   [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$HOME/.config/workbench" ]
   [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.local/state/workbench" ]
   [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$HOME/.cache/workbench" ]
+  [ "$(resolve_shell WORKBENCH_DATA_DIR)"   = "$HOME/.local/share/workbench" ]
   [ "$(resolve_python config_dir)" = "$HOME/.config/workbench" ]
   [ "$(resolve_python state_dir)"  = "$HOME/.local/state/workbench" ]
   [ "$(resolve_python cache_dir)"  = "$HOME/.cache/workbench" ]
+  [ "$(resolve_python data_dir)"   = "$HOME/.local/share/workbench" ]
   [ "$(resolve_zsh_state)" = "$HOME/.local/state/workbench" ]
 }
 
@@ -148,19 +174,20 @@ resolve_zsh_state() {
 
 @test "re-sourcing roots.sh under a changed HOME re-derives every root" {
   # lib/registries.sh loads roots.sh on its own, so a caller that sources it and
-  # then sandboxes HOME re-sources with all three roots already set. Reading its
+  # then sandboxes HOME re-sources with all four roots already set. Reading its
   # own last answer as an override pinned them to the first HOME: the settings
   # file went to the sandbox and the manifest to the real state root.
   run bash -c '
     . "$1/lib/roots.sh"
     HOME="$2"
     . "$1/lib/roots.sh"
-    printf "%s\n%s\n%s" "$WORKBENCH_CONFIG_DIR" "$WORKBENCH_STATE_DIR" "$WORKBENCH_CACHE_DIR"
+    printf "%s\n%s\n%s\n%s" "$WORKBENCH_CONFIG_DIR" "$WORKBENCH_STATE_DIR" "$WORKBENCH_CACHE_DIR" "$WORKBENCH_DATA_DIR"
   ' _ "$REPO_ROOT" "$TMPDIR/second"
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "$TMPDIR/second/.config/workbench" ]
   [ "${lines[1]}" = "$TMPDIR/second/.local/state/workbench" ]
   [ "${lines[2]}" = "$TMPDIR/second/.cache/workbench" ]
+  [ "${lines[3]}" = "$TMPDIR/second/.local/share/workbench" ]
 }
 
 @test "an override survives a re-source under a changed HOME" {
@@ -198,24 +225,25 @@ assert_agree() {
   fi
 }
 
-# assert_combo_agrees "STATE|XDG_STATE|XDG_CONFIG|XDG_CACHE" — apply one
-# environment and check every resolver against the shell one.
+# assert_combo_agrees "STATE|XDG_STATE|XDG_CONFIG|XDG_CACHE|XDG_DATA" — apply
+# one environment and check every resolver against the shell one.
 assert_combo_agrees() {
   local combo="$1"
   local -a fields
   # The trailing `|` keeps a combo whose last field is empty from arriving as
-  # three fields — `read -ra` drops trailing empties.
+  # four fields — `read -ra` drops trailing empties.
   IFS='|' read -ra fields <<< "$combo|"
   # The field count is load-bearing: a stray `|` would shift an XDG_STATE_HOME
   # value into XDG_CONFIG_HOME and the assertions below would still pass.
-  if [[ ${#fields[@]} -ne 4 ]]; then
-    echo "combo needs 4 |-separated fields, got ${#fields[@]}: '$combo'" >&2
+  if [[ ${#fields[@]} -ne 5 ]]; then
+    echo "combo needs 5 |-separated fields, got ${#fields[@]}: '$combo'" >&2
     return 1
   fi
   export_or_unset WORKBENCH_STATE_DIR "${fields[0]}"
   export_or_unset XDG_STATE_HOME "${fields[1]}"
   export_or_unset XDG_CONFIG_HOME "${fields[2]}"
   export_or_unset XDG_CACHE_HOME "${fields[3]}"
+  export_or_unset XDG_DATA_HOME "${fields[4]}"
 
   local sh_state
   sh_state="$(resolve_shell WORKBENCH_STATE_DIR)"
@@ -225,6 +253,8 @@ assert_combo_agrees() {
     python "$(resolve_python config_dir)" "$combo"
   assert_agree "cache root" "$(resolve_shell WORKBENCH_CACHE_DIR)" \
     python "$(resolve_python cache_dir)" "$combo"
+  assert_agree "data root" "$(resolve_shell WORKBENCH_DATA_DIR)" \
+    python "$(resolve_python data_dir)" "$combo"
 }
 
 @test "shell, Python, and zsh agree across the set/unset matrix" {
@@ -233,24 +263,31 @@ assert_combo_agrees() {
   # loops so the body stays inside the repo's nesting limit. An empty field
   # means unset. The first two fields are the rungs that must not disagree:
   # the override has to beat XDG_STATE_HOME in all three languages.
+  #
+  # XDG_DATA_HOME rides along with XDG_CACHE_HOME rather than doubling the
+  # matrix to thirty-two: every row forks bash, python and zsh, and the two
+  # rows below where the pair differs are what would catch a data/cache mix-up
+  # that the paired rows cannot.
   local combo
   for combo in \
-    "|||" \
-    "$TMPDIR/explicit-state|||" \
-    "|$TMPDIR/xdg-state||" \
-    "$TMPDIR/explicit-state|$TMPDIR/xdg-state||" \
-    "||$TMPDIR/xdg-config|" \
-    "$TMPDIR/explicit-state||$TMPDIR/xdg-config|" \
-    "|$TMPDIR/xdg-state|$TMPDIR/xdg-config|" \
-    "$TMPDIR/explicit-state|$TMPDIR/xdg-state|$TMPDIR/xdg-config|" \
-    "|||$TMPDIR/xdg-cache" \
-    "$TMPDIR/explicit-state|||$TMPDIR/xdg-cache" \
-    "|$TMPDIR/xdg-state||$TMPDIR/xdg-cache" \
-    "$TMPDIR/explicit-state|$TMPDIR/xdg-state||$TMPDIR/xdg-cache" \
-    "||$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
-    "$TMPDIR/explicit-state||$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
-    "|$TMPDIR/xdg-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
-    "$TMPDIR/explicit-state|$TMPDIR/xdg-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache"; do
+    "||||" \
+    "$TMPDIR/explicit-state||||" \
+    "|$TMPDIR/xdg-state|||" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state|||" \
+    "||$TMPDIR/xdg-config||" \
+    "$TMPDIR/explicit-state||$TMPDIR/xdg-config||" \
+    "|$TMPDIR/xdg-state|$TMPDIR/xdg-config||" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state|$TMPDIR/xdg-config||" \
+    "|||$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "$TMPDIR/explicit-state|||$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "|$TMPDIR/xdg-state||$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state||$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "||$TMPDIR/xdg-config|$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "$TMPDIR/explicit-state||$TMPDIR/xdg-config|$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "|$TMPDIR/xdg-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache|$TMPDIR/xdg-data" \
+    "|||$TMPDIR/xdg-cache|" \
+    "||||$TMPDIR/xdg-data"; do
     assert_combo_agrees "$combo"
   done
 }

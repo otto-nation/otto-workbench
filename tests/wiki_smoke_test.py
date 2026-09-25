@@ -20,6 +20,7 @@ runs correctly from a source checkout either way.
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -45,14 +46,35 @@ def run(*args: str, cwd: Path) -> subprocess.CompletedProcess:
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """A git repo with no knowledge base yet."""
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "init", "-b", "main", "-q", str(tmp_path)], check=True)
     return tmp_path
+
+
+def fake_workbench_launcher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Put a stub `otto-workbench` ahead of the real one on PATH, and return it.
+
+    Writing `wiki.root` is checked against the schema of the workbench installed
+    on the machine, and a branch adding a key is one the install has not learned
+    yet. Without this the write is refused for a reason that has nothing to do
+    with the behaviour under test — and the refusal would disappear on its own
+    once the branch merged, leaving a test that had never exercised the path it
+    names.
+    """
+    launcher_dir = tmp_path / "installed"
+    (launcher_dir / "bin").mkdir(parents=True)
+    shutil.copy2(WIKI_BIN.parent.parent.parent / "config.schema.json",
+                 launcher_dir / "config.schema.json")
+    launcher = launcher_dir / "bin" / "otto-workbench"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{launcher.parent}:{os.environ['PATH']}")
+    return launcher
 
 
 class TestLifecycle:
     def test_init_ingest_compile_index_lint(self, project):
         """The path a real knowledge base takes, from empty directory to clean lint."""
-        assert run("init", "--domain", "Payments", "--audience", "the team", cwd=project).returncode == 0
+        assert run("init", "--in-repo", "--domain", "Payments", "--audience", "the team", cwd=project).returncode == 0
         wiki_dir = project / "wiki"
 
         source = project / "notes.md"
@@ -84,7 +106,7 @@ class TestLifecycle:
 
     def test_status_reports_the_domain_not_template_furniture(self, project):
         """The template's own editing note must not surface as the subject."""
-        assert run("init", "--domain", "Payments", cwd=project).returncode == 0
+        assert run("init", "--in-repo", "--domain", "Payments", cwd=project).returncode == 0
         # Matched on the label, not the substring: a pytest tmp path can itself
         # contain the word and would otherwise match the path line above it.
         line = [
@@ -96,13 +118,13 @@ class TestLifecycle:
         assert "<!--" not in line and "Replace" not in line
 
     def test_a_new_schema_carries_no_placeholder_text(self, project):
-        assert run("init", "--domain", "Payments", "--audience", "the team", cwd=project).returncode == 0
+        assert run("init", "--in-repo", "--domain", "Payments", "--audience", "the team", cwd=project).returncode == 0
         schema = (project / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         assert "{DOMAIN}" not in schema and "{AUDIENCE}" not in schema
         assert "Replace Payments" not in schema
 
     def test_a_fresh_base_lints_clean(self, project):
-        run("init", cwd=project)
+        run("init", "--in-repo", cwd=project)
         result = run("lint", cwd=project)
         assert result.returncode == 0, result.stdout
 
@@ -110,7 +132,7 @@ class TestLifecycle:
 class TestHashesAreComputed:
     def test_reported_hash_matches_the_file(self, project):
         """The reason this CLI exists: hashes come from bytes, not recollection."""
-        assert run("init", cwd=project).returncode == 0
+        assert run("init", "--in-repo", cwd=project).returncode == 0
         source = project / "notes.md"
         source.write_text("known content\n", encoding="utf-8")
         run("ingest", "--stage", str(source), cwd=project)
@@ -120,7 +142,7 @@ class TestHashesAreComputed:
         assert expected in run("sources", cwd=project).stdout
 
     def test_binary_source_survives_staging(self, project):
-        assert run("init", cwd=project).returncode == 0
+        assert run("init", "--in-repo", cwd=project).returncode == 0
         source = project / "paper.pdf"
         source.write_bytes(b"%PDF-1.4\nbinary\x00bytes")
         run("ingest", "--stage", str(source), "--type", "pdf", cwd=project)
@@ -131,7 +153,7 @@ class TestHashesAreComputed:
 class TestContainment:
     def test_type_cannot_write_outside_the_base(self, project):
         """`--type ../../evil` wrote the source two directories up, once."""
-        assert run("init", cwd=project).returncode == 0
+        assert run("init", "--in-repo", cwd=project).returncode == 0
         source = project / "s.md"
         source.write_text("body\n", encoding="utf-8")
         assert run("ingest", "--stage", str(source), "--type", "../../evil", cwd=project).returncode == 0
@@ -142,7 +164,7 @@ class TestContainment:
         assert not list(project.parent.glob("*evil*"))
 
     def test_type_cannot_add_a_frontmatter_key(self, project):
-        assert run("init", cwd=project).returncode == 0
+        assert run("init", "--in-repo", cwd=project).returncode == 0
         source = project / "s.md"
         source.write_text("body\n", encoding="utf-8")
         run("ingest", "--stage", str(source), "--type", "file\ninjected: yes", cwd=project)
@@ -163,7 +185,7 @@ class TestExitCodes:
         assert "no knowledge base found" in result.stderr
 
     def test_findings_exit_one(self, project):
-        assert run("init", cwd=project).returncode == 0
+        assert run("init", "--in-repo", cwd=project).returncode == 0
         (project / "wiki" / "articles" / "a.md").write_text(
             "---\ntitle: A\n---\nsee [[ghost]]\n", encoding="utf-8"
         )
@@ -172,8 +194,8 @@ class TestExitCodes:
         assert "broken-link" in result.stdout
 
     def test_init_refuses_an_existing_base(self, project):
-        run("init", cwd=project)
-        result = run("init", cwd=project)
+        run("init", "--in-repo", cwd=project)
+        result = run("init", "--in-repo", cwd=project)
         assert result.returncode == 1
         assert "already exists" in result.stderr
 
@@ -188,7 +210,7 @@ class TestConfiguredDirectory:
     def test_wiki_dir_is_honoured_from_a_nested_directory(self, project):
         """The setting is read from the repo root, wherever the command runs."""
         (project / ".workbench.yml").write_text("wiki:\n  dir: knowledge\n", encoding="utf-8")
-        assert run("init", cwd=project).returncode == 0
+        assert run("init", "--in-repo", cwd=project).returncode == 0
         assert (project / "knowledge" / "SCHEMA.md").is_file()
 
         nested = project / "src" / "deep"
@@ -196,6 +218,170 @@ class TestConfiguredDirectory:
         result = run("path", cwd=nested)
         assert result.returncode == 0
         assert result.stdout.strip() == str((project / "knowledge").resolve())
+
+
+class TestInitModes:
+    def test_bare_init_refuses_and_names_every_option(self, project):
+        """Through the binary, because the refusal is the first thing a user meets."""
+        result = run("init", "--domain", "Payments", cwd=project)
+        assert result.returncode == 2
+        for flag in ("--vault", "--in-repo", "--wiki DIR"):
+            assert flag in result.stderr
+        assert not (project / "wiki").exists()
+
+    def test_a_vault_base_resolves_from_a_second_worktree(self, project, tmp_path, monkeypatch):
+        """The headline case, end to end: one base, two worktrees, one survives.
+
+        `WORKBENCH_DATA_DIR` and `WORKBENCH_CONFIG_DIR` are sandboxed by the
+        autouse fixtures in conftest, and the binary inherits them.
+
+        `PATH` gets a launcher resolving to this checkout because writing
+        `wiki.root` is checked against the schema of the workbench installed on
+        the machine, and a branch adding a key is one the install has not
+        learned yet. Without this the write is refused for a reason that has
+        nothing to do with the behaviour under test — and the refusal would
+        disappear on its own once the branch merged, leaving a test that had
+        never exercised the path it names.
+        """
+        fake_workbench_launcher(tmp_path, monkeypatch)
+
+        subprocess.run(
+            ["git", "-C", str(project), "remote", "add", "origin",
+             "git@github.com:acme/widget.git"],
+            check=True,
+        )
+        assert run("init", "--vault", "--domain", "Payments", cwd=project).returncode == 0
+        from_repo = run("path", cwd=project)
+        assert from_repo.returncode == 0, from_repo.stderr
+        base = from_repo.stdout.strip()
+        assert not (project / "wiki").exists()
+
+        subprocess.run(
+            ["git", "-C", str(project), "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-qm", "init", "--allow-empty"],
+            check=True,
+        )
+        worktree = tmp_path / "second"
+        subprocess.run(
+            ["git", "-C", str(project), "worktree", "add", "-q", str(worktree), "-b", "second"],
+            check=True,
+        )
+        from_worktree = run("path", cwd=worktree)
+        assert from_worktree.returncode == 0, from_worktree.stderr
+        assert from_worktree.stdout.strip() == base
+
+        subprocess.run(
+            ["git", "-C", str(project), "worktree", "remove", "--force", str(worktree)],
+            check=True,
+        )
+        after = run("path", cwd=project)
+        assert after.returncode == 0, after.stderr
+        assert after.stdout.strip() == base
+
+
+class TestBackup:
+    def test_snapshot_list_and_restore_through_the_binary(self, project):
+        """The restore path a person would actually walk, end to end."""
+        assert run("init", "--in-repo", "--domain", "Payments", cwd=project).returncode == 0
+        source = project / "notes.md"
+        source.write_text("Token refresh rotates a credential.\n", encoding="utf-8")
+        assert run("ingest", "--stage", str(source), "--title", "T", cwd=project).returncode == 0
+
+        made = run("backup", cwd=project)
+        assert made.returncode == 0, made.stderr
+        listed = run("backup", "--list", cwd=project)
+        assert listed.returncode == 0
+        assert ".tar.gz" in listed.stdout
+
+        staged = project / "wiki" / "raw"
+        original = sorted(p.name for p in staged.iterdir())
+        shutil.rmtree(staged)
+        staged.mkdir()
+
+        restored = run("backup", "--restore", "latest", cwd=project)
+        assert restored.returncode == 0, restored.stderr
+        landed = Path(restored.stdout.split(":")[0])
+        assert landed.is_dir()
+        assert sorted(p.name for p in (landed / "raw").iterdir()) == original
+        assert not any(staged.iterdir()), "the live base must be left as it was"
+
+
+class TestBrowsingLink:
+    def test_the_link_survives_removing_the_worktree_it_was_made_from(self, tmp_path, monkeypatch):
+        """Placement, end to end: beside the worktrees, so `wt remove` cannot reach it.
+
+        A link inside a worktree would go with the worktree, which is the whole
+        reason it is not put there.
+        """
+        launcher = fake_workbench_launcher(tmp_path, monkeypatch)
+
+        seed = tmp_path / "seed"
+        subprocess.run(["git", "init", "-b", "main", "-q", str(seed)], check=True)
+        subprocess.run(
+            ["git", "-C", str(seed), "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-qm", "init", "--allow-empty"],
+            check=True,
+        )
+        container = tmp_path / "container"
+        subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(container / ".git")], check=True)
+        subprocess.run(
+            ["git", "--git-dir", str(container / ".git"), "worktree", "add", "-q",
+             str(container / "main"), "main"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "--git-dir", str(container / ".git"), "remote", "set-url", "origin",
+             "git@github.com:acme/widget.git"],
+            check=True,
+        )
+
+        main = container / "main"
+        assert run("init", "--vault", "--domain", "Payments", cwd=main).returncode == 0
+        assert subprocess.run(
+            [str(launcher)], capture_output=True,
+        ).returncode == 0
+        base = run("path", cwd=main).stdout.strip()
+
+        # Turn the key on through the real writer, then link. Read from the
+        # environment rather than rebuilt from `tmp_path`: conftest's autouse
+        # fixture owns where the sandboxed config root goes, and spelling its
+        # directory name a second time here is a copy that goes stale silently
+        # if that fixture ever moves it.
+        config = Path(os.environ["WORKBENCH_CONFIG_DIR"]) / "config.yml"
+        config.write_text(config.read_text(encoding="utf-8") + "  link: true\n", encoding="utf-8")
+        linked = run("link", cwd=main)
+        assert linked.returncode == 0, linked.stderr
+        assert (container / "wiki").is_symlink()
+        assert (container / "wiki").resolve() == Path(base)
+
+        subprocess.run(
+            ["git", "--git-dir", str(container / ".git"), "worktree", "remove",
+             "--force", str(main)],
+            check=True,
+        )
+        assert (container / "wiki").is_symlink()
+        assert (container / "wiki").resolve() == Path(base)
+
+
+class TestSymlinkedEntry:
+    def test_path_is_the_same_string_from_either_side_of_a_link(self, project, tmp_path):
+        """One wiki, one path — through the binary, where the user reads it.
+
+        Entered from above the link and from inside it. These were two different
+        strings, because only one of the two entry points had the link collapsed
+        for it before the walk.
+        """
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        assert run("init", "--in-repo", "--domain", "Payments", cwd=vault).returncode == 0
+        (project / "wiki").symlink_to(vault / "wiki", target_is_directory=True)
+
+        above = run("path", cwd=project)
+        inside = run("path", cwd=project / "wiki")
+        assert above.returncode == 0, above.stderr
+        assert inside.returncode == 0, inside.stderr
+        assert above.stdout.strip() == inside.stdout.strip()
+        assert above.stdout.strip() == str((vault / "wiki").resolve())
 
 
 class TestPackaging:
@@ -222,7 +408,7 @@ class TestPackaging:
             shutil.copy2(repo_root / "lib" / module, standalone / "lib" / module)
 
         result = subprocess.run(
-            [str(standalone / "bin" / "wiki"), "init", "--domain", "Payments"],
+            [str(standalone / "bin" / "wiki"), "init", "--in-repo", "--domain", "Payments"],
             cwd=project,
             capture_output=True,
             text=True,

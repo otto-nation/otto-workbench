@@ -177,20 +177,28 @@ _split_repo_worktree_line() {
 # /private on macOS, and every caller resolves its path through `git rev-parse
 # --show-toplevel`, which hands back the realpath.
 #
-# The state and cache roots get a resolved spelling added too, since those come
-# from env vars a caller may well have written with a symlink in them —
+# The state, cache and data roots get a resolved spelling added too, since those
+# come from env vars a caller may well have written with a symlink in them —
 # `ai/lib/config/workbench_projects.py`'s `excluded()` does the same. This is a one-time
 # fork at array-build time, not a per-comparison one.
+#
+# The data root is the likeliest of the three to hold a repo, not the least:
+# `git init` in the wiki vault is the obvious way to back up authored notes, and
+# a vault registered as a project would put every repo's knowledge base in the
+# machine profile.
 if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
   PROJECTS_EXCLUDED_PREFIXES=(
     "${TMPDIR:-}" /tmp /private/tmp /var/folders /private/var/folders
-    "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}"
+    "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}" "${WORKBENCH_DATA_DIR:-}"
   )
   if [[ -n "${WORKBENCH_STATE_DIR:-}" && -d "${WORKBENCH_STATE_DIR}" ]]; then
     PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_STATE_DIR" && pwd -P)")
   fi
   if [[ -n "${WORKBENCH_CACHE_DIR:-}" && -d "${WORKBENCH_CACHE_DIR}" ]]; then
     PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_CACHE_DIR" && pwd -P)")
+  fi
+  if [[ -n "${WORKBENCH_DATA_DIR:-}" && -d "${WORKBENCH_DATA_DIR}" ]]; then
+    PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_DATA_DIR" && pwd -P)")
   fi
 fi
 

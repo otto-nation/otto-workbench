@@ -1,5 +1,16 @@
 """Layer 2 — knowledge base store. May import: core."""
 
+from .backup import (
+    KEEP_DEFAULT,
+    STALE_BACKUP_DAYS,
+    backups_dir,
+    is_overdue,
+    latest,
+    prune,
+    restore,
+    snapshot,
+    snapshots,
+)
 from .create import (
     ArchiveResult,
     ArticleNotFoundError,
@@ -17,6 +28,7 @@ from .model import Article, Source, Wiki
 from .paths import (
     ARCHIVE_DIR,
     ARTICLES_DIR,
+    BACKUPS_DIRNAME,
     DEFAULT_SETTINGS,
     DEFAULT_WIKI_DIRNAME,
     DRAFTS_DIR,
@@ -29,6 +41,7 @@ from .paths import (
     SOURCES_FILE,
     find_wiki,
     is_wiki,
+    vault_subpath,
 )
 from .parsing import (
     HASH_PREFIX_LEN,
@@ -42,6 +55,16 @@ from .report import build_index, collect_lint, collect_signals, collect_status
 
 __all__ = [
     "ARCHIVE_DIR",
+    "BACKUPS_DIRNAME",
+    "KEEP_DEFAULT",
+    "STALE_BACKUP_DAYS",
+    "backups_dir",
+    "is_overdue",
+    "latest",
+    "prune",
+    "restore",
+    "snapshot",
+    "snapshots",
     "ARTICLES_DIR",
     "ArchiveResult",
     "Article",
@@ -79,4 +102,5 @@ __all__ = [
     "read_text",
     "slugify_title",
     "stage_source",
+    "vault_subpath",
 ]

@@ -229,6 +229,12 @@
       "properties": {
         "dir": {
           "type": "string"
+        },
+        "link": {
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
         }
       }
     }

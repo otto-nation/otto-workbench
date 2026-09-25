@@ -51,6 +51,7 @@ Claude hook loads on every prompt carries nothing a reader does not need.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 import subprocess
@@ -58,6 +59,7 @@ import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import get_type_hints
 
 from core import serde
 from core import timeouts
@@ -97,6 +99,30 @@ PROJECT_SCOPE = "project"
 # caller parsing that report needs the same word the report prints.
 DEFAULT_SCOPE = "default"
 
+
+@dataclass(frozen=True)
+class ScopeRule:
+    """The scopes one key may be written at, and why the others are refused.
+
+    Declared in a field's ``metadata`` so the rule sits on the field it governs:
+    a mapping kept beside the dataclass would be a second listing of the keys,
+    and a renamed field would leave its entry pointing at nothing with nothing
+    to say so. ``typing.Annotated`` would be the other obvious home and does not
+    work here — ``serde.classify`` reports an annotated hint as opaque, which
+    would drop the field out of the schema, the docs table, and reconstruction.
+
+    A field with no rule may be written anywhere, which is what every key did
+    before this existed. Silence is the permissive answer on purpose: opting in
+    cannot refuse a write that works today.
+
+    ``reason`` is printed after the refusal and completes the sentence "this
+    scope is wrong because …", so it says what goes wrong rather than repeating
+    which scopes are allowed.
+    """
+
+    allowed: frozenset[str]
+    reason: str
+
 # Where the generated schema lives, repo-relative, and the raw URL that serves
 # it. One spelling of the path: bin/local/generate-config-schema writes there,
 # the modeline below points there, ``workbench_config_write`` reads it out of
@@ -123,6 +149,8 @@ ISSUE_PROVIDER_KEY = "issues.provider"
 ISSUE_TEAM_KEY = "issues.team"
 ISSUE_LABELS_KEY = "issues.labels"
 WIKI_DIR_KEY = "wiki.dir"
+WIKI_ROOT_KEY = "wiki.root"
+WIKI_LINK_KEY = "wiki.link"
 # Read from bash rather than written: git/steps.sh asks for this one through
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
@@ -161,6 +189,16 @@ class ConfigValueError(ConfigError):
     restores what it can and omits what it cannot, so a value of the wrong type
     is a key that reads back as its default with nothing said. Refusing at write
     time is the only place the caller still knows what it asked for.
+    """
+
+
+class ConfigScopeError(ConfigError):
+    """A write named a real key and a file that must not hold it.
+
+    Deliberately not a ``ConfigKeyError``: that one means the key is not real,
+    and a caller seeing it points the user at the list of keys the config
+    accepts. Here the key is real and the *destination* is wrong, so that hint
+    would send someone looking for a spelling mistake they did not make.
     """
 
 
@@ -291,25 +329,70 @@ class GitHubConfig:
     it is off by default and turned on per machine, not per repo.
     """
 
-    ssh_over_443: bool = False
+    ssh_over_443: bool = field(
+        default=False,
+        metadata={"scope": ScopeRule(
+            frozenset({GLOBAL_SCOPE}),
+            "it describes the network this machine is on, never the repo, and a"
+            " repo's .workbench.yml is read by everyone who clones it",
+        )},
+    )
 
 
 @dataclass(frozen=True)
 class WikiConfig:
-    """Where this repo keeps its compiled knowledge base.
+    """Where this machine, and this repo, keep compiled knowledge bases.
 
-    A directory name, resolved relative to each level the search walks, not a
-    path: the point of the walk is that a session anywhere under the repo finds
-    the same base, and an absolute path would fix it to one starting directory.
+    Two placements, both first-class. ``dir`` is the in-tree one: a base
+    committed with the repo and shared with whoever clones it. ``root`` is the
+    machine-level vault: a base private to this machine, outside every repo, so
+    it survives ``wt remove`` and reads the same from every worktree.
+
+    ``dir`` is a directory name, resolved relative to each level the search
+    walks, not a path: the point of the walk is that a session anywhere under
+    the repo finds the same base, and an absolute path would fix it to one
+    starting directory.
 
     Configuration rather than detection because the name is the only part that
     cannot be discovered. ``SCHEMA.md`` alongside ``articles/`` and ``raw/``
     identifies the directory once found, so a repo keeping its base under
     ``docs/knowledge`` needs to say so exactly once, and every harness reads the
     same answer.
+
+    ``root`` is the vault directory itself, holding one ``<org>/<repo>/`` folder
+    per repo. Empty means this machine has no vault, not "the default vault
+    path" — a default here would make every ``wiki init`` pick the private
+    placement silently, and which of the two a base gets is the one thing about
+    it that cannot be inferred.
+
+    An absolute path rather than a name re-derived from the data root on every
+    read: a vault of authored content must not move because someone set
+    ``XDG_DATA_HOME``. The data root supplies the default when ``wiki init``
+    writes this key, and the key is the only answer afterwards.
+
+    ``root`` is writable at global scope only, and that is enforced rather than
+    left to convention: an absolute path on one machine means nothing on any
+    other, and a repo's ``.workbench.yml`` is read by everyone who clones it.
+
+    ``link`` asks for a symlink from the repo to its vault base, so ``cd wiki``
+    and an editor's file tree reach it. Browsing only — nothing resolves through
+    it, and a broken one costs nothing, which is what keeps it an affordance
+    rather than a second way to find a base. It is placed beside a bare repo's
+    worktrees rather than inside one: a per-worktree link needs a ``.gitignore``
+    entry in every repo, ``wt remove`` strands it, and committing one stores an
+    absolute machine-specific path as the blob.
     """
 
     dir: str = "wiki"
+    link: bool = False
+    root: str = field(
+        default="",
+        metadata={"scope": ScopeRule(
+            frozenset({GLOBAL_SCOPE}),
+            "it is an absolute path on this machine, which means nothing on any"
+            " other, and a repo's .workbench.yml is read by everyone who clones it",
+        )},
+    )
 
 
 @dataclass(frozen=True)
@@ -623,6 +706,34 @@ def schema_type(fragment: dict) -> str | None:
     """
     found = _object_branch(fragment).get("type")
     return found if isinstance(found, str) else None
+
+
+def scope_rules(cls=None, prefix: str = "") -> dict[str, ScopeRule]:
+    """Every dotted key that restricts its scopes, and the rule it declares.
+
+    One walk, two readers: the writer refuses a write against it, and the docs
+    table renders the same dict into the line naming the restricted keys. A
+    second descent would be a second answer to "which keys are restricted", and
+    the two would drift the first time a rule moved.
+
+    Walks through ``serde.classify`` for the reason ``_reference_rows`` does:
+    what a hint means has one owner, so this cannot disagree with the schema
+    about which keys exist. Enum-keyed sections are skipped — their keys carry a
+    placeholder segment and name no single field to hang a rule on.
+    """
+    cls = cls if cls is not None else WorkbenchConfig
+    rules: dict[str, ScopeRule] = {}
+    hints = get_type_hints(cls)
+    for f in dataclasses.fields(cls):
+        kind, _ = serde.classify(hints[f.name])
+        key = f"{prefix}{f.name}"
+        if kind is serde.HintKind.DATACLASS:
+            rules.update(scope_rules(hints[f.name], f"{key}."))
+            continue
+        rule = f.metadata.get("scope")
+        if isinstance(rule, ScopeRule):
+            rules[key] = rule
+    return rules
 
 
 def defines_key(key: str) -> bool:

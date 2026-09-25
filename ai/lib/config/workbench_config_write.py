@@ -33,11 +33,16 @@ from pathlib import Path
 from core import timeouts
 from config.workbench_config import (
     CONFIG_HEADER,
+    CONTAINER_SCOPE,
+    GLOBAL_SCOPE,
     PROJECT_CONFIG_NAME,
+    PROJECT_SCOPE,
     SCHEMA_PATH,
     ConfigError,
     ConfigKeyError,
+    ConfigScopeError,
     ConfigValueError,
+    ScopeRule,
     container_config_path,
     defines_key,
     global_config_path,
@@ -46,6 +51,7 @@ from config.workbench_config import (
     schema_accepts,
     schema_at,
     schema_type,
+    scope_rules,
     surface_schema,
     yaml_dump,
 )
@@ -234,7 +240,46 @@ def _yq_assignment(key: str, value: bool | int | float | str) -> str:
     return f".{key} = strenv(WB_CONFIG_VALUE)"
 
 
-def set_value(key: str, value: str, path: Path | None = None) -> None:
+@dataclass(frozen=True)
+class ScopeCheck:
+    """Whether ``key`` may be written at ``scope``, and the sentence if not."""
+
+    ok: bool
+    key: str
+    scope: str
+    rule: ScopeRule | None = None
+
+    @property
+    def reason(self) -> str:
+        if self.ok or self.rule is None:
+            return ""
+        allowed = ", ".join(sorted(self.rule.allowed))
+        return (
+            f"{self.key} may only be written at {allowed} scope, and this is"
+            f" {self.scope} scope — {self.rule.reason}"
+        )
+
+
+def check_scope(key: str, scope: str) -> ScopeCheck:
+    """Whether ``scope`` is a file ``key`` is allowed to live in.
+
+    Beside ``check_key`` rather than inside it because the two answer opposite
+    questions. Every ``KeyVerdict`` means the key is not real; this one fires
+    only when it is, and the destination is wrong. Folding them together would
+    make one result stand for both, and the caller that prints "here is the list
+    of keys the config accepts" would print it at someone whose spelling was
+    fine.
+
+    A key that declares nothing may be written anywhere, which is what every key
+    could do before this existed.
+    """
+    rule = scope_rules().get(key)
+    if rule is None or scope in rule.allowed:
+        return ScopeCheck(True, key, scope)
+    return ScopeCheck(False, key, scope, rule)
+
+
+def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBAL_SCOPE) -> None:
     """Write one dotted key into a config file, creating it if needed.
 
     Through ``yq -i`` so the write preserves the comments and ordering of a
@@ -253,12 +298,34 @@ def set_value(key: str, value: str, path: Path | None = None) -> None:
     replaces a scalar of the wrong type with the default, on the way back in.
     Without the checks the write reports success and the value is simply gone,
     which is a rule quietly not applying rather than anything anybody can see.
+
+    ``scope`` names which of the three files ``path`` is, and raises
+    ``ConfigScopeError`` for a key that may not live there. It is a separate
+    parameter rather than something derived from ``path`` because deriving it
+    needs a repo root this function is never given — so the two can be passed
+    disagreeing, and a wrong pair would check a project write against the rules
+    for a global one, which is the guard defeating itself rather than failing.
+    The pair is asserted instead: a caller naming its own ``path`` has to name
+    the matching ``scope``, and the global default only applies to the global
+    file.
     """
     if path is None:
         path = global_config_path()
+    if scope == GLOBAL_SCOPE and path != global_config_path():
+        raise ConfigError(
+            f"not writing {path}: a non-global file needs the scope that names it,"
+            f" and this write did not say which — use set_project_value or"
+            f" set_container_value",
+        )
     check = check_key(key)
     if not check.ok:
         raise ConfigKeyError(f"not writing {path}: {check.reason}")
+    scope_check = check_scope(key, scope)
+    if not scope_check.ok:
+        raise ConfigScopeError(
+            f"not writing {path}: {scope_check.reason}\n"
+            f"  write it with: otto-workbench config set {key} {value}"
+        )
     typed = coerce_value(key, value)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -290,7 +357,7 @@ def set_project_value(key: str, value: str, project_root: Path | str) -> None:
     ``adopt_project_review_yml`` already makes, and the caller treats a failed
     write as a non-event.
     """
-    set_value(key, value, project_config_path(project_root))
+    set_value(key, value, project_config_path(project_root), scope=PROJECT_SCOPE)
 
 
 def set_container_value(key: str, value: str, project_root: Path | str) -> None:
@@ -312,7 +379,7 @@ def set_container_value(key: str, value: str, project_root: Path | str) -> None:
             f"{project_root} is not a bare-repo worktree, so it has no "
             f"container to write {PROJECT_CONFIG_NAME} into",
         )
-    set_value(key, value, path)
+    set_value(key, value, path, scope=CONTAINER_SCOPE)
 
 
 def _set_value_with_pyyaml(

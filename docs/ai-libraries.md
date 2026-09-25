@@ -3680,8 +3680,8 @@ must wrap a child process rather than be claimed and returned from.
 
 Where the workbench keeps things.
 
-Three user-level roots — config, state, and cache — each resolving through the
-same chain:
+Four user-level roots — config, state, cache, and data — each resolving through
+the same chain:
 
     WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 
@@ -4465,6 +4465,31 @@ is least unlike it. An unnormalized count over a whole file answers the second
 question: it grows with the file's vocabulary, so the longest file wins nearly
 every comparison and no finding is ever reported as a gap.
 
+### wiki/backup.py
+
+Snapshots of a knowledge base, and getting one back.
+
+A knowledge base is the one tree the workbench holds that nothing can
+regenerate. Everything else it writes has a producer that can be run again; an
+article was typed by a person, and a stray delete ends it rather than delaying
+it. That is what the data root exists to say, and this is the part that does
+something about it.
+
+What this is honest about: a snapshot here protects against a stray delete, a
+compile that went wrong, and an editor that ate a file. It sits on the same disk
+as the base, so it does not protect against losing the disk. Off-machine
+durability is a backup tool's job, and `references/init.md` names one.
+
+The archives live under the *state* root rather than beside the base. They have
+a producer — this module — so they are exactly what state is for, and putting
+them under the data root would nest the copy inside the tree being copied.
+
+ceiling: whole-tree tarballs, with no deduplication between them. A knowledge
+base is prose measured in megabytes, so ten copies cost less than the machinery
+to avoid them would. Upgrade trigger: once a base is large enough that a
+snapshot is slow enough to notice, which is the point at which an incremental
+tool is worth reaching for instead of growing this one.
+
 ### wiki/create.py
 
 Making a knowledge base, and putting a source into one.
@@ -4745,3 +4770,51 @@ Usage:
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
+
+### cli/wiki.py
+
+Mechanical operations over a compiled knowledge base.
+
+Usage:
+  wiki init   [--vault|--in-repo|--wiki DIR] [--domain TEXT] [--audience TEXT] [DIR]
+  wiki path   [--wiki DIR] [DIR]
+  wiki status [--wiki DIR] [--json] [DIR]
+  wiki lint   [--wiki DIR] [--json] [--signals] [DIR]
+  wiki signals [--wiki DIR] [--json] [DIR]
+  wiki sources [--wiki DIR] [--new] [--json] [DIR]
+  wiki index  [--wiki DIR] [--check] [DIR]
+  wiki ingest --stage SRC [--type T] [--title TEXT] [--wiki DIR] [DIR]
+  wiki archive SLUG [--force] [--wiki DIR] [DIR]
+
+A knowledge base is a directory holding SCHEMA.md, an `articles/` tree of compiled
+markdown, and a `raw/` tree of the immutable sources they were compiled from.
+`_index.md`, `_sources.md`, and `_log.md` are the generated bookkeeping.
+
+It lives in one of two places, and `init` asks which when a repo has not said.
+In the repo, committed and shared with whoever clones it; or in this machine's
+vault, private, outside every worktree, and one folder per repo. The vault is
+found through `wiki.root` rather than by searching, so it reads the same from
+every worktree of a repo and survives the worktree being removed.
+
+This CLI owns only what is decidable without reading for meaning: link graphs,
+word counts, file hashes, dates. Compiling a source into an article, answering a
+question from the wiki, and judging whether two articles say the same thing are
+the skill's work, not this script's. The division matters most for `sources`:
+incremental compilation keys off the sha256 of each raw file, and asking a model
+to produce that hash yields a plausible-looking fabrication, so the hash is
+computed here or not at all.
+
+Exit codes:
+  0  success; for `lint` and `index --check`, also means no findings
+  1  a finding was reported (lint findings, stale index), or the operation failed
+  2  the knowledge base could not be located: no base found, or — from `init`
+     alone — no location chosen to create one at. Both mean the same thing to a
+     caller, that no base is resolvable here and a person has to say what to do.
+
+### cli/wiki_placement.py
+
+Where a repo's knowledge base lives, and where a new one should go.
+
+Resolution consults an explicit `--wiki`, then the machine's vault, then the
+in-tree walk. Placement is the other half of that question: `init` will not
+guess between a committed base and a private one.

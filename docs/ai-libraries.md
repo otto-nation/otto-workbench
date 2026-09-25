@@ -569,6 +569,13 @@ They differ only in what makes a file collectable — the run being over, age, o
 the PR being gone — and all of them read what a review directory holds from
 `review.paths.phase_artifacts` rather than naming files themselves.
 
+"The PR being gone" is two questions, because a self-review need not have a PR
+at all and most do not. A review carrying a PR number is asked about by number;
+one carrying only a head ref is asked whether every PR ever opened from that
+branch has ended. A branch with no PR history is never collected on that second
+answer — it is indistinguishable from a branch not yet pushed, which is the
+ordinary state of a self-review run before its PR exists.
+
 `pr gc` collects loose files at the reviews root once they are a week old and
 prunes review directories and run-target directories for merged and closed PRs
 (skipping its own target). The `state.json`, `run.lock`, and `trail.jsonl` the

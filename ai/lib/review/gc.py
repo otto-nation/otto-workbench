@@ -9,6 +9,13 @@ They differ only in what makes a file collectable — the run being over, age, o
 the PR being gone — and all of them read what a review directory holds from
 `review.paths.phase_artifacts` rather than naming files themselves.
 
+"The PR being gone" is two questions, because a self-review need not have a PR
+at all and most do not. A review carrying a PR number is asked about by number;
+one carrying only a head ref is asked whether every PR ever opened from that
+branch has ended. A branch with no PR history is never collected on that second
+answer — it is indistinguishable from a branch not yet pushed, which is the
+ordinary state of a self-review run before its PR exists.
+
 `pr gc` collects loose files at the reviews root once they are a week old and
 prunes review directories and run-target directories for merged and closed PRs
 (skipping its own target). The `state.json`, `run.lock`, and `trail.jsonl` the
@@ -63,11 +70,19 @@ from review.paths import (
     phase_artifacts,
 )
 from review.state import read_pipeline_status
+from review.types import ReviewMeta
 from core.trail import Trail
 
 GC_STALE_DAYS = 7
 GC_FAILED_STALE_DAYS = 30
 PRUNE_MAX_FILES = 10
+# A self-review is kept far longer than one attached to a PR. Its branch may sit
+# unpushed for weeks before a PR exists, and the age gate is the only thing
+# standing between "not yet pushed" and "deleted" for the window before the
+# branch has ever been seen by the remote. Thirty days is the same allowance a
+# failed pipeline already gets, for the same reason: the cost of keeping a dead
+# review is disk, and the cost of deleting a live one is the user's work.
+GC_UNLINKED_STALE_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -298,6 +313,17 @@ def prune_merged_reviews(
     asked about, so without the break a latched sweep would spend all ten slots
     on entries it never asked about — and since the walk is ordered, the next
     sweep would re-walk the same ten and never reach the tail.
+
+    ceiling: a review whose branch will never open a PR — a self-review of the
+    default branch is the usual one — is past its age gate, is asked about, and
+    is never collected, so it consumes one of the ten slots on every run for
+    good. The walk is sorted, so the same ones are always the ones asked. That
+    is a slow leak rather than a stall: the rest of the eligible entries are
+    collected on later runs and the leak grows only as such branches do.
+    Upgrade trigger: if the count of never-reclaimable entries approaches
+    `max_files`, so a sweep can spend every slot without collecting anything,
+    record the answer per directory and skip re-asking rather than raising the
+    cap — raising it spends more quota on the same dead questions.
     """
     reviews_dir = reviews_dir or workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
@@ -314,24 +340,126 @@ def prune_merged_reviews(
 
         # A stray file carries no meta, so this is also what keeps the loose
         # files at the root out of a sweep that only prunes whole directories.
+        # A review with neither a PR number nor a head ref cannot be asked about
+        # either way, and is kept.
         meta = entry.meta
-        if not meta.repo or not meta.pr_number:
+        if not meta.repo or not (meta.pr_number or meta.head_ref):
             continue
 
         checked += 1
 
         review_dir = entry.path
-        stale_days = GC_FAILED_STALE_DAYS if _has_pipeline_failure(review_dir) else GC_STALE_DAYS
-        if not _dir_is_all_stale(review_dir, stale_days):
+        if not _dir_is_all_stale(review_dir, _stale_days_for(review_dir, meta)):
             continue
 
-        closure = _pr_closure(meta.repo, meta.pr_number)
-        if closure:
-            shutil.rmtree(review_dir, ignore_errors=True)
-            log.info(f"Pruned {meta.repo}#{meta.pr_number} ({closure.state.value})")
-            pruned += 1
+        ended = _review_work_ended(meta)
+        if not ended:
+            continue
+
+        shutil.rmtree(review_dir, ignore_errors=True)
+        log.info(f"Pruned {ended}")
+        pruned += 1
 
     return PruneOutcome(pruned, cut_short=bool(gh_budget.latched(gh_budget.Resource.GRAPHQL)))
+
+
+def _stale_days_for(review_dir: Path, meta: ReviewMeta) -> int:
+    """How long *review_dir* is kept before its liveness is even asked about.
+
+    A failed pipeline is kept longest, because it is the one a person comes back
+    to read. A review with no PR number is kept next-longest: the gap between a
+    self-review and the PR it precedes is however long the branch takes, and
+    that window is the only thing separating "not pushed yet" from "deleted" for
+    a branch the forge has never heard of.
+    """
+    if _has_pipeline_failure(review_dir):
+        return GC_FAILED_STALE_DAYS
+    return GC_STALE_DAYS if meta.pr_number else GC_UNLINKED_STALE_DAYS
+
+
+def _gh_repo(meta: ReviewMeta) -> str:
+    """The ``--repo`` argument for *meta*, host-qualified when the sidecar knows one.
+
+    A bare ``OWNER/REPO`` resolves against gh's *default* host. On a machine
+    authenticated to an enterprise instance and to github.com, that reads the
+    wrong instance — a 404, or a same-named public repo, which is the answer
+    that matters here because this sweep deletes on what it is told. The
+    three-part ``HOST/OWNER/REPO`` form routes to the host named in it.
+
+    Empty host is public github.com, where the bare form is already correct, and
+    is what a sidecar written before the field existed means. A repo already
+    carrying a host keeps it rather than being qualified twice.
+    """
+    host = meta.host.strip().strip("/")
+    if not host or meta.repo.count("/") != 1:
+        return meta.repo
+    return f"{host}/{meta.repo}"
+
+
+def _review_work_ended(meta: ReviewMeta) -> str:
+    """Why this review's work is over, or "" while it may still be live.
+
+    One question with two ways of answering it, because a review sidecar carries
+    a PR number or it does not, and only the first can be asked about by number.
+    The string is the log line's subject, so the caller neither re-derives which
+    question was asked nor formats two messages.
+    """
+    repo = _gh_repo(meta)
+    if meta.pr_number:
+        closure = _pr_closure(repo, meta.pr_number)
+        return f"{meta.repo}#{meta.pr_number} ({closure.state.value})" if closure else ""
+    if _branch_is_finished(repo, meta.head_ref):
+        return f"{meta.repo} {meta.head_ref} (no open PR remains)"
+    return ""
+
+
+def _branch_is_finished(repo: str, head_ref: str) -> bool:
+    """Whether every PR ever opened from *head_ref* has ended.
+
+    The second liveness signal, for a review whose sidecar carries no PR number.
+    `_pr_closure` cannot answer for those: there is no number to ask about, so
+    the prune skips them and their directories are never reclaimed however long
+    the branch has been gone.
+
+    True only when the branch has PR history and all of it is terminal. Both
+    other answers are False, and the difference between them is the whole reason
+    this is not a remote-ref check:
+
+    - *No PR has ever been opened from this branch.* Indistinguishable, from the
+      outside, from a branch that has not been pushed yet — which is the normal
+      state of a self-review, whose entire purpose is to run before the PR
+      exists. Deleting on this answer would collect the reviews the feature is
+      for. `git ls-remote` returns the same empty result for both, which is why
+      the branch-no-longer-on-the-remote signal the target sweep's ceiling
+      suggests is not the one used here.
+    - *A PR is still open.* Live work.
+
+    Asked by head ref rather than by looking for the branch, because a merged
+    branch is usually deleted and a deleted branch has no ref to find, while its
+    PR remains addressable by the ref it was opened from. `--state all` is what
+    makes that true — the default lists open PRs only, and would report every
+    merged branch as having no history at all.
+
+    A failure to ask is False, matching `_pr_closure`: keeping a dead review
+    costs disk, and gc that deletes on a network blip is worse than gc that runs
+    again tomorrow.
+    """
+    r = gh_client.run(
+        "pr", "list", "--repo", repo, "--head", head_ref,
+        "--state", "all", "--json", "state",
+    )
+    if not r.ok:
+        log.warn(f"GC: could not ask about {repo} {head_ref} — leaving its review in place")
+        return False
+    try:
+        rows = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        log.warn(f"GC: could not parse gh's response for {repo} {head_ref} — leaving its review in place")
+        return False
+    if not rows:
+        return False
+    states = [PRCloseState.parse(row.get("state")) for row in rows]
+    return all(state is not None and state.is_terminal for state in states)
 
 
 def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
@@ -557,8 +685,13 @@ def prune_merged_targets(targets_dir: Path | None = None,
         # ceiling: a target for a branch that never opens a PR is never
         # reclaimed, because the only liveness signal this sweep has is the
         # PR's close state. Upgrade trigger: if these accumulate enough to
-        # matter, add a second signal (the branch no longer existing on the
-        # remote) rather than an age cutoff.
+        # matter, give this sweep the second signal the reviews sweep now has
+        # — `_branch_is_finished`, which asks whether every PR opened from the
+        # branch has ended — rather than an age cutoff.
+        #
+        # Not the branch-no-longer-on-the-remote check this comment used to
+        # suggest: a branch that was never pushed and a branch that was merged
+        # and deleted both have no remote ref, and the first is live work.
         if not state.identity.pr_number or not state.identity.repo:
             continue
         checked += 1

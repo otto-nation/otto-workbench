@@ -35,7 +35,6 @@ from core import log
 from core import proc
 from core import run_lock
 from core import workbench_paths
-from core.tool_parser import handle_value_flags
 from core.trail import Trail, add_trail_args
 from pr import context as pr_context
 from pr import state as pr_state
@@ -106,7 +105,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-V", "--version", action="store_true")
     parser.add_argument("args", nargs="*")
     add_trail_args(parser)
-    handle_value_flags(parser)
     return parser
 
 

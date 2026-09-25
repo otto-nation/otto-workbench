@@ -1882,6 +1882,16 @@ def test_max_parallel_defaults_to_derived_capacity(cr):
     assert args.max_parallel is None
 
 
+def test_build_parser_does_not_read_the_process_argv(cr, monkeypatch):
+    """Building a parser must not be able to end the process that asked for it.
+
+    `pr` calls this to read flag arity while classifying its own argv, so a
+    factory that inspects `sys.argv` and exits would take `pr` with it.
+    """
+    monkeypatch.setattr(sys, "argv", ["claude-review", "--value-flags", "42"])
+    assert cr.build_parser().parse_args(["42"]).pr is None
+
+
 def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None:
     (review_dir / "pipeline.json").write_text(json.dumps({
         "head_sha": head_sha, "group_names": ["g1", "g2"],

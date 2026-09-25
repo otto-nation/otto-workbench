@@ -37,7 +37,6 @@ import sys
 from core import log
 from core import publishing
 from core import run_lock
-from core.tool_parser import handle_value_flags
 from core.trail import Trail, add_trail_args
 from fix import comments as fix_comments
 from gh.pr_reads import fetch_pr_data
@@ -345,7 +344,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    handle_value_flags(parser)
     args = parser.parse_args(argv)
 
     # Before --fix widens itself into --triage, so the conflict named is the one

@@ -646,6 +646,19 @@ A state file written before the stamps existed reads as "nothing seen" and
 re-reports one round's comments. That is the deliberate direction: a false
 unseen is noise once, a false seen loses a reviewer's words for good.
 
+The same edit reopens a *thread*. A thread whose last comment is ours is
+`addressed`, which `settlement_for` grades `settled_elsewhere` — so a reviewer
+who edits their comment to add a demand after we replied had it recorded as
+answered and closed out, not merely missed. A thread anyone other than us
+rewrote after our last word is `ambiguous` instead, which carries no settlement
+and is included in triage.
+
+The comparison is against the time we last spoke, so a reviewer who tidied
+their comment *before* we answered leaves the thread addressed — we answered
+the text as it now stands. Our own later edit does not reopen anything, and a
+resolved thread stays resolved: the button is the reviewer's own word on how it
+ended.
+
 **`pr fix` only trusts a clean verdict about the commit in hand:**
 
 `pr fix` decides whether to run each pass by reading the same cached state

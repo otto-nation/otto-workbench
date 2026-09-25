@@ -107,6 +107,39 @@ def last_comment_is_mine(comments: list[dict], my_login: str) -> bool:
     return last_author.lower() == my_login.lower()
 
 
+def _rewritten_since_my_reply(comments: list[dict], my_login: str) -> bool:
+    """Whether anyone edited their comment after our last word on the thread.
+
+    An edit posts nothing and moves nothing, so a thread whose reviewer rewrote
+    their comment to add a demand still ends with our reply and still reads as
+    ADDRESSED — and an ADDRESSED thread is grade SETTLED_ELSEWHERE, closed out
+    and never triaged. The added demand is not merely missed, it is recorded as
+    answered.
+
+    Compared against the time we last spoke, not against the whole thread: a
+    reviewer who fixed a typo in their comment *before* we answered was already
+    answered, and reopening that would reopen every thread with a tidied
+    comment in it.
+
+    A comment with no stamp on either side cannot be placed, so it does not
+    count as a rewrite — the same direction the rest of this change takes, since
+    a false reopen is noise and a false close loses the demand.
+    """
+    my_login_lower = my_login.lower()
+    my_last = max(
+        (c.get("createdAt", "") or "" for c in comments
+         if (c.get("author") or {}).get("login", "").lower() == my_login_lower),
+        default="",
+    )
+    if not my_last:
+        return False
+    return any(
+        (c.get("lastEditedAt") or "") > my_last
+        for c in comments
+        if (c.get("author") or {}).get("login", "").lower() != my_login_lower
+    )
+
+
 def compute_thread_state(
     comments: list[dict],
     is_resolved: bool,
@@ -115,6 +148,10 @@ def compute_thread_state(
     """Compute the lifecycle state of a thread from its comments.
 
     Returns one of: new, addressed, verified, contested, resolved, ambiguous.
+
+    An unresolved thread someone rewrote after our reply is AMBIGUOUS rather
+    than ADDRESSED: our answer is older than the text it answers, so whether it
+    still answers it is exactly the question a person has to look at.
     """
     if is_resolved:
         return ThreadState.RESOLVED
@@ -134,6 +171,8 @@ def compute_thread_state(
         return ThreadState.NEW
 
     if last_comment_is_mine(comments, my_login):
+        if _rewritten_since_my_reply(comments, my_login):
+            return ThreadState.AMBIGUOUS
         return ThreadState.ADDRESSED
 
     # Reviewer replied after me — classify the reply

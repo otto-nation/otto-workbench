@@ -363,6 +363,7 @@ _THREAD_NODE_FIELDS = f"""
               author {{ login }}
               body
               createdAt
+              lastEditedAt
             }}
           }}
 """
@@ -407,6 +408,7 @@ query($threadId: ID!, $endCursor: String) {{
           author {{ login }}
           body
           createdAt
+          lastEditedAt
         }}
       }}
     }}

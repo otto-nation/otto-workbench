@@ -824,3 +824,81 @@ class TestRestEditStamp:
             "updated_at": "2026-01-01T00:00:00Z",
         })
         assert graphql_stamp == rest_stamp
+
+
+# ── A demand added by editing a comment is not "addressed" ──────────────────
+#
+# An edit posts nothing and moves nothing, so a thread whose reviewer rewrote
+# their comment after our reply still ended with us and still read as
+# ADDRESSED. `settlement_for` grades an ADDRESSED thread SETTLED_ELSEWHERE, so
+# the added demand was not merely missed — it was recorded as answered and
+# closed out.
+
+
+class TestRewrittenAfterOurReply:
+
+    @staticmethod
+    def _thread(reviewer_edit=None, my_edit=None) -> list[dict]:
+        return [
+            {"author": {"login": "alice"}, "body": "nit: rename this",
+             "createdAt": "2026-01-01T00:00:00Z", "lastEditedAt": reviewer_edit},
+            {"author": {"login": "me"}, "body": "Renamed in abc123",
+             "createdAt": "2026-01-02T00:00:00Z", "lastEditedAt": my_edit},
+        ]
+
+    def test_an_edit_after_our_reply_reopens_the_thread(self):
+        """The defect: the reviewer's new demand used to read as answered."""
+        state = compute_thread_state(
+            self._thread(reviewer_edit="2026-01-03T00:00:00Z"), False, "me")
+        assert state is ThreadState.AMBIGUOUS
+
+    # passes-at-base: the case the fix must NOT catch — we answered the current text, and reopening it would reopen every thread with a tidied comment
+    def test_an_edit_before_our_reply_stays_addressed(self):
+        """We answered the text as it now stands, so nothing is owed."""
+        state = compute_thread_state(
+            self._thread(reviewer_edit="2026-01-01T12:00:00Z"), False, "me")
+        assert state is ThreadState.ADDRESSED
+
+    # passes-at-base: the ordinary thread, held unchanged by the fix
+    def test_a_thread_nobody_edited_stays_addressed(self):
+        assert compute_thread_state(self._thread(), False, "me") is ThreadState.ADDRESSED
+
+    # passes-at-base: our own edit is not a reviewer demand; holds the author filter in _rewritten_since_my_reply
+    def test_editing_our_own_reply_does_not_reopen_the_thread(self):
+        """Our own later edit is us tidying our answer, not a new demand."""
+        state = compute_thread_state(
+            self._thread(my_edit="2026-01-05T00:00:00Z"), False, "me")
+        assert state is ThreadState.ADDRESSED
+
+    # passes-at-base: RESOLVED is answered before the edit check runs, and must stay that way
+    def test_resolution_still_outranks_a_later_edit(self):
+        """The button is the reviewer's own word on how the thread ended."""
+        state = compute_thread_state(
+            self._thread(reviewer_edit="2026-01-09T00:00:00Z"), True, "me")
+        assert state is ThreadState.RESOLVED
+
+    # passes-at-base: NEW already says everything is owed; holds the check from masking it
+    def test_a_thread_we_never_answered_is_new_not_reopened(self):
+        """NEW already says everything is owed; the edit check must not mask it."""
+        thread = [{"author": {"login": "alice"}, "body": "nit",
+                   "createdAt": "2026-01-01T00:00:00Z",
+                   "lastEditedAt": "2026-01-03T00:00:00Z"}]
+        assert compute_thread_state(thread, False, "me") is ThreadState.NEW
+
+    # passes-at-base: a payload with no stamps must behave exactly as before the field was fetched
+    def test_an_unstamped_thread_is_not_treated_as_rewritten(self):
+        """A payload with no edit stamps at all must behave as it always did."""
+        thread = [
+            {"author": {"login": "alice"}, "body": "nit"},
+            {"author": {"login": "me"}, "body": "done"},
+        ]
+        assert compute_thread_state(thread, False, "me") is ThreadState.ADDRESSED
+
+    # passes-at-base: holds the check under last_comment_is_mine, where a real reviewer reply still classifies normally
+    def test_a_reviewer_reply_after_ours_is_classified_not_reopened(self):
+        """The edit check sits under `last_comment_is_mine` and must not
+        intercept a thread where the reviewer actually spoke last."""
+        thread = self._thread(reviewer_edit="2026-01-03T00:00:00Z")
+        thread.append({"author": {"login": "alice"}, "body": "thanks, looks good",
+                       "createdAt": "2026-01-04T00:00:00Z"})
+        assert compute_thread_state(thread, False, "me") is ThreadState.VERIFIED

@@ -439,14 +439,18 @@ def merge_readiness(state: PRState) -> Readiness:
         answer = domain.readiness()
         blockers.extend(answer.blockers)
         unchecked.extend(answer.unchecked)
-        if type(domain).readiness is Domain.readiness:
-            # A domain that does not answer the merge question at all — a
-            # description, a supersession verdict, a rebase record. Whether its
-            # snapshot is current has no bearing on whether the PR may merge,
-            # and blocking on one would make the line permanently red on any
-            # branch old enough to have a stale `pr describe` behind it. A
-            # readiness line that always says blocked is one nobody reads,
-            # which would cost the CI and review signal this exists to sharpen.
+        if type(domain).readiness is Domain.readiness or not domain.ages:
+            # Two kinds of domain are judged on content alone. One does not
+            # answer the merge question at all — a description, a supersession
+            # verdict, a rebase record — so whether its snapshot is current has
+            # no bearing on merging, and blocking on one would leave the line
+            # permanently red on any branch old enough to carry a stale `pr
+            # describe`. The other answers it from bookkeeping rather than from
+            # a measurement (`Domain.ages`): a delivered closeout does not
+            # become undelivered by sitting there, and re-running the pass
+            # could not refresh it. A readiness line that is always blocked is
+            # one nobody reads, which would cost the CI and review signal this
+            # exists to sharpen.
             continue
         if answer.blockers or answer.unchecked:
             continue
@@ -470,7 +474,7 @@ def render_merge_readiness(state: PRState) -> str:
 # When a snapshot stops being reported bare, and when it is called stale. The
 # dashboard is a read of a cache, so every line on it is an answer from
 # whenever its subcommand last ran — an hour-old CI verdict is worth dating and
-# a week-old one is worth refusing to present as current.
+# a day-old one is worth refusing to present as current.
 _AGE_VISIBLE = timedelta(hours=1)
 _AGE_STALE = timedelta(hours=24)
 

@@ -645,6 +645,14 @@ A domain that found something wrong keeps its blocker either way. An old
 failure is still a reason not to merge, and downgrading it to "unchecked" would
 make an unvouchable domain quieter than a current one.
 
+Two kinds of domain are judged on content alone. One has no say in merging at
+all — a description, a rebase record, a supersession verdict — so the age of
+its snapshot is not a reason to block. The other answers from bookkeeping
+rather than from a measurement: `pr fix`'s closeout debt is recorded in the
+state file itself, so it is as true a week later as when written and
+re-running the pass could not refresh it. An undelivered closeout still blocks
+at any age; a delivered one never starts to.
+
 **Push status in `pr status`:**
 
 `pr status` detects unpushed commits by comparing local HEAD against `origin/<branch>`.

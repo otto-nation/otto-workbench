@@ -156,13 +156,17 @@ def _worktree_head(wt: Path, fallback: str) -> str:
     from whenever state was last written, so a commit made since leaves every
     domain being compared against the very SHA it was measured at.
 
-    Falls back rather than raising. The call shells out with `cwd=` set, and a
-    worktree removed mid-run raises instead of returning "" — neither a gate
-    deciding what to run nor a dashboard read should be what ends the command.
+    Falls back rather than raising, and that covers both ways the call can
+    fail. It shells out with `cwd=` set, so a removed worktree or a missing git
+    raises `OSError` instead of returning ""; it also carries a timeout, and
+    `TimeoutExpired` is a `SubprocessError` rather than an `OSError`, so
+    catching the latter alone would still let a hung `git rev-parse` take down
+    a read-only `pr status`. Neither a gate deciding what to run nor a
+    dashboard read should be what ends the command.
     """
     try:
         return pr_context.head_sha(str(wt)) or fallback
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return fallback
 
 

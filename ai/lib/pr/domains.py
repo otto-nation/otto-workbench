@@ -79,6 +79,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import Enum, StrEnum
 from pathlib import Path
+from typing import ClassVar
 
 # get_type_hints(CIDomain) resolves its `runs` annotation against the namespace
 # of the module CIDomain is defined in, so RunState must be bound here;
@@ -142,6 +143,19 @@ class Domain:
     domain that never fixes anything carries an empty record, which renders
     nothing and blocks nothing.
     """
+
+    # Whether this domain's answer can go out of date, which is a question
+    # about what the answer *is* rather than about how old it is.
+    #
+    # Most domains report a measurement of something outside the state file —
+    # a CI run, a review of the tree, a fetch of the threads — and a
+    # measurement taken long enough ago stops describing the world. Some
+    # report bookkeeping the file itself owns: `FixSummary` answers "does this
+    # record show an undelivered closeout", which is as true a week later as
+    # the minute it was written, and which re-running the pass cannot change.
+    # Ageing the second kind blocks a PR on a delivered closeout, so a domain
+    # that reports bookkeeping turns this off and is judged on content alone.
+    ages: ClassVar[bool] = True
 
     updated_at: str = ""
     fix: FixRecord = field(default_factory=FixRecord)

@@ -2180,3 +2180,36 @@ def test_a_stale_merge_relevant_domain_still_blocks_alongside_an_inert_one():
     unchecked = merge_readiness(state).unchecked
     assert any(u.startswith("CI (last checked") for u in unchecked)
     assert not any("describe" in u for u in unchecked)
+
+
+def test_a_delivered_closeout_does_not_go_stale():
+    """`FixSummary` answers from bookkeeping, not from a measurement.
+
+    Its readiness reads the record this very file holds, so it is as true a
+    week later as when written, and re-running the pass could not refresh it.
+    Ageing it blocks a PR whose closeout was delivered yesterday.
+    """
+    state = _clean_but_aged(minutes=2)
+    apply(state, FixSummary(updated_at=_ago(hours=30)))
+    assert merge_readiness(state).render() == "**Merge readiness**: ready"
+
+
+def test_an_undelivered_closeout_blocks_however_old_it_is():
+    """Exempting it from the clock must not exempt it from its own verdict."""
+    state = _clean_but_aged(minutes=2)
+    apply(state, FixSummary(summary_deferred=True, updated_at=_ago(hours=30)))
+    assert "closeout not delivered" in merge_readiness(state).render()
+
+
+@pytest.mark.parametrize("name,cls", sorted(_domains().items()))
+def test_every_domain_declares_whether_its_answer_can_go_stale(name, cls):
+    """`ages` is read off the class, so a new domain inherits the default.
+
+    True is the safe default \u2014 a domain reporting a measurement it forgot to
+    mark is aged, which is noisy rather than unsound. This pins that the flag
+    is a real class attribute on every domain rather than a field that
+    serialises, which would put it in the state file.
+    """
+    import dataclasses
+    assert isinstance(cls.ages, bool)
+    assert "ages" not in {f.name for f in dataclasses.fields(cls)}

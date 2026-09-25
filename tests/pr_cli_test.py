@@ -2155,3 +2155,20 @@ def test_cmd_status_dumps_the_head_it_compared_against(observed, mock_load, caps
         pr_cli.cmd_status([], make_ctx(worktree_root=Path("/wt")))
 
     assert json.loads(capsys.readouterr().out)["identity"]["head_sha"] == "B"
+
+
+@pytest.mark.parametrize("boom", [
+    OSError("no such directory"),
+    subprocess.TimeoutExpired(cmd="git rev-parse HEAD", timeout=10.0),
+])
+def test_the_worktree_head_read_never_ends_the_command(boom):
+    """Both ways the shell-out can fail, since they are not one exception.
+
+    `pr_context.head_sha` runs git with a cwd and a timeout. A removed
+    worktree or a missing git binary raises OSError; a hung rev-parse raises
+    TimeoutExpired, which is a SubprocessError and NOT an OSError. Catching
+    only the first would let a hung git take down a read-only `pr status`.
+    """
+    from pathlib import Path as _Path
+    with patch("cli.pr_commands.pr_context.head_sha", side_effect=boom):
+        assert pr_commands._worktree_head(_Path("/wt"), "ctxsha") == "ctxsha"

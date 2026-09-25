@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# PreToolUse guard for the Edit and Write tools.
+#
+# Reads a hook payload on stdin and exits 2 with an explanation when the edit
+# would land on main/master (unless the path is gitignored). Exits 0 otherwise.
+#
+# Usage: claude-edit-guard        (stdin: {"tool_input":{"file_path":"..."}})
+
+set -e
+
+usage() {
+  cat <<EOF
+Usage: claude-edit-guard
+
+PreToolUse hook for the Edit and Write tools. Reads a hook payload on stdin
+and exits 2 when the target file is in a main or master worktree and is not
+gitignored.
+
+The rule is documented for humans in ai/guidelines/rules/git-operations.md
+§ Worktree-First Development.
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+# block MESSAGE — refuse the tool call. Exit 2 is the only status Claude Code
+# treats as blocking, and stderr is the only stream it feeds back.
+block() {
+  echo "BLOCKED: $1" >&2
+  exit 2
+}
+
+# Fail open: a malformed payload must not block every Edit/Write.
+file_path=$(jq -r '.tool_input.file_path // empty' 2>/dev/null) || exit 0
+[[ -z "$file_path" ]] && exit 0
+
+parent=$(dirname "$file_path")
+repo_dir=$(cd "$parent" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || exit 0
+branch=$(git -C "$repo_dir" branch --show-current 2>/dev/null) || exit 0
+[[ -z "$branch" ]] && exit 0
+
+if [[ "$branch" == "main" || "$branch" == "master" ]]; then
+  git -C "$repo_dir" check-ignore -q "$file_path" 2>/dev/null && exit 0
+  block "Cannot edit files on $branch. Create a worktree first: wt switch -c <branch>"
+fi

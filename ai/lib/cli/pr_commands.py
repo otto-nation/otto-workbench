@@ -127,6 +127,26 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return 0
 
 
+def _review_subject_sha(wt: Path, ctx_head_sha: str) -> str:
+    """The commit a spawned `claude-review --self` would actually read.
+
+    Not always `ctx.head_sha`. Under `--pr` that is the PR's *remote* head,
+    while `--self` reviews the worktree — see `review.pipeline._with_local_diff`,
+    which takes the SHA and the changed-file list from git for exactly this
+    reason. Asking the gate about the remote head after a clean review followed
+    by unpushed commits skips the review of the local tree nobody has read,
+    which is the silent miss this gate exists to prevent.
+
+    Falls back to the context's SHA when the checkout cannot be read. The call
+    shells out, and a worktree removed mid-run raises rather than returning ""
+    — a gate deciding what to run must not be the thing that ends the run.
+    """
+    try:
+        return pr_context.head_sha(str(wt)) or ctx_head_sha
+    except OSError:
+        return ctx_head_sha
+
+
 def _worth_running(domain: pr_domains.Domain, head_sha: str, *,
                    has_work: bool, name: str) -> bool:
     """Whether to run a pass, given what the cache last said about `domain`.
@@ -172,8 +192,18 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
 
     exit_code = 0
 
+    # Each pass is asked about the commit *its own child* will act on, and the
+    # two are not the same under `--pr`. `ctx.head_sha` is then the PR's remote
+    # head, which is the right question for CI — GitHub's runs are about what
+    # was pushed — and the wrong one for the review, which `--self` runs
+    # against the worktree (`review.pipeline._with_local_diff`). Asking the
+    # review about the remote head skips it after a clean review followed by
+    # unpushed commits: the local tree nobody has read is the one it declines
+    # to look at, which is the silent miss this gate exists to prevent.
+    review_sha = _review_subject_sha(wt, ctx.head_sha)
+
     review_findings = sum(state.review.finding_counts.values())
-    if _worth_running(state.review, ctx.head_sha,
+    if _worth_running(state.review, review_sha,
                       has_work=review_findings > 0, name="Review"):
         log.info(f"Fixing {review_findings} review finding(s)..." if review_findings
                  else "Reviewing...")

@@ -36,13 +36,27 @@ from pr import state as pr_state  # noqa: E402
 from core import run_lock  # noqa: E402
 from core import timeouts  # noqa: E402
 from core import tool_parser  # noqa: E402
+from cli import pr_commands  # noqa: E402
 from review import gc as review_gc  # noqa: E402
 
 
-def _cmd_fix(argv, ctx, **kw):
-    """Call cmd_fix with the entry point's BIN_DIR, as `_dispatch` does."""
+def _cmd_fix(argv, ctx, *, worktree_head=None, **kw):
+    """Call cmd_fix with the entry point's BIN_DIR, as `_dispatch` does.
+
+    `worktree_head` pins what the review gate believes the checkout's HEAD is.
+    It has to be injected rather than left to run: `cmd_fix` asks git for it
+    (the review child reads the worktree, not the PR's remote head), the tests
+    point `worktree_root` at a path that does not exist, and the ones that
+    patch `cli.pr_commands.subprocess.run` patch the attribute on the *shared*
+    `subprocess` module — so the real call would come back a MagicMock rather
+    than a SHA. Defaults to the context's own head, which is what a checkout
+    sitting on the reviewed commit would answer.
+    """
     kw.setdefault("bin_dir", BIN_DIR)
-    return pr_cli.cmd_fix(argv, ctx, **kw)
+    with patch("cli.pr_commands._review_subject_sha",
+               return_value=worktree_head if worktree_head is not None
+               else ctx.head_sha):
+        return pr_cli.cmd_fix(argv, ctx, **kw)
 
 
 # Shared fixture values for the positional-vs-flag-value tests below.
@@ -671,7 +685,6 @@ def test_cmd_fix_prefers_the_target_the_operator_named(mock_load, mock_run):
 
 @patch("cli.pr_commands.subprocess.run")
 @patch("cli.pr_commands.pr_state.load_state")
-# passes-at-base: the saving the gate preserves — a clean verdict for this very commit skipped the pass before the change and must still skip it
 def test_cmd_fix_skips_review_when_no_findings_on_this_commit(mock_load, mock_run):
     """A clean verdict suppresses the pass only when it was about this commit."""
     from pr import state as pr_state
@@ -781,7 +794,6 @@ def test_cmd_fix_checks_ci_again_when_the_green_run_was_another_commit(
 
 @patch("cli.pr_commands.subprocess.run")
 @patch("cli.pr_commands.pr_state.load_state")
-# passes-at-base: holds the gate from over-correcting into spawning always — the skip existed before and must survive
 def test_cmd_fix_trusts_a_green_ci_run_for_this_commit(mock_load, mock_run):
     """The gate must still save the spawn it is there to save."""
     from pr import state as pr_state
@@ -803,7 +815,6 @@ def test_cmd_fix_trusts_a_green_ci_run_for_this_commit(mock_load, mock_run):
 
 @patch("cli.pr_commands.subprocess.run")
 @patch("cli.pr_commands.pr_state.load_state")
-# passes-at-base: cached work already spawned before the change; this holds the commit check from suppressing a spawn that used to happen
 def test_cmd_fix_still_spawns_ci_on_a_stale_red_cache(mock_load, mock_run):
     """Cached work outranks the commit check: the child re-fetches either way."""
     from pr import state as pr_state
@@ -2005,3 +2016,64 @@ def test_cmd_fix_still_withholds_its_other_flags_from_describe(tmp_path):
     cmd = _describe_cmd(["--post", "--fix", "--wait"], tmp_path)
     assert "--fix" not in cmd
     assert "--wait" not in cmd
+
+
+# ── The review gate asks about the commit the review will read ──────────────
+#
+# `ctx.head_sha` is the PR's *remote* head under `--pr`, while `claude-review
+# --self` reads the worktree (`review.pipeline._with_local_diff`). Asking the
+# review gate about the remote head skipped the review after a clean pass
+# followed by unpushed commits — the local tree nobody had read was the one it
+# declined to look at.
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_reviews_unpushed_local_commits(mock_load, mock_run):
+    """A clean verdict for the remote head says nothing about local work."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="remote",
+                               worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="remote", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+
+    # `--pr` resolves ctx.head_sha to the remote head; the checkout has moved on.
+    _cmd_fix([], make_ctx(head_sha="remote"), worktree_head="local")
+
+    assert _calls_containing(mock_run, "claude-review")
+
+
+@patch("cli.pr_commands.subprocess.run")
+@patch("cli.pr_commands.pr_state.load_state")
+def test_cmd_fix_still_skips_when_the_checkout_is_on_the_reviewed_commit(
+    mock_load, mock_run,
+):
+    """The saving survives: nothing to review when the worktree matches."""
+    from pr import state as pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="remote",
+                               worktree_root="/wt")
+    pr_state.apply(state, pr_domains.ReviewSummary(
+        finding_counts={}, verdict=pr_domains.ReviewVerdict.APPROVE.value,
+        head_sha="local", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+
+    _cmd_fix([], make_ctx(head_sha="remote"), worktree_head="local")
+
+    assert not _calls_containing(mock_run, "claude-review")
+
+
+def test_the_review_subject_falls_back_when_the_checkout_is_gone():
+    """A gate deciding what to run must not be what ends the run.
+
+    `pr_context.head_sha` shells out with `cwd=` set, which raises rather than
+    returning "" when the directory is not there.
+    """
+    from pathlib import Path as _Path
+    assert pr_commands._review_subject_sha(
+        _Path("/definitely/not/here"), "ctxsha") == "ctxsha"

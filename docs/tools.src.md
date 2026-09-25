@@ -568,6 +568,13 @@ subject before acting. Skipping a necessary one is silent and permanent:
 nothing downstream looks again, and `pr fix` reports success having done
 nothing. So the gate errs toward running whenever it cannot place the verdict.
 
+Each pass is asked about the commit *its own child* will act on, and under
+`--pr` those differ. `ctx.head_sha` is then the PR's remote head — the right
+question for CI, whose runs are about what was pushed, and the wrong one for
+the review, which `--self` runs against the worktree. Asking the review about
+the remote head skips it after a clean review followed by unpushed commits,
+leaving the local tree nobody has read unexamined.
+
 The comment hint is not gated this way. It never spawns the comment pass, and
 `CommentsSummary` records no commit, so a stale count there costs a misleading
 line rather than skipped work.

@@ -53,7 +53,7 @@ def _cmd_fix(argv, ctx, *, worktree_head=None, **kw):
     sitting on the reviewed commit would answer.
     """
     kw.setdefault("bin_dir", BIN_DIR)
-    with patch("cli.pr_commands._review_subject_sha",
+    with patch("cli.pr_commands._worktree_head",
                return_value=worktree_head if worktree_head is not None
                else ctx.head_sha):
         return pr_cli.cmd_fix(argv, ctx, **kw)
@@ -2075,5 +2075,83 @@ def test_the_review_subject_falls_back_when_the_checkout_is_gone():
     returning "" when the directory is not there.
     """
     from pathlib import Path as _Path
-    assert pr_commands._review_subject_sha(
+    assert pr_commands._worktree_head(
         _Path("/definitely/not/here"), "ctxsha") == "ctxsha"
+
+
+# ── `pr status` compares against the checkout, not the last write ───────────
+#
+# `identity.head_sha` is from whenever state was last written. A commit made
+# since leaves it naming the very SHA the domains were measured at, so the
+# supersession check would be asking a stale value about itself and a verdict
+# about the previous commit would render as current.
+
+
+@patch("cli.pr_commands.pr_state.load_state")
+@patch("cli.pr_commands.pr_domains.PushDomain.observed")
+def test_cmd_status_marks_a_verdict_left_behind_by_a_local_commit(
+    observed, mock_load, capsys,
+):
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("acme/w", "feat/x", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    ci = pr_domains.CIDomain(conclusion="success", failure_count=0,
+                             updated_at=pr_state.now_iso(), latest_run_id=1)
+    ci.runs[1] = RunState(run_id=1, run_number=1, head_sha="A",
+                          status="completed", conclusion="success",
+                          fetched_at="t", failures={})
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    observed.return_value = pr_domains.PushDomain(ahead=1,
+                                                  updated_at=pr_state.now_iso())
+
+    # The checkout has moved on since `pr ci` wrote the state.
+    with patch("cli.pr_commands._worktree_head", return_value="B"):
+        pr_cli.cmd_status([], make_ctx(worktree_root=Path("/wt")))
+
+    err = capsys.readouterr().err
+    assert "[STALE — checked another commit]" in err
+
+
+@patch("cli.pr_commands.pr_state.load_state")
+@patch("cli.pr_commands.pr_domains.PushDomain.observed")
+def test_cmd_status_leaves_a_current_verdict_unmarked(observed, mock_load, capsys):
+    """The checkout is on the commit the run was about, so nothing is stale."""
+    from pr import state as pr_state
+    from pr.ci_failures import RunState
+    state = pr_state.new_state("acme/w", "feat/x", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    ci = pr_domains.CIDomain(conclusion="success", failure_count=0,
+                             updated_at=pr_state.now_iso(), latest_run_id=1)
+    ci.runs[1] = RunState(run_id=1, run_number=1, head_sha="A",
+                          status="completed", conclusion="success",
+                          fetched_at="t", failures={})
+    pr_state.apply(state, ci)
+    mock_load.return_value = state
+    observed.return_value = pr_domains.PushDomain(ahead=0,
+                                                  updated_at=pr_state.now_iso())
+
+    with patch("cli.pr_commands._worktree_head", return_value="A"):
+        pr_cli.cmd_status([], make_ctx(worktree_root=Path("/wt")))
+
+    assert "STALE" not in capsys.readouterr().err
+
+
+@patch("cli.pr_commands.pr_state.load_state")
+@patch("cli.pr_commands.pr_domains.PushDomain.observed")
+def test_cmd_status_dumps_the_head_it_compared_against(observed, mock_load, capsys):
+    """The JSON must agree with the dashboard rendered from the same object."""
+    from pr import state as pr_state
+    state = pr_state.new_state("acme/w", "feat/x", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    pr_state.apply(state, pr_domains.CIDomain(conclusion="success",
+                                              updated_at=pr_state.now_iso()))
+    mock_load.return_value = state
+    observed.return_value = pr_domains.PushDomain(ahead=0,
+                                                  updated_at=pr_state.now_iso())
+
+    with patch("cli.pr_commands._worktree_head", return_value="B"):
+        pr_cli.cmd_status([], make_ctx(worktree_root=Path("/wt")))
+
+    assert json.loads(capsys.readouterr().out)["identity"]["head_sha"] == "B"

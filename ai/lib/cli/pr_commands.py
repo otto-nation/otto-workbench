@@ -111,6 +111,13 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     it, and one that says nothing takes up no room. Push is the exception that
     is refreshed rather than read — it is a local git question, so `pr status`
     answers it now instead of reporting whatever the last write happened to see.
+
+    The identity's head SHA is refreshed on the same grounds, and it reaches
+    stdout the same way `push` does: both are written onto the loaded object
+    before `state_to_dict` dumps it, so the JSON agrees with the dashboard
+    rendered from it. A consumer reading `identity.head_sha` out of that dump
+    gets the commit the checkout is on now, which is the one the staleness
+    markers above were computed against.
     """
     wt = ctx.require_worktree()
     state = pr_state.load_state(ctx.target_dir)
@@ -118,6 +125,16 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     branch = state.identity.branch if state else ctx.branch
     repo = state.identity.repo if state else ctx.repo
     push = pr_domains.PushDomain.observed(wt, branch, updated_at=pr_state.now_iso())
+
+    # Refreshed for the same reason push is, and it is the same kind of
+    # question: `identity.head_sha` is from whenever state was last *written*,
+    # so a commit made since leaves it naming the commit the domains were
+    # measured against. Comparing them to it then always matches, and a verdict
+    # about the previous commit renders as current — the supersession check
+    # would be asking a stale value about itself. Held in memory: the dashboard
+    # is a read, and persisting this would date the file by looking at it.
+    if state:
+        state.identity.head_sha = _worktree_head(wt, state.identity.head_sha)
 
     lines = pr_state.render_dashboard(state, push, repo=repo, branch=branch)
     print("\n".join(lines), file=sys.stderr)
@@ -127,24 +144,26 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return 0
 
 
-def _review_subject_sha(wt: Path, ctx_head_sha: str) -> str:
-    """The commit a spawned `claude-review --self` would actually read.
+def _worktree_head(wt: Path, fallback: str) -> str:
+    """What HEAD the checkout is actually on, or `fallback` if it cannot say.
 
-    Not always `ctx.head_sha`. Under `--pr` that is the PR's *remote* head,
-    while `--self` reviews the worktree — see `review.pipeline._with_local_diff`,
-    which takes the SHA and the changed-file list from git for exactly this
-    reason. Asking the gate about the remote head after a clean review followed
-    by unpushed commits skips the review of the local tree nobody has read,
-    which is the silent miss this gate exists to prevent.
+    The live answer, which two callers need and neither can take from the state
+    they were handed. `pr fix` gates the review pass on it because
+    `claude-review --self` reads the worktree while `ctx.head_sha` under `--pr`
+    is the PR's *remote* head (see `review.pipeline._with_local_diff`): asking
+    the gate the remote question skips the review after a clean pass followed
+    by unpushed commits. `pr status` needs it because `identity.head_sha` is
+    from whenever state was last written, so a commit made since leaves every
+    domain being compared against the very SHA it was measured at.
 
-    Falls back to the context's SHA when the checkout cannot be read. The call
-    shells out, and a worktree removed mid-run raises rather than returning ""
-    — a gate deciding what to run must not be the thing that ends the run.
+    Falls back rather than raising. The call shells out with `cwd=` set, and a
+    worktree removed mid-run raises instead of returning "" — neither a gate
+    deciding what to run nor a dashboard read should be what ends the command.
     """
     try:
-        return pr_context.head_sha(str(wt)) or ctx_head_sha
+        return pr_context.head_sha(str(wt)) or fallback
     except OSError:
-        return ctx_head_sha
+        return fallback
 
 
 def _worth_running(domain: pr_domains.Domain, head_sha: str, *,
@@ -200,7 +219,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
     # review about the remote head skips it after a clean review followed by
     # unpushed commits: the local tree nobody has read is the one it declines
     # to look at, which is the silent miss this gate exists to prevent.
-    review_sha = _review_subject_sha(wt, ctx.head_sha)
+    review_sha = _worktree_head(wt, ctx.head_sha)
 
     review_findings = sum(state.review.finding_counts.values())
     if _worth_running(state.review, review_sha,

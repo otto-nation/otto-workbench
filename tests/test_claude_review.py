@@ -1390,6 +1390,44 @@ def test_prune_asks_about_the_head_ref_including_closed_prs(mock_run, cr, review
     assert cmd[cmd.index("--state") + 1] == "all"
 
 
+@patch("core.proc.subprocess.run")
+def test_prune_asks_an_enterprise_host_by_name(mock_run, cr, reviews_dir):
+    """A bare OWNER/REPO resolves against gh's default host, not the review's.
+
+    On a machine logged into an enterprise instance and github.com, that reads
+    the wrong instance — and a same-named public repo answering instead is the
+    dangerous case here, because this sweep deletes on what it is told.
+    """
+    d = reviews_dir / "ent-self"
+    d.mkdir()
+    (d / "review.md").write_text("review content")
+    (d / "meta.json").write_text(json.dumps({
+        "repo": "org/my-repo", "host": "ghe.example.com",
+        "head_ref": "x/ent", "mode": "self",
+    }))
+    old = time.time() - 40 * 86400
+    for f in d.iterdir():
+        os.utime(f, (old, old))
+    mock_run.side_effect = _pr_list_returning("MERGED")
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    cmd = mock_run.call_args[0][0]
+    assert cmd[cmd.index("--repo") + 1] == "ghe.example.com/org/my-repo"
+
+
+@patch("core.proc.subprocess.run")
+def test_prune_leaves_a_public_repo_unqualified(mock_run, cr, reviews_dir):
+    """An empty host is public github.com, where the bare form is correct."""
+    _seed_self_review(reviews_dir, "pub-self", head_ref="x/pub", age_days=40)
+    mock_run.side_effect = _pr_list_returning("MERGED")
+
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    cmd = mock_run.call_args[0][0]
+    assert cmd[cmd.index("--repo") + 1] == "org/my-repo"
+
+
 # ── the shared walk of the reviews tree ──────────────────────────────────────
 
 # 2021-06-01T00:00:00Z, as (atime, mtime) — old enough to be stale for every

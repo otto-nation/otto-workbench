@@ -313,6 +313,17 @@ def prune_merged_reviews(
     asked about, so without the break a latched sweep would spend all ten slots
     on entries it never asked about — and since the walk is ordered, the next
     sweep would re-walk the same ten and never reach the tail.
+
+    ceiling: a review whose branch will never open a PR — a self-review of the
+    default branch is the usual one — is past its age gate, is asked about, and
+    is never collected, so it consumes one of the ten slots on every run for
+    good. The walk is sorted, so the same ones are always the ones asked. That
+    is a slow leak rather than a stall: the rest of the eligible entries are
+    collected on later runs and the leak grows only as such branches do.
+    Upgrade trigger: if the count of never-reclaimable entries approaches
+    `max_files`, so a sweep can spend every slot without collecting anything,
+    record the answer per directory and skip re-asking rather than raising the
+    cap — raising it spends more quota on the same dead questions.
     """
     reviews_dir = reviews_dir or workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
@@ -366,6 +377,25 @@ def _stale_days_for(review_dir: Path, meta: ReviewMeta) -> int:
     return GC_STALE_DAYS if meta.pr_number else GC_UNLINKED_STALE_DAYS
 
 
+def _gh_repo(meta: ReviewMeta) -> str:
+    """The ``--repo`` argument for *meta*, host-qualified when the sidecar knows one.
+
+    A bare ``OWNER/REPO`` resolves against gh's *default* host. On a machine
+    authenticated to an enterprise instance and to github.com, that reads the
+    wrong instance — a 404, or a same-named public repo, which is the answer
+    that matters here because this sweep deletes on what it is told. The
+    three-part ``HOST/OWNER/REPO`` form routes to the host named in it.
+
+    Empty host is public github.com, where the bare form is already correct, and
+    is what a sidecar written before the field existed means. A repo already
+    carrying a host keeps it rather than being qualified twice.
+    """
+    host = meta.host.strip().strip("/")
+    if not host or meta.repo.count("/") != 1:
+        return meta.repo
+    return f"{host}/{meta.repo}"
+
+
 def _review_work_ended(meta: ReviewMeta) -> str:
     """Why this review's work is over, or "" while it may still be live.
 
@@ -374,10 +404,11 @@ def _review_work_ended(meta: ReviewMeta) -> str:
     The string is the log line's subject, so the caller neither re-derives which
     question was asked nor formats two messages.
     """
+    repo = _gh_repo(meta)
     if meta.pr_number:
-        closure = _pr_closure(meta.repo, meta.pr_number)
+        closure = _pr_closure(repo, meta.pr_number)
         return f"{meta.repo}#{meta.pr_number} ({closure.state.value})" if closure else ""
-    if _branch_is_finished(meta.repo, meta.head_ref):
+    if _branch_is_finished(repo, meta.head_ref):
         return f"{meta.repo} {meta.head_ref} (no open PR remains)"
     return ""
 

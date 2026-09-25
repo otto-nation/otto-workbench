@@ -280,7 +280,13 @@ def run_describe(
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> ToolParser:
+    """This command's parser, before anything has been parsed with it.
+
+    Public because `pr` reads it to learn which of these options consume a
+    following token, which is how a bare positional is classified as a PR
+    number or a branch.
+    """
     parser = ToolParser(
         prog=SCRIPT,
         description="Revise the PR description against the repo's PR template",
@@ -298,7 +304,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Apply the revision to the PR; without it the edit "
                              "is drafted")
     add_trail_args(parser)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     ctx = pr_context.resolve(

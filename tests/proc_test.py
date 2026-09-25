@@ -5,6 +5,7 @@ is the whole point — a wrapper that drops stderr leaves every renderer with
 nothing to print and every classifier reading the wrong stream.
 """
 
+import ast
 import os
 import signal
 import subprocess
@@ -679,3 +680,31 @@ class TestTail:
     def test_no_output_renders_as_nothing(self):
         assert proc.tail("") == ""
         assert proc.tail("", limit=10) == ""
+
+
+# passes-at-base: proc was stdlib-only before this branch too — the point is that it still is, after a commit that briefly made it not
+def test_proc_imports_nothing_from_ai_lib_but_timeouts():
+    """The module docstring's stdlib-only claim, made structural.
+
+    `proc` is what everything else in `ai/lib` is meant to be free to depend on,
+    and the docstring names `log`, `agent.usage` and `workbench_paths` as the
+    imports that would end that. An interrupt handler wanting `log.info` is the
+    exact pressure it warns about — hence `install_interrupt_handler` taking the
+    announcement as a callback rather than reaching for the module.
+
+    `timeouts` is the one allowed edge and is itself stdlib-only.
+    """
+    tree = ast.parse((Path(proc.__file__)).read_text())
+    reached = {
+        node.module.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    } - {"__future__", "collections", "dataclasses", "pathlib", "typing"}
+    assert reached == {"core"}, reached
+
+    workbench = {
+        alias.name for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "core"
+        for alias in node.names
+    }
+    assert workbench == {"timeouts"}, workbench

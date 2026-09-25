@@ -120,7 +120,9 @@ import os
 import re
 import signal
 import subprocess
+import sys
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -165,6 +167,25 @@ TIMEOUT_RETURNCODE = 124
 # reading `128 + SIGINT` off it.
 INTERRUPT_RETURNCODE = 130
 MISSING_RETURNCODE = 127
+
+
+def install_interrupt_handler(announce: Callable[[], None]) -> None:
+    """Exit quietly on SIGINT, the way every entry point here wants to.
+
+    Installing a handler is process-level state, so it belongs to whoever owns
+    the process — an entry point, never a library reached mid-run. That is why
+    this is a function an entry point calls rather than something a module does
+    on import: `signal.signal` overwrites without chaining and nothing restores
+    it, so two installers in one process means the second silently wins for the
+    rest of its life.
+
+    `announce` says the run was interrupted. It is a callback rather than a
+    `log` call because this module is stdlib-only by declaration — see the
+    module docstring — and every caller already depends on `log` anyway.
+    """
+    signal.signal(
+        signal.SIGINT,
+        lambda *_: (announce(), sys.exit(INTERRUPT_RETURNCODE)))
 
 # Signals that mean something outside the process ended it: the OOM killer and
 # a supervisor's kill (SIGKILL, SIGTERM), a reader that went away (SIGPIPE), an

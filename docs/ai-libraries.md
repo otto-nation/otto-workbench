@@ -3483,7 +3483,7 @@ actually predicts the right answer is **what bounds the cost**:
 
 | Tier | For | Why |
 |---|---|---|
-| `QUICK` | A `--value-flags` probe, a session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
+| `QUICK` | A session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
@@ -3545,33 +3545,28 @@ The output schema is generated from the tool's dataclass by ``schema_gen``,
 which describes what ``serde`` will accept for each field rather than deciding
 that for itself.
 
-``--value-flags`` prints one option string per line: every option of that parser
-that consumes a following value. ``pr`` asks a delegate this before deciding
-whether a bare token is the command's target or some other flag's argument.
-Without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR number
-and swallows it.
-
-The two stay separate on purpose. ``--tool-schema`` is keyed by ``dest``, drops
-``help=SUPPRESS`` actions, and loses option aliases, so arity cannot be
-recovered from it faithfully — and declaring it also enrolls a script in MCP
-discovery, which is not a side effect an arity probe should carry.
-
-A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
-in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
-the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
-``pr`` falls back to its arity-blind scan — no error, just the occasional flag
-value classified as the command's target. A ``ToolParser`` script answers the
-flag without opting in.
-
-One constraint comes with the protocol: every *option* the parser declares must
-consume exactly one value. A flat list of option strings cannot express
-``nargs='?'``, ``'+'``, ``'*'``, or an int above 1, so the probe refuses to
-answer rather than report a wrong arity — it names the offending option on
-stderr, exits 2, and ``pr`` reprints the message before degrading. Positionals
-are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
-
 Argparse introspection that reaches past the public API is collected here —
 ``value_taking_options`` and ``subparsers`` — so a caller never has to.
+
+``value_taking_options`` answers which of a parser's options consume a
+following value. ``pr`` reads it off a delegate's parser before deciding
+whether a bare token is the command's target or some other flag's argument;
+without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR
+number and swallows it. It was once a ``--value-flags`` flag each delegate
+answered in a subprocess, because the delegate's parser lived in another
+process — at 85-152 ms a call, with three degradation paths for a child that
+might be missing, hang, or exit non-zero. ``pr`` now imports the parser and
+asks it directly, and a delegate that will not import is left to raise: it
+cannot run either, so degrading would misclassify the target and then fail
+dispatch anyway. ``--tool-schema`` is unaffected — it shares this module with
+that protocol and nothing else, and MCP discovery still enrols a script by
+finding it.
+
+One constraint comes with a flat list of option strings: every *option* the
+parser declares must consume exactly one value. It cannot express ``nargs='?'``,
+``'+'``, ``'*'``, or an int above 1, so the function refuses to answer rather
+than report a wrong arity. Positionals are unconstrained (``claude-review``
+declares ``args`` with ``nargs='*'``).
 
 ``enum_arg`` is here for the same reason from the other side: it is the argparse
 ``type`` every enum-valued option in the workbench is declared with, so the
@@ -4550,11 +4545,14 @@ the signal handler, the run lock, and the choice of which flow to run. The
 review itself is `review.run`'s.
 
 Three things stay here rather than moving down a layer, each for its own reason.
-The signal handler is process-level state, which a library must not install.
-The run lock is claimed between resolving the self-review target and switching
-the checkout to it — a resolver that did both would take a process-lifetime lock
-from inside the library. And `version_string` lives in `ai/bin`, which nothing
-under `ai/lib` can import, so the caller passes it in.
+The signal handler is process-level state, so it is installed only when this
+module is the process — `install_signal_handler=False` for an in-process caller
+that has already installed its own, since `signal.signal` overwrites without
+chaining and nothing restores it. The run lock is claimed between resolving the
+self-review target and switching the checkout to it — a resolver that did both
+would take a process-lifetime lock from inside the library. And `version_string`
+lives in `ai/bin`, which nothing under `ai/lib` can import, so the caller passes
+it in.
 
 Usage:
   claude-review <pr_url_or_number>
@@ -4766,10 +4764,9 @@ phase body lives in the module that owns its subject — `pr.triage`,
 this module knows only which one to call and in what order.
 
 `main` returns rather than exits, as every module under `cli/` does; the shim at
-`ai/bin/review-threads` owns the process exit. The one exception is deliberate
-and lives a layer down: `deferred_issue.validate_track` still calls `sys.exit`,
-because library modules at every layer in this repo do, and the rule that holds
-uniformly is about `cli/`, not about libraries.
+`ai/bin/review-threads` owns the process exit. That now holds through the
+phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
+than exiting from under this module.
 
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]

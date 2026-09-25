@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from core.tool_parser import (
-    VALUE_FLAGS_FLAG, ToolParser, handle_value_flags, subparsers,
+    ToolParser, subparsers,
     value_taking_options,
 )
 
@@ -165,7 +165,7 @@ def test_store_false_action(capsys):
     assert "no_push" not in props
 
 
-# ── value-flags probe ──────────────────────────────────────────────────────
+# ── value-taking option introspection ──────────────────────────────────────
 
 
 def test_value_taking_options_lists_only_value_options():
@@ -236,37 +236,6 @@ def test_subparsers_is_a_copy_the_caller_cannot_corrupt():
     assert parser.parse_args(["status"]).command == "status"
 
 
-def test_handle_value_flags_prints_and_exits(capsys):
-    parser = _make_parser()
-    with pytest.raises(SystemExit) as exc_info:
-        handle_value_flags(parser, [VALUE_FLAGS_FLAG])
-    assert exc_info.value.code == 0
-    assert capsys.readouterr().out.split() == [
-        "--branch", "--count", "--effort", "--pr", "--repo-dir",
-    ]
-
-
-def test_handle_value_flags_is_a_noop_without_the_flag(capsys):
-    handle_value_flags(_make_parser(), ["--fix"])
-    assert capsys.readouterr().out == ""
-
-
-def test_handle_value_flags_reads_sys_argv_by_default(capsys, monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["test-tool", VALUE_FLAGS_FLAG])
-    with pytest.raises(SystemExit):
-        handle_value_flags(_make_parser())
-    assert "--branch" in capsys.readouterr().out
-
-
-def test_tool_parser_answers_the_probe(capsys):
-    """ToolParser scripts inherit the probe the same way they inherit --tool-schema."""
-    parser = _make_parser()
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args([VALUE_FLAGS_FLAG])
-    assert exc_info.value.code == 0
-    assert "--repo-dir" in capsys.readouterr().out
-
-
 # ── multi-value options the protocol cannot describe ───────────────────────
 
 
@@ -294,25 +263,20 @@ def test_value_taking_options_still_ignores_multi_value_positionals():
     assert value_taking_options(parser) == ["--reply"]
 
 
-def test_handle_value_flags_reports_a_multi_value_option_on_stderr(capsys):
-    """Loud, not silent: the probe names the flag it cannot describe and exits 2."""
+# passes-at-base: value_taking_options raised this same ValueError before — only the flag that caught it and exited 2 went, not the refusal
+def test_the_refusal_names_the_flag_and_the_fix():
+    """Loud, not silent: the refusal names the option it cannot describe."""
     parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
     parser.add_argument("--track", nargs="+")
-    with pytest.raises(SystemExit) as exc_info:
-        handle_value_flags(parser, [VALUE_FLAGS_FLAG])
-    assert exc_info.value.code == 2
-
-    captured = capsys.readouterr()
-    assert captured.out == "", "a refusal must not look like an empty answer"
-    assert captured.err.startswith(f"bad-delegate: {VALUE_FLAGS_FLAG}: ")
-    assert "--track declares nargs='+'" in captured.err
-    assert "_positional_index" in captured.err, "the message must name the fix"
+    with pytest.raises(ValueError) as exc_info:
+        value_taking_options(parser)
+    assert "--track declares nargs='+'" in str(exc_info.value)
+    assert "_positional_index" in str(exc_info.value), "the message must name the fix"
 
 
-def test_a_multi_value_option_does_not_break_normal_parsing(capsys):
-    """The constraint is on the probe, not on the delegate's own CLI."""
+# passes-at-base: the arity constraint was never on the delegate's own CLI, and deleting the protocol must not narrow what one may declare
+def test_a_multi_value_option_does_not_break_normal_parsing():
+    """The constraint is on the introspection, not on the delegate's own CLI."""
     parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
     parser.add_argument("--track", nargs="+")
-    handle_value_flags(parser, ["--track", "a", "b"])
     assert parser.parse_args(["--track", "a", "b"]).track == ["a", "b"]
-    assert capsys.readouterr().err == ""

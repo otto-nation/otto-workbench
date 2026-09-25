@@ -8,9 +8,9 @@ run 'pr <command> --help' to see each script's flags.
 
 import argparse
 import contextlib
+import importlib
 import json
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -47,7 +47,7 @@ from core import timeouts
 from config import workbench_projects
 from core import run_lock
 from review import listing as review_listing
-from core.tool_parser import VALUE_FLAGS_FLAG
+from core import tool_parser
 from core.trail import Trail, add_trail_args
 
 
@@ -84,45 +84,48 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
     return positionals, flags
 
 
-def _delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
-    """Ask a delegate which of its option strings consume a following value.
+# The parser factory that answers "which of this command's options consume a
+# following token", per subcommand. Not a CommandSpec field: the three
+# scriptless commands have no delegate parser at all — their parser is one of
+# this binary's own subparsers — so a field would be filled for five entries
+# and structurally empty for three, which is the two-meanings-in-one-field
+# shape the handler seam was careful to avoid.
+_PARSER_FACTORIES = {
+    "ci": "cli.ci_check:build_parser",
+    "review": "cli.claude_review:build_parser",
+    "comments": "cli.review_threads:build_parser",
+    "rebase": "cli.pr_rebase:build_parser",
+    "describe": "cli.pr_describe:build_parser",
+}
 
-    The delegate's own argparse parser is the single source of truth for its
-    flags, so the wrapper asks it (see tool_parser.handle_value_flags) instead
-    of mirroring a list here that would rot the next time a delegate grows a
-    flag.  Internal commands have no delegate and answer empty.
+
+def _delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
+    """Which of *spec*'s delegate's options consume a following value.
+
+    The delegate's own parser is the single source of truth, and it is an
+    import away. This used to spawn the delegate to ask the same question
+    through a pipe; `core.tool_parser`'s module docstring carries what that
+    cost and why it is gone.
+
+    Imported here rather than at module scope: `pr --help` must load no
+    delegate (test_pr_help_imports_no_delegate), and all five together cost
+    +48-61 ms on an 83 ms base. Only the one command being dispatched is
+    loaded, and dispatch is about to import it anyway.
+
+    An import that fails is left to propagate. A delegate whose module will
+    not import cannot run either, and degrading here would misclassify the
+    target and then fail dispatch two lines later — two confusing errors in
+    place of one honest traceback.
+
+    Commands with no delegate answer empty, which is the arity-blind scan
+    `_positional_index` degrades to.
     """
-    script = spec.script
-    if not script:
+    factory = _PARSER_FACTORIES.get(spec.name)
+    if factory is None:
         return frozenset()
-    # Arity is an improvement on the historical arity-blind scan, not a
-    # precondition for it: a delegate that is missing, crashes, or hangs must
-    # not take down the command the user actually asked for. Every failure
-    # below degrades to "no option takes a value", which is exactly the
-    # pre-arity behaviour.
-    try:
-        probe = proc.run(
-            [str(BIN_DIR / script), VALUE_FLAGS_FLAG], timeout=timeouts.QUICK,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        log.warn(f"{script} {VALUE_FLAGS_FLAG}: {exc}")
-        return frozenset()
-    if probe.returncode == proc.TIMEOUT_RETURNCODE:
-        # A hung delegate is worth surfacing: it stalls a command the user
-        # expected to be instant, and is as diagnosable as the non-zero-exit
-        # case below.
-        log.warn(f"{script} {VALUE_FLAGS_FLAG}: {probe.stderr.strip()}")
-        return frozenset()
-    if probe.returncode != 0:
-        # Same degradation as above, but this failure is the delegate's own
-        # doing rather than the environment's — a flag the protocol cannot
-        # describe, or a parser that no longer builds. Reprint what it said so
-        # whoever broke it sees a diagnosis instead of a token quietly going to
-        # the wrong place.
-        if probe.stderr.strip():
-            log.warn(f"{script} {VALUE_FLAGS_FLAG}: {probe.stderr.strip()}")
-        return frozenset()
-    return frozenset(tok for tok in probe.stdout.split() if tok.startswith("-"))
+    module_name, attr = factory.split(":", 1)
+    parser = getattr(importlib.import_module(module_name), attr)()
+    return frozenset(tool_parser.value_taking_options(parser))
 
 
 def _positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
@@ -414,10 +417,7 @@ def main():
         sys.stdout.write("\n")
         sys.exit(0)
 
-    signal.signal(
-        signal.SIGINT,
-        lambda *_: (log.blank(), log.info("Interrupted"),
-                    sys.exit(proc.INTERRUPT_RETURNCODE)))
+    proc.install_interrupt_handler(log.interrupted)
 
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so

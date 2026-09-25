@@ -12,10 +12,9 @@ phase body lives in the module that owns its subject — `pr.triage`,
 this module knows only which one to call and in what order.
 
 `main` returns rather than exits, as every module under `cli/` does; the shim at
-`ai/bin/review-threads` owns the process exit. The one exception is deliberate
-and lives a layer down: `deferred_issue.validate_track` still calls `sys.exit`,
-because library modules at every layer in this repo do, and the rule that holds
-uniformly is about `cli/`, not about libraries.
+`ai/bin/review-threads` owns the process exit. That now holds through the
+phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
+than exiting from under this module.
 
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
@@ -37,7 +36,6 @@ import sys
 from core import log
 from core import publishing
 from core import run_lock
-from core.tool_parser import handle_value_flags
 from core.trail import Trail, add_trail_args
 from fix import comments as fix_comments
 from gh.pr_reads import fetch_pr_data
@@ -270,7 +268,8 @@ def _run_threads(trail, args, ctx) -> int:
 
     if args.finish:
         track = TRACK_ALL if args.track_all else frozenset(args.track)
-        closeout.finish_deferred_work(ctx, report, trail=trail, track=track)
+        if not closeout.finish_deferred_work(ctx, report, trail=trail, track=track):
+            return 1
 
     json.dump(output, sys.stdout, indent=2)
     print()
@@ -278,7 +277,7 @@ def _run_threads(trail, args, ctx) -> int:
 
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     # Two axes, and the help text has to keep them apart: --triage/--fix/--finish
     # /--reply/--settle choose the work, --post decides whether it leaves the
     # machine. Read as peers, `--finish --post` looks like it says publish twice,
@@ -344,8 +343,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
-    handle_value_flags(parser)
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     # Before --fix widens itself into --triage, so the conflict named is the one

@@ -204,20 +204,18 @@ class TestATrackerWithNoTeamKey:
 
 
 class TestTrackValidation:
-    def test_an_unknown_id_exits(self):
-        with pytest.raises(SystemExit):
-            deferred_issue.validate_track(_state("t1"), {"nope"})
+    def test_an_unknown_id_is_refused(self):
+        assert not deferred_issue.validate_track(_state("t1"), {"nope"})
 
     def test_track_all_validates_nothing(self):
-        deferred_issue.validate_track(_state("t1"), deferred_issue.TRACK_ALL)
+        assert deferred_issue.validate_track(_state("t1"), deferred_issue.TRACK_ALL)
 
     def test_a_non_deferred_id_is_unknown(self):
         """Membership is of the deferred set, not of the record."""
         state = _state("t1")
         state.fix.fix.items.append(
             ItemOutcome(id="t2", outcome=FixOutcome.FIXED))
-        with pytest.raises(SystemExit):
-            deferred_issue.validate_track(state, {"t2"})
+        assert not deferred_issue.validate_track(state, {"t2"})
 
     def test_an_empty_snapshot_rejects_an_id_that_cannot_exist(self, worktree):
         """#1319: the one case where "filed nothing" reads as agreement.
@@ -229,9 +227,8 @@ class TestTrackValidation:
         """
         state = PRState(identity=_identity())
         with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
-            with pytest.raises(SystemExit):
-                deferred_issue.finalize_deferred(
-                    state, _ctx(worktree), {}, track={"nope"})
+            assert not deferred_issue.finalize_deferred(
+                state, _ctx(worktree), {}, track={"nope"})
         create.assert_not_called()
 
     def test_an_empty_snapshot_with_no_track_stays_silent(self, worktree, capsys):
@@ -243,7 +240,7 @@ class TestTrackValidation:
         """
         state = PRState(identity=_identity())
         with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
-            deferred_issue.finalize_deferred(state, _ctx(worktree), {})
+            assert deferred_issue.finalize_deferred(state, _ctx(worktree), {})
         create.assert_not_called()
         assert capsys.readouterr().err == ""
 
@@ -332,9 +329,8 @@ class TestReportingRunsAfterFiling:
         described a selection that never happened."""
         state = _state("t1")
         printed = []
-        with patch.object(deferred_issue.log, "info", side_effect=printed.append), \
-                pytest.raises(SystemExit):
-            deferred_issue.finalize_deferred(
+        with patch.object(deferred_issue.log, "info", side_effect=printed.append):
+            assert not deferred_issue.finalize_deferred(
                 state, _ctx(worktree), {}, track={"nope"})
         assert printed == []
 

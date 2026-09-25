@@ -24,33 +24,28 @@ The output schema is generated from the tool's dataclass by ``schema_gen``,
 which describes what ``serde`` will accept for each field rather than deciding
 that for itself.
 
-``--value-flags`` prints one option string per line: every option of that parser
-that consumes a following value. ``pr`` asks a delegate this before deciding
-whether a bare token is the command's target or some other flag's argument.
-Without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR number
-and swallows it.
-
-The two stay separate on purpose. ``--tool-schema`` is keyed by ``dest``, drops
-``help=SUPPRESS`` actions, and loses option aliases, so arity cannot be
-recovered from it faithfully — and declaring it also enrolls a script in MCP
-discovery, which is not a side effect an arity probe should carry.
-
-A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
-in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
-the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
-``pr`` falls back to its arity-blind scan — no error, just the occasional flag
-value classified as the command's target. A ``ToolParser`` script answers the
-flag without opting in.
-
-One constraint comes with the protocol: every *option* the parser declares must
-consume exactly one value. A flat list of option strings cannot express
-``nargs='?'``, ``'+'``, ``'*'``, or an int above 1, so the probe refuses to
-answer rather than report a wrong arity — it names the offending option on
-stderr, exits 2, and ``pr`` reprints the message before degrading. Positionals
-are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
-
 Argparse introspection that reaches past the public API is collected here —
 ``value_taking_options`` and ``subparsers`` — so a caller never has to.
+
+``value_taking_options`` answers which of a parser's options consume a
+following value. ``pr`` reads it off a delegate's parser before deciding
+whether a bare token is the command's target or some other flag's argument;
+without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR
+number and swallows it. It was once a ``--value-flags`` flag each delegate
+answered in a subprocess, because the delegate's parser lived in another
+process — at 85-152 ms a call, with three degradation paths for a child that
+might be missing, hang, or exit non-zero. ``pr`` now imports the parser and
+asks it directly, and a delegate that will not import is left to raise: it
+cannot run either, so degrading would misclassify the target and then fail
+dispatch anyway. ``--tool-schema`` is unaffected — it shares this module with
+that protocol and nothing else, and MCP discovery still enrols a script by
+finding it.
+
+One constraint comes with a flat list of option strings: every *option* the
+parser declares must consume exactly one value. It cannot express ``nargs='?'``,
+``'+'``, ``'*'``, or an int above 1, so the function refuses to answer rather
+than report a wrong arity. Positionals are unconstrained (``claude-review``
+declares ``args`` with ``nargs='*'``).
 
 ``enum_arg`` is here for the same reason from the other side: it is the argparse
 ``type`` every enum-valued option in the workbench is declared with, so the
@@ -79,12 +74,9 @@ _CONTEXT_ARGS = frozenset({"repo_dir", "branch", "pr"})
 # "debug" is registered by add_trail_args() in the pr dispatcher, not by ToolParser.
 _FRAMEWORK_ARGS = frozenset({"help", "tool_schema", "debug"})
 
-# Hidden probe asking a script which of its options consume a following value.
-VALUE_FLAGS_FLAG = "--value-flags"
-
 # The nargs values that mean "this option consumes exactly one token", which is
-# the only arity the --value-flags answer can express.  argparse spells the
-# default two ways: None (plain store) and a literal 1.
+# the only arity a flat list of option strings can express.  argparse spells
+# the default two ways: None (plain store) and a literal 1.
 _SINGLE_VALUE_NARGS = (None, 1)
 
 
@@ -116,8 +108,6 @@ class ToolParser(ArgumentParser):
             json.dump(self._build_schema(), sys.stdout, indent=2)
             sys.stdout.write("\n")
             sys.exit(0)
-
-        handle_value_flags(self, args)
 
         return super().parse_args(args, namespace)
 
@@ -218,11 +208,11 @@ def value_taking_options(parser: ArgumentParser) -> list[str]:
         if action.nargs not in _SINGLE_VALUE_NARGS:
             raise ValueError(
                 f"{'/'.join(action.option_strings)} declares nargs={action.nargs!r}, "
-                f"but {VALUE_FLAGS_FLAG} can only describe options that consume exactly "
-                "one value (nargs=None or 1). Callers skip a fixed one token after such "
-                "an option, so answering for this one would misclassify the next. Give "
-                "the option a single value, or teach both this function and "
-                "_positional_index in ai/bin/pr to carry a count."
+                "but a flat list of option strings can only describe options that "
+                "consume exactly one value (nargs=None or 1). Callers skip a fixed "
+                "one token after such an option, so answering for this one would "
+                "misclassify the next. Give the option a single value, or teach both "
+                "this function and _positional_index in ai/bin/pr to carry a count."
             )
         options.update(action.option_strings)
     return sorted(options)
@@ -251,37 +241,6 @@ def subparsers(parser: ArgumentParser) -> dict[str, ArgumentParser]:
         if isinstance(action, _SubParsersAction):
             return dict(action.choices)
     return {}
-
-
-def handle_value_flags(parser: ArgumentParser, args=None) -> None:
-    """Answer the ``--value-flags`` probe, printing one option per line.
-
-    A wrapper CLI that classifies a bare positional (``ai/bin/pr``)
-    cannot tell a target from a flag's value without knowing the delegate's
-    arity.  The delegate's own parser is the single source of truth for that,
-    so the wrapper asks rather than mirroring a list that would rot.
-
-    This is deliberately separate from ``--tool-schema``: that document is
-    keyed by ``dest``, drops ``help=SUPPRESS`` actions, and loses option
-    aliases, so arity cannot be recovered from it faithfully.  Declaring
-    ``--tool-schema`` also enrolls a script in MCP tool discovery
-    (``ai/claude/mcps/server.py``), which is not a side effect an arity probe
-    should carry.
-
-    A parser this protocol cannot describe (see ``value_taking_options``) is
-    reported on stderr and exits 2 rather than raising: the probe runs as a
-    subprocess, so a traceback would reach nobody, while a one-line diagnosis
-    is reprinted by the caller that captured it.
-    """
-    if VALUE_FLAGS_FLAG not in (sys.argv[1:] if args is None else args):
-        return
-    try:
-        options = value_taking_options(parser)
-    except ValueError as exc:
-        sys.stderr.write(f"{parser.prog}: {VALUE_FLAGS_FLAG}: {exc}\n")
-        sys.exit(2)
-    sys.stdout.write("".join(f"{opt}\n" for opt in options))
-    sys.exit(0)
 
 
 def _action_to_property(action) -> dict | None:

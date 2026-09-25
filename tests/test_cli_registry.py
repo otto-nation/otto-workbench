@@ -9,6 +9,7 @@ it, and whether it takes a target are all readable without executing anything.
 import importlib
 import subprocess
 import sys
+import ast
 import textwrap
 from pathlib import Path
 
@@ -335,3 +336,31 @@ def test_pr_help_imports_no_delegate():
     # up here (`cli.ci_check`, `cli.claude_review`, …) is the regression.
     assert loaded <= {"cli.needs", "cli.registry", "cli.review_modes",
                       "cli.pr_commands"}, loaded
+
+
+# ── process-level state belongs to the process ────────────────────────────
+
+
+def test_no_cli_module_installs_a_signal_handler():
+    """A handler installed mid-run replaces the caller's without restoring it.
+
+    `signal.signal` neither chains nor stacks, so whichever installer runs last
+    owns SIGINT for the life of the process. Under in-process dispatch the last
+    one is a library reached partway through a command, which is why the only
+    legitimate installer is the entry point that owns the process —
+    `proc.install_interrupt_handler`, called from a `main` or a shim.
+    """
+    def installs_a_handler(node):
+        return (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "signal"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "signal")
+
+    offenders = [
+        f"{path.name}:{node.lineno}"
+        for path in sorted((LIB_DIR / "cli").glob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text()))
+        if installs_a_handler(node)
+    ]
+    assert offenders == [], offenders

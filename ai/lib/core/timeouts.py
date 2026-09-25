@@ -18,7 +18,7 @@ actually predicts the right answer is **what bounds the cost**:
 
 | Tier | For | Why |
 |---|---|---|
-| `QUICK` | A `--value-flags` probe, a session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
+| `QUICK` | A session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
@@ -57,8 +57,8 @@ built on them can depend on it without a cycle.
 
 from __future__ import annotations
 
-# A subprocess that should answer instantly: a `--value-flags` probe, a session
-# hook reading one file. Exceeding this is a wedged process, never real work.
+# A subprocess that should answer instantly: a session hook reading one file.
+# Exceeding this is a wedged process, never real work.
 QUICK = 5.0
 
 # Flat-cost local reads — git metadata (`rev-parse`, `merge-base`, `log`,

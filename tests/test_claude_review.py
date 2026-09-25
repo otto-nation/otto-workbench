@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -1882,6 +1883,16 @@ def test_max_parallel_defaults_to_derived_capacity(cr):
     assert args.max_parallel is None
 
 
+def test_build_parser_does_not_read_the_process_argv(cr, monkeypatch):
+    """Building a parser must not be able to end the process that asked for it.
+
+    `pr` calls this to read flag arity while classifying its own argv, so a
+    factory that inspects `sys.argv` and exits would take `pr` with it.
+    """
+    monkeypatch.setattr(sys, "argv", ["claude-review", "--value-flags", "42"])
+    assert cr.build_parser().parse_args(["42"]).pr is None
+
+
 def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None:
     (review_dir / "pipeline.json").write_text(json.dumps({
         "head_sha": head_sha, "group_names": ["g1", "g2"],
@@ -2821,3 +2832,24 @@ def test_a_derived_base_that_does_not_resolve_is_not_refused(tmp_path, monkeypat
     )
 
     assert seen["ran"] is True
+
+
+def test_an_in_process_caller_can_keep_its_own_signal_handler(cr, monkeypatch):
+    """The entry point that owns the process owns SIGINT.
+
+    `signal.signal` overwrites without chaining and nothing restores it, so a
+    `main` called in-process must be able to decline to install one rather than
+    silently replacing its caller's for the rest of the run.
+    """
+    installed = []
+    monkeypatch.setattr(signal, "signal", lambda *a: installed.append(a[0]))
+
+    def signals_installed_by(flag):
+        installed.clear()
+        with pytest.raises(RuntimeError):
+            cr.main([], install_signal_handler=flag)
+        return list(installed)
+
+    with patch.object(cr, "build_parser", side_effect=RuntimeError("stop")):
+        assert signals_installed_by(False) == []
+        assert signals_installed_by(True) == [signal.SIGINT]

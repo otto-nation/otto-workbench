@@ -211,7 +211,13 @@ def _select_mode(args) -> tuple[RunMode, str]:
     return RunMode.REBASE_ONLY, "--no-push flag set"
 
 
-def _parse_args(argv: list[str] | None):
+def build_parser() -> ToolParser:
+    """This command's parser, before anything has been parsed with it.
+
+    Public because `pr` reads it to learn which of these options consume a
+    following token, which is how a bare positional is classified as a PR
+    number or a branch.
+    """
     parser = ToolParser(
         prog=SCRIPT,
         description="Rebase onto the branch's base with conflict detection and force-push",
@@ -239,7 +245,11 @@ def _parse_args(argv: list[str] | None):
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
     add_trail_args(parser)
-    return parser.parse_args(argv)
+    return parser
+
+
+def _parse_args(argv: list[str] | None):
+    return build_parser().parse_args(argv)
 
 
 def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:

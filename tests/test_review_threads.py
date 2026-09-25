@@ -2634,7 +2634,7 @@ class TestFollowHistoryRewrite:
         ctx = make_ctx(branch="feature", worktree_root=repo.path,
                        head_sha=repo.replay, target_dir=repo.path / "target")
         with patch.object(closeout, "post_pending_fix_replies"), \
-                patch.object(deferred_issue, "finalize_deferred"), \
+                patch.object(deferred_issue, "finalize_deferred", return_value=True), \
                 patch.object(summary_publish, "render_deferred_summary"):
             closeout.finish_deferred_work(ctx, PRReport())
         saved = pr_state.load_state(repo.path / "target")
@@ -3730,15 +3730,19 @@ class TestDeferralRequiresAChoice:
 
     def test_unknown_id_is_an_error_not_a_silent_skip(self, worktree):
         state = self._state(worktree, ["t1"])
-        with pytest.raises(SystemExit):
-            self._run(state, self._ctx(worktree), track={"t9"})
+        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
+            assert not deferred_issue.finalize_deferred(
+                state, self._ctx(worktree), {}, track={"t9"})
+        create.assert_not_called()
 
     def test_a_non_deferred_id_is_also_an_error(self, worktree):
         """Naming a thread the pass already fixed is a mistake worth surfacing."""
         state = self._state(worktree, ["t1"])
         state.fix.fix.items.append(ItemOutcome(id="t2", outcome=FixOutcome.FIXED))
-        with pytest.raises(SystemExit):
-            self._run(state, self._ctx(worktree), track={"t2"})
+        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
+            assert not deferred_issue.finalize_deferred(
+                state, self._ctx(worktree), {}, track={"t2"})
+        create.assert_not_called()
 
 
 class TestUnfiledDeferralsAreNamed:
@@ -3779,17 +3783,17 @@ class TestUnfiledDeferralsAreNamed:
 
 class TestTrackFlagParsing:
     def test_track_is_repeatable(self):
-        args = cli_review_threads._build_parser().parse_args(
+        args = cli_review_threads.build_parser().parse_args(
             ["--finish", "--track", "t1", "--track", "t2"])
         assert args.track == ["t1", "t2"]
 
     def test_track_all_is_separate(self):
-        args = cli_review_threads._build_parser().parse_args(["--finish", "--track-all"])
+        args = cli_review_threads.build_parser().parse_args(["--finish", "--track-all"])
         assert args.track_all is True
         assert args.track == []
 
     def test_track_defaults_to_empty(self):
-        args = cli_review_threads._build_parser().parse_args(["--finish"])
+        args = cli_review_threads.build_parser().parse_args(["--finish"])
         assert args.track == []
         assert args.track_all is False
 
@@ -3819,11 +3823,28 @@ class TestFinishDeferredWork:
         with patch.object(closeout, "post_pending_fix_replies",
                           side_effect=lambda *a, **k: order.append("replies")), \
                 patch.object(deferred_issue, "finalize_deferred",
-                             side_effect=lambda *a, **k: order.append("issue")), \
+                             side_effect=lambda *a, **k: order.append("issue") or True), \
                 patch.object(summary_publish, "render_deferred_summary",
                              side_effect=lambda *a, **k: order.append("summary")):
             closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         assert order == ["replies", "issue", "summary"]
+
+    def test_a_refused_track_stops_before_the_summary_and_reports(self, worktree):
+        """The refusal reaches the caller as a value, not as a process exit.
+
+        The summary and the unfiled list both describe a filing run, so neither
+        may render once the tracking ids were rejected and nothing was filed.
+        """
+        self._save(worktree)
+        with patch.object(closeout, "post_pending_fix_replies"), \
+                patch.object(deferred_issue, "finalize_deferred",
+                             return_value=False), \
+                patch.object(deferred_issue, "report_unfiled_deferrals") as unfiled, \
+                patch.object(summary_publish, "render_deferred_summary") as summary:
+            assert closeout.finish_deferred_work(
+                self._ctx(worktree), PRReport()) is False
+        unfiled.assert_not_called()
+        summary.assert_not_called()
 
     def test_state_written_by_the_steps_is_persisted(self, worktree):
         """The steps mutate in place; this phase is the one that saves."""
@@ -3833,7 +3854,7 @@ class TestFinishDeferredWork:
             state.fix.fix.commit_status = CommitStatus.PUSHED
 
         with patch.object(closeout, "post_pending_fix_replies", side_effect=mark), \
-                patch.object(deferred_issue, "finalize_deferred"), \
+                patch.object(deferred_issue, "finalize_deferred", return_value=True), \
                 patch.object(summary_publish, "render_deferred_summary"):
             closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         on_disk = pr_state.load_state(worktree / "target")
@@ -3847,7 +3868,7 @@ class TestFinishDeferredWork:
         seen = []
         with patch.object(closeout, "post_pending_fix_replies",
                           side_effect=lambda st, *a, **k: seen.extend(st.fix.fix.items)), \
-                patch.object(deferred_issue, "finalize_deferred"), \
+                patch.object(deferred_issue, "finalize_deferred", return_value=True), \
                 patch.object(summary_publish, "render_deferred_summary"):
             closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         assert [t.id for t in seen] == ["t9"]
@@ -3869,7 +3890,7 @@ class TestFinishDeferredWork:
         draft.write_text("A rewritten description.\n")
         with patch.object(pc, "update_pr_body", return_value=True) as update, \
                 patch.object(closeout, "post_pending_fix_replies"), \
-                patch.object(deferred_issue, "finalize_deferred"), \
+                patch.object(deferred_issue, "finalize_deferred", return_value=True), \
                 patch.object(summary_publish, "render_deferred_summary"):
             closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         update.assert_called_once_with(
@@ -3881,7 +3902,7 @@ class TestFinishDeferredWork:
         self._save(worktree)
         with patch.object(pc, "deliver_pr_body") as deliver, \
                 patch.object(closeout, "post_pending_fix_replies"), \
-                patch.object(deferred_issue, "finalize_deferred"), \
+                patch.object(deferred_issue, "finalize_deferred", return_value=True), \
                 patch.object(summary_publish, "render_deferred_summary"):
             closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         deliver.assert_not_called()
@@ -4172,17 +4193,17 @@ class TestFinishFlag:
     """
 
     def test_finish_sets_finish(self):
-        assert cli_review_threads._build_parser().parse_args(["--finish"]).finish
+        assert cli_review_threads.build_parser().parse_args(["--finish"]).finish
 
     def test_it_is_off_by_default(self):
-        assert not cli_review_threads._build_parser().parse_args([]).finish
+        assert not cli_review_threads.build_parser().parse_args([]).finish
 
     @pytest.mark.parametrize("alias", ["--resolve", "--resolve-verified"])
     def test_the_old_aliases_are_rejected(self, alias):
         # Exit 2 specifically: argparse's unknown-flag code, not any SystemExit
         # a broken parser might raise on the way past.
         with pytest.raises(SystemExit) as exc:
-            cli_review_threads._build_parser().parse_args([alias])
+            cli_review_threads.build_parser().parse_args([alias])
         assert exc.value.code == 2
 
 
@@ -4406,27 +4427,27 @@ def _hand_fixed(tmp_path, *, pushed=True):
 
 class TestSettleFlagParsing:
     def test_settle_is_repeatable(self):
-        args = cli_review_threads._build_parser().parse_args(["--settle", "t1", "--settle", "t2"])
+        args = cli_review_threads.build_parser().parse_args(["--settle", "t1", "--settle", "t2"])
         assert args.settle == ["t1", "t2"]
 
     def test_settle_records_a_fix_unless_told_otherwise(self):
         """The ending an operator who was offered "fix it" chose."""
-        args = cli_review_threads._build_parser().parse_args(["--settle", "t1"])
+        args = cli_review_threads.build_parser().parse_args(["--settle", "t1"])
         assert args.settle_as == FixOutcome.FIXED.value
 
     @pytest.mark.parametrize("outcome", [o.value for o in (
         FixOutcome.FIXED, FixOutcome.DISMISSED, FixOutcome.ALREADY_ADDRESSED)])
     def test_every_bucket_the_closeout_can_reply_to_is_offered(self, outcome):
-        args = cli_review_threads._build_parser().parse_args(["--settle", "t1", "--as", outcome])
+        args = cli_review_threads.build_parser().parse_args(["--settle", "t1", "--as", outcome])
         assert args.settle_as == outcome
 
     def test_deferral_is_not_a_settlement(self):
         """--track already files work still owed; --settle records work finished."""
         with pytest.raises(SystemExit):
-            cli_review_threads._build_parser().parse_args(["--settle", "t1", "--as", "deferred"])
+            cli_review_threads.build_parser().parse_args(["--settle", "t1", "--as", "deferred"])
 
     def test_nothing_is_settled_unless_asked(self):
-        assert cli_review_threads._build_parser().parse_args(["--finish"]).settle == []
+        assert cli_review_threads.build_parser().parse_args(["--finish"]).settle == []
 
 
 class TestSettleFlagValidation:
@@ -9729,7 +9750,7 @@ class TestTruncatedThreadFetch:
     def _run(self, tmp_path, threads, *, complete, finish=False):
         ctx = self._ctx(tmp_path)
         state_path = self._seed_ledger(ctx)
-        args = cli_review_threads._build_parser().parse_args(
+        args = cli_review_threads.build_parser().parse_args(
             ["--finish"] if finish else [])
         with patch.object(cli_review_threads, "fetch_pr_data",
                           return_value=self._pr_data(threads, complete=complete)), \
@@ -9772,6 +9793,23 @@ class TestTruncatedThreadFetch:
         assert code == 0
         fin.assert_called_once()
 
+    def test_a_refused_track_is_the_runs_exit_code(self, tmp_path):
+        """--finish --track with an id naming no deferred thread fails the run.
+
+        The refusal used to be a `sys.exit(1)` two layers down in a library, so
+        the exit status came from the process dying rather than from this
+        module. Now that closeout reports it, only propagating the value keeps
+        the run from claiming success having filed nothing.
+        """
+        ctx = self._ctx(tmp_path)
+        self._seed_ledger(ctx)
+        args = cli_review_threads.build_parser().parse_args(["--finish"])
+        with patch.object(cli_review_threads, "fetch_pr_data",
+                          return_value=self._pr_data(
+                              [self._thread("T_page1")], complete=True)), \
+             patch.object(closeout, "finish_deferred_work", return_value=False):
+            assert cli_review_threads._run_threads(MagicMock(), args, ctx) == 1
+
     def test_finish_on_an_incomplete_fetch_resolves_nothing_on_github(
             self, tmp_path):
         """The guard's "nothing was published" claim must stay true: a
@@ -9779,7 +9817,7 @@ class TestTruncatedThreadFetch:
         before --finish bails out."""
         ctx = self._ctx(tmp_path)
         self._seed_ledger(ctx)
-        args = cli_review_threads._build_parser().parse_args(["--finish"])
+        args = cli_review_threads.build_parser().parse_args(["--finish"])
         with patch.object(
                 cli_review_threads, "fetch_pr_data",
                 return_value=self._pr_data(

@@ -74,13 +74,13 @@ def test_comments_summary_defaults():
     assert c.by_state == {}
     assert c.blocking_reviewers == []
     assert c.has_approvals is False
-    assert c.seen_issue_comment_ids == []
-    assert c.seen_review_body_comment_ids == []
+    assert c.seen_issue_comments == {}
+    assert c.seen_review_body_comments == {}
 
 
 def test_comments_summary_with_seen_ids():
-    c = CommentsSummary(seen_issue_comment_ids=[111, 222, 333])
-    assert c.seen_issue_comment_ids == [111, 222, 333]
+    c = CommentsSummary(seen_issue_comments={111: "", 222: "2026-01-01T00:00:00Z"})
+    assert c.seen_issue_comments == {111: "", 222: "2026-01-01T00:00:00Z"}
 
 
 def test_triage_summary_defaults():
@@ -196,7 +196,7 @@ def test_state_roundtrip_with_data():
     assert restored.comments.by_state == {"new": 2, "addressed": 3}
     assert restored.comments.blocking_reviewers == ["alice"]
     assert restored.comments.has_approvals is True
-    assert restored.comments.seen_issue_comment_ids == []
+    assert restored.comments.seen_issue_comments == {}
 
 
 def test_commit_status_wire_values_are_the_strings_state_files_hold():
@@ -235,28 +235,51 @@ def test_a_status_read_from_an_older_state_file_still_compares():
     assert state.fix.fix.commit_status == CommitStatus.PUSH_HELD
 
 
-def test_state_roundtrip_with_seen_issue_comment_ids():
+def test_state_roundtrip_with_seen_issue_comments():
+    """The stamps survive JSON, which turns every mapping key into a string."""
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
     apply(state, CommentsSummary(
         total_threads=3, by_state={"new": 1, "addressed": 2},
-        seen_issue_comment_ids=[111, 222, 333],
+        seen_issue_comments={111: "", 222: "2026-07-02T00:00:00Z"},
         updated_at="2026-07-02T00:00:00+00:00",
     ))
     d = state_to_dict(state)
-    restored = state_from_dict(d)
-    assert restored.comments.seen_issue_comment_ids == [111, 222, 333]
+    restored = state_from_dict(json.loads(json.dumps(d)))
+    assert restored.comments.seen_issue_comments == {
+        111: "", 222: "2026-07-02T00:00:00Z",
+    }
 
 
-def test_state_roundtrip_with_seen_review_body_comment_ids():
+def test_state_roundtrip_with_seen_review_body_comments():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
     apply(state, CommentsSummary(
         total_threads=3, by_state={"new": 1, "addressed": 2},
-        seen_review_body_comment_ids=[444, 555, 666],
+        seen_review_body_comments={444: "2026-07-13T00:00:00Z", 555: ""},
         updated_at="2026-07-13T00:00:00+00:00",
     ))
     d = state_to_dict(state)
-    restored = state_from_dict(d)
-    assert restored.comments.seen_review_body_comment_ids == [444, 555, 666]
+    restored = state_from_dict(json.loads(json.dumps(d)))
+    assert restored.comments.seen_review_body_comments == {
+        444: "2026-07-13T00:00:00Z", 555: "",
+    }
+
+
+def test_a_state_file_from_before_the_stamps_reads_as_nothing_seen():
+    """The migration, such as it is: one round re-reports, nothing is dropped.
+
+    The old field was a list of bare ids. serde drops what no field claims, so
+    the mapping comes back empty and every comment reads unseen — noisy once,
+    and the only direction that cannot silently swallow a reviewer's words.
+    """
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    apply(state, CommentsSummary(total_threads=1, updated_at="t"))
+    d = state_to_dict(state)
+    d["comments"]["seen_issue_comment_ids"] = [111, 222]
+    d["comments"].pop("seen_issue_comments", None)
+
+    restored = state_from_dict(json.loads(json.dumps(d)))
+
+    assert restored.comments.seen_issue_comments == {}
 
 
 def test_state_roundtrip_with_triage_data():
@@ -983,13 +1006,14 @@ def test_apply_replaces_comments():
 def test_apply_comments_with_seen_ids():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, CommentsSummary(
-        total_threads=2, seen_issue_comment_ids=[100, 200], updated_at="t1",
+        total_threads=2, seen_issue_comments={100: "", 200: ""}, updated_at="t1",
     ))
-    assert state.comments.seen_issue_comment_ids == [100, 200]
+    assert state.comments.seen_issue_comments == {100: "", 200: ""}
     apply(state, CommentsSummary(
-        total_threads=3, seen_issue_comment_ids=[100, 200, 300], updated_at="t2",
+        total_threads=3, seen_issue_comments={100: "", 200: "", 300: ""},
+        updated_at="t2",
     ))
-    assert state.comments.seen_issue_comment_ids == [100, 200, 300]
+    assert state.comments.seen_issue_comments == {100: "", 200: "", 300: ""}
 
 
 def test_apply_replaces_triage():
@@ -1093,42 +1117,35 @@ def test_save_preserves_rebase_data(worktree):
     assert loaded.rebase.files_resolved == ["f.py"]
 
 
-def test_save_preserves_seen_issue_comment_ids(worktree):
+def test_save_preserves_seen_issue_comments(worktree):
+    """Through a real file, where the mapping's int keys go out as strings."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     apply(state, CommentsSummary(
-        total_threads=2, seen_issue_comment_ids=[111, 222],
+        total_threads=2, seen_issue_comments={111: "", 222: "2026-07-02T00:00:00Z"},
         updated_at="2026-07-02T00:00:00+00:00",
     ))
     save_state(worktree, state)
     loaded = load_state(worktree)
     assert loaded is not None
-    assert loaded.comments.seen_issue_comment_ids == [111, 222]
+    assert loaded.comments.seen_issue_comments == {
+        111: "", 222: "2026-07-02T00:00:00Z",
+    }
 
 
-def test_load_state_without_seen_ids_defaults_empty(worktree):
-    """Old state files without seen_issue_comment_ids should deserialize with []."""
+@pytest.mark.parametrize("field_name", [
+    "seen_issue_comments", "seen_review_body_comments",
+])
+def test_load_state_without_seen_stamps_defaults_empty(worktree, field_name):
+    """A file missing the mapping loads with an empty one, not a failure."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
     path = worktree / "state.json"
     data = json.loads(path.read_text())
-    del data["comments"]["seen_issue_comment_ids"]
+    del data["comments"][field_name]
     path.write_text(json.dumps(data))
     loaded = load_state(worktree)
     assert loaded is not None
-    assert loaded.comments.seen_issue_comment_ids == []
-
-
-def test_load_state_without_seen_review_body_comment_ids_defaults_empty(worktree):
-    """Old state files without seen_review_body_comment_ids should deserialize with []."""
-    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
-    save_state(worktree, state)
-    path = worktree / "state.json"
-    data = json.loads(path.read_text())
-    del data["comments"]["seen_review_body_comment_ids"]
-    path.write_text(json.dumps(data))
-    loaded = load_state(worktree)
-    assert loaded is not None
-    assert loaded.comments.seen_review_body_comment_ids == []
+    assert getattr(loaded.comments, field_name) == {}
 
 
 # ── load_or_init ───────────────────────────────────────────────────────────

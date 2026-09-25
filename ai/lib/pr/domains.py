@@ -449,8 +449,20 @@ class CommentsSummary(Domain):
     by_state: dict[str, int] = field(default_factory=dict)
     blocking_reviewers: list[str] = field(default_factory=list)
     has_approvals: bool = False
-    seen_issue_comment_ids: list[int] = field(default_factory=list)
-    seen_review_body_comment_ids: list[int] = field(default_factory=list)
+    # What the last round read, as {comment id: the edit stamp it carried}.
+    #
+    # Keyed by id *and* dated, because an edit keeps the id: a reviewer who
+    # rewrites a comment to add a demand produces the same id with a new
+    # stamp, and an id-only record read that as already handled and dropped it
+    # from triage. The value is `lastEditedAt`, or "" for a comment never
+    # edited — so an unedited comment matches on "" == "" and stays seen.
+    #
+    # These replace the former `seen_*_ids` lists rather than sitting beside
+    # them. A state file written before this deserializes without them, which
+    # reads as "nothing seen" and re-reports one round's comments — noise, and
+    # the direction that cannot silently drop a reviewer's words.
+    seen_issue_comments: dict[int, str] = field(default_factory=dict)
+    seen_review_body_comments: dict[int, str] = field(default_factory=dict)
     # Whether the fetch behind these counts reached every thread. Defaulted
     # True so a state file written before the field reads as it always did;
     # a short tally that claimed to be the whole PR is what this exists to

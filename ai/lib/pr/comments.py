@@ -475,6 +475,17 @@ def fetch_reviewer_verdicts(
     return list(by_user.values())
 
 
+def _rest_edit_stamp(comment: dict) -> str:
+    """A REST comment's last-edited stamp, in the GraphQL path's vocabulary.
+
+    `""` for a comment never edited, so the two fetch paths agree. See the call
+    site for why the equality check is the whole point.
+    """
+    created = comment.get("created_at", "") or ""
+    updated = comment.get("updated_at", "") or ""
+    return "" if updated == created else updated
+
+
 def fetch_issue_comments(
     repo: str, pr_number: int, my_login: str,
     pr_data: PRData | None = None,
@@ -508,6 +519,15 @@ def fetch_issue_comments(
             "user": user,
             "body": c.get("body", ""),
             "created_at": c.get("created_at", ""),
+            # REST has no `lastEditedAt`, so it is reconstructed: `updated_at`
+            # equals `created_at` until the first edit and moves with each one
+            # after. The equality is what makes it a *last edited* stamp rather
+            # than a modification time, and collapsing that case to "" is what
+            # keeps this path agreeing with the GraphQL one, which sends null
+            # for a comment nobody has edited. Without the collapse the two
+            # paths record different stamps for the same untouched comment, and
+            # a run that alternates between them re-reports it every round.
+            "last_edited_at": _rest_edit_stamp(c),
         })
     return result
 
@@ -543,6 +563,13 @@ def fetch_review_body_comments(
             "body": body,
             "state": state,
             "submitted_at": r.get("submitted_at", ""),
+            # The reviews REST payload carries no edit stamp at all — not an
+            # equivalent of `lastEditedAt`, and not `updated_at`. So an edited
+            # review body is undetectable on this path, and "" says the stamp
+            # is unknown rather than claiming the review is unedited. The
+            # GraphQL path above is the one every real run takes; this fallback
+            # is for a caller holding no PRData.
+            "last_edited_at": "",
         })
     return result
 

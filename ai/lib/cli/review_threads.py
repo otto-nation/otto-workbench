@@ -79,6 +79,38 @@ def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord
 
 
 
+def _edit_stamp(comment: dict) -> str:
+    """When this comment's body was last rewritten, or "" if never.
+
+    One spelling for the two helpers below, so the key they record and the key
+    they compare against cannot come to disagree about which field dates a
+    comment.
+    """
+    return comment.get("last_edited_at", "") or ""
+
+
+def _mark_seen(comments: list[dict], prior: dict[int, str]) -> None:
+    """Flag each comment the last round already read, in place.
+
+    Seen means *this* text was read, not that this comment id was: an edit
+    keeps the id, so matching on id alone treats a rewritten comment as handled
+    and `triage.collect_unseen_comments` drops it before an agent ever sees it.
+    A reviewer who edits a comment to add a demand is asking for something, and
+    that is the case an id-only record loses.
+
+    A comment absent from `prior` is unseen, which is also how a state file
+    written before the stamps existed reads. That direction is deliberate: a
+    false unseen re-reports something once, a false seen drops it for good.
+    """
+    for c in comments:
+        c["seen"] = c["id"] in prior and prior[c["id"]] == _edit_stamp(c)
+
+
+def _seen_record(comments: list[dict]) -> dict[int, str]:
+    """What this round read, for the next round to compare against."""
+    return {c["id"]: _edit_stamp(c) for c in comments}
+
+
 def _run_threads(trail, args, ctx) -> int:
     repo = ctx.repo
     pr_number = ctx.pr_number
@@ -180,21 +212,15 @@ def _run_threads(trail, args, ctx) -> int:
             v.get("state") == "APPROVED" for v in report.verdicts
         )
         st = pr_state.load_or_init(**ctx_args)
-        prior_seen_ids = set(st.comments.seen_issue_comment_ids)
-        current_ids = [c["id"] for c in issue_comments]
-        for c in issue_comments:
-            c["seen"] = c["id"] in prior_seen_ids
-        prior_seen_review_ids = set(st.comments.seen_review_body_comment_ids)
-        current_review_ids = [c["id"] for c in review_body_comments]
-        for c in review_body_comments:
-            c["seen"] = c["id"] in prior_seen_review_ids
+        _mark_seen(issue_comments, st.comments.seen_issue_comments)
+        _mark_seen(review_body_comments, st.comments.seen_review_body_comments)
         pr_state.apply(st, pr_domains.CommentsSummary(
             total_threads=len(report.threads),
             by_state=thread_states,
             blocking_reviewers=blocking,
             has_approvals=has_approvals,
-            seen_issue_comment_ids=current_ids,
-            seen_review_body_comment_ids=current_review_ids,
+            seen_issue_comments=_seen_record(issue_comments),
+            seen_review_body_comments=_seen_record(review_body_comments),
             complete=fetched.complete,
             updated_at=pr_state.now_iso(),
         ))

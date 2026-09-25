@@ -382,6 +382,7 @@ query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
           author {{ login __typename }}
           body
           createdAt
+          lastEditedAt
         }}
       }}
     }}
@@ -710,6 +711,7 @@ query($owner: String!, $name: String!, $pr: Int!) {{
           body
           minimizedReason
           submittedAt
+          lastEditedAt
           author {{ login }}
         }}
       }}
@@ -728,6 +730,7 @@ query($owner: String!, $name: String!, $pr: Int!) {{
           author {{ login __typename }}
           body
           createdAt
+          lastEditedAt
         }}
       }}
       commits(last: {GQL_COMMITS_LIMIT}) {{
@@ -837,7 +840,15 @@ class PRData:
         return list(by_user.values())
 
     def review_body_comments(self, my_login: str) -> list[dict]:
-        """Non-self reviews with substantive body text, as [{id, user, body, state, submitted_at}]."""
+        """Non-self reviews with substantive body text.
+
+        ``[{id, user, body, state, submitted_at, last_edited_at}]``.
+
+        ``last_edited_at`` is what lets a caller tell a review it has already
+        read from the same review re-worded since. An edit keeps the id and
+        does not move the review, so id alone cannot: see
+        `cli.review_threads`, which keys seen-ness on both.
+        """
         my_lower = my_login.lower()
         results = []
         for r in self.reviews:
@@ -859,11 +870,18 @@ class PRData:
                 "body": body,
                 "state": state,
                 "submitted_at": r.get("submittedAt", ""),
+                # None when never edited, which is the common case — normalised
+                # to "" so every consumer compares strings.
+                "last_edited_at": r.get("lastEditedAt") or "",
             })
         return results
 
     def non_self_issue_comments(self, my_login: str) -> list[dict]:
-        """Issue-level comments excluding my_login and bots, as [{id, user, body, created_at}]."""
+        """Issue-level comments excluding my_login and bots.
+
+        ``[{id, user, body, created_at, last_edited_at}]``. See
+        `review_body_comments` for why the edit stamp travels with the id.
+        """
         my_lower = my_login.lower()
         results = []
         for c in self.issue_comments:
@@ -878,6 +896,7 @@ class PRData:
                 "user": login,
                 "body": c.get("body", ""),
                 "created_at": c.get("createdAt", ""),
+                "last_edited_at": c.get("lastEditedAt") or "",
             })
         return results
 

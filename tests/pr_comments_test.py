@@ -784,3 +784,43 @@ def test_sync_prefers_the_fetched_record_over_the_carried_one():
 
     assert result["T_abc"].state == ThreadState.RESOLVED
     assert result["T_abc"].summary == "stale"
+
+
+# ── The two fetch paths must date a comment the same way ────────────────────
+#
+# GraphQL sends `lastEditedAt: null` for a comment nobody has edited; REST has
+# no such field and sends `updated_at == created_at`. Seen-tracking compares
+# the recorded stamp against the fetched one, so if the paths disagree about an
+# untouched comment, a run that alternates between them re-reports it forever.
+
+
+class TestRestEditStamp:
+
+    def test_an_unedited_comment_has_no_stamp(self):
+        """`updated_at == created_at` is REST's way of saying "never edited"."""
+        assert pr_comments._rest_edit_stamp({
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }) == ""
+
+    def test_an_edited_comment_carries_the_edit_time(self):
+        assert pr_comments._rest_edit_stamp({
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-02-01T00:00:00Z",
+        }) == "2026-02-01T00:00:00Z"
+
+    def test_a_payload_missing_both_fields_has_no_stamp(self):
+        assert pr_comments._rest_edit_stamp({}) == ""
+
+    def test_the_paths_agree_on_an_untouched_comment(self):
+        """The regression this normalisation exists to prevent.
+
+        Both spellings of "never edited" must reduce to the same recorded
+        stamp, or seen-ness flips every time the fetch path changes.
+        """
+        graphql_stamp = None or ""       # what non_self_issue_comments records
+        rest_stamp = pr_comments._rest_edit_stamp({
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        })
+        assert graphql_stamp == rest_stamp

@@ -626,6 +626,26 @@ counted as `N carried over`, and logged. An edit never drops a row it is the
 only comment holding; a row an earlier comment also carries is scoped like any
 other, since the chain still holds it.
 
+**An edited comment is read again:**
+
+A comment `pr comments` has already read is dropped from triage decomposition,
+so the record of what was read decides what an agent ever sees. That record is
+keyed on the comment id *and* the time its body was last edited — an edit keeps
+the id and does not move the comment, so a reviewer who rewrites a comment to
+add a demand would otherwise have it silently discarded as already handled.
+
+The stamp is GitHub's `lastEditedAt`, which is null until the first edit. The
+REST fallback has no such field and reconstructs it from `updated_at`,
+collapsing the never-edited case (`updated_at == created_at`) to the same empty
+stamp — without that, the two fetch paths would disagree about an untouched
+comment and re-report it on every round. An edited *review body* is
+undetectable on the REST path, which carries no edit stamp at all; the GraphQL
+path every real run takes does carry one.
+
+A state file written before the stamps existed reads as "nothing seen" and
+re-reports one round's comments. That is the deliberate direction: a false
+unseen is noise once, a false seen loses a reviewer's words for good.
+
 **`pr fix` only trusts a clean verdict about the commit in hand:**
 
 `pr fix` decides whether to run each pass by reading the same cached state

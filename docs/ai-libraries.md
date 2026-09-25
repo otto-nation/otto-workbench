@@ -3367,11 +3367,26 @@ no lock: it would report success while excluding nobody. They run under a
 ``pr review`` that holds the real lock across the subprocess, and a direct
 invocation of either is undocumented.
 
-The pass-through is an exact string match on the target and does not prove the
-flock is ours. A value exported into a shell by hand, or left behind by a run
-killed before its ``finally``, therefore reads as ownership. Proving it would
-mean re-probing a lock we already hold, which fails precisely because we hold
-it; the marker is the only thing that can answer, so it is trusted.
+Ownership is asked twice, in order, and the two questions differ in what they
+can prove. First a process-local registry of the flocks this process itself
+took: that one *is* proof — we opened the descriptor and took the flock here,
+so a hit is a lock we hold and re-taking it is a no-op rather than a refusal.
+Only on a miss is the env marker consulted, and it remains an exact string
+match that does not prove the flock is ours. A value exported into a shell by
+hand, or left behind by a run killed before its ``finally``, therefore still
+reads as ownership. Proving it would mean re-probing a lock another process in
+our tree holds, which fails precisely because it is held; the marker is the
+only thing that can answer for that case, so it is trusted there — and only
+there.
+
+That registry is what lets one process hold locks on several targets at once.
+``flock`` is not re-entrant across file descriptors, and the marker is a single
+value, so a process taking a second lock would otherwise lose the name of the
+first and refuse its own lock on re-entry. The marker is still written, because
+it is the only channel a subprocess delegate can read, but it is derived from
+the registry rather than saved and restored per call: a ``claim_for_process``
+take outlives the block that was holding the value it displaced, so restoring
+that value would clear a marker whose flock is still held.
 
 ### core/schema_gen.py
 

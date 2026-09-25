@@ -440,22 +440,29 @@ def _clear_lock_env():
     """Never inherit a run lock marker across tests, or out of a real run.
 
     claim_for_process holds its handle until the process exits, which for a
-    test process means the rest of the session — so drop those here too.
+    test process means the rest of the session — so release those here too,
+    through the same walker the exit hook runs rather than a second close loop.
     Autouse for the same reason as _clear_agent_env: this is the floor, so
     the next module that takes a lock does not have to remember.
+
+    Both markers, not just the target's: a test that claims a checkout leaves
+    TREE_LOCK_ENV behind exactly the way it leaves LOCK_ENV behind.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
     from core import run_lock
 
     saved = os.environ.pop(run_lock.LOCK_ENV, None)
+    saved_tree = os.environ.pop(run_lock.TREE_LOCK_ENV, None)
     yield
-    for handle in run_lock._HELD:
-        handle.close()
-    run_lock._HELD.clear()
+    run_lock._release_all()
+    run_lock._INHERITED.clear()
     os.environ.pop(run_lock.LOCK_ENV, None)
+    os.environ.pop(run_lock.TREE_LOCK_ENV, None)
     if saved is not None:
         os.environ[run_lock.LOCK_ENV] = saved
+    if saved_tree is not None:
+        os.environ[run_lock.TREE_LOCK_ENV] = saved_tree
 
 
 @pytest.fixture

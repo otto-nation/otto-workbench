@@ -208,7 +208,15 @@ def test_prune_merged_targets_leaves_a_live_targets_dir_alone(tmp_path, monkeypa
                         lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
     with run_lock.acquire(target, command="pr review", started="t"):
+        # Disowned, not merely unmarked: the registry and the env marker each
+        # wave a holder through, so a live run is only simulated once both are
+        # gone and the open descriptor's flock is what answers. The popped
+        # entry is bound to a local for the rest of the block — it holds the
+        # only reference to the open file, and letting it be collected would
+        # close the descriptor and release the flock under test.
         os.environ.pop(run_lock.LOCK_ENV, None)
+        disowned = run_lock._HELD.pop(str(target / run_lock.LOCK_FILE), None)
+        assert disowned is not None
         assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()).pruned == 0
 
     assert (target / pr_state.STATE_FILE).is_file()

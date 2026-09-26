@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from core import log
 from core.trail import Trail
@@ -41,8 +42,24 @@ class Verdict:
     detail: str = ""
 
 
+class GateAdapter(Protocol):
+    """The three things the gate reads off a domain's adapter.
+
+    Satisfied by ``fix.engine.FixAdapter``. Declared here rather than imported
+    so this module does not depend on the engine it was split out of — that
+    edge is the seam, and annotating the concrete class would put it back. The
+    narrow shape also says what the gate actually needs, so a domain missing a
+    field is a type error at its own definition rather than at a gate call.
+    """
+
+    item_noun: str
+    phase: object
+    verify_phase: object
+
+
 # What the gate is handed and what it gives back: the fixed items, and a verdict
-# per item id. An id the gate does not answer is not a verdict — see `_verify`.
+# per item id. An id the gate does not answer is not a verdict — see
+# `verify_claims`.
 VerifyFn = Callable[..., dict[str, Verdict]]
 
 # What the fix pass said holds its change, as the gate is shown it. Composed
@@ -228,16 +245,16 @@ def _gated_decline(outcome: ItemOutcome) -> bool:
 def _no_scope(_outcome: ItemOutcome) -> fix_scope.BatchScope:
     """The scope lookup for a caller that supplied no observations.
 
-    Keeps `_verify` callable without a `_Settled` — which the tests do, and
-    which a domain calling the gate directly would — by answering the way an
-    unobserved pass genuinely should: nothing is known, so nothing is
+    Keeps `verify_claims` callable without a `_Settled` — which the tests do,
+    and which a domain calling the gate directly would — by answering the way
+    an unobserved pass genuinely should: nothing is known, so nothing is
     contradicted and no observation block is rendered.
     """
     return fix_scope.UNKNOWN_SCOPE
 
 
-def _verify(
-    outcomes: list[ItemOutcome], verify: VerifyFn | None, adapter,
+def verify_claims(
+    outcomes: list[ItemOutcome], verify: VerifyFn | None, adapter: GateAdapter,
     by_id: dict[str, FixItem], trail: Trail | None,
     scope_for: Callable[[ItemOutcome], fix_scope.BatchScope] = _no_scope,
 ) -> None:
@@ -400,7 +417,6 @@ def _report_ungated(contradicted: set[str], trail: Trail | None) -> None:
             "with no gate to settle them",
             data={"items": sorted(contradicted)},
         )
-
 
 
 # What a contradicted item says when the gate reached no verdict on it. Not a

@@ -66,7 +66,10 @@ TRACKING_FILENAME = "fix-tracking.md"
 # The gate's own checklists, published for the same reason: a review's sweep
 # removes every chunk file by this glob, and a gate running inside a review
 # directory would otherwise leave its answers beside the deliverable. Always
-# suffixed, including chunk 1, so the sweep is one pattern rather than two names.
+# suffixed, including chunk 1, so every file this code writes is reached by one
+# pattern. It does not match the unsuffixed `verify-tracking.md` earlier
+# revisions wrote; review/gc.py removes that name explicitly alongside the
+# glob, and can stop once no in-flight review predates the suffix.
 VERIFY_TRACKING_GLOB = "verify-tracking-*.md"
 
 # What a retry is told about the file it is handed. The first pass's settled
@@ -234,6 +237,14 @@ class FixAdapter(ABC):
         return self.artifacts / f"verify-tracking-{chunk}.md"
 
     def verify_session_log(self, chunk: int) -> Path:
+        """Where this verify chunk streams its session.
+
+        Indexed for the same reason the tracking file is: one path shared by
+        two chunks is one chunk's diagnosis overwriting the other's, and a gate
+        that ran two chunks would answer for whichever finished last. A
+        single-chunk gate passes 1, which is the whole range rather than a
+        special case — the suffix is always written.
+        """
         if chunk < 1:
             raise ValueError(f"verify chunk is 1-based, got {chunk}")
         return self.artifacts / f"verify-session-{chunk}.jsonl"
@@ -817,7 +828,10 @@ def run(
     # Before the scope is read and before anything is committed: a fix the gate
     # falsifies must not reach `landing` as a fix, or the commit and the record
     # would disagree about what the pass did.
-    fix_gate._verify(settled.outcomes, verify, adapter, by_id, trail, scope_for=settled.scope_for)
+    fix_gate.verify_claims(
+        settled.outcomes, verify, adapter, by_id, trail,
+        scope_for=settled.scope_for,
+    )
 
     # Between the gate and the push, which is the only window that works: the
     # outcomes are final here, and `land` below reads the publishing gate a

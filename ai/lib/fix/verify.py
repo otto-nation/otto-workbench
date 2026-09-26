@@ -52,7 +52,7 @@ def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
 
 def _run_chunk(
     phase: Phase, items: list[FixItem], adapter, label: str, chunk: int,
-) -> dict[str, "Verdict"]:
+) -> dict[str, Verdict]:
     """One gate invoke, budgeted for this chunk's size."""
     path = adapter.verify_tracking_path(chunk)
     fix_tracking.write(path, "Verify Fixes", items, fix_tracking.VERIFY_BOXES)
@@ -103,7 +103,7 @@ def _run_chunk(
 
 def run(
     phase: Phase, _prompt_unused: str, *, items: list[FixItem], adapter,
-) -> dict[str, "Verdict"]:
+) -> dict[str, Verdict]:
     """Ask the gate about `items` and hand back a verdict per item id.
 
     Signature is the engine's `VerifyFn`: the engine supplies the phase and the
@@ -122,7 +122,7 @@ def run(
     chunk_size = agent_phases.phase_chunk_size(phase)
     batched = _chunks(items, chunk_size)
     name = "Verify gate"
-    verdicts: dict[str, "Verdict"] = {}
+    verdicts: dict[str, Verdict] = {}
     for n, chunk in enumerate(batched, start=1):
         label = name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})"
         verdicts.update(_run_chunk(phase, chunk, adapter, label, n))

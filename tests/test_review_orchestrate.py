@@ -2963,6 +2963,10 @@ class TestCleanupScope:
         listing below is here to catch.
         """
         def _two_chunk_gate(job, **_kwargs):
+            # This hook replaces the pipeline outright, so the standard `_fix`
+            # stub never runs and nothing writes `fix-tracking.md`. Anything a
+            # later change adds to that stub has to be added here too, or the
+            # exact listing below stops covering it.
             Path(job.review_file).write_text(self._REVIEW)
             Path(job.session_log).write_text("{}\n")
             review_dir = Path(job.artifact_dir)

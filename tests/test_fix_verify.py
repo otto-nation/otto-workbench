@@ -88,9 +88,17 @@ def test_each_chunk_writes_its_own_tracking_file(tmp_path):
     adapter = _Adapter(tmp_path)
     chunk = agent_phases.phase_chunk_size(Phase.FIX_VERIFY)
     seen = []
+    # Captured while each chunk is in flight. Checking existence after the run
+    # would pass on two files written by one chunk; the point is that chunk 2
+    # is answering on its own checklist rather than reading chunk 1's, and only
+    # a read taken during the call can tell those apart.
+    tracking = []
 
     def run_fix(_phase, _prompt, **kwargs):
         seen.append(kwargs["session_log"])
+        tracking.append(sorted(
+            p.name for p in adapter.artifacts.glob("verify-tracking-*.md")
+        ))
         return agent_invoke.FixResult(0, None)
 
     with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=run_fix):
@@ -102,8 +110,10 @@ def test_each_chunk_writes_its_own_tracking_file(tmp_path):
     assert seen[0] != seen[1]
     assert seen[0].endswith("verify-session-1.jsonl")
     assert seen[1].endswith("verify-session-2.jsonl")
-    assert (adapter.artifacts / "verify-tracking-1.md").exists()
-    assert (adapter.artifacts / "verify-tracking-2.md").exists()
+    assert tracking == [
+        ["verify-tracking-1.md"],
+        ["verify-tracking-1.md", "verify-tracking-2.md"],
+    ]
     assert not (adapter.artifacts / "verify-tracking.md").exists()
 
 

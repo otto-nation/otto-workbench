@@ -44,8 +44,9 @@ file_path=$(jq -r '.tool_input.file_path // empty' 2>/dev/null) || exit 0
 # GIT_DIR and friends are stripped before any git below. Git skips discovery
 # when GIT_DIR is set, so one inherited from a calling hook would answer about
 # that repository instead of the edited file's — a wrong answer arriving as a
-# success.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# success. GIT_COMMON_DIR goes with them: it redirects the shared storage a
+# linked worktree reads, and the Pi twin in detect.ts strips the same four.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 
 parent=$(dirname "$file_path")
 repo_dir=$(cd "$parent" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || exit 0
@@ -54,7 +55,14 @@ repo_dir=$(cd "$parent" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null
 # exemption: a suite reads ignored build output too, and rewriting it under a
 # running gate invalidates the same run. No pid is named — holders() can be
 # empty while the lock is held, so it is not a detail this can stand behind.
-_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+#
+# The symlink is followed before the traversal. sync_component_bin installs
+# this as ~/.local/bin/claude-edit-guard, and settings.json runs it by that
+# path: without the readlink, ../../.. climbs out of ~/.local/bin to a user
+# directory, the -x test fails, and the lock half is silently skipped on every
+# real invocation while the tests — which call the repo copy — stay green.
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_repo_root="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
 _with_tree_lock="$_repo_root/bin/local/with-tree-lock"
 
 if [[ -x "$_with_tree_lock" ]] \

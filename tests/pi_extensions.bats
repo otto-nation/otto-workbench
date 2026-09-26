@@ -993,30 +993,9 @@ _lock_refusal() {
   " -- "$1"
 }
 
-# _hold_tree TREE — hold LOCK_SH on TREE in the background until killed.
-# Prints the wrapper pid. Polls --check rather than sleeping.
-#
-# The holder's stdout and stderr go to /dev/null on purpose. A caller reads
-# this through `holder=$(_hold_tree ...)`, and a background child that inherits
-# the command substitution's pipe keeps its write end open — the substitution
-# then blocks until the holder exits, which is never, so the test hangs before
-# it reaches its first assertion.
-_hold_tree() {
-  local tree="$1"
-  "$REPO_ROOT/bin/local/with-tree-lock" "$tree" -- \
-    sh -c 'while true; do sleep 30; done' >/dev/null 2>&1 &
-  local wrapper=$!
-  for _ in $(seq 1 50); do
-    if "$REPO_ROOT/bin/local/with-tree-lock" --check "$tree" >/dev/null 2>&1; then
-      printf '%s' "$wrapper"
-      return 0
-    fi
-    sleep 0.1
-  done
-  kill "$wrapper" 2>/dev/null || true
-  echo "tree $tree never became locked" >&2
-  return 1
-}
+# _hold_tree lives in tests/test_helper.bash: claude_settings.bats holds the
+# same lock for the Claude half of this guard, and one fact read by two
+# harnesses is worth one helper rather than two copies of it.
 
 @test "tree-lock-guard: a free tree is not a refusal" {
   local repo="$TMPDIR/repo"
@@ -1108,13 +1087,22 @@ h = open(sys.argv[1], 'a+')
 fcntl.flock(h, fcntl.LOCK_SH)
 time.sleep(30)
 " "$lock" >/dev/null 2>&1 &
-  local py=$!
+  local py=$! locked=""
   for _ in $(seq 1 50); do
     if "$REPO_ROOT/bin/local/with-tree-lock" --check "$repo" >/dev/null 2>&1; then
+      locked=yes
       break
     fi
     sleep 0.1
   done
+  # Fail here rather than at the assertion below: an unlocked tree makes
+  # _lock_refusal correctly return null, and the final assertion would report
+  # a guard that failed to refuse instead of a lock that was never taken.
+  if [[ -z "$locked" ]]; then
+    kill "$py" 2>/dev/null || true
+    echo "tree $repo never became locked" >&2
+    return 1
+  fi
   _lock_refusal "$repo/file.txt"
   local result_out=$output
   kill "$py" 2>/dev/null || true
@@ -1124,10 +1112,14 @@ time.sleep(30)
 }
 
 @test "tree-lock-guard: missing path or non-git path fails open" {
+  # The status is asserted alongside the output: a node crash whose message
+  # happened to contain "null" would otherwise pass the output check alone.
   _lock_refusal "$TMPDIR/no-such-parent/file.txt"
+  [ "$status" -eq 0 ]
   [ "$output" = "null" ]
   mkdir -p "$TMPDIR/plain"
   _lock_refusal "$TMPDIR/plain/file.txt"
+  [ "$status" -eq 0 ]
   [ "$output" = "null" ]
 }
 

@@ -42,13 +42,15 @@ export const REFUSAL =
  * GIT_DIR and friends are stripped first. Git skips discovery entirely when
  * GIT_DIR is set, so with one inherited from a hook the `-C` below is ignored
  * and the answer is about the hook's repository — a wrong answer arriving as a
- * success.
+ * success. GIT_COMMON_DIR goes with them: it redirects the shared storage a
+ * linked worktree reads, and the Claude twin strips the same four.
  */
 export function gitRootFor(path: string): string {
   const env = { ...process.env };
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   delete env.GIT_INDEX_FILE;
+  delete env.GIT_COMMON_DIR;
 
   try {
     return execFileSync("git", ["-C", dirname(path), "rev-parse", "--show-toplevel"], {

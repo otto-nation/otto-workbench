@@ -126,8 +126,13 @@ teardown() {
   pytest_line=$(grep -n 'Running \$_pytest_label' "$HOOK" | head -1 | cut -d: -f1)
   notice_line=$(grep -n '^_warn_if_pr_is_open$' "$HOOK" | tail -1 | cut -d: -f1)
 
+  # Every line is guarded: an unmatched grep leaves the variable empty, and an
+  # empty operand fails the comparison with "integer expression expected"
+  # rather than naming the pattern that stopped matching.
   [ -n "$start_line" ]
   [ -n "$end_line" ]
+  [ -n "$gitleaks_line" ]
+  [ -n "$pytest_line" ]
   [ -n "$notice_line" ]
   [ "$start_line" -lt "$gitleaks_line" ]
   [ "$end_line" -gt "$pytest_line" ]

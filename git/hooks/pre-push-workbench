@@ -93,6 +93,8 @@ _fail_if_tree_moved() {
   exit 1
 }
 
+# The "before" bookend. Its matching _fail_if_tree_moved runs after the last
+# validator, at the far end of this file.
 _start_tree=$(_tree_snapshot)
 
 # ── Secret scan ──────────────────────────────────────────────────────────────

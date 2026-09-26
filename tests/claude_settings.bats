@@ -467,25 +467,9 @@ _init_test_repo() {
 # ai/lib/core/tree_lock.py through `with-tree-lock --check`, so the two
 # harnesses cannot disagree about whether a tree is under validation.
 
-# _hold_tree TREE — hold LOCK_SH on TREE until killed; prints the wrapper pid.
-# The holder's output goes to /dev/null so a `$(...)` caller is not left
-# waiting on a pipe the background child keeps open.
-_hold_tree() {
-  local tree="$1"
-  "$REPO_ROOT/bin/local/with-tree-lock" "$tree" -- \
-    sh -c 'while true; do sleep 30; done' >/dev/null 2>&1 &
-  local wrapper=$!
-  for _ in $(seq 1 50); do
-    if "$REPO_ROOT/bin/local/with-tree-lock" --check "$tree" >/dev/null 2>&1; then
-      printf '%s' "$wrapper"
-      return 0
-    fi
-    sleep 0.1
-  done
-  kill "$wrapper" 2>/dev/null || true
-  echo "tree $tree never became locked" >&2
-  return 1
-}
+# _hold_tree lives in tests/test_helper.bash: pi_extensions.bats holds the same
+# lock for the Pi half of this guard, and one fact read by two harnesses is
+# worth one helper rather than two copies of it.
 
 @test "edit-guard: blocks an edit to a tree a validator holds" {
   local repo="$TMPDIR/repo"
@@ -552,6 +536,51 @@ _hold_tree() {
   git -C "$repo" commit -m "init" --quiet
   run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}"
   [ "$status" -eq 0 ]
+}
+
+@test "edit-guard: inherited GIT_DIR does not retarget the probe" {
+  # Git skips discovery when GIT_DIR is set, so an inherited one would make
+  # `rev-parse --show-toplevel` answer about the calling hook's repository and
+  # leave the guard probing the lock on a tree nobody is editing.
+  local repo="$TMPDIR/repo" other="$TMPDIR/other"
+  mkdir -p "$repo" "$other"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  _init_test_repo "$other" feature
+  git -C "$other" commit --allow-empty -m init --quiet
+  local holder other_git
+  holder="$(_hold_tree "$repo")"
+  other_git=$(git -C "$other" rev-parse --absolute-git-dir)
+  run env GIT_DIR="$other_git" GIT_WORK_TREE="$other" bash -c \
+    "echo '{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}' | '$REPO_ROOT/ai/claude/bin/claude-edit-guard' 2>&1"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+}
+
+@test "edit-guard: the lock is read when the guard runs through its install symlink" {
+  # settings.json runs the guard as ~/.local/bin/claude-edit-guard, the
+  # symlink sync_component_bin installs. BASH_SOURCE is that path, so without
+  # following it the ../../.. traversal lands outside the repo, the -x test
+  # fails, and the lock half is skipped everywhere but here.
+  local repo="$TMPDIR/repo" bindir="$TMPDIR/bin"
+  mkdir -p "$repo" "$bindir"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  ln -s "$REPO_ROOT/ai/claude/bin/claude-edit-guard" "$bindir/claude-edit-guard"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run bash -c \
+    "echo '{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}' | bash '$bindir/claude-edit-guard' 2>&1"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
 }
 
 # ── gh pr create block ──────────────────────────────────────────────────────

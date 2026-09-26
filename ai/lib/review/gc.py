@@ -130,10 +130,9 @@ def cleanup_intermediates(review_dir: Path) -> None:
 
     This also sweeps fix.jsonl: a `--fix` pass's log is diagnostic, not a
     finding, so it goes the same way as any other phase log rather than
-    surviving the run that wrote it. Both checklists go with it — the fix
-    pass's and the verify gate's — and both are named rather than derived,
-    because they are the fix engine's files rather than the phase registry's:
-    every domain's pass writes them under those names.
+    surviving the run that wrote it. The fix pass's checklist is named; the
+    verify gate's is a glob of every chunk file, because two chunks must not
+    share a path. Both belong to the fix engine rather than the phase registry.
 
     When this runs is not this function's decision — a review run sweeps
     through `cleaned_on_success`, which is what knows the run is over.
@@ -141,7 +140,9 @@ def cleanup_intermediates(review_dir: Path) -> None:
     cleanup = phase_artifacts(review_dir)
     cleanup.append(review_dir / FILENAME_PIPELINE_STATE)
     cleanup.append(review_dir / fix_engine.TRACKING_FILENAME)
-    cleanup.append(review_dir / fix_engine.VERIFY_TRACKING_FILENAME)
+    cleanup.extend(sorted(review_dir.glob(fix_engine.VERIFY_TRACKING_GLOB)))
+    # A run that started before chunked names may have left the unsuffixed file.
+    cleanup.append(review_dir / "verify-tracking.md")
     cleanup.extend(
         p for p in review_dir.glob("prompt-*") if p.name != FILENAME_PROMPT_STATS
     )

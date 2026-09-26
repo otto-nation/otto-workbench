@@ -27,6 +27,7 @@ from agent import invoke as agent_invoke
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
 from fix import engine as fix_engine
+from fix import gate as fix_gate
 from git import land
 from git import push
 from review import document as review_document
@@ -327,7 +328,7 @@ class TestTheVerifyGate:
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
-            verdicts={"M1": fix_engine.Verdict(
+            verdicts={"M1": fix_gate.Verdict(
                 ok=False, detail="test_helper does not exist",
             )},
         )
@@ -350,7 +351,7 @@ class TestTheVerifyGate:
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
-            verdicts={"M1": fix_engine.Verdict(ok=True, detail="suite green")},
+            verdicts={"M1": fix_gate.Verdict(ok=True, detail="suite green")},
         )
 
         assert "- [x] **[M1]**" in Path(job.review_file).read_text()
@@ -390,10 +391,10 @@ class TestTheVerifyGate:
         job = _make_job(git_wt, tmp_path, self.REVIEW)
         adapter = review_fix.ReviewFixAdapter(job, [_finding("M1")])
 
-        assert adapter.verify_session_log == Path(
-            review_paths.phase_log_path(job.review_file, Phase.FIX_VERIFY),
+        assert adapter.verify_session_log(1) == Path(
+            review_paths.phase_log_path(job.review_file, Phase.FIX_VERIFY, 1),
         )
-        assert adapter.verify_session_log.parent == Path(job.artifact_dir)
+        assert adapter.verify_session_log(1).parent == Path(job.artifact_dir)
 
 
 # ── what the pass commits ───────────────────────────────────────────────────

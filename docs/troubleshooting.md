@@ -251,8 +251,10 @@ Both files live outside every checkout, in the target's own directory: `~/.confi
 While a gate runs — `task test`, `bin/local/validate-all`, or a `git push` that
 triggers the pre-push hook — the worktree is declared under validation. Editing
 a tree mid-validation silently invalidates the run, and nothing in the output
-says so; the lock makes that state visible. Automatic refusal of edits is not
-yet implemented — the lock is currently a signal to read, not a gate.
+says so; the lock makes that state visible. Both agent harnesses read it and
+refuse the edit — `ai/claude/bin/claude-edit-guard` for Claude Code and the
+`tree-lock-guard` extension for Pi. Each goes through `with-tree-lock --check`,
+so neither can disagree with the other about whether a tree is being validated.
 
 See what holds it:
 

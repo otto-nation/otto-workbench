@@ -621,6 +621,13 @@ class TestConsumeStreamTracksWrites:
             self.stdin = TestCheckLimits.MockStdin()
 
     def _steer_message(self, tool_name):
+        """The 80% turn warning's message for a run whose only tool was `tool_name`.
+
+        Selected by its warning text rather than by being the only steer: a
+        read-only run also earns the 25% write-first steer, which carries
+        `_WRITE_FIRST` without the turn count and would otherwise let this
+        pass while the warning itself said "wrap up".
+        """
         lines = [json.dumps({
             "type": "message_update",
             "content": [{"type": "toolCall", "name": tool_name, "arguments": {}}],
@@ -629,9 +636,12 @@ class TestConsumeStreamTracksWrites:
         lines.append(json.dumps({"type": "agent_end"}))
         proc = self.MockProc([l + "\n" for l in lines])
         ai_backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
-        steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
-        assert len(steers) == 1
-        return steers[0]["message"]
+        warnings = [
+            c["message"] for c in proc.stdin.commands
+            if c["type"] == "steer" and "Turn warning: 8/10" in c["message"]
+        ]
+        assert len(warnings) == 1
+        return warnings[0]
 
     def test_edit_call_earns_the_wrap_up_message(self):
         assert ai_backend_pi._WRAP_UP in self._steer_message("edit")
@@ -1700,15 +1710,17 @@ class TestNoProgressSteer:
     def test_the_no_progress_steer_is_independent_of_the_turn_warning(self):
         # Different conditions, so a run that loops early and then nears its
         # turn cap earns both. Suppressing one behind the other would hide
-        # whichever fired second.
+        # whichever fired second. The unwritten-by-25% steer is a third such
+        # condition and fires here too.
         lines = [self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT
         lines += [json.dumps({"type": "turn_end"}) + "\n"] * 8
         proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
         ai_backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
-        steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
-        assert len(steers) == 2
-        assert any("same tool call" in s["message"] for s in steers)
-        assert any(ai_backend_pi._WRITE_FIRST in s["message"] for s in steers)
+        steers = [c["message"] for c in proc.stdin.commands if c["type"] == "steer"]
+        assert len(steers) == 3
+        assert sum("same tool call" in s for s in steers) == 1
+        assert sum("Turn warning: 8/10" in s for s in steers) == 1
+        assert sum(s == ai_backend_pi._WRITE_FIRST for s in steers) == 1
 
     def test_streaming_updates_do_not_count_as_repeats(self):
         # message_update repeats the same call many times over; counting those
@@ -1718,3 +1730,93 @@ class TestNoProgressSteer:
             "content": [{"type": "toolCall", "name": "read", "arguments": {}}],
         }) + "\n"
         assert self._run([line] * 10) == []
+
+
+class TestWriteFirstSteer:
+    """A one-shot _WRITE_FIRST when nothing has been written by 25% of max_turns.
+
+    The 80% steer arrives when the budget is nearly spent, which is too late
+    to be a course correction: an agent that has written nothing by then has
+    already spent the turns it needed to investigate. This one fires early
+    enough that the file exists before a run can die with it empty.
+    """
+
+    def _steers(self, lines, *, max_turns=15):
+        proc = TestConsumeStreamTracksWrites.MockProc(
+            [line + "\n" for line in lines]
+        )
+        ai_backend_pi._consume_stream(
+            proc, io.StringIO(), "",
+            max_turns=max_turns, output_path="/out/review.md",
+        )
+        return [c for c in proc.stdin.commands if c["type"] == "steer"]
+
+    def test_threshold_at_group_medium_is_turn_four(self):
+        assert ai_backend_pi._write_first_turn(15) == 4
+
+    def test_threshold_floors_at_three(self):
+        assert ai_backend_pi._write_first_turn(4) == 3
+        assert ai_backend_pi._write_first_turn(8) == 3
+
+    def test_an_unwritten_run_is_steered_at_25_percent(self):
+        lines = [json.dumps({"type": "turn_end"})] * 4
+        lines.append(json.dumps({"type": "agent_end"}))
+        steers = self._steers(lines)
+        assert len(steers) == 1
+        assert ai_backend_pi._WRITE_FIRST in steers[0]["message"]
+
+    def test_a_written_run_is_not_steered_at_25_percent(self):
+        lines = [
+            json.dumps({
+                "type": "tool_execution_start",
+                "toolName": "write",
+                "args": {"path": "/out/review.md"},
+            }),
+        ]
+        lines += [json.dumps({"type": "turn_end"})] * 4
+        lines.append(json.dumps({"type": "agent_end"}))
+        assert self._steers(lines) == []
+
+    def test_a_scratch_write_does_not_suppress_the_steer(self):
+        """The deliverable, not any write — the same split session.py makes."""
+        lines = [
+            json.dumps({
+                "type": "tool_execution_start",
+                "toolName": "write",
+                "args": {"path": "/tmp/probe.py"},
+            }),
+        ]
+        lines += [json.dumps({"type": "turn_end"})] * 4
+        lines.append(json.dumps({"type": "agent_end"}))
+        steers = self._steers(lines)
+        assert len(steers) == 1
+        assert ai_backend_pi._WRITE_FIRST in steers[0]["message"]
+
+    def test_the_25_percent_steer_is_one_shot(self):
+        lines = [json.dumps({"type": "turn_end"})] * 6
+        lines.append(json.dumps({"type": "agent_end"}))
+        # turn 4 fires once; turns 5-6 do not; turn 12 is not reached
+        assert len(self._steers(lines)) == 1
+
+    def test_80_percent_steer_still_fires_after_the_25_percent_steer(self):
+        lines = [json.dumps({"type": "turn_end"})] * 12
+        lines.append(json.dumps({"type": "agent_end"}))
+        steers = self._steers(lines)
+        assert len(steers) == 2
+        assert all(ai_backend_pi._WRITE_FIRST in s["message"] for s in steers)
+        assert "Turn warning: 12/15" in steers[1]["message"]
+
+    def test_the_two_steers_never_share_a_turn(self):
+        """At max_turns=4 both thresholds are turn 3; the 80% message wins.
+
+        The early turn is max(3, ceil(max_turns * 0.25)) and the warning is
+        int(max_turns * 0.8), so the floor of 3 collides with the 80%
+        threshold for any max_turns of 4 or fewer and for no larger value.
+        Without the upper bound the 25% steer would fire on the same turn as
+        the turn warning, sending the same _WRITE_FIRST text twice.
+        """
+        lines = [json.dumps({"type": "turn_end"})] * 3
+        lines.append(json.dumps({"type": "agent_end"}))
+        steers = self._steers(lines, max_turns=4)
+        assert len(steers) == 1
+        assert "Turn warning: 3/4" in steers[0]["message"]

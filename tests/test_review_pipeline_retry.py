@@ -176,7 +176,11 @@ class TestRetryMissingOutput:
         invoke = _Invoke(str(output), write_on=0, log_path=log_path)
         diagnosis = self._run(invoke, log_path, str(output))
         assert len(invoke.calls) == 1
-        assert diagnosis == Diagnosis(DiagnosisKind.COMPLETED, detail="success")
+        # `deliverable_gone` because this fixture never creates the file, where
+        # `review.phases._touch` does before every real phase.
+        assert diagnosis == Diagnosis(
+            DiagnosisKind.COMPLETED, detail="success", deliverable_gone=True,
+        )
 
     def test_both_attempts_survive_in_the_log(self, tmp_path):
         log_path = _write_log(tmp_path, _result())

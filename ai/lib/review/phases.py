@@ -424,7 +424,7 @@ def _review_group(
     if not _has_output(group_output):
         try_recover_output(group_log, group_output)
     if not _has_output(group_output):
-        diagnosis = diagnose_missing_output(group_log)
+        diagnosis = diagnose_missing_output(group_log, output_path=group_output)
         log.warn(f"Group {i} ({grp.name}) produced no output ({diagnosis.message})")
         failed = GroupFailure(grp.name, diagnosis)
         if pipeline_state is not None:

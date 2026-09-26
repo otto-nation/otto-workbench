@@ -356,3 +356,194 @@ class TestPiLogsAreReadableForWrites:
         log_path = _write_log(tmp_path, _result())
         diagnosis = review_agent.diagnose_missing_output(log_path)
         assert not diagnosis.no_write_tool
+
+    def test_a_scratch_write_is_not_the_deliverable(self, tmp_path):
+        """A /tmp probe must not clear no_write_tool for the declared output.
+
+        The live stream already asks pi_wrote_output(data, output_path); the
+        post-run diagnosis still asked pi_write_tool_used (any write). A probe
+        then diagnosed as bare COMPLETED and was not retried.
+        """
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_tool("write", path="/tmp/probe.py"),
+            json.dumps({"type": "turn_end"}),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(
+            log_path, output_path="/out/review.md",
+        )
+        assert diagnosis.kind is DiagnosisKind.COMPLETED
+        assert diagnosis.no_write_tool
+
+    def test_a_write_to_the_deliverable_still_clears_the_flag(self, tmp_path):
+        """The counterpart: the declared file being written is not a thrash."""
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path="/out/review.md"),
+            json.dumps({"type": "turn_end"}),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(
+            log_path, output_path="/out/review.md",
+        )
+        assert not diagnosis.no_write_tool
+
+
+class TestRecoveringAStrayWriteFromTheLog:
+    """Findings an agent wrote somewhere other than the declared deliverable.
+
+    Three runs wrote a complete review to a bare `review.md` in the worktree
+    after a project-local guard refused the absolute path. The state-directory
+    file stayed at zero bytes and the findings were discarded — but Pi records
+    the whole document in the `tool_execution_start` that announced the write,
+    so nothing had to be swept off disk to get them back.
+    """
+
+    def test_a_write_to_the_deliverable_path_is_recovered(self, tmp_path):
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path=str(output), content="## Must fix\n- [M1] x\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert "## Must fix" in output.read_text()
+
+    def test_a_relative_write_of_the_same_name_is_recovered(self, tmp_path):
+        """The defect itself: the stray file is `review.md`, not the full path."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path="review.md", content="## Must fix\n- [M1] x\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert "## Must fix" in output.read_text()
+
+    def test_a_scratch_write_beside_it_is_not_the_deliverable(self, tmp_path):
+        """Matched on the whole final component, so a neighbour cannot win."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path=str(tmp_path / "test123.txt"),
+                     content="## Must fix\n- [M1] not the review\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is False
+        assert output.read_text() == ""
+
+    def test_a_probe_without_headings_is_not_recovered(self, tmp_path):
+        """The observed log's 4-byte "test" probe precedes the real document."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path="review.md", content="test"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is False
+
+    def test_the_last_qualifying_write_wins(self, tmp_path):
+        """A refused write is retried, and the document grows across attempts."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path=str(output), content="## Must fix\n- draft\n"),
+            _pi_tool("write", path="review.md", content="## Must fix\n- final\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert "final" in output.read_text()
+        assert "draft" not in output.read_text()
+
+    def test_a_claude_denial_is_still_recovered(self, tmp_path):
+        """The Claude source keeps working alongside the new Pi one."""
+        output = tmp_path / "review.md"
+        log_path = _write_log(
+            tmp_path,
+            json.dumps({
+                "type": "result",
+                "permission_denials": [
+                    {"tool_input": {"content": "## Must fix\n- [M1] denied\n"}},
+                ],
+            }),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert "denied" in output.read_text()
+
+
+class TestAMissingDeliverableIsNamedAsSuch:
+    """A pre-created file that is gone is not the same as one left empty.
+
+    `review.phases._touch` creates the deliverable before every phase, so an
+    empty one is the ordinary shape of a run that wrote nothing and the
+    existing message already says so. Absent means something removed it. The
+    flag is reporting only — retryability does not read it.
+    """
+
+    def test_a_missing_deliverable_is_named(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(
+            log_path, output_path=str(tmp_path / "absent.md"),
+        )
+        assert diagnosis.deliverable_gone
+        assert "no longer there" in diagnosis.message
+
+    def test_a_pre_created_empty_deliverable_is_not_named_gone(self, tmp_path):
+        """The common case stays quiet, or every failure carries the suffix."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(
+            log_path, output_path=str(output),
+        )
+        assert not diagnosis.deliverable_gone
+        assert "no longer there" not in diagnosis.message
+
+    def test_a_crash_is_not_annotated_with_it(self, tmp_path):
+        """The error already explains the missing output; restating it buries it."""
+        log_path = _write_log(
+            tmp_path,
+            json.dumps({
+                "type": "result", "subtype": "error", "is_error": True,
+                "result": "spawn ENOENT",
+            }),
+        )
+        diagnosis = review_agent.diagnose_missing_output(
+            log_path, output_path=str(tmp_path / "absent.md"),
+        )
+        assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
+        assert not diagnosis.deliverable_gone
+
+    def test_a_missing_deliverable_does_not_change_retryability(self, tmp_path):
+        """Reporting honesty, not a behaviour change: both answers must match."""
+        from agent import retry as agent_retry
+
+        output = tmp_path / "review.md"
+        lines = (_pi_tool("read", path="/wt/a.py"), _pi_result(subtype="success"))
+        without_file = review_agent.diagnose_missing_output(
+            _write_log(tmp_path, *lines), output_path=str(output),
+        )
+        output.write_text("")
+        with_file = review_agent.diagnose_missing_output(
+            _write_log(tmp_path, *lines), output_path=str(output),
+        )
+        assert without_file.deliverable_gone
+        assert not with_file.deliverable_gone
+        assert agent_retry.is_retryable(with_file) == agent_retry.is_retryable(
+            without_file,
+        )

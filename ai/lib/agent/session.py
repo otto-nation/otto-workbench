@@ -166,6 +166,7 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     if not log_path or not Path(log_path).is_file():
         return Diagnosis(DiagnosisKind.NO_SESSION_LOG)
     records = read_jsonl(log_path)
+    gone = _deliverable_is_gone(output_path)
     results = _of_type(records, "result")
     if not results:
         if _has_quota_retry(records):
@@ -181,6 +182,9 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     crashed = diagnosis.kind in (DiagnosisKind.AGENT_ERROR, DiagnosisKind.TRANSIENT)
     if crashed:
         return diagnosis
+    # Only now: a crash already explains the missing output, and saying it
+    # twice pushes the cause out of the reader's way with a restatement of it.
+    diagnosis = replace(diagnosis, deliverable_gone=gone)
     if _is_pi_log(records):
         if _pi_wrote_output(records, output_path):
             return diagnosis
@@ -193,6 +197,20 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     if wrote:
         return diagnosis
     return replace(diagnosis, no_write_tool=True)
+
+
+def _deliverable_is_gone(output_path: str) -> bool:
+    """Whether the declared deliverable is absent rather than merely empty.
+
+    `review.phases._touch` pre-creates the file before every phase, so an empty
+    one is the ordinary shape of a run that wrote nothing and the existing
+    message already names that. A file that is not there at all did not come
+    from the agent declining to write: something removed it, or the phase was
+    handed a path nothing created. That is the state no other field reports,
+    and reporting it as "output missing" tells the reader the one thing they
+    could already see. Reporting only — retryability does not read it.
+    """
+    return bool(output_path) and not Path(output_path).exists()
 
 
 def _detail_is_transient(detail: str) -> bool:
@@ -240,25 +258,73 @@ def _extract_denied_content(denial: dict) -> str:
     return _extract_heredoc(cmd)
 
 
-def _collect_denied_contents(log_path: str) -> list[str]:
-    results = _parse_jsonl_records(log_path, "result")
+def _collect_denied_contents(records: list[dict]) -> list[str]:
+    results = _of_type(records, "result")
     denials = [d for r in results for d in r.get("permission_denials", [])]
     return [_extract_denied_content(d) for d in denials]
 
 
+def _pi_write_attempts(records: list[dict], output_path: str) -> list[str]:
+    """Contents a Pi agent tried to write to the deliverable, in log order.
+
+    Pi's `tool_execution_start` carries the whole document alongside the path,
+    so a write a guard refused — or one that landed somewhere else — leaves the
+    findings in the log regardless of what reached the declared path. Claude's
+    equivalent is `permission_denials`, which `_collect_denied_contents` reads;
+    Pi writes no such record, which is why this is a second reader rather than
+    a branch inside that one.
+
+    A relative write counts. An agent refused the absolute path retries with a
+    bare `review.md`, which lands in its worktree and is the exact file three
+    runs lost their findings to — so the basename is matched as well as the
+    resolved path. Matching is on the whole final component, never a substring,
+    so a `test123.txt` beside it is not mistaken for the deliverable.
+    """
+    if not output_path:
+        return []
+    target = Path(output_path)
+    resolved = target.resolve()
+    contents = []
+    for record in records:
+        if record.get("type") != "tool_execution_start":
+            continue
+        args = record.get("args") or {}
+        written = args.get("path")
+        content = args.get("content")
+        if not written or not content:
+            continue
+        candidate = Path(written)
+        if candidate.name != target.name and candidate.resolve() != resolved:
+            continue
+        contents.append(content)
+    return contents
+
+
 def try_recover_output(log_path: str, output_path: str) -> bool:
-    """Salvage a document the agent wrote but was denied permission to save.
+    """Salvage a document the agent wrote but that never reached `output_path`.
+
+    Two sources, because the two backends record a lost write differently: a
+    Claude denial carries the content in its `permission_denials` record, and a
+    Pi write carries it in the `tool_execution_start` that announced it.
 
     Public because `agent.retry` runs this before writing a run off as
-    unproductive — the content is in the denial record either way.
+    unproductive — the content is in the log either way.
+
+    The last qualifying candidate wins. An agent refused its first write tries
+    again, and the document grows across those attempts rather than shrinking;
+    taking the first would recover a draft and discard the review.
     """
     if not log_path or not Path(log_path).is_file():
         return False
-    for content in _collect_denied_contents(log_path):
+    records = read_jsonl(log_path)
+    candidates = _collect_denied_contents(records) + _pi_write_attempts(
+        records, output_path,
+    )
+    for content in reversed(candidates):
         if "## " not in content:
             continue
         Path(output_path).write_text(content + "\n")
-        log.warn(f"Recovered review from denied write — saved to {output_path}")
+        log.warn(f"Recovered review from the session log — saved to {output_path}")
         return True
     return False
 

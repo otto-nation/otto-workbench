@@ -505,6 +505,26 @@ class TestTryRecoverOutput:
         }) + "\n")
         assert ro.try_recover_output(str(log), str(output)) is False
 
+    def test_the_last_qualifying_denial_wins(self, ro, tmp_path):
+        """An agent refused once writes again, and the document grows.
+
+        Pinned because the rule changed with the Pi reader: recovery used to
+        take the first qualifying denial, which on a run that was refused
+        mid-draft recovers the draft and discards the finished review.
+        """
+        log = tmp_path / "session.jsonl"
+        output = tmp_path / "output.md"
+        log.write_text(json.dumps({
+            "type": "result",
+            "permission_denials": [
+                {"tool_input": {"content": "## Must fix\n- draft\n"}},
+                {"tool_input": {"content": "## Must fix\n- final\n"}},
+            ],
+        }) + "\n")
+        assert ro.try_recover_output(str(log), str(output)) is True
+        assert "final" in output.read_text()
+        assert "draft" not in output.read_text()
+
     def test_missing_log_file(self, ro, tmp_path):
         assert ro.try_recover_output(
             str(tmp_path / "missing.jsonl"),

@@ -93,6 +93,7 @@ _DIAGNOSIS_MESSAGES = {
 _MESSAGE_KINDS = {message: kind for kind, message in _DIAGNOSIS_MESSAGES.items()}
 
 _NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
+_DELIVERABLE_GONE_SUFFIX = "the pre-created deliverable is no longer there"
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,14 @@ class Diagnosis:
 
     kind: DiagnosisKind
     no_write_tool: bool = False
+    # The declared deliverable is absent, not merely empty. The orchestrator
+    # pre-creates it, so zero bytes is the ordinary shape of every failure here
+    # and the existing message already says the agent did not write — the file
+    # having gone is the state nothing else reports, and the one that means
+    # something removed it rather than never filling it. A second fact rather
+    # than a kind, because it composes with whatever ended the run. Reporting
+    # only: retryability does not read it.
+    deliverable_gone: bool = False
     detail: str = ""
     # None when the backend reported no turn count; rendered as "?".
     num_turns: int | None = None
@@ -115,9 +124,12 @@ class Diagnosis:
     @property
     def message(self) -> str:
         """The human-readable reason, as it appears in logs and review files."""
-        return self._base_message() + (
-            f" — {_NO_WRITE_TOOL_SUFFIX}" if self.no_write_tool else ""
-        )
+        suffixes = []
+        if self.no_write_tool:
+            suffixes.append(_NO_WRITE_TOOL_SUFFIX)
+        if self.deliverable_gone:
+            suffixes.append(_DELIVERABLE_GONE_SUFFIX)
+        return self._base_message() + "".join(f" — {s}" for s in suffixes)
 
     def _base_message(self) -> str:
         if self.kind is DiagnosisKind.MAX_TURNS:

@@ -534,7 +534,11 @@ def _steer_write_first(
     process: subprocess.Popen, turn_count: int, max_turns: int | None,
     *, wrote_output: bool, steered: bool,
 ) -> bool:
-    """Send the early `_WRITE_FIRST` if this turn earns it; report whether sent.
+    """Send the early `_WRITE_FIRST` if this turn earns it.
+
+    Returns whether the steer has been sent at any point during this run, not
+    whether it went out on this call — the stream loop feeds the value back in
+    as ``steered`` so the one-shot stays one-shot.
 
     The send lives here rather than in the stream loop so the decision and the
     message stay together and the loop body stays one level deep.

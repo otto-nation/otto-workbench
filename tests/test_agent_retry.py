@@ -342,6 +342,8 @@ class TestSharedRetryability:
             json.dumps({"type": "tool_execution_start",
                         "toolName": "write", "args": {"path": "/tmp/probe.py"}})
             + "\n"
+            + json.dumps({"type": "turn_end"})
+            + "\n"
             + json.dumps({"type": "result", "subtype": "success"})
             + "\n"
         )

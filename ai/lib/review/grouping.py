@@ -128,7 +128,14 @@ def _is_test_file(path: str) -> bool:
 
 
 def _subject_stem(path: str) -> str:
-    """The source stem a test file is named for, else the file's own stem."""
+    """The source stem a test file is named for, else the file's own stem.
+
+    Strips one test affix, so a compound name keeps whatever else it carries:
+    ``test_review_grouping.py`` yields ``review_grouping``, which no source
+    stem matches, and the file falls back to its own top-level directory. That
+    is the accepted cost of staying lexical — resolving it needs the import
+    graph, which does not generalise past this repo.
+    """
     name = path.rsplit("/", 1)[-1]
     lower = name.lower()
     for token in (".test.", ".spec."):
@@ -192,6 +199,8 @@ def group_files(pr: PRMetadata) -> list[Group]:
         d = f.split("/")[0] if "/" in f else "."
         _bucket(d, f)
 
+    # Source files contribute their own stem — _subject_stem strips a test
+    # affix only when there is one, so the call is a no-op on the files here.
     stem_owner: dict[str, str] = {}
     for d in dir_order:
         for f in dir_files[d]:

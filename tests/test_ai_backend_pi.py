@@ -1809,9 +1809,11 @@ class TestWriteFirstSteer:
     def test_the_two_steers_never_share_a_turn(self):
         """At max_turns=4 both thresholds are turn 3; the 80% message wins.
 
-        The floor of 3 collides with the 80% threshold for any max_turns of 4
-        or fewer. Without the upper bound the 25% steer would fire on the same
-        turn as the turn warning, sending the same _WRITE_FIRST text twice.
+        The early turn is max(3, ceil(max_turns * 0.25)) and the warning is
+        int(max_turns * 0.8), so the floor of 3 collides with the 80%
+        threshold for any max_turns of 4 or fewer and for no larger value.
+        Without the upper bound the 25% steer would fire on the same turn as
+        the turn warning, sending the same _WRITE_FIRST text twice.
         """
         lines = [json.dumps({"type": "turn_end"})] * 3
         lines.append(json.dumps({"type": "agent_end"}))

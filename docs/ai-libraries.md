@@ -3290,6 +3290,25 @@ Stdlib only, deliberately. This is the module everything else in `ai/lib`
 should be free to depend on, and pulling in `log`, `agent.usage`, or
 `workbench_paths` from here would make that impossible.
 
+### core/quota_throttle.py
+
+A machine-wide backoff shared by every agent that hits a 429.
+
+Two review pipelines on one host used to each keep a process-local ladder
+(``threading.Lock`` plus ``time.monotonic()``). After a shared quota 429 they
+backed off independently and re-collided on the way up, because a monotonic
+clock is not comparable across processes and a lock in one address space is
+invisible to another.
+
+The wait is a wall-clock timestamp in a JSON file, not a held flock. A crash
+mid-backoff is therefore not a stale lock: the next process reads ``resume_at``
+and waits out whatever is left. A dead pid in the file is diagnostic only, the
+same way ``job_slots.holders()`` ignores one.
+
+The file is rewritten in place under ``LOCK_EX``. ``os.replace`` would swap
+the name onto a new inode, and two writers could then each hold ``LOCK_EX``
+on a different inode — the flock follows the inode, not the path.
+
 ### core/report.py
 
 How a tool writes a machine-readable report to stdout.

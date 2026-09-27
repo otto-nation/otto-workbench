@@ -530,6 +530,46 @@ def _due_a_write_steer(
     return turn_count < int(max_turns * BUDGET_WARN_THRESHOLD)
 
 
+def _should_ask_for_deliverable(
+    output_path: str, *, wrote_output: bool, aborted: bool, asked: bool,
+) -> bool:
+    """Whether a run that has just ended earns one more prompt for its output.
+
+    Four ways to decline, and each is a case where asking would be wrong rather
+    than merely useless. No ``output_path`` is a caller with no deliverable to
+    miss. ``wrote_output`` means the stream saw a write to that path. An
+    aborted run has already spent its one post-cap round trip on the summary
+    follow-up, and a second ask would collide with it. ``asked`` is what makes
+    this one-shot: the ask is offered once per run and never again.
+    """
+    return bool(output_path) and not wrote_output and not aborted and not asked
+
+
+def _ask_for_deliverable(
+    process: subprocess.Popen, prefix: str, *, due: bool,
+) -> bool:
+    """Send the one extra prompt asking for the file. True to keep reading.
+
+    ``due`` is false for every event that is not the settle we are waiting on,
+    and answers True so the loop reads the next line. Taking the guard as an
+    argument rather than branching at the call site keeps the stream loop two
+    levels deep, which `validate-nesting` enforces.
+
+    A `prompt` rather than a `steer`, and only once the run has settled. Pi's
+    agent loop drains the steer and follow-up queues *before* it emits
+    ``agent_end``, so a steer sent after that point is accepted, queued, and
+    never run — and a reader waiting for another ``agent_end`` behind it waits
+    forever. That is the hang this feature had to avoid, not a risk it takes.
+    ``agent_settled`` is the event that clears ``_isAgentRunActive``, and a
+    bare `prompt` after it starts a fresh run on the same session, with the
+    context the agent already built.
+    """
+    if not due:
+        return True
+    log.warn(f"{prefix}run ended with no deliverable — asking once for it")
+    return _send(process, {"type": "prompt", "message": _WRITE_FIRST})
+
+
 def _steer_write_first(
     process: subprocess.Popen, turn_count: int, max_turns: int | None,
     *, wrote_output: bool, steered: bool,
@@ -675,6 +715,14 @@ def _consume_stream(
     `output_path` is the deliverable. Progress is measured against it rather
     than against any write, so an agent probing with a scratch file under /tmp
     keeps the steering it needs instead of switching it off.
+
+    A run that ends having written nothing is asked once more for the file,
+    which is the last point at which the findings it holds can still be saved.
+    That ask cannot loop: ``asked_for_output`` latches on the way out and is
+    never cleared, so the first `agent_end` either breaks or arms the ask, and
+    every `agent_end` after it breaks unconditionally. At most two runs are
+    consumed, and each iteration still reads one line, so EOF ends the loop as
+    it always did.
     """
     prev_tool = ""
     turn_count = 0
@@ -688,6 +736,11 @@ def _consume_stream(
     error = None
     tool_repeats: dict[str, int] = {}
     nudged_no_progress = False
+    # Two flags, not one: `pending_ask` is the gap between agent_end and the
+    # agent_settled that makes a new prompt legal, and `asked_for_output` is
+    # the latch that keeps the whole thing one-shot.
+    pending_ask = False
+    asked_for_output = False
 
     for raw_line in process.stdout:
         log_file.write(raw_line)
@@ -700,6 +753,14 @@ def _consume_stream(
         # which the unconditional skip this replaces also kept response events
         # away from.
         response_error = _rpc_response_error(data) if event_type == "response" else None
+        if response_error and asked_for_output:
+            # The salvage prompt was refused. The run it is salvaging already
+            # ended on its own terms, so this is not that run failing: keep
+            # the stop_reason it earned and let the no-write diagnosis stand.
+            # Reporting it as an error would hide a retryable ending behind a
+            # crash nobody can act on.
+            log.warn(f"{prefix}pi refused the deliverable prompt: {response_error}")
+            break
         if response_error:
             log.error(f"{prefix}pi refused the run: {response_error}")
             stop_reason, error = "error", response_error
@@ -740,7 +801,29 @@ def _consume_stream(
             )
             stop_reason, aborted = (stop, True) if stop else (stop_reason, aborted)
 
-        if event_type == "agent_end":
+        # An agent_end arms the ask or ends the run. `pending_ask` has to
+        # survive into the next iteration — the settle that makes a new prompt
+        # legal is a separate event — so it is only assigned here, never reset
+        # by an unrelated event in between.
+        ended = event_type == "agent_end"
+        if ended:
+            pending_ask = _should_ask_for_deliverable(
+                output_path, wrote_output=wrote_output,
+                aborted=aborted, asked=asked_for_output,
+            )
+        # The run is over unless it just earned the ask. Every agent_end after
+        # the ask has been made reaches this with `asked_for_output` already
+        # true, so `pending_ask` is false and the loop ends: that is what
+        # bounds this to one extra run.
+        if ended and not pending_ask:
+            break
+
+        # Latched before the send, so a write that fails cannot be retried
+        # into a second ask.
+        due_now = event_type == "agent_settled" and pending_ask
+        pending_ask = pending_ask and not due_now
+        asked_for_output = asked_for_output or due_now
+        if not _ask_for_deliverable(process, prefix, due=due_now):
             break
 
     return StreamResult(turn_count, accumulated_cost, stop_reason, model, error)

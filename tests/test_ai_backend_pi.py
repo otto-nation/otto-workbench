@@ -1820,3 +1820,167 @@ class TestWriteFirstSteer:
         steers = self._steers(lines, max_turns=4)
         assert len(steers) == 1
         assert "Turn warning: 3/4" in steers[0]["message"]
+
+
+class TestAskForDeliverableOnAgentEnd:
+    """A run that ends having written nothing is asked once more for the file.
+
+    The last point at which findings the agent holds can still be saved. The
+    ask is a `prompt` after `agent_settled`, not a `steer` on `agent_end`: Pi
+    drains the steer and follow-up queues before emitting `agent_end`, so a
+    steer sent afterwards is accepted, queued, and never run — and a reader
+    waiting behind it for another `agent_end` waits forever.
+    """
+
+    OUT = "/out/review.md"
+
+    def _run(self, lines, *, output_path=OUT, max_turns=None):
+        proc = TestConsumeStreamTracksWrites.MockProc([l + "\n" for l in lines])
+        result = ai_backend_pi._consume_stream(
+            proc, io.StringIO(), "", max_turns=max_turns, output_path=output_path,
+        )
+        return proc, result
+
+    @staticmethod
+    def _prompts(proc):
+        return [c for c in proc.stdin.commands if c["type"] == "prompt"]
+
+    def test_an_unwritten_run_is_asked_once_for_its_deliverable(self):
+        proc, result = self._run([
+            json.dumps({"type": "turn_end"}),
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+            json.dumps({"type": "agent_end"}),
+        ])
+        prompts = self._prompts(proc)
+        assert len(prompts) == 1
+        assert prompts[0]["message"] == ai_backend_pi._WRITE_FIRST
+        assert result.stop_reason == "completed"
+
+    def test_the_ask_is_a_prompt_not_a_steer(self):
+        """A steer after agent_end is queued and never run — that is the hang."""
+        proc, _ = self._run([
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+            json.dumps({"type": "agent_end"}),
+        ])
+        after_end = [
+            c for c in proc.stdin.commands
+            if c["type"] in ("steer", "follow_up")
+            and c.get("message") == ai_backend_pi._WRITE_FIRST
+        ]
+        assert after_end == []
+
+    def test_the_second_agent_end_ends_the_run(self):
+        proc, result = self._run([
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+            json.dumps({"type": "agent_end"}),
+        ])
+        assert len(self._prompts(proc)) == 1
+        assert result.stop_reason == "completed"
+
+    def test_the_loop_cannot_spin_on_a_stream_that_never_stops(self):
+        """The termination proof. A finite list ends even with no break at all.
+
+        This feeds an endless alternation of the two events the ask reacts to,
+        so a loop that re-armed would never return. The generator fails the
+        test rather than hanging it.
+        """
+        def endless():
+            for n in range(12):
+                yield json.dumps({"type": "agent_end"}) + "\n"
+                yield json.dumps({"type": "agent_settled"}) + "\n"
+            raise AssertionError("the stream loop did not terminate")
+
+        proc = TestConsumeStreamTracksWrites.MockProc(endless())
+        result = ai_backend_pi._consume_stream(
+            proc, io.StringIO(), "", output_path=self.OUT,
+        )
+        assert len(self._prompts(proc)) == 1
+        assert result.stop_reason == "completed"
+
+    def test_a_run_that_wrote_its_deliverable_is_not_asked(self):
+        proc, _ = self._run([
+            json.dumps({
+                "type": "tool_execution_start",
+                "toolName": "write", "args": {"path": self.OUT},
+            }),
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+        ])
+        assert self._prompts(proc) == []
+
+    def test_a_scratch_write_does_not_count_as_the_deliverable(self):
+        proc, _ = self._run([
+            json.dumps({
+                "type": "tool_execution_start",
+                "toolName": "write", "args": {"path": "/tmp/probe.py"},
+            }),
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+            json.dumps({"type": "agent_end"}),
+        ])
+        assert len(self._prompts(proc)) == 1
+
+    def test_a_caller_with_no_declared_deliverable_is_not_asked(self):
+        proc, _ = self._run([
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+        ], output_path="")
+        assert self._prompts(proc) == []
+
+    def test_an_aborted_run_is_not_asked(self):
+        """The cap path already spent its one round trip on the summary."""
+        lines = [json.dumps({"type": "turn_end"})] * 4
+        lines += [
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+        ]
+        proc, _ = self._run(lines, max_turns=4)
+        assert self._prompts(proc) == []
+        assert [c["type"] for c in proc.stdin.commands if c["type"] == "abort"]
+
+    def test_no_agent_settled_means_no_ask_and_no_hang(self):
+        """Degrades to the old behaviour on a Pi that does not emit it."""
+        proc, result = self._run([
+            json.dumps({"type": "agent_end"}),
+        ])
+        assert self._prompts(proc) == []
+        assert result.stop_reason == "completed"
+
+    def test_a_dead_child_ends_the_run_without_an_error(self):
+        class DeadStdin:
+            commands: list = []
+            def write(self, data):
+                raise BrokenPipeError("gone")
+            def flush(self):
+                pass
+
+        lines = [
+            json.dumps({"type": "agent_end"}) + "\n",
+            json.dumps({"type": "agent_settled"}) + "\n",
+        ]
+        proc = TestConsumeStreamTracksWrites.MockProc(lines)
+        proc.stdin = DeadStdin()
+        result = ai_backend_pi._consume_stream(
+            proc, io.StringIO(), "", output_path=self.OUT,
+        )
+        assert result.stop_reason == "completed"
+        assert result.error is None
+
+    def test_a_refused_ask_does_not_turn_a_finished_run_into_an_error(self):
+        """The first prompt staying fatal is the contrast — see TestFatalRpcResponse."""
+        proc, result = self._run([
+            json.dumps({"type": "agent_end"}),
+            json.dumps({"type": "agent_settled"}),
+            json.dumps({
+                "type": "response", "command": "prompt",
+                "success": False, "error": "nope",
+            }),
+        ])
+        assert len(self._prompts(proc)) == 1
+        assert result.stop_reason == "completed"
+        assert result.error is None

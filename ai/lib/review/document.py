@@ -74,6 +74,7 @@ from pathlib import Path
 
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
+from pr.target import display_repo
 from review.spans import finding_spans
 from review.types import SEVERITIES, Finding, FindingScope, ReviewMeta, ReviewType, meta_enum
 
@@ -386,10 +387,14 @@ def review_title(meta: ReviewMeta) -> str:
     a number the review does not have, and stating it is worse than saying
     nothing.
     """
+    # Host-qualified: two enterprise instances can serve the same slug, and a
+    # title naming only the slug leaves the reader unable to tell which review
+    # they are reading. Empty and github.com render exactly as before.
+    shown = display_repo(meta.repo, meta.host)
     if meta.mode == Mode.SELF:
-        return f"# Self-Review: {meta.repo} — {meta.head_ref or 'unknown'}"
+        return f"# Self-Review: {shown} — {meta.head_ref or 'unknown'}"
     number = f"#{meta.pr_number}" if meta.pr_number is not None else ""
-    title = f"# Review: {meta.repo}{number}"
+    title = f"# Review: {shown}{number}"
     return f"{title} — {meta.title}" if meta.title else title
 
 

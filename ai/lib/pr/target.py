@@ -364,6 +364,26 @@ def forge_base_url(host: str = "") -> str:
     return host if _SCHEME_RE.match(host) else f"https://{host}"
 
 
+def display_repo(repo: str, host: str = "") -> str:
+    """How to *show* a repo: host-qualified when the forge is not public GitHub.
+
+    ``acme/widget`` on github.com and for an empty host, and
+    ``ghe.acme.com/acme/widget`` otherwise. Two enterprise instances serving
+    the same slug are one string everywhere the tool reports on them, and a
+    reader looking at a review title or a listing row cannot tell which
+    instance it came from.
+
+    Display only, and deliberately not reused for machine input. The value that
+    reaches ``gh --repo``, the GraphQL ``owner``/``name`` pair, the persisted
+    ``PRIdentity.repo``, the review directory names, ``find_repo_root`` and the
+    wiki vault path is the bare slug, and must stay the bare slug — the
+    ``HOST/OWNER/REPO`` form gh accepts is built by its own helper, from the
+    same two values but for a different consumer. Anything rendering this into
+    an argument has made a mistake this function cannot catch.
+    """
+    return repo if is_public_github(host) else f"{host.strip().rstrip('/')}/{repo}"
+
+
 def _repo_key(url: str) -> str | None:
     """An origin URL as one path component naming the repo, or None."""
     canonical = _canonical(url)
@@ -404,6 +424,15 @@ class RepoIdentity:
     label: str
     key: str
     host: str = ""
+
+    @property
+    def display_label(self) -> str:
+        """``label``, host-qualified when the forge is not public GitHub.
+
+        For showing the repo to a person. ``label`` itself is unchanged and is
+        what every API call and on-disk path still uses — see ``display_repo``.
+        """
+        return display_repo(self.label, self.host)
 
 
 def repo_identity_from_origin(cwd: str | None = None) -> RepoIdentity | None:

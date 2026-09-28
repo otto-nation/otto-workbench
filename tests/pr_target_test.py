@@ -587,3 +587,35 @@ class TestFoldCaseIsTheOnlyFold:
     def test_the_ascii_around_a_unicode_char_still_folds(self):
         """Per-codepoint, so one untouched character does not exempt its word."""
         assert pr_target.fold_case("\u0130STANBUL") == "\u0130stanbul"
+
+
+class TestDisplayRepo:
+    """The display form, which is the one thing the host is allowed to change.
+
+    `label` reaches `gh --repo`, GraphQL, `PRIdentity.repo`, review directory
+    names, `find_repo_root` and the wiki vault path, and none of those may
+    grow a host. This is the sibling for a person to read.
+    """
+
+    @pytest.mark.parametrize("host", ["", "github.com", "GitHub.com"])
+    def test_a_public_host_shows_the_bare_slug(self, host):
+        assert pr_target.display_repo("acme/widget", host) == "acme/widget"
+
+    def test_an_enterprise_host_qualifies_the_slug(self):
+        assert pr_target.display_repo("acme/widget", "ghe.acme.com") == (
+            "ghe.acme.com/acme/widget")
+
+    def test_two_instances_serving_one_slug_render_differently(self):
+        """The whole point: the bare slug cannot tell these apart."""
+        assert pr_target.display_repo("acme/widget", "ghe.acme.com") != (
+            pr_target.display_repo("acme/widget", "ghe.other.com"))
+
+    def test_a_trailing_slash_does_not_double(self):
+        assert pr_target.display_repo("acme/widget", "ghe.acme.com/") == (
+            "ghe.acme.com/acme/widget")
+
+    def test_the_identity_exposes_it_beside_the_untouched_label(self):
+        identity = pr_target.RepoIdentity(
+            label="acme/widget", key="acme-widget-1234abcd", host="ghe.acme.com")
+        assert identity.display_label == "ghe.acme.com/acme/widget"
+        assert identity.label == "acme/widget", "what gh and the layout still use"

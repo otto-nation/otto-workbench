@@ -105,8 +105,12 @@ def run_pr_review(
     # tracker to read, and looking it up without one resolves to nothing.
     repo_root = review_worktree.find_repo_root(repo, flags.repo_dir)
     if not repo_root:
-        trail.error("setup_worktree", f"cannot find local clone of {repo}")
-        log.error(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
+        # `find_repo_root` still takes the bare slug — only the message a
+        # person reads names the instance, which is the difference between
+        # "clone it" and "you cloned the other one".
+        shown = pr_target.display_repo(repo, ctx.host)
+        trail.error("setup_worktree", f"cannot find local clone of {shown}")
+        log.error(f"Cannot find local clone of {shown}. Clone it first and re-run from within the repo.")
         raise SystemExit(1)
 
     pr_meta = gh_client.pr_view(pr_number, "headRefName", "body", repo=repo)

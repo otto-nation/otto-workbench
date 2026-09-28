@@ -7812,7 +7812,7 @@ class TestAttributionSurvivesARebase:
         recorded line number slides onto code the row was never about — the
         stale-coordinate shape, and the one that published the base commit four
         times. `still.py` is untouched after the read, so its coordinate stays
-        honest and only the rewritten committer date is left to catch — the
+        honest, leaving only the rewritten committer date to catch — the
         timestamp shape. Every commit is authored before the review, so a
         correct run cites neither.
         """

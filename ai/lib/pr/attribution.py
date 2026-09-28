@@ -26,13 +26,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
 
 from git import client as git_client
 from git import topology as git_topology
 from git.land import CommitStatus, LandResult
 from pr import permalinks
-from pr.fix import SettledBy
+from pr.fix import ItemOutcome, SettledBy
 from pr.thread_models import CommentItem, ReportThread
 
 
@@ -278,21 +277,11 @@ def find_addressing_commit(
     return sha if sha else None
 
 
-class ReadInATree(Protocol):
-    """A record that remembers which tree its line numbers were read in.
-
-    Satisfied by both `thread_models.CommentItem` and `pr.fix.ItemOutcome`,
-    which share no base class: one is a row being rendered and the other a row
-    being persisted, and `read_sha` is the whole of what the staleness check
-    needs from either. Named rather than typed as `object` so the contract is
-    the field, not "anything a getattr survives".
-    """
-
-    read_sha: str
-
-
 def coordinate_went_stale(
-    wt_path: Path | None, entry: ReadInATree, filepath: str, line: int,
+    wt_path: Path | None,
+    entry: CommentItem | ItemOutcome,
+    filepath: str,
+    line: int,
 ) -> bool:
     """Whether `line` has stopped meaning what it meant when it was recorded.
 
@@ -494,7 +483,12 @@ class AddressingHistory:
         return AddressedFraming(landed_after, sha)
 
     def _commit_for(self, entry: CommentItem) -> str:
-        """The branch commit behind this entry's code, or "" when there is none."""
+        """The branch commit behind this entry's code, or "" when there is none.
+
+        Checks :meth:`_coordinate_went_stale` before spending `where` on a walk:
+        that guard is what `_postdates` still relies on to hold, and it only
+        refuses to spend a coordinate that no longer points at the row's code.
+        """
         if not self._wt_path:
             return ""
         # Triage's citation where there is one: it names the code that makes
@@ -506,8 +500,6 @@ class AddressingHistory:
             where = (entry.evidence_file, entry.evidence_line)
         else:
             where = (entry.file, entry.line)
-        # `_postdates` is still the guard the answer has to satisfy; this only
-        # refuses to spend a coordinate that no longer points at the row's code.
         if self._coordinate_went_stale(entry, *where):
             return ""
         if where not in self._commits:

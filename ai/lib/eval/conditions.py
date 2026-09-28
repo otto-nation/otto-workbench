@@ -78,11 +78,13 @@ def seed_config_tree(source: Path, dest: Path, condition: str) -> Path:
             shutil.copy2(item, dest / item.name)
 
     src_rules = source / "rules"
-    if src_rules.is_dir():
-        names = [p.stem for p in src_rules.glob("*.md")]
-        classify(names)
-        for rule in src_rules.glob("*.md"):
-            if condition == "full" or rule.stem in KEPT_RULES:
-                shutil.copy2(rule, rules_dir / rule.name)
+    if not src_rules.is_dir():
+        return dest
+
+    rules = sorted(src_rules.glob("*.md"))
+    classify([rule.stem for rule in rules])
+    wanted = rules if condition == "full" else [r for r in rules if r.stem in KEPT_RULES]
+    for rule in wanted:
+        shutil.copy2(rule, rules_dir / rule.name)
 
     return dest

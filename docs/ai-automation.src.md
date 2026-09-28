@@ -111,7 +111,7 @@ drops every other. There is no filtered top-up.
 
 `--compare` diffs a run against same-backend `{backend}-{model}.json` files
 and exits `2` on a regression; `--save-baselines` records the served model and
-exits `3` when unresolved or a run never executed. Which metrics gate, and why a dead run is not a score, are on
+exits `3` when unresolved or a run never executed; `--seed-floors` reseeds a deleted `floors.json`. Which metrics gate, and why a dead run is not a score, are on
 [`eval/scoring.py`](ai-libraries.md#evalscoringpy). The
 [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on demand
 — not a pull-request check: each run spends real money on real model calls, and

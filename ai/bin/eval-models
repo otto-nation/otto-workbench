@@ -16,7 +16,6 @@ import argparse
 import dataclasses
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -38,8 +37,10 @@ from eval import conditions  # noqa: E402
 from eval.floors import (  # noqa: E402
     FLOORS_FILENAME,
     apply_accept_regressions,
+    baseline_stem,
     baselines_from_output,
     compare_against_floors,
+    floors_absent_with_baselines,
     floors_path,
     format_floor_breaches,
     load_floors,
@@ -129,12 +130,6 @@ def _serialize_run(r: ScoringResult) -> dict:
 _UNRESOLVED_MODEL_LABELS = frozenset({"", "(default)"})
 
 
-def _sanitize_model_label(label: str) -> str:
-    s = label.replace("(", "").replace(")", "")
-    s = re.sub(r"[^a-zA-Z0-9._-]", "-", s)
-    return s.strip("-") or "default"
-
-
 def _backend_label() -> str | None:
     """The selected backend's filename token, or None when nothing is selected.
 
@@ -149,7 +144,7 @@ def _backend_label() -> str | None:
 
 def _baseline_filename(backend: str, model_label: str) -> str:
     """``{backend}-{sanitized-model}.json``, e.g. ``claude-sonnet.json``."""
-    return f"{backend}-{_sanitize_model_label(model_label)}.json"
+    return f"{baseline_stem(backend, model_label)}.json"
 
 
 def _unique_served_model(usage) -> str:
@@ -571,6 +566,15 @@ def _run_post_eval(
         return 3
 
     results_dir = _resolve_results_dir(args, repo_root)
+    if floors_absent_with_baselines(results_dir) and not getattr(
+        args, "seed_floors", False,
+    ):
+        print(
+            "error: refusing to save baselines — floors.json is absent "
+            "while baselines exist; pass --seed-floors to reseed from this run",
+            file=sys.stderr,
+        )
+        return 1
     written = _save_baselines(output, results_dir)
     for path in written:
         print(f"Baseline written: {path}", file=sys.stderr)
@@ -708,6 +712,11 @@ def main():
         "--save-baselines", action="store_true",
         help="Write per-model baseline files to eval/results/ "
              "(refuses when the high-water floors would drop)",
+    )
+    parser.add_argument(
+        "--seed-floors", action="store_true",
+        help="Allow --save-baselines to create floors.json from this run "
+             "when baselines already exist",
     )
     parser.add_argument(
         "--accept-regression", action="append", default=[],

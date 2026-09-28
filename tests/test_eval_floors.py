@@ -142,6 +142,45 @@ class TestCompareAgainstFloors:
         assert not result.ok
         assert "new-case" in result.unfloored_entries
 
+    def test_deleting_a_decayed_recall_mean_still_breaches(self):
+        baseline = _baseline(INCIDENT_ENTRY, 0.556)
+        del baseline["entries"][INCIDENT_ENTRY]["recall_mean"]
+        result = compare_against_floors(
+            _floors(INCIDENT_ENTRY, 1.0), baseline, 3,
+        )
+        assert not result.ok
+        assert (INCIDENT_ENTRY, "recall_mean") in result.missing_metrics
+
+    def test_deleting_cache_read_ratio_mean_still_breaches(self):
+        cache_floor = 0.9011053140137101
+        floors = FloorSet(1, {STEM: {INCIDENT_ENTRY: {
+            "recall_mean": _record(1.0),
+            "cache_read_ratio_mean": _record(cache_floor),
+        }}})
+        result = compare_against_floors(
+            floors, _baseline(INCIDENT_ENTRY, 1.0), 3,
+        )
+        assert not result.ok
+        assert (INCIDENT_ENTRY, "cache_read_ratio_mean") in result.missing_metrics
+
+    def test_deleting_a_decayed_entry_still_breaches(self):
+        baseline = _baseline(INCIDENT_ENTRY, 0.556)
+        del baseline["entries"][INCIDENT_ENTRY]
+        result = compare_against_floors(
+            _floors(INCIDENT_ENTRY, 1.0), baseline, 3,
+        )
+        assert not result.ok
+        assert INCIDENT_ENTRY in result.dropped_entries
+
+    def test_deleting_an_entry_without_decay_still_breaches(self):
+        baseline = _baseline(INCIDENT_ENTRY, 1.0)
+        del baseline["entries"][INCIDENT_ENTRY]
+        result = compare_against_floors(
+            _floors(INCIDENT_ENTRY, 1.0), baseline, 3,
+        )
+        assert not result.ok
+        assert INCIDENT_ENTRY in result.dropped_entries
+
 
 class TestFloorDocumentGrammar:
     def test_floor_above_best_fails(self):
@@ -320,6 +359,28 @@ class TestSaveBaselinesRefusesRegression:
         assert code != 0
         assert path.read_text() == "{}\n"
 
+    def test_save_does_not_recreate_deleted_floors_when_baselines_exist(
+        self, em, tmp_path,
+    ):
+        results = tmp_path / "results"
+        results.mkdir()
+        baseline = em._baseline_document(
+            "sonnet", "low", 3,
+            {INCIDENT_ENTRY: _complete_metrics(1.0)},
+            "claude",
+        )
+        path = results / "claude-sonnet.json"
+        original = json.dumps(baseline, indent=2) + "\n"
+        path.write_text(original)
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(1.0)}},
+        }
+        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        assert code != 0
+        assert not (results / "floors.json").exists()
+        assert path.read_text() == original
+
 
 class TestParseAcceptRegression:
     def test_a_spec_without_a_reason_is_refused(self):
@@ -385,3 +446,83 @@ class TestValidateEvalFloors:
         assert proc.returncode != 0
         assert INCIDENT_ENTRY in proc.stderr
         assert "recall_mean" in proc.stderr
+
+    def test_deleting_a_decayed_recall_mean_fails_the_validator(self, tmp_path):
+        src = REPO_ROOT / "eval" / "results"
+        floors = json.loads((src / "floors.json").read_text())
+        baseline = json.loads((src / "claude-sonnet.json").read_text())
+        baseline["entries"][INCIDENT_ENTRY]["recall_mean"] = 0.556
+        del baseline["entries"][INCIDENT_ENTRY]["recall_mean"]
+        (tmp_path / "floors.json").write_text(json.dumps(floors) + "\n")
+        (tmp_path / "claude-sonnet.json").write_text(json.dumps(baseline) + "\n")
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        assert INCIDENT_ENTRY in proc.stderr
+        assert "recall_mean" in proc.stderr
+
+    def test_deleting_cache_read_ratio_mean_fails_the_validator(self, tmp_path):
+        src = REPO_ROOT / "eval" / "results"
+        floors = json.loads((src / "floors.json").read_text())
+        baseline = json.loads((src / "claude-sonnet.json").read_text())
+        rec = floors["backends"][STEM][INCIDENT_ENTRY]["cache_read_ratio_mean"]
+        assert rec["floor"] == 0.9011053140137101
+        del baseline["entries"][INCIDENT_ENTRY]["cache_read_ratio_mean"]
+        (tmp_path / "floors.json").write_text(json.dumps(floors) + "\n")
+        (tmp_path / "claude-sonnet.json").write_text(json.dumps(baseline) + "\n")
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        assert INCIDENT_ENTRY in proc.stderr
+        assert "cache_read_ratio_mean" in proc.stderr
+
+    def test_deleting_a_decayed_entry_fails_the_validator(self, tmp_path):
+        src = REPO_ROOT / "eval" / "results"
+        floors = json.loads((src / "floors.json").read_text())
+        baseline = json.loads((src / "claude-sonnet.json").read_text())
+        baseline["entries"][INCIDENT_ENTRY]["recall_mean"] = 0.556
+        del baseline["entries"][INCIDENT_ENTRY]
+        (tmp_path / "floors.json").write_text(json.dumps(floors) + "\n")
+        (tmp_path / "claude-sonnet.json").write_text(json.dumps(baseline) + "\n")
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        assert INCIDENT_ENTRY in proc.stderr
+
+    def test_deleting_an_entry_without_decay_fails_the_validator(self, tmp_path):
+        src = REPO_ROOT / "eval" / "results"
+        floors = json.loads((src / "floors.json").read_text())
+        baseline = json.loads((src / "claude-sonnet.json").read_text())
+        del baseline["entries"][INCIDENT_ENTRY]
+        (tmp_path / "floors.json").write_text(json.dumps(floors) + "\n")
+        (tmp_path / "claude-sonnet.json").write_text(json.dumps(baseline) + "\n")
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        assert INCIDENT_ENTRY in proc.stderr
+
+    def test_absent_floors_with_baselines_exits_1(self, tmp_path):
+        src = REPO_ROOT / "eval" / "results"
+        baseline = json.loads((src / "claude-sonnet.json").read_text())
+        (tmp_path / "claude-sonnet.json").write_text(json.dumps(baseline) + "\n")
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        assert "floors.json" in proc.stderr
+
+    def test_absent_floors_with_no_baselines_exits_0(self, tmp_path):
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 0

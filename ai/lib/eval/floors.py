@@ -8,9 +8,10 @@ sum to -0.444, which clears the 0.334 noise floor.
 
 `eval-models --save-baselines` and `bin/local/validate-eval-floors` both call
 the functions here. An entry in a baseline with no floor record fails — deleting
-a key must not defeat the gate. `floors.json` is the high-water across committed
-history of each lineage, not the current file; `seed_floors` folds historical
-baselines and never drops `best`.
+a key must not defeat the gate. A floor record whose entry or metric is missing
+from the baseline also fails: the gate walks the floors, not the current file.
+`floors.json` is the high-water across committed history of each lineage;
+`seed_floors` folds historical baselines and never drops `best`.
 """
 
 # doc-group: eval
@@ -79,10 +80,15 @@ class FloorComparison:
     aggregate_breaches: tuple[FloorBreach, ...]
     stale_reasons: tuple[str, ...]
     unfloored_entries: tuple[str, ...]
+    dropped_entries: tuple[str, ...]
+    missing_metrics: tuple[tuple[str, str], ...]
 
     @property
     def ok(self) -> bool:
-        return not (self.breaches or self.aggregate_breaches or self.unfloored_entries)
+        return not (
+            self.breaches or self.aggregate_breaches or self.unfloored_entries
+            or self.dropped_entries or self.missing_metrics
+        )
 
 
 @dataclass(frozen=True)
@@ -267,18 +273,24 @@ def compare_against_floors(
     entries = baseline.get("entries") or {}
     recorded = floors.backends.get(stem, {})
     unfloored = tuple(name for name in sorted(entries) if name not in recorded)
+    dropped = tuple(name for name in sorted(recorded) if name not in entries)
     breaches: list[FloorBreach] = []
+    missing: list[tuple[str, str]] = []
     for name, metrics in entries.items():
         if name not in recorded:
             continue
-        breaches.extend(
-            _entry_breaches(name, model, recorded[name], metrics, runs_per_entry),
+        found, absent = _entry_breaches(
+            name, model, recorded[name], metrics, runs_per_entry,
         )
+        breaches.extend(found)
+        missing.extend(absent)
     return FloorComparison(
         breaches=tuple(breaches),
         aggregate_breaches=tuple(_aggregate_breaches(recorded, entries, model)),
         stale_reasons=tuple(_stale_reasons(stem, recorded)),
         unfloored_entries=unfloored,
+        dropped_entries=dropped,
+        missing_metrics=tuple(missing),
     )
 
 
@@ -287,10 +299,14 @@ def _entry_breaches(
     records: Mapping[str, FloorRecord],
     metrics: dict,
     runs_per_entry: int,
-) -> list[FloorBreach]:
+) -> tuple[list[FloorBreach], list[tuple[str, str]]]:
     breaches: list[FloorBreach] = []
+    missing: list[tuple[str, str]] = []
     for metric, rec in records.items():
-        if metric in UNGATED_PER_ENTRY or metric not in metrics:
+        if metric in UNGATED_PER_ENTRY:
+            continue
+        if metric not in metrics:
+            missing.append((entry, metric))
             continue
         current = float(metrics[metric])
         tolerance = _tolerance_for(metric, rec, runs_per_entry)
@@ -302,7 +318,7 @@ def _entry_breaches(
             std=float(metrics.get("recall_std", 0.0) or 0.0),
             tolerance=tolerance,
         ))
-    return breaches
+    return breaches, missing
 
 
 def _tolerance_for(metric: str, rec: FloorRecord, runs_per_entry: int) -> float:
@@ -501,6 +517,27 @@ def floors_path(results_dir: str | Path) -> Path:
     return Path(results_dir) / FLOORS_FILENAME
 
 
+def iter_baseline_paths(results_dir: str | Path) -> list[Path]:
+    """JSON files in *results_dir* except ``floors.json``, sorted."""
+    directory = Path(results_dir)
+    return [
+        path for path in sorted(directory.glob("*.json"))
+        if path.name != FLOORS_FILENAME
+    ]
+
+
+def floors_absent_with_baselines(results_dir: str | Path) -> bool:
+    """True when baselines exist but ``floors.json`` does not.
+
+    Absent floors with no baselines is bootstrap. Absent floors with
+    baselines is a deleted lock file, not a first run.
+    """
+    directory = Path(results_dir)
+    return not floors_path(directory).is_file() and bool(
+        iter_baseline_paths(directory),
+    )
+
+
 def load_floors_or_empty(path: Path | str) -> FloorSet:
     path = Path(path)
     if path.is_file():
@@ -543,6 +580,10 @@ def format_floor_breaches(comparison: FloorComparison) -> str:
         )
     for name in comparison.unfloored_entries:
         lines.append(f"  {name}: no floor record")
+    for name in comparison.dropped_entries:
+        lines.append(f"  {name}: dropped from baseline")
+    for entry, metric in comparison.missing_metrics:
+        lines.append(f"  {entry}: missing metric {metric}")
     for note in comparison.stale_reasons:
         lines.append(f"  stale: {note}")
     return "\n".join(lines)

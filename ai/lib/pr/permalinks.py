@@ -33,6 +33,18 @@ from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, Repo
 # taught to pass one keeps working and renders exactly what it rendered before
 # — the alternative, a required parameter, would be a link nobody can build
 # rather than a link on the wrong forge.
+#
+# A pair of arguments rather than one `RepoRef(slug, host)` value, deliberately.
+# Folding the two into a type was evaluated and rejected: `repo` is the bare
+# `owner/name` that `gh --repo`, the REST paths and the GraphQL query all need,
+# and it is persisted on `ReviewMeta`, `PRIdentity`, `CommentsState` and
+# `ConsumedReview`, where `serde._coerce_dataclass` omits a value that is not a
+# dict and `ReviewEntry.is_for` then silently stops matching. `PushIntent.repo`
+# is a filesystem path under the same name. So the type would have to stop at
+# the boundary anyway, and a type that may not be stored or passed to the API
+# earns nothing over the two arguments it would wrap. If it is ever revived it
+# belongs in this module alone, built at the call from `(ctx.repo, ctx.host)`,
+# and never as a field on anything that is written to disk.
 
 
 def blob_permalink(

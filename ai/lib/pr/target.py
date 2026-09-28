@@ -330,6 +330,14 @@ def forge_base_url(host: str = "") -> str:
     from config rather than from a remote, and rewriting it would turn an
     operator's ``http://`` intranet host into an https URL that does not serve.
     """
+    # ceiling: the host varies but the path grammar does not — every URL built
+    # from this base is spelled GitHub's way (/blob/, /commit/, /pull/ and the
+    # #discussion_r anchor), so this supports github.com and GitHub Enterprise
+    # and nothing else. A forge with its own grammar needs far more than a
+    # base URL: gh is the only API client here, and GitLab or Gitea would each
+    # want a second client, a different PR-URL parse, and different comment
+    # anchors. Upgrade trigger: anyone needing the pr CLI against a forge that
+    # is neither github.com nor GitHub Enterprise.
     host = host.strip().rstrip("/")
     if not host:
         return f"https://{PUBLIC_GITHUB_HOST}"

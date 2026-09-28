@@ -778,6 +778,26 @@ class TestStaticViolationsAsWork:
 
         assert "<!-- fix:SA1 -->" in inv.call_args.args[1]
 
+    def test_a_duplicate_violation_id_is_warned_about_not_silently_dropped(
+        self, git_wt, tmp_path, capsys,
+    ):
+        """A hand-built list going straight through the constructor, not the
+        documented `run_static_analysis` path, can carry a repeated id. The
+        dict `items()` reads from keeps only the last of the two; this asserts
+        that loss is reported rather than silent.
+        """
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        adapter = review_fix.ReviewFixAdapter(
+            job, [],
+            violations=[
+                _violation("SA1", "src.py", 1, message="first"),
+                _violation("SA1", "src.py", 2, message="second"),
+            ],
+        )
+
+        assert len(adapter.items()) == 1
+        assert "Duplicate static violation ids" in capsys.readouterr().err
+
     def test_violations_run_the_pass_when_there_are_no_findings(self, git_wt, tmp_path):
         """A clean review over a file the checker flags is still work.
 

@@ -569,7 +569,23 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         self.effort = job.effort
         self.model = job.model
         self.findings = {f.id: f for f in findings}
-        self.violations = {v.id: v for v in violations or []}
+        violations = violations or []
+        violation_ids = [v.id for v in violations]
+        duplicate_ids = {
+            vid for vid in violation_ids if vid and violation_ids.count(vid) > 1
+        }
+        if duplicate_ids:
+            # `run_static_analysis` renumbers globally on every call, so this
+            # cannot happen through the documented path today. It is here for
+            # the hand-built list this constructor does not otherwise refuse:
+            # the dict below silently keeps the last of a duplicate id and drops
+            # the rest, and a dropped violation is a fix the operator cannot
+            # find unless something says so.
+            log.warn(
+                f"Duplicate static violation ids {sorted(duplicate_ids)} — "
+                "keeping the last of each, dropping the rest"
+            )
+        self.violations = {v.id: v for v in violations}
         self.changed: set[str] | None = None
         self.summary = ""
 

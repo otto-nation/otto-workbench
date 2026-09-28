@@ -25,9 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import timeouts
-from core.job_slots import claim, holders
-
-GRANT_ENV = "WORKBENCH_TEST_SLOTS_GRANTED"
+from core.job_slots import GRANT_ENV, claim, holders
 
 
 def _show() -> int:

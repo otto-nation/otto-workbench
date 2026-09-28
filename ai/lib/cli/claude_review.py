@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "on, else the repo's default branch")
     parser.add_argument(
         "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
-        help="Max concurrent group reviews (default: derived from free CPU, cap 4)",
+        help="Max concurrent group reviews (default: from the machine slot pool, cap 4)",
     )
     parser.add_argument("--max-cost", type=float)
     parser.add_argument("--model")

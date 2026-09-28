@@ -625,6 +625,22 @@ print(f'tracking_exists={os.path.exists(\"$TMPDIR/fix-tracking.md\")}')
   [ "$result" = "tracking_exists=False" ]
 }
 
+@test "cleanup_intermediates: sweeps every verify-tracking chunk" {
+  echo "review" > "$TMPDIR/review.md"
+  echo "chunk1" > "$TMPDIR/verify-tracking-1.md"
+  echo "chunk2" > "$TMPDIR/verify-tracking-2.md"
+  echo "legacy" > "$TMPDIR/verify-tracking.md"
+
+  result=$(_py "
+import os, pathlib
+mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
+print(os.path.exists('$TMPDIR/verify-tracking-1.md'),
+      os.path.exists('$TMPDIR/verify-tracking-2.md'),
+      os.path.exists('$TMPDIR/verify-tracking.md'))
+")
+  [ "$result" = "False False False" ]
+}
+
 @test "cleanup_intermediates: preserves the deliverable and its sidecars" {
   echo "review" > "$TMPDIR/review.md"
   echo '{"type":"result"}' > "$TMPDIR/session.jsonl"

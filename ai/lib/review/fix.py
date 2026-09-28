@@ -482,10 +482,9 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         """
         return Path(phase_log_path(self.job.review_file, self.phase))
 
-    @property
-    def verify_session_log(self) -> Path:
-        """The gate's session log, named by the registry for the same reason."""
-        return Path(phase_log_path(self.job.review_file, self.verify_phase))
+    def verify_session_log(self, chunk: int) -> Path:
+        """The gate's session log, named by the registry, one file per chunk."""
+        return Path(phase_log_path(self.job.review_file, self.verify_phase, chunk))
 
     def add_dirs(self) -> list[Path]:
         """The worktree, and the review directory the tracking file sits in."""

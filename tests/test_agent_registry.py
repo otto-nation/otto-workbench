@@ -283,7 +283,7 @@ class TestPhaseLogNames:
             Phase.SYNTHESIS: "synthesis.jsonl",
             Phase.DISPROVE: "disprove.jsonl",
             Phase.FIX: "fix.jsonl",
-            Phase.FIX_VERIFY: "fix_verify.jsonl",
+            Phase.FIX_VERIFY: "fix_verify-{}.jsonl",
         }
         assert {p: PHASES[p].log_filename for p in REVIEW_PHASES} == expected
 
@@ -294,9 +294,9 @@ class TestPhaseLogNames:
         assert all(names)
         assert len(set(names)) == len(names)
 
-    def test_group_is_the_only_indexed_phase(self):
+    def test_group_and_fix_verify_are_the_indexed_phases(self):
         indexed = {p for p in REVIEW_PHASES if "{}" in PHASES[p].log_filename}
-        assert indexed == {Phase.GROUP}
+        assert indexed == {Phase.GROUP, Phase.FIX_VERIFY}
 
 
 class TestPhaseOutputNames:

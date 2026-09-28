@@ -435,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
     parser.add_argument(
         "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
-        help="Max concurrent group reviews (default: derived from free CPU, cap 4)",
+        help="Max concurrent group reviews (default: from the machine slot pool, cap 4)",
     )
     add_phase_skip_flags(parser)
     parser.add_argument("--disprove", action="store_true", default=None,

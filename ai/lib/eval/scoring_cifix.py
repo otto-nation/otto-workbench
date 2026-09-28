@@ -101,14 +101,6 @@ class CiFixTask:
         if pre_code == 0:
             return _unfixable(repo_dir, log_dir, pre_output)
 
-        agent_env = None
-        if opts.config_dir:
-            # A complete mapping, not a two-key dict: a partial env strips PATH
-            # and HOME (backend.py:284). HOME stays as it is — rewriting it
-            # makes the CLI refuse to start, bill nothing and exit 0.
-            agent_env = clean_env()
-            agent_env["CLAUDE_CONFIG_DIR"] = opts.config_dir
-
         rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
             prompt=_PROMPT.format(
                 repo_dir=repo_dir,
@@ -124,7 +116,7 @@ class CiFixTask:
             model=opts.model or "",
             task="eval-ci-fix",
             repo="eval/corpus",
-            env=agent_env,
+            rules_home=opts.rules_home,
         ))
 
         post_code, post_output = run_verify(repo_dir, manifest, opts.timeout)

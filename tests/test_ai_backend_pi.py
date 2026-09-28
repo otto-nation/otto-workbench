@@ -1984,3 +1984,22 @@ class TestAskForDeliverableOnAgentEnd:
         assert len(self._prompts(proc)) == 1
         assert result.stop_reason == "completed"
         assert result.error is None
+
+
+class TestRulesHomeIsANoop:
+    """Task 9: Pi does not map ``rules_home``. Task 10 will."""
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_rules_home_does_not_set_pi_coding_agent_dir(
+            self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            rules_home=str(tmp_path / "rules"),
+        ))
+        assert "PI_CODING_AGENT_DIR" not in seen["env"]
+        assert "CLAUDE_CONFIG_DIR" not in seen["env"]

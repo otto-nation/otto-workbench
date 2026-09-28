@@ -8,7 +8,6 @@ never fails is worth nothing, and one that never passes is unwinnable.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 import tempfile
@@ -290,54 +289,62 @@ class TestCiFixOutcome:
 
 
 class TestConditionReachesAgent:
-    """A ci-fix run serves the agent a complete env with CLAUDE_CONFIG_DIR."""
+    """A ci-fix run serves the agent a backend-neutral rules_home."""
 
-    def test_the_condition_reaches_the_agent_as_an_absolute_config_dir(
+    def test_the_condition_reaches_the_agent_as_an_absolute_rules_home(
             self, tmp_path, monkeypatch):
         seen = {}
 
         def fake_invoke_fix(inv):
+            seen["rules_home"] = inv.rules_home
             seen["env"] = inv.env
             return 0
 
         monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
                             fake_invoke_fix)
         opts = RunOptions(condition="trimmed",
-                          config_dir=str(tmp_path / "cc-trimmed"))
+                          rules_home=str(tmp_path / "cc-trimmed"))
         _run_cifix_case(opts)
 
-        assert seen["env"]["CLAUDE_CONFIG_DIR"] == str(tmp_path / "cc-trimmed")
-        assert Path(seen["env"]["CLAUDE_CONFIG_DIR"]).is_absolute()
+        assert seen["rules_home"] == str(tmp_path / "cc-trimmed")
+        assert Path(seen["rules_home"]).is_absolute()
+        assert seen["env"] is None
 
     def test_the_agent_env_is_complete_because_a_partial_one_strips_path_and_home(
             self, tmp_path, monkeypatch):
+        """Eval no longer builds env: a partial mapping was the layering defect.
+
+        Completeness (PATH, HOME unchanged) is asserted at the Claude backend,
+        where the mapping now lives.
+        """
         seen = {}
 
         def fake_invoke_fix(inv):
             seen["env"] = inv.env
+            seen["rules_home"] = inv.rules_home
             return 0
 
         monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
                             fake_invoke_fix)
-        opts = RunOptions(condition="trimmed", config_dir=str(tmp_path / "cc"))
+        opts = RunOptions(condition="trimmed", rules_home=str(tmp_path / "cc"))
         _run_cifix_case(opts)
 
-        assert "PATH" in seen["env"]
-        assert "HOME" in seen["env"]
-        assert seen["env"]["HOME"] == os.environ["HOME"], (
-            "HOME must not be rewritten")
+        assert seen["env"] is None
+        assert seen["rules_home"] == str(tmp_path / "cc")
 
     def test_no_config_dir_leaves_the_env_inherited_as_it_is_today(self, monkeypatch):
         seen = {}
 
         def fake_invoke_fix(inv):
             seen["env"] = inv.env
+            seen["rules_home"] = inv.rules_home
             return 0
 
         monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
                             fake_invoke_fix)
         _run_cifix_case(RunOptions())
         assert seen["env"] is None
+        assert seen["rules_home"] == ""
 
 
 class TestZeroTokenGuard:

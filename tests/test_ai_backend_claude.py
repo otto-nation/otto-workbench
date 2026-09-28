@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -9,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import backend_claude as ai_backend_claude
 from core.phases import Phase
+from test_ai_backend import _recording_popen
 
 _FIX_PHASE = Phase.FIX
 
@@ -297,3 +300,59 @@ class TestThePromptShapeGrantsNoTools:
         ):
             assert "--allowedTools" in cmd
             assert cmd[cmd.index("--permission-mode") + 1] == "acceptEdits"
+
+
+class TestRulesHome:
+    """``rules_home`` maps to ``CLAUDE_CONFIG_DIR`` at spawn, not at the eval layer."""
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_rules_home_becomes_claude_config_dir_in_the_spawned_env(
+            self, monkeypatch, tmp_path, entry_point):
+        home = tmp_path / "cc-trimmed"
+        home.mkdir()
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(ai_backend_claude, entry_point)(
+            ai_backend_claude.AgentInvocation(
+                prompt="p", cwd=str(tmp_path),
+                session_log=str(tmp_path / "s.jsonl"),
+                add_dirs=[str(tmp_path)],
+                rules_home=str(home),
+            ),
+        )
+        assert seen["env"]["CLAUDE_CONFIG_DIR"] == str(home)
+        assert Path(seen["env"]["CLAUDE_CONFIG_DIR"]).is_absolute()
+        assert "PATH" in seen["env"]
+        assert "HOME" in seen["env"]
+        assert seen["env"]["HOME"] == os.environ["HOME"]
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_empty_rules_home_does_not_inject_claude_config_dir(
+            self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(ai_backend_claude, entry_point)(
+            ai_backend_claude.AgentInvocation(
+                prompt="p", cwd=str(tmp_path),
+                session_log=str(tmp_path / "s.jsonl"),
+            ),
+        )
+        assert "CLAUDE_CONFIG_DIR" not in seen["env"]
+
+    def test_a_relative_rules_home_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="must be absolute"):
+            ai_backend_claude._spawn_env(
+                ai_backend_claude.AgentInvocation(
+                    prompt="p", cwd=str(tmp_path), rules_home="relative/cc",
+                ),
+            )
+
+    def test_add_dir_is_unchanged_when_rules_home_is_set(self):
+        cmd = ai_backend_claude._build_fix_cmd(
+            ai_backend_claude.AgentInvocation(
+                prompt="", add_dirs=["/tmp/wt"], rules_home="/tmp/cc",
+            ),
+        )
+        assert cmd.count("--add-dir") == 1
+        assert cmd[cmd.index("/tmp/wt") - 1] == "--add-dir"

@@ -143,6 +143,19 @@ def _guard_env(inv: AgentInvocation) -> dict[str, str]:
     return env
 
 
+def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
+    """The subprocess environment. ``rules_home`` is a no-op on this backend.
+
+    Task 10 maps it to ``--append-system-prompt`` of a generated AGENTS.md,
+    keeping ``--no-context-files``. ``PI_CODING_AGENT_DIR`` is the wrong
+    mapping: it relocates settings, sessions and extensions/ (Vertex
+    provider, gh_* tools) rather than the operator rule prefix.
+    """
+    if REVIEW_EXTENSION.is_file():
+        return _guard_env(inv)
+    return agent_env(inv)
+
+
 def _read_agent_prompt(agent: str) -> str | None:
     """Read an agent's system prompt from ~/.claude/agents/<name>.md."""
     agent_file = AGENTS_DIR / f"{agent}.md"
@@ -979,7 +992,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=_guard_env(inv) if ext else agent_env(inv),
+        env=_spawn_env(inv),
     )
 
     with _rpc_process(cmd, **spawn) as proc:
@@ -1050,7 +1063,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=_guard_env(inv) if ext else agent_env(inv),
+        env=_spawn_env(inv),
     )
 
     with _rpc_process(cmd, **spawn) as proc:

@@ -417,7 +417,7 @@ def _recording_task(calls):
 
             def run(self, case_dir, opts):
                 calls.append({
-                    "config_dir": opts.config_dir,
+                    "rules_home": opts.rules_home,
                     "condition": opts.condition,
                 })
                 return eval_task.RunArtifacts(
@@ -479,6 +479,6 @@ def test_each_condition_gets_its_own_seeded_tree_and_row(tmp_path, monkeypatch, 
     monkeypatch.setattr(em, "get_task", _recording_task(calls))
     args = _args(tmp_path, conditions="full,trimmed", runs=1)
     em.run_eval(args)
-    dirs = {c["config_dir"] for c in calls}
+    dirs = {c["rules_home"] for c in calls}
     assert len(dirs) == 2, "each arm needs its own tree"
     assert all(Path(d).is_absolute() for d in dirs)

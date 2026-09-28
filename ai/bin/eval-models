@@ -277,12 +277,12 @@ def _report_run(artifacts, result: ScoringResult, total_expected: int) -> None:
 
 def _run_arm(
     entry: dict, model: str, label: str, arm: str,
-    args: argparse.Namespace, config_dir: str,
+    args: argparse.Namespace, rules_home: str,
 ) -> list[ScoringResult]:
     return [
         _run_single(
             entry, model, label, run_idx, args,
-            arm, config_dir,
+            arm, rules_home,
         )
         for run_idx in range(args.runs)
     ]
@@ -291,7 +291,7 @@ def _run_arm(
 def _run_single(
     entry: dict, model: str, label: str, run_idx: int,
     args: argparse.Namespace,
-    arm: str = "full", config_dir: str = "",
+    arm: str = "full", rules_home: str = "",
 ) -> ScoringResult:
     run_label = f"{entry['name']} / {label}"
     if arm != "full":
@@ -304,7 +304,7 @@ def _run_single(
     task = get_task(task_name(manifest))
     opts = RunOptions(
         model=model, effort=args.effort, timeout=args.timeout,
-        verbose=args.verbose, condition=arm, config_dir=config_dir,
+        verbose=args.verbose, condition=arm, rules_home=rules_home,
     )
 
     artifacts = task.run(Path(entry["case_dir"]), opts)

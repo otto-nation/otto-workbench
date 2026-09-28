@@ -87,9 +87,9 @@ class RunOptions:
     # Which rule prefix this run is served. Inert for review and skill tasks:
     # only ci-fix invokes a fix agent, so only ci-fix reads it.
     condition: str = "full"
-    # The seeded CLAUDE_CONFIG_DIR for that prefix, empty to inherit the
-    # operator's own.
-    config_dir: str = ""
+    # Where this run's operator rule prefix is served from, empty to inherit
+    # the operator's own. Backend-neutral: the agent layer maps it.
+    rules_home: str = ""
 
 
 def outcome_for(exit_code: int, usage: SessionUsage) -> RunOutcome:

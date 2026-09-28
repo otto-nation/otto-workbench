@@ -2069,3 +2069,69 @@ class TestRulesHomePrefix:
                     prompt="", rules_home="relative/arm",
                 ),
             )
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_prefix_file_exists_at_spawn_with_the_rule_text(
+            self, monkeypatch, tmp_path, entry_point):
+        seen = {}
+
+        def popen(cmd, **kwargs):
+            path = Path(cmd[cmd.index("--append-system-prompt") + 1])
+            seen["readable"] = path.is_file()
+            seen["text"] = path.read_text()
+            return _recording_popen({})(cmd, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", popen)
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            rules_home=str(_arm(tmp_path)),
+        ))
+        assert seen["readable"] is True
+        assert "Keep this." in seen["text"]
+        assert "general.md" in seen["text"]
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_no_prefix_file_remains_after_invoke(
+            self, monkeypatch, tmp_path, entry_point):
+        seen = {}
+        inner = _recording_popen(seen)
+
+        def popen(cmd, **kwargs):
+            seen["path"] = cmd[cmd.index("--append-system-prompt") + 1]
+            return inner(cmd, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", popen)
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            rules_home=str(_arm(tmp_path)),
+        ))
+        assert seen["path"]
+        assert not Path(seen["path"]).exists()
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_exception_between_materialize_and_spawn_still_removes_the_file(
+            self, monkeypatch, tmp_path, entry_point):
+        captured = {}
+        real = ai_backend_pi.materialize_rule_prefix
+
+        def wrapping(home):
+            path = real(home)
+            captured["path"] = path
+            return path
+
+        monkeypatch.setattr(ai_backend_pi, "materialize_rule_prefix", wrapping)
+
+        def boom(*_a, **_k):
+            raise RuntimeError("between materialize and spawn")
+
+        monkeypatch.setattr(ai_backend_pi, "_spawn_env", boom)
+        with pytest.raises(RuntimeError, match="between materialize and spawn"):
+            getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+                prompt="p", cwd=str(tmp_path),
+                session_log=str(tmp_path / "s.jsonl"),
+                rules_home=str(_arm(tmp_path)),
+            ))
+        assert captured["path"]
+        assert not Path(captured["path"]).exists()

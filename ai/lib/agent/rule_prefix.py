@@ -18,10 +18,13 @@ a silent empty prompt.
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import tempfile
 from pathlib import Path
+
+TEMP_PREFIX = "pi-rules-"
 
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.DOTALL)
 _YAML_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$")
@@ -77,16 +80,33 @@ def materialize(rules_home: str) -> str:
     (``resolvePromptInput`` reads the file when ``existsSync`` is true). The
     blob is large enough that the file form is the one to use; the temp file
     is not under ``~/.claude`` or ``~/.pi``.
+
+    Cleanup is registered here, at create, via ``atexit``. The file must still
+    exist when the Pi subprocess starts, which is after the argv builder
+    returns, so a ``NamedTemporaryFile(delete=True)`` around the builder would
+    inject a missing path and the arm would silently score as a successful
+    trim. ``atexit`` survives an exception or early return between this call
+    and spawn; callers that have already started the child may also call
+    ``release`` so the file does not wait until process exit.
     """
     blob = rule_blob(rules_home)
-    fd, path = tempfile.mkstemp(prefix="pi-rules-", suffix=".md", text=True)
+    fd, path = tempfile.mkstemp(prefix=TEMP_PREFIX, suffix=".md", text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(blob)
     except OSError:
         os.unlink(path)
         raise
+    atexit.register(release, path)
     return path
+
+
+def release(path: str) -> None:
+    """Unlink a ``materialize`` temp file. Idempotent; a missing path is fine."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _rule_section(path: Path) -> str | None:

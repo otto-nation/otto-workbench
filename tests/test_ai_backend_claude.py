@@ -349,10 +349,13 @@ class TestRulesHome:
             )
 
     def test_add_dir_is_unchanged_when_rules_home_is_set(self):
-        cmd = ai_backend_claude._build_fix_cmd(
-            ai_backend_claude.AgentInvocation(
-                prompt="", add_dirs=["/tmp/wt"], rules_home="/tmp/cc",
-            ),
+        inv = ai_backend_claude.AgentInvocation(
+            prompt="", add_dirs=["/tmp/wt"], rules_home="/tmp/cc",
         )
-        assert cmd.count("--add-dir") == 1
-        assert cmd[cmd.index("/tmp/wt") - 1] == "--add-dir"
+        for builder in (
+            ai_backend_claude._build_fix_cmd,
+            ai_backend_claude._build_agent_cmd,
+        ):
+            cmd = builder(inv)
+            assert cmd.count("--add-dir") == 1
+            assert cmd[cmd.index("/tmp/wt") - 1] == "--add-dir"

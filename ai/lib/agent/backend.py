@@ -317,8 +317,11 @@ class AgentInvocation:
     phase: str | None = None
     # Where this run's operator rule prefix comes from. Empty inherits
     # whatever the operator already has. Not an env var and not a delta —
-    # each backend maps it to its own mechanism (Claude Code:
-    # CLAUDE_CONFIG_DIR; Pi: Task 10, --append-system-prompt).
+    # each backend maps it to its own mechanism. Claude Code sets
+    # CLAUDE_CONFIG_DIR to this path at spawn. Pi leaves that unset, keeps
+    # --no-context-files, and injects the concatenated Pi-reachable rules as
+    # --append-system-prompt of a temp file that still exists when the child
+    # starts.
     rules_home: str = ""
 
 

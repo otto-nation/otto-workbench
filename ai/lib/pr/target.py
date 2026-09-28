@@ -536,6 +536,11 @@ def repo_identity_from_origin(cwd: str | None = None) -> RepoIdentity | None:
 
     Not ``gh repo view``: the key must be derivable without the network, and two
     sources for one component is how the two derivations drift apart.
+
+    ``host`` is parsed from the same ``config --get`` read the key is derived
+    from — see ``_origin_url`` — so on a machine with a ``url.*.insteadOf``
+    rewrite configured, a rendered link now names the recorded remote's host
+    rather than the rewritten spelling ``remote get-url`` used to hand it.
     """
     url = _origin_url(cwd)
     canonical = _canonical(url) if url else ""

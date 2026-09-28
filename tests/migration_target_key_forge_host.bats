@@ -44,18 +44,21 @@ PY
 
 # A target directory as a real run leaves it: a state.json naming the checkout
 # it was resolved from, and a ledger standing in for what must survive a move.
+#
+# No repo_key in identity: PRIdentity (ai/lib/pr/state.py) never records one, so
+# a real run's state.json never has it either — seeding one here would exercise
+# a path the migration cannot actually reach in production.
 _seed_target() {
-  local name="$1" worktree="$2" repo_key="${3:-}"
+  local name="$1" worktree="$2"
   local dir="$STATE/pr/$name"
   mkdir -p "$dir/pr-comments"
-  python3 - "$dir" "$worktree" "$repo_key" <<'PY'
+  python3 - "$dir" "$worktree" <<'PY'
 import json, sys
 from pathlib import Path
-d, wt, key = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+d, wt = Path(sys.argv[1]), sys.argv[2]
 (d / "state.json").write_text(json.dumps({
     "identity": {"repo": "acme/widget", "branch": "main", "pr_number": None,
-                 "head_sha": "abc1234", "worktree_root": wt,
-                 **({"repo_key": key} if key else {})},
+                 "head_sha": "abc1234", "worktree_root": wt},
 }))
 PY
   printf '{"decided":"by hand"}\n' > "$dir/pr-comments/state.json"
@@ -86,7 +89,7 @@ _run_migration() {
   old="$(_key_for_repo "$repo_pub")"
   new="$(_key_for_repo "$repo")"
   [ "$old" != "$new" ]
-  _seed_target "${old}-main" "$repo" "$old"
+  _seed_target "${old}-main" "$repo"
 
   _run_migration
 
@@ -103,7 +106,7 @@ _run_migration() {
   local repo="$TMPDIR/repo"
   _init_repo "$repo" "git@github.com:acme/widget.git"
   local key; key="$(_key_for_repo "$repo")"
-  _seed_target "${key}-main" "$repo" "$key"
+  _seed_target "${key}-main" "$repo"
 
   _run_migration
 
@@ -120,8 +123,8 @@ _run_migration() {
   local old new
   old="$(_key_for_repo "$repo_pub")"
   new="$(_key_for_repo "$repo")"
-  _seed_target "${old}-main" "$repo" "$old"
-  _seed_target "${new}-main" "$repo" "$new"
+  _seed_target "${old}-main" "$repo"
+  _seed_target "${new}-main" "$repo"
   printf '{"decided":"already here"}\n' > "$STATE/pr/${new}-main/pr-comments/state.json"
 
   _run_migration
@@ -139,7 +142,7 @@ _run_migration() {
   _init_repo "$repo" "git@ghe.acme.com:acme/widget.git" "ghe.acme.com"
   _init_repo "$repo_pub" "git@ghe.acme.com:acme/widget.git"
   local old; old="$(_key_for_repo "$repo_pub")"
-  local dir; dir="$(_seed_target "${old}-main" "$repo" "$old")"
+  local dir; dir="$(_seed_target "${old}-main" "$repo")"
 
   # Hold the target's lock from another process for the migration's lifetime.
   python3 - "$REPO_ROOT" "$dir" <<'PY' &
@@ -172,7 +175,7 @@ PY
   local repo="$TMPDIR/repo"
   _init_repo "$repo" "git@ghe.acme.com:acme/widget.git" "ghe.acme.com"
   local key; key="$(_key_for_repo "$repo")"
-  _seed_target "${key}-main" "$TMPDIR/deleted-worktree" "$key"
+  _seed_target "${key}-main" "$TMPDIR/deleted-worktree"
 
   _run_migration
 

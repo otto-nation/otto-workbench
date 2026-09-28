@@ -149,14 +149,12 @@ for target in sorted(p for p in root.iterdir() if p.is_dir()):
         print(f"UNRESOLVED\t{target.name}\tno origin in {worktree}")
         continue
 
-    # The branch half of the directory name is whatever follows the old key, so
-    # it is carried across rather than recomputed: recomputing it would fold a
-    # second rule into a migration that exists for one.
-    old_key = identity.get("repo_key", "")
-    suffix = target.name[len(old_key):] if old_key and target.name.startswith(old_key) else ""
-    if not suffix:
-        branch = identity.get("branch", "")
-        suffix = f"-{pr_target.slug(branch)}" if branch else ""
+    # The branch half of the directory name is recomputed from the recorded
+    # branch rather than carried across: state.json's identity has no repo_key
+    # field (see ai/lib/pr/state.py's PRIdentity) for a stored old key to strip
+    # off the directory name, so the branch slug is the only route to it.
+    branch = identity.get("branch", "")
+    suffix = f"-{pr_target.slug(branch)}" if branch else ""
     want = f"{resolved.key}{suffix}"
 
     if want == target.name:

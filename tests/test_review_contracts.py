@@ -1151,7 +1151,7 @@ def test_python_script_help_exits_zero(script):
 # output skeleton, and `review.prompt`'s `_REREVIEW_CTX` sets the house
 # precedent of spelling per-phase instructional prose out in full. The copies
 # are kept honest here instead.
-_SUMMARY_CONTRACT_RE = re.compile(r"^## Summary|Write ## Summary", re.MULTILINE)
+_SUMMARY_CONTRACT_RE = re.compile(r"(?m)(?:^## Summary\b|Write ## Summary)")
 
 # A tally of prior findings in the Summary is prose no one computes: the
 # ledger that does record them is stripped before publish, so a wrong count

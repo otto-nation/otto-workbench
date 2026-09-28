@@ -349,6 +349,7 @@ def post_fix_replies(
     pr_number: int,
     cp: attribution.CommitPushResult,
     history: "attribution.AddressingHistory | None" = None,
+    host: str = "",
 ) -> int:
     """Post replies to each fixed thread. Returns count of replies posted.
 
@@ -365,13 +366,13 @@ def post_fix_replies(
         sha = attribution.attribute_commit(entry, cp, history, threads_by_id.get(entry.id)).sha
         parts = [
             f"{APPLIED_REPLY_PREFIX}: {entry.summary}",
-            f"Fixed in [`{sha}`]({permalinks.commit_permalink(repo, sha)}).",
+            f"Fixed in [`{sha}`]({permalinks.commit_permalink(repo, sha, host)}).",
         ]
         # The file, not the line: the fix has just moved the lines around it,
         # and pointing a reviewer at the wrong line is worse than pointing them
         # at the file the change landed in.
         if entry.file:
-            url = permalinks.blob_permalink(repo, sha, entry.file)
+            url = permalinks.blob_permalink(repo, sha, entry.file, host=host)
             parts.append(f"Result is in [`{entry.file}`]({url}).")
         note = unverified_note(entry)
         if note:
@@ -391,6 +392,7 @@ def post_already_addressed_replies(
     pr_number: int,
     wt_path: Path,
     acted: bool = False,
+    host: str = "",
 ) -> int:
     """Post replies to threads the current code satisfies. Returns count posted.
 
@@ -422,12 +424,13 @@ def post_already_addressed_replies(
         # let an already_addressed verdict through without a citation that
         # resolves. Checking again here would only overrule it with a weaker
         # link.
-        link = permalinks.code_link(entry, repo, head_sha, wt_path, verify_evidence=False)
+        link = permalinks.code_link(
+            entry, repo, head_sha, wt_path, verify_evidence=False, host=host)
         if link:
             parts.append(f"Current behaviour is at {link}.")
         if framing.cited:
             sha = framing.sha
-            commit_url = permalinks.commit_permalink(repo, sha)
+            commit_url = permalinks.commit_permalink(repo, sha, host)
             lead = "Fixed in" if framing.in_response else "Addressed in"
             parts.append(f"{lead} [`{git_client.abbrev(sha)}`]({commit_url}).")
         # Only on the `acted` path: that half landed a change and is making the
@@ -459,6 +462,7 @@ def reply_to_fixed(
     pr_number: int,
     cp: attribution.CommitPushResult,
     wt_path: Path,
+    host: str = "",
 ) -> int:
     """Reply on every fixed thread, each citing the commit attributed to it.
 
@@ -486,11 +490,12 @@ def reply_to_fixed(
     posted = 0
     if attributed:
         posted += post_fix_replies(
-            attributed, threads_by_id, repo, pr_number, cp, history,
+            attributed, threads_by_id, repo, pr_number, cp, history, host,
         )
     if unattributed:
         posted += post_already_addressed_replies(
             unattributed, threads_by_id, repo, pr_number, wt_path, acted=True,
+            host=host,
         )
     return posted
 
@@ -501,6 +506,7 @@ def post_dismissed_replies(
     repo: str,
     pr_number: int,
     wt_path: Path,
+    host: str = "",
 ) -> int:
     """Post replies to invalid suggestion threads. Returns count posted.
 
@@ -518,7 +524,7 @@ def post_dismissed_replies(
         reasoning = entry.reasoning
         body = DISMISSED_REPLY_PREFIX
         body = f"{body}: {reasoning}" if reasoning else f"{body}."
-        link = permalinks.evidence_link(entry, repo, head_sha, wt_path)
+        link = permalinks.evidence_link(entry, repo, head_sha, wt_path, host)
         return f"{body}\n\nSee {link}." if link else body
 
     posted = _post_thread_replies(dismissed, threads_by_id, repo, pr_number, body_fn)
@@ -535,6 +541,7 @@ def post_deferred_replies(
     issue_id: str,
     issue_url: str,
     wt_path: Path | None = None,
+    host: str = "",
 ) -> int:
     """Post replies to deferred threads linking the tracking issue."""
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
@@ -545,7 +552,7 @@ def post_deferred_replies(
                  f"Tracked in {issue_ref}."]
         # A deferral says the code still stands as the reviewer found it, which
         # is a claim about the tree like any other — pin it.
-        link = permalinks.code_link(entry, repo, head_sha, wt_path)
+        link = permalinks.code_link(entry, repo, head_sha, wt_path, host=host)
         if link:
             parts.append(f"Unchanged at {link}.")
         return "\n\n".join(parts)

@@ -217,7 +217,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         fixed_bucket = tracking.bucket(FixOutcome.FIXED)
         replies = self.round.replies.plus(comment_replies.settle_fixed(
             fixed_bucket, self.threads_by_id, self.repo,
-            self.report.pr_number, cp, self.workdir,
+            self.report.pr_number, cp, self.workdir, self.ctx.host,
         ))
         content = summary_model.RoundContent(
             by_outcome=self.round.by_outcome(tracking),

@@ -42,6 +42,7 @@ def settle_fixed(
     pr_number: int,
     cp: attribution.CommitPushResult,
     wt_path: Path,
+    host: str = "",
 ) -> ReplyOutcome:
     """Tell the reviewers what landed, and close the threads it landed on.
 
@@ -59,7 +60,7 @@ def settle_fixed(
         return ReplyOutcome()
     return ReplyOutcome(
         posted=thread_replies.reply_to_fixed(
-            fixed, threads_by_id, repo, pr_number, cp, wt_path,
+            fixed, threads_by_id, repo, pr_number, cp, wt_path, host,
         ),
         resolved=tuple(settlement.resolve_fixed_threads(fixed, threads_by_id)),
     )
@@ -107,14 +108,14 @@ def post_triage_replies(
         replies = replies.plus(ReplyOutcome(
             posted=thread_replies.post_dismissed_replies(
                 round_.threads.dismissed, threads_by_id, ctx.repo,
-                report.pr_number, wt_path,
+                report.pr_number, wt_path, ctx.host,
             ),
         ))
     if round_.already_addressed:
         replies = replies.plus(ReplyOutcome(
             posted=thread_replies.post_already_addressed_replies(
                 round_.already_addressed, threads_by_id, ctx.repo,
-                report.pr_number, wt_path,
+                report.pr_number, wt_path, host=ctx.host,
             ),
             resolved=tuple(settlement.resolve_fixed_threads(
                 round_.already_addressed, threads_by_id)),

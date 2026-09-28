@@ -32,7 +32,7 @@ from review.state import PipelineState, pipeline_status, set_failures_section
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
     CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
-    build_mechanical_body, states_verdict,
+    PARTIAL_VERDICT, build_mechanical_body, states_verdict,
 )
 from review.verify import post_process_findings
 
@@ -132,12 +132,22 @@ def _build_mechanical_fallback(
     review_dir = Path(job.review_file).parent
     status = pipeline_status(review_dir) if review_dir.exists() else ReviewStatus.ERROR
 
+    # What reported, not what was dispatched. A group that produced nothing
+    # contributed no findings, so counting it in the scope tells the reader a
+    # surface was examined when it was not — and that sentence sits directly
+    # above the findings the missing group never added to. The verdict goes
+    # the same way: "Approve — clean review" over unread source is the one
+    # line a reader acts on without opening the failures table below it.
+    failed = len(pipeline_state.groups_failed) if pipeline_state else 0
+    partial = failed > 0 and failed < group_count
     body = build_mechanical_body(
         merged_content,
         group_count=group_count,
         summary_note=FALLBACK_SUMMARY,
         include_verdict=states_verdict(job.mode),
+        verdict=PARTIAL_VERDICT if partial else "",
         file_count=job.pr.changed_files,
+        groups_reported=group_count - failed if partial else None,
     )
     if pipeline_state:
         body = set_failures_section(body, pipeline_state)

@@ -563,6 +563,13 @@ def _ask_for_deliverable(
     ``agent_settled`` is the event that clears ``_isAgentRunActive``, and a
     bare `prompt` after it starts a fresh run on the same session, with the
     context the agent already built.
+
+    Both halves were measured against a live ``pi --mode rpc`` (0.84.4) rather
+    than read off the source: a prompt sent on ``agent_settled`` produced a
+    second ``agent_start``/``agent_end``/``agent_settled`` triple, and a steer
+    sent on ``agent_end`` produced no further run at all. The second result is
+    the one worth keeping — it is what the obvious reading of "steer the agent
+    to write" would have shipped, and it would have hung on the next read.
     """
     if not due:
         return True

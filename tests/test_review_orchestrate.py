@@ -775,6 +775,57 @@ class TestBuildMechanicalFallback:
         result = ro._build_mechanical_fallback(job, 3, merged)
         assert "3 findings" in result.body
 
+    def _partial_job(self, ro, tmp_path, changed_files=16):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42",
+            pr=ro.PRMetadata(title="t", body="", head="feat", base="main",
+                             head_sha="abc", additions=10, deletions=5,
+                             changed_files=changed_files, files=[]),
+            ctx=ro.PRContext(),
+            wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            mode=ro.Mode.PR,
+        )
+
+    def test_a_partial_run_counts_the_groups_that_reported(self, ro, tmp_path):
+        """"across 3 groups" over a group that wrote nothing reads as examined.
+
+        The sentence sits directly above findings the missing group never
+        contributed to, which is how a review of two thirds of a PR was acted
+        on as a review of all of it.
+        """
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+
+        state = PipelineState(group_names=["a", "b", "c"])
+        state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
+        result = ro._build_mechanical_fallback(
+            self._partial_job(ro, tmp_path), 3, "", pipeline_state=state,
+        )
+        assert "in 2 of 3 groups" in result.body
+        assert "in 3 groups" not in result.body
+
+    def test_a_partial_run_withholds_the_clean_verdict(self, ro, tmp_path):
+        """Approve over source no agent opened is the line a reader acts on."""
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+
+        state = PipelineState(group_names=["a", "b", "c"])
+        state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
+        result = ro._build_mechanical_fallback(
+            self._partial_job(ro, tmp_path), 3, "", pipeline_state=state,
+        )
+        assert "No verdict — part of this review did not run." in result.body
+        assert "Approve" not in result.body
+
+    def test_a_run_where_every_group_reported_counts_plainly(self, ro, tmp_path):
+        """The common case keeps its wording; only a partial run qualifies it."""
+        result = ro._build_mechanical_fallback(
+            self._partial_job(ro, tmp_path), 3, "",
+        )
+        assert "in 3 groups" in result.body
+        assert " of 3 groups" not in result.body
+
 
 # ── 33. _write_clean_review ─────────────────────────────────────────────────
 

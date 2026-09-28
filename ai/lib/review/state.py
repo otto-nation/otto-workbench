@@ -28,7 +28,9 @@ from agent.registry import SCAN_PHASES
 from core.phases import Phase
 from pr.domains import ReviewStatus
 from agent.session import _parse_session_cost
-from review.document import SECTION_SUMMARY, set_section, set_status
+from review.document import (
+    SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument, set_section, set_status,
+)
 from review.paths import (
     FILENAME_PIPELINE_STATE,
     phase_log_path,
@@ -347,12 +349,35 @@ def set_failures_section(content: str, state: "PipelineState") -> str:
     return set_section(content, SECTION_FAILURES, build_failures_body(state), before=SECTION_SUMMARY)
 
 
+def _withhold_verdict_if_partial(content: str, state: "PipelineState") -> str:
+    """Replace a stated verdict when part of the review did not run.
+
+    A synthesis agent writes its verdict from the findings it was handed, and
+    a group that produced nothing hands it none — so a run whose source group
+    died synthesises "Approve" over files no agent opened. That line is the
+    one a reader may act on without opening the rest, and it sat directly
+    above an accurate Agent Failures table that was read second.
+
+    Only a *partial* run is rewritten. Where every group failed there is no
+    review to overstate, and `_build_mechanical_fallback` already says so.
+    """
+    from review.verdict import PARTIAL_VERDICT
+
+    failed = len(state.groups_failed)
+    if not failed or failed >= state.group_count > 0:
+        return content
+    if not ReviewDocument(body=content).section(SECTION_VERDICT):
+        return content
+    return set_section(content, SECTION_VERDICT, PARTIAL_VERDICT)
+
+
 def _inject_failures_and_status(review_file: str, state: "PipelineState") -> None:
     """Insert Agent Failures section and status metadata into an existing review."""
     path = Path(review_file)
     if not path.exists():
         return
     content = set_failures_section(path.read_text(), state)
+    content = _withhold_verdict_if_partial(content, state)
     path.write_text(set_status(content, pipeline_status(path.parent)))
 
 

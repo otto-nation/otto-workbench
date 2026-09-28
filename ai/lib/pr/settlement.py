@@ -486,6 +486,16 @@ def resolve_settled_commit(
                 f"first, or the reply citing it sends the reviewer to a 404"
             ))
         return SettledCommit(sha=git_client.abbrev(sha))
+    if attribution.coordinate_went_stale(
+            wt_path, outcome, outcome.file, outcome.line):
+        # The recorded line has stopped meaning what it meant when it was read,
+        # so the walk below would answer about whatever code inherited the
+        # number. Worse here than at render time: this answer is written into
+        # the state file, so a wrong citation is replayed by every later round.
+        # Settling still succeeds — the row is settled either way, and
+        # `report_settlement` already tells the operator that an uncited row
+        # takes `--commit` to name one.
+        return SettledCommit()
     sha = attribution.find_addressing_commit(wt_path, outcome.file, outcome.line) or ""
     if sha and push.holds(wt_path, sha):
         return SettledCommit(sha=git_client.abbrev(sha))

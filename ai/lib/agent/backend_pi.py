@@ -190,7 +190,7 @@ def _resolve_skill_path(agent: str) -> Path | None:
 def _rule_prefix_flags(inv: AgentInvocation) -> list[str]:
     """``--append-system-prompt`` of the arm, or nothing when ``rules_home`` is empty.
 
-    Empty is byte-identical to the pre-Task-10 argv: no flag, no temp file.
+    Empty is byte-identical to an invocation with no prefix: no flag, no temp file.
     A *set* home is materialised to a file because Pi treats an existing path
     as file contents, and the blob is too large for the text form.
     """

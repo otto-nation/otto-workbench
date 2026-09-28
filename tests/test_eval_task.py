@@ -517,3 +517,72 @@ def test_a_missing_pi_source_fails_loudly_rather_than_seeding_empty(
     monkeypatch.setattr(em.conditions, "prepare_seed_source", fake_prepare)
     with pytest.raises(SystemExit, match="Pi rule layers produced no files"):
         em.run_eval(_args(tmp_path, conditions="full", runs=1))
+
+
+def _seed_claude_and_stub_task(tmp_path, monkeypatch, em, get_task):
+    _make_case(tmp_path / "corpus", "a", task="ci-fix")
+    _fake_claude(tmp_path / "claude")
+    monkeypatch.setenv("AI_BACKEND", "claude")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str((tmp_path / "claude").resolve()))
+    monkeypatch.setattr(em, "get_task", get_task)
+
+
+def test_a_two_arm_run_prints_the_ab_table(tmp_path, monkeypatch, em, capsys):
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, em, _recording_task([]))
+    em.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1))
+    out = capsys.readouterr().out
+    assert "| Arm |" in out, "two-arm stdout must include the A/B table"
+    assert "delta" in out
+
+
+def test_a_single_arm_run_does_not_print_the_ab_table(
+    tmp_path, monkeypatch, em, capsys,
+):
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, em, _recording_task([]))
+    em.run_eval(_args(tmp_path, conditions="full", runs=1))
+    out = capsys.readouterr().out
+    assert "| Arm |" not in out
+    assert "delta" not in out
+
+
+def _task_trimmed_never_ran():
+    def _get_task(_name=""):
+        class Rec:
+            name = "stub"
+            condition = "full"
+
+            def run(self, case_dir, opts):
+                self.condition = opts.condition
+                return eval_task.RunArtifacts(
+                    usage=SessionUsage(cost=0.01, input_tokens=10),
+                    data={"summary": "stub"},
+                )
+
+            def score(self, artifacts, manifest):
+                outcome = (
+                    eval_scoring.RunOutcome.NOT_RUN
+                    if self.condition == "trimmed"
+                    else eval_scoring.RunOutcome.MEASURED
+                )
+                return ScoringResult(
+                    "", "", 0, recall=1.0, billed_input=40000, outcome=outcome,
+                )
+
+        return Rec()
+
+    return _get_task
+
+
+def test_an_unmeasured_trimmed_arm_is_not_zero_in_the_ab_table(
+    tmp_path, monkeypatch, em, capsys,
+):
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, em, _task_trimmed_never_ran())
+    em.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1))
+    out = capsys.readouterr().out
+    assert "| Arm |" in out, "two-arm stdout must include the A/B table"
+    ab = out.split("| Arm |", 1)[1]
+    trimmed_row = ab.split("trimmed", 1)[1].split("\n")[0]
+    assert "0%" not in trimmed_row, (
+        "an arm that never ran must not read as 0% in the A/B table"
+    )
+    assert "unmeasured" in trimmed_row.lower()

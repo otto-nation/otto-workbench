@@ -2013,7 +2013,7 @@ class TestRulesHomeIsANoop:
 
 
 class TestRulesHomePrefix:
-    """Task 10: ``rules_home`` is injected as ``--append-system-prompt``."""
+    """``rules_home`` is injected as ``--append-system-prompt``, or omitted when empty."""
 
     def test_empty_rules_home_argv_is_byte_identical_to_today(self):
         fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))

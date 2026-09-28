@@ -41,7 +41,9 @@ from core.phases import Effort, Phase
 from pr import attribution
 from pr.fix import FixOutcome, ItemOutcome
 from gh.types import PRContext, PRMetadata
-from review.static_analysis import CheckerResult, StaticViolation
+from review.static_analysis import (
+    CheckerResult, StaticViolation, format_static_analysis,
+)
 from review.types import Finding, ReviewJob
 
 # What the push owner answers when the fix pass's commit reached the remote.
@@ -222,11 +224,19 @@ def _violation(
     return StaticViolation(file=path, line=line, message=message, id=vid, **kwargs)
 
 
-def _static_results(*violations: StaticViolation) -> list[CheckerResult]:
-    """Violations in the shape `run_static_analysis` hands to the job."""
+def _static_results(
+    *violations: StaticViolation, scoped: bool = True,
+) -> list[CheckerResult]:
+    """Violations in the shape `run_static_analysis` hands to the job.
+
+    `scoped` defaults True — the shape the orchestrator produces when it could
+    read the branch's diff, which is the ordinary case and the only one that
+    yields work.
+    """
     return [CheckerResult(
         name="Nesting depth", violations=list(violations),
         files_checked=len({v.file for v in violations}),
+        scoped_to_added=scoped,
     )]
 
 
@@ -893,8 +903,11 @@ class TestStaticViolationsAsWork:
         would spend the whole budget on mechanical edits."""
         over = review_fix._MAX_STATIC_ITEMS + 5
         job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        # One site each: `_static_items` collapses a site to a single item, so
+        # violations sharing a function would test that collapse instead.
         job.static_results = _static_results(*[
-            _violation(f"SA{n}", "src.py", n) for n in range(1, over + 1)
+            _violation(f"SA{n}", "src.py", n, context=f"in f{n}()")
+            for n in range(1, over + 1)
         ])
         taken = review_fix._static_items(job.static_results)
 
@@ -912,6 +925,62 @@ class TestStaticViolationsAsWork:
         results = _static_results(StaticViolation(file="src.py", line=1, message="x"))
         assert review_fix._static_items(results) == []
 
+    def test_an_unscoped_result_yields_no_work(self, git_wt, tmp_path):
+        """Whole-file measurements are a report, not a work list.
+
+        A result the diff could not narrow includes depth the branch inherited.
+        Handing that to the agent is asking it to flatten code the branch never
+        touched — and `fix.scope` cannot refuse the edit, because the file it
+        lands in is a branch file. So the refusal is here.
+        """
+        results = _static_results(
+            _violation("SA1", "src.py", 4), scoped=False,
+        )
+        assert review_fix._static_items(results) == []
+
+    def test_an_unscoped_result_still_reports_its_violations(self, git_wt, tmp_path):
+        """Not taking the work does not mean hiding the finding."""
+        results = _static_results(
+            _violation("SA1", "src.py", 4), scoped=False,
+        )
+        rendered = format_static_analysis(results)
+        assert "SA1" in rendered
+        assert "src.py:4" in rendered
+
+    def test_one_over_deep_function_is_one_item_not_several(self, git_wt, tmp_path):
+        """A nesting checker reports every line past the limit; one edit fixes all.
+
+        Handed over whole they spend four items of the cap, ask the agent to
+        tick four boxes for one edit, and guarantee a false contradiction at
+        the gate — `fix.reconcile` attributes by path, so several items in one
+        file make every deferral among them look like a deferral with an edit
+        behind it.
+        """
+        results = _static_results(*[
+            _violation(f"SA{n}", "src.py", n, context="in deep()")
+            for n in range(4, 8)
+        ])
+        taken = review_fix._static_items(results)
+
+        assert [v.id for v in taken] == ["SA4"]
+        # The shallowest line, which is where the flattening starts.
+        assert taken[0].line == 4
+
+    def test_two_functions_in_one_file_are_two_items(self, git_wt, tmp_path):
+        """The collapse is per site, not per file — these need separate edits."""
+        results = _static_results(
+            _violation("SA1", "src.py", 4, context="in one()"),
+            _violation("SA2", "src.py", 9, context="in two()"),
+        )
+        assert [v.id for v in review_fix._static_items(results)] == ["SA1", "SA2"]
+
+    def test_the_same_function_name_in_two_files_is_two_items(self, git_wt, tmp_path):
+        results = _static_results(
+            _violation("SA1", "a.py", 4, context="in run()"),
+            _violation("SA2", "b.py", 4, context="in run()"),
+        )
+        assert [v.id for v in review_fix._static_items(results)] == ["SA1", "SA2"]
+
     def test_a_fixed_violation_is_described_by_its_location_and_message(self):
         """A violation has no prose body, so the location has to be in the line."""
         violation = _violation("SA1", "src.py", 12, context="in run()")
@@ -921,6 +990,102 @@ class TestStaticViolationsAsWork:
         assert summary == (
             "Fixed:\n  - [SA1] src.py:12 — depth 5 exceeds limit 4 (in run())"
         )
+
+
+class TestADeclineSurvivesTheNextRound:
+    """The section is a fresh render of a fresh scan, every review.
+
+    So an annotation written onto it is erased by the next run. For a decline
+    that means the adjudication is lost and the violation goes back to the
+    agent — every round, for the life of the branch, because nothing about the
+    code changed to stop it being reported. A finding keeps its verdict on the
+    document and `run_fix_pass` reads it back; a violation has no such line, so
+    the verdict has to live in the sidecar.
+    """
+
+    def _declined_round(self, git_wt, tmp_path):
+        """Run a pass that declines SA1, and hand back the job."""
+        job = _make_job(
+            git_wt, tmp_path,
+            "## Must fix\n\n## Static Analysis\n\n"
+            "- [ ] **[SA1]** **`src.py:4`** — depth 5 exceeds limit 4 (in f())\n",
+            files=["src.py"],
+        )
+        job.static_results = _static_results(
+            _violation("SA1", "src.py", 4, context="in f()"),
+        )
+        _run(job, {"SA1": "declined — ceiling: documented tradeoff"})
+        return job
+
+    def test_the_decline_is_recorded_against_the_site(self, git_wt, tmp_path):
+        job = self._declined_round(git_wt, tmp_path)
+        site = _violation("SA1", "src.py", 4, context="in f()").site
+
+        recorded = review_paths.read_review_meta(
+            Path(job.artifact_dir),
+        ).static_declined
+        assert site in recorded
+        assert "documented tradeoff" in recorded[site]
+
+    def test_the_next_round_does_not_hand_it_back_to_the_agent(
+        self, git_wt, tmp_path,
+    ):
+        """The whole point: a `ceiling:` decline is not re-litigated forever."""
+        job = self._declined_round(git_wt, tmp_path)
+        declined = review_paths.read_review_meta(
+            Path(job.artifact_dir),
+        ).static_declined
+
+        # The next review renumbers from a fresh scan; same site, new id.
+        next_round = _static_results(
+            _violation("SA1", "src.py", 6, context="in f()"),
+        )
+        assert review_fix._static_items(next_round, declined) == []
+
+    def test_a_line_that_moved_is_still_the_same_site(self, git_wt, tmp_path):
+        """Keyed on file and function, so an edit above it does not revive it."""
+        first = _violation("SA1", "src.py", 4, context="in f()")
+        moved = _violation("SA7", "src.py", 88, context="in f()")
+        assert first.site == moved.site
+
+    def test_a_different_function_in_the_same_file_is_not_covered(self):
+        """A decline adjudicates one piece of work, not the whole file."""
+        declined = _violation("SA1", "src.py", 4, context="in f()")
+        other = _violation("SA2", "src.py", 9, context="in g()")
+        assert declined.site != other.site
+
+        taken = review_fix._static_items(
+            _static_results(other), {declined.site: "ceiling"},
+        )
+        assert [v.id for v in taken] == ["SA2"]
+
+    def test_the_section_shows_the_reader_it_was_adjudicated(self, git_wt, tmp_path):
+        """The scan keeps reporting it — that is what a decline means — so the
+        section has to say someone already decided, or it reads as new work."""
+        violation = _violation("SA1", "src.py", 4, context="in f()")
+        rendered = format_static_analysis(
+            _static_results(violation),
+            {violation.site: "ceiling: documented tradeoff"},
+        )
+        line = next(ln for ln in rendered.split("\n") if "SA1" in ln)
+        assert line.endswith("*(declined — ceiling: documented tradeoff)*")
+
+    def test_a_skip_is_not_persisted(self, git_wt, tmp_path):
+        """Work still owed belongs back in the next round's list."""
+        job = _make_job(
+            git_wt, tmp_path,
+            "## Must fix\n\n## Static Analysis\n\n"
+            "- [ ] **[SA1]** **`src.py:4`** — depth 5 exceeds limit 4 (in f())\n",
+            files=["src.py"],
+        )
+        job.static_results = _static_results(
+            _violation("SA1", "src.py", 4, context="in f()"),
+        )
+        _run(job, {"SA1": "needs a person — a design call"})
+
+        assert review_paths.read_review_meta(
+            Path(job.artifact_dir),
+        ).static_declined == {}
 
 
 class TestApplyStaticOutcomes:
@@ -1018,6 +1183,49 @@ class TestApplyStaticOutcomes:
         assert line.startswith("- [x] **[SA1]**")
         # The quotation is prose and stays exactly as the checker wrote it.
         assert "`- [ ] fixed`" in line
+
+    def test_a_declaration_quoted_outside_the_section_is_not_the_one_ticked(self):
+        """The rewrite is scoped to the section, not to the line's shape.
+
+        A finding quoting an `SA` line is a line of the same shape outside the
+        section — and a review of this repo quotes one, because the tests and
+        docstrings here contain them verbatim. Unscoped, the first match in the
+        document won: the quotation inside the finding's body was ticked and
+        the violation it quoted stayed open, so one pass corrupted a finding
+        and reported its own fix as undone.
+        """
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `t.py:1` — the fixture quotes a declaration:\n"
+            "  - [ ] **[SA1]** **`src.py:9`** — depth 5 exceeds limit 4\n"
+            "\n"
+            + self.SECTION
+        )
+        out = review_fix._apply_static_outcomes(
+            text, [_outcome("SA1", FixOutcome.FIXED)],
+        )
+        quoted, declared = [
+            ln for ln in out.split("\n") if "**[SA1]**" in ln
+        ]
+        assert quoted.strip().startswith("- [ ] **[SA1]**"), "the quotation was ticked"
+        assert declared.startswith("- [x] **[SA1]**"), "the declaration was not"
+
+    def test_a_document_with_no_section_is_returned_unchanged(self):
+        """Nothing to scope to is nothing to rewrite."""
+        text = "## Must fix\n- [ ] **[M1]** `a.py:1` — Missing guard\n"
+        assert review_fix._apply_static_outcomes(
+            text, [_outcome("SA1", FixOutcome.FIXED)],
+        ) == text
+
+    def test_the_rest_of_the_document_survives_the_rewrite(self):
+        """The scoping splices the section back between what surrounded it."""
+        text = self.SECTION + "\n## Verdict\n\nRequest changes\n"
+        out = review_fix._apply_static_outcomes(
+            text, [_outcome("SA1", FixOutcome.FIXED)],
+        )
+        assert "## Verdict" in out
+        assert "Request changes" in out
+        assert self._line(out, "SA2") == self._line(self.SECTION, "SA2")
 
     def test_a_finding_line_is_left_to_the_findings_rewriter(self):
         """The two streams must not rewrite each other's lines."""

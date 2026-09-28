@@ -104,6 +104,11 @@ Two things earn `declined` here, and nothing else does:
 the repo has a depth limit and this file is over it. If flattening it needs a
 design call, that is `needs a person`, and say what the call is.
 
+A decline sticks. It is recorded against the function rather than the line, so
+the next review will not ask again even though the checker still reports the
+depth — write the reason for a reader who has not seen this round. A `needs a
+person` does not stick, and comes back next round as work still owed.
+
 ## What earns each box
 
 - **fixed** — a clear, unambiguous change: a wrong value, a missing guard, an

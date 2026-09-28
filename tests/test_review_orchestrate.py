@@ -2513,6 +2513,32 @@ class TestStaticAnalysisIntegration:
         for violation in violations:
             assert f"**[{violation.id}]**" in review_file.read_text()
 
+    def test_a_failing_checker_does_not_take_the_review_with_it(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """A reporting step must not destroy a review that is already written.
+
+        The section is injected after every agent has run and been paid for.
+        An exception here reached `main`, so the run ended with no verdict
+        stamped, no JSON result, and no fix pass — over a review that was
+        finished and on disk.
+        """
+        review_file = tmp_path / "review.md"
+        original = "## Summary\nLooks good.\n\n## Verdict\nApprove"
+        review_file.write_text(original)
+        (tmp_path / "deep.sh").write_text(self.DEEP)
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("checker exploded")
+
+        monkeypatch.setattr(ro, "run_static_analysis", _boom)
+        changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
+        job = self._job(tmp_path, review_file, changed_files)
+
+        assert ro._inject_static_analysis_section(job) is None
+        assert review_file.read_text() == original
+        assert job.static_results == []
+
     def test_static_analysis_skipped_when_no_applicable_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
         original = "## Summary\nLooks good.\n\n## Verdict\nApprove"

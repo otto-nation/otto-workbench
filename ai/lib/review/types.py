@@ -350,6 +350,18 @@ class ReviewMeta:
     # schema depend on a module it otherwise knows nothing about.
     fix_commit_sha: str = ""
     fix_commit_status: str = ""
+    # Static violations a pass adjudicated rather than fixed, keyed by
+    # `StaticViolation.site` and valued with the reason. The `## Static
+    # Analysis` section is regenerated from a fresh scan every review, so an
+    # annotation written onto it is erased by the next run — which for a
+    # decline means the adjudication is lost and the violation is handed back
+    # to the agent, every round, forever. A finding keeps its verdict because
+    # the document carries it and `run_fix_pass` reads it back; a violation has
+    # no such line to keep, so its verdict lives here instead.
+    #
+    # Keyed on the site hash rather than the `SA<n>` id, which is a position in
+    # one rendering and names a different violation in the next.
+    static_declined: dict[str, str] = field(default_factory=dict)
 
     @property
     def unpushed_fix_commit(self) -> str:

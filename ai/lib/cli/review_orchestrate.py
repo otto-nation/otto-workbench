@@ -62,7 +62,7 @@ from review.document import (
     SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
 )
 from review.paths import (
-    FILENAME_SESSION, review_artifact_path, stamp_reviewed,
+    FILENAME_SESSION, read_review_meta, review_artifact_path, stamp_reviewed,
 )
 from core.tool_parser import enum_arg
 # The function rather than the module: `git.client` binds `run` and `ok`, which
@@ -83,7 +83,7 @@ from review.pipeline import (
     run_multi_phase, run_single_agent,
 )
 from review.static_analysis import (
-    format_static_analysis, run_static_analysis,
+    added_lines, format_static_analysis, run_static_analysis,
 )
 from agent import backend as ai_backend
 
@@ -176,8 +176,26 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
     if not review_path.is_file():
         return None
     changed_files = [f["path"] for f in job.pr.files]
-    results = run_static_analysis(changed_files, job.wt_path)
-    section = format_static_analysis(results)
+    # Against the PR or stack base, the same ref `job.pr.files` was collected
+    # over, so the lines and the file list describe one branch. A base that
+    # does not resolve gives None, which reports every violation and offers
+    # none of them as work.
+    base = f"origin/{job.pr.base}" if job.pr.base else ""
+    try:
+        added = added_lines(job.wt_path, base) if base else None
+        results = run_static_analysis(changed_files, job.wt_path, added)
+    except Exception as exc:
+        # A checker is a reporting step that now runs over every changed file
+        # in full, and `_CHECKERS` is a registry built to be extended. An
+        # exception here used to reach `main` and take the whole run with it:
+        # the review was already written and the agents already paid for, and
+        # the run would end with no verdict stamped and no fix pass. A
+        # violation nobody hears about is a worse report; it is not a worse
+        # review.
+        log.warn(f"Static analysis failed, skipping the section: {exc}")
+        return None
+    declined = read_review_meta(Path(job.artifact_dir)).static_declined
+    section = format_static_analysis(results, declined)
     if not section:
         return None
     job.static_results = results

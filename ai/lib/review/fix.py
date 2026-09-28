@@ -65,7 +65,9 @@ from git import client as git_client
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
-from review.document import ReviewDocument, is_skipped
+from review.document import (
+    SECTION_STATIC_ANALYSIS, ReviewDocument, is_skipped, section_span,
+)
 from review.grammar import FINDING_ID_RE
 from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
@@ -494,7 +496,15 @@ def _apply_static_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     measured, and a reader opening the PR after a fix pass sees a violation
     reported live at a line where it no longer exists.
 
-    Only lines the section actually declares — the box and the id open the line.
+    Scoped to the section's own span, which is the whole of what makes the
+    rewrite safe. A declaration is matched by its shape, and that shape appears
+    outside the section too: a finding quoting an `SA` line — a review of this
+    repo does, because the tests and the docstrings here contain them verbatim
+    — is a line this would otherwise match. Unscoped, the first match in the
+    document won: the quotation inside a finding's body was ticked and the
+    violation it was quoting stayed open, so one pass corrupted a finding and
+    reported its own fix as undone.
+
     A violation past `_MAX_STATIC_ITEMS` has no outcome and is left exactly as
     rendered, which is what the document should say about work nothing answered.
 
@@ -502,9 +512,13 @@ def _apply_static_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     file today, but the finding side guards the same case, and the failure if it
     ever happens is a second annotation on a line that already carries one.
     """
+    span = section_span(text, SECTION_STATIC_ANALYSIS)
+    if span is None:
+        return text
+    head, body, tail = text[:span.start], span.body_of(text), text[span.end:]
     by_id = {o.id: o for o in outcomes}
     written: set[str] = set()
-    lines = text.split("\n")
+    lines = body.split("\n")
     for n, line in enumerate(lines):
         match = STATIC_ID_RE.match(line.strip())
         if not match:
@@ -522,7 +536,7 @@ def _apply_static_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
         note = _annotation(outcome)
         if note:
             lines[n] = _annotated(line, note)
-    return "\n".join(lines)
+    return head + "\n".join(lines) + tail
 
 
 def _bullet_paths(paths: set[str]) -> str:
@@ -737,6 +751,37 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         review_file = Path(self.job.review_file)
         text = _apply_outcomes(review_file.read_text(), run.outcomes)
         review_file.write_text(_apply_static_outcomes(text, run.outcomes))
+        self._persist_static_declines(run.outcomes)
+
+    def _persist_static_declines(self, outcomes: list[ItemOutcome]) -> None:
+        """Keep this pass's static declines where the next round can read them.
+
+        The annotation on the document does not survive: the section is a fresh
+        render of a fresh scan every review. So an adjudication that lives only
+        there is one the next round cannot see, and the violation goes back to
+        the agent — every round, for the life of the branch, because nothing
+        about the code changed to stop it being reported.
+
+        Declines only. A skip is work still owed and belongs back in the next
+        round's list; a fix removes the violation from the next scan by
+        fixing it, so neither needs recording. What has to persist is the one
+        verdict that says "this will keep being reported and that is correct".
+
+        Accumulated rather than replaced, so a round that declines nothing does
+        not retract what an earlier round decided.
+        """
+        settled = {
+            self.violations[o.id].site: o.reason or "declined by an earlier pass"
+            for o in outcomes
+            if o.outcome is FixOutcome.DECLINED and o.id in self.violations
+        }
+        if not settled:
+            return
+        review_dir = Path(self.job.artifact_dir)
+        meta = read_review_meta(review_dir)
+        write_review_meta(review_dir, replace(
+            meta, static_declined={**meta.static_declined, **settled},
+        ))
 
     def _descriptions(self) -> dict[str, str]:
         """The one line each item is reported under, by id.
@@ -775,7 +820,10 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     # A declined finding is not work: it was considered and rejected, so it is
     # out of the work set and out of the turn budget it would otherwise buy.
     findings = [f for f in doc.open_findings if not f.declined]
-    violations = _static_items(job.static_results)
+    review_dir = Path(job.artifact_dir)
+    violations = _static_items(
+        job.static_results, read_review_meta(review_dir).static_declined,
+    )
     if not findings and not violations:
         log.info("No findings left to fix — skipping fix pass")
         _report_unpushed(job)
@@ -788,14 +836,41 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     _record_commit(job, run)
 
 
-def _static_items(results: list[CheckerResult]) -> list[StaticViolation]:
+def _static_items(
+    results: list[CheckerResult], declined: dict[str, str] | None = None,
+) -> list[StaticViolation]:
     """The violations this pass will take, capped and in reading order.
+
+    `declined` is what an earlier round adjudicated, by site — those are not
+    work. The section is rebuilt from a fresh scan every review, so a decline
+    written onto the document is gone by the next run; without reading it back
+    from the sidecar, a violation declined against a `ceiling:` comment is
+    re-presented to the agent every round for the life of the branch.
+
+    Only from a result scoped to the lines the branch added. An unscoped result
+    measured whole files, so its violations include depth the branch inherited
+    — reporting that is fair, and handing it to an agent is instructing it to
+    flatten code the branch never touched. `fix.scope` cannot refuse those
+    edits, because the file they land in *is* a branch file, so the refusal has
+    to be here. The section still reports them; nobody is asked to fix them.
 
     A violation with no id never went through `run_static_analysis` and so is
     not addressable — it renders without a checkbox, and an outcome against it
     would have no line to be written back to.
     """
-    addressable = [v for v in all_violations(results) if v.id]
+    unscoped = [r for r in results if r.violations and not r.scoped_to_added]
+    if unscoped:
+        log.warn(
+            "Static analysis: "
+            f"{', '.join(r.name for r in unscoped)} measured whole files — "
+            "reporting those violations but not fixing them, since the branch "
+            "did not necessarily add the lines they sit on."
+        )
+    scoped = [r for r in results if r.scoped_to_added]
+    settled = declined or {}
+    addressable = _one_per_site(
+        v for v in all_violations(scoped) if v.id and v.site not in settled
+    )
     taken = addressable[:_MAX_STATIC_ITEMS]
     if len(addressable) > len(taken):
         log.info(
@@ -803,6 +878,36 @@ def _static_items(results: list[CheckerResult]) -> list[StaticViolation]:
             f"violations this pass — the rest stay open for the next review."
         )
     return taken
+
+
+def _one_per_site(violations) -> list[StaticViolation]:
+    """The first violation at each `(file, function)`, in reading order.
+
+    A nesting checker reports every line past the limit, so one over-deep
+    function arrives as four or five violations that one early return answers.
+    Handed over whole they cost four items of a twenty-item cap, four boxes the
+    agent must tick for one edit, and — worse — a guaranteed false
+    contradiction at the gate: `fix.reconcile` attributes by path, so several
+    items anchored in one file make every deferral among them look like a
+    deferral with an edit behind it. `fix/reconcile.py` names that as its
+    upgrade trigger, for a domain that batches several items in one file. This
+    is that domain, so it does not batch them.
+
+    The shallowest line at a site is the one kept, because it is where the
+    flattening has to start; the deeper lines below it are the same defect seen
+    further in. The rest stay in the section, unticked — honest, since nothing
+    answered them individually, and the next review re-measures the file and
+    finds them gone if the fix worked.
+    """
+    seen: set[tuple[str, str]] = set()
+    kept: list[StaticViolation] = []
+    for violation in violations:
+        site = (violation.file, violation.context)
+        if site in seen:
+            continue
+        seen.add(site)
+        kept.append(violation)
+    return kept
 
 
 def _report_unpushed(job: ReviewJob) -> None:

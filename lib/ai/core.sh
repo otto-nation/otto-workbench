@@ -141,8 +141,6 @@ _detect_gh_org() {
     # would otherwise read the first path segment of file:///srv/git/widget.git
     # as the org "srv".
     file://*|/*|./*|../*) ;;
-    # ssh://[user@]host[:port]/org/repo.git
-    ssh://*) rest="${url#ssh://*/}" ;;
     # scp-style user@host:org/repo.git — the authority ends at the first colon.
     # A dotless authority is an ssh alias whose real host lives in ssh_config;
     # the org is still the segment after the colon either way.

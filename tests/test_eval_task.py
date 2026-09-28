@@ -271,7 +271,8 @@ class TestOutcomeFor:
     """
 
     def test_a_clean_exit_is_measured(self):
-        assert eval_task.outcome_for(0, SessionUsage()) is eval_scoring.RunOutcome.MEASURED
+        assert eval_task.outcome_for(
+            0, SessionUsage(input_tokens=80)) is eval_scoring.RunOutcome.MEASURED
 
     def test_a_non_zero_exit_that_spent_money_is_measured(self):
         """An agent that ran, worked, and failed produced a real result."""

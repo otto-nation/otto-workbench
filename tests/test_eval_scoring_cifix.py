@@ -24,8 +24,8 @@ if str(LIB_DIR) not in sys.path:
 from eval import scoring_cifix as eval_scoring_cifix
 from agent.usage import SessionUsage
 from eval.scoring_cifix import CiFixTask, run_verify, verify_command
-from eval.scoring import RunOutcome
-from eval.task import RunArtifacts, RunOptions, get_task
+from eval.scoring import RunOutcome, ScoringResult, aggregate_runs
+from eval.task import RunArtifacts, RunOptions, get_task, outcome_for
 
 CORPUS = REPO_ROOT / "eval" / "corpus"
 
@@ -176,8 +176,15 @@ class TestCiFixTaskRun:
         _rm(artifacts)
 
     def test_reports_still_failing_when_the_agent_does_nothing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
-                            lambda *a, **kw: 0)
+        def fake_fix(inv):
+            Path(inv.session_log).write_text(json.dumps({
+                "type": "result",
+                "total_cost_usd": 0.05,
+                "usage": {"input_tokens": 40, "output_tokens": 8},
+            }) + "\n")
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix", fake_fix)
         case_dir = _case(tmp_path, "test -f fixed\n")
 
         artifacts = CiFixTask().run(case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
@@ -331,3 +338,26 @@ class TestConditionReachesAgent:
                             fake_invoke_fix)
         _run_cifix_case(RunOptions())
         assert seen["env"] is None
+
+
+class TestZeroTokenGuard:
+    """A CLI that declines to start must not average in as a 0% score."""
+
+    def test_a_run_that_billed_nothing_and_exited_zero_is_not_a_measurement(self):
+        """The CLAUDE_CONFIG_DIR arm's worst failure: the CLI declines to start,
+        prints a notice, bills nothing and exits 0. Averaged in as a zero it would
+        read as a real arm scoring 0% rather than as an arm that never ran."""
+        usage = SessionUsage(cost=0.0, duration_ms=1200)
+        assert outcome_for(0, usage) is RunOutcome.NOT_RUN
+
+    def test_an_unmeasured_run_is_excluded_from_the_arm_mean(self):
+        good = ScoringResult(entry_name="e", model="m", run_index=0, recall=1.0,
+                             billed_input=40000, outcome=RunOutcome.MEASURED)
+        dead = ScoringResult(entry_name="e", model="m", run_index=1, recall=0.0,
+                             billed_input=0, outcome=RunOutcome.NOT_RUN)
+        agg = aggregate_runs([good, dead])
+        assert agg["recall_mean"] == 1.0, (
+            "a run that never happened is not a 0% score")
+        assert agg["billed_input_mean"] == 40000
+        assert agg["runs_measured"] == 1
+        assert agg["runs_attempted"] == 2

@@ -197,6 +197,56 @@ class TestViolationIds:
         ids = [v.id for r in results for v in r.violations]
         assert len(set(ids)) == len(ids)
 
+    def test_each_checker_s_block_carries_contiguous_ids(self):
+        """The section renders one block per checker, so numbering follows that.
+
+        Numbering by a global `(file, line)` sort while displaying per checker
+        interleaves the ids — one block reads `SA1, SA3` and the next `SA2,
+        SA4`. Each id is still correct and addressable; it just reads as a
+        numbering bug to everyone who opens the review.
+
+        The filenames here are chosen so a global sort and a per-checker sort
+        disagree: by `(file, line)` alone the interleaving would be a.py, b.py,
+        c.py, d.py across the two checkers.
+        """
+        results = [
+            CheckerResult(name="A", violations=[
+                StaticViolation(file="a.py", line=1, message="x"),
+                StaticViolation(file="c.py", line=1, message="x"),
+            ], files_checked=2),
+            CheckerResult(name="B", violations=[
+                StaticViolation(file="b.py", line=1, message="x"),
+                StaticViolation(file="d.py", line=1, message="x"),
+            ], files_checked=2),
+        ]
+        for n, violation in enumerate(all_violations(results), start=1):
+            violation.id = f"SA{n}"
+
+        assert [v.id for v in results[0].violations] == ["SA1", "SA2"]
+        assert [v.id for v in results[1].violations] == ["SA3", "SA4"]
+
+    def test_the_rendered_section_numbers_top_to_bottom(self):
+        """What a reader sees: ids ascending down the page, no gaps."""
+        results = [
+            CheckerResult(name="A", violations=[
+                StaticViolation(file="a.py", line=1, message="x"),
+                StaticViolation(file="c.py", line=1, message="x"),
+            ], files_checked=2),
+            CheckerResult(name="B", violations=[
+                StaticViolation(file="b.py", line=1, message="x"),
+                StaticViolation(file="d.py", line=1, message="x"),
+            ], files_checked=2),
+        ]
+        for n, violation in enumerate(all_violations(results), start=1):
+            violation.id = f"SA{n}"
+
+        rendered = [
+            STATIC_ID_RE.match(ln).group(2)
+            for ln in format_static_analysis(results).split("\n")
+            if STATIC_ID_RE.match(ln)
+        ]
+        assert rendered == ["SA1", "SA2", "SA3", "SA4"]
+
     def test_a_static_id_is_not_readable_as_a_finding(self):
         """The two work streams must not claim each other's ids.
 

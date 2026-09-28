@@ -158,12 +158,19 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
     return True
 
 
-def _inject_static_analysis_section(job) -> dict | None:
+def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
     """Write the `## Static Analysis` section, and hand the results to the job.
 
     The results go on the job because the fix pass runs next and needs the same
     list: these violations are work it can take, and re-deriving them there
     would measure a tree the section has already described.
+
+    Not reached on the no-op re-review path, which returns above — and that
+    stays consistent rather than leaving a gap. No agent runs there, the fix
+    pass is never called, and `_carried_findings` drops `## Static Analysis`
+    from the document it carries forward, so the section and the empty
+    `job.static_results` agree: this run measured nothing and claims nothing.
+    The next run with a real delta writes both.
     """
     review_path = Path(job.review_file)
     if not review_path.is_file():

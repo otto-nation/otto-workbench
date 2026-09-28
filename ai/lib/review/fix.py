@@ -84,20 +84,28 @@ _STILL_OPEN = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
 # not a decline of auto-fix. Named so a reader of the commit body can tell.
 _NOT_REACHED = "not reached (turn limit)"
 
-# How many static violations one pass will take. The phase scales five turns an
-# item to a cap of eighty, so an uncapped section — nesting alone runs to
-# hundreds of lines on a large diff, which is why it renders collapsed — would
-# spend the whole budget on mechanical edits and starve the findings beside
-# them.
+# How many static violations one pass will take. Without a cap, a section that
+# runs to hundreds of lines on a large diff — nesting alone does, which is why
+# it renders collapsed — would spend the whole turn budget on mechanical edits
+# and starve the findings beside it.
+#
+# Above the phase's own turns-per-item arithmetic, deliberately. `Phase.FIX`
+# scales five turns an item to a cap of eighty, so a chunk of sixteen is what
+# gets the full rate and twenty does not. A violation is cheaper than a finding
+# by roughly that margin: the fix is a known shape (flatten the control flow)
+# against a located line, with no premise to disprove first and no reviewer
+# claim to weigh — which is most of what the five turns buy a finding. Sixteen
+# would be the number if these cost what findings cost.
 #
 # The ones past the cap stay in the section unticked and unannotated, which is
 # what the document should say about work nothing answered. A later round picks
 # them up: the section is regenerated each review, and by then the fixed ones
 # are gone.
 #
-# ceiling: a fixed cap rather than a share of the remaining turn budget. Upgrade
-# when a pass is regularly truncating with findings unread — that is the cap
-# competing with the findings for turns, which is the thing it exists to prevent.
+# ceiling: a fixed cap rather than a share of the remaining turn budget, and one
+# whose margin over sixteen is reasoned rather than measured. Upgrade when a
+# pass is regularly truncating with findings unread — that is the cap competing
+# with the findings for turns, which is the thing it exists to prevent.
 _MAX_STATIC_ITEMS = 20
 
 # The trailing half of a static item's section heading in the tracking file,

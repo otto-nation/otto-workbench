@@ -154,14 +154,25 @@ _CHECKERS: list[Callable[[list[str], str], CheckerResult | None]] = [
 def all_violations(results: list[CheckerResult]) -> list[StaticViolation]:
     """Every violation across `results`, in the order the section lists them.
 
-    The reading order is the id order, so a caller taking a prefix of this —
-    the fix pass takes the first `_MAX_STATIC_ITEMS` — takes the ones a reader
-    sees first rather than an arbitrary slice.
+    Checker by checker, and by `(file, line)` within each — which is exactly
+    how `format_static_analysis` lays the section out, because it renders one
+    `###` block per checker. Numbering follows this order, so the ids a reader
+    sees run 1, 2, 3 down the page.
+
+    Sorting globally instead would number across the section while the display
+    groups by checker, and the moment a second checker is registered one block
+    would read `SA1, SA3, SA5` and the next `SA2, SA4`. The ids would each still
+    be correct and addressable; they would simply look like a numbering bug to
+    everyone who opened the review.
+
+    The reading order being the id order is also what makes the fix pass's cap
+    honest: it takes the first `_MAX_STATIC_ITEMS`, which are then the ones a
+    reader sees first rather than an arbitrary slice.
     """
-    return sorted(
-        (v for r in results for v in r.violations),
-        key=lambda v: (v.file, v.line),
-    )
+    return [
+        v for r in results
+        for v in sorted(r.violations, key=lambda v: (v.file, v.line))
+    ]
 
 
 def run_static_analysis(changed_files: list[str], wt_path: str) -> list[CheckerResult]:
@@ -173,6 +184,8 @@ def run_static_analysis(changed_files: list[str], wt_path: str) -> list[CheckerR
     # Numbered here rather than inside each checker: the ids run over the whole
     # section, and a checker numbering its own would restart at 1 and hand two
     # violations the same id the moment a second checker is registered.
+    # `all_violations` is the section's own reading order, so the numbering a
+    # reader sees is contiguous down the page.
     for n, violation in enumerate(all_violations(results), start=1):
         violation.id = f"{STATIC_ID_PREFIX}{n}"
     return results

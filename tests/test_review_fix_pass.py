@@ -215,10 +215,11 @@ def _finding(fid: str, path: str = "a.py", body: str = "body", **kwargs) -> Find
     )
 
 
-def _violation(vid: str, path: str = "a.py", line: int = 1, **kwargs) -> StaticViolation:
-    return StaticViolation(
-        file=path, line=line, message="depth 5 exceeds limit 4", id=vid, **kwargs,
-    )
+def _violation(
+    vid: str, path: str = "a.py", line: int = 1,
+    message: str = "depth 5 exceeds limit 4", **kwargs,
+) -> StaticViolation:
+    return StaticViolation(file=path, line=line, message=message, id=vid, **kwargs)
 
 
 def _static_results(*violations: StaticViolation) -> list[CheckerResult]:
@@ -937,6 +938,27 @@ class TestApplyStaticOutcomes:
                      verify_detail="no runnable check"),
         ])
         assert self._line(out, "SA1") == self._line(ticked, "SA1")
+
+    def test_a_box_quoted_in_the_message_is_not_the_one_that_gets_ticked(self):
+        """The declaration's own box, not the first `- [ ]` anywhere on the line.
+
+        The findings side guards this because a review of a template quotes an
+        empty box in its prose. A violation message can carry one the same way —
+        a checker reporting on a markdown template, or any message quoting the
+        syntax — and ticking the quotation would corrupt the text while leaving
+        the violation open.
+        """
+        section = (
+            "## Static Analysis\n"
+            "- [ ] **[SA1]** **`t.md:1`** — the line `- [ ] fixed` is malformed\n"
+        )
+        out = review_fix._apply_static_outcomes(
+            section, [_outcome("SA1", FixOutcome.FIXED)],
+        )
+        line = self._line(out, "SA1")
+        assert line.startswith("- [x] **[SA1]**")
+        # The quotation is prose and stays exactly as the checker wrote it.
+        assert "`- [ ] fixed`" in line
 
     def test_a_finding_line_is_left_to_the_findings_rewriter(self):
         """The two streams must not rewrite each other's lines."""

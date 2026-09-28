@@ -29,16 +29,9 @@ for _s in SEVERITIES:
         _SEVERITY_HEADERS.add(_a.lower())
 
 # Sections written to the local review file as bookkeeping rather than as
-# reviewer claims about the code. File Triage documents which files the
-# reviewer looked at, which is noise on the PR. The prior-findings ledger
-# reports on the *previous* review: its IDs number that review, so posting it
-# beside findings numbered for this one puts two numbering schemes in front of
-# a reader with nothing distinguishing them.
-#
-# `post_process_findings` already strips the ledger before publish, so on the
-# full pipeline this is belt-and-braces. It is load-bearing for a review that
-# reaches `review-post` without that pass — one written by the agent protocol
-# directly, or a `--post` of a file that was never post-processed.
+# reviewer claims about the code. Both are stripped by `post_process_findings`
+# (see its docstring in verify.py) before publish; excluding them here is the
+# fallback for a review that reaches `review-post` without that pass.
 _INTERNAL_HEADERS: set[str] = {
     SECTION_FILE_TRIAGE.lower(),
     SECTION_PRIOR_FINDINGS.lower(),

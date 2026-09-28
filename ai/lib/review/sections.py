@@ -29,9 +29,11 @@ for _s in SEVERITIES:
         _SEVERITY_HEADERS.add(_a.lower())
 
 # Sections written to the local review file as bookkeeping rather than as
-# reviewer claims about the code. Both are stripped by `post_process_findings`
-# (see its docstring in verify.py) before publish; excluding them here is the
-# fallback for a review that reaches `review-post` without that pass.
+# reviewer claims about the code. They are excluded here because this is the
+# last point before the body is posted, and neither reaches it the same way:
+# File Triage is never stripped upstream, and the prior-findings ledger is
+# stripped only on the pipeline that runs `post_process_findings` (see its
+# docstring for why the ledger's IDs cannot be posted beside this review's).
 _INTERNAL_HEADERS: set[str] = {
     SECTION_FILE_TRIAGE.lower(),
     SECTION_PRIOR_FINDINGS.lower(),

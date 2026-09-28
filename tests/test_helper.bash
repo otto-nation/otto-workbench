@@ -540,3 +540,34 @@ import json, sys
 print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
 ' "$1"
 }
+
+# _hold_tree TREE — hold LOCK_SH on TREE in the background until killed.
+# Prints the wrapper pid. Polls --check rather than sleeping a fixed window,
+# which a loaded runner would outlast.
+#
+# The holder's stdout and stderr go to /dev/null on purpose. A caller reads
+# this through `holder=$(_hold_tree ...)`, and a background child that inherits
+# the command substitution's pipe keeps its write end open — the substitution
+# then blocks until the holder exits, which is never, so the test hangs before
+# it reaches its first assertion.
+#
+# Shared by claude_settings.bats and pi_extensions.bats: both harnesses' guards
+# read one lock through `with-tree-lock --check`, so both suites need to take
+# that lock for real. A copy per suite is a copy that can diverge from the one
+# fact they are each asserting on.
+_hold_tree() {
+  local tree="$1"
+  "$REPO_ROOT/bin/local/with-tree-lock" "$tree" -- \
+    sh -c 'while true; do sleep 30; done' >/dev/null 2>&1 &
+  local wrapper=$!
+  for _ in $(seq 1 50); do
+    if "$REPO_ROOT/bin/local/with-tree-lock" --check "$tree" >/dev/null 2>&1; then
+      printf '%s' "$wrapper"
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill "$wrapper" 2>/dev/null || true
+  echo "tree $tree never became locked" >&2
+  return 1
+}

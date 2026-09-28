@@ -975,6 +975,160 @@ _probe() {
   [ "$status" -eq 2 ]
 }
 
+# ── tree-lock-guard ──────────────────────────────────────────────────────────
+# Same split as issue-defer-guard: the predicate is in detect.ts, which imports
+# nothing but node builtins, so node can load it directly. index.ts is the
+# wiring no test can reach.
+#
+# The probe is with-tree-lock --check, which is is_locked(). Tests hold a real
+# flock rather than stubbing the CLI, so an inverted probe fails here the same
+# way it fails in tests/tree_lock_test.py.
+
+# _lock_refusal FILE — prints the refusal string, or "null".
+_lock_refusal() {
+  run node --input-type=module -e "
+    const { lockRefusal } = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
+    const msg = lockRefusal(process.argv[1]);
+    process.stdout.write(msg === null ? 'null' : msg);
+  " -- "$1"
+}
+
+# _hold_tree lives in tests/test_helper.bash: claude_settings.bats holds the
+# same lock for the Claude half of this guard, and one fact read by two
+# harnesses is worth one helper rather than two copies of it.
+
+@test "tree-lock-guard: a free tree is not a refusal" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  _lock_refusal "$repo/file.txt"
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
+}
+
+@test "tree-lock-guard: a held tree is a refusal that names no pid" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  _lock_refusal "$repo/file.txt"
+  local result_status=$status result_out=$output
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$result_status" -eq 0 ]
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+  [[ "$result_out" != *[Pp]id* ]]
+}
+
+@test "tree-lock-guard: WORKBENCH_TREE_LOCK does not suppress the refusal" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  WORKBENCH_TREE_LOCK="$repo" _lock_refusal "$repo/file.txt"
+  local result_out=$output
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+}
+
+@test "tree-lock-guard: inherited GIT_DIR does not retarget the probe" {
+  local repo="$TMPDIR/repo" other="$TMPDIR/other"
+  mkdir -p "$repo" "$other"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  git -C "$other" init -q -b feat
+  git -C "$other" config user.email t@t
+  git -C "$other" config user.name t
+  git -C "$other" commit -q --allow-empty -m init
+  local holder other_git
+  holder="$(_hold_tree "$repo")"
+  other_git=$(git -C "$other" rev-parse --absolute-git-dir)
+  GIT_DIR="$other_git" GIT_WORK_TREE="$other" _lock_refusal "$repo/file.txt"
+  local result_out=$output
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+}
+
+@test "tree-lock-guard: a torn record still refuses without naming a pid" {
+  # holders() can be [] while is_locked() is true. Take LOCK_SH without
+  # writing a JSONL line, which is the state acquire()'s _record can tear into.
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  git -C "$repo" config user.email t@t
+  git -C "$repo" config user.name t
+  git -C "$repo" commit -q --allow-empty -m init
+  touch "$repo/file.txt"
+  local git_dir lock
+  git_dir=$(git -C "$repo" rev-parse --absolute-git-dir)
+  lock="$git_dir/workbench-validate.lock"
+  python3 -c "
+import fcntl, sys, time
+h = open(sys.argv[1], 'a+')
+fcntl.flock(h, fcntl.LOCK_SH)
+time.sleep(30)
+" "$lock" >/dev/null 2>&1 &
+  local py=$! locked=""
+  for _ in $(seq 1 50); do
+    if "$REPO_ROOT/bin/local/with-tree-lock" --check "$repo" >/dev/null 2>&1; then
+      locked=yes
+      break
+    fi
+    sleep 0.1
+  done
+  # Fail here rather than at the assertion below: an unlocked tree makes
+  # _lock_refusal correctly return null, and the final assertion would report
+  # a guard that failed to refuse instead of a lock that was never taken.
+  if [[ -z "$locked" ]]; then
+    kill "$py" 2>/dev/null || true
+    echo "tree $repo never became locked" >&2
+    return 1
+  fi
+  _lock_refusal "$repo/file.txt"
+  local result_out=$output
+  kill "$py" 2>/dev/null || true
+  wait "$py" 2>/dev/null || true
+  [[ "$result_out" == *"A validator holds this tree"* ]]
+  [[ "$result_out" != *[Pp]id* ]]
+}
+
+@test "tree-lock-guard: missing path or non-git path fails open" {
+  # The status is asserted alongside the output: a node crash whose message
+  # happened to contain "null" would otherwise pass the output check alone.
+  _lock_refusal "$TMPDIR/no-such-parent/file.txt"
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
+  mkdir -p "$TMPDIR/plain"
+  _lock_refusal "$TMPDIR/plain/file.txt"
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
+}
+
+@test "tree-lock-guard: detect.ts imports no SDK" {
+  run grep -E '@earendil-works/pi-coding-agent|isToolCallEventType' \
+    "$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts"
+  [ "$status" -ne 0 ]
+}
+
 # ─── exit-status-guard ────────────────────────────────────────────────────
 # The trailing-report half of the no-masked-status rule. Same split as the
 # other guards: the predicate is in detect.ts, which pulls in only ../_shared.
@@ -1539,5 +1693,220 @@ _scratch() {
   [ "$status" -eq 0 ]
   run grep -qE 'BARE_FLAGS = \("--no-context-files", "--no-skills"\)' \
     "$REPO_ROOT/ai/lib/agent/backend_pi.py"
+  [ "$status" -eq 0 ]
+}
+
+# ─── job-poll-guard ────────────────────────────────────────────────────────
+# Refuses a second read of a job this agent run already polled. Same split as
+# the other guards: detect.ts imports nothing, so every branch runs under a
+# bare node.
+#
+# The predicate cannot ask whether a job is running — the jobs tools are
+# another repo's, their manager is closure-local, and tool_call fires before
+# execute. So the tests drive the sequence the guard actually sees: calls, and
+# the text their results came back with.
+
+# _poll OPS — run a sequence against one state and print each pollRefusal.
+#
+# OPS is a JSON array of steps, each one of:
+#   {"call": "job_output", "id": "job-1"}   a guarded call; prints REFUSED or ok
+#   {"result": "job_output", "id": "job-1", "text": "...", "isError": false}
+#   {"reset": true}                          what agent_start does
+_poll() {
+  run node --input-type=module -e "
+    const d = await import('$REPO_ROOT/ai/pi/extensions/job-poll-guard/detect.ts');
+    const state = d.freshState();
+    const out = [];
+    for (const step of JSON.parse(process.argv[1])) {
+      if (step.reset) { d.resetState(state); continue; }
+      if (step.result) {
+        d.noteResult(state, step.result, step.text ?? '', step.isError ?? false);
+        continue;
+      }
+      const reason = d.pollRefusal(state, step.call, step.id);
+      if (reason === null) { d.noteCall(state, step.call, step.id); out.push('ok'); }
+      else out.push('REFUSED');
+    }
+    process.stdout.write(out.join(','));
+  " -- "$1"
+}
+
+_running_line() { printf '%s  [running 12s]  a job\n\nsome output' "$1"; }
+_exited_line() { printf '%s  [exit 0 after 12s]  a job\n\nsome output' "$1"; }
+
+@test "job-poll-guard: the first job_output of a run is allowed" {
+  _poll '[{"call":"job_output","id":"job-1"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+}
+
+@test "job-poll-guard: a repeat with no result yet is refused" {
+  # Two job_output calls in one parallel batch both reach tool_call before
+  # either result lands. That is the repeat with the least excuse.
+  _poll '[{"call":"job_output","id":"job-1"},{"call":"job_output","id":"job-1"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,REFUSED" ]
+}
+
+@test "job-poll-guard: polling a different job is not a repeat" {
+  _poll '[{"call":"job_output","id":"job-1"},{"call":"job_output","id":"job-2"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok" ]
+}
+
+@test "job-poll-guard: a still-running result refuses the next read" {
+  local line
+  line=$(_running_line job-1)
+  _poll "$(printf '[{"call":"job_output","id":"job-1"},{"result":"job_output","text":%s},{"call":"job_output","id":"job-1"}]' "$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,REFUSED" ]
+}
+
+@test "job-poll-guard: a finished job may be read again for more output" {
+  # The tool's own description says to raise max_bytes for more, so a second
+  # read of a job that has exited is the documented use, not a poll.
+  local line
+  line=$(_exited_line job-1)
+  _poll "$(printf '[{"call":"job_output","id":"job-1"},{"result":"job_output","text":%s},{"call":"job_output","id":"job-1"}]' "$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok" ]
+}
+
+@test "job-poll-guard: a killed or failed job reads as finished" {
+  _poll '[{"call":"job_output","id":"j"},{"result":"job_output","text":"j  [killed after 3s]  x"},{"call":"job_output","id":"j"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok" ]
+  _poll '[{"call":"job_output","id":"j"},{"result":"job_output","text":"j  [failed after 3s]  x"},{"call":"job_output","id":"j"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok" ]
+}
+
+@test "job-poll-guard: an unparseable result fails open" {
+  # The line format belongs to another repo. A guard that refused on text it
+  # could not read would block every poll the day that format changed.
+  _poll '[{"call":"job_output","id":"job-1"},{"result":"job_output","text":"something else entirely"},{"call":"job_output","id":"job-1"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,REFUSED" ]
+}
+
+@test "job-poll-guard: an errored result does not refuse the corrected retry" {
+  # `No such job: x` is a typo, not a poll.
+  _poll '[{"call":"job_output","id":"job-1"},{"result":"job_output","text":"No such job: job-1","isError":true},{"call":"job_output","id":"job-1"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok" ]
+}
+
+@test "job-poll-guard: the first job_list is allowed and a bare repeat is not" {
+  _poll '[{"call":"job_list"},{"call":"job_list"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,REFUSED" ]
+}
+
+@test "job-poll-guard: a list showing a running job refuses the next list" {
+  _poll '[{"call":"job_list"},{"result":"job_list","text":"2 job(s), 1 running:\nj  [running 4s]  x"},{"call":"job_list"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,REFUSED" ]
+}
+
+@test "job-poll-guard: a list with nothing running may be repeated" {
+  _poll '[{"call":"job_list"},{"result":"job_list","text":"No background jobs."},{"call":"job_list"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok" ]
+  _poll '[{"call":"job_list"},{"result":"job_list","text":"2 job(s), 0 running:\nj  [exit 0 after 4s]  x"},{"call":"job_list"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok" ]
+}
+
+@test "job-poll-guard: the two tools do not count against each other" {
+  _poll '[{"call":"job_output","id":"job-1"},{"call":"job_list"},{"call":"job_output","id":"job-2"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,ok,ok" ]
+}
+
+@test "job-poll-guard: a reset allows a job refused before it" {
+  # This is the agent_start contract. A job's completion is delivered as
+  # nextTurn, so the read that follows the notice lands in a later agent run
+  # and must not be refused as a repeat.
+  _poll '[{"call":"job_output","id":"job-1"},{"call":"job_output","id":"job-1"},{"reset":true},{"call":"job_output","id":"job-1"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok,REFUSED,ok" ]
+}
+
+# _parse_out TEXT / _parse_list TEXT — the two text readers, as JSON.
+_parse_out() {
+  run node --input-type=module -e "
+    const { parseOutputStatus } = await import('$REPO_ROOT/ai/pi/extensions/job-poll-guard/detect.ts');
+    process.stdout.write(JSON.stringify(parseOutputStatus(process.argv[1])));
+  " -- "$1"
+}
+
+_parse_list() {
+  run node --input-type=module -e "
+    const { parseListRunningCount } = await import('$REPO_ROOT/ai/pi/extensions/job-poll-guard/detect.ts');
+    process.stdout.write(JSON.stringify(parseListRunningCount(process.argv[1])));
+  " -- "$1"
+}
+
+@test "job-poll-guard: the status reader matches formatJobLine's real shapes" {
+  # Shapes taken from formatJobLine in usemaximum/pi-extensions extensions/jobs.
+  _parse_out "job-1  [running 12s]  run the suite"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"id":"job-1","status":"running"}' ]
+  _parse_out "job-2  [exit 0 after 198s]  run the suite"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"id":"job-2","status":"done"}' ]
+  _parse_out "job-3  [killed after 3s]  x"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"id":"job-3","status":"done"}' ]
+  _parse_out "no brackets here"
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
+}
+
+@test "job-poll-guard: the list reader counts what is running" {
+  _parse_list "3 job(s), 2 running:"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+  _parse_list "No background jobs."
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+  _parse_list "something else"
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
+}
+
+@test "job-poll-guard: detect.ts imports no SDK" {
+  run grep -E '@earendil-works/pi-coding-agent|isToolCallEventType' \
+    "$REPO_ROOT/ai/pi/extensions/job-poll-guard/detect.ts"
+  [ "$status" -ne 0 ]
+}
+
+@test "job-poll-guard: index.ts resets on agent_start, not turn_start" {
+  # A turn_start reset would only catch two polls in one assistant message and
+  # would refuse the legitimate read that follows a completion notice.
+  run grep -q 'pi.on("agent_start"' \
+    "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
+  [ "$status" -eq 0 ]
+  run grep -q 'resetState(state)' \
+    "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
+  [ "$status" -eq 0 ]
+  # Scoped to a subscription, since the header comment explains at length why
+  # turn_start is the wrong event and would match a bare grep for the word.
+  run grep -q 'pi.on("turn_start"' \
+    "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
+  [ "$status" -ne 0 ]
+}
+
+@test "job-poll-guard: index.ts decides through the predicate and records results" {
+  # A hand-written reason at the call site would pass the refusal tests above
+  # while the wiring bypassed the predicate entirely.
+  run grep -q 'pollRefusal(state' \
+    "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
+  [ "$status" -eq 0 ]
+  run grep -q 'pi.on("tool_result"' \
+    "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
+  [ "$status" -eq 0 ]
+  run grep -q 'noteResult(' \
+    "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
   [ "$status" -eq 0 ]
 }

@@ -15,6 +15,11 @@ tools:
     visibility: hidden
     description: "PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts"
 
+  - name: claude-edit-guard
+    permission: false
+    visibility: hidden
+    description: "PreToolUse hook for Edit/Write — blocks edits on main/master unless gitignored, and edits to a tree a validator holds"
+
   - name: reuse-mode-tracker
     permission: false
     visibility: hidden

@@ -326,13 +326,6 @@ project_granted_dirs() {
 
 # ── Hook behavior ────────────────────────────────────────────────────────────
 
-# Extracts and evaluates an inline hook command from settings.json.
-# The hook reads tool_input from stdin (JSON), so we pipe a mock payload.
-_run_hook() {
-  local hook_cmd=$1 tool_input=$2
-  echo "$tool_input" | bash -c "$hook_cmd" 2>&1
-}
-
 # Runs the Bash PreToolUse guard against a mock payload. Every Bash rule lives
 # in that one script, so these tests exercise the source rather than a
 # JSON-escaped copy of it.
@@ -353,6 +346,19 @@ _run_guard() {
   }
 }
 
+@test "settings delegates Edit|Write to claude-edit-guard" {
+  local bin_dir cmds
+  bin_dir=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  [ -n "$bin_dir" ]
+
+  cmds=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write") | .hooks[].command' "$SETTINGS")
+  [ "$cmds" = "bash $bin_dir/claude-edit-guard" ] || {
+    echo "expected a single edit-guard invocation, got:"
+    echo "$cmds"
+    return 1
+  }
+}
+
 @test "guard: exits 0 on a payload with no command" {
   run _run_guard '{"tool_input":{}}'
   [ "$status" -eq 0 ]
@@ -361,10 +367,6 @@ _run_guard() {
 @test "guard: fails open on a malformed payload" {
   run _run_guard 'not json'
   [ "$status" -eq 0 ]
-}
-
-_get_branch_hook() {
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write") | .hooks[0].command' "$SETTINGS"
 }
 
 @test "brace hook: blocks real brace expansion" {
@@ -390,6 +392,11 @@ _get_branch_hook() {
   [ "$status" -eq 0 ]
 }
 
+# Runs the Edit/Write PreToolUse guard against a mock payload.
+_run_edit_guard() {
+  echo "$1" | "$REPO_ROOT/ai/claude/bin/claude-edit-guard" 2>&1
+}
+
 _init_test_repo() {
   local dir=$1 branch=${2:-main}
   git -C "$dir" init -b "$branch" --quiet
@@ -397,46 +404,183 @@ _init_test_repo() {
   git -C "$dir" config user.name "Test"
 }
 
-@test "branch hook: blocks tracked file on main" {
-  local hook tmpdir
-  hook=$(_get_branch_hook)
-  tmpdir=$(mktemp -d)
-  _init_test_repo "$tmpdir"
-  touch "$tmpdir/tracked.txt"
-  git -C "$tmpdir" add tracked.txt
-  git -C "$tmpdir" commit -m "init" --quiet
-  run _run_hook "$hook" "{\"tool_input\":{\"file_path\":\"$tmpdir/tracked.txt\"}}"
-  rm -rf "$tmpdir"
+@test "edit-guard: exits 0 on a payload with no file_path" {
+  run _run_edit_guard '{"tool_input":{}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "edit-guard: fails open on a malformed payload" {
+  run _run_edit_guard 'not json'
+  [ "$status" -eq 0 ]
+}
+
+@test "edit-guard: blocks a tracked file on main and names wt switch" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo"
+  touch "$repo/tracked.txt"
+  git -C "$repo" add tracked.txt
+  git -C "$repo" commit -m "init" --quiet
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/tracked.txt\"}}"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"BLOCKED"* ]]
+  [ "$output" = "BLOCKED: Cannot edit files on main. Create a worktree first: wt switch -c <branch>" ]
 }
 
-@test "branch hook: allows gitignored file on main" {
-  local hook tmpdir
-  hook=$(_get_branch_hook)
-  tmpdir=$(mktemp -d)
-  _init_test_repo "$tmpdir"
-  echo "ignore/" > "$tmpdir/.gitignore"
-  git -C "$tmpdir" add .gitignore
-  git -C "$tmpdir" commit -m "init" --quiet
-  mkdir -p "$tmpdir/ignore/specs"
-  run _run_hook "$hook" "{\"tool_input\":{\"file_path\":\"$tmpdir/ignore/specs/test.md\"}}"
-  rm -rf "$tmpdir"
+@test "edit-guard: blocks a tracked file on master" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" master
+  touch "$repo/tracked.txt"
+  git -C "$repo" add tracked.txt
+  git -C "$repo" commit -m "init" --quiet
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/tracked.txt\"}}"
+  [ "$status" -eq 2 ]
+  [ "$output" = "BLOCKED: Cannot edit files on master. Create a worktree first: wt switch -c <branch>" ]
+}
+
+@test "edit-guard: allows a gitignored file on main" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo"
+  echo "ignore/" > "$repo/.gitignore"
+  git -C "$repo" add .gitignore
+  git -C "$repo" commit -m "init" --quiet
+  mkdir -p "$repo/ignore/specs"
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/ignore/specs/test.md\"}}"
   [ "$status" -eq 0 ]
 }
 
-@test "branch hook: allows any file on feature branch" {
-  local hook tmpdir
-  hook=$(_get_branch_hook)
-  tmpdir=$(mktemp -d)
-  _init_test_repo "$tmpdir"
-  touch "$tmpdir/file.txt"
-  git -C "$tmpdir" add file.txt
-  git -C "$tmpdir" commit -m "init" --quiet
-  git -C "$tmpdir" checkout -b feature --quiet
-  run _run_hook "$hook" "{\"tool_input\":{\"file_path\":\"$tmpdir/file.txt\"}}"
-  rm -rf "$tmpdir"
+@test "edit-guard: allows any file on a feature branch" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo"
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  git -C "$repo" checkout -b feature --quiet
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}"
   [ "$status" -eq 0 ]
+}
+
+# ── edit-guard: the tree-validation lock ────────────────────────────────────
+# The Pi half of this is tree-lock-guard in tests/pi_extensions.bats. Both read
+# ai/lib/core/tree_lock.py through `with-tree-lock --check`, so the two
+# harnesses cannot disagree about whether a tree is under validation.
+
+# _hold_tree lives in tests/test_helper.bash: pi_extensions.bats holds the same
+# lock for the Pi half of this guard, and one fact read by two harnesses is
+# worth one helper rather than two copies of it.
+
+@test "edit-guard: blocks an edit to a tree a validator holds" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+  [[ "$output" != *[Pp]id* ]]
+}
+
+@test "edit-guard: a gitignored path is still refused while the tree is held" {
+  # The gitignore exemption belongs to the main-branch rule, not to this one:
+  # a suite reads ignored build output too, and rewriting it underneath a
+  # running gate invalidates the same run.
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  echo "ignore/" > "$repo/.gitignore"
+  git -C "$repo" add .gitignore
+  git -C "$repo" commit -m "init" --quiet
+  mkdir -p "$repo/ignore"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/ignore/out.md\"}}"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+}
+
+@test "edit-guard: WORKBENCH_TREE_LOCK does not suppress the refusal" {
+  # That variable is the writers' reentrancy marker. A reader honouring it
+  # would let anything that inherited it edit straight through the lock.
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run env WORKBENCH_TREE_LOCK="$repo" bash -c \
+    "echo '{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}' | '$REPO_ROOT/ai/claude/bin/claude-edit-guard' 2>&1"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+}
+
+@test "edit-guard: a free tree is not refused" {
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "edit-guard: inherited GIT_DIR does not retarget the probe" {
+  # Git skips discovery when GIT_DIR is set, so an inherited one would make
+  # `rev-parse --show-toplevel` answer about the calling hook's repository and
+  # leave the guard probing the lock on a tree nobody is editing.
+  local repo="$TMPDIR/repo" other="$TMPDIR/other"
+  mkdir -p "$repo" "$other"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  _init_test_repo "$other" feature
+  git -C "$other" commit --allow-empty -m init --quiet
+  local holder other_git
+  holder="$(_hold_tree "$repo")"
+  other_git=$(git -C "$other" rev-parse --absolute-git-dir)
+  run env GIT_DIR="$other_git" GIT_WORK_TREE="$other" bash -c \
+    "echo '{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}' | '$REPO_ROOT/ai/claude/bin/claude-edit-guard' 2>&1"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
+}
+
+@test "edit-guard: the lock is read when the guard runs through its install symlink" {
+  # settings.json runs the guard as ~/.local/bin/claude-edit-guard, the
+  # symlink sync_component_bin installs. BASH_SOURCE is that path, so without
+  # following it the ../../.. traversal lands outside the repo, the -x test
+  # fails, and the lock half is skipped everywhere but here.
+  local repo="$TMPDIR/repo" bindir="$TMPDIR/bin"
+  mkdir -p "$repo" "$bindir"
+  _init_test_repo "$repo" feature
+  touch "$repo/file.txt"
+  git -C "$repo" add file.txt
+  git -C "$repo" commit -m "init" --quiet
+  ln -s "$REPO_ROOT/ai/claude/bin/claude-edit-guard" "$bindir/claude-edit-guard"
+  local holder
+  holder="$(_hold_tree "$repo")"
+  run bash -c \
+    "echo '{\"tool_input\":{\"file_path\":\"$repo/file.txt\"}}' | bash '$bindir/claude-edit-guard' 2>&1"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"A validator holds this tree"* ]]
 }
 
 # ── gh pr create block ──────────────────────────────────────────────────────

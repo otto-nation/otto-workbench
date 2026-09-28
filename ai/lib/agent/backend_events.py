@@ -57,6 +57,15 @@ WRITE_TOOL_NAMES = frozenset({"edit", "multiedit", "notebookedit", "write"})
 
 PI_RPC_EVENT_TYPES = frozenset({"tool_execution_start", "turn_end", "agent_end"})
 
+# What Pi puts in a message's `stopReason` when the turn did not end on the
+# model's own terms. `error` is a failed API call — a transport fault, an auth
+# refusal — and `aborted` is a turn cancelled from outside.
+#
+# Only `error` is read as a failure worth reclassifying: an abort is the
+# harness stopping a run it meant to stop, most often the turn cap, which the
+# `result` record already reports as `max_turns`.
+_PI_ERROR_STOP_REASON = "error"
+
 
 def is_write_tool(name: str) -> bool:
     """Whether a tool can put content into a file.
@@ -64,6 +73,34 @@ def is_write_tool(name: str) -> bool:
     Compared lowercased — Claude reports `Edit`, Pi reports `edit`.
     """
     return name.lower() in WRITE_TOOL_NAMES
+
+
+def pi_run_error(records: list[dict]) -> str:
+    """The error text Pi recorded against a run's last turn, or "".
+
+    Pi reports a failed API call on the `agent_end` envelope and *not* on the
+    `result` record, which keeps saying `subtype=success, is_error=False`. A
+    reader that trusts `result` alone therefore sees a clean run wherever the
+    transport failed, and the run is reported as an agent that declined to
+    write rather than as a network fault — with the retry skipped, because the
+    kinds those two map to differ on whether a second attempt is worth making.
+    That cost a self-review three runs and about four dollars before anyone
+    read the log.
+
+    The last message of the last `agent_end` is the one that ended the run.
+    Earlier turns can carry their own recovered errors, and a run that failed
+    at turn three and then finished is not a failed run.
+    """
+    ends = [r for r in records if r.get("type") == "agent_end"]
+    if not ends:
+        return ""
+    messages = ends[-1].get("messages") or []
+    if not messages:
+        return ""
+    last = messages[-1]
+    if last.get("stopReason") != _PI_ERROR_STOP_REASON:
+        return ""
+    return str(last.get("errorMessage") or "")
 
 
 # ── Claude Code parser ────────────────────────────────────────────────────────

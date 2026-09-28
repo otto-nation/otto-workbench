@@ -915,6 +915,11 @@ Runs machine-checkable tools against changed files and formats violations
 for inclusion in review output. Each checker is a plain function with the
 signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
 
+A violation is work, not just a note. Each one carries an `SA<n>` id and a
+checkbox, which is what lets the fix pass take them as items and write back
+what it did about each — the same three outcomes a finding gets. `review.fix`
+owns that side; what lives here is the spelling both ends read.
+
 ### review/steps.py
 
 One function per phase of a multi-phase review.

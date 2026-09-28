@@ -14,8 +14,8 @@ from typing import Literal
 
 from core.text import slugify
 from review.document import (
-    SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
-    SECTION_VERDICT, ReviewDocument,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
+    SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument,
 )
 from review.types import SEVERITIES
 
@@ -28,9 +28,16 @@ for _s in SEVERITIES:
     for _a in _s.aliases:
         _SEVERITY_HEADERS.add(_a.lower())
 
-# Sections written to the local review file for coverage tracking only — they
-# document which files the reviewer looked at, which is noise on the PR.
-_INTERNAL_HEADERS: set[str] = {SECTION_FILE_TRIAGE.lower()}
+# Sections written to the local review file as bookkeeping rather than as
+# reviewer claims about the code. They are excluded here because this is the
+# last point before the body is posted, and neither reaches it the same way:
+# File Triage is never stripped upstream, and the prior-findings ledger is
+# stripped only on the pipeline that runs `post_process_findings` (see its
+# docstring for why the ledger's IDs cannot be posted beside this review's).
+_INTERNAL_HEADERS: set[str] = {
+    SECTION_FILE_TRIAGE.lower(),
+    SECTION_PRIOR_FINDINGS.lower(),
+}
 
 
 @dataclass(frozen=True)

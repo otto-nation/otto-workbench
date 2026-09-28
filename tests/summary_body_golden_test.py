@@ -462,6 +462,7 @@ class TestTheSummaryTableRendersOnTheForgeThePRIsOn:
         """A satisfied row reports as a fix and cites its own commit."""
         assert f"https://{_HOST}/{_REPO}/commit/def5678" in _enterprise_body()
 
+    # passes-at-base: asserts the rendering the change was careful not to move
     def test_no_host_still_renders_public_github(self):
         """The golden bodies are the full statement of this; one row restates it.
 

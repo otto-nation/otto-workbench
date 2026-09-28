@@ -589,6 +589,11 @@ def test_detect_repo_reads_the_origin_remote(monkeypatch):
     `gh repo view` is GraphQL under the hood, so an exhausted GraphQL budget
     used to fail every `pr` subcommand at its first step — to learn a string
     the git remote already spells.
+
+    This is the *public GitHub* guarantee specifically. A non-public host does
+    ask gh, for the reasons in `TestANonPublicHostPrefersWhatTheAPICallsIt`
+    below; the budget property this protects is about the common path, which
+    an empty or github.com host is.
     """
     monkeypatch.setattr(pr_target, "repo_identity_from_origin",
                         lambda cwd=None: pr_target.RepoIdentity(
@@ -622,6 +627,93 @@ def test_detect_repo_exits_when_neither_can_name_the_repo(monkeypatch, capsys):
 
     assert excinfo.value.code == 1
     assert "Cannot determine repository" in capsys.readouterr().err
+
+
+class TestANonPublicHostPrefersWhatTheAPICallsIt:
+    """A GHES origin parses, so the gh fallback never ran for it.
+
+    `RepoIdentity` folds case and drops the host, so the label is a guess about
+    what the API calls the repo — right for github.com, and unverified for the
+    instance the host exists to distinguish. Returning it the moment it parsed
+    meant the one case the fallback was written for was the one case that
+    skipped it.
+    """
+
+    HOST = "ghe.acme.com"
+
+    # Deliberately not the slug gh returns in these cases. A test whose label
+    # and API answer agree passes against code that never asks — verified by
+    # reverting the host branch, where three such cases stayed green and only
+    # the one with differing values failed.
+    LABEL = "acme/widget-from-origin"
+
+    @classmethod
+    def _origin(cls, monkeypatch, host, label=LABEL):
+        monkeypatch.setattr(
+            pr_target, "repo_identity_from_origin",
+            lambda cwd=None: pr_target.RepoIdentity(
+                label=label, key="acme-widget-1234abcd", host=host))
+
+    def test_an_enterprise_host_asks_gh_for_the_slug(self, monkeypatch):
+        self._origin(monkeypatch, self.HOST)
+        monkeypatch.setattr(pr_context.gh_client, "repo_slug",
+                            lambda cwd=None: "acme/Widget-API")
+        assert pr_context.detect_repo("/wt") == "acme/widget-api"
+
+    def test_the_answer_is_folded(self, monkeypatch):
+        """`nameWithOwner` preserves case; every comparison downstream folds it.
+
+        An unfolded slug forks review directories, fails `ReviewEntry.is_for`'s
+        exact match, and makes the `origin.label == repo` guard in
+        `review_orchestrate` False — silently dropping the host stamping this
+        path exists to enable.
+        """
+        self._origin(monkeypatch, self.HOST)
+        monkeypatch.setattr(pr_context.gh_client, "repo_slug",
+                            lambda cwd=None: "ACME/WIDGET")
+        slug = pr_context.detect_repo("/wt")
+        assert slug == "acme/widget"
+        assert slug != self.LABEL
+        assert slug == pr_target.fold_case(slug)
+
+    # passes-at-base: label is the answer both sides by design; pins the degrade
+    def test_an_empty_answer_keeps_the_label(self, monkeypatch):
+        """A throttled API is not evidence the origin named the repo wrongly.
+
+        `repo_slug` returns "" on failure rather than exiting, and the origin
+        did answer — so the preference degrades to the label instead of
+        failing a command that has a usable name in hand.
+        """
+        self._origin(monkeypatch, self.HOST)
+        monkeypatch.setattr(pr_context.gh_client, "repo_slug", lambda cwd=None: "")
+        assert pr_context.detect_repo("/wt") == self.LABEL
+
+    def test_it_goes_through_the_call_that_retries(self, monkeypatch):
+        """`repo_slug` wraps `gh repo view` in `_with_retries`; the inline call
+        below it in `detect_repo` does not, so a throttle on this path used to
+        decide the repo's name."""
+        self._origin(monkeypatch, self.HOST)
+        monkeypatch.setattr(pr_context.gh_client, "repo_slug",
+                            lambda cwd=None: "acme/from-repo-slug")
+
+        def fail(*a, **k):
+            raise AssertionError("must go through repo_slug, not the bare run")
+
+        monkeypatch.setattr(pr_context.gh_client, "run", fail)
+        assert pr_context.detect_repo("/wt") == "acme/from-repo-slug"
+
+    @pytest.mark.parametrize("host", ["", "github.com", "GitHub.com"])
+    # passes-at-base: asserts the GraphQL-budget property the change preserves
+    def test_a_public_host_never_asks(self, monkeypatch, host):
+        """Both spellings of public GitHub, and the fold between them."""
+        self._origin(monkeypatch, host)
+
+        def fail(*a, **k):
+            raise AssertionError(f"host {host!r} must not reach the API")
+
+        monkeypatch.setattr(pr_context.gh_client, "repo_slug", fail)
+        monkeypatch.setattr(pr_context.gh_client, "run", fail)
+        assert pr_context.detect_repo("/wt") == self.LABEL
 
 
 # ── the LOCAL rung still names an open PR when it can ───────────────────────

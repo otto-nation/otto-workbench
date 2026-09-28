@@ -227,20 +227,28 @@ def _bare_host(authority: str) -> str:
     return host.partition(":")[0]
 
 
-def _fold_case(text: str) -> str:
-    """``A``-``Z`` folded to ``a``-``z``, every other codepoint untouched."""
+def fold_case(text: str) -> str:
+    """``A``-``Z`` folded to ``a``-``z``, every other codepoint untouched.
+
+    Public because the fold is part of the identity contract rather than an
+    implementation detail of it: anything that produces a slug this module's
+    output will be compared against has to fold it the same way, and the one
+    Unicode-aware ``str.lower`` anywhere near this path is a bug that surfaces
+    as two review directories for one repo.
+    """
     return text.translate(_ASCII_FOLD)
+
 
 
 def _drop_git_suffix(path: str) -> str:
     """One trailing ``.git``, whatever the case of the suffix.
 
     ``widget.GIT`` and ``widget.git`` are one repo on every host, so a clone
-    spelled either way has to reach one key. Matched through ``_fold_case``
+    spelled either way has to reach one key. Matched through ``fold_case``
     rather than ``str.lower`` so that the whole contract has exactly one notion
     of case and no path through this module can reach a Unicode fold.
     """
-    return path[: -len(".git")] if _fold_case(path[-len(".git"):]) == ".git" else path
+    return path[: -len(".git")] if fold_case(path[-len(".git"):]) == ".git" else path
 
 
 def _canonical(url: str) -> str:
@@ -276,7 +284,7 @@ def _canonical(url: str) -> str:
         # local clone and a one-segment hosted path on one key: git@host:widget
         # and /srv/git/widget both canonicalize to "widget".
         path = path.rpartition("/")[2]
-    return _fold_case(path)
+    return fold_case(path)
 
 
 def _key_for(canonical: str) -> str:
@@ -316,6 +324,19 @@ def _key_for(canonical: str) -> str:
     # approved spec.
     readable = slug(canonical)[:64].rstrip("-")
     return f"{readable}-{digest}" if readable else digest
+
+
+def is_public_github(host: str) -> bool:
+    """Whether *host* names public github.com, which empty also means.
+
+    The two spellings collapse here rather than at each caller. Empty is what a
+    local remote, an ssh alias and a caller with no context to ask all produce,
+    and every one of them has always been treated as public GitHub — so a
+    caller asking "is this the public instance?" has to accept both, and one
+    that tests only ``== PUBLIC_GITHUB_HOST`` silently answers False for the
+    commonest case.
+    """
+    return not host.strip() or fold_case(host.strip()) == PUBLIC_GITHUB_HOST
 
 
 def forge_base_url(host: str = "") -> str:

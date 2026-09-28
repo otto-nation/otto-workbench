@@ -244,6 +244,7 @@ class TestTheReplyLinkersCarryTheHost:
             f"[`thread.py:1`](https://{_HOST}/{_REPO}/blob/{_SHA}/thread.py#L1)")
         assert "github.com" not in link
 
+    # passes-at-base: asserts the rendering the change was careful not to move
     def test_no_host_still_renders_public_github(self, tmp_path):
         """The empty default is what an untaught caller keeps getting."""
         entry = CommentItem(id="t1", file="thread.py", line=1, read_sha=_SHA)

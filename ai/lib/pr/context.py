@@ -608,10 +608,33 @@ def detect_repo(cwd: str | None = None) -> str:
     disagree with what the API would call the same repo. Exit 1 still belongs to
     the case where neither can name it — callers downstream treat the repo as
     known.
+
+    That disagreement is why a non-public host asks ``gh`` even though the
+    origin parsed. Returning the label the moment it parses is right for
+    github.com and wrong for the remote the host exists to distinguish, and a
+    GHES URL parses like any other — so the fallback never ran for the one case
+    that needed it. The budget argument above is unaffected: it is about the
+    common path, which is still answered from git alone.
+
+    ``gh``'s answer is a preference, not an authority. An empty one falls back
+    to the label rather than exiting, because the origin *did* name the repo
+    and a throttled API is not evidence that it named it wrongly.
     """
     identity = pr_target.repo_identity_from_origin(cwd)
-    if identity:
+    if identity and pr_target.is_public_github(identity.host):
         return identity.label
+    if identity:
+        # `repo_slug` rather than the `gh repo view` below: it is the same call
+        # with the retries this path was missing, so a throttle no longer
+        # decides the repo's name.
+        #
+        # Folded, because `_canonical` folds A-Z and `nameWithOwner` does not.
+        # An unfolded slug here forks review directories, breaks
+        # `ReviewEntry.is_for`'s exact match, and makes the `origin.label ==
+        # repo` guard in `review_orchestrate` False — which would silently drop
+        # the host stamping this whole path exists to enable.
+        slug = pr_target.fold_case(gh_client.repo_slug(cwd).strip())
+        return slug or identity.label
 
     r = gh_client.run("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=cwd)
     slug = r.stdout.strip()

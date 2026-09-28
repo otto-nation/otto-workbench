@@ -549,3 +549,41 @@ def test_target_dir_for_checkout_is_none_on_detached_head(tmp_path, monkeypatch)
                      "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
     run_checked(["git", "-C", str(wt), "checkout", "-q", "--detach", "HEAD"])
     assert pr_target.target_dir_for_checkout(wt) is None
+
+
+class TestIsPublicGithub:
+    """Empty and github.com are one bucket, which is what every caller means.
+
+    A caller testing `== PUBLIC_GITHUB_HOST` alone answers False for the
+    commonest case: a local remote, an ssh alias and a caller with no context
+    to ask all produce an empty host, and all three have always been treated as
+    public GitHub.
+    """
+
+    @pytest.mark.parametrize("host", ["", "   ", "github.com", "GitHub.com", "GITHUB.COM"])
+    def test_the_public_spellings(self, host):
+        assert pr_target.is_public_github(host) is True
+
+    @pytest.mark.parametrize("host", ["ghe.acme.com", "github.acme.com",
+                                      "gitlab.com", "github.com.evil.test"])
+    def test_everything_else_is_not(self, host):
+        assert pr_target.is_public_github(host) is False
+
+
+class TestFoldCaseIsTheOnlyFold:
+    def test_it_folds_ascii_only(self):
+        assert pr_target.fold_case("ACME/Widget-API") == "acme/widget-api"
+
+    def test_a_unicode_uppercase_is_left_alone(self):
+        """`str.lower` would fold these; the key contract says it must not.
+
+        A Unicode fold anywhere near this path produces two keys for one repo
+        on machines that disagree about the locale.
+        """
+        assert pr_target.fold_case("\u0130") == "\u0130"
+        assert pr_target.fold_case("\u00c9") == "\u00c9"
+        assert pr_target.fold_case("\u0130").lower() != "\u0130"
+
+    def test_the_ascii_around_a_unicode_char_still_folds(self):
+        """Per-codepoint, so one untouched character does not exempt its word."""
+        assert pr_target.fold_case("\u0130STANBUL") == "\u0130stanbul"

@@ -292,18 +292,29 @@ def _pi_result(subtype: str = "error_max_turns", num_turns: int = _TURNS) -> str
     return json.dumps({"type": "result", "subtype": subtype, "num_turns": num_turns})
 
 
+def _pi_message(stop_reason: str = "", error: str = "") -> dict:
+    message = {"role": "assistant", "content": []}
+    if stop_reason:
+        message["stopReason"] = stop_reason
+    if error:
+        message["errorMessage"] = error
+    return message
+
+
 def _pi_agent_end(stop_reason: str = "", error: str = "") -> str:
     """Pi's end-of-run envelope, carrying the last turn's stop reason.
 
     The shape Pi actually writes: the run's outcome hangs off the last message
     of the envelope, not off the `result` record beside it.
     """
-    message = {"role": "assistant", "content": []}
-    if stop_reason:
-        message["stopReason"] = stop_reason
-    if error:
-        message["errorMessage"] = error
-    return json.dumps({"type": "agent_end", "messages": [message]})
+    return json.dumps({
+        "type": "agent_end", "messages": [_pi_message(stop_reason, error)],
+    })
+
+
+def _pi_agent_end_messages(*messages: dict) -> str:
+    """An envelope holding several turns, for reading which one is consulted."""
+    return json.dumps({"type": "agent_end", "messages": list(messages)})
 
 
 class TestPiLogsAreReadableForWrites:
@@ -508,6 +519,42 @@ class TestAPiTransportFailureIsNotACompletedRun:
             log_path, output_path="/out/review.md",
         )
         assert diagnosis.kind is DiagnosisKind.COMPLETED
+
+    # passes-at-base: a bound on the new check, which base does not make at all
+    def test_a_mid_turn_error_the_run_continued_past_is_not_a_failure(self, tmp_path):
+        """Only the envelope's last message says how the run ended.
+
+        The deliberate trade in `pi_run_error`: recall for precision. A turn
+        that hit a transient fault and carried on to finish is a run that
+        worked, and reading any message would fail it on a fault it recovered
+        from. Pinned because it is a design choice rather than an oversight,
+        and the docstring saying so is not a test.
+        """
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_agent_end_messages(
+                _pi_message("error", "read ETIMEDOUT"),
+                _pi_message(),
+            ),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.COMPLETED
+
+    def test_the_last_message_of_the_last_envelope_is_the_one_read(self, tmp_path):
+        """The counterpart: an error there did end the run, and is reported."""
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_agent_end_messages(
+                _pi_message(),
+                _pi_message("error", "read ETIMEDOUT"),
+            ),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.TRANSIENT
 
     # passes-at-base: a bound on the new check, which base does not make at all
     def test_a_result_that_reports_its_own_error_keeps_that_detail(self, tmp_path):

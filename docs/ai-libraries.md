@@ -917,8 +917,10 @@ signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
 
 A violation is work, not just a note. Each one carries an `SA<n>` id and a
 checkbox, which is what lets the fix pass take them as items and write back
-what it did about each — the same three outcomes a finding gets. `review.fix`
-owns that side; what lives here is the spelling both ends read.
+what it did about each, in the same spellings a finding gets: a ticked box, a
+`*(skipped — …)*`, a `*(declined — …)*`, or the line left alone for work the
+pass never reached. `review.fix` owns that side; what lives here is the
+spelling both ends read.
 
 ### review/steps.py
 

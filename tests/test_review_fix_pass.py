@@ -798,6 +798,24 @@ class TestStaticViolationsAsWork:
         assert len(adapter.items()) == 1
         assert "Duplicate static violation ids" in capsys.readouterr().err
 
+    def test_a_violation_off_the_branch_is_still_in_scope(self, git_wt, tmp_path):
+        """The defensive union in `_anchor_files`, exercised rather than assumed.
+
+        Violations are drawn from `job.pr.files` today, so their paths are
+        already branch files and the union adds nothing. The fallback is there
+        for a caller whose violations come from somewhere else, and until this
+        nothing established it works — an untested safety net is a claim, not a
+        guarantee. Without it such a violation would be handed to the agent as
+        work and then refused at the commit as out of scope.
+        """
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        adapter = review_fix.ReviewFixAdapter(
+            job, [], violations=[_violation("SA1", "elsewhere.py", 3)],
+        )
+
+        assert "elsewhere.py" in adapter._anchor_files()
+        assert "elsewhere.py" in adapter._allowed_paths()
+
     def test_violations_run_the_pass_when_there_are_no_findings(self, git_wt, tmp_path):
         """A clean review over a file the checker flags is still work.
 

@@ -82,6 +82,12 @@ class RunOptions:
     effort: str = "low"
     timeout: int = EVAL_CASE_BUDGET
     verbose: bool = False
+    # Which rule prefix this run is served. Inert for review and skill tasks:
+    # only ci-fix invokes a fix agent, so only ci-fix reads it.
+    condition: str = "full"
+    # The seeded CLAUDE_CONFIG_DIR for that prefix, empty to inherit the
+    # operator's own.
+    config_dir: str = ""
 
 
 def outcome_for(exit_code: int, usage: SessionUsage) -> RunOutcome:

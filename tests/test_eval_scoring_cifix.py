@@ -8,8 +8,10 @@ never fails is worth nothing, and one that never passes is unwinnable.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -122,6 +124,22 @@ def _case(tmp_path: Path, verify_body: str, task: str = "ci-fix") -> Path:
         json.dumps({"name": "stub-case", "task": task}))
     (case_dir / "src" / "verify.sh").write_text(verify_body)
     return case_dir
+
+
+def _run_cifix_case(opts: RunOptions) -> RunArtifacts:
+    """Drive a ci-fix run far enough that invoke_fix is called.
+
+    There is no shared harness helper for this; existing tests inline
+    `CiFixTask().run(case_dir, RunOptions(...))`. The fixture fails
+    pre-verify so the agent is reached. Temp dirs are cleaned before return.
+    """
+    case_root = Path(tempfile.mkdtemp(prefix="eval-cifix-case-"))
+    try:
+        artifacts = CiFixTask().run(_case(case_root, "exit 1\n"), opts)
+        _rm(artifacts)
+        return artifacts
+    finally:
+        shutil.rmtree(case_root, ignore_errors=True)
 
 
 class TestCiFixTaskRun:
@@ -262,3 +280,54 @@ class TestCiFixOutcome:
     def test_the_outcome_reaches_the_score(self):
         artifacts = RunArtifacts(data={"fixed": False}, outcome=RunOutcome.NOT_RUN)
         assert CiFixTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN
+
+
+class TestConditionReachesAgent:
+    """A ci-fix run serves the agent a complete env with CLAUDE_CONFIG_DIR."""
+
+    def test_the_condition_reaches_the_agent_as_an_absolute_config_dir(
+            self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_invoke_fix(inv):
+            seen["env"] = inv.env
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+                            fake_invoke_fix)
+        opts = RunOptions(condition="trimmed",
+                          config_dir=str(tmp_path / "cc-trimmed"))
+        _run_cifix_case(opts)
+
+        assert seen["env"]["CLAUDE_CONFIG_DIR"] == str(tmp_path / "cc-trimmed")
+        assert Path(seen["env"]["CLAUDE_CONFIG_DIR"]).is_absolute()
+
+    def test_the_agent_env_is_complete_because_a_partial_one_strips_path_and_home(
+            self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_invoke_fix(inv):
+            seen["env"] = inv.env
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+                            fake_invoke_fix)
+        opts = RunOptions(condition="trimmed", config_dir=str(tmp_path / "cc"))
+        _run_cifix_case(opts)
+
+        assert "PATH" in seen["env"]
+        assert "HOME" in seen["env"]
+        assert seen["env"]["HOME"] == os.environ["HOME"], (
+            "HOME must not be rewritten")
+
+    def test_no_config_dir_leaves_the_env_inherited_as_it_is_today(self, monkeypatch):
+        seen = {}
+
+        def fake_invoke_fix(inv):
+            seen["env"] = inv.env
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+                            fake_invoke_fix)
+        _run_cifix_case(RunOptions())
+        assert seen["env"] is None

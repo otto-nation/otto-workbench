@@ -447,7 +447,17 @@ class TestTheSummaryTableRendersOnTheForgeThePRIsOn:
     """
 
     def test_no_link_in_the_body_is_on_public_github(self):
-        assert "github.com" not in _enterprise_body()
+        """The absence is asserted over a body proven to carry links.
+
+        On its own, `"github.com" not in body` is the vacuous-absence shape:
+        an empty body satisfies it, and so would a table that rendered no
+        rows. The link count is what makes the absence mean something, in this
+        test rather than in its siblings — a fixture that stopped producing
+        rows would otherwise turn this green.
+        """
+        body = _enterprise_body()
+        assert body.count(f"https://{_HOST}/") == 6
+        assert "github.com" not in body
 
     def test_the_commit_cell_names_the_enterprise_host(self):
         assert f"https://{_HOST}/{_REPO}/commit/{_LINK_SHA}" in _enterprise_body()

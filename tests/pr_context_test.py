@@ -673,8 +673,10 @@ class TestANonPublicHostPrefersWhatTheAPICallsIt:
                             lambda cwd=None: "ACME/WIDGET")
         slug = pr_context.detect_repo("/wt")
         assert slug == "acme/widget"
-        assert slug != self.LABEL
-        assert slug == pr_target.fold_case(slug)
+        # The API's own casing, not merely "some lowercase string": asserting
+        # `slug == fold_case(slug)` would hold for any lowercase literal and so
+        # passes without the fold, and `slug != LABEL` only proves gh was asked.
+        assert slug != "ACME/WIDGET"
 
     # passes-at-base: label is the answer both sides by design; pins the degrade
     def test_an_empty_answer_keeps_the_label(self, monkeypatch):

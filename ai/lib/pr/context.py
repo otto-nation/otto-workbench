@@ -633,7 +633,14 @@ def detect_repo(cwd: str | None = None) -> str:
         # `ReviewEntry.is_for`'s exact match, and makes the `origin.label ==
         # repo` guard in `review_orchestrate` False — which would silently drop
         # the host stamping this whole path exists to enable.
-        slug = pr_target.fold_case(gh_client.repo_slug(cwd).strip())
+        #
+        # Safe to hand back to gh: the API resolves a repo case-insensitively
+        # and answers with the true casing either way — `gh repo view
+        # microsoft/typescript` and `gh api repos/microsoft/typescript` both
+        # return `microsoft/TypeScript`. The origin path has folded since
+        # before this branch, so the fold is what the rest of the pipeline
+        # already assumes rather than something this call introduces.
+        slug = pr_target.fold_case(gh_client.repo_slug(cwd))
         return slug or identity.label
 
     r = gh_client.run("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=cwd)

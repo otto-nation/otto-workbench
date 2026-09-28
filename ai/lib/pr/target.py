@@ -239,7 +239,6 @@ def fold_case(text: str) -> str:
     return text.translate(_ASCII_FOLD)
 
 
-
 def _drop_git_suffix(path: str) -> str:
     """One trailing ``.git``, whatever the case of the suffix.
 

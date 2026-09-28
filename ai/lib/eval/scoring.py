@@ -595,5 +595,5 @@ def _format_ab_delta_row(entry: str, model: str, aggs: dict[str, dict]) -> str:
     out_d = trimmed["output_tokens_mean"] - full["output_tokens_mean"]
     return (
         f"| {entry} | {model} | delta "
-        f"| - | {pass_d:.0%} | {billed_d:.0f} | {out_d:.0f} |"
+        f"| - | {pass_d:+.0%} | {billed_d:+.0f} | {out_d:+.0f} |"
     )

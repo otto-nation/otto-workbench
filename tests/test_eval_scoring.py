@@ -682,7 +682,7 @@ def test_an_unmeasured_arm_is_named_not_printed_as_a_zero():
         ("e", "sonnet", "full"): [
             _r(recall=1.0, billed_input=40000, outcome=RunOutcome.MEASURED),
         ],
-        ("e", "sonnet", "trimmed"): [_r(recall=0.0, outcome=RunOutcome.NOT_RUN)],
+        ("e", "sonnet", "trimmed"): [_r(recall=1.0, outcome=RunOutcome.NOT_RUN)],
     }
     table = format_ab_table(results)
     assert "0%" not in table.split("trimmed")[1].split("\n")[0], \
@@ -690,3 +690,61 @@ def test_an_unmeasured_arm_is_named_not_printed_as_a_zero():
     assert "unmeasured" in table.lower()
     assert "-40000" not in table and "-40,000" not in table, \
         "an unmeasured arm must not be differenced against as a zero"
+
+
+def test_a_measured_zero_is_printed_as_zero_and_still_gets_a_delta():
+    results = {
+        ("e", "sonnet", "full"): [
+            _r(recall=1.0, billed_input=40000, output_tokens=3000),
+        ],
+        ("e", "sonnet", "trimmed"): [
+            _r(recall=0.0, billed_input=22000, output_tokens=2800),
+        ],
+    }
+    table = format_ab_table(results)
+    trimmed_row = table.split("trimmed")[1].split("\n")[0]
+    assert "0%" in trimmed_row, "a measured miss must render 0%, not unmeasured"
+    assert "unmeasured" not in trimmed_row.lower()
+    assert "delta" in table
+
+
+def test_a_partially_measured_arm_still_emits_a_delta():
+    results = {
+        ("e", "sonnet", "full"): [
+            _r(recall=1.0, billed_input=40000, output_tokens=3000),
+        ],
+        ("e", "sonnet", "trimmed"): [
+            _r(recall=1.0, billed_input=22000, output_tokens=2800, run_index=0),
+            _r(recall=1.0, billed_input=22000, output_tokens=2800,
+               run_index=1, outcome=RunOutcome.NOT_RUN),
+            _r(recall=1.0, billed_input=22000, output_tokens=2800,
+               run_index=2, outcome=RunOutcome.NOT_RUN),
+        ],
+    }
+    table = format_ab_table(results)
+    assert "1/3" in table.split("trimmed")[1].split("\n")[0]
+    assert "delta" in table
+
+
+def test_both_unmeasured_arms_emit_no_delta():
+    results = {
+        ("e", "sonnet", "full"): [_r(recall=1.0, outcome=RunOutcome.NOT_RUN)],
+        ("e", "sonnet", "trimmed"): [_r(recall=1.0, outcome=RunOutcome.NOT_RUN)],
+    }
+    table = format_ab_table(results)
+    assert "delta" not in table
+    assert "unmeasured" in table.lower()
+
+
+def test_a_positive_delta_carries_an_explicit_sign():
+    results = {
+        ("e", "sonnet", "full"): [
+            _r(recall=0.5, billed_input=20000, output_tokens=2000),
+        ],
+        ("e", "sonnet", "trimmed"): [
+            _r(recall=1.0, billed_input=40000, output_tokens=3000),
+        ],
+    }
+    delta_row = format_ab_table(results).split("delta")[1].split("\n")[0]
+    assert "+50%" in delta_row
+    assert "+20000" in delta_row or "+20,000" in delta_row

@@ -2459,8 +2459,17 @@ rule that is hard to restate is itself a defect:
     codepoint alone.** That is the **canonical form**; when it is empty there is
     no key — return ``None``. The key is ``slug(canonical)``, truncated to 64
     characters and stripped of trailing ``-``, then ``-``, then the first 8 hex
-    characters of ``sha256(canonical.encode("utf-8")).hexdigest()``. When the
-    readable part is empty, the key is the digest alone.
+    characters of ``sha256(hashed.encode("utf-8")).hexdigest()``, where
+    ``hashed`` is the canonical form alone when the repo declares no forge
+    instance or declares ``github.com``, and ``fold(declared) + "\n" +
+    canonical`` otherwise. When the readable part is empty, the key is the
+    digest alone.
+
+    The declared instance is ``github.host`` from ``.workbench.yml``, **not**
+    anything parsed from the remote URL — see the fourth property below. It is
+    folded by the same A–Z rule and stripped of whitespace and a trailing
+    ``/``. The readable part never carries it: only the digest does, so a
+    declared target's directory reads the same to a human.
 
 ``slug(s)``, used above and again for the branch, is the whole of its own rule:
 
@@ -2471,7 +2480,7 @@ rule that is hard to restate is itself a defect:
     where this gives ``feat-v1.2``: two directories for one target, which
     under-locks every branch with a dot in its name.
 
-Three properties of that rule a mirror has to reproduce exactly, because a run
+Four properties of that rule a mirror has to reproduce exactly, because a run
 that disagrees about any of them looks in a directory nobody writes:
 
 * **A remote is hosted per its scheme, never per its authority.** ``file`` is
@@ -2488,6 +2497,20 @@ that disagrees about any of them looks in a directory nobody writes:
   whose strip uncovers a trailing slash a pass that ran only first would leave
   behind. Normalizing once, on either side, gives one of those two spellings its
   own directory and its own lock.
+* **The forge instance is declared, never inferred.** Two repos sharing a path
+  on two instances are distinguished only when a repo says which instance it is
+  on; an undeclared repo keys exactly as it did before the key knew about
+  forges, which is what makes every existing directory stay put. A mirror must
+  **not** try to recover the instance from the remote URL, however tempting the
+  string looks. The host in a URL is a *spelling*: one repo is routinely
+  spelled as an ssh alias (``ghebox:acme/widget``), as a dotted alias
+  (``github.com-work``, indistinguishable from a hostname), and through a
+  ``url.*.insteadOf`` rewrite — all of which must reach one key, and none of
+  which a lexical rule separates from a genuinely different host. Resolving an
+  alias through ``ssh -G`` is not the escape hatch either: ``Match exec`` runs
+  during ``-G``, so the key would depend on arbitrary shell in a dotfile. For
+  the same reason the URL is read with ``config --get remote.origin.url``
+  rather than ``remote get-url``, which applies ``insteadOf``.
 * **The fold is codepoint arithmetic, not a call to a language's lowercase.**
   Repo paths are case-insensitive on GitHub and GitLab, so two differently-cased
   remotes are one repo; git refs are case-sensitive, so ``feat/A`` and ``feat/a``

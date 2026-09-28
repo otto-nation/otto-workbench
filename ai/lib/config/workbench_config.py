@@ -321,12 +321,19 @@ class ReuseConfig:
 
 @dataclass(frozen=True)
 class GitHubConfig:
-    """How this machine reaches GitHub.
+    """How this machine reaches GitHub, and which instance a repo lives on.
 
     ``ssh_over_443`` moves git's SSH traffic to ``ssh.github.com:443``, the
     endpoint GitHub publishes for networks that block or throttle outbound
     TCP/22. Same service, same host keys, one more hop through their edge — so
     it is off by default and turned on per machine, not per repo.
+
+    ``host`` names the GitHub instance this repo is served by, and is the only
+    thing that puts a forge into a target key. Declared rather than parsed,
+    because which instance a checkout belongs to is not recoverable from the
+    remote URL: the host is a *spelling*, and one repo is routinely spelled
+    several ways — an ssh alias, a mirror, an ``insteadOf`` rewrite — every one
+    of which must reach one key. See ``pr.target._key_host``.
     """
 
     ssh_over_443: bool = field(
@@ -335,6 +342,16 @@ class GitHubConfig:
             frozenset({GLOBAL_SCOPE}),
             "it describes the network this machine is on, never the repo, and a"
             " repo's .workbench.yml is read by everyone who clones it",
+        )},
+    )
+
+    host: str = field(
+        default="",
+        metadata={"scope": ScopeRule(
+            frozenset({CONTAINER_SCOPE, PROJECT_SCOPE}),
+            "it describes which GitHub instance this repo is served by, which is"
+            " a fact about the repo rather than the machine — a machine-wide"
+            " value would key every other repo on this instance too",
         )},
     )
 

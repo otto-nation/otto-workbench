@@ -295,6 +295,7 @@ def post_fix_summary(
     activity_at: str = "",
     wt_path: Path | None = None,
     history: attribution.AddressingHistory | None = None,
+    host: str = "",
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     if not content.has_content:
@@ -306,6 +307,7 @@ def post_fix_summary(
         head_sha=head_sha,
         wt_path=wt_path,
         history=history,
+        host=host,
     ), activity_at=activity_at,
         folded=summary_model.folded_locations(content, threads_by_id),
         folded_texts=summary_model.folded_restatements(content, threads_by_id))
@@ -359,6 +361,7 @@ def post_or_defer_summary(
     head_sha: str = "",
     activity_at: str = "",
     wt_path: Path | None = None,
+    host: str = "",
 ) -> str | None:
     """Post summary immediately or defer to state when discussion is pending.
 
@@ -378,6 +381,7 @@ def post_or_defer_summary(
             activity_at=activity_at,
             wt_path=wt_path,
             history=history,
+            host=host,
         )
 
     log.info("Deferred fix summary — will render from state on --finish")
@@ -434,6 +438,7 @@ def publish(
     has_unaccounted: bool,
     head_sha: str,
     wt_path: Path | None = None,
+    host: str = "",
 ) -> SummaryOutcome:
     """Render this round's summary and say what is still owed after it.
 
@@ -453,13 +458,14 @@ def publish(
         head_sha=head_sha,
         activity_at=newest_reviewer_activity(report),
         wt_path=wt_path,
+        host=host,
     )
     return SummaryOutcome(url, owed)
 
 
 def render_deferred_summary(
     state: pr_state.PRState, report: PRReport, repo: str, pr_number: int,
-    threads_by_id: dict[str, ReportThread],
+    threads_by_id: dict[str, ReportThread], host: str = "",
 ) -> None:
     """Re-render fix summary from state and post it.
 
@@ -522,6 +528,7 @@ def render_deferred_summary(
         head_sha=cp.sha or state.identity.head_sha,
         wt_path=wt_path,
         history=history,
+        host=host,
     ), activity_at=newest_reviewer_activity(report),
         folded=summary_model.folded_locations(content, threads_by_id),
         folded_texts=summary_model.folded_restatements(content, threads_by_id))

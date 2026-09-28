@@ -60,6 +60,35 @@ teardown() {
   [[ "$output" == *"github.com/settings/tokens"* ]]
 }
 
+@test "the PAT URL names the enterprise instance the repo is on" {
+  # A PAT is issued by the instance the repo lives on. Sending a GHES user to
+  # github.com/settings produces a token for the wrong instance and a 401 they
+  # have no reason to connect back to this message.
+  make_git_repo_with_org "$TMPDIR/repo" "acme" "widget" "ghe.acme.com"
+  cd "$TMPDIR/repo"
+
+  run load_gh_token
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"https://ghe.acme.com/settings/tokens/new"* ]]
+  [[ "$output" != *"github.com/settings"* ]]
+}
+
+# passes-at-base: asserts the URL the change was careful not to move
+@test "the PAT URL stays on github.com for an ssh alias" {
+  # A dotless authority is an alias whose real host lives in ssh_config and is
+  # not knowable here, so the message keeps the answer it always gave.
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init --quiet
+  git -C "$TMPDIR/repo" remote add origin "gitbox:acme/widget.git"
+  cd "$TMPDIR/repo"
+
+  run load_gh_token
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"https://github.com/settings/tokens/new"* ]]
+}
+
 # ── Success: from env file ────────────────────────────────────────────────────
 
 @test "succeeds: GH_TOKEN set in global env file" {
@@ -216,4 +245,65 @@ teardown() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"GH_TOKEN__OTTO_NATION"* ]]
   [[ "$output" == *"otto-nation"* ]]
+}
+
+# ── org detection is host-agnostic ───────────────────────────────────────────
+
+@test "_detect_gh_org extracts org from an enterprise SSH remote" {
+  # Matching the literal github.com meant a GHES remote produced no org, so
+  # GH_TOKEN__<ORG> was never consulted and the default token was used silently.
+  make_git_repo_with_org "$TMPDIR/repo" "acme" "widget" "ghe.acme.com"
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme" ]
+}
+
+@test "_detect_gh_org extracts org from an enterprise HTTPS remote" {
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init --quiet
+  git -C "$TMPDIR/repo" remote add origin "https://ghe.acme.com/acme/widget.git"
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$output" = "acme" ]
+}
+
+@test "_detect_gh_org handles the ssh:// form with a port" {
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init --quiet
+  git -C "$TMPDIR/repo" remote add origin "ssh://git@ghe.acme.com:2222/acme/widget.git"
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$output" = "acme" ]
+}
+
+@test "_detect_gh_org handles a user in an HTTPS remote" {
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init --quiet
+  git -C "$TMPDIR/repo" remote add origin "https://user@github.com/acme/widget.git"
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$output" = "acme" ]
+}
+
+# passes-at-base: the old form also read no org here; guards the widening
+@test "_detect_gh_org reads no org from a local path remote" {
+  # file:// names a path, not an owner. Read as a forge URL its first segment
+  # would be taken for the org.
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init --quiet
+  git -C "$TMPDIR/repo" remote add origin "file:///srv/git/widget.git"
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$output" = "" ]
+}
+
+@test "an enterprise remote reaches its org-specific token" {
+  # The whole point of detecting the org on a non-github.com host.
+  make_git_repo_with_org "$TMPDIR/repo" "acme" "widget" "ghe.acme.com"
+  cd "$TMPDIR/repo"
+  mkdir -p "$TMPDIR/.config/task"
+  printf 'GH_TOKEN=pat_default\nGH_TOKEN__ACME=pat_acme\n' > "$TMPDIR/.config/task/taskfile.env"
+  load_gh_token
+  [ "$GH_TOKEN" = "pat_acme" ]
 }

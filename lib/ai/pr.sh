@@ -76,10 +76,18 @@ push_branch() {
   fi
 }
 
-# Matches only a GitHub pull request URL. Anchored to the /pull/<number> path so
-# that non-PR URLs in gh's own output — such as the https://githubstatus.com link
-# in its connectivity error — are never mistaken for a created PR.
-PR_URL_PATTERN='https://github\.com/[^[:space:]]+/pull/[0-9]+'
+# Matches a pull request URL on any host. Pinned to github.com, this found
+# nothing on a GitHub Enterprise remote — gh creates the PR and prints an
+# enterprise URL, the scrape came up empty, and the user was told "PR creation
+# failed" for a PR that exists.
+#
+# The /pull/<number> path is what keeps a non-PR URL in gh's own output — such
+# as the https://githubstatus.com link in its connectivity error — from being
+# read as a created PR. The host never contributed to that: githubstatus.com
+# has no /pull/<number> either. A contrived docs or status URL that did carry
+# one would now match, but nothing reaches this scrape except the output of a
+# `gh pr create` that already exited 0.
+PR_URL_PATTERN='https://[^[:space:]]+/[^[:space:]]+/pull/[0-9]+'
 
 # create_pr GH_ARGS...
 # Runs `gh pr create` with the given arguments and reports the resulting PR URL.

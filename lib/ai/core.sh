@@ -122,26 +122,65 @@ load_ai_command() {
   fi
 }
 
-# _detect_gh_org — extracts the GitHub org/owner from the current repo's origin remote.
-# Handles SSH (git@github.com:org/repo.git) and HTTPS (https://github.com/org/repo.git).
+# _detect_gh_org — extracts the org/owner from the current repo's origin remote.
+# Handles SSH (git@HOST:org/repo.git), HTTPS (https://HOST/org/repo.git) and the
+# ssh:// form, on any host.
 # Prints the org name to stdout. Returns empty (not failure) if detection is not possible.
+#
+# Host-agnostic on purpose. Matching the literal github.com meant a GitHub
+# Enterprise remote produced no org at all, so GH_TOKEN__<ORG> was never
+# consulted and the lookup fell through to the default GH_TOKEN silently — the
+# per-org scoping simply did not apply on the instance most likely to need it.
+# The same gap swallowed the ssh:// and https://user@ spellings on github.com.
 _detect_gh_org() {
   local url
   url=$(git remote get-url origin 2>/dev/null) || return 0
-  local org=""
+  local rest="" org=""
   case "$url" in
-    git@github.com:*)
-      # git@github.com:org/repo.git → strip prefix and /repo.git suffix
-      org="${url#git@github.com:}"
-      org="${org%%/*}"
-      ;;
-    https://github.com/*)
-      # https://github.com/org/repo.git → strip prefix and /repo.git suffix
-      org="${url#https://github.com/}"
-      org="${org%%/*}"
-      ;;
+    # A local clone names no org. Checked before the generic scheme arm, which
+    # would otherwise read the first path segment of file:///srv/git/widget.git
+    # as the org "srv".
+    file://*|/*|./*|../*) ;;
+    # Any scheme — https://, ssh://, git:// — as scheme://[user@]host[:port]/org/repo.
+    # Drop the scheme, then the authority up to the first slash.
+    *://*) rest="${url#*://}"; rest="${rest#*/}" ;;
+    # scp-style [user@]host:org/repo.git — the authority ends at the first colon.
+    # A dotless authority is an ssh alias whose real host lives in ssh_config;
+    # the org is still the segment after the colon either way.
+    *:*) rest="${url#*:}" ;;
+  esac
+  # Whatever remains is org/repo.git, or a bare path for a local remote. A
+  # value with no slash names no org and is left empty rather than guessed at.
+  case "$rest" in
+    */*) org="${rest%%/*}" ;;
   esac
   printf '%s' "$org"
+}
+
+# _origin_host — the host of the current repo's origin remote.
+# Prints github.com when there is no origin, when it names a local path, or when
+# its authority has no dot (an ssh alias, whose real host lives in ssh_config and
+# is not knowable here). The default keeps every message that interpolates this
+# reading exactly as it did before the host was consulted.
+_origin_host() {
+  local url host=""
+  url=$(git remote get-url origin 2>/dev/null) || url=""
+  case "$url" in
+    file://*|/*|./*|../*|"") ;;
+    *://*)
+      host="${url#*://}"
+      host="${host%%/*}"
+      ;;
+    *:*) host="${url%%:*}" ;;
+  esac
+  # Strip any user@ and :port, leaving the bare authority.
+  host="${host##*@}"
+  host="${host%%:*}"
+  # A dotless authority is an ssh alias, not a hostname anyone can visit.
+  case "$host" in
+    *.*) printf '%s' "$host" ;;
+    *) printf 'github.com' ;;
+  esac
 }
 
 # _normalize_org_to_env ORG — converts a GitHub org name to an env var suffix.
@@ -208,7 +247,10 @@ load_gh_token() {
   else
     printf "  Set GH_TOKEN in %s\n" "$cfg_path"
   fi
-  printf "  Create a fine-grained PAT: https://github.com/settings/tokens/new\n"
+  # The PAT is issued by the instance the repo lives on, so the link follows
+  # origin's host. A GHES user sent to github.com/settings creates a token for
+  # the wrong instance and gets a 401 they have no reason to connect to this.
+  printf "  Create a fine-grained PAT: https://%s/settings/tokens/new\n" "$(_origin_host)"
   printf "  Required: Contents (read/write), Pull requests (read/write) — scoped to specific repos\n"
   printf "  Run: task --global ai:setup\n"
   return 1

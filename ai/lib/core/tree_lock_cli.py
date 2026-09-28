@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core import signal_relay
 from core import timeouts
 from core.tree_lock import acquire, holders, is_locked
 
@@ -48,24 +47,15 @@ def _run_child(child: list[str]) -> int:
     membership (it is in a new session), so the SIGINT handler is what
     delivers it. SIGHUP is the same gap for a closed terminal: without a
     handler the wrapper dies, the flock drops, and the suite keeps running.
+
+    :func:`signal_relay.forwarding_signals` owns that relay and the ordering
+    it depends on: it wraps the spawn rather than following it, so there is no
+    window in which a child exists and no handler does.
     """
-    proc = subprocess.Popen(child, start_new_session=True)
-
-    def _forward(signum: int, _frame: object) -> None:
-        try:
-            os.killpg(os.getpgid(proc.pid), signum)
-        except ProcessLookupError:
-            pass
-
-    previous = {
-        signum: signal.signal(signum, _forward)
-        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-    }
-    try:
+    with signal_relay.forwarding_signals() as relay:
+        proc = subprocess.Popen(child, start_new_session=True)
+        relay.forward_to(proc)
         code = proc.wait(timeout=timeouts.UNBOUNDED)
-    finally:
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
     # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
     # callers expect the shell convention 128+N (SIGTERM -> 143).
     return 128 + (-code) if code < 0 else code

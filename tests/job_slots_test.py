@@ -21,6 +21,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 from core import job_slots
+from core import signal_relay
 from core.job_slots import LOCK_ENV, claim, holders, pool_size
 from core.job_slots_cli import GRANT_ENV
 
@@ -368,6 +369,72 @@ def test_a_signal_to_the_wrapper_reaches_the_child(tmp_path):
             proc.kill()
             proc.wait(timeout=30)
     assert caught.exists(), "the child never saw the signal sent to the wrapper"
+
+
+def test_a_signal_racing_the_spawn_still_reaches_the_child(monkeypatch):
+    """A signal landing before the child exists is held, not dropped.
+
+    The ordering bug this pins: with the handlers installed *after* the spawn,
+    a signal in that window is taken with default disposition, the wrapper dies
+    without forwarding, and the child — alone in its own session, so outside the
+    signalled process group — runs on with the slots released. Timing decides
+    whether the window is hit, which is why it reached CI as an intermittent
+    failure rather than being caught here.
+
+    Driven deterministically rather than by racing a real one: `Popen` is
+    wrapped so the wrapper signals *itself* at the instant the window would be
+    open, which is the one moment the old ordering cannot survive and the new
+    one must.
+    """
+    from core import job_slots_cli
+
+    real_popen = subprocess.Popen
+    delivered: list[int] = []
+
+    def signalling_popen(*args, **kwargs):
+        # Inside the window under the old ordering: the handler either exists
+        # now and queues this, or does not and kills the process outright.
+        os.kill(os.getpid(), signal.SIGTERM)
+        return real_popen(*args, **kwargs)
+
+    # The relay lives in `core.signal_relay`, which both wrappers share, so the
+    # delivery is stubbed there rather than on this module. `signal_relay.os`
+    # is the shared `os` module, not a private reference, so this patches
+    # `os.killpg` process-wide for the duration of the test; monkeypatch
+    # reverts it on teardown regardless of outcome.
+    monkeypatch.setattr(job_slots_cli.subprocess, "Popen", signalling_popen)
+    monkeypatch.setattr(
+        signal_relay.os, "killpg",
+        lambda _pgid, signum: delivered.append(signum),
+    )
+
+    code = job_slots_cli._run_child([sys.executable, "-c", "pass"], 1)
+
+    assert delivered == [signal.SIGTERM], (
+        "the signal taken before the child existed was dropped rather than "
+        "forwarded once it did"
+    )
+    assert code == 0
+
+
+def test_the_relay_is_uninstalled_once_the_child_is_gone():
+    """A wrapper that ran a child must not leave its handlers behind.
+
+    The relay is only correct while there is a child to forward to. Left
+    installed, a later signal would be swallowed by a closure pointing at a
+    process that has already exited, so the restore is part of the contract
+    rather than tidiness.
+    """
+    from core import job_slots_cli
+
+    before = {
+        signum: signal.getsignal(signum)
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    }
+    job_slots_cli._run_child([sys.executable, "-c", "pass"], 1)
+    after = {signum: signal.getsignal(signum) for signum in before}
+
+    assert after == before
 
 
 def test_the_cli_rejects_a_flag_with_no_value():

@@ -54,6 +54,7 @@ def build_summary_body(
     history: attribution.AddressingHistory | None = None,
     scope: summary_rounds.RoundScope | None = None,
     chain: list[summary_rounds.SummaryRound] | None = None,
+    host: str = "",
 ) -> str:
     """Build the markdown body for the fix summary comment.
 
@@ -143,7 +144,7 @@ def build_summary_body(
         so it is the one that can answer.
         """
         cells = summary_row.row_cells_for(
-            entry, status, threads_by_id, repo, pr_number, sha, wt_path)
+            entry, status, threads_by_id, repo, pr_number, sha, wt_path, host)
         row = summary_row.render_row(cells)
         key = summary_model.row_key_from_cells(cells)
         if not scope.covers(
@@ -178,7 +179,8 @@ def build_summary_body(
     fixed_count = sum([
         emit(
             e,
-            summary_row.fixed_status_for(e, cp, repo, history, threads_by_id.get(e.id)),
+            summary_row.fixed_status_for(
+                e, cp, repo, history, threads_by_id.get(e.id), host),
             getattr(e, "commit_sha", "") or link_sha,
         )
         for e in fixed
@@ -188,7 +190,8 @@ def build_summary_body(
     addressed_shown = [
         (framing, emit(
             e,
-            summary_row.addressed_status_for(framing, repo, verified=e.verified),
+            summary_row.addressed_status_for(
+                framing, repo, host, verified=e.verified),
             link_sha,
         ))
         for e, framing in zip(already_addressed, addressed_framings, strict=True)

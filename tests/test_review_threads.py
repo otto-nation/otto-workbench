@@ -885,6 +885,25 @@ def _make_completed(returncode, stdout="", stderr=""):
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
 
 
+def _fake_ctx(tmp_path, **overrides):
+    """A stand-in for `ResolvedContext` in the fix-pass drivers below.
+
+    One helper rather than the same literal at eight call sites: the fields a
+    fix pass reads off its context grow, and a `SimpleNamespace` answers a
+    field it was never given with `AttributeError` rather than a default. Eight
+    copies means eight failures every time one is added, in tests that are not
+    about the new field.
+
+    `host` empty is public GitHub, which is what these drivers assert against.
+    """
+    fields = {
+        "repo": "owner/repo", "branch": "b", "pr_number": 1,
+        "head_sha": "aaa1111", "target_dir": tmp_path, "host": "",
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
 def _git_ran(returncode, stdout="", stderr=""):
     """What a stubbed `git_client.run` hands back.
 
@@ -1993,10 +2012,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
                 for n, t in enumerate(threads)
             ],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
 
         pushes = []
         commits = []
@@ -4942,6 +4958,114 @@ class TestPostAlreadyAddressedReplies:
         assert thread_replies.UNVERIFIED_REPLY_NOTE not in body
 
 
+# ── the host reaches the reply bodies ────────────────────────────────────
+
+
+class TestReplyBodiesRenderTheEnterpriseHost:
+    """Every reply body that cites a link, rendered against a GHES host.
+
+    The linkers taking a `host` buys nothing if the reply path drops it, and a
+    dropped argument is invisible at the unit level: each of these functions
+    renders a URL that resolves either way. Only the host in the rendered body
+    tells a threaded call from an untaught one.
+
+    Public github.com is asserted absent rather than the host asserted present,
+    because the failure being tested is a link on the *wrong* forge.
+    """
+
+    HOST = "ghe.acme.com"
+
+    def test_a_fixed_reply_cites_the_enterprise_commit_and_blob(self, tmp_path):
+        fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py",
+                             commit_sha="abc1234")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        cp = attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, "")
+        with patch("pr.comments.post_thread_reply", return_value=True) as mock_reply:
+            thread_replies.post_fix_replies(
+                fixed, threads_by_id, "owner/repo", 42, cp, host=self.HOST,
+            )
+        body = mock_reply.call_args[0][3]
+        assert f"https://{self.HOST}/owner/repo/commit/abc1234" in body
+        assert f"https://{self.HOST}/owner/repo/blob/abc1234/src/app.py" in body
+        assert "github.com" not in body
+
+    def test_an_already_addressed_reply_cites_the_enterprise_commit(self, tmp_path):
+        fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(attribution, "find_addressing_commit",
+                         return_value="abc1234def5678"),
+        ):
+            thread_replies.post_already_addressed_replies(
+                fixed, threads_by_id, "owner/repo", 42, tmp_path, host=self.HOST,
+            )
+        body = mock_reply.call_args[0][3]
+        assert f"https://{self.HOST}/owner/repo/commit/abc1234def5678" in body
+        assert "github.com" not in body
+
+    def test_a_dismissed_reply_cites_the_enterprise_evidence(self, tmp_path):
+        """The reply that most needs a line to point at, per the module docstring."""
+        (tmp_path / "cited.py").write_text("a\nb\n")
+        dismissed = [CommentItem(
+            id="t1", summary="not applicable", reasoning="reason",
+            evidence_file="cited.py", evidence_line=2, read_sha="head123")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(git_client, "head_sha", return_value="head123"),
+        ):
+            thread_replies.post_dismissed_replies(
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path, self.HOST,
+            )
+        body = mock_reply.call_args[0][3]
+        assert f"https://{self.HOST}/owner/repo/blob/head123/cited.py#L2" in body
+        assert "github.com" not in body
+
+    def test_a_deferred_reply_cites_the_enterprise_code(self, tmp_path):
+        deferred = [CommentItem(id="t1", summary="fix it", file="src/app.py",
+                                line=3, read_sha="head123")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(git_client, "head_sha", return_value="head123"),
+        ):
+            thread_replies.post_deferred_replies(
+                deferred, threads_by_id, "owner/repo", 42,
+                "ENG-456", "https://linear.app/team/issue/ENG-456",
+                tmp_path, self.HOST,
+            )
+        body = mock_reply.call_args[0][3]
+        assert f"https://{self.HOST}/owner/repo/blob/head123/src/app.py#L3" in body
+
+    def test_an_unattributed_fix_keeps_the_host_through_the_split(self, tmp_path):
+        """`reply_to_fixed` routes uncitable rows to a second function.
+
+        The host has to survive the hand-off, which is the one place in this
+        path where a caller passes it on rather than using it.
+        """
+        # No `commit_sha` and a failed push: nothing to attribute, so the split
+        # routes this row to the already-addressed body under `acted=True`.
+        # That path names no commit by design — a commit predating the comment
+        # is not the one that carried the fix — so the blob link is what the
+        # host has to reach.
+        fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py",
+                             line=3, read_sha="head123")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        cp = attribution.CommitPushResult("", CommitStatus.PUSH_FAILED, "")
+        with (
+            patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(git_client, "head_sha", return_value="head123"),
+            patch.object(attribution, "find_addressing_commit", return_value=None),
+        ):
+            thread_replies.reply_to_fixed(
+                fixed, threads_by_id, "owner/repo", 42, cp, tmp_path, self.HOST,
+            )
+        body = mock_reply.call_args[0][3]
+        assert f"https://{self.HOST}/owner/repo/blob/head123/src/app.py#L3" in body
+        assert "github.com" not in body
+
+
 # ── reply upsert ─────────────────────────────────────────────────────────
 
 
@@ -5603,10 +5727,7 @@ class TestFixPassHoldsWhenContested:
                 for n, t in enumerate(threads)
             ],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
         pushes = []
         commits = []
 
@@ -5806,10 +5927,7 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
             threads=[ReportThread(id="t1", file="f.go", line=10,
                                   comments=[{"databaseId": 100}])],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
@@ -5857,10 +5975,7 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
             issue_comments=[{"id": "c1", "author": "kgn", "body": "one thought",
                              "seen": False}],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
         with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \
@@ -5903,10 +6018,7 @@ class TestTheRoundWithNothingToFixTakesTheSameTail:
             threads=[ReportThread(id="t1", file="f.go", line=10,
                                   comments=[{"databaseId": 100}])],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
@@ -5999,10 +6111,7 @@ class TestARoundWithNoFixablesRecordsItsCommentItems:
             threads=[ReportThread(id="t1", file="f.go", line=10,
                                   comments=[{"databaseId": 100}])],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
@@ -6074,10 +6183,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
                              comments=[{"databaseId": 200}]),
             ],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
         with patch.object(thread_context, "diff_context_for_file", return_value=""), \
              patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
@@ -6123,10 +6229,7 @@ class TestARoundWithUnaccountedThreadsStillPublishes:
             threads=[ReportThread(id="t2", file="g.go", line=20,
                                   comments=[{"databaseId": 200}])],
         )
-        ctx = SimpleNamespace(
-            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
-            target_dir=tmp_path,
-        )
+        ctx = _fake_ctx(tmp_path)
         with patch.object(comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git_topology, "default_branch_cached", return_value="main"), \
              patch.object(fix_state, "persist"), \

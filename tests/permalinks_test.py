@@ -200,6 +200,58 @@ class TestCodeLink:
         assert "gone.py" in link
 
 
+class TestTheReplyLinkersCarryTheHost:
+    """The three builders every comment-fix reply body renders through.
+
+    They are the last in the module to take a host, and until they did, every
+    reply on an enterprise PR cited github.com — a URL that resolves, on a
+    forge the reviewer does not use, pointing at whatever public repo happens
+    to own that slug. Both of `code_link`'s branches are covered because each
+    reaches `anchored_link` by its own route.
+    """
+
+    def test_anchored_link_renders_the_enterprise_host(self, tmp_path):
+        entry = CommentItem(id="t1", read_sha=_SHA)
+        link = permalinks.anchored_link(
+            entry, _REPO, "a/b.py", 7, _SHA, tmp_path, _HOST)
+        assert link == (
+            f"[`a/b.py:7`](https://{_HOST}/{_REPO}/blob/{_SHA}/a/b.py#L7)")
+        assert "github.com" not in link
+
+    def test_evidence_link_renders_the_enterprise_host(self, tmp_path):
+        entry = CommentItem(
+            id="t1", evidence_file="cited.py", evidence_line=2, read_sha=_SHA)
+        link = permalinks.evidence_link(entry, _REPO, _SHA, tmp_path, _HOST)
+        assert link == (
+            f"[`cited.py:2`](https://{_HOST}/{_REPO}/blob/{_SHA}/cited.py#L2)")
+        assert "github.com" not in link
+
+    def test_code_link_renders_the_enterprise_host_from_the_citation(self, tmp_path):
+        (tmp_path / "cited.py").write_text("a\nb\n")
+        entry = CommentItem(
+            id="t1", file="thread.py", line=1,
+            evidence_file="cited.py", evidence_line=2, read_sha=_SHA)
+        link = permalinks.code_link(entry, _REPO, _SHA, tmp_path, host=_HOST)
+        assert link == (
+            f"[`cited.py:2`](https://{_HOST}/{_REPO}/blob/{_SHA}/cited.py#L2)")
+        assert "github.com" not in link
+
+    def test_code_link_renders_the_enterprise_host_on_the_fallback(self, tmp_path):
+        """The uncited branch is a second `anchored_link` call, two lines apart."""
+        entry = CommentItem(id="t1", file="thread.py", line=1, read_sha=_SHA)
+        link = permalinks.code_link(entry, _REPO, _SHA, tmp_path, host=_HOST)
+        assert link == (
+            f"[`thread.py:1`](https://{_HOST}/{_REPO}/blob/{_SHA}/thread.py#L1)")
+        assert "github.com" not in link
+
+    # passes-at-base: asserts the rendering the change was careful not to move
+    def test_no_host_still_renders_public_github(self, tmp_path):
+        """The empty default is what an untaught caller keeps getting."""
+        entry = CommentItem(id="t1", file="thread.py", line=1, read_sha=_SHA)
+        assert permalinks.code_link(entry, _REPO, _SHA, tmp_path) == (
+            f"[`thread.py:1`](https://github.com/{_REPO}/blob/{_SHA}/thread.py#L1)")
+
+
 class TestCommentSource:
     def test_an_issue_comment_anchors_to_its_comment(self):
         source = permalinks.CommentSource("issue_comment", "900")

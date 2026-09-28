@@ -31,6 +31,7 @@ from core import log
 from core import timeouts
 from pr import context as pr_context
 from pr.review_sync import sync_review_domain
+from pr.target import display_repo
 from review import listing as review_listing
 from review.paths import find_review_file, review_file_path
 from review.summary import ReviewSummaryReport, build_review_summary, json_summary
@@ -92,7 +93,8 @@ def post(argv: list[str], ctx: pr_context.ResolvedContext, *,
 
     review = find_review_file(ctx.repo, pr_num)
     if not review:
-        log.error(f"No review file found for {ctx.repo}#{pr_num}")
+        log.error(
+            f"No review file found for {display_repo(ctx.repo, ctx.host)}#{pr_num}")
         log.dim("Run: pr review")
         return 1
 
@@ -150,7 +152,8 @@ def summary(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
     review = find_review_file(ctx.repo, pr_num)
     if not review:
-        log.error(f"No review file found for {ctx.repo}#{pr_num}")
+        log.error(
+            f"No review file found for {display_repo(ctx.repo, ctx.host)}#{pr_num}")
         return 1
 
     print(json_summary(ctx.repo, pr_num, str(review)))

@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core import signal_relay
 from core import timeouts
 from core.job_slots import GRANT_ENV, claim, holders
 
@@ -61,36 +61,27 @@ def _run_child(child: list[str], granted: int) -> int:
     (it is in a new session), so the handler is what delivers it. SIGHUP is the
     same gap for a closed terminal — without a handler the wrapper dies, the
     slots free, and the suite keeps running outside the pool.
+
+    :func:`signal_relay.forwarding_signals` owns that relay and the ordering
+    it depends on: it wraps the spawn rather than following it, so there is no
+    window in which a child exists and no handler does.
     """
     env = os.environ.copy()
     env[GRANT_ENV] = str(granted)
-    try:
-        proc = subprocess.Popen(child, start_new_session=True, env=env)
-    except OSError as exc:
-        # A command that does not exist or cannot be executed. The slots are
-        # released by claim()'s finally either way, so this is about the
-        # message: every other failure on this surface reports itself as
-        # `job_slots_cli: ...` and a raw traceback here would be the one path
-        # that does not. 127 is the shell's convention for "command not
-        # found", which is what a caller of a wrapper script expects to see.
-        print(f"job_slots_cli: cannot run {child[0]}: {exc}", file=sys.stderr)
-        return 127
-
-    def _forward(signum: int, _frame: object) -> None:
+    with signal_relay.forwarding_signals() as relay:
         try:
-            os.killpg(os.getpgid(proc.pid), signum)
-        except ProcessLookupError:
-            pass
-
-    previous = {
-        signum: signal.signal(signum, _forward)
-        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-    }
-    try:
+            proc = subprocess.Popen(child, start_new_session=True, env=env)
+        except OSError as exc:
+            # A command that does not exist or cannot be executed. The slots are
+            # released by claim()'s finally either way, so this is about the
+            # message: every other failure on this surface reports itself as
+            # `job_slots_cli: ...` and a raw traceback here would be the one path
+            # that does not. 127 is the shell's convention for "command not
+            # found", which is what a caller of a wrapper script expects to see.
+            print(f"job_slots_cli: cannot run {child[0]}: {exc}", file=sys.stderr)
+            return 127
+        relay.forward_to(proc)
         code = proc.wait(timeout=timeouts.UNBOUNDED)
-    finally:
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
     # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
     # callers expect the shell convention 128+N (SIGTERM -> 143).
     return 128 + (-code) if code < 0 else code

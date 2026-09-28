@@ -227,8 +227,15 @@ def _bare_host(authority: str) -> str:
     return host.partition(":")[0]
 
 
-def _fold_case(text: str) -> str:
-    """``A``-``Z`` folded to ``a``-``z``, every other codepoint untouched."""
+def fold_case(text: str) -> str:
+    """``A``-``Z`` folded to ``a``-``z``, every other codepoint untouched.
+
+    Public because the fold is part of the identity contract rather than an
+    implementation detail of it: anything that produces a slug this module's
+    output will be compared against has to fold it the same way, and the one
+    Unicode-aware ``str.lower`` anywhere near this path is a bug that surfaces
+    as two review directories for one repo.
+    """
     return text.translate(_ASCII_FOLD)
 
 
@@ -236,11 +243,11 @@ def _drop_git_suffix(path: str) -> str:
     """One trailing ``.git``, whatever the case of the suffix.
 
     ``widget.GIT`` and ``widget.git`` are one repo on every host, so a clone
-    spelled either way has to reach one key. Matched through ``_fold_case``
+    spelled either way has to reach one key. Matched through ``fold_case``
     rather than ``str.lower`` so that the whole contract has exactly one notion
     of case and no path through this module can reach a Unicode fold.
     """
-    return path[: -len(".git")] if _fold_case(path[-len(".git"):]) == ".git" else path
+    return path[: -len(".git")] if fold_case(path[-len(".git"):]) == ".git" else path
 
 
 def _canonical(url: str) -> str:
@@ -276,7 +283,7 @@ def _canonical(url: str) -> str:
         # local clone and a one-segment hosted path on one key: git@host:widget
         # and /srv/git/widget both canonicalize to "widget".
         path = path.rpartition("/")[2]
-    return _fold_case(path)
+    return fold_case(path)
 
 
 def _key_for(canonical: str) -> str:
@@ -318,6 +325,19 @@ def _key_for(canonical: str) -> str:
     return f"{readable}-{digest}" if readable else digest
 
 
+def is_public_github(host: str) -> bool:
+    """Whether *host* names public github.com, which empty also means.
+
+    The two spellings collapse here rather than at each caller. Empty is what a
+    local remote, an ssh alias and a caller with no context to ask all produce,
+    and every one of them has always been treated as public GitHub — so a
+    caller asking "is this the public instance?" has to accept both, and one
+    that tests only ``== PUBLIC_GITHUB_HOST`` silently answers False for the
+    commonest case.
+    """
+    return not host.strip() or fold_case(host.strip()) == PUBLIC_GITHUB_HOST
+
+
 def forge_base_url(host: str = "") -> str:
     """The ``https://`` base for *host*, or public GitHub when it names none.
 
@@ -330,10 +350,38 @@ def forge_base_url(host: str = "") -> str:
     from config rather than from a remote, and rewriting it would turn an
     operator's ``http://`` intranet host into an https URL that does not serve.
     """
+    # ceiling: the host varies but the path grammar does not — every URL built
+    # from this base is spelled GitHub's way (/blob/, /commit/, /pull/ and the
+    # #discussion_r anchor), so this supports github.com and GitHub Enterprise
+    # and nothing else. A forge with its own grammar needs far more than a
+    # base URL: gh is the only API client here, and GitLab or Gitea would each
+    # want a second client, a different PR-URL parse, and different comment
+    # anchors. Upgrade trigger: anyone needing the pr CLI against a forge that
+    # is neither github.com nor GitHub Enterprise.
     host = host.strip().rstrip("/")
     if not host:
         return f"https://{PUBLIC_GITHUB_HOST}"
     return host if _SCHEME_RE.match(host) else f"https://{host}"
+
+
+def display_repo(repo: str, host: str = "") -> str:
+    """How to *show* a repo: host-qualified when the forge is not public GitHub.
+
+    ``acme/widget`` on github.com and for an empty host, and
+    ``ghe.acme.com/acme/widget`` otherwise. Two enterprise instances serving
+    the same slug are one string everywhere the tool reports on them, and a
+    reader looking at a review title or a listing row cannot tell which
+    instance it came from.
+
+    Display only, and deliberately not reused for machine input. The value that
+    reaches ``gh --repo``, the GraphQL ``owner``/``name`` pair, the persisted
+    ``PRIdentity.repo``, the review directory names, ``find_repo_root`` and the
+    wiki vault path is the bare slug, and must stay the bare slug — the
+    ``HOST/OWNER/REPO`` form gh accepts is built by its own helper, from the
+    same two values but for a different consumer. Anything rendering this into
+    an argument has made a mistake this function cannot catch.
+    """
+    return repo if is_public_github(host) else f"{host.strip().rstrip('/')}/{repo}"
 
 
 def _repo_key(url: str) -> str | None:
@@ -376,6 +424,15 @@ class RepoIdentity:
     label: str
     key: str
     host: str = ""
+
+    @property
+    def display_label(self) -> str:
+        """``label``, host-qualified when the forge is not public GitHub.
+
+        For showing the repo to a person. ``label`` itself is unchanged and is
+        what every API call and on-disk path still uses — see ``display_repo``.
+        """
+        return display_repo(self.label, self.host)
 
 
 def repo_identity_from_origin(cwd: str | None = None) -> RepoIdentity | None:

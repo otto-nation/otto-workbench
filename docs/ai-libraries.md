@@ -3503,6 +3503,27 @@ consumer, which is how the transform came to be spelled four different ways.
 Stop-hook gates that cannot afford a Python start-up. ``tests/sessions_ssot.bats``
 runs both against one fixture tree and fails when they disagree.
 
+### core/signal_relay.py
+
+Forwarding signals to a child that may not exist yet.
+
+Two wrappers in this package hold a lock for the duration of a command —
+`job_slots_cli` holds a share of the test-parallelism pool, `tree_lock_cli`
+holds the validation lock on a tree — and both run that command in its own
+session so a terminal Ctrl-C does not reach it by process-group membership.
+That makes the signal handler the only thing that can deliver a stop, and it
+makes the *ordering* of the handler against the spawn load-bearing.
+
+Both had the same bug: handlers installed after `Popen`, leaving a window in
+which the child exists and the handler does not. A signal landing there is
+taken with default disposition, so the wrapper dies without forwarding and the
+child — alone in its new session — is never told to stop, while the lock the
+wrapper was holding is released and the work runs on untracked.
+
+One owner rather than a copy per wrapper. A second implementation of a
+primitive this subtle is how the two come to disagree, and the bug above was
+already present in both files in the same shape.
+
 ### core/text.py
 
 Text a human reads, formatted the same way wherever it is written.

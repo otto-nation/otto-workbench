@@ -1,6 +1,7 @@
 """Tests for the tree validation lock."""
 
 import os
+import signal
 import subprocess
 import sys
 import textwrap
@@ -14,6 +15,8 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 from conftest import init_worktree, seed_repo  # noqa: E402
+from core import signal_relay  # noqa: E402
+from core import tree_lock_cli  # noqa: E402
 from core.tree_lock import LOCK_ENV, LOCK_FILE, acquire, holders, is_locked, lock_path
 
 
@@ -222,6 +225,43 @@ def test_git_timeout_is_treated_as_no_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", boom)
     assert lock_path(tmp_path) is None
     assert is_locked(tmp_path) is False
+
+
+def test_a_signal_racing_the_spawn_still_reaches_the_child(monkeypatch):
+    """A signal landing before the child exists is held, not dropped.
+
+    The ordering bug this pins: with the handlers installed *after* the spawn,
+    a signal in that window is taken with default disposition, the wrapper dies
+    without forwarding, and the child — alone in its own session, so outside the
+    signalled process group — runs on with the lock released.
+
+    Driven deterministically rather than by racing a real one: `Popen` is
+    wrapped so the wrapper signals *itself* at the instant the window would be
+    open, which is the one moment the old ordering cannot survive and the new
+    one must.
+    """
+    real_popen = subprocess.Popen
+    delivered: list[int] = []
+
+    def signalling_popen(*args, **kwargs):
+        os.kill(os.getpid(), signal.SIGTERM)
+        return real_popen(*args, **kwargs)
+
+    # The relay lives in `core.signal_relay`, which both wrappers share, so the
+    # delivery is stubbed there rather than on this module.
+    monkeypatch.setattr(tree_lock_cli.subprocess, "Popen", signalling_popen)
+    monkeypatch.setattr(
+        signal_relay.os, "killpg",
+        lambda _pgid, signum: delivered.append(signum),
+    )
+
+    code = tree_lock_cli._run_child([sys.executable, "-c", "pass"])
+
+    assert delivered == [signal.SIGTERM], (
+        "the signal taken before the child existed was dropped rather than "
+        "forwarded once it did"
+    )
+    assert code == 0
 
 
 def test_inherited_git_dir_does_not_hijack_resolution(tmp_path, monkeypatch):

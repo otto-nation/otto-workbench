@@ -3,20 +3,20 @@
   "model": "(default)",
   "effort": "low",
   "runs_per_entry": 3,
-  "updated_at": "2026-09-09T01:45:11.655311+00:00",
+  "updated_at": "2026-09-28T19:10:19.011104+00:00",
   "entries": {
-    "ci-fix-missing-binary": {
+    "ci-fix-masked-exit-status": {
       "recall_mean": 1.0,
       "recall_std": 0.0,
       "precision_mean": 1.0,
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.33886575,
-      "duration_mean_ms": 42088,
-      "billed_input_mean": 198898.33333333334,
-      "output_tokens_mean": 2869.0,
-      "cache_read_ratio_mean": 0.8467467321720639,
+      "cost_mean": 0.8422685,
+      "duration_mean_ms": 13237,
+      "billed_input_mean": 207331.0,
+      "output_tokens_mean": 688.6666666666666,
+      "cache_read_ratio_mean": 0.3948774570675588,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
@@ -27,8 +27,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.34389825,
-          "duration_ms": 36984,
+          "cost_usd": 0.84103225,
+          "duration_ms": 13944,
+          "billed_input": 207305,
+          "output_tokens": 653,
           "matched_ids": [],
           "false_positive_ids": []
         },
@@ -39,8 +41,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.33335075,
-          "duration_ms": 47174,
+          "cost_usd": 0.8426117499999999,
+          "duration_ms": 13541,
+          "billed_input": 207327,
+          "output_tokens": 707,
           "matched_ids": [],
           "false_positive_ids": []
         },
@@ -51,8 +55,187 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.33934825,
-          "duration_ms": 42108,
+          "cost_usd": 0.8431615,
+          "duration_ms": 12228,
+          "billed_input": 207361,
+          "output_tokens": 706,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-missing-binary": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 1.16472125,
+      "duration_mean_ms": 16632,
+      "billed_input_mean": 207935.33333333334,
+      "output_tokens_mean": 970.0,
+      "cache_read_ratio_mean": 0.1330909277884126,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.08384725,
+          "duration_ms": 16313,
+          "billed_input": 207826,
+          "output_tokens": 887,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.085279,
+          "duration_ms": 16914,
+          "billed_input": 208004,
+          "output_tokens": 1015,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.3250374999999996,
+          "duration_ms": 16669,
+          "billed_input": 207976,
+          "output_tokens": 1008,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-missing-regression-test": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 1.1126673333333335,
+      "duration_mean_ms": 23572,
+      "billed_input_mean": 223320.33333333334,
+      "output_tokens_mean": 1431.3333333333333,
+      "cache_read_ratio_mean": 0.23109903674885815,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.1057432500000002,
+          "duration_ms": 22004,
+          "billed_input": 209142,
+          "output_tokens": 1271,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.8962712500000001,
+          "duration_ms": 28988,
+          "billed_input": 251915,
+          "output_tokens": 1809,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.3359874999999999,
+          "duration_ms": 19724,
+          "billed_input": 208904,
+          "output_tokens": 1214,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-mktemp-trap": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 1.0344886666666666,
+      "duration_mean_ms": 20209,
+      "billed_input_mean": 237484.66666666666,
+      "output_tokens_mean": 1167.3333333333333,
+      "cache_read_ratio_mean": 0.3535293196095335,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.8889147500000001,
+          "duration_ms": 21585,
+          "billed_input": 251680,
+          "output_tokens": 1260,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.36048875,
+          "duration_ms": 20293,
+          "billed_input": 251793,
+          "output_tokens": 1125,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.8540625,
+          "duration_ms": 18750,
+          "billed_input": 208981,
+          "output_tokens": 1117,
           "matched_ids": [],
           "false_positive_ids": []
         }
@@ -65,11 +248,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.3736631666666667,
-      "duration_mean_ms": 50621,
-      "billed_input_mean": 237633.0,
-      "output_tokens_mean": 3483.0,
-      "cache_read_ratio_mean": 0.8706878832708749,
+      "cost_mean": 1.4200574166666666,
+      "duration_mean_ms": 55102,
+      "billed_input_mean": 382591.3333333333,
+      "output_tokens_mean": 3246.6666666666665,
+      "cache_read_ratio_mean": 0.472696717012599,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
@@ -80,8 +263,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.36731149999999996,
-          "duration_ms": 48180,
+          "cost_usd": 1.1888705000000002,
+          "duration_ms": 43716,
+          "billed_input": 295078,
+          "output_tokens": 2519,
           "matched_ids": [],
           "false_positive_ids": []
         },
@@ -92,8 +277,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.34096825000000003,
-          "duration_ms": 44297,
+          "cost_usd": 1.5208320000000002,
+          "duration_ms": 63130,
+          "billed_input": 425625,
+          "output_tokens": 3634,
           "matched_ids": [],
           "false_positive_ids": []
         },
@@ -104,8 +291,187 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.4127097500000001,
-          "duration_ms": 59387,
+          "cost_usd": 1.5504697499999998,
+          "duration_ms": 58462,
+          "billed_input": 427071,
+          "output_tokens": 3587,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-stat-portability": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 1.1582251666666668,
+      "duration_mean_ms": 50029,
+      "billed_input_mean": 341316.6666666667,
+      "output_tokens_mean": 3128.6666666666665,
+      "cache_read_ratio_mean": 0.5442252549783179,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.6239307500000002,
+          "duration_ms": 72832,
+          "billed_input": 476876,
+          "output_tokens": 4856,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.23358075,
+          "duration_ms": 53213,
+          "billed_input": 338837,
+          "output_tokens": 3255,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.6171639999999999,
+          "duration_ms": 24043,
+          "billed_input": 208237,
+          "output_tokens": 1275,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-unguarded-grep": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.9043855000000001,
+      "duration_mean_ms": 18183,
+      "billed_input_mean": 165700.0,
+      "output_tokens_mean": 1029.6666666666667,
+      "cache_read_ratio_mean": 0.1647563014146608,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.82195375,
+          "duration_ms": 16637,
+          "billed_input": 165718,
+          "output_tokens": 963,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.83397525,
+          "duration_ms": 21735,
+          "billed_input": 165672,
+          "output_tokens": 1264,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.0572275,
+          "duration_ms": 16179,
+          "billed_input": 165710,
+          "output_tokens": 862,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-unsafe-map-read": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.9394389166666667,
+      "duration_mean_ms": 17108,
+      "billed_input_mean": 221758.0,
+      "output_tokens_mean": 991.0,
+      "cache_read_ratio_mean": 0.3611881029035479,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 1.092233,
+          "duration_ms": 18495,
+          "billed_input": 207701,
+          "output_tokens": 1089,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.84329725,
+          "duration_ms": 13780,
+          "billed_input": 207433,
+          "output_tokens": 707,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.8827865,
+          "duration_ms": 19050,
+          "billed_input": 250140,
+          "output_tokens": 1177,
           "matched_ids": [],
           "false_positive_ids": []
         }
@@ -114,34 +480,61 @@
     "command-injection-bash": {
       "recall_mean": 1.0,
       "recall_std": 0.0,
-      "precision_mean": 0.18888888888888888,
-      "precision_std": 0.01924500897298754,
+      "precision_mean": 0.15277777777777776,
+      "precision_std": 0.0240562612162344,
       "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 4.333333333333333,
-      "cost_mean": 0.12225196666666667,
-      "duration_mean_ms": 39060,
-      "billed_input_mean": 107482.0,
-      "output_tokens_mean": 3117.0,
-      "cache_read_ratio_mean": 0.6990834274197182,
+      "false_positive_mean": 5.666666666666667,
+      "cost_mean": 0.11961733333333331,
+      "duration_mean_ms": 43575,
+      "billed_input_mean": 57373.333333333336,
+      "output_tokens_mean": 3782.3333333333335,
+      "cache_read_ratio_mean": 0.4319409192335546,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
         {
           "outcome": "measured",
           "recall": 1.0,
-          "precision": 0.2,
+          "precision": 0.16666666666666666,
           "severity_accuracy": 1.0,
-          "false_positive_count": 4,
+          "false_positive_count": 5,
           "false_positive_ok": false,
-          "cost_usd": 0.1159338,
-          "duration_ms": 37603,
+          "cost_usd": 0.16055809999999998,
+          "duration_ms": 82338,
+          "billed_input": 80065,
+          "output_tokens": 7267,
           "matched_ids": [
             "M1"
           ],
           "false_positive_ids": [
             "M2",
             "S1",
+            "S2",
             "N1",
+            "N2"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.125,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 7,
+          "false_positive_ok": false,
+          "cost_usd": 0.0921988,
+          "duration_ms": 17062,
+          "billed_input": 46075,
+          "output_tokens": 1334,
+          "matched_ids": [
+            "M2"
+          ],
+          "false_positive_ids": [
+            "M1",
+            "S1",
+            "S2",
+            "S3",
+            "N1",
+            "N2",
             "I1"
           ]
         },
@@ -152,8 +545,10 @@
           "severity_accuracy": 1.0,
           "false_positive_count": 5,
           "false_positive_ok": false,
-          "cost_usd": 0.1290491,
-          "duration_ms": 44908,
+          "cost_usd": 0.1060951,
+          "duration_ms": 31326,
+          "billed_input": 45980,
+          "output_tokens": 2746,
           "matched_ids": [
             "M1"
           ],
@@ -164,77 +559,24 @@
             "N1",
             "I1"
           ]
-        },
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 0.2,
-          "severity_accuracy": 1.0,
-          "false_positive_count": 4,
-          "false_positive_ok": false,
-          "cost_usd": 0.12177299999999999,
-          "duration_ms": 34671,
-          "matched_ids": [
-            "M2"
-          ],
-          "false_positive_ids": [
-            "M1",
-            "S1",
-            "S2",
-            "N1"
-          ]
         }
       ]
     },
     "nil-check-go": {
       "recall_mean": 1.0,
       "recall_std": 0.0,
-      "precision_mean": 0.3055555555555555,
+      "precision_mean": 0.27777777777777773,
       "precision_std": 0.0481125224324688,
       "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 2.3333333333333335,
-      "cost_mean": 0.0946629,
-      "duration_mean_ms": 17188,
-      "billed_input_mean": 93637.66666666667,
-      "output_tokens_mean": 1071.0,
-      "cache_read_ratio_mean": 0.680232492364139,
+      "false_positive_mean": 2.6666666666666665,
+      "cost_mean": 0.0879181,
+      "duration_mean_ms": 12725,
+      "billed_input_mean": 45742.0,
+      "output_tokens_mean": 997.0,
+      "cache_read_ratio_mean": 0.3460283174669083,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 0.3333333333333333,
-          "severity_accuracy": 1.0,
-          "false_positive_count": 2,
-          "false_positive_ok": true,
-          "cost_usd": 0.09341079999999999,
-          "duration_ms": 18134,
-          "matched_ids": [
-            "M1"
-          ],
-          "false_positive_ids": [
-            "S1",
-            "N1"
-          ]
-        },
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 0.3333333333333333,
-          "severity_accuracy": 1.0,
-          "false_positive_count": 2,
-          "false_positive_ok": true,
-          "cost_usd": 0.09461629999999999,
-          "duration_ms": 15183,
-          "matched_ids": [
-            "M1"
-          ],
-          "false_positive_ids": [
-            "S1",
-            "N1"
-          ]
-        },
         {
           "outcome": "measured",
           "recall": 1.0,
@@ -242,8 +584,10 @@
           "severity_accuracy": 1.0,
           "false_positive_count": 3,
           "false_positive_ok": false,
-          "cost_usd": 0.0959616,
-          "duration_ms": 18247,
+          "cost_usd": 0.08871040000000001,
+          "duration_ms": 13961,
+          "billed_input": 45802,
+          "output_tokens": 1061,
           "matched_ids": [
             "M1"
           ],
@@ -252,24 +596,82 @@
             "N1",
             "I1"
           ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.08854100000000001,
+          "duration_ms": 13480,
+          "billed_input": 45765,
+          "output_tokens": 1054,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1",
+            "I1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.08650290000000001,
+          "duration_ms": 10736,
+          "billed_input": 45659,
+          "output_tokens": 876,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
         }
       ]
     },
     "off-by-one-python": {
       "recall_mean": 1.0,
       "recall_std": 0.0,
-      "precision_mean": 0.3055555555555555,
+      "precision_mean": 0.27777777777777773,
       "precision_std": 0.0481125224324688,
       "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 2.3333333333333335,
-      "cost_mean": 0.10052503333333333,
-      "duration_mean_ms": 20136,
-      "billed_input_mean": 94444.33333333333,
-      "output_tokens_mean": 1532.6666666666667,
-      "cache_read_ratio_mean": 0.6778805342619352,
+      "false_positive_mean": 2.6666666666666665,
+      "cost_mean": 0.09674913333333333,
+      "duration_mean_ms": 18839,
+      "billed_input_mean": 56010.666666666664,
+      "output_tokens_mean": 1690.6666666666667,
+      "cache_read_ratio_mean": 0.425791465780432,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.0942576,
+          "duration_ms": 21150,
+          "billed_input": 41789,
+          "output_tokens": 2035,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        },
         {
           "outcome": "measured",
           "recall": 1.0,
@@ -277,48 +679,36 @@
           "severity_accuracy": 1.0,
           "false_positive_count": 3,
           "false_positive_ok": true,
-          "cost_usd": 0.10683,
-          "duration_ms": 25221,
+          "cost_usd": 0.10458289999999999,
+          "duration_ms": 19690,
+          "billed_input": 80447,
+          "output_tokens": 1706,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1",
+            "I1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": true,
+          "cost_usd": 0.09140689999999999,
+          "duration_ms": 15679,
+          "billed_input": 45796,
+          "output_tokens": 1331,
           "matched_ids": [
             "M1"
           ],
           "false_positive_ids": [
             "S1",
             "S2",
-            "N1"
-          ]
-        },
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 0.3333333333333333,
-          "severity_accuracy": 1.0,
-          "false_positive_count": 2,
-          "false_positive_ok": true,
-          "cost_usd": 0.09870980000000001,
-          "duration_ms": 18765,
-          "matched_ids": [
-            "M1"
-          ],
-          "false_positive_ids": [
-            "S1",
-            "N1"
-          ]
-        },
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 0.3333333333333333,
-          "severity_accuracy": 1.0,
-          "false_positive_count": 2,
-          "false_positive_ok": true,
-          "cost_usd": 0.09603529999999999,
-          "duration_ms": 16424,
-          "matched_ids": [
-            "M1"
-          ],
-          "false_positive_ids": [
-            "S1",
             "N1"
           ]
         }
@@ -331,11 +721,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.2883155,
-      "duration_mean_ms": 23274,
-      "billed_input_mean": 127941.0,
-      "output_tokens_mean": 1393.3333333333333,
-      "cache_read_ratio_mean": 0.6959592152059079,
+      "cost_mean": 0.15832383333333333,
+      "duration_mean_ms": 22552,
+      "billed_input_mean": 52308.333333333336,
+      "output_tokens_mean": 1188.3333333333333,
+      "cache_read_ratio_mean": 0.6593157079159077,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
@@ -346,8 +736,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.2913145,
-          "duration_ms": 22722,
+          "cost_usd": 0.16109975,
+          "duration_ms": 22150,
+          "billed_input": 52449,
+          "output_tokens": 1279,
           "matched_ids": [
             "pr comments --finish --track T-3 --pr 42"
           ],
@@ -360,8 +752,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.301761,
-          "duration_ms": 25125,
+          "cost_usd": 0.15688025,
+          "duration_ms": 20995,
+          "billed_input": 52256,
+          "output_tokens": 1138,
           "matched_ids": [
             "pr comments --finish --track T-3 --pr 42"
           ],
@@ -374,8 +768,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.27187100000000003,
-          "duration_ms": 21977,
+          "cost_usd": 0.15699149999999998,
+          "duration_ms": 24513,
+          "billed_input": 52220,
+          "output_tokens": 1148,
           "matched_ids": [
             "pr comments --finish --track T-3 --pr 42"
           ],
@@ -390,11 +786,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.35621858333333334,
-      "duration_mean_ms": 42910,
-      "billed_input_mean": 185348.66666666666,
-      "output_tokens_mean": 2718.6666666666665,
-      "cache_read_ratio_mean": 0.7867211387306972,
+      "cost_mean": 0.2633411666666667,
+      "duration_mean_ms": 53962,
+      "billed_input_mean": 117813.33333333333,
+      "output_tokens_mean": 3528.3333333333335,
+      "cache_read_ratio_mean": 0.7912694205017229,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
@@ -405,8 +801,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.34437825,
-          "duration_ms": 41299,
+          "cost_usd": 0.28711125,
+          "duration_ms": 60240,
+          "billed_input": 148397,
+          "output_tokens": 3803,
           "matched_ids": [
             "pr comments --fix --pr 42"
           ],
@@ -419,8 +817,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.35919525,
-          "duration_ms": 38733,
+          "cost_usd": 0.1609065,
+          "duration_ms": 21545,
+          "billed_input": 52325,
+          "output_tokens": 1268,
           "matched_ids": [
             "pr comments --fix --pr 42"
           ],
@@ -433,8 +833,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.36508225000000005,
-          "duration_ms": 48700,
+          "cost_usd": 0.34200575,
+          "duration_ms": 80103,
+          "billed_input": 152718,
+          "output_tokens": 5514,
           "matched_ids": [
             "pr comments --fix --pr 42"
           ],
@@ -449,11 +851,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.30891575,
-      "duration_mean_ms": 27639,
-      "billed_input_mean": 152330.33333333334,
-      "output_tokens_mean": 1534.0,
-      "cache_read_ratio_mean": 0.723643036758136,
+      "cost_mean": 0.1649805,
+      "duration_mean_ms": 23960,
+      "billed_input_mean": 57907.666666666664,
+      "output_tokens_mean": 1375.0,
+      "cache_read_ratio_mean": 0.6890184366615202,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
@@ -464,8 +866,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.26901575,
-          "duration_ms": 19744,
+          "cost_usd": 0.17750974999999997,
+          "duration_ms": 27826,
+          "billed_input": 69693,
+          "output_tokens": 1615,
           "matched_ids": [
             "pr comments --finish --post --pr 42"
           ],
@@ -478,8 +882,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.3650055,
-          "duration_ms": 36238,
+          "cost_usd": 0.15995275,
+          "duration_ms": 23541,
+          "billed_input": 51923,
+          "output_tokens": 1320,
           "matched_ids": [
             "pr comments --finish --post --pr 42"
           ],
@@ -492,8 +898,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.29272599999999993,
-          "duration_ms": 26935,
+          "cost_usd": 0.157479,
+          "duration_ms": 20513,
+          "billed_input": 52107,
+          "output_tokens": 1190,
           "matched_ids": [
             "pr comments --finish --post --pr 42"
           ],
@@ -508,11 +916,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.287063,
-      "duration_mean_ms": 49801,
-      "billed_input_mean": 147158.66666666666,
-      "output_tokens_mean": 1500.6666666666667,
-      "cache_read_ratio_mean": 0.7663749691491132,
+      "cost_mean": 0.18198233333333333,
+      "duration_mean_ms": 46127,
+      "billed_input_mean": 42562.333333333336,
+      "output_tokens_mean": 3089.6666666666665,
+      "cache_read_ratio_mean": 0.6310020617983577,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
@@ -523,8 +931,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.28999825,
-          "duration_ms": 54700,
+          "cost_usd": 0.17660125000000002,
+          "duration_ms": 43324,
+          "billed_input": 42549,
+          "output_tokens": 2874,
           "matched_ids": [
             "pr rebase --fix --onto main"
           ],
@@ -537,8 +947,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.27265925,
-          "duration_ms": 40473,
+          "cost_usd": 0.14761175,
+          "duration_ms": 31796,
+          "billed_input": 27985,
+          "output_tokens": 2093,
           "matched_ids": [
             "pr rebase --fix --onto main"
           ],
@@ -551,10 +963,12 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.29853149999999995,
-          "duration_ms": 54231,
+          "cost_usd": 0.221734,
+          "duration_ms": 63262,
+          "billed_input": 57153,
+          "output_tokens": 4302,
           "matched_ids": [
-            "pr rebase --fix --onto main"
+            "pr rebase --fix --onto origin/main"
           ],
           "false_positive_ids": []
         }
@@ -567,11 +981,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.25047800000000003,
-      "duration_mean_ms": 21458,
-      "billed_input_mean": 94791.33333333333,
-      "output_tokens_mean": 1244.6666666666667,
-      "cache_read_ratio_mean": 0.6483957200332225,
+      "cost_mean": 0.11294458333333333,
+      "duration_mean_ms": 16379,
+      "billed_input_mean": 28013.666666666668,
+      "output_tokens_mean": 704.6666666666666,
+      "cache_read_ratio_mean": 0.4951156393621015,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
@@ -582,22 +996,10 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.2600795,
-          "duration_ms": 25176,
-          "matched_ids": [
-            "pr rebase --branch eval --onto main"
-          ],
-          "false_positive_ids": []
-        },
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 1.0,
-          "severity_accuracy": 0.0,
-          "false_positive_count": 0,
-          "false_positive_ok": true,
-          "cost_usd": 0.24594575000000002,
-          "duration_ms": 20108,
+          "cost_usd": 0.11253625,
+          "duration_ms": 17673,
+          "billed_input": 27991,
+          "output_tokens": 694,
           "matched_ids": [
             "pr rebase --onto main"
           ],
@@ -610,8 +1012,26 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.24540875,
-          "duration_ms": 19091,
+          "cost_usd": 0.11383774999999999,
+          "duration_ms": 13914,
+          "billed_input": 28026,
+          "output_tokens": 738,
+          "matched_ids": [
+            "pr rebase --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.11245975,
+          "duration_ms": 17551,
+          "billed_input": 28024,
+          "output_tokens": 682,
           "matched_ids": [
             "pr rebase --onto main"
           ],
@@ -620,20 +1040,54 @@
       ]
     },
     "pr-rebase-push-refused": {
-      "recall_mean": 0.7777777777777778,
-      "recall_std": 0.3849001794597505,
+      "recall_mean": 0.5555555555555555,
+      "recall_std": 0.19245008972987526,
       "precision_mean": 1.0,
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.5371211666666666,
-      "duration_mean_ms": 106037,
-      "billed_input_mean": 332224.3333333333,
-      "output_tokens_mean": 6407.333333333333,
-      "cache_read_ratio_mean": 0.8752830643539767,
+      "cost_mean": 0.40862574999999995,
+      "duration_mean_ms": 112655,
+      "billed_input_mean": 189708.66666666666,
+      "output_tokens_mean": 7704.333333333333,
+      "cache_read_ratio_mean": 0.8759774727301437,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
+        {
+          "outcome": "measured",
+          "recall": 0.6666666666666666,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.285871,
+          "duration_ms": 73049,
+          "billed_input": 128065,
+          "output_tokens": 4744,
+          "matched_ids": [
+            "pr rebase --fix --onto main",
+            "pr rebase"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 0.6666666666666666,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.5483797499999999,
+          "duration_ms": 147466,
+          "billed_input": 307391,
+          "output_tokens": 9977,
+          "matched_ids": [
+            "pr rebase --fix",
+            "pr rebase"
+          ],
+          "false_positive_ids": []
+        },
         {
           "outcome": "measured",
           "recall": 0.3333333333333333,
@@ -641,42 +1095,12 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.51198475,
-          "duration_ms": 117047,
+          "cost_usd": 0.3916265,
+          "duration_ms": 117452,
+          "billed_input": 133670,
+          "output_tokens": 8392,
           "matched_ids": [
-            "pr rebase --fix --branch eval"
-          ],
-          "false_positive_ids": []
-        },
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 1.0,
-          "severity_accuracy": 0.0,
-          "false_positive_count": 0,
-          "false_positive_ok": true,
-          "cost_usd": 0.44359875000000004,
-          "duration_ms": 80930,
-          "matched_ids": [
-            "pr rebase --fix --onto main",
-            "git -C /var/folders/mv/p1l2_9j13kb3tr0m9fs79tc00000gn/T/eval-skill-isxc8lm2 commit -m fix(worker): declare svc-api dependency backing ListJobs ACL grant -m svc-api/acls.yaml grants worker access to ListJobs for the retry path, but\nworker declared only svc-queue and svc-audit. The pre-push ACL check rejects\na grant no dependency backs.",
-            "pr rebase --onto main"
-          ],
-          "false_positive_ids": []
-        },
-        {
-          "outcome": "measured",
-          "recall": 1.0,
-          "precision": 1.0,
-          "severity_accuracy": 0.0,
-          "false_positive_count": 0,
-          "false_positive_ok": true,
-          "cost_usd": 0.65578,
-          "duration_ms": 120136,
-          "matched_ids": [
-            "pr rebase --fix --onto main",
-            "git commit -q -m fix(worker): declare svc-api dependency backing ListJobs grant -m svc-api/acls.yaml grants worker access to ListJobs for the retry path, but\nservices/worker.yaml did not declare svc-api as a dependency, so the pre-push\nACL check rejected the unbacked grant.",
-            "pr rebase --branch eval --onto main"
+            "pr rebase --fix"
           ],
           "false_positive_ids": []
         }
@@ -689,29 +1113,32 @@
       "precision_std": 0.0481125224324688,
       "severity_accuracy_mean": 1.0,
       "false_positive_mean": 2.3333333333333335,
-      "cost_mean": 0.09628576666666666,
-      "duration_mean_ms": 17899,
-      "billed_input_mean": 93881.33333333333,
-      "output_tokens_mean": 1196.3333333333333,
-      "cache_read_ratio_mean": 0.6794010282572658,
+      "cost_mean": 0.08933986666666667,
+      "duration_mean_ms": 12596,
+      "billed_input_mean": 45904.333333333336,
+      "output_tokens_mean": 1107.3333333333333,
+      "cache_read_ratio_mean": 0.34563251428244723,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
         {
           "outcome": "measured",
           "recall": 1.0,
-          "precision": 0.3333333333333333,
+          "precision": 0.25,
           "severity_accuracy": 1.0,
-          "false_positive_count": 2,
-          "false_positive_ok": true,
-          "cost_usd": 0.09738679999999998,
-          "duration_ms": 17208,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.0898809,
+          "duration_ms": 12745,
+          "billed_input": 45995,
+          "output_tokens": 1139,
           "matched_ids": [
             "M1"
           ],
           "false_positive_ids": [
             "S1",
-            "I1"
+            "I1",
+            "I2"
           ]
         },
         {
@@ -721,8 +1148,10 @@
           "severity_accuracy": 1.0,
           "false_positive_count": 2,
           "false_positive_ok": true,
-          "cost_usd": 0.0962636,
-          "duration_ms": 21495,
+          "cost_usd": 0.0892485,
+          "duration_ms": 12992,
+          "billed_input": 45858,
+          "output_tokens": 1113,
           "matched_ids": [
             "M1"
           ],
@@ -734,51 +1163,55 @@
         {
           "outcome": "measured",
           "recall": 1.0,
-          "precision": 0.25,
+          "precision": 0.3333333333333333,
           "severity_accuracy": 1.0,
-          "false_positive_count": 3,
-          "false_positive_ok": false,
-          "cost_usd": 0.0952069,
-          "duration_ms": 14995,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.0888902,
+          "duration_ms": 12051,
+          "billed_input": 45860,
+          "output_tokens": 1070,
           "matched_ids": [
             "M1"
           ],
           "false_positive_ids": [
             "S1",
-            "N1",
-            "I1"
+            "N1"
           ]
         }
       ]
     },
     "unchecked-error-go": {
-      "recall_mean": 0.6666666666666666,
-      "recall_std": 0.5773502691896258,
-      "precision_mean": 0.13888888888888887,
-      "precision_std": 0.1272937693043289,
-      "severity_accuracy_mean": 0.6666666666666666,
-      "false_positive_mean": 4.333333333333333,
-      "cost_mean": 0.1007845,
-      "duration_mean_ms": 21584,
-      "billed_input_mean": 94627.66666666667,
-      "output_tokens_mean": 1530.6666666666667,
-      "cache_read_ratio_mean": 0.6770763961316367,
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.21666666666666667,
+      "precision_std": 0.028867513459481284,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 3.6666666666666665,
+      "cost_mean": 0.0932057,
+      "duration_mean_ms": 16608,
+      "billed_input_mean": 46207.333333333336,
+      "output_tokens_mean": 1429.6666666666667,
+      "cache_read_ratio_mean": 0.3444481107638568,
       "runs_measured": 3,
       "runs_attempted": 3,
       "runs": [
         {
           "outcome": "measured",
           "recall": 1.0,
-          "precision": 0.25,
+          "precision": 0.2,
           "severity_accuracy": 1.0,
-          "false_positive_count": 3,
+          "false_positive_count": 4,
           "false_positive_ok": false,
-          "cost_usd": 0.0980018,
-          "duration_ms": 20388,
+          "cost_usd": 0.0952973,
+          "duration_ms": 18299,
+          "billed_input": 46242,
+          "output_tokens": 1632,
           "matched_ids": [
             "M1"
           ],
           "false_positive_ids": [
+            "M2",
             "S1",
             "S2",
             "N1"
@@ -786,16 +1219,19 @@
         },
         {
           "outcome": "measured",
-          "recall": 0.0,
-          "precision": 0.0,
-          "severity_accuracy": 0.0,
-          "false_positive_count": 5,
+          "recall": 1.0,
+          "precision": 0.2,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 4,
           "false_positive_ok": false,
-          "cost_usd": 0.1008045,
-          "duration_ms": 22068,
-          "matched_ids": [],
+          "cost_usd": 0.09197520000000001,
+          "duration_ms": 15726,
+          "billed_input": 46287,
+          "output_tokens": 1289,
+          "matched_ids": [
+            "M1"
+          ],
           "false_positive_ids": [
-            "M1",
             "S1",
             "S2",
             "N1",
@@ -805,20 +1241,20 @@
         {
           "outcome": "measured",
           "recall": 1.0,
-          "precision": 0.16666666666666666,
+          "precision": 0.25,
           "severity_accuracy": 1.0,
-          "false_positive_count": 5,
+          "false_positive_count": 3,
           "false_positive_ok": false,
-          "cost_usd": 0.1035472,
-          "duration_ms": 22296,
+          "cost_usd": 0.0923446,
+          "duration_ms": 15800,
+          "billed_input": 46093,
+          "output_tokens": 1368,
           "matched_ids": [
             "M1"
           ],
           "false_positive_ids": [
             "S1",
             "S2",
-            "S3",
-            "N1",
             "I1"
           ]
         }

@@ -35,6 +35,17 @@ sys.path.insert(0, str(_AI_LIB_DIR))
 
 from agent import backend as ai_backend  # noqa: E402
 from eval import conditions  # noqa: E402
+from eval.floors import (  # noqa: E402
+    FLOORS_FILENAME,
+    apply_accept_regressions,
+    baselines_from_output,
+    compare_against_floors,
+    floors_path,
+    format_floor_breaches,
+    load_floors,
+    parse_accept_regression,
+    ratchet_floors,
+)
 from eval.scoring import (  # noqa: E402
     SCHEMA_VERSION,
     SESSION_SCHEMA_VERSION,
@@ -209,6 +220,8 @@ def _load_baselines(results_dir: str, backend: str | None) -> dict[str, dict]:
     if not backend or not results_path.is_dir():
         return baselines
     for f in sorted(results_path.glob("*.json")):
+        if f.name == FLOORS_FILENAME:
+            continue
         try:
             data = json.loads(f.read_text())
         except (json.JSONDecodeError, OSError) as e:
@@ -480,9 +493,17 @@ def _run_post_eval(
 ) -> int:
     output = _flatten_full_arm(output)
     exit_code = 0
+    accepts, accept_err = _accepts_from_args(args)
+    if accept_err:
+        print(f"error: {accept_err}", file=sys.stderr)
+        return 3
 
-    if args.compare:
+    if args.compare or args.save_baselines:
         exit_code = _run_comparison(args, output, repo_root)
+    if args.save_baselines:
+        floor_code = _run_floors_gate(args, output, repo_root, accepts)
+        if floor_code:
+            exit_code = floor_code
 
     if not args.save_baselines:
         return exit_code
@@ -553,8 +574,49 @@ def _run_post_eval(
     written = _save_baselines(output, results_dir)
     for path in written:
         print(f"Baseline written: {path}", file=sys.stderr)
+    floors_file = ratchet_floors(output, results_dir, accepts)
+    print(f"Floors written: {floors_file}", file=sys.stderr)
 
     return exit_code
+
+
+def _accepts_from_args(args: argparse.Namespace) -> tuple[list, str]:
+    specs = list(getattr(args, "accept_regression", None) or [])
+    if not specs:
+        return [], ""
+    parsed = []
+    for spec in specs:
+        try:
+            parsed.append(parse_accept_regression(spec))
+        except ValueError as exc:
+            return [], str(exc)
+    return parsed, ""
+
+
+def _run_floors_gate(
+    args: argparse.Namespace, output: dict, repo_root: Path, accepts: list,
+) -> int:
+    path = floors_path(_resolve_results_dir(args, repo_root))
+    if not path.is_file():
+        return 0
+    floors = load_floors(path)
+    if accepts:
+        floors = apply_accept_regressions(floors, accepts, output)
+    code = 0
+    for baseline in baselines_from_output(output):
+        comparison = compare_against_floors(
+            floors, baseline, int(output.get("runs_per_entry") or 1),
+        )
+        printed = format_floor_breaches(comparison)
+        if comparison.stale_reasons:
+            print("floor notices:", file=sys.stderr)
+            print(printed, file=sys.stderr)
+        if comparison.ok:
+            continue
+        print("floor regressions:", file=sys.stderr)
+        print(printed, file=sys.stderr)
+        code = 2
+    return code
 
 
 def _run_comparison(
@@ -644,7 +706,13 @@ def main():
     )
     parser.add_argument(
         "--save-baselines", action="store_true",
-        help="Write per-model baseline files to eval/results/",
+        help="Write per-model baseline files to eval/results/ "
+             "(refuses when the high-water floors would drop)",
+    )
+    parser.add_argument(
+        "--accept-regression", action="append", default=[],
+        metavar="SPEC",
+        help="Allow a floor drop: entry/metric=value — reason (repeatable)",
     )
     parser.add_argument(
         "--compare", action="store_true",

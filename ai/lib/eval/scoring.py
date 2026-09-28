@@ -27,6 +27,11 @@ A run that never executed is not a measurement. `RunOutcome` records that, and
 `aggregate_runs` averages only the measured runs — an invocation that died before
 the agent did any work would otherwise land as recall 0, indistinguishable from a
 genuine miss and averaged into the figure a baseline is written from.
+
+The high-water ratchet (`eval.floors`) is a separate gate from the previous-file
+diff: it compares a run against the best value ever recorded, not the last one.
+`--save-baselines` refuses a write that would lower a floor, and the committed
+`eval/results/floors.json` is the document `validate-eval-floors` holds.
 """
 
 # doc-group: eval
@@ -312,6 +317,22 @@ def validate_baseline_schema(data: object) -> list[str]:
 TOKEN_REGRESSION_RATIO = 0.15
 CACHE_READ_FLOOR = 0.60
 
+# Single-run noise on a 3-run mean is ±1/3. Two -0.222 decay steps sum to
+# -0.444, which clears that floor; one step does not. 1e-9 keeps a drop of
+# exactly one run's quantum from false-firing on float representation of 1/3.
+def entry_recall_tolerance(runs_per_entry: int) -> float:
+    return 1.0 / runs_per_entry + 1e-9
+
+
+# Same 1/3 quantum, rounded up so a 0.333 severity drop is still noise.
+ENTRY_SEVERITY_TOLERANCE = 0.34
+# Replaces the 0.5 that sat below one run's quantum (0.333) and therefore
+# gated noise. 1.5 is a bit over four runs flipping on a 3-run mean.
+ENTRY_FALSE_POSITIVE_TOLERANCE = 1.5
+# Mean recall / precision over the floored set. One noisy entry of 12 is
+# 0.222/12 ≈ 0.019; two decay steps on one entry are 0.444/12 ≈ 0.037.
+AGGREGATE_TOLERANCE = 0.03
+
 _RELATIVE_TOKEN_METRICS = ("billed_input_mean", "output_tokens_mean")
 _DISPLAY_METRICS = ("cost_mean", "duration_mean_ms")
 
@@ -365,7 +386,7 @@ def _gate_quality_metrics(base: dict, cur: dict, threshold: float) -> dict[str, 
     }
     metrics["false_positive_mean"] = _compare_metric(
         base.get("false_positive_mean", 0.0), cur.get("false_positive_mean", 0.0),
-        0.5, higher_is_better=False,
+        ENTRY_FALSE_POSITIVE_TOLERANCE, higher_is_better=False,
     )
     return metrics
 
@@ -604,3 +625,31 @@ def _format_ab_delta_row(entry: str, model: str, aggs: dict[str, dict]) -> str:
         f"| {entry} | {model} | delta "
         f"| - | {pass_d:+.0%} | {billed_d:+.0f} | {out_d:+.0f} |"
     )
+
+
+# Floor ratchet names live in eval.floors so this file stays under the code-line
+# cap. Imported lazily so eval.floors can read the constants above without a
+# circular import at module load.
+_FLOOR_EXPORTS = frozenset({
+    "FloorAccept",
+    "FloorBreach",
+    "FloorComparison",
+    "FloorRecord",
+    "FloorSet",
+    "apply_accept_regressions",
+    "baseline_stem",
+    "compare_against_floors",
+    "format_floor_breaches",
+    "load_floors",
+    "parse_accept_regression",
+    "raise_floors",
+    "validate_floors_document",
+    "write_floors",
+})
+
+
+def __getattr__(name: str):
+    if name not in _FLOOR_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from eval import floors as _floors
+    return getattr(_floors, name)

@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Hold committed eval baselines to the high-water floors in floors.json.
+
+Does not use git — CI checks out depth-1, and origin/main is not there.
+
+Usage: bin/local/validate-eval-floors [--quiet] [RESULTS_DIR]
+Exit code: 0 if floors hold (or floors.json is absent), 1 on breach or grammar error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_SCRIPT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_SCRIPT_ROOT / "ai" / "lib"))
+
+from eval.floors import (  # noqa: E402
+    FLOORS_FILENAME,
+    compare_against_floors,
+    format_floor_breaches,
+    load_floors,
+    validate_floors_document,
+)
+
+
+def _iter_baselines(results_dir: Path) -> list[Path]:
+    paths = []
+    for path in sorted(results_dir.glob("*.json")):
+        if path.name == FLOORS_FILENAME:
+            continue
+        paths.append(path)
+    return paths
+
+
+def _report(message: str, quiet: bool, *, error: bool = False) -> None:
+    stream = sys.stderr if error else sys.stdout
+    if error or not quiet:
+        print(message, file=stream)
+
+
+def _check_baseline(floors, path: Path, quiet: bool) -> int:
+    try:
+        baseline = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"✗ {path.name}: {exc}", file=sys.stderr)
+        return 1
+    runs = int(baseline.get("runs_per_entry") or 1)
+    comparison = compare_against_floors(floors, baseline, runs)
+    if comparison.stale_reasons and not quiet:
+        print(f"  stale markers in {path.name}:")
+        print(format_floor_breaches(comparison))
+    if comparison.ok:
+        _report(f"  ✓ {path.name}: floors hold", quiet)
+        return 0
+    print(f"✗ {path.name}: floor breach", file=sys.stderr)
+    print(format_floor_breaches(comparison), file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate eval baselines against committed high-water floors.",
+    )
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "results_dir", nargs="?", default=None,
+        help="Directory holding floors.json and baseline files "
+             "(default: <repo>/eval/results)",
+    )
+    args = parser.parse_args()
+    results_dir = Path(args.results_dir) if args.results_dir else (
+        _SCRIPT_ROOT / "eval" / "results"
+    )
+    floors_path = results_dir / FLOORS_FILENAME
+    if not floors_path.is_file():
+        print(f"notice: {floors_path} is absent — skipping floor checks")
+        return 0
+    try:
+        data = json.loads(floors_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"✗ {FLOORS_FILENAME}: {exc}", file=sys.stderr)
+        return 1
+    grammar = validate_floors_document(data)
+    if grammar:
+        print(f"✗ {FLOORS_FILENAME}: schema errors", file=sys.stderr)
+        for err in grammar:
+            print(f"  {err}", file=sys.stderr)
+        return 1
+    floors = load_floors(floors_path)
+    failures = 0
+    for path in _iter_baselines(results_dir):
+        failures += _check_baseline(floors, path, args.quiet)
+    if failures:
+        print(f"✗ {failures} baseline(s) breached floors", file=sys.stderr)
+        return 1
+    _report(f"✓ floors hold ({floors_path})", args.quiet)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

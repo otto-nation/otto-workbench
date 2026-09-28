@@ -2726,6 +2726,20 @@ Membership is explicit on both sides rather than "kept is everything not
 dropped": a rule added later would otherwise join the kept arm silently and
 change what the two conditions mean without anyone editing this file.
 
+### eval/floors.py
+
+High-water ratchet for committed eval baselines.
+
+A predecessor-relative gate cannot catch slow decay: one run flipping on a
+3-run mean is ±0.333, and each observed decay step was -0.222. Any threshold
+that is noise-safe misses the decay; any threshold that catches it false-fires.
+This module compares against the best value ever recorded. Two -0.222 steps
+sum to -0.444, which clears the 0.334 noise floor.
+
+`eval-models --save-baselines` and `bin/local/validate-eval-floors` both call
+the functions here. An entry in a baseline with no floor record fails — deleting
+a key must not defeat the gate.
+
 ### eval/rules_canary.py
 
 Does `--add-dir` still bring the operator's coding rules with it.
@@ -2800,6 +2814,11 @@ A run that never executed is not a measurement. `RunOutcome` records that, and
 `aggregate_runs` averages only the measured runs — an invocation that died before
 the agent did any work would otherwise land as recall 0, indistinguishable from a
 genuine miss and averaged into the figure a baseline is written from.
+
+The high-water ratchet (`eval.floors`) is a separate gate from the previous-file
+diff: it compares a run against the best value ever recorded, not the last one.
+`--save-baselines` refuses a write that would lower a floor, and the committed
+`eval/results/floors.json` is the document `validate-eval-floors` holds.
 
 ### eval/scoring_cifix.py
 

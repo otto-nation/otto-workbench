@@ -84,6 +84,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-tool-schema` | Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe |
 | `validate-yq-version` | Fails when this machine's yq is older than the one CI pins — an expression the older parser rejects fails every registry read at once |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
+| `validate-eval-floors` | Holds committed eval baselines to the high-water floors in eval/results/floors.json |
 | `validate-docs-composed` | Validates that every composed doc matches what its docs/*.src.md composes to |
 | `validate-doc-reference` | Validates that a source doc renders every module group its source set declares |
 | `validate-doc-budget` | Validates that a doc declaring a line budget stays within it and holds no '####' heading |

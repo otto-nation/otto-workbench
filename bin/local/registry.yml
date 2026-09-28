@@ -139,6 +139,11 @@ tools:
     visibility: brief
     description: "Validates eval baseline files for schema correctness and corpus coverage"
 
+  - name: validate-eval-floors
+    permission: false
+    visibility: brief
+    description: "Holds committed eval baselines to the high-water floors in eval/results/floors.json"
+
   - name: validate-docs-composed
     permission: false
     visibility: brief

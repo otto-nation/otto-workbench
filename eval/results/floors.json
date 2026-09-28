@@ -3,575 +3,592 @@
   "backends": {
     "claude-sonnet": {
       "ci-fix-missing-binary": {
-        "recall_mean": {
-          "floor": 1.0,
-          "best": 1.0
+        "billed_input_mean": {
+          "floor": 198898.33333333334,
+          "best": 164739.33333333334,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
         },
-        "precision_mean": {
-          "floor": 1.0,
-          "best": 1.0
-        },
-        "severity_accuracy_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        "cache_read_ratio_mean": {
+          "floor": 0.850868079043531,
+          "best": 0.850868079043531
         },
         "false_positive_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "cache_read_ratio_mean": {
-          "floor": 0.8467467321720639,
-          "best": 0.8467467321720639
-        },
-        "billed_input_mean": {
-          "floor": 198898.33333333334,
-          "best": 198898.33333333334
         },
         "output_tokens_mean": {
           "floor": 2869.0,
-          "best": 2869.0
-        }
-      },
-      "ci-fix-sed-portability": {
-        "recall_mean": {
+          "best": 2164.6666666666665,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "ci-fix-sed-portability": {
+        "billed_input_mean": {
+          "floor": 237633.0,
+          "best": 185600.0,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
         },
         "cache_read_ratio_mean": {
           "floor": 0.8706878832708749,
           "best": 0.8706878832708749
         },
-        "billed_input_mean": {
-          "floor": 237633.0,
-          "best": 237633.0
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
-          "floor": 3483.0,
-          "best": 3483.0
-        }
-      },
-      "command-injection-bash": {
+          "floor": 3316.6666666666665,
+          "best": 3316.6666666666665
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
         "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
-          "floor": 0.18888888888888888,
-          "best": 0.18888888888888888
-        },
         "severity_accuracy_mean": {
-          "floor": 1.0,
-          "best": 1.0
-        },
-        "false_positive_mean": {
-          "floor": 4.333333333333333,
-          "best": 4.333333333333333
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "command-injection-bash": {
+        "billed_input_mean": {
+          "floor": 107482.0,
+          "best": 82288.66666666667,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
         },
         "cache_read_ratio_mean": {
           "floor": 0.6990834274197182,
           "best": 0.6990834274197182
         },
-        "billed_input_mean": {
-          "floor": 107482.0,
-          "best": 107482.0
+        "false_positive_mean": {
+          "floor": 4.333333333333333,
+          "best": 4.333333333333333
         },
         "output_tokens_mean": {
-          "floor": 3117.0,
-          "best": 3117.0
-        }
-      },
-      "nil-check-go": {
+          "floor": 3100.0,
+          "best": 3100.0
+        },
+        "precision_mean": {
+          "floor": 0.18888888888888888,
+          "best": 0.18888888888888888
+        },
         "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
-          "floor": 0.3055555555555555,
-          "best": 0.3055555555555555
-        },
         "severity_accuracy_mean": {
           "floor": 1.0,
           "best": 1.0
+        }
+      },
+      "nil-check-go": {
+        "billed_input_mean": {
+          "floor": 93637.66666666667,
+          "best": 79195.66666666667,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.6845367639150344,
+          "best": 0.6845367639150344
         },
         "false_positive_mean": {
           "floor": 2.3333333333333335,
           "best": 2.3333333333333335
-        },
-        "cache_read_ratio_mean": {
-          "floor": 0.680232492364139,
-          "best": 0.680232492364139
-        },
-        "billed_input_mean": {
-          "floor": 93637.66666666667,
-          "best": 93637.66666666667
         },
         "output_tokens_mean": {
           "floor": 1071.0,
           "best": 1071.0
-        }
-      },
-      "off-by-one-python": {
-        "recall_mean": {
-          "floor": 1.0,
-          "best": 1.0
         },
         "precision_mean": {
           "floor": 0.3055555555555555,
           "best": 0.3055555555555555
         },
-        "severity_accuracy_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "false_positive_mean": {
-          "floor": 2.3333333333333335,
-          "best": 2.3333333333333335
-        },
-        "cache_read_ratio_mean": {
-          "floor": 0.6778805342619352,
-          "best": 0.6778805342619352
-        },
+        "severity_accuracy_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        }
+      },
+      "off-by-one-python": {
         "billed_input_mean": {
           "floor": 94444.33333333333,
-          "best": 94444.33333333333
+          "best": 80125.0,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.6831186942678427,
+          "best": 0.6831186942678427
+        },
+        "false_positive_mean": {
+          "floor": 2.0,
+          "best": 2.0
         },
         "output_tokens_mean": {
           "floor": 1532.6666666666667,
           "best": 1532.6666666666667
+        },
+        "precision_mean": {
+          "floor": 0.3611111111111111,
+          "best": 0.3611111111111111
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 1.0,
+          "best": 1.0
         }
       },
       "pr-comments-approved": {
-        "recall_mean": {
-          "floor": 1.0,
-          "best": 1.0
+        "billed_input_mean": {
+          "floor": 127941.0,
+          "best": 105178.66666666667,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
         },
-        "precision_mean": {
-          "floor": 1.0,
-          "best": 1.0
-        },
-        "severity_accuracy_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        "cache_read_ratio_mean": {
+          "floor": 0.6986897820918442,
+          "best": 0.6986897820918442
         },
         "false_positive_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "cache_read_ratio_mean": {
-          "floor": 0.6959592152059079,
-          "best": 0.6959592152059079
-        },
-        "billed_input_mean": {
-          "floor": 127941.0,
-          "best": 127941.0
         },
         "output_tokens_mean": {
           "floor": 1393.3333333333333,
-          "best": 1393.3333333333333
+          "best": 1191.6666666666667,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
         }
       },
       "pr-comments-draft-only": {
-        "recall_mean": {
-          "floor": 1.0,
-          "best": 1.0
+        "billed_input_mean": {
+          "floor": 185348.66666666666,
+          "best": 152107.66666666666,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
         },
-        "precision_mean": {
-          "floor": 1.0,
-          "best": 1.0
-        },
-        "severity_accuracy_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        "cache_read_ratio_mean": {
+          "floor": 0.7897646379421929,
+          "best": 0.7897646379421929
         },
         "false_positive_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "cache_read_ratio_mean": {
-          "floor": 0.7867211387306972,
-          "best": 0.7867211387306972
-        },
-        "billed_input_mean": {
-          "floor": 185348.66666666666,
-          "best": 185348.66666666666
         },
         "output_tokens_mean": {
           "floor": 2718.6666666666665,
-          "best": 2718.6666666666665
-        }
-      },
-      "pr-comments-publish": {
-        "recall_mean": {
+          "best": 1956.0,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "pr-comments-publish": {
+        "billed_input_mean": {
+          "floor": 152330.33333333334,
+          "best": 152330.33333333334
         },
         "cache_read_ratio_mean": {
           "floor": 0.723643036758136,
           "best": 0.723643036758136
         },
-        "billed_input_mean": {
-          "floor": 152330.33333333334,
-          "best": 152330.33333333334
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 1534.0,
           "best": 1534.0
-        }
-      },
-      "pr-rebase-clean": {
-        "recall_mean": {
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "pr-rebase-clean": {
+        "billed_input_mean": {
+          "floor": 147158.66666666666,
+          "best": 102970.33333333333,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
         },
         "cache_read_ratio_mean": {
           "floor": 0.7663749691491132,
           "best": 0.7663749691491132
         },
-        "billed_input_mean": {
-          "floor": 147158.66666666666,
-          "best": 147158.66666666666
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 1500.6666666666667,
-          "best": 1500.6666666666667
-        }
-      },
-      "pr-rebase-conflicts-need-approval": {
-        "recall_mean": {
+          "best": 1208.6666666666667,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
-        },
-        "cache_read_ratio_mean": {
-          "floor": 0.6483957200332225,
-          "best": 0.6483957200332225
-        },
+        }
+      },
+      "pr-rebase-conflicts-need-approval": {
         "billed_input_mean": {
           "floor": 94791.33333333333,
           "best": 94791.33333333333
         },
-        "output_tokens_mean": {
-          "floor": 1244.6666666666667,
-          "best": 1244.6666666666667
-        }
-      },
-      "pr-rebase-push-refused": {
-        "recall_mean": {
-          "floor": 0.7777777777777778,
-          "best": 0.7777777777777778
-        },
-        "precision_mean": {
-          "floor": 1.0,
-          "best": 1.0
-        },
-        "severity_accuracy_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        "cache_read_ratio_mean": {
+          "floor": 0.7278342211986176,
+          "best": 0.7278342211986176
         },
         "false_positive_mean": {
           "floor": 0.0,
           "best": 0.0
         },
-        "cache_read_ratio_mean": {
-          "floor": 0.8752830643539767,
-          "best": 0.8752830643539767
-        },
-        "billed_input_mean": {
-          "floor": 332224.3333333333,
-          "best": 332224.3333333333
-        },
         "output_tokens_mean": {
-          "floor": 6407.333333333333,
-          "best": 6407.333333333333
-        }
-      },
-      "sql-injection-python": {
+          "floor": 1244.6666666666667,
+          "best": 967.0,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
         "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
-          "floor": 0.3055555555555555,
-          "best": 0.3055555555555555
-        },
         "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "pr-rebase-push-refused": {
+        "billed_input_mean": {
+          "floor": 321162.6666666667,
+          "best": 321162.6666666667
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.9011053140137101,
+          "best": 0.9011053140137101
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 6407.333333333333,
+          "best": 4154.333333333333,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "sql-injection-python": {
+        "billed_input_mean": {
+          "floor": 93881.33333333333,
+          "best": 79374.66666666667,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.6839803813498899,
+          "best": 0.6839803813498899
         },
         "false_positive_mean": {
           "floor": 2.3333333333333335,
           "best": 2.3333333333333335
         },
-        "cache_read_ratio_mean": {
-          "floor": 0.6794010282572658,
-          "best": 0.6794010282572658
-        },
-        "billed_input_mean": {
-          "floor": 93881.33333333333,
-          "best": 93881.33333333333
-        },
         "output_tokens_mean": {
           "floor": 1196.3333333333333,
           "best": 1196.3333333333333
+        },
+        "precision_mean": {
+          "floor": 0.3055555555555555,
+          "best": 0.3055555555555555
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 1.0,
+          "best": 1.0
         }
       },
       "unchecked-error-go": {
-        "recall_mean": {
-          "floor": 0.6666666666666666,
-          "best": 0.6666666666666666
-        },
-        "precision_mean": {
-          "floor": 0.13888888888888887,
-          "best": 0.13888888888888887
-        },
-        "severity_accuracy_mean": {
-          "floor": 0.6666666666666666,
-          "best": 0.6666666666666666
-        },
-        "false_positive_mean": {
-          "floor": 4.333333333333333,
-          "best": 4.333333333333333
-        },
-        "cache_read_ratio_mean": {
-          "floor": 0.6770763961316367,
-          "best": 0.6770763961316367
-        },
         "billed_input_mean": {
           "floor": 94627.66666666667,
-          "best": 94627.66666666667
+          "best": 80905.0,
+          "lowered": "prompt growth Aug 25 to Sep 8 — Claude-era cost cannot be re-recorded"
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.6807253377891346,
+          "best": 0.6807253377891346
+        },
+        "false_positive_mean": {
+          "floor": 3.6666666666666665,
+          "best": 3.6666666666666665
         },
         "output_tokens_mean": {
           "floor": 1530.6666666666667,
           "best": 1530.6666666666667
+        },
+        "precision_mean": {
+          "floor": 0.21666666666666667,
+          "best": 0.21666666666666667
+        },
+        "recall_mean": {
+          "floor": 0.6666666666666666,
+          "best": 1.0,
+          "lowered": "Sep 8 recorded 2/3 — one 3-run quantum, no identified cause; Claude-era score cannot be re-recorded"
+        },
+        "severity_accuracy_mean": {
+          "floor": 1.0,
+          "best": 1.0
         }
       }
     },
     "pi-claude-opus-5": {
       "ci-fix-masked-exit-status": {
-        "recall_mean": {
-          "floor": 1.0,
-          "best": 1.0
-        },
-        "precision_mean": {
-          "floor": 1.0,
-          "best": 1.0
-        },
-        "severity_accuracy_mean": {
-          "floor": 0.0,
-          "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        "billed_input_mean": {
+          "floor": 207331.0,
+          "best": 207331.0
         },
         "cache_read_ratio_mean": {
           "floor": 0.3948774570675588,
           "best": 0.3948774570675588
         },
-        "billed_input_mean": {
-          "floor": 207331.0,
-          "best": 207331.0
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 688.6666666666666,
           "best": 688.6666666666666
-        }
-      },
-      "ci-fix-missing-regression-test": {
-        "recall_mean": {
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "ci-fix-missing-regression-test": {
+        "billed_input_mean": {
+          "floor": 223320.33333333334,
+          "best": 223320.33333333334
         },
         "cache_read_ratio_mean": {
           "floor": 0.23109903674885815,
           "best": 0.23109903674885815
         },
-        "billed_input_mean": {
-          "floor": 223320.33333333334,
-          "best": 223320.33333333334
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 1431.3333333333333,
           "best": 1431.3333333333333
-        }
-      },
-      "ci-fix-mktemp-trap": {
-        "recall_mean": {
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "ci-fix-mktemp-trap": {
+        "billed_input_mean": {
+          "floor": 237484.66666666666,
+          "best": 237484.66666666666
         },
         "cache_read_ratio_mean": {
           "floor": 0.3535293196095335,
           "best": 0.3535293196095335
         },
-        "billed_input_mean": {
-          "floor": 237484.66666666666,
-          "best": 237484.66666666666
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 1167.3333333333333,
           "best": 1167.3333333333333
-        }
-      },
-      "ci-fix-stat-portability": {
-        "recall_mean": {
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "ci-fix-stat-portability": {
+        "billed_input_mean": {
+          "floor": 341316.6666666667,
+          "best": 341316.6666666667
         },
         "cache_read_ratio_mean": {
           "floor": 0.5442252549783179,
           "best": 0.5442252549783179
         },
-        "billed_input_mean": {
-          "floor": 341316.6666666667,
-          "best": 341316.6666666667
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 3128.6666666666665,
           "best": 3128.6666666666665
-        }
-      },
-      "ci-fix-unguarded-grep": {
-        "recall_mean": {
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "ci-fix-unguarded-grep": {
+        "billed_input_mean": {
+          "floor": 165700.0,
+          "best": 165700.0
         },
         "cache_read_ratio_mean": {
           "floor": 0.1647563014146608,
           "best": 0.1647563014146608
         },
-        "billed_input_mean": {
-          "floor": 165700.0,
-          "best": 165700.0
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 1029.6666666666667,
           "best": 1029.6666666666667
-        }
-      },
-      "ci-fix-unsafe-map-read": {
-        "recall_mean": {
+        },
+        "precision_mean": {
           "floor": 1.0,
           "best": 1.0
         },
-        "precision_mean": {
+        "recall_mean": {
           "floor": 1.0,
           "best": 1.0
         },
         "severity_accuracy_mean": {
           "floor": 0.0,
           "best": 0.0
-        },
-        "false_positive_mean": {
-          "floor": 0.0,
-          "best": 0.0
+        }
+      },
+      "ci-fix-unsafe-map-read": {
+        "billed_input_mean": {
+          "floor": 221758.0,
+          "best": 221758.0
         },
         "cache_read_ratio_mean": {
           "floor": 0.3611881029035479,
           "best": 0.3611881029035479
         },
-        "billed_input_mean": {
-          "floor": 221758.0,
-          "best": 221758.0
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
         },
         "output_tokens_mean": {
           "floor": 991.0,
           "best": 991.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
         }
       }
     }

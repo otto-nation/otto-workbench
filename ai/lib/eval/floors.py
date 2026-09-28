@@ -8,7 +8,9 @@ sum to -0.444, which clears the 0.334 noise floor.
 
 `eval-models --save-baselines` and `bin/local/validate-eval-floors` both call
 the functions here. An entry in a baseline with no floor record fails — deleting
-a key must not defeat the gate.
+a key must not defeat the gate. `floors.json` is the high-water across committed
+history of each lineage, not the current file; `seed_floors` folds historical
+baselines and never drops `best`.
 """
 
 # doc-group: eval
@@ -131,7 +133,9 @@ def _record_from(rec: dict) -> FloorRecord:
 
 def write_floors(path: Path | str, floors: FloorSet) -> None:
     path = Path(path)
-    path.write_text(json.dumps(_floors_to_dict(floors), indent=2) + "\n")
+    path.write_text(
+        json.dumps(_floors_to_dict(floors), indent=2, ensure_ascii=False) + "\n",
+    )
 
 
 def _floors_to_dict(floors: FloorSet) -> dict:
@@ -215,13 +219,29 @@ def _validate_record(prefix: str, metric: object, rec: object) -> list[str]:
     errors = _number_field_errors(loc, rec, "floor") + _number_field_errors(loc, rec, "best")
     if errors:
         return errors
-    floor, best = rec["floor"], rec["best"]
-    if floor > best:
-        return [f"{loc}: floor {floor} exceeds best {best}"]
-    lowered = rec.get("lowered")
+    return _floor_best_errors(
+        loc, metric, rec["floor"], rec["best"], rec.get("lowered"),
+    )
+
+
+def _needs_lowered(metric: str, floor: float, best: float) -> bool:
+    if metric in LOWER_IS_BETTER:
+        return floor > best
+    return floor < best
+
+
+def _floor_best_errors(
+    loc: str, metric: str, floor: float, best: float, lowered: object,
+) -> list[str]:
+    inverted = metric in LOWER_IS_BETTER
+    wrong_way = floor < best if inverted else floor > best
+    if wrong_way:
+        relation = "is below" if inverted else "exceeds"
+        return [f"{loc}: floor {floor} {relation} best {best}"]
     if lowered is None:
-        if floor < best:
-            return [f"{loc}: floor is below best with no lowered reason"]
+        if _needs_lowered(metric, floor, best):
+            side = "above" if inverted else "below"
+            return [f"{loc}: floor is {side} best with no lowered reason"]
         return []
     if not isinstance(lowered, str):
         return [f"{loc}: lowered must be a string"]
@@ -359,10 +379,22 @@ def _stale_in_entry(
     stem: str, name: str, metrics: Mapping[str, FloorRecord],
 ) -> list[str]:
     return [
-        f"{stem}/{name}/{metric}: lowered is stale (floor >= best)"
+        f"{stem}/{name}/{metric}: lowered is stale (floor at best)"
         for metric, rec in metrics.items()
-        if rec.lowered is not None and rec.floor >= rec.best
+        if rec.lowered is not None and not _needs_lowered(metric, rec.floor, rec.best)
     ]
+
+
+def seed_floors(baselines: list[dict]) -> FloorSet:
+    """High-water seed: fold ``raise_floors`` over historical baselines in order.
+
+    A later worse value never drops ``best``. Callers pass already-loaded
+    documents — this function does not read git.
+    """
+    floors = empty_floors()
+    for baseline in baselines:
+        floors = raise_floors(floors, baseline)
+    return floors
 
 
 def raise_floors(floors: FloorSet, baseline: dict) -> FloorSet:

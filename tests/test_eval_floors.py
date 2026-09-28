@@ -22,6 +22,7 @@ from eval.floors import (
     compare_against_floors,
     parse_accept_regression,
     raise_floors,
+    seed_floors,
     validate_floors_document,
 )
 from eval.scoring import entry_recall_tolerance
@@ -188,6 +189,62 @@ class TestFloorDocumentGrammar:
         })
         assert any("declares nothing" in e for e in errors)
 
+    def test_lower_is_better_floor_below_best_fails(self):
+        errors = validate_floors_document({
+            "schema_version": 1,
+            "backends": {STEM: {"e": {"billed_input_mean": {
+                "floor": 100.0, "best": 200.0,
+            }}}},
+        })
+        assert errors
+        assert any("is below best" in e for e in errors)
+
+    def test_lower_is_better_floor_above_best_needs_lowered(self):
+        errors = validate_floors_document({
+            "schema_version": 1,
+            "backends": {STEM: {"e": {"billed_input_mean": {
+                "floor": 200.0, "best": 100.0,
+            }}}},
+        })
+        assert errors
+        assert any("no lowered reason" in e for e in errors)
+
+    def test_lower_is_better_floor_above_best_with_lowered_passes(self):
+        errors = validate_floors_document({
+            "schema_version": 1,
+            "backends": {STEM: {"e": {"billed_input_mean": {
+                "floor": 200.0, "best": 100.0,
+                "lowered": "prompt growth — Claude-era cost cannot be re-recorded",
+            }}}},
+        })
+        assert errors == []
+
+
+class TestSeedFloors:
+    def test_later_worse_revision_keeps_the_earlier_best(self):
+        """e5383b3a recorded 1.0; a8dd81c8 recorded 0.778. best is 1.0."""
+        earlier = _baseline(INCIDENT_ENTRY, 1.0)
+        later = _baseline(INCIDENT_ENTRY, 0.7777777777777778)
+        floors = seed_floors([earlier, later])
+        rec = floors.backends[STEM][INCIDENT_ENTRY]["recall_mean"]
+        assert rec.best == 1.0
+        assert rec.floor == 1.0
+        drop = compare_against_floors(
+            floors, _baseline(INCIDENT_ENTRY, 0.556), 3,
+        )
+        assert not drop.ok
+        assert _recall_breach(drop).floor == 1.0
+        last_wins = seed_floors([later])
+        last = last_wins.backends[STEM][INCIDENT_ENTRY]["recall_mean"]
+        assert last.best == 0.7777777777777778
+        silent = compare_against_floors(
+            last_wins, _baseline(INCIDENT_ENTRY, 0.556), 3,
+        )
+        assert not any(
+            b.entry == INCIDENT_ENTRY and b.metric == "recall_mean"
+            for b in silent.breaches
+        ), "last-wins seed must miss the per-entry 0.556 incident"
+
 
 class TestRaiseFloors:
     def test_raises_best_on_improvement_and_never_lowers_it(self):
@@ -307,5 +364,24 @@ class TestValidateEvalFloors:
             capture_output=True, text=True, check=False,
         )
         assert proc.returncode == 1
+        assert INCIDENT_ENTRY in proc.stderr
+        assert "recall_mean" in proc.stderr
+
+    def test_committed_floors_catch_the_recorded_incident(self, tmp_path):
+        """0.556 vs the Aug 25 high-water of 1.0 must fail the real floors.json."""
+        src = REPO_ROOT / "eval" / "results"
+        floors = json.loads((src / "floors.json").read_text())
+        rec = floors["backends"][STEM][INCIDENT_ENTRY]["recall_mean"]
+        assert rec["best"] == 1.0
+        assert rec["floor"] == 1.0
+        baseline = json.loads((src / "claude-sonnet.json").read_text())
+        baseline["entries"][INCIDENT_ENTRY]["recall_mean"] = 0.556
+        (tmp_path / "floors.json").write_text(json.dumps(floors) + "\n")
+        (tmp_path / "claude-sonnet.json").write_text(json.dumps(baseline) + "\n")
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode != 0
         assert INCIDENT_ENTRY in proc.stderr
         assert "recall_mean" in proc.stderr

@@ -142,6 +142,19 @@ class TestCompareAgainstFloors:
         assert not result.ok
         assert "new-case" in result.unfloored_entries
 
+    def test_unfloored_new_name_does_not_block_save(self):
+        result = compare_against_floors(
+            _floors("kept", 1.0),
+            _baseline("kept", 1.0, extra_entries={
+                "new-case": {"recall_mean": 1.0, "precision_mean": 1.0},
+            }),
+            3,
+        )
+        assert not result.ok
+        assert not result.blocks_save(frozenset())
+        assert not result.blocks_save(frozenset({"kept"}))
+        assert result.blocks_save(frozenset({"kept", "new-case"}))
+
     def test_deleting_a_decayed_recall_mean_still_breaches(self):
         baseline = _baseline(INCIDENT_ENTRY, 0.556)
         del baseline["entries"][INCIDENT_ENTRY]["recall_mean"]
@@ -381,6 +394,114 @@ class TestSaveBaselinesRefusesRegression:
         assert not (results / "floors.json").exists()
         assert path.read_text() == original
 
+    def test_save_establishes_a_first_floor_for_a_new_case(self, em, tmp_path):
+        results = tmp_path / "results"
+        results.mkdir()
+        kept = _complete_metrics(1.0)
+        path = results / "claude-sonnet.json"
+        path.write_text(json.dumps(em._baseline_document(
+            "sonnet", "low", 3, {INCIDENT_ENTRY: kept}, "claude",
+        ), indent=2) + "\n")
+        (results / "floors.json").write_text(json.dumps({
+            "schema_version": 1,
+            "backends": {STEM: {INCIDENT_ENTRY: {
+                "recall_mean": {"floor": 1.0, "best": 1.0},
+            }}},
+        }) + "\n")
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {
+                INCIDENT_ENTRY: {"sonnet": kept},
+                "new-case": {"sonnet": _complete_metrics(1.0)},
+            },
+        }
+        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        assert code == 0
+        floors = json.loads((results / "floors.json").read_text())
+        rec = floors["backends"][STEM]["new-case"]["recall_mean"]
+        assert rec["floor"] == 1.0
+        assert rec["best"] == 1.0
+        saved = json.loads(path.read_text())
+        assert "new-case" in saved["entries"]
+
+    def test_save_establishes_floors_for_a_new_backend(self, em, tmp_path):
+        results = tmp_path / "results"
+        results.mkdir()
+        (results / "floors.json").write_text(json.dumps({
+            "schema_version": 1,
+            "backends": {STEM: {INCIDENT_ENTRY: {
+                "recall_mean": {"floor": 1.0, "best": 1.0},
+            }}},
+        }) + "\n")
+        output = {
+            "backend": "pi", "effort": "low", "runs_per_entry": 3,
+            "entries": {INCIDENT_ENTRY: {"opus": _complete_metrics(1.0)}},
+        }
+        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        assert code == 0
+        floors = json.loads((results / "floors.json").read_text())
+        rec = floors["backends"]["pi-opus"][INCIDENT_ENTRY]["recall_mean"]
+        assert rec["floor"] == 1.0
+        assert rec["best"] == 1.0
+        assert STEM in floors["backends"]
+        assert (results / "pi-opus.json").is_file()
+
+    def test_unfloored_entry_already_on_disk_still_refuses_save(
+        self, em, tmp_path,
+    ):
+        results = tmp_path / "results"
+        results.mkdir()
+        kept = _complete_metrics(1.0)
+        orphan = _complete_metrics(1.0)
+        path = results / "claude-sonnet.json"
+        original_doc = em._baseline_document(
+            "sonnet", "low", 3,
+            {INCIDENT_ENTRY: kept, "orphan": orphan},
+            "claude",
+        )
+        original = json.dumps(original_doc, indent=2) + "\n"
+        path.write_text(original)
+        (results / "floors.json").write_text(json.dumps({
+            "schema_version": 1,
+            "backends": {STEM: {INCIDENT_ENTRY: {
+                "recall_mean": {"floor": 1.0, "best": 1.0},
+            }}},
+        }) + "\n")
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {
+                INCIDENT_ENTRY: {"sonnet": kept},
+                "orphan": {"sonnet": orphan},
+            },
+        }
+        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        assert code != 0
+        assert path.read_text() == original
+        floors = json.loads((results / "floors.json").read_text())
+        assert "orphan" not in floors["backends"][STEM]
+
+    def test_seed_floors_prints_a_warning_when_it_reseeds(
+        self, em, tmp_path, capsys,
+    ):
+        results = tmp_path / "results"
+        results.mkdir()
+        path = results / "claude-sonnet.json"
+        path.write_text(json.dumps(em._baseline_document(
+            "sonnet", "low", 3,
+            {INCIDENT_ENTRY: _complete_metrics(1.0)}, "claude",
+        ), indent=2) + "\n")
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(1.0)}},
+        }
+        args = _save_args(results, seed_floors=True)
+        code = em._run_post_eval(args, output, tmp_path)
+        assert code == 0
+        err = capsys.readouterr().err
+        assert "--seed-floors is reseeding floors.json from this run" in err
+        assert "recovered from history" in err
+        assert (results / "floors.json").is_file()
+
 
 class TestParseAcceptRegression:
     def test_a_spec_without_a_reason_is_refused(self):
@@ -526,3 +647,19 @@ class TestValidateEvalFloors:
             capture_output=True, text=True, check=False,
         )
         assert proc.returncode == 0
+
+    def test_unfloored_entry_on_disk_fails_the_validator(self, tmp_path):
+        _write_validator_fixture(tmp_path, current=1.0)
+        baseline = json.loads((tmp_path / "claude-sonnet.json").read_text())
+        baseline["entries"]["orphan"] = {
+            "recall_mean": 1.0, "precision_mean": 1.0,
+        }
+        (tmp_path / "claude-sonnet.json").write_text(
+            json.dumps(baseline) + "\n",
+        )
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        assert "orphan" in proc.stderr

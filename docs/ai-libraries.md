@@ -2740,8 +2740,10 @@ sum to -0.444, which clears the 0.334 noise floor.
 the functions here. An entry in a baseline with no floor record fails — deleting
 a key must not defeat the gate. A floor record whose entry or metric is missing
 from the baseline also fails: the gate walks the floors, not the current file.
-`floors.json` is the high-water across committed history of each lineage;
-`seed_floors` folds historical baselines and never drops `best`.
+`--save-baselines` still writes a first floor for a name the on-disk baseline
+does not yet carry, and for a new backend with no file; the validator then
+holds that floor. `floors.json` is the high-water across committed history of
+each lineage; `seed_floors` folds historical baselines and never drops `best`.
 
 ### eval/rules_canary.py
 

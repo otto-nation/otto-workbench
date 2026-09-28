@@ -36,16 +36,12 @@ from agent import backend as ai_backend  # noqa: E402
 from eval import conditions  # noqa: E402
 from eval.floors import (  # noqa: E402
     FLOORS_FILENAME,
-    apply_accept_regressions,
+    SEED_FLOORS_WARNING,
     baseline_stem,
-    baselines_from_output,
-    compare_against_floors,
     floors_absent_with_baselines,
-    floors_path,
-    format_floor_breaches,
-    load_floors,
     parse_accept_regression,
     ratchet_floors,
+    save_floor_gate_messages,
 )
 from eval.scoring import (  # noqa: E402
     SCHEMA_VERSION,
@@ -566,15 +562,16 @@ def _run_post_eval(
         return 3
 
     results_dir = _resolve_results_dir(args, repo_root)
-    if floors_absent_with_baselines(results_dir) and not getattr(
-        args, "seed_floors", False,
-    ):
+    missing_floors = floors_absent_with_baselines(results_dir)
+    if missing_floors and not getattr(args, "seed_floors", False):
         print(
             "error: refusing to save baselines — floors.json is absent "
             "while baselines exist; pass --seed-floors to reseed from this run",
             file=sys.stderr,
         )
         return 1
+    if missing_floors:
+        print(SEED_FLOORS_WARNING, file=sys.stderr)
     written = _save_baselines(output, results_dir)
     for path in written:
         print(f"Baseline written: {path}", file=sys.stderr)
@@ -600,26 +597,11 @@ def _accepts_from_args(args: argparse.Namespace) -> tuple[list, str]:
 def _run_floors_gate(
     args: argparse.Namespace, output: dict, repo_root: Path, accepts: list,
 ) -> int:
-    path = floors_path(_resolve_results_dir(args, repo_root))
-    if not path.is_file():
-        return 0
-    floors = load_floors(path)
-    if accepts:
-        floors = apply_accept_regressions(floors, accepts, output)
-    code = 0
-    for baseline in baselines_from_output(output):
-        comparison = compare_against_floors(
-            floors, baseline, int(output.get("runs_per_entry") or 1),
-        )
-        printed = format_floor_breaches(comparison)
-        if comparison.stale_reasons:
-            print("floor notices:", file=sys.stderr)
-            print(printed, file=sys.stderr)
-        if comparison.ok:
-            continue
-        print("floor regressions:", file=sys.stderr)
-        print(printed, file=sys.stderr)
-        code = 2
+    code, messages = save_floor_gate_messages(
+        _resolve_results_dir(args, repo_root), output, accepts,
+    )
+    for message in messages:
+        print(message, file=sys.stderr)
     return code
 
 
@@ -715,8 +697,7 @@ def main():
     )
     parser.add_argument(
         "--seed-floors", action="store_true",
-        help="Allow --save-baselines to create floors.json from this run "
-             "when baselines already exist",
+        help="Reseed missing floors.json from this run's scores, not history",
     )
     parser.add_argument(
         "--accept-regression", action="append", default=[],

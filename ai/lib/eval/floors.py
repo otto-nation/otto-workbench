@@ -10,8 +10,10 @@ sum to -0.444, which clears the 0.334 noise floor.
 the functions here. An entry in a baseline with no floor record fails — deleting
 a key must not defeat the gate. A floor record whose entry or metric is missing
 from the baseline also fails: the gate walks the floors, not the current file.
-`floors.json` is the high-water across committed history of each lineage;
-`seed_floors` folds historical baselines and never drops `best`.
+`--save-baselines` still writes a first floor for a name the on-disk baseline
+does not yet carry, and for a new backend with no file; the validator then
+holds that floor. `floors.json` is the high-water across committed history of
+each lineage; `seed_floors` folds historical baselines and never drops `best`.
 """
 
 # doc-group: eval
@@ -22,7 +24,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Container, Mapping
 
 from eval.scoring import (
     AGGREGATE_TOLERANCE,
@@ -35,6 +37,11 @@ from eval.scoring import (
 
 FLOORS_FILENAME = "floors.json"
 FLOORS_SCHEMA_VERSION = 1
+SEED_FLOORS_WARNING = (
+    "warning: --seed-floors is reseeding floors.json from this run, "
+    "not from git history; `best` (and `floor`) are set from these "
+    "scores rather than recovered from history"
+)
 
 HIGHER_IS_BETTER = (
     "recall_mean", "precision_mean", "severity_accuracy_mean", "cache_read_ratio_mean",
@@ -89,6 +96,20 @@ class FloorComparison:
             self.breaches or self.aggregate_breaches or self.unfloored_entries
             or self.dropped_entries or self.missing_metrics
         )
+
+    def blocks_save(self, prior_entries: Container[str]) -> bool:
+        """Whether `--save-baselines` must refuse this comparison.
+
+        An unfloored name not in *prior_entries* is a first floor: the
+        ratchet writes it. An unfloored name already on disk is a deleted
+        floor and still refuses. The validator keeps using `ok`.
+        """
+        if (
+            self.breaches or self.aggregate_breaches
+            or self.dropped_entries or self.missing_metrics
+        ):
+            return True
+        return any(name in prior_entries for name in self.unfloored_entries)
 
 
 @dataclass(frozen=True)
@@ -526,6 +547,21 @@ def iter_baseline_paths(results_dir: str | Path) -> list[Path]:
     ]
 
 
+def load_prior_entry_names(
+    results_dir: str | Path, backend: str, model: str,
+) -> frozenset[str]:
+    """Entry names already recorded in this stem's on-disk baseline.
+
+    A missing file is a new backend (or first save): no names. Distinguishes
+    a new corpus case from a floor deleted under an existing entry.
+    """
+    path = Path(results_dir) / f"{baseline_stem(backend, model)}.json"
+    if not path.is_file():
+        return frozenset()
+    data = json.loads(path.read_text())
+    return frozenset(data.get("entries") or {})
+
+
 def floors_absent_with_baselines(results_dir: str | Path) -> bool:
     """True when baselines exist but ``floors.json`` does not.
 
@@ -568,6 +604,54 @@ def ratchet_floors(
         floors = raise_floors(floors, baseline)
     write_floors(path, floors)
     return path
+
+
+def save_floor_gate_messages(
+    results_dir: str | Path,
+    output: dict,
+    accepts: list[FloorAccept],
+) -> tuple[int, tuple[str, ...]]:
+    """Exit code and stderr chunks for `--save-baselines`' floor gate.
+
+    Unfloored names absent from the on-disk baseline are first floors and
+    do not refuse the save; `ratchet_floors` writes them. Unfloored names
+    already on disk are a deleted floor and still refuse.
+    """
+    directory = Path(results_dir)
+    path = floors_path(directory)
+    if not path.is_file():
+        return 0, ()
+    floors = load_floors(path)
+    if accepts:
+        floors = apply_accept_regressions(floors, accepts, output)
+    lines: list[str] = []
+    code = 0
+    runs = int(output.get("runs_per_entry") or 1)
+    for baseline in baselines_from_output(output):
+        comparison = compare_against_floors(floors, baseline, runs)
+        prior = load_prior_entry_names(
+            directory,
+            str(baseline.get("backend", "")),
+            str(baseline.get("model", "")),
+        )
+        blocking = comparison.blocks_save(prior)
+        printed = format_floor_breaches(comparison)
+        if comparison.stale_reasons:
+            lines.append("floor notices:")
+            lines.append(printed)
+        if blocking:
+            lines.append("floor regressions:")
+            lines.append(printed)
+            code = 2
+            continue
+        first = tuple(
+            name for name in comparison.unfloored_entries if name not in prior
+        )
+        if not first:
+            continue
+        lines.append("establishing first floors:")
+        lines.extend(f"  {name}" for name in first)
+    return code, tuple(lines)
 
 
 def format_floor_breaches(comparison: FloorComparison) -> str:

@@ -798,6 +798,27 @@ class TestStaticViolationsAsWork:
         assert len(adapter.items()) == 1
         assert "Duplicate static violation ids" in capsys.readouterr().err
 
+    def test_two_violations_with_no_id_are_warned_about_too(
+        self, git_wt, tmp_path, capsys,
+    ):
+        """An empty id collapses exactly as a repeated `SA1` does.
+
+        Excluding it would leave the guard silent on the case it is least able
+        to explain: an unaddressable violation has no line to be written back
+        to either, so losing it quietly is the worse of the two.
+        """
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        adapter = review_fix.ReviewFixAdapter(
+            job, [],
+            violations=[
+                _violation("", "src.py", 1, message="first"),
+                _violation("", "src.py", 2, message="second"),
+            ],
+        )
+
+        assert len(adapter.items()) == 1
+        assert "Duplicate static violation ids" in capsys.readouterr().err
+
     def test_a_violation_off_the_branch_is_still_in_scope(self, git_wt, tmp_path):
         """The defensive union in `_anchor_files`, exercised rather than assumed.
 

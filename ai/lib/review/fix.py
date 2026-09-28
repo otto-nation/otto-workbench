@@ -572,7 +572,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         violations = violations or []
         violation_ids = [v.id for v in violations]
         duplicate_ids = {
-            vid for vid in violation_ids if vid and violation_ids.count(vid) > 1
+            vid for vid in violation_ids if violation_ids.count(vid) > 1
         }
         if duplicate_ids:
             # `run_static_analysis` renumbers globally on every call, so this
@@ -580,9 +580,12 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
             # the hand-built list this constructor does not otherwise refuse:
             # the dict below silently keeps the last of a duplicate id and drops
             # the rest, and a dropped violation is a fix the operator cannot
-            # find unless something says so. The guard only catches a truthy
-            # repeated id — two hand-built violations both carrying id="" still
-            # collapse into one silently, the same hand-built-list caveat.
+            # find unless something says so.
+            #
+            # The empty id counts. Two violations both carrying `""` collapse
+            # exactly as two `SA1`s do, and an unaddressable violation is the
+            # worse of the two to lose quietly — excluding it would have made
+            # the guard silent on the case it is least able to explain.
             log.warn(
                 f"Duplicate static violation ids {sorted(duplicate_ids)} — "
                 "keeping the last of each, dropping the rest"

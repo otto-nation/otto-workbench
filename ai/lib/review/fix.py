@@ -580,7 +580,9 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
             # the hand-built list this constructor does not otherwise refuse:
             # the dict below silently keeps the last of a duplicate id and drops
             # the rest, and a dropped violation is a fix the operator cannot
-            # find unless something says so.
+            # find unless something says so. The guard only catches a truthy
+            # repeated id — two hand-built violations both carrying id="" still
+            # collapse into one silently, the same hand-built-list caveat.
             log.warn(
                 f"Duplicate static violation ids {sorted(duplicate_ids)} — "
                 "keeping the last of each, dropping the rest"

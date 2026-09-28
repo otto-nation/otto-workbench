@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 from datetime import datetime, timezone
+from itertools import product
 from pathlib import Path
 
 # ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
@@ -43,6 +44,17 @@ from eval.scoring import (  # noqa: E402
     incomplete_entries,
 )
 from eval.task import EVAL_CASE_BUDGET, RunOptions, get_task, task_name  # noqa: E402
+
+
+def _no_match_message(entry_filter: str, task_filter: str) -> str:
+    if entry_filter and not task_filter:
+        return f"error: corpus entry not found: {entry_filter}"
+    parts = []
+    if entry_filter:
+        parts.append(f"entry={entry_filter}")
+    if task_filter:
+        parts.append(f"task={task_filter}")
+    return f"error: no corpus entries matching {', '.join(parts)}"
 
 
 def discover_entries(corpus_dir: str, entry_filter: str, task_filter: str = "") -> list[dict]:
@@ -77,18 +89,7 @@ def discover_entries(corpus_dir: str, entry_filter: str, task_filter: str = "") 
         })
 
     if not entries and (entry_filter or task_filter):
-        if entry_filter and not task_filter:
-            print(f"error: corpus entry not found: {entry_filter}", file=sys.stderr)
-        else:
-            parts = []
-            if entry_filter:
-                parts.append(f"entry={entry_filter}")
-            if task_filter:
-                parts.append(f"task={task_filter}")
-            print(
-                f"error: no corpus entries matching {', '.join(parts)}",
-                file=sys.stderr,
-            )
+        print(_no_match_message(entry_filter, task_filter), file=sys.stderr)
         sys.exit(1)
 
     return entries
@@ -224,15 +225,18 @@ def _build_output(
     }
 
 
+def _full_arm_row(data) -> dict:
+    if isinstance(data, dict) and "full" in data and "recall_mean" not in data:
+        return data["full"]
+    return data
+
+
 def _flatten_full_arm(output: dict) -> dict:
     """Session output nests condition; save/compare stay entries[name][model]."""
     entries: dict[str, dict] = {}
     for name, models in output.get("entries", {}).items():
         for model, data in models.items():
-            if isinstance(data, dict) and "full" in data and "recall_mean" not in data:
-                entries.setdefault(name, {})[model] = data["full"]
-            else:
-                entries.setdefault(name, {})[model] = data
+            entries.setdefault(name, {})[model] = _full_arm_row(data)
     flat = dict(output)
     flat["entries"] = entries
     flat["schema_version"] = SCHEMA_VERSION
@@ -273,6 +277,19 @@ def _report_run(artifacts, result: ScoringResult, total_expected: int) -> None:
         f"FP: {result.false_positive_count}{over}",
         file=sys.stderr,
     )
+
+
+def _run_arm(
+    entry: dict, model: str, label: str, arm: str,
+    args: argparse.Namespace, config_dir: str,
+) -> list[ScoringResult]:
+    return [
+        _run_single(
+            entry, model, label, run_idx, args,
+            arm, config_dir,
+        )
+        for run_idx in range(args.runs)
+    ]
 
 
 def _run_single(
@@ -358,17 +375,12 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
         }
 
         all_results: dict[tuple[str, str, str], list] = {}
-        for entry in entries:
-            for model, label in zip(models, model_labels):
-                for arm in arms:
-                    key = (entry["name"], label, arm)
-                    all_results[key] = [
-                        _run_single(
-                            entry, model, label, run_idx, args,
-                            arm, str(seeded[arm]),
-                        )
-                        for run_idx in range(args.runs)
-                    ]
+        for entry, (model, label), arm in product(
+            entries, zip(models, model_labels), arms,
+        ):
+            all_results[(entry["name"], label, arm)] = _run_arm(
+                entry, model, label, arm, args, str(seeded[arm]),
+            )
 
         print("\n" + format_summary_table(all_results))
 

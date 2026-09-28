@@ -105,6 +105,7 @@ class TestFormatSummaryTable:
 def _valid_baseline() -> dict:
     return {
         "schema_version": 1,
+        "backend": "claude",
         "model": "sonnet",
         "effort": "low",
         "runs_per_entry": 1,
@@ -147,6 +148,18 @@ class TestValidateBaselineSchema:
         errors = validate_baseline_schema(data)
         assert any("model" in e for e in errors)
 
+    def test_missing_backend(self):
+        data = _valid_baseline()
+        del data["backend"]
+        errors = validate_baseline_schema(data)
+        assert any("backend" in e for e in errors)
+
+    def test_unknown_backend(self):
+        data = _valid_baseline()
+        data["backend"] = "None"
+        errors = validate_baseline_schema(data)
+        assert any("backend" in e for e in errors)
+
     def test_missing_entries(self):
         data = _valid_baseline()
         del data["entries"]
@@ -177,6 +190,7 @@ class TestValidateBaselineSchema:
 def _baseline_data(recall: float = 0.8, precision: float = 0.9) -> dict:
     return {
         "schema_version": 1,
+        "backend": "claude",
         "model": "sonnet",
         "entries": {
             "test-entry": {
@@ -321,7 +335,12 @@ def _token_baseline(**overrides) -> dict:
         "cache_read_ratio_mean": 0.85,
     }
     entry.update(overrides)
-    return {"schema_version": 2, "model": "sonnet", "entries": {"test-entry": entry}}
+    return {
+        "schema_version": 2,
+        "backend": "claude",
+        "model": "sonnet",
+        "entries": {"test-entry": entry},
+    }
 
 
 def _token_current(**overrides) -> dict:
@@ -640,8 +659,10 @@ def test_a_baseline_file_keeps_the_flat_schema_3_shape(em, tmp_path):
         },
         "low", 1,
     )
+    session["backend"] = "claude"
     assert em._run_post_eval(_save_baseline_args(tmp_path), session, tmp_path) == 0
-    base = json.loads((tmp_path / "results" / "sonnet.json").read_text())
+    base = json.loads((tmp_path / "results" / "claude-sonnet.json").read_text())
+    assert base["backend"] == "claude"
     assert base["schema_version"] == eval_scoring.SCHEMA_VERSION
     assert base["entries"]["e"]["recall_mean"] == 0.9
     assert "full" not in base["entries"]["e"]

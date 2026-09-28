@@ -2778,11 +2778,13 @@ Task-agnostic: what a run *is* and how it is scored belongs to the task
 of a score, the statistics over repeated runs, and the baseline diff — the parts
 every task shares.
 
-`eval-models --compare` diffs a run against the baselines in `eval/results/` and
-exits `2` on a regression. The gate is deliberately narrow, because a gate that
-flaps gets disabled: token growth, quality drops and false positives fail past
-the thresholds declared below, the cache-read ratio fails below its floor, and
-cost and duration are reported but never gated.
+`eval-models --compare` diffs a run against the baselines in `eval/results/`
+that were recorded on the same backend, and exits `2` on a regression. A run
+whose backend has no file yet is a new baseline, not a failure. The gate is
+deliberately narrow, because a gate that flaps gets disabled: token growth,
+quality drops and false positives fail past the thresholds declared below, the
+cache-read ratio fails below its floor, and cost and duration are reported but
+never gated.
 
 Tokens are gated and cost is not because tokens are what a change controls; the
 dollar figure also moves with model prices, and duration moves with machine

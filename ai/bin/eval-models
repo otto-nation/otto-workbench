@@ -115,10 +115,46 @@ def _serialize_run(r: ScoringResult) -> dict:
     }
 
 
+_UNRESOLVED_MODEL_LABELS = frozenset({"", "(default)"})
+
+
 def _sanitize_model_label(label: str) -> str:
     s = label.replace("(", "").replace(")", "")
     s = re.sub(r"[^a-zA-Z0-9._-]", "-", s)
     return s.strip("-") or "default"
+
+
+def _backend_label() -> str | None:
+    """The selected backend's filename token, or None when nothing is selected.
+
+    None is a missing identity, not the string "None": a file named
+    ``None-sonnet.json`` would look like a recorded backend and compare as one.
+    """
+    selected = ai_backend.selected_backend()
+    if selected is None:
+        return None
+    return selected.value
+
+
+def _baseline_filename(backend: str, model_label: str) -> str:
+    """``{backend}-{sanitized-model}.json``, e.g. ``claude-sonnet.json``."""
+    return f"{backend}-{_sanitize_model_label(model_label)}.json"
+
+
+def _unique_served_model(usage) -> str:
+    """The session-log model when exactly one served; else unresolved."""
+    models = [m for m in usage.cost_by_model if m]
+    if len(models) == 1:
+        return models[0]
+    return ""
+
+
+def _unresolved_model_labels(output: dict) -> list[str]:
+    """Model keys that are still the empty/--models-omitted placeholder."""
+    labels: list[str] = []
+    for models in output.get("entries", {}).values():
+        labels.extend(models)
+    return sorted({label for label in labels if label in _UNRESOLVED_MODEL_LABELS})
 
 
 def _baseline_document(
@@ -126,10 +162,12 @@ def _baseline_document(
     effort: str,
     runs_per_entry: int,
     entry_results: dict[str, dict],
+    backend: str,
 ) -> dict:
-    """A per-model baseline file: schema 3, entries[name] -> metrics."""
+    """A per-backend, per-model baseline file: schema 3, entries[name] -> metrics."""
     return {
         "schema_version": SCHEMA_VERSION,
+        "backend": backend,
         "model": model_label,
         "effort": effort,
         "runs_per_entry": runs_per_entry,
@@ -144,6 +182,7 @@ def _save_baselines(
 ) -> list[str]:
     results_path = Path(results_dir)
     results_path.mkdir(parents=True, exist_ok=True)
+    backend = output["backend"]
 
     models_data: dict[str, dict[str, dict]] = {}
     for entry_name, entry_models in output.get("entries", {}).items():
@@ -153,26 +192,29 @@ def _save_baselines(
     written = []
     for model_label, entry_data in sorted(models_data.items()):
         baseline = _baseline_document(
-            model_label, output["effort"], output["runs_per_entry"], entry_data,
+            model_label, output["effort"], output["runs_per_entry"],
+            entry_data, backend,
         )
-        filename = _sanitize_model_label(model_label) + ".json"
-        filepath = results_path / filename
+        filepath = results_path / _baseline_filename(backend, model_label)
         filepath.write_text(json.dumps(baseline, indent=2) + "\n")
         written.append(str(filepath))
 
     return written
 
 
-def _load_baselines(results_dir: str) -> dict[str, dict]:
+def _load_baselines(results_dir: str, backend: str | None) -> dict[str, dict]:
+    """Load baselines recorded on ``backend``. Other backends are not compared."""
     results_path = Path(results_dir)
     baselines: dict[str, dict] = {}
-    if not results_path.is_dir():
+    if not backend or not results_path.is_dir():
         return baselines
     for f in sorted(results_path.glob("*.json")):
         try:
             data = json.loads(f.read_text())
         except (json.JSONDecodeError, OSError) as e:
             print(f"warning: skipping {f}: {e}", file=sys.stderr)
+            continue
+        if data.get("backend") != backend:
             continue
         model = data.get("model")
         if model is None:
@@ -290,6 +332,17 @@ def _run_arm(
     ]
 
 
+def _store_arm(
+    all_results: dict[tuple[str, str, str], list],
+    entry: dict, model: str, label: str, arm: str,
+    args: argparse.Namespace, rules_home: str,
+) -> None:
+    """Run one arm and index each result by the model it actually recorded."""
+    for result in _run_arm(entry, model, label, arm, args, rules_home):
+        key = (entry["name"], result.model, arm)
+        all_results.setdefault(key, []).append(result)
+
+
 def _run_single(
     entry: dict, model: str, label: str, run_idx: int,
     args: argparse.Namespace,
@@ -314,8 +367,11 @@ def _run_single(
         if artifacts.exit_code != 0:
             print(f"  {task.name} exited {artifacts.exit_code}", file=sys.stderr)
         result = task.score(artifacts, manifest)
+        recorded = label
+        if not model:
+            recorded = _unique_served_model(artifacts.usage) or label
         result = dataclasses.replace(
-            result, entry_name=entry["name"], model=label,
+            result, entry_name=entry["name"], model=recorded,
             run_index=run_idx, condition=arm,
         )
         _report_run(artifacts, result, len(result.matches))
@@ -388,8 +444,8 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
         for entry, (model, label), arm in product(
             entries, zip(models, model_labels), arms,
         ):
-            all_results[(entry["name"], label, arm)] = _run_arm(
-                entry, model, label, arm, args, str(seeded[arm]),
+            _store_arm(
+                all_results, entry, model, label, arm, args, str(seeded[arm]),
             )
 
         print("\n" + format_summary_table(all_results))
@@ -397,6 +453,7 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
             print("\n" + format_ab_table(all_results))
 
         output = _build_output(all_results, args.effort, args.runs)
+        output["backend"] = _backend_label()
 
         if args.output:
             Path(args.output).write_text(json.dumps(output, indent=2) + "\n")
@@ -456,6 +513,26 @@ def _run_post_eval(
     # downstream would catch it: validate-eval-baselines checks coverage, not
     # plausibility. Refuse rather than record — the runs can be re-attempted,
     # the overwritten baseline cannot.
+    unresolved = _unresolved_model_labels(output)
+    if unresolved:
+        print(
+            "error: refusing to save baselines — model was not resolved "
+            "(pass --models, or the session log must name exactly one served model):",
+            file=sys.stderr,
+        )
+        for model in unresolved:
+            print(f"  {model or '(empty)'}", file=sys.stderr)
+        return 3
+
+    backend = output.get("backend") or _backend_label()
+    if not backend:
+        print(
+            "error: refusing to save baselines — no backend selected",
+            file=sys.stderr,
+        )
+        return 3
+    output["backend"] = backend
+
     incomplete = incomplete_entries(output)
     if incomplete:
         print(
@@ -484,7 +561,8 @@ def _run_comparison(
     args: argparse.Namespace, output: dict, repo_root: Path,
 ) -> int:
     results_dir = _resolve_results_dir(args, repo_root)
-    baselines = _load_baselines(results_dir)
+    backend = output.get("backend") or _backend_label()
+    baselines = _load_baselines(results_dir, backend)
     if not baselines:
         print("\nNo baselines found for comparison.", file=sys.stderr)
         return 0

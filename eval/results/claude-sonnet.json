@@ -1,0 +1,829 @@
+{
+  "schema_version": 3,
+  "backend": "claude",
+  "model": "sonnet",
+  "effort": "low",
+  "runs_per_entry": 3,
+  "updated_at": "2026-09-09T01:45:11.655311+00:00",
+  "entries": {
+    "ci-fix-missing-binary": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.33886575,
+      "duration_mean_ms": 42088,
+      "billed_input_mean": 198898.33333333334,
+      "output_tokens_mean": 2869.0,
+      "cache_read_ratio_mean": 0.8467467321720639,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.34389825,
+          "duration_ms": 36984,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.33335075,
+          "duration_ms": 47174,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.33934825,
+          "duration_ms": 42108,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-sed-portability": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.3736631666666667,
+      "duration_mean_ms": 50621,
+      "billed_input_mean": 237633.0,
+      "output_tokens_mean": 3483.0,
+      "cache_read_ratio_mean": 0.8706878832708749,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.36731149999999996,
+          "duration_ms": 48180,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.34096825000000003,
+          "duration_ms": 44297,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.4127097500000001,
+          "duration_ms": 59387,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "command-injection-bash": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.18888888888888888,
+      "precision_std": 0.01924500897298754,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 4.333333333333333,
+      "cost_mean": 0.12225196666666667,
+      "duration_mean_ms": 39060,
+      "billed_input_mean": 107482.0,
+      "output_tokens_mean": 3117.0,
+      "cache_read_ratio_mean": 0.6990834274197182,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.2,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 4,
+          "false_positive_ok": false,
+          "cost_usd": 0.1159338,
+          "duration_ms": 37603,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "M2",
+            "S1",
+            "N1",
+            "I1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.16666666666666666,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 5,
+          "false_positive_ok": false,
+          "cost_usd": 0.1290491,
+          "duration_ms": 44908,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "M2",
+            "S1",
+            "S2",
+            "N1",
+            "I1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.2,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 4,
+          "false_positive_ok": false,
+          "cost_usd": 0.12177299999999999,
+          "duration_ms": 34671,
+          "matched_ids": [
+            "M2"
+          ],
+          "false_positive_ids": [
+            "M1",
+            "S1",
+            "S2",
+            "N1"
+          ]
+        }
+      ]
+    },
+    "nil-check-go": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.3055555555555555,
+      "precision_std": 0.0481125224324688,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 2.3333333333333335,
+      "cost_mean": 0.0946629,
+      "duration_mean_ms": 17188,
+      "billed_input_mean": 93637.66666666667,
+      "output_tokens_mean": 1071.0,
+      "cache_read_ratio_mean": 0.680232492364139,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.09341079999999999,
+          "duration_ms": 18134,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.09461629999999999,
+          "duration_ms": 15183,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.0959616,
+          "duration_ms": 18247,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1",
+            "I1"
+          ]
+        }
+      ]
+    },
+    "off-by-one-python": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.3055555555555555,
+      "precision_std": 0.0481125224324688,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 2.3333333333333335,
+      "cost_mean": 0.10052503333333333,
+      "duration_mean_ms": 20136,
+      "billed_input_mean": 94444.33333333333,
+      "output_tokens_mean": 1532.6666666666667,
+      "cache_read_ratio_mean": 0.6778805342619352,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": true,
+          "cost_usd": 0.10683,
+          "duration_ms": 25221,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "N1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.09870980000000001,
+          "duration_ms": 18765,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.09603529999999999,
+          "duration_ms": 16424,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        }
+      ]
+    },
+    "pr-comments-approved": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.2883155,
+      "duration_mean_ms": 23274,
+      "billed_input_mean": 127941.0,
+      "output_tokens_mean": 1393.3333333333333,
+      "cache_read_ratio_mean": 0.6959592152059079,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.2913145,
+          "duration_ms": 22722,
+          "matched_ids": [
+            "pr comments --finish --track T-3 --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.301761,
+          "duration_ms": 25125,
+          "matched_ids": [
+            "pr comments --finish --track T-3 --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.27187100000000003,
+          "duration_ms": 21977,
+          "matched_ids": [
+            "pr comments --finish --track T-3 --pr 42"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "pr-comments-draft-only": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.35621858333333334,
+      "duration_mean_ms": 42910,
+      "billed_input_mean": 185348.66666666666,
+      "output_tokens_mean": 2718.6666666666665,
+      "cache_read_ratio_mean": 0.7867211387306972,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.34437825,
+          "duration_ms": 41299,
+          "matched_ids": [
+            "pr comments --fix --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.35919525,
+          "duration_ms": 38733,
+          "matched_ids": [
+            "pr comments --fix --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.36508225000000005,
+          "duration_ms": 48700,
+          "matched_ids": [
+            "pr comments --fix --pr 42"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "pr-comments-publish": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.30891575,
+      "duration_mean_ms": 27639,
+      "billed_input_mean": 152330.33333333334,
+      "output_tokens_mean": 1534.0,
+      "cache_read_ratio_mean": 0.723643036758136,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.26901575,
+          "duration_ms": 19744,
+          "matched_ids": [
+            "pr comments --finish --post --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.3650055,
+          "duration_ms": 36238,
+          "matched_ids": [
+            "pr comments --finish --post --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.29272599999999993,
+          "duration_ms": 26935,
+          "matched_ids": [
+            "pr comments --finish --post --pr 42"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "pr-rebase-clean": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.287063,
+      "duration_mean_ms": 49801,
+      "billed_input_mean": 147158.66666666666,
+      "output_tokens_mean": 1500.6666666666667,
+      "cache_read_ratio_mean": 0.7663749691491132,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.28999825,
+          "duration_ms": 54700,
+          "matched_ids": [
+            "pr rebase --fix --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.27265925,
+          "duration_ms": 40473,
+          "matched_ids": [
+            "pr rebase --fix --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.29853149999999995,
+          "duration_ms": 54231,
+          "matched_ids": [
+            "pr rebase --fix --onto main"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "pr-rebase-conflicts-need-approval": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.25047800000000003,
+      "duration_mean_ms": 21458,
+      "billed_input_mean": 94791.33333333333,
+      "output_tokens_mean": 1244.6666666666667,
+      "cache_read_ratio_mean": 0.6483957200332225,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.2600795,
+          "duration_ms": 25176,
+          "matched_ids": [
+            "pr rebase --branch eval --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.24594575000000002,
+          "duration_ms": 20108,
+          "matched_ids": [
+            "pr rebase --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.24540875,
+          "duration_ms": 19091,
+          "matched_ids": [
+            "pr rebase --onto main"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "pr-rebase-push-refused": {
+      "recall_mean": 0.7777777777777778,
+      "recall_std": 0.3849001794597505,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.5371211666666666,
+      "duration_mean_ms": 106037,
+      "billed_input_mean": 332224.3333333333,
+      "output_tokens_mean": 6407.333333333333,
+      "cache_read_ratio_mean": 0.8752830643539767,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 0.3333333333333333,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.51198475,
+          "duration_ms": 117047,
+          "matched_ids": [
+            "pr rebase --fix --branch eval"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.44359875000000004,
+          "duration_ms": 80930,
+          "matched_ids": [
+            "pr rebase --fix --onto main",
+            "git -C /var/folders/mv/p1l2_9j13kb3tr0m9fs79tc00000gn/T/eval-skill-isxc8lm2 commit -m fix(worker): declare svc-api dependency backing ListJobs ACL grant -m svc-api/acls.yaml grants worker access to ListJobs for the retry path, but\nworker declared only svc-queue and svc-audit. The pre-push ACL check rejects\na grant no dependency backs.",
+            "pr rebase --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.65578,
+          "duration_ms": 120136,
+          "matched_ids": [
+            "pr rebase --fix --onto main",
+            "git commit -q -m fix(worker): declare svc-api dependency backing ListJobs grant -m svc-api/acls.yaml grants worker access to ListJobs for the retry path, but\nservices/worker.yaml did not declare svc-api as a dependency, so the pre-push\nACL check rejected the unbacked grant.",
+            "pr rebase --branch eval --onto main"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "sql-injection-python": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.3055555555555555,
+      "precision_std": 0.0481125224324688,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 2.3333333333333335,
+      "cost_mean": 0.09628576666666666,
+      "duration_mean_ms": 17899,
+      "billed_input_mean": 93881.33333333333,
+      "output_tokens_mean": 1196.3333333333333,
+      "cache_read_ratio_mean": 0.6794010282572658,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.09738679999999998,
+          "duration_ms": 17208,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "I1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.0962636,
+          "duration_ms": 21495,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.0952069,
+          "duration_ms": 14995,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1",
+            "I1"
+          ]
+        }
+      ]
+    },
+    "unchecked-error-go": {
+      "recall_mean": 0.6666666666666666,
+      "recall_std": 0.5773502691896258,
+      "precision_mean": 0.13888888888888887,
+      "precision_std": 0.1272937693043289,
+      "severity_accuracy_mean": 0.6666666666666666,
+      "false_positive_mean": 4.333333333333333,
+      "cost_mean": 0.1007845,
+      "duration_mean_ms": 21584,
+      "billed_input_mean": 94627.66666666667,
+      "output_tokens_mean": 1530.6666666666667,
+      "cache_read_ratio_mean": 0.6770763961316367,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.0980018,
+          "duration_ms": 20388,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "N1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 0.0,
+          "precision": 0.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 5,
+          "false_positive_ok": false,
+          "cost_usd": 0.1008045,
+          "duration_ms": 22068,
+          "matched_ids": [],
+          "false_positive_ids": [
+            "M1",
+            "S1",
+            "S2",
+            "N1",
+            "I1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.16666666666666666,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 5,
+          "false_positive_ok": false,
+          "cost_usd": 0.1035472,
+          "duration_ms": 22296,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "S3",
+            "N1",
+            "I1"
+          ]
+        }
+      ]
+    }
+  }
+}

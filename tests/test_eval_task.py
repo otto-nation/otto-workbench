@@ -338,10 +338,10 @@ class TestSaveBaselineRefusal:
         )
 
     @staticmethod
-    def _output(measured: int, attempted: int) -> dict:
+    def _output(measured: int, attempted: int, model: str = "sonnet") -> dict:
         return {
-            "effort": "low", "runs_per_entry": attempted,
-            "entries": {"case-a": {"sonnet": {
+            "backend": "claude", "effort": "low", "runs_per_entry": attempted,
+            "entries": {"case-a": {model: {
                 "recall_mean": 1.0, "precision_mean": 1.0,
                 "runs_measured": measured, "runs_attempted": attempted,
             }}},
@@ -350,7 +350,17 @@ class TestSaveBaselineRefusal:
     def test_a_complete_pass_is_saved(self, em, tmp_path, capsys):
         code = em._run_post_eval(self._args(tmp_path), self._output(3, 3), tmp_path)
         assert code == 0
-        assert (tmp_path / "results" / "sonnet.json").is_file()
+        path = tmp_path / "results" / "claude-sonnet.json"
+        assert path.is_file()
+        assert json.loads(path.read_text())["backend"] == "claude"
+
+    def test_an_unresolved_model_is_not_saved(self, em, tmp_path, capsys):
+        code = em._run_post_eval(
+            self._args(tmp_path), self._output(3, 3, model="(default)"), tmp_path,
+        )
+        assert code == 3
+        assert not (tmp_path / "results").exists()
+        assert "model was not resolved" in capsys.readouterr().err
 
     def test_a_pass_with_dead_runs_is_refused(self, em, tmp_path, capsys):
         code = em._run_post_eval(self._args(tmp_path), self._output(1, 3), tmp_path)
@@ -371,6 +381,114 @@ class TestSaveBaselineRefusal:
         good.write_text('{"keep": true}\n')
         em._run_post_eval(self._args(tmp_path), self._output(0, 3), tmp_path)
         assert good.read_text() == '{"keep": true}\n'
+
+    def test_two_backends_write_distinct_files(self, em, tmp_path):
+        metrics = {
+            "recall_mean": 1.0, "precision_mean": 1.0,
+            "runs_measured": 3, "runs_attempted": 3,
+        }
+        claude = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {"case-a": {"sonnet": metrics}},
+        }
+        pi = {
+            "backend": "pi", "effort": "low", "runs_per_entry": 3,
+            "entries": {"case-a": {"sonnet": metrics}},
+        }
+        results = str(tmp_path / "results")
+        em._save_baselines(claude, results)
+        em._save_baselines(pi, results)
+        names = sorted(p.name for p in (tmp_path / "results").glob("*.json"))
+        assert names == ["claude-sonnet.json", "pi-sonnet.json"]
+
+
+class TestBaselineBackendCompare:
+    """A Pi run must not be judged against a Claude-recorded file."""
+
+    @staticmethod
+    def _args(tmp_path):
+        return argparse.Namespace(
+            compare=True, save_baselines=False,
+            results_dir=str(tmp_path / "results"),
+        )
+
+    @staticmethod
+    def _metrics(recall: float) -> dict:
+        return {
+            "recall_mean": recall, "precision_mean": 1.0,
+            "severity_accuracy_mean": 1.0, "false_positive_mean": 0.0,
+        }
+
+    def test_a_different_backend_baseline_is_not_a_regression(
+        self, em, tmp_path, capsys,
+    ):
+        results = tmp_path / "results"
+        results.mkdir()
+        pi = em._baseline_document(
+            "sonnet", "low", 1, {"case-a": self._metrics(1.0)}, "pi",
+        )
+        (results / "pi-sonnet.json").write_text(json.dumps(pi) + "\n")
+        current = {
+            "backend": "claude",
+            "entries": {"case-a": {"sonnet": self._metrics(0.0)}},
+        }
+        code = em._run_comparison(self._args(tmp_path), current, tmp_path)
+        assert code == 0
+        assert "No baselines found for comparison" in capsys.readouterr().err
+
+    def test_the_same_backend_still_compares(self, em, tmp_path, capsys):
+        results = tmp_path / "results"
+        results.mkdir()
+        claude = em._baseline_document(
+            "sonnet", "low", 1, {"case-a": self._metrics(1.0)}, "claude",
+        )
+        pi = em._baseline_document(
+            "sonnet", "low", 1, {"case-a": self._metrics(1.0)}, "pi",
+        )
+        (results / "claude-sonnet.json").write_text(json.dumps(claude) + "\n")
+        (results / "pi-sonnet.json").write_text(json.dumps(pi) + "\n")
+        current = {
+            "backend": "claude",
+            "entries": {"case-a": {"sonnet": self._metrics(0.0)}},
+        }
+        code = em._run_comparison(self._args(tmp_path), current, tmp_path)
+        assert code == 2
+        err = capsys.readouterr().err
+        assert "regression" in err
+
+
+class TestServedModelLabel:
+    def test_empty_model_records_the_served_model(self, em, stub_run):
+        task, entry, args = stub_run
+
+        def run(_case_dir, _opts):
+            return eval_task.RunArtifacts(
+                usage=SessionUsage(
+                    cost=0.25, cost_by_model={"claude-opus-5": 0.25},
+                ),
+                temp_dirs=[task.temp_dir],
+                data={"summary": "stub ran"},
+            )
+
+        task.run = run
+        result = em._run_single(entry, "", "(default)", 0, args)
+        assert result.model == "claude-opus-5"
+
+    def test_an_ambiguous_session_log_keeps_the_placeholder(self, em, stub_run):
+        task, entry, args = stub_run
+
+        def run(_case_dir, _opts):
+            return eval_task.RunArtifacts(
+                usage=SessionUsage(cost=0.25, cost_by_model={
+                    "claude-opus-5": 0.2, "claude-sonnet-5": 0.05,
+                }),
+                temp_dirs=[task.temp_dir],
+                data={"summary": "stub ran"},
+            )
+
+        task.run = run
+        result = em._run_single(entry, "", "(default)", 0, args)
+        assert result.model == "(default)"
 
 
 class TestTaskFilter:

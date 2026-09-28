@@ -268,7 +268,7 @@ Use the Write tool to save the review to the output path specified in the prompt
 ...
 
 ## Summary
-One sentence on what the change does and overall quality.
+One sentence on what the change does and overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — the `## Prior findings` ledger is the record of what became of them, and a tally written twice is a tally that can disagree with itself
 
 ## Must fix
 - **[M1]** **`<file>:<line>`** — <finding>

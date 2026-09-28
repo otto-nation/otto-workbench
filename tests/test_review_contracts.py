@@ -1143,3 +1143,68 @@ def test_python_script_help_exits_zero(script):
         f"stdout: {result.stdout[:500]}\n"
         f"stderr: {result.stderr[:500]}"
     )
+
+
+# Every source that tells an agent what to write under `## Summary`. The
+# constraint below is stated in each rather than shared from one place: two of
+# them phrase it mid-clause in a numbered task list and two inside a fenced
+# output skeleton, and `review.prompt`'s `_REREVIEW_CTX` sets the house
+# precedent of spelling per-phase instructional prose out in full. The copies
+# are kept honest here instead.
+_SUMMARY_CONTRACT_RE = re.compile(r"^## Summary|Write ## Summary", re.MULTILINE)
+
+# A tally of prior findings in the Summary is prose no one computes: the
+# ledger that does record them is stripped before publish, so a wrong count
+# reaches the PR as the only surviving statement about the prior round.
+_NO_PRIOR_TALLY = (
+    "On a re-review, do not count the prior findings here "
+    '("13 of 19 fixed") — the `## Prior findings` ledger is the record of '
+    "what became of them, and a tally written twice is a tally that can "
+    "disagree with itself"
+)
+
+
+def _summary_contract_sources() -> list[Path]:
+    """Every template or agent file that states a `## Summary` contract.
+
+    Scraped rather than listed, so a fifth one added later is held to the same
+    constraint without this file being edited. The pattern is anchored on the
+    heading so a backticked cross-reference to `## Summary` mid-sentence does
+    not read as a contract.
+    """
+    sources = [AGENTS_DIR / "reviewer.md", *sorted(TEMPLATE_DIR.glob("*.md"))]
+    return [
+        path for path in sources
+        if path.exists() and _SUMMARY_CONTRACT_RE.search(path.read_text())
+    ]
+
+
+# passes-at-base: asserts the selector's reach, which the constraint did not change
+def test_summary_contract_sources_are_found():
+    """The selector finds the known contracts, so the check below is not vacuous.
+
+    Holds at the merge base by design: the four files stated a Summary contract
+    before they carried the constraint. What it guards is the parametrised test
+    below, which would pass over an empty set without saying so — a selector
+    that stops matching is the way that check goes quietly green.
+    """
+    names = {p.name for p in _summary_contract_sources()}
+    assert names == {
+        "reviewer.md",
+        "self-review.md",
+        "self-review-synthesis.md",
+        "synthesis.md",
+    }, f"unexpected set of Summary contracts: {sorted(names)}"
+
+
+@pytest.mark.parametrize(
+    "path",
+    _summary_contract_sources(),
+    ids=[p.name for p in _summary_contract_sources()],
+)
+def test_summary_contract_forbids_a_prior_findings_tally(path):
+    """Every `## Summary` contract carries the no-tally constraint, verbatim."""
+    assert _NO_PRIOR_TALLY in path.read_text(), (
+        f"{path.name} states a `## Summary` contract without the "
+        f"no-prior-tally constraint. Add this sentence verbatim:\n\n{_NO_PRIOR_TALLY}"
+    )

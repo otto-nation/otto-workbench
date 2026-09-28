@@ -16,7 +16,7 @@ ${delta_section}
 ## Task
 1. Write the header: # Self-Review: ${repo} — ${branch_name}
    Include <!-- date: ${today} -->, <!-- head_sha: ${pr_head_sha} -->, and <!-- generator: ${generator_version} --> comments
-2. Write ## Summary — one sentence on what the changes do and overall quality
+2. Write ## Summary — one sentence on what the changes do and overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — the `## Prior findings` ledger is the record of what became of them, and a tally written twice is a tally that can disagree with itself
 3. Include all Must fix / Should fix / Nit / Idioms findings from the merged content
 4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description` (use I prefix for Idioms). Keep any `*(declined — reason)*` annotation on the line — it marks a finding already adjudicated, and dropping it puts the finding back into the next fix pass. NEVER use ### headings for findings — downstream counters and fix tools parse the `- [ ] **[X1]**` list-item format only
 5. Use any finding IDs — they will be mechanically renumbered after you write the file

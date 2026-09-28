@@ -80,3 +80,36 @@ https://github.com/otto-nation/otto-workbench/pull/700"
   [ "$status" -eq 0 ]
   [[ "${lines[-1]}" == "https://github.com/otto-nation/otto-workbench/pull/700" ]]
 }
+
+@test "reports an enterprise PR URL" {
+  # gh creates the PR and prints an enterprise URL. Pinned to github.com, the
+  # scrape found nothing here and told the user creation had failed for a PR
+  # that exists.
+  make_fake_gh 0 "https://ghe.acme.com/acme/widget/pull/12"
+
+  run create_pr --title "fix: thing" --body "body"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ Pull request created"* ]]
+  [[ "$output" == *"https://ghe.acme.com/acme/widget/pull/12"* ]]
+}
+
+@test "reports a PR URL on a self-hosted instance with a port" {
+  make_fake_gh 0 "https://git.internal.acme:8443/acme/widget/pull/7"
+
+  run create_pr --title "fix: thing" --body "body"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"https://git.internal.acme:8443/acme/widget/pull/7"* ]]
+}
+
+# passes-at-base: the old pattern rejected this too; guards the widening
+@test "still rejects a non-PR enterprise URL" {
+  # The /pull/<number> anchor is what does the work now that the host is free.
+  make_fake_gh 0 "opened an issue at https://ghe.acme.com/acme/widget/issues/12"
+
+  run create_pr --title "fix: thing" --body "body"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"printed no pull request URL"* ]]
+}

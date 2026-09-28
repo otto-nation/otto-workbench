@@ -333,6 +333,25 @@ class TestSharedRetryability:
             Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded"),
         ) == ""
 
+    def test_a_probe_only_pi_log_is_retryable(self, tmp_path):
+        """The flag still overrides COMPLETED when the write was not the file."""
+        from agent.session import diagnose_missing_output
+
+        log = tmp_path / "session.jsonl"
+        log.write_text(
+            json.dumps({"type": "tool_execution_start",
+                        "toolName": "write", "args": {"path": "/tmp/probe.py"}})
+            + "\n"
+            + json.dumps({"type": "turn_end"})
+            + "\n"
+            + json.dumps({"type": "result", "subtype": "success"})
+            + "\n"
+        )
+        diagnosis = diagnose_missing_output(str(log), output_path="/out/review.md")
+        assert diagnosis.kind is DiagnosisKind.COMPLETED
+        assert diagnosis.no_write_tool
+        assert agent_retry.is_retryable(diagnosis)
+
 
 class TestCIFixRetryHint:
     """ci-check's fallback hint, for when the diagnosis suggests nothing better."""
@@ -452,6 +471,22 @@ class TestWriteRecipesMatchTheBackend:
         pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
         assert "empty `old_string`" not in pi
         assert "Write tool is NOT available" not in pi
+
+    def test_both_recipes_expect_rewrites_not_a_single_write(self):
+        """A ban on building the file up in pieces also banned rewriting it.
+
+        The templates tell an agent to write first and keep investigating;
+        the recipe told it that write was its only one. Deferring the write
+        is the rational response to being told both.
+        """
+        pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
+        claude = agent_templates.build_output_block(
+            "/tmp/out.md", backend=Backend.CLAUDE,
+        )
+        for text in (pi, claude):
+            assert "do not build the file up in pieces" not in text
+            assert "complete document" in text
+            assert "never leave the file" in text
 
     def test_the_retry_hint_follows_the_same_split(self):
         """A hint naming the other CLI re-issues the recipe that just failed."""

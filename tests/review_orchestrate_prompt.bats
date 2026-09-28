@@ -233,3 +233,18 @@ print("FOUND" if "Holistic context" in result else "MISSING")
 ')
   [ "$result" = "MISSING" ]
 }
+
+@test "group.md turn-budget line allows complete rewrites" {
+  grep -q "Further complete rewrites are expected" "$REPO_ROOT/ai/lib/review-templates/group.md"
+  ! grep -q "do not build the file up in pieces" "$REPO_ROOT/ai/lib/review-templates/group.md"
+}
+
+@test "single-agent.md turn-budget line allows complete rewrites" {
+  grep -q "Further complete rewrites are expected" "$REPO_ROOT/ai/lib/review-templates/single-agent.md"
+  ! grep -q "do not build the file up in pieces" "$REPO_ROOT/ai/lib/review-templates/single-agent.md"
+}
+
+@test "self-review.md turn-budget line allows complete rewrites" {
+  grep -q "Further complete rewrites are expected" "$REPO_ROOT/ai/lib/review-templates/self-review.md"
+  ! grep -q "do not build the file up in pieces" "$REPO_ROOT/ai/lib/review-templates/self-review.md"
+}

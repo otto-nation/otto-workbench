@@ -359,6 +359,30 @@ class TestTheDisproveGateRecordsItsOwnOutcome:
         assert "| disprove | agent hit max turns (20) | failed |" in review
 
 
+class TestAPartialReviewDoesNotReadAsClean:
+    """The parts read first must not contradict the failures table below them.
+
+    A run whose source group produced nothing rendered "No findings across 16
+    files in 3 groups" and "Approve — clean review" above an accurate Agent
+    Failures table. The reassuring text was shorter and higher, and it is what
+    got acted on: the review reported a clean bill of health for files no
+    agent opened.
+    """
+
+    def test_a_partial_run_withholds_the_clean_verdict(self, job, run):
+        run(job, fails={"group-2"})
+        review = _review(job)
+        assert "Approve — clean review." not in review
+        assert "No verdict — part of this review did not run." in review
+
+    def test_the_failures_table_still_carries_the_detail(self, job, run):
+        """The withheld verdict replaces nothing; it points at what was there."""
+        run(job, fails={"group-2"})
+        review = _review(job)
+        assert "| group-2: b |" in review
+        assert "Agent Failures" in review
+
+
 class TestRecoverDeclinesTheWorkItShould:
     def test_a_surviving_complete_state_blocks_a_re_run(self, job, run):
         """The `--force` guard.

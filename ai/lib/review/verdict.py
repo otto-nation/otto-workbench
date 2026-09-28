@@ -134,6 +134,16 @@ def mechanical_verdict(counts: dict[str, int]) -> str:
 # that had findings to weigh, and a review with none had nothing to synthesize.
 CLEAN_VERDICT = f"{ReviewVerdict.APPROVE.prose} — clean review.\n"
 
+# What a partial run states instead. "Approve — clean review" is the one line
+# a reader may act on without opening the rest, and on a run where the group
+# holding the source produced nothing it is false in the most expensive
+# direction: it reports a clean bill of health for files no agent opened. The
+# `## Agent Failures` table already said so and was read second.
+PARTIAL_VERDICT = (
+    "No verdict — part of this review did not run. "
+    "See Agent Failures below for what was not assessed.\n"
+)
+
 
 # What the Summary says when no synthesis agent wrote the review — the
 # `summary_note` a caller of `build_mechanical_body` hands in. Each names why
@@ -160,6 +170,7 @@ def build_mechanical_body(
     include_verdict: bool = True,
     verdict: str = "",
     file_count: int = 0,
+    groups_reported: int | None = None,
 ) -> str:
     """A whole review body around findings no synthesis agent read.
 
@@ -174,6 +185,17 @@ def build_mechanical_body(
     the budget stopped the run. `verdict` overrides what a verdict section
     says, defaulting to the one `mechanical_verdict` derives from the tally.
 
+    `groups_reported` is how many groups came back, where `group_count` is how
+    many were dispatched. When they differ the scope says so — "in 2 of 3
+    groups" — because a count of what was sent out reads as a count of what
+    was examined, and that sentence sits directly above findings the missing
+    group never contributed to. `None` means they agree.
+
+    There is deliberately no file counterpart. `PipelineState` records group
+    names, not the files behind each one, so a "9 of 16 files" would have to
+    be estimated — and a fabricated number in the sentence that exists to stop
+    fabricated confidence is worse than the group figure alone.
+
     Every path that reaches the review file without a synthesis agent composes
     here, so which sections such a review carries has one answer. A caller that
     assembles its own body decides that question again, which is how a clean
@@ -185,12 +207,17 @@ def build_mechanical_body(
     # A run that grouped nothing states no scope. `group_count` of 0 is the path
     # that never reached the group phase at all, where "across 120 files in 0
     # groups" would report a surface this run did not look at.
+    groups_seen = group_count if groups_reported is None else groups_reported
+    group_scope = (
+        f"{groups_seen} groups" if groups_seen == group_count
+        else f"{groups_seen} of {group_count} groups"
+    )
     if not group_count:
         scope = ""
     elif file_count:
-        scope = f" across {file_count} file{plural(file_count)} in {group_count} groups"
+        scope = f" across {file_count} file{plural(file_count)} in {group_scope}"
     else:
-        scope = f" across {group_count} groups"
+        scope = f" across {group_scope}"
     body = (
         f"## {SECTION_SUMMARY}\n"
         f"{count_summary}{scope}. "

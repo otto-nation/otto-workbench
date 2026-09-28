@@ -955,3 +955,45 @@ class TestDedupSections:
         sections = _sections(M="- **[M1]** **`a.go:1`** — uploads to S4 buckets, see [S9]")
         result = review_merge._dedup_sections(sections)
         assert "uploads to S4 buckets, see [S9]" in result["M"]
+
+
+class TestReaderToleranceForIncrementalWrites:
+    """A6b's net: merge_reviews already accepts a short complete doc, an
+    empty doc, and a rewrite of the file between calls. Do not tighten this.
+    """
+
+    _SHORT = (
+        "## File Triage\n- `a.py` — Tier 2\n"
+        "## Must fix\n- **[M1]** **`a.py:1`** — issue\n"
+    )
+
+    # passes-at-base: merge_reviews already section-merges a short complete doc
+    def test_a_short_complete_group_doc_merges(self, tmp_path):
+        g = tmp_path / "group-1.md"
+        g.write_text(self._SHORT)
+        result = review_merge.merge_reviews([str(g)])
+        assert "## File Triage" in result
+        assert "[M1]" in result
+
+    # passes-at-base: an empty group file already contributes no sections
+    def test_an_empty_group_doc_merges(self, tmp_path):
+        g = tmp_path / "group-1.md"
+        g.write_text("")
+        result = review_merge.merge_reviews([str(g)])
+        assert "## File Triage" in result
+        assert "[M1]" not in result
+
+    # passes-at-base: merge_reviews reads the path at call time, so a rewrite is a later read
+    def test_a_doc_rewritten_mid_run_merges_the_current_bytes(self, tmp_path):
+        g = tmp_path / "group-1.md"
+        g.write_text(self._SHORT)
+        first = review_merge.merge_reviews([str(g)])
+        g.write_text(
+            self._SHORT
+            + "## Should fix\n- **[S1]** **`a.py:2`** — later finding\n"
+        )
+        second = review_merge.merge_reviews([str(g)])
+        assert "[M1]" in first
+        assert "[S1]" not in first
+        assert "[M1]" in second
+        assert "[S1]" in second

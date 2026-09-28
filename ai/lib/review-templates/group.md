@@ -30,4 +30,4 @@ A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a
 A finding already annotated `*(declined — reason)*` was adjudicated — carry it forward with the annotation intact rather than re-raising it as open.
 
 ## Turn budget
-You have ${max_turns} turns.${omitted_guidance} Write your findings file FIRST based on the diff and file contents — do not investigate before writing. Use any remaining turns to verify specific concerns and update the file.
+You have ${max_turns} turns.${omitted_guidance} Write a complete findings file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify specific concerns and rewrite the file.

@@ -173,6 +173,43 @@ class TestGroupFiles:
         assert len(root) == 1
         assert set(root[0].files) == {"Taskfile.global.yml", "README.md"}
 
+    def test_a_test_joins_the_group_holding_its_subject(self):
+        pr = _pr([
+            {"path": "ai/lib/core/job_slots.py", "additions": 40, "deletions": 0},
+            {"path": "tests/job_slots_test.py", "additions": 20, "deletions": 0},
+            {"path": "bin/run.sh", "additions": 10, "deletions": 0},
+        ])
+        groups = group_files(pr)
+        ai = next(g for g in groups if "ai/lib/core/job_slots.py" in g.files)
+        assert "tests/job_slots_test.py" in ai.files
+        assert not any(
+            g.name == "tests" and "tests/job_slots_test.py" in g.files
+            for g in groups
+        )
+
+    def test_affinity_cannot_produce_an_oversized_group(self):
+        files = [
+            {"path": f"pkg/mod{i}.py", "additions": 10, "deletions": 0}
+            for i in range(MAX_GROUP_FILES)
+        ]
+        files.append(
+            {"path": "tests/test_mod0.py", "additions": 10, "deletions": 0}
+        )
+        groups = group_files(_pr(files))
+        assert all(len(g.files) <= MAX_GROUP_FILES for g in groups)
+        assert all(g.lines <= MAX_GROUP_LINES for g in groups)
+
+    def test_unmatched_test_files_still_bucket_by_first_segment(self):
+        pr = _pr([
+            {"path": "ai/lib/review.py", "additions": 40, "deletions": 0},
+            {"path": "tests/test_x.py", "additions": 20, "deletions": 0},
+        ])
+        groups = group_files(pr)
+        tests = next(g for g in groups if g.name == "tests")
+        assert tests.files == ["tests/test_x.py"]
+        ai = next(g for g in groups if g.name == "ai")
+        assert "tests/test_x.py" not in ai.files
+
 
 # ── merge_smallest_groups ────────────────────────────────────────────────────
 

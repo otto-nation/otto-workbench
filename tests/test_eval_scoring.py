@@ -16,9 +16,11 @@ if str(LIB_DIR) not in sys.path:
 
 from eval import scoring as eval_scoring
 from eval.scoring import (
+    RunOutcome,
     ScoringResult,
     aggregate_runs,
     compare_baselines,
+    format_ab_table,
     format_comparison_table,
     format_summary_table,
     validate_baseline_schema,
@@ -663,3 +665,28 @@ def test_save_baselines_refuses_a_trimmed_only_session(em, tmp_path, capsys):
     err = capsys.readouterr().err
     assert "no full arm" in err
     assert "e / sonnet" in err
+
+
+def test_the_table_reports_each_arm_and_the_delta_between_them():
+    results = {
+        ("e", "sonnet", "full"): [_r(recall=1.0, billed_input=40000, output_tokens=3000)],
+        ("e", "sonnet", "trimmed"): [_r(recall=1.0, billed_input=22000, output_tokens=2800)],
+    }
+    table = format_ab_table(results)
+    assert "full" in table and "trimmed" in table
+    assert "-18000" in table or "-18,000" in table
+
+
+def test_an_unmeasured_arm_is_named_not_printed_as_a_zero():
+    results = {
+        ("e", "sonnet", "full"): [
+            _r(recall=1.0, billed_input=40000, outcome=RunOutcome.MEASURED),
+        ],
+        ("e", "sonnet", "trimmed"): [_r(recall=0.0, outcome=RunOutcome.NOT_RUN)],
+    }
+    table = format_ab_table(results)
+    assert "0%" not in table.split("trimmed")[1].split("\n")[0], \
+        "an arm that never ran must not read as a 0% pass rate"
+    assert "unmeasured" in table.lower()
+    assert "-40000" not in table and "-40,000" not in table, \
+        "an unmeasured arm must not be differenced against as a zero"

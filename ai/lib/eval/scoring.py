@@ -529,3 +529,71 @@ def format_comparison_table(comparison: dict) -> str:
         rows.append(f"| {entry} | {model} | - | - | - | - | not run | - |")
 
     return "\n".join(rows)
+
+
+def format_ab_table(
+    results: dict[tuple, list[ScoringResult]],
+) -> str:
+    """Per-arm means and the trimmed-minus-full delta.
+
+    An arm that never produced a measurement is named `unmeasured` rather than
+    scored as zero, and the pair is not differenced — a missing arm is not a
+    cheaper arm.
+    """
+    header = (
+        "| Entry | Model | Arm | Runs | Pass | billed_input | output_tokens |"
+    )
+    sep = "|---|---|---|---|---|---|---|"
+    rows = [header, sep]
+    for (entry, model), arms in sorted(_ab_groups(results).items()):
+        aggs = {cond: aggregate_runs(runs) for cond, runs in arms.items()}
+        rows.extend(
+            _format_ab_arm_row(entry, model, cond, aggs[cond])
+            for cond in sorted(aggs)
+        )
+        if _ab_delta_ready(aggs):
+            rows.append(_format_ab_delta_row(entry, model, aggs))
+    return "\n".join(rows)
+
+
+def _ab_groups(
+    results: dict[tuple, list[ScoringResult]],
+) -> dict[tuple[str, str], dict[str, list[ScoringResult]]]:
+    groups: dict[tuple[str, str], dict[str, list[ScoringResult]]] = {}
+    for key, runs in results.items():
+        entry, model, *rest = key
+        condition = rest[0] if rest else "full"
+        groups.setdefault((entry, model), {})[condition] = runs
+    return groups
+
+
+def _ab_delta_ready(aggs: dict[str, dict]) -> bool:
+    full = aggs.get("full")
+    trimmed = aggs.get("trimmed")
+    if full is None or trimmed is None:
+        return False
+    return full["runs_measured"] > 0 and trimmed["runs_measured"] > 0
+
+
+def _format_ab_arm_row(entry: str, model: str, cond: str, agg: dict) -> str:
+    runs_s = f"{agg['runs_measured']}/{agg['runs_attempted']}"
+    if agg["runs_measured"] == 0:
+        metrics = "unmeasured | unmeasured | unmeasured"
+    else:
+        metrics = (
+            f"{agg['recall_mean']:.0%} "
+            f"| {agg['billed_input_mean']:.0f} "
+            f"| {agg['output_tokens_mean']:.0f}"
+        )
+    return f"| {entry} | {model} | {cond} | {runs_s} | {metrics} |"
+
+
+def _format_ab_delta_row(entry: str, model: str, aggs: dict[str, dict]) -> str:
+    full, trimmed = aggs["full"], aggs["trimmed"]
+    pass_d = trimmed["recall_mean"] - full["recall_mean"]
+    billed_d = trimmed["billed_input_mean"] - full["billed_input_mean"]
+    out_d = trimmed["output_tokens_mean"] - full["output_tokens_mean"]
+    return (
+        f"| {entry} | {model} | delta "
+        f"| - | {pass_d:.0%} | {billed_d:.0f} | {out_d:.0f} |"
+    )

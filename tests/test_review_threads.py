@@ -7879,6 +7879,137 @@ class TestAddressedInResponseFraming:
         assert "fixed" not in body
 
 
+# ── attribution survives a history rewrite ─────────────────────────────────
+
+
+class TestAttributionSurvivesARebase:
+    """A rebase must not turn "no evidence" into a confident wrong citation.
+
+    Per-row attribution rests on two independent guards, and a rebase destroys
+    both in one stroke. The line the row recorded is a coordinate in the tree it
+    was read in, so once the file moves underneath it the `git log -L` walk
+    answers about whatever code inherited the number; and the committer date the
+    staleness check reads is reset on every commit by the rebase, so the base
+    commit of the branch suddenly postdates every review comment.
+
+    Both shapes published the branch's *base* commit as the commit carrying a
+    fix — a commit a reviewer can open and find nothing in.
+    """
+
+    @staticmethod
+    def _git(wt, *args, when=""):
+        env = dict(os.environ)
+        if when:
+            env["GIT_AUTHOR_DATE"] = when
+            env["GIT_COMMITTER_DATE"] = when
+        run_checked(["git", "-C", str(wt), *args], env=env)
+
+    def _sha(self, wt, rev):
+        return git_out(wt, "rev-parse", rev).strip()
+
+    @pytest.fixture
+    def rebased(self, worktree):
+        """A branch whose commits all predate the review, then rebased.
+
+        `moved.py` loses its opening lines after the row was read, so the
+        recorded line number slides onto code the row was never about — the
+        stale-coordinate shape, and the one that published the base commit four
+        times. `still.py` is untouched after the read, so its coordinate stays
+        honest, leaving only the rewritten committer date to catch — the
+        timestamp shape. Every commit is authored before the review, so a
+        correct run cites neither.
+        """
+        hooks = worktree / ".git" / "empty-hooks"
+        hooks.mkdir()
+        self._git(worktree, "config", "user.email", "test@example.com")
+        self._git(worktree, "config", "user.name", "Test")
+        self._git(worktree, "config", "commit.gpgsign", "false")
+        self._git(worktree, "config", "core.hooksPath", str(hooks))
+        (worktree / "moved.py").write_text("alpha\nbeta\ngamma\n")
+        (worktree / "still.py").write_text("one\ntwo\n")
+        self._git(worktree, "add", "-A")
+        self._git(worktree, "commit", "-qm", "base")
+        self._git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+        # The branch's own base commit — the one wrongly published. It is the
+        # last commit to touch both recorded lines.
+        (worktree / "moved.py").write_text("alpha\nbeta\nGAMMA\n")
+        (worktree / "still.py").write_text("one\nTWO\n")
+        self._git(worktree, "commit", "-qam", "feat: the branch's base work",
+                  when=_BEFORE_THE_REVIEW)
+        read = self._sha(worktree, "HEAD")
+        # Lands after the row was read and shifts moved.py up, so the recorded
+        # line 3 now names line 1's code and resolves to the base commit.
+        (worktree / "moved.py").write_text("GAMMA\n")
+        self._git(worktree, "commit", "-qam", "drop the header",
+                  when=_BEFORE_THE_REVIEW)
+        # The rebase: every committer date becomes now, so the branch's base
+        # commit postdates the review comment it predates in authorship.
+        # `--force-rebase` because the branch is already on origin/main here and
+        # a fast-forward would rewrite nothing — leaving the dates intact and the
+        # defect unreproduced, which is a fixture that cannot fail.
+        self._git(worktree, "rebase", "--force-rebase", "origin/main")
+        return SimpleNamespace(
+            path=worktree,
+            read=self._sha(worktree, "HEAD~1"),
+            base=self._sha(worktree, "HEAD~1"),
+        )
+
+    @staticmethod
+    def _thread(tid):
+        return ReportThread(id=tid, comments=[
+            {"databaseId": 1, "createdAt": _THE_REVIEW_COMMENT},
+        ])
+
+    def _framing(self, entry, wt_path):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
+            history = attribution.AddressingHistory(wt_path)
+            return history.framing(entry, self._thread(entry.id))
+
+    def test_a_stale_line_coordinate_cites_no_commit(self, rebased):
+        """The recorded line now points at code the row was never about."""
+        entry = CommentItem(id="t1", summary="guard it", file="moved.py",
+                            line=1, read_sha=rebased.read)
+        assert not self._framing(entry, rebased.path).cited
+
+    def test_a_rewritten_committer_date_claims_no_fix(self, rebased):
+        """The line is honest; only the rebase makes the commit look recent.
+
+        This row's coordinate still points at the code it was read against, so
+        the commit genuinely is the one behind that line and naming it as
+        context ("Addressed in") stays true. What the rebase must not buy is the
+        stronger reading: `in_response` is the claim that the work landed
+        *because* the reviewer asked, and a commit authored before the comment
+        did not, however recently the rebase re-stamped it.
+        """
+        entry = CommentItem(id="t2", summary="rename it", file="still.py",
+                            line=2, read_sha=rebased.read)
+        assert not self._framing(entry, rebased.path).in_response
+
+    def test_the_summary_row_reports_no_fix_after_a_rebase(self, rebased):
+        """End to end: the shape that published the base commit as "Fixed in".
+
+        The reviewer-facing defect was the whole row, not the SHA alone — a
+        rebased branch turned every satisfied row into a claimed fix, counted it
+        as one, and linked the base commit as the thing that carried it.
+        """
+        entry = CommentItem(id="t1", summary="guard it", file="moved.py",
+                            line=1, read_sha=rebased.read)
+        cp = attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+        with patch.object(git_topology, "default_branch_cached", return_value="main"):
+            body = summary_render.build_summary_body(
+                summary_model.RoundContent(
+                    by_outcome={FixOutcome.ALREADY_ADDRESSED: [entry]},
+                    issue_comments=[], review_body_comments=[],
+                ),
+                cp, "owner/repo", 42, {entry.id: self._thread("t1")},
+                wt_path=rebased.path,
+            )
+        assert f"Fixed in [`{rebased.base}`]" not in body
+        assert "Fixed in" not in body
+        assert "Already addressed" in body
+        assert "1 already addressed" in body
+
+
 # ── per-row attribution when work landed by hand across commits ────────────
 
 
@@ -8547,6 +8678,12 @@ class TestEvidencePermalinks:
         assert "the guard already returns early" in body
 
     def test_already_addressed_links_the_line_at_head(self, tmp_path):
+        # `read_sha` here names a tree that was never built — `tmp_path` is not a
+        # repo — so the staleness check cannot resolve the coordinate and
+        # declines the citation, which is the honest answer for a tree git
+        # cannot read. This test's subject is the link, and the addressing
+        # commit is already a stub, so the check is stubbed to match rather than
+        # the assertion weakened to whatever the unresolvable tree produces.
         addressed = [CommentItem(
             id="t1", summary="use the helper", file="app.py",
             evidence_file="app.py", evidence_line=4, read_sha="cafe123",
@@ -8555,6 +8692,8 @@ class TestEvidencePermalinks:
         with (
             patch.object(git_client, "head_sha", return_value="cafe123"),
             patch.object(attribution, "find_addressing_commit", return_value="dead" * 10),
+            patch.object(attribution.AddressingHistory, "_coordinate_went_stale",
+                         return_value=False),
             patch("pr.comments.post_thread_reply", return_value=True) as reply,
         ):
             thread_replies.post_already_addressed_replies(

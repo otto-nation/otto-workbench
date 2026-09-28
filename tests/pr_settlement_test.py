@@ -14,9 +14,10 @@ above it.
 """
 
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from conftest import REPO_ROOT, make_ctx
+from conftest import REPO_ROOT, git_out, make_ctx, run_checked
 
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -24,6 +25,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
+from git import topology as git_topology  # noqa: E402
 from pr import settlement  # noqa: E402
 from pr import state as pr_state  # noqa: E402
 from pr import thread_replies  # noqa: E402
@@ -535,6 +537,85 @@ class TestWhatSettledOneSnapshotRow:
 
 
 # ── settled_commits: all or nothing ───────────────────────────────────────
+
+
+class TestASettlementWillNotCiteAStaleCoordinate:
+    """`--settle` infers a commit from a line, and the line can go stale.
+
+    The inference asks which commit last changed the row's line *in the tree
+    that exists now*, using the line number recorded when the row was read. Once
+    the file has changed underneath it — a rebase, or any commit adding or
+    removing lines above it — the number names different code and the walk
+    answers confidently about a line the row was never about.
+
+    Worse here than at render time: `--settle` writes its answer into the state
+    file, so a wrong citation is persisted and every later round replays it.
+    """
+
+    @staticmethod
+    def _git(wt, *args):
+        run_checked(["git", "-C", str(wt), *args])
+
+    @pytest.fixture
+    def shifted(self, worktree):
+        """A branch where the recorded line slides onto unrelated code.
+
+        `moved.py` loses its opening lines after the row is read, so the
+        recorded line 1 lands on what the branch's base commit wrote — code the
+        row was never about. `still.py` is the control and keeps its meaning.
+        """
+        hooks = worktree / ".git" / "empty-hooks"
+        hooks.mkdir()
+        for key, value in [("user.email", "test@example.com"),
+                           ("user.name", "Test"),
+                           ("commit.gpgsign", "false"),
+                           ("core.hooksPath", str(hooks))]:
+            self._git(worktree, "config", key, value)
+        (worktree / "moved.py").write_text("alpha\nbeta\ngamma\n")
+        (worktree / "still.py").write_text("one\ntwo\n")
+        self._git(worktree, "add", "-A")
+        self._git(worktree, "commit", "-qm", "base")
+        self._git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+        (worktree / "moved.py").write_text("alpha\nbeta\nGAMMA\n")
+        (worktree / "still.py").write_text("one\nTWO\n")
+        self._git(worktree, "commit", "-qam", "the branch's base work")
+        read = git_out(worktree, "rev-parse", "HEAD").strip()
+        (worktree / "moved.py").write_text("GAMMA\n")
+        self._git(worktree, "commit", "-qam", "drop the header")
+        return SimpleNamespace(path=worktree, read=read)
+
+    def _resolved(self, shifted, outcome, explicit=""):
+        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
+             patch.object(settlement.push, "holds", return_value=True):
+            return settlement.resolve_settled_commit(
+                shifted.path, outcome, explicit)
+
+    def test_a_stale_line_settles_without_a_citation(self, shifted):
+        outcome = ItemOutcome(id="c1", file="moved.py", line=1,
+                              read_sha=shifted.read)
+        resolved = self._resolved(shifted, outcome)
+        assert resolved.ok
+        assert resolved.sha == ""
+
+    # passes-at-base: the citation this change was careful not to drop
+    def test_a_line_still_meaning_what_it_meant_keeps_its_citation(self, shifted):
+        """The control: a file untouched since the read still cites honestly."""
+        outcome = ItemOutcome(id="c2", file="still.py", line=2,
+                              read_sha=shifted.read)
+        assert self._resolved(shifted, outcome).sha
+
+    # passes-at-base: pins the asymmetry a broader guard would have erased
+    def test_a_row_with_no_recorded_tree_is_unaffected(self, shifted):
+        """No `read_sha` is "cannot check", not "stale" — the walk still runs."""
+        outcome = ItemOutcome(id="c3", file="still.py", line=2)
+        assert self._resolved(shifted, outcome).sha
+
+    # passes-at-base: the override must survive the guard it routes around
+    def test_an_operators_explicit_commit_is_still_honoured(self, shifted):
+        """The override exists for exactly the fix a stale line cannot find."""
+        outcome = ItemOutcome(id="c4", file="moved.py", line=1,
+                              read_sha=shifted.read)
+        assert self._resolved(shifted, outcome, explicit="HEAD").sha
 
 
 class TestOneCitationPerSettlement:

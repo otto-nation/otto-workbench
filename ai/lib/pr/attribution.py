@@ -31,7 +31,7 @@ from git import client as git_client
 from git import topology as git_topology
 from git.land import CommitStatus, LandResult
 from pr import permalinks
-from pr.fix import SettledBy
+from pr.fix import ItemOutcome, SettledBy
 from pr.thread_models import CommentItem, ReportThread
 
 
@@ -277,15 +277,67 @@ def find_addressing_commit(
     return sha if sha else None
 
 
-def commit_timestamp(wt_path: Path, sha: str) -> float:
-    """When `sha` was committed, in POSIX seconds, or 0.0 when unknown.
+def coordinate_went_stale(
+    wt_path: Path | None,
+    entry: CommentItem | ItemOutcome,
+    filepath: str,
+    line: int,
+) -> bool:
+    """Whether `line` has stopped meaning what it meant when it was recorded.
 
-    The committer date, not the author date: a rebased or cherry-picked fix
-    keeps the author date it was first written at, which would place work
-    landed in response to a review before the review that asked for it.
+    A line number is a coordinate in one tree. :func:`find_addressing_commit`
+    spends it against the tree that exists now, so once the file has changed
+    underneath it the number names whatever code inherited it and the walk
+    answers confidently about a line the row was never about. That is how a
+    rebased branch had four rows attributed to its own base commit, and it is
+    why every caller of that function has to ask this first.
+
+    Only a recorded tree that *disagrees* is evidence of staleness. A record
+    with no `read_sha` is one nothing ever stamped a tree onto, which says the
+    run cannot check the coordinate rather than that the coordinate is wrong —
+    declining those would retire the per-line mechanism for every caller that
+    builds a record without one. The asymmetry is deliberate: staleness is
+    claimed only where it can be shown.
+
+    Shared by the render path and `--settle` rather than written twice, because
+    the two disagreeing would mean a row cited one commit when it was settled
+    and a different one when it was published.
+
+    `permalinks.anchored_line` decides the same question for a *link* and is
+    reused rather than restated, so a citation and the anchor beside it cannot
+    disagree about whether the coordinate still holds.
     """
+    if not entry.read_sha:
+        return False
+    return not permalinks.anchored_line(entry, filepath, line, "HEAD", wt_path)
+
+
+def commit_timestamp(wt_path: Path, sha: str) -> float:
+    """When `sha` landed, in POSIX seconds, or 0.0 when unknown.
+
+    The *older* of the committer and author dates, because the two disagree in
+    opposite directions and only the earlier one is safe in both.
+
+    The committer date alone reads a rebase as work landing now: a rebase resets
+    it on every commit it replays, so the branch's own base commit — written
+    days before the review — comes back newer than every review comment, and
+    every staleness check downstream passes unconditionally. That is how a
+    summary published four rows against a base commit containing none of them.
+
+    The author date alone has the symmetric failure this function was first
+    written to avoid: a cherry-picked or rebased fix keeps the date it was
+    written at, which places work landed in response to a review before the
+    review that asked for it.
+
+    The minimum is wrong in neither direction. A commit only counts as landing
+    after the review when it does so on both clocks, so a rewrite can lose a
+    citation the branch could have supported but can never invent one — and
+    losing a citation costs a line of provenance, while inventing one sends a
+    reviewer to a commit that does not contain the change.
+    """
+    stamps = git_client.out("show", "-s", "--format=%ct %at", sha, cwd=wt_path)
     try:
-        return float(git_client.out("show", "-s", "--format=%ct", sha, cwd=wt_path))
+        return min(float(stamp) for stamp in stamps.split())
     except ValueError:
         return 0.0
 
@@ -431,7 +483,12 @@ class AddressingHistory:
         return AddressedFraming(landed_after, sha)
 
     def _commit_for(self, entry: CommentItem) -> str:
-        """The branch commit behind this entry's code, or "" when there is none."""
+        """The branch commit behind this entry's code, or "" when there is none.
+
+        Checks :meth:`_coordinate_went_stale` before spending `where` on a walk:
+        that guard is what `_postdates` still relies on to hold, and it only
+        refuses to spend a coordinate that no longer points at the row's code.
+        """
         if not self._wt_path:
             return ""
         # Triage's citation where there is one: it names the code that makes
@@ -443,9 +500,17 @@ class AddressingHistory:
             where = (entry.evidence_file, entry.evidence_line)
         else:
             where = (entry.file, entry.line)
+        if self._coordinate_went_stale(entry, *where):
+            return ""
         if where not in self._commits:
             self._commits[where] = find_addressing_commit(self._wt_path, *where) or ""
         return self._commits[where]
+
+    def _coordinate_went_stale(
+        self, entry: CommentItem, filepath: str, line: int,
+    ) -> bool:
+        """:func:`coordinate_went_stale` against this history's worktree."""
+        return coordinate_went_stale(self._wt_path, entry, filepath, line)
 
     def _postdates(
         self, sha: str, entry: CommentItem, thread: ReportThread | None,

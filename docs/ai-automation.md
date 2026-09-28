@@ -455,13 +455,13 @@ when the thread was opened:
 | a commit on the thread's line, dated after the review comment | `Applied:` … `Fixed in <sha>` | `Fixed in <sha>`, counted with the fixes |
 | a commit on that line, dated before the comment | `Already addressed:` … `Addressed in <sha>` | `Already addressed` |
 | no commit on that line — the code predates the branch | `Already addressed:` | `Already addressed` |
+| the thread's line no longer means what it did when it was read | `Already addressed:` | `Already addressed` |
 
 The commit is the one `git log -L` names for the thread's line, so two threads
-on one file get two answers; its committer date is what is compared, because a
-rebased fix keeps the author date it was first written at. Either timestamp
-missing reads as pre-existing: claiming credit for a fix is the assertion that
-needs evidence, and there is none when one side of the comparison cannot be
-dated.
+on one file get two answers, and both the line and the date it is judged by are
+checked so a rebase cannot invent one — `pr/attribution.py` carries the rules.
+Either timestamp missing reads as pre-existing: claiming credit for a fix is the
+assertion that needs evidence, and there is none when one side cannot be dated.
 
 `pr comments --finish` reaches this reply from a second direction. A fixed
 thread whose commit the resolver cannot cite — a hook rejected the pass's

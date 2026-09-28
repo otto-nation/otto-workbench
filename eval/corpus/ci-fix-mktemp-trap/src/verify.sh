@@ -24,6 +24,8 @@ dir=$(cat "$MKTEMP_LOG")
 
 : > "$MKTEMP_LOG"
 bash "$here/prepare.sh" --fail >/dev/null 2>&1
+rc=$?
+[[ "$rc" -ne 0 ]] || fail "prepare.sh --fail must exit non-zero"
 dir=$(cat "$MKTEMP_LOG")
 [[ -n "$dir" ]] || fail "prepare.sh did not create a temp dir on the failure path"
 [[ ! -d "$dir" ]] || fail "temp dir leaked after early exit: $dir"

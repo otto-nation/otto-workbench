@@ -328,11 +328,18 @@ class TestRunAgentQuotaRetry:
     def test_a_shared_throttle_holds_the_other_agents_back(
         self, monkeypatch, tmp_path,
     ):
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
         self._agent(monkeypatch, [1, 0])
         throttle = agent_invoke.QuotaThrottle()
         agent_invoke.run_agent(self._inv(tmp_path), throttle=throttle)
         # The backoff the failure set is what a sibling agent waits out.
         assert throttle._resume_at > 0
+
+        slept = []
+        monkeypatch.setattr(agent_invoke.time, "sleep", lambda s: slept.append(s))
+        agent_invoke.QuotaThrottle().wait_if_needed()
+        assert slept
+        assert slept[0] == pytest.approx(30, abs=2)
 
 
 class TestRunFixRetryPolicy:

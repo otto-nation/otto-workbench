@@ -22,7 +22,6 @@ those differ; going through here is what stops them, and
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -32,6 +31,7 @@ from agent import phases as agent_phases
 from agent import retry as agent_retry
 from agent import backend as ai_backend
 from core import log
+from core.quota_throttle import QuotaThrottle
 from agent import session as review_agent
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
@@ -148,35 +148,6 @@ def run_prompt(
 
 
 # ── Agent shape ──────────────────────────────────────────────────────────────
-
-
-class QuotaThrottle:
-    """Thread-safe throttle shared across pipeline agents.
-
-    When any agent hits a 429, all pending agents wait before launching.
-    """
-
-    def __init__(self, backoff: float = 30.0, max_backoff: float = 120.0):
-        self._lock = threading.Lock()
-        self._resume_at: float = 0.0
-        self._backoff = backoff
-        self._max_backoff = max_backoff
-
-    def report_exhausted(self, model: str) -> float:
-        with self._lock:
-            wait = self._backoff
-            self._resume_at = time.monotonic() + wait
-            self._backoff = min(self._backoff * 2, self._max_backoff)
-        log.warn(f"Quota exhausted on {model} — backing off {wait:.0f}s")
-        return wait
-
-    def wait_if_needed(self) -> None:
-        with self._lock:
-            resume_at = self._resume_at
-        remaining = resume_at - time.monotonic()
-        if remaining > 0:
-            log.info(f"Throttle: waiting {remaining:.0f}s for quota to recover")
-            time.sleep(remaining)
 
 
 def _invoke_once(inv: AgentInvocation) -> int:

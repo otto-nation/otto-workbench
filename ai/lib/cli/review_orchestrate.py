@@ -256,25 +256,36 @@ def _review_scale(job) -> ReviewScale:
     return ReviewScale(job.pr.changed_files, job.pr.total_lines, "pr")
 
 
-def _pipeline_thresholds(job) -> tuple[int, int]:
+def _pipeline_thresholds(job, explicit_effort: Effort | None = None) -> tuple[int, int]:
     """Line and file counts that push this job onto the multi-phase path.
 
     A self-review uses ``review.self_effort`` for these two numbers only —
     phase skips, thinking, and budgets still follow ``job.effort``. Unset,
     that key takes low's thresholds so a small local diff stays on the
     single-agent path without dropping disprove.
+
+    ``explicit_effort`` is ``--effort`` when the caller passed one, and it wins
+    here as it does everywhere else: the precedence is ``CLI flag > env >
+    project > container > global``, and this branch used to read the config key
+    alone. That made the flag look like it worked and silently not — it moved
+    every budget while leaving the path decision on the config's value, so a
+    diff too big for one agent stayed on the single-agent path and the run
+    burned its turns without writing. The config key is still the default; it
+    is no longer the only answer.
     """
     preset = EFFORT_PRESETS[job.effort]
     if job.mode != Mode.SELF:
         return preset.multi_phase_line_threshold, preset.multi_phase_file_threshold
-    self_effort = job.config.review.self_effort or Effort.LOW
+    self_effort = explicit_effort or job.config.review.self_effort or Effort.LOW
     chosen = EFFORT_PRESETS[self_effort]
     return chosen.multi_phase_line_threshold, chosen.multi_phase_file_threshold
 
 
-def _choose_pipeline(job) -> tuple[Pipeline, ReviewScale, int, int]:
+def _choose_pipeline(
+    job, explicit_effort: Effort | None = None,
+) -> tuple[Pipeline, ReviewScale, int, int]:
     """Which pipeline this job runs, and the numbers that chose it."""
-    line_threshold, file_threshold = _pipeline_thresholds(job)
+    line_threshold, file_threshold = _pipeline_thresholds(job, explicit_effort)
     scale = _review_scale(job)
     is_large = scale.lines > line_threshold or scale.files > file_threshold
     pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
@@ -302,7 +313,7 @@ def _run_phases(trail, args, job) -> Pipeline:
         write_unchanged_review(job)
         return Pipeline.SINGLE
 
-    pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job)
+    pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job, args.effort)
 
     trail.decision(
         "select_pipeline",

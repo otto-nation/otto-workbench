@@ -3237,3 +3237,44 @@ class TestSelfReviewPipeline:
         assert pr_pipeline is ro.Pipeline.MULTI
         assert self_pipeline is ro.Pipeline.SINGLE
         assert _should_disprove(self_job) is True
+
+    def test_an_explicit_effort_moves_the_self_review_threshold(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """`--effort` wins here as it does everywhere else in the chain.
+
+        It used to set every budget and leave this decision on the config key,
+        so a diff too large for one agent stayed single-agent and the run spent
+        its turns reading without ever writing the review. The flag looked like
+        it worked and did not.
+        """
+        from core.phases import Effort
+
+        monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "config"))
+        (tmp_path / "config").mkdir()
+        # 681 lines: over medium's 500, under low's 1000 — the band where the
+        # two presets disagree, which is the only place the flag can show.
+        job = self._job(ro, tmp_path, ro.Mode.SELF)
+
+        default_pipeline, *_ = ro._choose_pipeline(job)
+        flagged_pipeline, *_ = ro._choose_pipeline(job, Effort.MEDIUM)
+
+        assert default_pipeline is ro.Pipeline.SINGLE
+        assert flagged_pipeline is ro.Pipeline.MULTI
+
+    # passes-at-base: the config key was already the value this reads
+    def test_the_config_key_still_answers_when_no_flag_is_passed(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The flag is an override, not a replacement for `review.self_effort`."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text(
+            "review:\n  self_effort: medium\n",
+        )
+        monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+        job = self._job(ro, tmp_path, ro.Mode.SELF)
+
+        pipeline, *_ = ro._choose_pipeline(job)
+
+        assert pipeline is ro.Pipeline.MULTI

@@ -207,6 +207,8 @@ def format_summary_table(
 # run census. Earlier baselines still load: a field they never recorded is
 # ungated and unchecked, not failing.
 SCHEMA_VERSION = 3
+# Session --output nests condition under model. Baselines stay SCHEMA_VERSION.
+SESSION_SCHEMA_VERSION = 4
 _SUPPORTED_SCHEMA_VERSIONS = (1, 2, 3)
 
 _ENTRY_METRIC_KEYS = {"recall_mean", "precision_mean"}

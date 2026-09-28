@@ -395,6 +395,18 @@ class TestTaskFilter:
         with pytest.raises(SystemExit):
             em.discover_entries(str(tmp_path), "", "ci-fix")
 
+    def test_run_eval_passes_the_task_filter_to_discover(self, tmp_path, em, capsys):
+        corpus = tmp_path / "corpus"
+        _make_case(corpus, "ci-only-a", task="ci-fix")
+        _make_case(corpus, "ci-only-b", task="ci-fix")
+        _make_case(corpus, "review-only-a", task="review")
+        em.run_eval(_args(tmp_path, task="ci-fix", dry_run=True))
+        err = capsys.readouterr().err
+        assert "ci-only-a" in err
+        assert "ci-only-b" in err
+        assert "review-only-a" not in err
+        assert "Total runs: 2" in err
+
 
 def _recording_task(calls):
     """A get_task stand-in that records RunOptions without invoking a model."""
@@ -450,6 +462,13 @@ def _fake_claude(path: Path) -> Path:
     rules.mkdir(parents=True)
     (rules / "general.md").write_text("# general\n")
     return path
+
+
+def test_empty_conditions_is_an_error(tmp_path, em):
+    (tmp_path / "corpus").mkdir()
+    args = _args(tmp_path, conditions="", dry_run=True)
+    with pytest.raises(SystemExit, match="unknown condition"):
+        em.run_eval(args)
 
 
 def test_each_condition_gets_its_own_seeded_tree_and_row(tmp_path, monkeypatch, em):

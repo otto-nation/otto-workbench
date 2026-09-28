@@ -36,6 +36,7 @@ sys.path.insert(0, str(_AI_LIB_DIR))
 from eval import conditions  # noqa: E402
 from eval.scoring import (  # noqa: E402
     SCHEMA_VERSION,
+    SESSION_SCHEMA_VERSION,
     ScoringResult,
     aggregate_runs,
     compare_baselines,
@@ -135,27 +136,6 @@ def _baseline_document(
     }
 
 
-def _build_baseline(
-    all_results: dict[tuple, list[ScoringResult]],
-    model_label: str,
-    effort: str,
-    runs_per_entry: int,
-) -> dict:
-    """Collapse to the full arm only — baselines do not gain a condition axis."""
-    entry_results: dict[str, dict] = {}
-    for key, results in all_results.items():
-        entry_name, model, *rest = key
-        condition = rest[0] if rest else "full"
-        if model != model_label or condition != "full":
-            continue
-        agg = aggregate_runs(results)
-        entry_results[entry_name] = {
-            **agg,
-            "runs": [_serialize_run(r) for r in results],
-        }
-    return _baseline_document(model_label, effort, runs_per_entry, entry_results)
-
-
 def _save_baselines(
     output: dict,
     results_dir: str,
@@ -218,7 +198,7 @@ def _build_output(
         }
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "schema_version": 4,
+        "schema_version": SESSION_SCHEMA_VERSION,
         "effort": effort,
         "runs_per_entry": runs_per_entry,
         "entries": entries,
@@ -241,6 +221,22 @@ def _flatten_full_arm(output: dict) -> dict:
     flat["entries"] = entries
     flat["schema_version"] = SCHEMA_VERSION
     return flat
+
+
+def _missing_full_pair(name: str, model: str, data) -> list[tuple[str, str]]:
+    row = _full_arm_row(data)
+    if not isinstance(row, dict) or "recall_mean" not in row:
+        return [(name, model)]
+    return []
+
+
+def _entries_without_full_arm(output: dict) -> list[tuple[str, str]]:
+    """(entry, model) pairs whose flattened row is not a full-arm metric dict."""
+    missing: list[tuple[str, str]] = []
+    for name, models in output.get("entries", {}).items():
+        for model, data in models.items():
+            missing.extend(_missing_full_pair(name, model, data))
+    return missing
 
 
 def _cleanup(temp_dirs: list[str], keep: bool) -> None:
@@ -352,7 +348,7 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
     models = [m.strip() for m in args.models.split(",")] if args.models else [""]
     model_labels = [m or "(default)" for m in models]
 
-    arms = [c.strip() for c in args.conditions.split(",") if c.strip()]
+    arms = [c.strip() for c in args.conditions.split(",")]
     for arm in arms:
         if arm not in conditions.CONDITIONS:
             sys.exit(f"error: unknown condition: {arm}")
@@ -424,6 +420,20 @@ def _run_post_eval(
             file=sys.stderr,
         )
         return exit_code
+
+    # A trimmed-only session nests condition and has no full arm. Flattening
+    # that document is identity, so a save would overwrite the schema-3 ratchet
+    # with a nested file labelled schema 3. Refuse rather than record.
+    missing_full = _entries_without_full_arm(output)
+    if missing_full:
+        print(
+            "error: refusing to save baselines — session has no full arm "
+            "(the canonical baseline is the full-arm ratchet):",
+            file=sys.stderr,
+        )
+        for entry, model in missing_full:
+            print(f"  {entry} / {model}", file=sys.stderr)
+        return 3
 
     # A baseline is written wholesale from one pass, so a single window of
     # backend failures would replace a good file with zeros and nothing

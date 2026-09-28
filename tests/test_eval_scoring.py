@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -608,7 +610,7 @@ def test_the_session_output_nests_condition_under_model(em):
         {("e", "sonnet", "full"): [_r()], ("e", "sonnet", "trimmed"): [_r()]},
         "low", 1,
     )
-    assert out["schema_version"] == 4
+    assert out["schema_version"] == eval_scoring.SESSION_SCHEMA_VERSION
     assert set(out["entries"]["e"]["sonnet"]) == {"full", "trimmed"}
     assert "billed_input_mean" in out["entries"]["e"]["sonnet"]["full"]
 
@@ -619,7 +621,45 @@ def test_a_per_run_record_carries_the_tokens_an_ab_needs(em):
     assert row["output_tokens"] == 2800
 
 
-def test_a_baseline_file_keeps_the_flat_schema_3_shape(em):
-    base = em._build_baseline({("e", "sonnet", "full"): [_r()]}, "sonnet", "low", 1)
-    assert base["schema_version"] == 3
-    assert "recall_mean" in base["entries"]["e"], "baselines stay entries[name][model]"
+def _save_baseline_args(tmp_path):
+    return argparse.Namespace(
+        save_baselines=True, compare=False,
+        results_dir=str(tmp_path / "results"),
+    )
+
+
+def test_a_baseline_file_keeps_the_flat_schema_3_shape(em, tmp_path):
+    session = em._build_output(
+        {
+            ("e", "sonnet", "full"): [_r(model="sonnet", recall=0.9)],
+            ("e", "sonnet", "trimmed"): [
+                _r(model="sonnet", recall=0.1, condition="trimmed"),
+            ],
+        },
+        "low", 1,
+    )
+    assert em._run_post_eval(_save_baseline_args(tmp_path), session, tmp_path) == 0
+    base = json.loads((tmp_path / "results" / "sonnet.json").read_text())
+    assert base["schema_version"] == eval_scoring.SCHEMA_VERSION
+    assert base["entries"]["e"]["recall_mean"] == 0.9
+    assert "full" not in base["entries"]["e"]
+    assert "trimmed" not in base["entries"]["e"]
+
+
+def test_save_baselines_refuses_a_trimmed_only_session(em, tmp_path, capsys):
+    session = em._build_output(
+        {("e", "sonnet", "trimmed"): [
+            _r(model="sonnet", recall=0.1, condition="trimmed"),
+        ]},
+        "low", 1,
+    )
+    results = tmp_path / "results"
+    results.mkdir()
+    good = results / "sonnet.json"
+    good.write_text('{"keep": true}\n')
+    code = em._run_post_eval(_save_baseline_args(tmp_path), session, tmp_path)
+    assert code == 3
+    assert good.read_text() == '{"keep": true}\n'
+    err = capsys.readouterr().err
+    assert "no full arm" in err
+    assert "e / sonnet" in err

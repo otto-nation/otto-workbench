@@ -2695,6 +2695,20 @@ reads both. Anything else in this module stays behind the preflight.
 
 The eval harness: fixture tasks, the scorers that grade each task's output, and the aggregation the CI ratchet gates on.
 
+### eval/conditions.py
+
+The two rule prefixes an A/B run compares, and the trees they are served from.
+
+The prefix under test is the 27 files installed at ``~/.claude/rules/`` — the
+merge of repo defaults, generated files and operator overrides — not the 18 in
+``ai/guidelines/rules/``. A trim set written against the repo sources would
+leave the five generated files identical in both arms and quietly shrink the
+contrast the experiment exists to measure.
+
+Membership is explicit on both sides rather than "kept is everything not
+dropped": a rule added later would otherwise join the kept arm silently and
+change what the two conditions mean without anyone editing this file.
+
 ### eval/rules_canary.py
 
 Does `--add-dir` still bring the operator's coding rules with it.
@@ -2905,7 +2919,9 @@ A run reports a `RunOutcome`, and only `MEASURED` is a number. An invocation
 that died before the agent did any work produces empty artifacts, which score as
 recall 0 and are indistinguishable in the results from a genuine miss — one bad
 backend window then replaces a good baseline with zeros. `outcome_for` names that
-case from the two things it always shows: a non-zero exit and no usage at all.
+case from the usage: nothing billed, regardless of exit code. A non-zero exit
+with no spend is a dead backend; an exit 0 with no spend is the CLI refusing to
+start.
 
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.

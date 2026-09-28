@@ -11,6 +11,8 @@ dropped": a rule added later would otherwise join the kept arm silently and
 change what the two conditions mean without anyone editing this file.
 """
 
+# doc-group: eval
+
 from __future__ import annotations
 
 import shutil

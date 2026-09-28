@@ -2454,31 +2454,64 @@ class TestFetchMetadataSelfMode:
 
 
 class TestStaticAnalysisIntegration:
+    DEEP = (
+        "#!/bin/bash\n"
+        "func() {\n"
+        "  if true; then\n"
+        "    for x in a; do\n"
+        "      while true; do\n"
+        "        echo deep\n"
+        "      done\n"
+        "    done\n"
+        "  fi\n"
+        "}\n"
+    )
+
+    def _job(self, tmp_path, review_file, changed_files):
+        """A job in the two fields the injector reads, plus the one it writes."""
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(tmp_path)
+        job.pr.files = changed_files
+        job.static_results = []
+        return job
+
     def test_static_analysis_injected_into_review(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
         review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
-
-        deep_script = tmp_path / "deep.sh"
-        deep_script.write_text(
-            "#!/bin/bash\n"
-            "func() {\n"
-            "  if true; then\n"
-            "    for x in a; do\n"
-            "      while true; do\n"
-            "        echo deep\n"
-            "      done\n"
-            "    done\n"
-            "  fi\n"
-            "}\n"
-        )
+        (tmp_path / "deep.sh").write_text(self.DEEP)
 
         changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
-        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+        ro._inject_static_analysis_section(
+            self._job(tmp_path, review_file, changed_files),
+        )
 
         result = review_file.read_text()
         assert "## Static Analysis" in result
         assert "Nesting depth" in result
         assert result.index("## Static Analysis") < result.index("## Verdict")
+
+    def test_the_violations_reach_the_job_the_fix_pass_reads(self, ro, tmp_path):
+        """The fix pass takes its work from here rather than re-running the checkers.
+
+        Re-deriving them there would measure a tree this section has already
+        described, so the two could disagree about what is wrong with the code.
+        """
+        review_file = tmp_path / "review.md"
+        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        (tmp_path / "deep.sh").write_text(self.DEEP)
+
+        changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
+        job = self._job(tmp_path, review_file, changed_files)
+        ro._inject_static_analysis_section(job)
+
+        violations = [v for r in job.static_results for v in r.violations]
+        assert violations, "the deep script's violation did not reach the job"
+        assert all(v.id for v in violations), "a violation with no id is unaddressable"
+        # The same ids the section declares, or the fix pass's outcomes have no
+        # line to be written back to.
+        for violation in violations:
+            assert f"**[{violation.id}]**" in review_file.read_text()
 
     def test_static_analysis_skipped_when_no_applicable_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
@@ -2486,9 +2519,11 @@ class TestStaticAnalysisIntegration:
         review_file.write_text(original)
 
         changed_files = [{"path": "README.md", "additions": 5, "deletions": 0}]
-        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+        job = self._job(tmp_path, review_file, changed_files)
+        ro._inject_static_analysis_section(job)
 
         assert review_file.read_text() == original
+        assert job.static_results == []
 
     def test_static_analysis_clean_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
@@ -2498,7 +2533,9 @@ class TestStaticAnalysisIntegration:
         clean_script.write_text("#!/bin/bash\necho hello\n")
 
         changed_files = [{"path": "clean.sh", "additions": 2, "deletions": 0}]
-        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+        ro._inject_static_analysis_section(
+            self._job(tmp_path, review_file, changed_files),
+        )
 
         result = review_file.read_text()
         assert "## Static Analysis" in result

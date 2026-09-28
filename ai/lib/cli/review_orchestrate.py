@@ -158,15 +158,22 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
     return True
 
 
-def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_path: str) -> dict | None:
-    review_path = Path(review_file)
+def _inject_static_analysis_section(job) -> dict | None:
+    """Write the `## Static Analysis` section, and hand the results to the job.
+
+    The results go on the job because the fix pass runs next and needs the same
+    list: these violations are work it can take, and re-deriving them there
+    would measure a tree the section has already described.
+    """
+    review_path = Path(job.review_file)
     if not review_path.is_file():
         return None
-    changed_files = [f["path"] for f in pr_files]
-    results = run_static_analysis(changed_files, wt_path)
+    changed_files = [f["path"] for f in job.pr.files]
+    results = run_static_analysis(changed_files, job.wt_path)
     section = format_static_analysis(results)
     if not section:
         return None
+    job.static_results = results
     review_path.write_text(set_section(
         review_path.read_text(), SECTION_STATIC_ANALYSIS, section, before=SECTION_VERDICT,
     ))
@@ -316,7 +323,7 @@ def _run_phases(trail, args, job) -> Pipeline:
         detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
         trail.info("evidence_verification", detail, data=v)
 
-    sa_summary = _inject_static_analysis_section(job.review_file, job.pr.files, job.wt_path)
+    sa_summary = _inject_static_analysis_section(job)
     if sa_summary is not None:
         detail = f"checkers={sa_summary['checkers_run']} files={sa_summary['files_checked']} violations={sa_summary['violations']}"
         trail.info("static_analysis", detail, data=sa_summary)

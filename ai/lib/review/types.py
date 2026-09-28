@@ -663,6 +663,15 @@ class ReviewJob:
     reply_threads: ReplyThreads | None = None
     verification: dict | None = None
     pr_state_data: "PRState | None" = None
+    # What the static checkers found, held from the run that wrote the `## Static
+    # Analysis` section so the fix pass works the same list a reader sees.
+    # Re-running the checkers there would scan a tree the review has already
+    # described, and the section and the work set would then disagree.
+    #
+    # Annotated as a string for the reason `PRState` is: `review.static_analysis`
+    # imports `review.document`, which imports this module, so naming the type
+    # here would close the cycle.
+    static_results: "list[CheckerResult]" = field(default_factory=list)
     viewer_role: str = ""
     throttle: "QuotaThrottle | None" = None
     # Taken when the job is built, not when the sidecar is written: every

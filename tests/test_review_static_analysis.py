@@ -10,11 +10,15 @@ if str(LIB_DIR) not in sys.path:
 if str(REPO_ROOT / "lib") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "lib"))
 
+from review.grammar import FINDING_ID_RE
 from review.static_analysis import (
+    STATIC_ID_RE,
     CheckerResult,
     StaticViolation,
+    all_violations,
     check_nesting_depth,
     format_static_analysis,
+    run_static_analysis,
 )
 
 
@@ -94,6 +98,34 @@ class TestFormatStaticAnalysis:
         assert "**`script.sh:10`** — depth 3 exceeds limit 2" in output
         assert "(in " not in output
 
+    def test_an_addressable_violation_renders_a_box_and_an_id(self):
+        """The box is what the fix pass ticks; the id is what it keys its outcome by."""
+        violations = [StaticViolation(
+            file="a.sh", line=1, message="depth 3 exceeds limit 2", id="SA1",
+        )]
+        results = [CheckerResult(name="Nesting depth", violations=violations, files_checked=1)]
+        line = next(
+            ln for ln in format_static_analysis(results).split("\n")
+            if "a.sh" in ln
+        )
+        assert line.startswith("- [ ] **[SA1]** ")
+        assert STATIC_ID_RE.match(line)
+
+    def test_a_violation_with_no_id_renders_without_a_box(self):
+        """It never went through `run_static_analysis`, so nothing can answer it.
+
+        Rendering a box the fix pass will never tick would report the violation
+        as work in hand when no outcome can reach it.
+        """
+        violations = [StaticViolation(file="a.sh", line=1, message="too deep")]
+        results = [CheckerResult(name="Nesting depth", violations=violations, files_checked=1)]
+        line = next(
+            ln for ln in format_static_analysis(results).split("\n")
+            if "a.sh" in ln
+        )
+        assert line.startswith("- **`a.sh:1`**")
+        assert not STATIC_ID_RE.match(line)
+
     def test_multiple_checkers_mixed(self):
         results = [
             CheckerResult(name="Checker A", violations=[], files_checked=2),
@@ -113,6 +145,77 @@ class TestFormatStaticAnalysis:
         results = [CheckerResult(name="Test", violations=violations, files_checked=1)]
         output = format_static_analysis(results)
         assert "2 violations in 1 of 1 files checked" in output
+
+
+class TestViolationIds:
+    """The ids that let the fix pass take a violation as work."""
+
+    def _results(self, *violations):
+        return [CheckerResult(
+            name="Nesting depth", violations=list(violations), files_checked=1,
+        )]
+
+    def test_ids_are_assigned_in_reading_order(self):
+        results = self._results(
+            StaticViolation(file="b.py", line=1, message="x"),
+            StaticViolation(file="a.py", line=9, message="x"),
+            StaticViolation(file="a.py", line=2, message="x"),
+        )
+        for n, violation in enumerate(all_violations(results), start=1):
+            violation.id = f"SA{n}"
+        assert [(v.file, v.line, v.id) for v in all_violations(results)] == [
+            ("a.py", 2, "SA1"), ("a.py", 9, "SA2"), ("b.py", 1, "SA3"),
+        ]
+
+    def test_run_static_analysis_numbers_every_violation(self, tmp_path):
+        (tmp_path / "deep.py").write_text(
+            "def func():\n"
+            "    if True:\n"
+            "        for x in range(10):\n"
+            "            while True:\n"
+            "                pass\n"
+        )
+        results = run_static_analysis(["deep.py"], str(tmp_path))
+        violations = all_violations(results)
+        assert violations
+        assert [v.id for v in violations] == [
+            f"SA{n}" for n in range(1, len(violations) + 1)
+        ]
+
+    def test_numbering_runs_across_checkers_rather_than_restarting(self):
+        """Two checkers numbering their own would hand two violations one id."""
+        results = [
+            CheckerResult(name="A", violations=[
+                StaticViolation(file="a.py", line=1, message="x"),
+            ], files_checked=1),
+            CheckerResult(name="B", violations=[
+                StaticViolation(file="b.py", line=1, message="x"),
+            ], files_checked=1),
+        ]
+        for n, violation in enumerate(all_violations(results), start=1):
+            violation.id = f"SA{n}"
+        ids = [v.id for r in results for v in r.violations]
+        assert len(set(ids)) == len(ids)
+
+    def test_a_static_id_is_not_readable_as_a_finding(self):
+        """The two work streams must not claim each other's ids.
+
+        `FINDING_ID_RE` wants digits straight after the severity key, and the
+        `A` in `SA1` is not one — a property of a pattern in another module,
+        which is why it is asserted here rather than described in a comment.
+        """
+        line = "- [ ] **[SA1]** **`a.py:1`** — depth 5 exceeds limit 4"
+        assert STATIC_ID_RE.match(line)
+        assert not FINDING_ID_RE.match(line)
+
+    def test_a_finding_line_is_not_readable_as_a_violation(self):
+        line = "- [ ] **[S1]** `a.py:1` — the guard is missing"
+        assert FINDING_ID_RE.match(line)
+        assert not STATIC_ID_RE.match(line)
+
+    def test_an_id_quoted_mid_line_is_not_a_declaration(self):
+        """Anchored at the head, so prose about a violation does not become one."""
+        assert not STATIC_ID_RE.match("- [ ] **[S1]** the fix for **[SA1]** is owed")
 
 
 class TestCheckNestingDepth:

@@ -80,6 +80,30 @@ A decline resting on scope, house convention, a documented `ceiling:` tradeoff,
 or the finding's own text needs none of this. It is specifically the
 "the code already does X" decline that has to rule out having done X yourself.
 
+## Machine-checked items
+
+An item whose id begins `SA` is a static analysis violation, not a reviewer's
+finding. The section above does not apply to it: the measurement was taken from
+the code by a checker, so there is no premise to disprove and no reviewer who
+might have been looking at the wrong file.
+
+Fix it by flattening the control flow the checker measured — an early return, a
+guard clause, an extracted helper. Do not satisfy the depth by moving code into
+a nested function defined at the same site, which lowers the number and leaves
+the reader exactly where they were.
+
+Two things earn `declined` here, and nothing else does:
+
+- the code carries a `ceiling:` or `ceiling-permanent:` comment naming this
+  shape as a deliberate tradeoff — the same rule findings get
+- the checker misread the file: it counted a construct the language does not
+  nest, or a depth the source does not have. Name the line and what it actually
+  is
+
+"The nesting is fine" and "the function is clearer this way" are not declines —
+the repo has a depth limit and this file is over it. If flattening it needs a
+design call, that is `needs a person`, and say what the call is.
+
 ## What earns each box
 
 - **fixed** — a clear, unambiguous change: a wrong value, a missing guard, an

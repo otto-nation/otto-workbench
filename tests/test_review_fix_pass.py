@@ -41,6 +41,7 @@ from core.phases import Effort, Phase
 from pr import attribution
 from pr.fix import FixOutcome, ItemOutcome
 from gh.types import PRContext, PRMetadata
+from review.static_analysis import CheckerResult, StaticViolation
 from review.types import Finding, ReviewJob
 
 # What the push owner answers when the fix pass's commit reached the remote.
@@ -212,6 +213,20 @@ def _finding(fid: str, path: str = "a.py", body: str = "body", **kwargs) -> Find
         id=fid, severity=fid[0], seq=int(fid[1:]), path=path,
         line=1, end_line=None, body=body, **kwargs,
     )
+
+
+def _violation(vid: str, path: str = "a.py", line: int = 1, **kwargs) -> StaticViolation:
+    return StaticViolation(
+        file=path, line=line, message="depth 5 exceeds limit 4", id=vid, **kwargs,
+    )
+
+
+def _static_results(*violations: StaticViolation) -> list[CheckerResult]:
+    """Violations in the shape `run_static_analysis` hands to the job."""
+    return [CheckerResult(
+        name="Nesting depth", violations=list(violations),
+        files_checked=len({v.file for v in violations}),
+    )]
 
 
 # ── what reaches the agent ──────────────────────────────────────────────────
@@ -594,7 +609,7 @@ class TestBranchScope:
 class TestTheSummary:
     """Three answers worth telling apart, in the terms each is worth reading."""
 
-    FINDINGS = {"M1": _finding("M1", body="the guard is missing")}
+    FINDINGS = {"M1": "the guard is missing"}
 
     def test_a_fix_is_described_by_the_finding_it_answered(self):
         summary = review_fix._summary(
@@ -608,8 +623,10 @@ class TestTheSummary:
         assert "[M9] gone.py" in review_fix._summary([outcome], self.FINDINGS)
 
     def test_a_multi_line_body_is_reported_by_its_first_line(self):
-        findings = {"M1": _finding("M1", body="headline\n\nthe rest of it")}
-        summary = review_fix._summary([_outcome("M1", FixOutcome.FIXED)], findings)
+        described = {"M1": review_fix._describe_finding(
+            _finding("M1", body="headline\n\nthe rest of it"),
+        )}
+        summary = review_fix._summary([_outcome("M1", FixOutcome.FIXED)], described)
         assert summary == "Fixed:\n  - [M1] headline"
 
     def test_a_skip_is_reported_by_the_reason_the_agent_gave(self):
@@ -742,7 +759,224 @@ class TestTheSummary:
         assert summary == "Fixed:\n  - [M1] the guard is missing"
 
 
-# ── what the review document ends up saying ─────────────────────────────────
+# ── the second work stream: static analysis violations ──────────────────────
+
+
+class TestStaticViolationsAsWork:
+    """The checkers' violations are work the pass takes, not just a note.
+
+    They arrive on the job from the run that wrote the `## Static Analysis`
+    section, so the pass works the list a reader sees rather than re-measuring
+    a tree that section has already described.
+    """
+
+    def test_a_violation_becomes_an_item_the_agent_is_handed(self, git_wt, tmp_path):
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job.static_results = _static_results(_violation("SA1", "src.py", 12))
+        inv = _run(job, {"SA1": "fixed"})
+
+        assert "<!-- fix:SA1 -->" in inv.call_args.args[1]
+
+    def test_violations_run_the_pass_when_there_are_no_findings(self, git_wt, tmp_path):
+        """A clean review over a file the checker flags is still work.
+
+        Before this the pass returned early on an empty findings list, so the
+        violations were reported and never acted on.
+        """
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job.static_results = _static_results(_violation("SA1", "src.py", 12))
+        inv = _run(job, {"SA1": "fixed"})
+
+        inv.assert_called_once()
+
+    # passes-at-base: asserts the early return this change was careful to keep
+    def test_a_clean_review_with_no_violations_still_runs_nothing(self, git_wt, tmp_path):
+        """A second work stream must not make an empty one a reason to run."""
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        inv = _run(job, {})
+        inv.assert_not_called()
+
+    def test_findings_and_violations_are_handed_over_together(self, git_wt, tmp_path):
+        job = _make_job(
+            git_wt, tmp_path,
+            "## Must fix\n- [ ] **[M1]** `src.py:1` — Missing guard\n",
+            files=["src.py"],
+        )
+        job.static_results = _static_results(_violation("SA1", "src.py", 12))
+        inv = _run(job, {"M1": "fixed", "SA1": "fixed"})
+
+        prompt = inv.call_args.args[1]
+        assert "<!-- fix:M1 -->" in prompt
+        assert "<!-- fix:SA1 -->" in prompt
+        # Findings first: the template orders work by severity, and a violation
+        # has none to sort into.
+        assert prompt.index("<!-- fix:M1 -->") < prompt.index("<!-- fix:SA1 -->")
+
+    def test_the_agent_is_told_the_measurement_is_not_a_claim_to_disprove(
+        self, git_wt, tmp_path,
+    ):
+        """The template's disprove-first section is wrong for a counted depth.
+
+        An agent invited to argue with the checker produces a decline where the
+        repo wanted an early return.
+        """
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job.static_results = _static_results(_violation("SA1", "src.py", 12))
+        inv = _run(job, {"SA1": "fixed"})
+
+        prompt = inv.call_args.args[1]
+        assert "not claimed by a reviewer" in prompt
+        assert "Machine-checked items" in prompt
+
+    def test_the_pass_takes_at_most_the_cap(self, git_wt, tmp_path):
+        """Five turns an item against an eighty-turn cap: an uncapped section
+        would spend the whole budget on mechanical edits."""
+        over = review_fix._MAX_STATIC_ITEMS + 5
+        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job.static_results = _static_results(*[
+            _violation(f"SA{n}", "src.py", n) for n in range(1, over + 1)
+        ])
+        taken = review_fix._static_items(job.static_results)
+
+        assert len(taken) == review_fix._MAX_STATIC_ITEMS
+        # The ones a reader sees first, not an arbitrary slice.
+        assert [v.id for v in taken] == [
+            f"SA{n}" for n in range(1, review_fix._MAX_STATIC_ITEMS + 1)
+        ]
+
+    def test_a_violation_with_no_id_is_never_taken(self, git_wt, tmp_path):
+        """It never went through `run_static_analysis`, so it renders no box.
+
+        An outcome against it would have no line to be written back to.
+        """
+        results = _static_results(StaticViolation(file="src.py", line=1, message="x"))
+        assert review_fix._static_items(results) == []
+
+    def test_a_fixed_violation_is_described_by_its_location_and_message(self):
+        """A violation has no prose body, so the location has to be in the line."""
+        violation = _violation("SA1", "src.py", 12, context="in run()")
+        summary = review_fix._summary(
+            [_outcome("SA1", FixOutcome.FIXED)], {"SA1": violation.describe()},
+        )
+        assert summary == (
+            "Fixed:\n  - [SA1] src.py:12 — depth 5 exceeds limit 4 (in run())"
+        )
+
+
+class TestApplyStaticOutcomes:
+    """The `## Static Analysis` section is rewritten to what the pass did.
+
+    Without this the section still describes the tree the review measured, and
+    a reader opening the PR after a fix pass sees a violation reported live at
+    a line where it no longer exists.
+    """
+
+    SECTION = (
+        "## Static Analysis\n"
+        "\n"
+        "### Nesting depth\n"
+        "\n"
+        "- [ ] **[SA1]** **`a.py:1`** — depth 5 exceeds limit 4 (in one())\n"
+        "- [ ] **[SA2]** **`b.py:2`** — depth 6 exceeds limit 4 (in two())\n"
+    )
+
+    def _line(self, text: str, vid: str) -> str:
+        return next(ln for ln in text.split("\n") if f"**[{vid}]**" in ln)
+
+    def test_a_fixed_violation_is_ticked(self):
+        out = review_fix._apply_static_outcomes(
+            self.SECTION, [_outcome("SA1", FixOutcome.FIXED)],
+        )
+        assert self._line(out, "SA1").startswith("- [x] **[SA1]**")
+
+    def test_a_skipped_violation_carries_the_reason(self):
+        out = review_fix._apply_static_outcomes(self.SECTION, [
+            _outcome("SA1", FixOutcome.NEEDS_HUMAN, "needs an extracted helper"),
+        ])
+        line = self._line(out, "SA1")
+        assert line.startswith("- [ ] **[SA1]**")
+        assert line.endswith("*(skipped — needs an extracted helper)*")
+
+    def test_a_declined_violation_carries_the_reason(self):
+        out = review_fix._apply_static_outcomes(self.SECTION, [
+            _outcome("SA1", FixOutcome.DECLINED, "ceiling: documented tradeoff"),
+        ])
+        assert self._line(out, "SA1").endswith("*(declined — ceiling: documented tradeoff)*")
+
+    def test_a_violation_nothing_answered_is_left_exactly_as_rendered(self):
+        """What the document should say about work nothing reached.
+
+        A violation past the cap has no outcome, and annotating it would report
+        a verdict the pass never reached.
+        """
+        out = review_fix._apply_static_outcomes(
+            self.SECTION, [_outcome("SA1", FixOutcome.FIXED)],
+        )
+        assert self._line(out, "SA2") == self._line(self.SECTION, "SA2")
+
+    def test_a_deferral_leaves_the_line_alone(self):
+        """The agent never reached it, so the line still describes open work."""
+        out = review_fix._apply_static_outcomes(
+            self.SECTION, [_outcome("SA1", FixOutcome.DEFERRED)],
+        )
+        assert self._line(out, "SA1") == self._line(self.SECTION, "SA1")
+
+    def test_an_unverified_fix_ticks_and_says_so(self):
+        out = review_fix._apply_static_outcomes(self.SECTION, [
+            _outcome("SA1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        line = self._line(out, "SA1")
+        assert line.startswith("- [x] **[SA1]**")
+        assert line.endswith("*(unverified — no runnable check)*")
+
+    def test_an_already_ticked_line_is_not_annotated_twice(self):
+        ticked = self.SECTION.replace("- [ ] **[SA1]**", "- [x] **[SA1]**")
+        out = review_fix._apply_static_outcomes(ticked, [
+            _outcome("SA1", FixOutcome.FIXED, verified=False,
+                     verify_detail="no runnable check"),
+        ])
+        assert self._line(out, "SA1") == self._line(ticked, "SA1")
+
+    def test_a_finding_line_is_left_to_the_findings_rewriter(self):
+        """The two streams must not rewrite each other's lines."""
+        both = "## Must fix\n- [ ] **[M1]** `a.py:1` — Missing guard\n\n" + self.SECTION
+        out = review_fix._apply_static_outcomes(
+            both, [_outcome("M1", FixOutcome.FIXED)],
+        )
+        assert "- [ ] **[M1]**" in out
+
+    def test_a_real_pass_writes_the_rewritten_section_to_the_review_file(
+        self, git_wt, tmp_path,
+    ):
+        """Asserted through `run_fix_pass`, not by calling the rewriter.
+
+        Every case above calls `_apply_static_outcomes` directly, so all of them
+        keep passing with the call site disconnected — which is the whole defect
+        this rewriter exists to fix, reappearing as a unit test that cannot see
+        it. This one reads the file the pass actually wrote.
+        """
+        job = _make_job(
+            git_wt, tmp_path,
+            "## Must fix\n\n" + self.SECTION,
+            files=["src.py"],
+        )
+        job.static_results = _static_results(
+            _violation("SA1", "a.py", 1), _violation("SA2", "b.py", 2),
+        )
+
+        def edit():
+            (git_wt / "src.py").write_text("flattened\n")
+
+        _run(job, {"SA1": "fixed", "SA2": "needs a person — an extracted helper"},
+             work=edit)
+
+        written = Path(job.review_file).read_text()
+        sa1 = next(ln for ln in written.split("\n") if "**[SA1]**" in ln)
+        sa2 = next(ln for ln in written.split("\n") if "**[SA2]**" in ln)
+        assert sa1.startswith("- [x] **[SA1]**")
+        assert sa2.startswith("- [ ] **[SA2]**")
+        assert sa2.endswith("*(skipped — an extracted helper)*")
 
 
 class TestApplyOutcomes:
@@ -948,17 +1182,16 @@ class TestApplyOutcomes:
     # passes-at-base: base writes no caveat, so its lines are short for free
     def test_a_hedged_summary_line_fits_the_commit_body_limit(self):
         """These lines land in a commit body, and no hook on this path checks them."""
-        findings = {"M1": _finding("M1", body="x" * 80)}
         summary = review_fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="y" * 60)],
-            findings,
+            {"M1": "x" * 80},
         )
         assert all(len(line) <= 100 for line in summary.splitlines())
 
     def test_a_long_detail_alone_cannot_overrun_the_line(self):
         summary = review_fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="y" * 90)],
-            {"M1": _finding("M1", body="short")},
+            {"M1": "short"},
         )
         assert all(len(line) <= 100 for line in summary.splitlines())
         assert "not verified automatically" in summary
@@ -967,7 +1200,7 @@ class TestApplyOutcomes:
         """The description gives way first — a half-printed caveat is the worse loss."""
         summary = review_fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="no runnable check")],
-            {"M1": _finding("M1", body="x" * 80)},
+            {"M1": "x" * 80},
         )
         assert summary.endswith("(not verified automatically — no runnable check)")
         assert "…" in summary

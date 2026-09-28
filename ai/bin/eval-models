@@ -43,7 +43,7 @@ from eval.scoring import (  # noqa: E402
 from eval.task import EVAL_CASE_BUDGET, RunOptions, get_task, task_name  # noqa: E402
 
 
-def discover_entries(corpus_dir: str, entry_filter: str) -> list[dict]:
+def discover_entries(corpus_dir: str, entry_filter: str, task_filter: str = "") -> list[dict]:
     corpus = Path(corpus_dir)
     if not corpus.is_dir():
         print(f"error: corpus directory not found: {corpus_dir}", file=sys.stderr)
@@ -60,6 +60,8 @@ def discover_entries(corpus_dir: str, entry_filter: str) -> list[dict]:
         name = manifest.get("name", d.name)
         if entry_filter and name != entry_filter:
             continue
+        if task_filter and task_name(manifest) != task_filter:
+            continue
         src_dir = d / "src"
         if not src_dir.is_dir():
             print(f"warning: no src/ directory in {d.name}, skipping", file=sys.stderr)
@@ -72,8 +74,19 @@ def discover_entries(corpus_dir: str, entry_filter: str) -> list[dict]:
             "manifest": manifest,
         })
 
-    if entry_filter and not entries:
-        print(f"error: corpus entry not found: {entry_filter}", file=sys.stderr)
+    if not entries and (entry_filter or task_filter):
+        if entry_filter and not task_filter:
+            print(f"error: corpus entry not found: {entry_filter}", file=sys.stderr)
+        else:
+            parts = []
+            if entry_filter:
+                parts.append(f"entry={entry_filter}")
+            if task_filter:
+                parts.append(f"task={task_filter}")
+            print(
+                f"error: no corpus entries matching {', '.join(parts)}",
+                file=sys.stderr,
+            )
         sys.exit(1)
 
     return entries
@@ -272,7 +285,7 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
     if not Path(corpus_dir).is_absolute():
         corpus_dir = str(repo_root / corpus_dir)
 
-    entries = discover_entries(corpus_dir, args.entry)
+    entries = discover_entries(corpus_dir, args.entry, args.task)
     models = [m.strip() for m in args.models.split(",")] if args.models else [""]
     model_labels = [m or "(default)" for m in models]
 
@@ -423,6 +436,10 @@ def main():
     parser.add_argument(
         "--entry", default="",
         help="Filter to a specific corpus entry by name",
+    )
+    parser.add_argument(
+        "--task", default="",
+        help="Filter to one task kind (review, ci-fix, skill)",
     )
     parser.add_argument(
         "--timeout", type=int, default=EVAL_CASE_BUDGET,

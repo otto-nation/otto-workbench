@@ -24,6 +24,22 @@ from eval import scoring as eval_scoring
 from eval.scoring import ScoringResult
 
 
+def _make_case(root: Path, name: str, task: str = "review") -> Path:
+    """A corpus case is a directory with manifest.json and src/.
+
+    The briefs call this helper; it does not exist elsewhere in tests/, so it
+    is part of this deliverable. Shape matches eval/corpus/<name>/.
+    """
+    case = root / name
+    src = case / "src"
+    src.mkdir(parents=True)
+    (src / "file.py").write_text("x = 1\n")
+    (case / "manifest.json").write_text(
+        json.dumps({"name": name, "task": task}) + "\n",
+    )
+    return case
+
+
 class TestTaskRegistry:
     def test_get_task_dispatches(self):
         task = eval_task.get_task("review")
@@ -355,3 +371,26 @@ class TestSaveBaselineRefusal:
         good.write_text('{"keep": true}\n')
         em._run_post_eval(self._args(tmp_path), self._output(0, 3), tmp_path)
         assert good.read_text() == '{"keep": true}\n'
+
+
+class TestTaskFilter:
+    """--task narrows the corpus to one kind before any model is invoked."""
+
+    def test_the_task_filter_selects_every_case_of_one_kind(self, tmp_path, em):
+        _make_case(tmp_path, "a", task="ci-fix")
+        _make_case(tmp_path, "b", task="ci-fix")
+        _make_case(tmp_path, "c", task="review")
+        found = em.discover_entries(str(tmp_path), "", "ci-fix")
+        assert sorted(e["name"] for e in found) == ["a", "b"]
+
+    def test_the_two_filters_narrow_together(self, tmp_path, em):
+        _make_case(tmp_path, "a", task="ci-fix")
+        _make_case(tmp_path, "b", task="ci-fix")
+        assert [e["name"] for e in em.discover_entries(str(tmp_path), "a", "ci-fix")] == ["a"]
+
+    def test_a_task_filter_matching_nothing_exits_rather_than_running_an_empty_pass(
+        self, tmp_path, em,
+    ):
+        _make_case(tmp_path, "a", task="review")
+        with pytest.raises(SystemExit):
+            em.discover_entries(str(tmp_path), "", "ci-fix")

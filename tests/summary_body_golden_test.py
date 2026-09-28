@@ -86,6 +86,10 @@ _PR = 42
 # `read_sha` empty renders the whole-file link instead. Both shapes are in the
 # full body, because the anchoring decision is part of row identity.
 _LINK_SHA = "abc1234"
+# A GitHub Enterprise host, for the body that asserts no link is on public
+# GitHub. Deliberately in no golden: the goldens record the public-GitHub
+# rendering, which is what an empty host means.
+_HOST = "ghe.acme.com"
 # When the summary being continued was last written. The two scoped rows carry
 # no activity the run can date, which `RoundScope.covers` reads as quiet — so
 # they are left to the comment that published them and render as notes.
@@ -388,6 +392,83 @@ def _uncommitted_body():
         wt_path=None,
         history=_FrozenHistory({}),
     )
+
+
+def _enterprise_body():
+    """The full body rendered against a GitHub Enterprise host.
+
+    Not a golden file: what is asserted is that no link in the body is on
+    github.com, and a fixture would record the answer rather than check it.
+    Narrower inputs than `_full_body` on purpose — `carried_over` and
+    `hand_held` are verbatim text lifted from a previously published comment
+    and are *supposed* to re-emit unchanged whatever host this round runs on,
+    so a body carrying them could never assert the absence of github.com.
+    """
+    return summary_render.build_summary_body(
+        _round_content(
+            fixed=[
+                CommentItem(id="t1", summary="fix the regex", reviewer="kgn",
+                            file="a.py", line=10, read_sha=_LINK_SHA,
+                            commit_sha=_LINK_SHA),
+            ],
+            already_addressed=[
+                CommentItem(id="t12", summary="satisfied after the ask",
+                            reviewer="kgn", file="d.py", line=3,
+                            read_sha=_LINK_SHA),
+            ],
+        ),
+        attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED,
+                                     error=""),
+        _REPO,
+        _PR,
+        _threads(),
+        has_comment_items=True,
+        head_sha=_LINK_SHA,
+        wt_path=None,
+        history=_FrozenHistory({
+            "t12": attribution.AddressedFraming(True, sha="def5678"),
+        }),
+        host=_HOST,
+    )
+
+
+class TestTheSummaryTableRendersOnTheForgeThePRIsOn:
+    """Every link the table builds, on a GHES host.
+
+    The table is the second surface that cited github.com on an enterprise PR
+    — the reply bodies were the first. Its three builders already took a
+    `host`; the chain from `build_summary_body` down to them simply never
+    passed one, so the defect was invisible at the unit level and only a
+    rendered body shows it.
+
+    The first case is the one that holds the whole chain: a per-link assertion
+    passes on the links that were already right, and only the absence of
+    github.com anywhere fails when one of four callers is left unthreaded.
+    """
+
+    def test_no_link_in_the_body_is_on_public_github(self):
+        assert "github.com" not in _enterprise_body()
+
+    def test_the_commit_cell_names_the_enterprise_host(self):
+        assert f"https://{_HOST}/{_REPO}/commit/{_LINK_SHA}" in _enterprise_body()
+
+    def test_the_file_cell_names_the_enterprise_host(self):
+        assert f"https://{_HOST}/{_REPO}/blob/{_LINK_SHA}/a.py#L10" in _enterprise_body()
+
+    def test_the_thread_cell_names_the_enterprise_host(self):
+        assert f"https://{_HOST}/{_REPO}/pull/{_PR}#discussion_r" in _enterprise_body()
+
+    def test_the_addressed_cell_names_the_enterprise_host(self):
+        """A satisfied row reports as a fix and cites its own commit."""
+        assert f"https://{_HOST}/{_REPO}/commit/def5678" in _enterprise_body()
+
+    def test_no_host_still_renders_public_github(self):
+        """The golden bodies are the full statement of this; one row restates it.
+
+        Without it, every assertion above passes against a renderer that put
+        the host on unconditionally.
+        """
+        assert f"https://github.com/{_REPO}/commit/{_LINK_SHA}" in _full_body()
 
 
 class TestTheRenderedSummaryIsRecorded:

@@ -231,6 +231,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             has_unaccounted=self.round.has_unaccounted,
             head_sha=cp.sha or self.ctx.head_sha,
             wt_path=self.workdir,
+            host=self.ctx.host,
         )
 
         fix_state.persist(

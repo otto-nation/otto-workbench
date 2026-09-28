@@ -127,7 +127,7 @@ def finish_deferred_work(
         return False
     deferred_issue.report_unfiled_deferrals(state, track)
     summary_publish.render_deferred_summary(
-        state, report, ctx.repo, ctx.pr_number, threads_by_id,
+        state, report, ctx.repo, ctx.pr_number, threads_by_id, ctx.host,
     )
     pr_state.save_state(ctx.target_dir, state)
     return True

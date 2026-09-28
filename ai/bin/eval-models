@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,6 +32,7 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
+from eval import conditions  # noqa: E402
 from eval.scoring import (  # noqa: E402
     SCHEMA_VERSION,
     ScoringResult,
@@ -102,6 +104,8 @@ def _serialize_run(r: ScoringResult) -> dict:
         "false_positive_ok": r.false_positive_ok,
         "cost_usd": r.cost_usd,
         "duration_ms": r.duration_ms,
+        "billed_input": r.billed_input,
+        "output_tokens": r.output_tokens,
         "matched_ids": [m.matched_finding_id for m in r.matches if m.matched],
         "false_positive_ids": r.false_positive_ids,
     }
@@ -113,12 +117,13 @@ def _sanitize_model_label(label: str) -> str:
     return s.strip("-") or "default"
 
 
-def _build_baseline(
+def _baseline_document(
     model_label: str,
     effort: str,
     runs_per_entry: int,
     entry_results: dict[str, dict],
 ) -> dict:
+    """A per-model baseline file: schema 3, entries[name] -> metrics."""
     return {
         "schema_version": SCHEMA_VERSION,
         "model": model_label,
@@ -127,6 +132,27 @@ def _build_baseline(
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "entries": entry_results,
     }
+
+
+def _build_baseline(
+    all_results: dict[tuple, list[ScoringResult]],
+    model_label: str,
+    effort: str,
+    runs_per_entry: int,
+) -> dict:
+    """Collapse to the full arm only — baselines do not gain a condition axis."""
+    entry_results: dict[str, dict] = {}
+    for key, results in all_results.items():
+        entry_name, model, *rest = key
+        condition = rest[0] if rest else "full"
+        if model != model_label or condition != "full":
+            continue
+        agg = aggregate_runs(results)
+        entry_results[entry_name] = {
+            **agg,
+            "runs": [_serialize_run(r) for r in results],
+        }
+    return _baseline_document(model_label, effort, runs_per_entry, entry_results)
 
 
 def _save_baselines(
@@ -143,7 +169,7 @@ def _save_baselines(
 
     written = []
     for model_label, entry_data in sorted(models_data.items()):
-        baseline = _build_baseline(
+        baseline = _baseline_document(
             model_label, output["effort"], output["runs_per_entry"], entry_data,
         )
         filename = _sanitize_model_label(model_label) + ".json"
@@ -177,24 +203,40 @@ def _load_baselines(results_dir: str) -> dict[str, dict]:
 
 
 def _build_output(
-    all_results: dict[tuple[str, str], list[ScoringResult]],
+    all_results: dict[tuple[str, str, str], list[ScoringResult]],
     effort: str,
     runs_per_entry: int,
 ) -> dict:
     entries: dict[str, dict] = {}
-    for (entry_name, model_label), results in all_results.items():
-        entry_out = entries.setdefault(entry_name, {})
+    for (entry_name, model_label, condition), results in all_results.items():
+        model_out = entries.setdefault(entry_name, {}).setdefault(model_label, {})
         agg = aggregate_runs(results)
-        entry_out[model_label] = {
+        model_out[condition] = {
             **agg,
             "runs": [_serialize_run(r) for r in results],
         }
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "schema_version": 4,
         "effort": effort,
         "runs_per_entry": runs_per_entry,
         "entries": entries,
     }
+
+
+def _flatten_full_arm(output: dict) -> dict:
+    """Session output nests condition; save/compare stay entries[name][model]."""
+    entries: dict[str, dict] = {}
+    for name, models in output.get("entries", {}).items():
+        for model, data in models.items():
+            if isinstance(data, dict) and "full" in data and "recall_mean" not in data:
+                entries.setdefault(name, {})[model] = data["full"]
+            else:
+                entries.setdefault(name, {})[model] = data
+    flat = dict(output)
+    flat["entries"] = entries
+    flat["schema_version"] = SCHEMA_VERSION
+    return flat
 
 
 def _cleanup(temp_dirs: list[str], keep: bool) -> None:
@@ -236,8 +278,11 @@ def _report_run(artifacts, result: ScoringResult, total_expected: int) -> None:
 def _run_single(
     entry: dict, model: str, label: str, run_idx: int,
     args: argparse.Namespace,
+    arm: str = "full", config_dir: str = "",
 ) -> ScoringResult:
     run_label = f"{entry['name']} / {label}"
+    if arm != "full":
+        run_label += f" / {arm}"
     if args.runs > 1:
         run_label += f" (run {run_idx + 1}/{args.runs})"
     print(f"\n>> {run_label}", file=sys.stderr)
@@ -245,8 +290,8 @@ def _run_single(
     manifest = entry["manifest"]
     task = get_task(task_name(manifest))
     opts = RunOptions(
-        model=model, effort=args.effort,
-        timeout=args.timeout, verbose=args.verbose,
+        model=model, effort=args.effort, timeout=args.timeout,
+        verbose=args.verbose, condition=arm, config_dir=config_dir,
     )
 
     artifacts = task.run(Path(entry["case_dir"]), opts)
@@ -255,7 +300,8 @@ def _run_single(
             print(f"  {task.name} exited {artifacts.exit_code}", file=sys.stderr)
         result = task.score(artifacts, manifest)
         result = dataclasses.replace(
-            result, entry_name=entry["name"], model=label, run_index=run_idx,
+            result, entry_name=entry["name"], model=label,
+            run_index=run_idx, condition=arm,
         )
         _report_run(artifacts, result, len(result.matches))
         return result
@@ -289,33 +335,51 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
     models = [m.strip() for m in args.models.split(",")] if args.models else [""]
     model_labels = [m or "(default)" for m in models]
 
+    arms = [c.strip() for c in args.conditions.split(",") if c.strip()]
+    for arm in arms:
+        if arm not in conditions.CONDITIONS:
+            sys.exit(f"error: unknown condition: {arm}")
+
     print(f"Corpus: {len(entries)} entries", file=sys.stderr)
     print(f"Models: {', '.join(model_labels)}", file=sys.stderr)
+    print(f"Conditions: {', '.join(arms)}", file=sys.stderr)
     print(f"Effort: {args.effort}, Runs: {args.runs}", file=sys.stderr)
 
     if args.dry_run:
-        return _dry_run(entries, len(models) * args.runs)
+        return _dry_run(entries, len(models) * len(arms) * args.runs)
 
-    all_results: dict[tuple[str, str], list] = {}
+    config_home = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    with tempfile.TemporaryDirectory(prefix="eval-cc-") as tmpdir:
+        seeded = {
+            arm: conditions.seed_config_tree(
+                config_home, Path(tmpdir) / f"cc-{arm}", arm,
+            )
+            for arm in arms
+        }
 
-    for entry in entries:
-        for model, label in zip(models, model_labels):
-            key = (entry["name"], label)
-            all_results[key] = [
-                _run_single(entry, model, label, run_idx, args)
-                for run_idx in range(args.runs)
-            ]
+        all_results: dict[tuple[str, str, str], list] = {}
+        for entry in entries:
+            for model, label in zip(models, model_labels):
+                for arm in arms:
+                    key = (entry["name"], label, arm)
+                    all_results[key] = [
+                        _run_single(
+                            entry, model, label, run_idx, args,
+                            arm, str(seeded[arm]),
+                        )
+                        for run_idx in range(args.runs)
+                    ]
 
-    print("\n" + format_summary_table(all_results))
+        print("\n" + format_summary_table(all_results))
 
-    output = _build_output(all_results, args.effort, args.runs)
+        output = _build_output(all_results, args.effort, args.runs)
 
-    if args.output:
-        Path(args.output).write_text(json.dumps(output, indent=2) + "\n")
-        print(f"\nResults written to {args.output}", file=sys.stderr)
+        if args.output:
+            Path(args.output).write_text(json.dumps(output, indent=2) + "\n")
+            print(f"\nResults written to {args.output}", file=sys.stderr)
 
-    exit_code = _run_post_eval(args, output, repo_root)
-    return output, exit_code
+        exit_code = _run_post_eval(args, output, repo_root)
+        return output, exit_code
 
 
 def _resolve_results_dir(args: argparse.Namespace, repo_root: Path) -> str:
@@ -333,6 +397,7 @@ def _pluralize(word: str, count: int) -> str:
 def _run_post_eval(
     args: argparse.Namespace, output: dict, repo_root: Path,
 ) -> int:
+    output = _flatten_full_arm(output)
     exit_code = 0
 
     if args.compare:
@@ -440,6 +505,10 @@ def main():
     parser.add_argument(
         "--task", default="",
         help="Filter to one task kind (review, ci-fix, skill)",
+    )
+    parser.add_argument(
+        "--conditions", default="full",
+        help="Comma-separated rule-prefix arms: full, trimmed",
     )
     parser.add_argument(
         "--timeout", type=int, default=EVAL_CASE_BUDGET,

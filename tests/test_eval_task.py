@@ -394,3 +394,72 @@ class TestTaskFilter:
         _make_case(tmp_path, "a", task="review")
         with pytest.raises(SystemExit):
             em.discover_entries(str(tmp_path), "", "ci-fix")
+
+
+def _recording_task(calls):
+    """A get_task stand-in that records RunOptions without invoking a model."""
+
+    def _get_task(_name=""):
+        class Rec:
+            name = "stub"
+
+            def run(self, case_dir, opts):
+                calls.append({
+                    "config_dir": opts.config_dir,
+                    "condition": opts.condition,
+                })
+                return eval_task.RunArtifacts(
+                    usage=SessionUsage(cost=0.01, input_tokens=10),
+                    data={"summary": "stub"},
+                )
+
+            def score(self, artifacts, manifest):
+                return ScoringResult("", "", 0, recall=1.0, cost_usd=0.01)
+
+        return Rec()
+
+    return _get_task
+
+
+def _args(tmp_path, **overrides):
+    """Namespace for run_eval. The briefs call _args(); it did not exist."""
+    ns = dict(
+        corpus=str(tmp_path / "corpus"),
+        entry="",
+        task="",
+        models="",
+        effort="low",
+        timeout=42,
+        verbose=False,
+        keep_temp=False,
+        dry_run=False,
+        runs=1,
+        conditions="full",
+        output="",
+        save_baselines=False,
+        compare=False,
+        results_dir=str(tmp_path / "results"),
+    )
+    ns.update(overrides)
+    return argparse.Namespace(**ns)
+
+
+def _fake_claude(path: Path) -> Path:
+    """A classify()-clean CLAUDE_CONFIG_DIR the runner can copy, not ~/.claude."""
+    rules = path / "rules"
+    rules.mkdir(parents=True)
+    (rules / "general.md").write_text("# general\n")
+    return path
+
+
+def test_each_condition_gets_its_own_seeded_tree_and_row(tmp_path, monkeypatch, em):
+    _make_case(tmp_path / "corpus", "a", task="ci-fix")
+    _fake_claude(tmp_path / "claude")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str((tmp_path / "claude").resolve()))
+    calls = []
+    monkeypatch.setattr(em, "get_task", _recording_task(calls))
+    args = _args(tmp_path, conditions="full,trimmed", runs=1)
+    em.run_eval(args)
+    dirs = {c["config_dir"] for c in calls}
+    assert len(dirs) == 2, "each arm needs its own tree"
+    assert all(Path(d).is_absolute() for d in dirs)

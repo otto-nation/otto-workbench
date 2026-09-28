@@ -23,6 +23,23 @@ from eval.scoring import (
 )
 
 
+def _r(**overrides) -> ScoringResult:
+    """A scored run. The briefs call _r(); ScoringResult is positional on identity."""
+    kwargs = {
+        "entry_name": "e",
+        "model": "m",
+        "run_index": 0,
+        "recall": 0.8,
+    }
+    kwargs.update(overrides)
+    return ScoringResult(
+        kwargs.pop("entry_name"),
+        kwargs.pop("model"),
+        kwargs.pop("run_index"),
+        **kwargs,
+    )
+
+
 # ── TestAggregateRuns ───────────────────────────────────────────────────────
 
 
@@ -584,3 +601,25 @@ class TestBaselineCensusSchema:
         data = _baseline_data()
         data["schema_version"] = eval_scoring.SCHEMA_VERSION
         assert validate_baseline_schema(data) == []
+
+
+def test_the_session_output_nests_condition_under_model(em):
+    out = em._build_output(
+        {("e", "sonnet", "full"): [_r()], ("e", "sonnet", "trimmed"): [_r()]},
+        "low", 1,
+    )
+    assert out["schema_version"] == 4
+    assert set(out["entries"]["e"]["sonnet"]) == {"full", "trimmed"}
+    assert "billed_input_mean" in out["entries"]["e"]["sonnet"]["full"]
+
+
+def test_a_per_run_record_carries_the_tokens_an_ab_needs(em):
+    row = em._serialize_run(_r(billed_input=40000, output_tokens=2800))
+    assert row["billed_input"] == 40000
+    assert row["output_tokens"] == 2800
+
+
+def test_a_baseline_file_keeps_the_flat_schema_3_shape(em):
+    base = em._build_baseline({("e", "sonnet", "full"): [_r()]}, "sonnet", "low", 1)
+    assert base["schema_version"] == 3
+    assert "recall_mean" in base["entries"]["e"], "baselines stay entries[name][model]"

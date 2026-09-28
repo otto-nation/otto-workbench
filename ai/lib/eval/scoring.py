@@ -56,6 +56,7 @@ class ScoringResult:
     entry_name: str
     model: str
     run_index: int
+    condition: str = "full"
     matches: list = field(default_factory=list)
     false_positive_ids: list[str] = field(default_factory=list)
     recall: float = 0.0
@@ -167,15 +168,17 @@ def incomplete_entries(output: dict) -> list[tuple[str, str, int, int]]:
 
 
 def format_summary_table(
-    all_results: dict[tuple[str, str], list[ScoringResult]],
+    all_results: dict[tuple, list[ScoringResult]],
 ) -> str:
     header = (
-        "| Entry | Model | Runs | Recall | Precision | Sev.Acc | FP | Cost | Duration |"
+        "| Entry | Model | Condition | Runs | Recall | Precision | Sev.Acc | FP | Cost | Duration |"
     )
-    sep = "|---|---|---|---|---|---|---|---|---|"
+    sep = "|---|---|---|---|---|---|---|---|---|---|"
     rows = [header, sep]
 
-    for (entry, model), results in sorted(all_results.items()):
+    for key, results in sorted(all_results.items()):
+        entry, model, *rest = key
+        condition = rest[0] if rest else "full"
         agg = aggregate_runs(results)
         # The census sits next to the numbers it produced: an entry averaged
         # from one surviving run of three should not read like a three-run mean.
@@ -187,7 +190,7 @@ def format_summary_table(
         if agg["precision_std"] > 0:
             prec_s += f" ±{agg['precision_std']:.0%}"
         rows.append(
-            f"| {entry} | {model} "
+            f"| {entry} | {model} | {condition} "
             f"| {runs_s} "
             f"| {recall_s} "
             f"| {prec_s} "

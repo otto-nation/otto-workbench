@@ -1,6 +1,6 @@
-"""A machine-wide pool of test-parallelism slots.
+"""A machine-wide pool of parallelism slots, shared by suites and agents.
 
-Sizing a test run from the load average cannot work, and the reason is not a
+Sizing a run from the load average cannot work, and the reason is not a
 tuning problem. A one-minute average lags the load it reports, so two suites
 started within a minute of each other both read an idle machine and both take
 the full cap: 24 heavy processes on 18 cores, each run slower than if it had
@@ -27,6 +27,13 @@ length of two suites, which is how people learn ``--no-verify``. The floor is
 small enough that the overshoot stays bounded — three concurrent suites on 18
 cores take 12, 5 and 2 rather than 12, 12 and 12.
 
+Both kinds of heavy work draw from it. ``bin/local/run-tests`` claims for a
+suite, and ``review.pipeline`` claims for a group phase's agents — which is
+the point of one pool rather than two: a review and a suite started together
+compete for the same cores, so they have to be able to see each other. The
+directory is still named ``test-slots`` because renaming it would split the
+pool from any run already holding flocks under the old name.
+
 Distinct from ``run_lock.py`` (exclusive, one target, serialises ``pr`` runs)
 and ``tree_lock.py`` (shared, one worktree, publishes a fact). This one is
 counted, machine-wide, and hands out capacity.
@@ -47,6 +54,14 @@ from core.workbench_paths import state_dir
 
 SLOTS_DIRNAME = "test-slots"
 LOCK_ENV = "WORKBENCH_TEST_SLOTS"
+
+# The grant itself, exported alongside the marker so a child sizes itself from
+# what this run was actually given. The marker says "a claim already happened"
+# and stops a nested run claiming twice; on its own it would also stop that run
+# reading a number, and `run-tests` falls back to its full JOBS when the grant
+# is missing — skipping the pool *and* ignoring the grant, which is the one
+# combination that oversubscribes rather than bounding the overshoot.
+GRANT_ENV = "WORKBENCH_TEST_SLOTS_GRANTED"
 
 # Cores the pool never hands out, so a machine saturated with test runs still
 # has something left for the shell the developer is typing into.
@@ -182,7 +197,7 @@ def claim(want: int, floor: int, cores: int, command: str = ""):
         # reads it to know the claim already happened, and yielding without it
         # sent run-tests into an unbounded re-exec loop with nothing on screen.
         try:
-            os.environ[LOCK_ENV] = str(want)
+            _mark(want)
             yield want
         finally:
             _restore_marker(previous)
@@ -191,7 +206,7 @@ def claim(want: int, floor: int, cores: int, command: str = ""):
     held = _take_up_to(want, cores, command)
     try:
         granted = max(len(held), floor)
-        os.environ[LOCK_ENV] = str(granted)
+        _mark(granted)
         yield granted
     finally:
         _restore_marker(previous)
@@ -221,8 +236,20 @@ def _release(held: list) -> None:
             handle.close()
 
 
+def _mark(granted: int) -> None:
+    """Publish the grant to this process and everything it spawns."""
+    os.environ[LOCK_ENV] = str(granted)
+    os.environ[GRANT_ENV] = str(granted)
+
+
 def _restore_marker(previous: str | None) -> None:
-    """Put LOCK_ENV back the way we found it."""
+    """Put LOCK_ENV and the grant back the way we found them.
+
+    The grant is cleared rather than restored: only ``claim`` sets it in this
+    process, so there is no prior value of ours to put back, and a value we
+    inherited belongs to a parent whose own ``finally`` will deal with it.
+    """
+    os.environ.pop(GRANT_ENV, None)
     if previous is None:
         os.environ.pop(LOCK_ENV, None)
         return

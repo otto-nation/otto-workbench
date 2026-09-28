@@ -13,6 +13,7 @@ to review.gc, which the orchestrator runs once every phase is done.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -20,7 +21,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from git import client as git_client
-from core import log
+from core import job_slots, log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
@@ -52,9 +53,9 @@ DEFAULT_MAX_COST = 20.0
 # Concurrent group agents used to hit 429 rate limits, so the default became
 # one. Concurrency does not multiply spend: every group in a phase launches
 # before the next gate regardless, so raising it only changes when the money
-# is spent, not how much. The count is now derived from free capacity unless
-# --max-parallel pins it. A second pipeline raises the load average, so the
-# clamp yields to it.
+# is spent, not how much. The count is now taken from the machine's slot pool
+# unless --max-parallel pins it, so a second pipeline sees the first one's
+# held slots rather than a load average that has not caught up with them.
 DEFAULT_MAX_PARALLEL = None
 
 # ceiling: cap of 4 group agents. Upgrade trigger: once the trail shows quota
@@ -64,52 +65,51 @@ MAX_PARALLEL_CAP = 4
 MAX_PARALLEL_FLOOR = 1
 
 
-def parallel_worker_count(
-    group_count: int, cores: int, load: float,
-    cap: int = MAX_PARALLEL_CAP,
-) -> int:
-    """How many group agents free capacity can take, given a measured machine.
+@contextlib.contextmanager
+def hold_group_workers(
+    group_count: int, requested: int | None = None, *, cores: int | None = None,
+):
+    """Hold the machine slots this group phase runs on, yielding the count.
 
-    ``min(group_count, clamp(cores - load, 1, cap))``. Truncates toward zero
-    so a fraction of a free core does not round up into another agent.
-    """
-    free = int(cores - load)
-    return min(group_count, max(MAX_PARALLEL_FLOOR, min(cap, free)))
+    A context manager rather than a function returning a number, because the
+    slots are *held* for the body: ``job_slots.claim`` releases its flocks in a
+    ``finally``, so computing a count and leaving the ``with`` would free the
+    capacity before a single agent launched. That is the whole difference from
+    the load average this replaces — a reading cannot lag when there is no
+    reading, but only while the claim is open.
 
+    Wrapped once around the entire fan-out, never per worker. ``claim`` mutates
+    ``os.environ`` and is not thread-safe, so two workers claiming would race
+    the marker, and the first to finish would drop flocks its siblings were
+    still running on.
 
-def resolve_max_parallel(
-    group_count: int, requested: int | None = None,
-    *,
-    cores: int | None = None,
-    load: float | None = None,
-) -> int:
-    """The worker count this run will use, and a line saying why.
+    ``want`` stays at the cap rather than the group count or the pool size: an
+    idle 18-core machine would otherwise grant 17, and the ``ceiling:`` on
+    ``MAX_PARALLEL_CAP`` would be a lie. An explicit ``--max-parallel`` skips
+    the pool entirely, the way ``TEST_JOBS`` does on the test runner.
 
-    An explicit ``--max-parallel`` wins, like ``TEST_JOBS`` on the test runner.
-    Otherwise free capacity: cores minus the one-minute load average, clamped
-    to 1..4. Prints the choice because an invisible wait is indistinguishable
-    from a slow model, and a run sized down by another process looks exactly
-    like a slow one unless something says so.
+    Prints the choice because an invisible wait is indistinguishable from a
+    slow model, and a run sized down by another process looks exactly like a
+    slow one unless something says so.
     """
     if requested is not None:
         workers = min(requested, group_count)
         log.info(f"Group parallelism: {workers} worker(s) — set by --max-parallel")
-        return workers
+        yield workers
+        return
+
     if cores is None:
         cores = os.cpu_count() or 1
-    if load is None:
-        try:
-            load = os.getloadavg()[0]
-        except (OSError, AttributeError):
-            # Unreadable load is treated as a full box so we stay serial rather
-            # than fan out on a machine we cannot size.
-            load = float(cores)
-    workers = parallel_worker_count(group_count, cores, load)
-    log.info(
-        f"Group parallelism: {workers} worker(s) "
-        f"({cores} cores, load {load:.2f}, capped at {MAX_PARALLEL_CAP})"
-    )
-    return workers
+    want = min(group_count, MAX_PARALLEL_CAP)
+    with job_slots.claim(
+        want, MAX_PARALLEL_FLOOR, cores, command="pr review (group phase)",
+    ) as granted:
+        workers = min(granted, want)
+        log.info(
+            f"Group parallelism: {workers} worker(s) "
+            f"(pool granted {granted} of {want}, capped at {MAX_PARALLEL_CAP})"
+        )
+        yield workers
 
 
 # ── Review pipelines ──────────────────────────────────────────────────────────
@@ -284,13 +284,16 @@ def run_multi_phase(
             GroupFailure(g.name, unrun) for g in groups
         ]
     else:
-        workers = resolve_max_parallel(group_count, max_parallel)
-        group_phase = _run_group_phase(
-            job, groups, group_count, holistic.content, workers,
-            group_skips, state,
-        )
-        group_outputs, failed_groups = group_phase.outputs, group_phase.failures
-        cost_so_far += group_phase.cost
+        # The claim spans the whole phase, retries included: _run_group_phase
+        # re-runs failed groups after its pool exits, and those agents are the
+        # same load as the first attempt.
+        with hold_group_workers(group_count, max_parallel) as workers:
+            group_phase = _run_group_phase(
+                job, groups, group_count, holistic.content, workers,
+                group_skips, state,
+            )
+            group_outputs, failed_groups = group_phase.outputs, group_phase.failures
+            cost_so_far += group_phase.cost
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
     merged_content = _phase_merge(group_outputs[:], failed_groups)

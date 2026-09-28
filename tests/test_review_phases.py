@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent import phases as agent_phases
+from core import job_slots
 from review import paths as review_paths
 from review import pipeline as review_pipeline
 from review import phases as review_phases
@@ -619,37 +621,79 @@ class TestReadScan:
             review_phases.read_scan(Phase.SINGLE, "some content")
 
 
-class TestParallelWorkerCount:
-    """Free capacity, not a fixed 1, decides how many group agents run."""
+class TestGroupWorkerSlots:
+    """Group agents draw from the machine slot pool, not a load average.
 
-    @pytest.mark.parametrize(
-        "cores, load, group_count, expected",
-        [
-            (18, 0.5, 5, 4),
-            (18, 0.5, 2, 2),
-            (8, 5.2, 5, 2),
-            (4, 3.5, 5, 1),
-            (8, 10.0, 5, 1),
-            (2, 0.0, 5, 2),
-            (18, 14.0, 5, 4),
-            (18, 15.0, 5, 3),
-        ],
-    )
-    def test_free_capacity_clamps_between_one_and_four(
-        self, cores, load, group_count, expected,
-    ):
-        assert review_pipeline.parallel_worker_count(
-            group_count, cores, load,
-        ) == expected
+    The load average lags the load it reports, so two pipelines starting
+    together both read an idle box and both take the cap. A slot is held, so
+    the second sees what the first took.
+    """
 
-    def test_an_explicit_count_wins_over_capacity(self):
-        assert review_pipeline.resolve_max_parallel(5, requested=1, cores=18, load=0.1) == 1
+    @pytest.fixture(autouse=True)
+    def _pool_in_tmp(self, tmp_path, monkeypatch):
+        """Scratch pool, and no inherited markers from the suite's own claim."""
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.delenv(job_slots.LOCK_ENV, raising=False)
+        monkeypatch.delenv(job_slots.GRANT_ENV, raising=False)
+        yield
+
+    def test_an_explicit_count_wins_over_the_pool(self):
+        with review_pipeline.hold_group_workers(5, requested=1) as workers:
+            assert workers == 1
 
     def test_an_explicit_count_still_cannot_exceed_the_group_count(self):
-        assert review_pipeline.resolve_max_parallel(2, requested=8, cores=18, load=0.1) == 2
+        with review_pipeline.hold_group_workers(2, requested=8) as workers:
+            assert workers == 2
 
-    def test_derived_count_uses_the_injected_machine(self):
-        assert review_pipeline.resolve_max_parallel(5, cores=8, load=5.2) == 2
+    def test_an_explicit_count_does_not_take_slots(self):
+        """--max-parallel skips the pool, the way TEST_JOBS does on run-tests."""
+        with review_pipeline.hold_group_workers(5, requested=4):
+            assert job_slots.GRANT_ENV not in os.environ
+
+    def test_an_idle_pool_grants_the_cap_not_the_machine(self):
+        """want is the cap: an 18-core box would otherwise hand out 17."""
+        with review_pipeline.hold_group_workers(10, cores=18) as workers:
+            assert workers == review_pipeline.MAX_PARALLEL_CAP
+
+    def test_a_smaller_group_count_is_not_rounded_up(self):
+        with review_pipeline.hold_group_workers(2, cores=18) as workers:
+            assert workers == 2
+
+    def _claim_beside(self, monkeypatch, want):
+        """What a suite claiming `want` gets while this phase holds its slots.
+
+        The marker is dropped first so the second claim is a real one rather
+        than the pass-through a nested run-tests takes.
+        """
+        monkeypatch.delenv(job_slots.LOCK_ENV, raising=False)
+        with job_slots.claim(want, 2, 18) as other:
+            return other
+
+    def test_a_concurrent_claim_sees_the_slots_this_one_holds(self, monkeypatch):
+        """The whole point: held capacity is visible, a load average is not."""
+        with review_pipeline.hold_group_workers(10, cores=18) as workers:
+            assert workers == 4
+            # 18 cores is 17 slots, 4 of them held here, so a suite asking for
+            # more than the 13 left is held to what remains. Asking for 13 or
+            # fewer would be granted in full either way and would prove nothing
+            # about the slots this phase took.
+            assert self._claim_beside(monkeypatch, 16) == job_slots.pool_size(18) - 4
+
+    def test_the_slots_are_held_for_the_body_not_just_counted(self):
+        """A count computed and released before the fan-out holds nothing."""
+        with review_pipeline.hold_group_workers(4, cores=18):
+            assert os.environ.get(job_slots.GRANT_ENV) is not None
+        assert job_slots.GRANT_ENV not in os.environ
+
+    def test_a_nested_run_tests_can_size_itself_from_the_grant(self):
+        """run-tests skips its own claim under the marker and reads the grant.
+
+        Without the grant exported it would skip the pool *and* fall back to
+        its full JOBS, which is the one combination that oversubscribes.
+        """
+        with review_pipeline.hold_group_workers(10, cores=18) as workers:
+            assert os.environ[job_slots.GRANT_ENV] == str(workers)
+            assert os.environ[job_slots.LOCK_ENV] == str(workers)
 
 
 class TestParallelFailFast:

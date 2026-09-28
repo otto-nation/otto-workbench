@@ -3066,9 +3066,9 @@ It goes if a second release ships with no Python reader.
 
 ### core/job_slots.py
 
-A machine-wide pool of test-parallelism slots.
+A machine-wide pool of parallelism slots, shared by suites and agents.
 
-Sizing a test run from the load average cannot work, and the reason is not a
+Sizing a run from the load average cannot work, and the reason is not a
 tuning problem. A one-minute average lags the load it reports, so two suites
 started within a minute of each other both read an idle machine and both take
 the full cap: 24 heavy processes on 18 cores, each run slower than if it had
@@ -3094,6 +3094,13 @@ waiting: a queue would make the third worktree's pre-push sit silent for the
 length of two suites, which is how people learn ``--no-verify``. The floor is
 small enough that the overshoot stays bounded — three concurrent suites on 18
 cores take 12, 5 and 2 rather than 12, 12 and 12.
+
+Both kinds of heavy work draw from it. ``bin/local/run-tests`` claims for a
+suite, and ``review.pipeline`` claims for a group phase's agents — which is
+the point of one pool rather than two: a review and a suite started together
+compete for the same cores, so they have to be able to see each other. The
+directory is still named ``test-slots`` because renaming it would split the
+pool from any run already holding flocks under the old name.
 
 Distinct from ``run_lock.py`` (exclusive, one target, serialises ``pr`` runs)
 and ``tree_lock.py`` (shared, one worktree, publishes a fact). This one is

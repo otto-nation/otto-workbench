@@ -27,7 +27,7 @@ from config.workbench_config import yaml_dump
 # Imported rather than spelled again: see `pr.target` for what the value is.
 # Here it is the host that adds nothing to gh's own resolution, so a base_url
 # naming it is normalised away instead of qualifying every ``--repo``.
-from pr.target import PUBLIC_GITHUB_HOST
+from pr.target import PUBLIC_GITHUB_HOST, is_public_github
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
@@ -452,7 +452,7 @@ def _github_host(opts: dict | None) -> str:
     """
     base = (opts or {}).get("base_url", "")
     host = re.sub(r"^[a-z]+://", "", base.strip(), flags=re.IGNORECASE).strip("/")
-    return "" if host.lower() == PUBLIC_GITHUB_HOST else host
+    return "" if is_public_github(host) else host
 
 
 def warn_on_host_mismatch(
@@ -477,7 +477,7 @@ def warn_on_host_mismatch(
     # Both are normalised to "" for the public instance, so this compares like
     # with like: an unset base_url and an explicit https://github.com are the
     # same answer, and neither disagrees with an origin on github.com.
-    origin = "" if origin_host.lower() == PUBLIC_GITHUB_HOST else origin_host.lower()
+    origin = "" if is_public_github(origin_host) else origin_host.lower()
     if not origin or not tracker_host or origin == tracker_host.lower():
         return ""
     message = (

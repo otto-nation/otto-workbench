@@ -202,3 +202,60 @@ def test_the_table_reports_the_pr_and_the_finding_total(reviews_dir):
     assert row.split() == [
         "acme/widget", "#42", "changes_requested", "3", "2026-08-18T14:02:11+00:00",
     ]
+
+
+# ── the forge a row came from ───────────────────────────────────────────────
+
+
+class TestTheTableNamesTheInstance:
+    """Two forges can serve one slug, and the table is where they meet.
+
+    `repo` stays the bare slug every consumer keys on — the host rides beside
+    it and only the rendered cell is qualified.
+    """
+
+    def test_a_row_carries_the_host_from_the_sidecar(self, reviews_dir):
+        _review(reviews_dir, repo="acme/widget", pr_number=42,
+                host="ghe.acme.com")
+
+        row, = review_listing.rows()
+
+        assert row.host == "ghe.acme.com"
+        assert row.repo == "acme/widget", "the slug every consumer keys on is unchanged"
+
+    def test_an_enterprise_row_is_host_qualified(self, reviews_dir):
+        _review(reviews_dir, repo="acme/widget", pr_number=42,
+                host="ghe.acme.com", reviewed_at="2026-08-18T14:02:11+00:00")
+
+        _, row = review_listing.render_table(review_listing.rows())
+
+        assert row.split()[0] == "ghe.acme.com/acme/widget"
+
+    def test_two_instances_serving_one_slug_are_told_apart(self, reviews_dir):
+        """The failure the qualification exists for: identical cells otherwise."""
+        _review(reviews_dir, name="widget-42", repo="acme/widget", pr_number=42,
+                host="ghe.acme.com")
+        _review(reviews_dir, name="widget-43", repo="acme/widget", pr_number=43,
+                host="ghe.other.com")
+
+        cells = {r.split()[0] for r in review_listing.render_table(
+            review_listing.rows())[1:]}
+
+        assert cells == {"ghe.acme.com/acme/widget", "ghe.other.com/acme/widget"}
+
+    # passes-at-base: asserts the rendering the change was careful not to move
+    def test_a_public_github_row_is_unchanged(self, reviews_dir):
+        _review(reviews_dir, repo="acme/widget", pr_number=42,
+                reviewed_at="2026-08-18T14:02:11+00:00")
+
+        _, row = review_listing.render_table(review_listing.rows())
+
+        assert row.split()[0] == "acme/widget"
+
+    # passes-at-base: an unattributed row has no host to qualify it with
+    def test_an_unattributed_row_still_says_so(self, reviews_dir):
+        _review(reviews_dir)
+
+        _, row = review_listing.render_table(review_listing.rows())
+
+        assert row.startswith("(unattributed)")

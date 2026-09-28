@@ -982,3 +982,14 @@ class TestWarnOnHostMismatch:
         """A local remote or ssh alias names no host to disagree with."""
         assert warn_on_host_mismatch(
             "github", {"base_url": "https://ghe.acme.com"}, "") == ""
+
+    def test_a_blank_origin_host_says_nothing_either(self):
+        """Whitespace names no instance, so it cannot disagree with one.
+
+        Both sides route through `pr.target.is_public_github`, which reads a
+        blank host the same way it reads an empty one — a comparison spelled
+        `host.lower() == PUBLIC_GITHUB_HOST` instead would call this a
+        non-public host and warn about a disagreement with nothing.
+        """
+        assert warn_on_host_mismatch(
+            "github", {"base_url": "https://ghe.acme.com"}, "   ") == ""

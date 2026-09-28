@@ -549,3 +549,73 @@ def test_target_dir_for_checkout_is_none_on_detached_head(tmp_path, monkeypatch)
                      "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
     run_checked(["git", "-C", str(wt), "checkout", "-q", "--detach", "HEAD"])
     assert pr_target.target_dir_for_checkout(wt) is None
+
+
+class TestIsPublicGithub:
+    """Empty and github.com are one bucket, which is what every caller means.
+
+    A caller testing `== PUBLIC_GITHUB_HOST` alone answers False for the
+    commonest case: a local remote, an ssh alias and a caller with no context
+    to ask all produce an empty host, and all three have always been treated as
+    public GitHub.
+    """
+
+    @pytest.mark.parametrize("host", ["", "   ", "github.com", "GitHub.com", "GITHUB.COM"])
+    def test_the_public_spellings(self, host):
+        assert pr_target.is_public_github(host) is True
+
+    @pytest.mark.parametrize("host", ["ghe.acme.com", "github.acme.com",
+                                      "gitlab.com", "github.com.evil.test"])
+    def test_everything_else_is_not(self, host):
+        assert pr_target.is_public_github(host) is False
+
+
+class TestFoldCaseIsTheOnlyFold:
+    def test_it_folds_ascii_only(self):
+        assert pr_target.fold_case("ACME/Widget-API") == "acme/widget-api"
+
+    def test_a_unicode_uppercase_is_left_alone(self):
+        """`str.lower` would fold these; the key contract says it must not.
+
+        A Unicode fold anywhere near this path produces two keys for one repo
+        on machines that disagree about the locale.
+        """
+        assert pr_target.fold_case("\u0130") == "\u0130"
+        assert pr_target.fold_case("\u00c9") == "\u00c9"
+        assert pr_target.fold_case("\u0130").lower() != "\u0130"
+
+    def test_the_ascii_around_a_unicode_char_still_folds(self):
+        """Per-codepoint, so one untouched character does not exempt its word."""
+        assert pr_target.fold_case("\u0130STANBUL") == "\u0130stanbul"
+
+
+class TestDisplayRepo:
+    """The display form, which is the one thing the host is allowed to change.
+
+    `label` reaches `gh --repo`, GraphQL, `PRIdentity.repo`, review directory
+    names, `find_repo_root` and the wiki vault path, and none of those may
+    grow a host. This is the sibling for a person to read.
+    """
+
+    @pytest.mark.parametrize("host", ["", "github.com", "GitHub.com"])
+    def test_a_public_host_shows_the_bare_slug(self, host):
+        assert pr_target.display_repo("acme/widget", host) == "acme/widget"
+
+    def test_an_enterprise_host_qualifies_the_slug(self):
+        assert pr_target.display_repo("acme/widget", "ghe.acme.com") == (
+            "ghe.acme.com/acme/widget")
+
+    def test_two_instances_serving_one_slug_render_differently(self):
+        """The whole point: the bare slug cannot tell these apart."""
+        assert pr_target.display_repo("acme/widget", "ghe.acme.com") != (
+            pr_target.display_repo("acme/widget", "ghe.other.com"))
+
+    def test_a_trailing_slash_does_not_double(self):
+        assert pr_target.display_repo("acme/widget", "ghe.acme.com/") == (
+            "ghe.acme.com/acme/widget")
+
+    def test_the_identity_exposes_it_beside_the_untouched_label(self):
+        identity = pr_target.RepoIdentity(
+            label="acme/widget", key="acme-widget-1234abcd", host="ghe.acme.com")
+        assert identity.display_label == "ghe.acme.com/acme/widget"
+        assert identity.label == "acme/widget", "what gh and the layout still use"

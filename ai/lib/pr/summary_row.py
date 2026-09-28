@@ -29,10 +29,12 @@ from pr.summary_model import ActionCell
 from pr.thread_models import CommentItem, ReportThread
 
 
-def fixed_status_text(cp: attribution.CommitPushResult, repo: str) -> str:
+def fixed_status_text(
+    cp: attribution.CommitPushResult, repo: str, host: str = "",
+) -> str:
     """Human-readable status for fixed threads in the summary table."""
     if cp.sha and cp.status == CommitStatus.PUSHED:
-        return ActionCell.fixed_in(cp.sha, repo)
+        return ActionCell.fixed_in(cp.sha, repo, host)
     if cp.status == CommitStatus.NO_CHANGES:
         # "A fix was applied" and "nothing was committed" contradict each other,
         # and which half is wrong is not knowable from here — a hook may have
@@ -82,6 +84,7 @@ def fixed_status_for(
     repo: str,
     history: attribution.AddressingHistory | None = None,
     thread: ReportThread | None = None,
+    host: str = "",
 ) -> str:
     """Status cell for one fixed row, rendering what `attribution.attribute_commit` allows.
 
@@ -101,19 +104,20 @@ def fixed_status_for(
         # Only the cited cell carries the hedge. The others already withhold the
         # claim for a different reason — they cannot name a commit at all — and
         # stacking a second caveat on those would say less, not more.
-        return ActionCell.fixed_in(attributed.sha, repo, verified=entry.verified)
+        return ActionCell.fixed_in(
+            attributed.sha, repo, host, verified=entry.verified)
     # A row settled outside the pass landed in a commit this run could not
     # resolve. That is true of the row whatever the running pass did, so it is
     # answered before the pass-level text gets a say.
     if settled_outside_the_pass(entry, cp):
         return ActionCell.RECONCILED
     if attributed.claim is attribution.CommitClaim.PASS:
-        return fixed_status_text(cp, repo)
+        return fixed_status_text(cp, repo, host)
     return ActionCell.UNATTRIBUTED
 
 
 def addressed_status_for(
-    framing: attribution.AddressedFraming, repo: str,
+    framing: attribution.AddressedFraming, repo: str, host: str = "",
     *, verified: bool | None = None,
 ) -> str:
     """Status cell for one satisfied row, in the framing its history earned.
@@ -130,7 +134,7 @@ def addressed_status_for(
     `ActionCell.fixed_in` ignores anything but an explicit False anyway.
     """
     if framing.in_response and framing.cited:
-        return ActionCell.fixed_in(framing.sha, repo, verified=verified)
+        return ActionCell.fixed_in(framing.sha, repo, host, verified=verified)
     return ActionCell.ALREADY_ADDRESSED
 
 
@@ -139,6 +143,7 @@ def row_cells_for(
     threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
     head_sha: str = "",
     wt_path: Path | None = None,
+    host: str = "",
 ) -> list[str]:
     """The cells of one summary table row, in column order.
 
@@ -162,12 +167,12 @@ def row_cells_for(
     ever reaches a published table again, type this parameter as `ActionCell`
     so a bare string cannot be passed at all.
     """
-    summary = permalinks.thread_cell(entry, threads_by_id, repo, pr_number)
+    summary = permalinks.thread_cell(entry, threads_by_id, repo, pr_number, host)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
     if entry.file and head_sha:
         anchor = permalinks.anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
         label = f"{entry.file}:{anchor}" if anchor else entry.file
-        url = permalinks.blob_permalink(repo, head_sha, entry.file, anchor)
+        url = permalinks.blob_permalink(repo, head_sha, entry.file, anchor, host)
         file_loc = f"[`{label}`]({url})"
     elif entry.file and entry.line:
         file_loc = f"`{entry.file}:{entry.line}`"

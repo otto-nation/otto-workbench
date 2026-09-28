@@ -541,7 +541,9 @@ class ActionCell(_ActionVocabulary):
     NEEDS_DISCUSSION = ("Needs discussion", FixOutcome.NEEDS_HUMAN)
 
     @classmethod
-    def fixed_in(cls, sha: str, repo: str, *, verified: bool | None = None) -> str:
+    def fixed_in(
+        cls, sha: str, repo: str, host: str = "", *, verified: bool | None = None,
+    ) -> str:
         """The status cell that names the commit carrying a row.
 
         One spelling for every surface that claims a fix landed: the fixed rows,
@@ -556,7 +558,7 @@ class ActionCell(_ActionVocabulary):
         including every satisfied row, where the reviewer themself confirmed the
         behaviour and no gate could say more than they did.
         """
-        cell = f"{cls.FIXED_IN}[`{sha}`]({permalinks.commit_permalink(repo, sha)})"
+        cell = f"{cls.FIXED_IN}[`{sha}`]({permalinks.commit_permalink(repo, sha, host)})"
         return f"{cell} (unverified)" if verified is False else cell
 
     @classmethod

@@ -33,6 +33,18 @@ from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, Repo
 # taught to pass one keeps working and renders exactly what it rendered before
 # — the alternative, a required parameter, would be a link nobody can build
 # rather than a link on the wrong forge.
+#
+# A pair of arguments rather than one `RepoRef(slug, host)` value, deliberately.
+# Folding the two into a type was evaluated and rejected: `repo` is the bare
+# `owner/name` that `gh --repo`, the REST paths and the GraphQL query all need,
+# and it is persisted on `ReviewMeta`, `PRIdentity`, `CommentsState` and
+# `ConsumedReview`, where `serde._coerce_dataclass` omits a value that is not a
+# dict and `ReviewEntry.is_for` then silently stops matching. `PushIntent.repo`
+# is a filesystem path under the same name. So the type would have to stop at
+# the boundary anyway, and a type that may not be stored or passed to the API
+# earns nothing over the two arguments it would wrap. If it is ever revived it
+# belongs in this module alone, built at the call from `(ctx.repo, ctx.host)`,
+# and never as a field on anything that is written to disk.
 
 
 def blob_permalink(
@@ -91,10 +103,11 @@ def anchored_line(
 def anchored_link(
     entry: CommentItem,
     repo: str, filepath: str, line: int, sha: str, wt_path: Path | None,
+    host: str = "",
 ) -> str:
     """A markdown blob link to `filepath`, anchored only where the line holds."""
     anchor = anchored_line(entry, filepath, line, sha, wt_path)
-    url = blob_permalink(repo, sha, filepath, anchor)
+    url = blob_permalink(repo, sha, filepath, anchor, host)
     label = f"{filepath}:{anchor}" if anchor else filepath
     return f"[`{label}`]({url})"
 
@@ -125,18 +138,19 @@ def evidence_is_real(repo_dir: Path, entry: CommentItem) -> bool:
 
 def evidence_link(
     entry: CommentItem, repo: str, sha: str, wt_path: Path | None = None,
+    host: str = "",
 ) -> str:
     """Render an entry's cited location as a markdown link, or "" if uncited."""
     if not entry.has_evidence() or not sha:
         return ""
     return anchored_link(
-        entry, repo, entry.evidence_file, entry.evidence_line, sha, wt_path,
+        entry, repo, entry.evidence_file, entry.evidence_line, sha, wt_path, host,
     )
 
 
 def code_link(
     entry: CommentItem, repo: str, sha: str, wt_path: Path | None = None,
-    verify_evidence: bool = True,
+    verify_evidence: bool = True, host: str = "",
 ) -> str:
     """Link the code an entry is about, or "" when there is nothing to point at.
 
@@ -154,12 +168,12 @@ def code_link(
     if entry.has_evidence() and (
         not verify_evidence or wt_path is None or evidence_is_real(wt_path, entry)
     ):
-        link = evidence_link(entry, repo, sha, wt_path)
+        link = evidence_link(entry, repo, sha, wt_path, host)
         if link:
             return link
     if not entry.file or not sha:
         return ""
-    return anchored_link(entry, repo, entry.file, entry.line, sha, wt_path)
+    return anchored_link(entry, repo, entry.file, entry.line, sha, wt_path, host)
 
 
 @dataclass(frozen=True)

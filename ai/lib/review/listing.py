@@ -81,6 +81,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core import serde
+from pr.target import display_repo
 from review.paths import (
     ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
 )
@@ -141,6 +142,12 @@ class ReviewRow:
     # is on the branch for anyone to find, while a held one is knowable from
     # nowhere else once the terminal that printed its resume line is gone.
     unpushed_fix_commit: str = ""
+    # The forge the review was run against, empty for public GitHub. Another
+    # optional field, so the schema does not bump. `repo` stays the bare slug
+    # every consumer already keys on — this is beside it, for a consumer that
+    # wants to *show* which instance a row came from, and `display_repo` is
+    # what turns the pair into that string.
+    host: str = ""
 
 
 def row_for(entry: ReviewEntry) -> ReviewRow:
@@ -162,6 +169,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
 
     return ReviewRow(
         repo=meta.repo,
+        host=meta.host,
         pr_number=meta.pr_number,
         review_file=str(review_file),
         head_sha=meta.head_sha,
@@ -229,7 +237,10 @@ def render_table(listing: list[ReviewRow]) -> list[str]:
     header = ("REPO", "PR", "VERDICT", "FINDINGS", "REVIEWED")
     body = [
         (
-            row.repo or "(unattributed)",
+            # Host-qualified, because the listing is where two instances'
+            # reviews sit in one table and the slug alone cannot tell them
+            # apart. A public-GitHub row renders exactly as it did.
+            display_repo(row.repo, row.host) if row.repo else "(unattributed)",
             f"#{row.pr_number}" if row.pr_number else "-",
             row.verdict or "-",
             str(row.findings["total"]),

@@ -170,7 +170,7 @@ def finalize_deferred(
     if issue.id:
         thread_replies.post_deferred_replies(
             deferred, threads_by_id, ctx.repo, ctx.pr_number,
-            issue.id, issue.url, ctx.require_worktree(),
+            issue.id, issue.url, ctx.require_worktree(), ctx.host,
         )
 
     state.fix.deferred_issue_id = issue.id

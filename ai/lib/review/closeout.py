@@ -100,7 +100,7 @@ def finish_deferred_work(
         state.fix.pr_body_pending = pc.deliver_pr_body(
             pc.artifacts_dir(ctx.target_dir), ctx.repo, ctx.pr_number,
         )
-    post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
+    post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id, ctx.host)
     warn_if_snapshot_stale(state, wt_path)
     flipped = settlement.reconcile_fix_snapshot(state, threads_by_id, settlement.answered_comment_sources(
         state.fix.fix.items, ctx.repo, ctx.pr_number, report.my_login,
@@ -127,7 +127,7 @@ def finish_deferred_work(
         return False
     deferred_issue.report_unfiled_deferrals(state, track)
     summary_publish.render_deferred_summary(
-        state, report, ctx.repo, ctx.pr_number, threads_by_id,
+        state, report, ctx.repo, ctx.pr_number, threads_by_id, ctx.host,
     )
     pr_state.save_state(ctx.target_dir, state)
     return True
@@ -174,6 +174,7 @@ def post_pending_fix_replies(
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
+    host: str = "",
 ) -> None:
     """Send the replies the fix pass produced but did not deliver.
 
@@ -235,13 +236,14 @@ def post_pending_fix_replies(
         fix.replies_posted += thread_replies.reply_to_fixed(
             fixed, threads_by_id, repo, pr_number,
             history_rewrite.reconciled_commit(record, record.commit_status, wt_path), wt_path,
+            host,
         )
         resolved += settlement.resolve_fixed_threads(fixed, threads_by_id)
 
     addressed = bucket(FixOutcome.ALREADY_ADDRESSED)
     if addressed:
         fix.replies_posted += thread_replies.post_already_addressed_replies(
-            addressed, threads_by_id, repo, pr_number, wt_path,
+            addressed, threads_by_id, repo, pr_number, wt_path, host=host,
         )
         resolved += settlement.resolve_fixed_threads(addressed, threads_by_id)
 
@@ -251,7 +253,7 @@ def post_pending_fix_replies(
     dismissed = bucket(FixOutcome.DISMISSED)
     if dismissed:
         fix.replies_posted += thread_replies.post_dismissed_replies(
-            dismissed, threads_by_id, repo, pr_number, wt_path,
+            dismissed, threads_by_id, repo, pr_number, wt_path, host,
         )
 
     state.comments.move_to_resolved(resolved, updated_at=pr_state.now_iso())

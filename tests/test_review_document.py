@@ -303,6 +303,22 @@ class TestReviewTitle:
         meta = ReviewMeta(repo="acme/widget", mode=Mode.SELF)
         assert review_title(meta) == "# Self-Review: acme/widget — unknown"
 
+    def test_an_enterprise_review_names_the_instance(self):
+        """Two instances can serve one slug; the title has to say which."""
+        meta = ReviewMeta(repo="acme/widget", pr_number=42, host="ghe.acme.com")
+        assert review_title(meta) == "# Review: ghe.acme.com/acme/widget#42"
+
+    def test_an_enterprise_self_review_names_it_too(self):
+        meta = ReviewMeta(repo="acme/widget", head_ref="feat/x", mode=Mode.SELF,
+                          host="ghe.acme.com")
+        assert review_title(meta) == (
+            "# Self-Review: ghe.acme.com/acme/widget — feat/x")
+
+    # passes-at-base: asserts the rendering the change was careful not to move
+    def test_a_public_host_renders_the_bare_slug(self):
+        meta = ReviewMeta(repo="acme/widget", pr_number=42, host="github.com")
+        assert review_title(meta) == "# Review: acme/widget#42"
+
 
 class TestDocumentRender:
     def test_the_frame_goes_above_the_body_in_order(self):

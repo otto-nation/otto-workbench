@@ -294,6 +294,59 @@ _refute_identity_rejection() {
   _refute_identity_rejection
 }
 
+@test "pre-commit rejects a placeholder identity on an enterprise remote" {
+  # The forge list named github.com, gitlab.com and bitbucket.org, so a GitHub
+  # Enterprise remote skipped the check entirely — the guard was absent on
+  # exactly the remotes a company runs.
+  _make_identity_repo "Test" "test@test.com" "git@ghe.acme.com:owner/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"placeholder identity — email=test@test.com, name=Test"* ]]
+}
+
+@test "pre-commit rejects a placeholder identity on a self-hosted HTTPS remote" {
+  _make_identity_repo "Test" "test@test.com" "https://gitlab.internal.acme/owner/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"placeholder identity"* ]]
+}
+
+# passes-at-base: listed by the old glob; proves the check is a superset
+@test "pre-commit rejects a placeholder identity on a gitlab.com remote" {
+  # Listed by the old glob and still guarded — the structural check is a
+  # superset of the three hosts it replaced, not a swap.
+  _make_identity_repo "Test" "test@test.com" "git@gitlab.com:owner/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"placeholder identity"* ]]
+}
+
+# passes-at-base: the exemption the widening must not swallow
+@test "pre-commit allows a placeholder identity on a local path remote" {
+  # A throwaway repo cloned from a path on disk is what the exemption is for,
+  # and the structural check must not widen far enough to catch it.
+  _make_identity_repo "Test" "test@test.com" "/srv/git/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  _refute_identity_rejection
+}
+
+# passes-at-base: the exemption the widening must not swallow
+@test "pre-commit allows a placeholder identity on a file:// remote" {
+  _make_identity_repo "Test" "test@test.com" "file:///srv/git/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  _refute_identity_rejection
+}
+
 # ── Repo-local delegation ────────────────────────────────────────────────────
 
 @test "pre-commit finds the local hook through the environment git exported" {

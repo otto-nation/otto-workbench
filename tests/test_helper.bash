@@ -159,15 +159,19 @@ make_gh_token_config() {
   echo "GH_TOKEN=$token" > "$dir/.config/task/taskfile.env"
 }
 
-# make_git_repo_with_org DIR ORG REPO — creates a git repo with origin pointing to github.com:ORG/REPO.
+# make_git_repo_with_org DIR ORG REPO [HOST] — creates a git repo with origin
+# pointing to HOST:ORG/REPO. HOST defaults to github.com, which is what every
+# caller predating enterprise coverage wants; pass one to exercise a remote
+# that is not public GitHub.
 make_git_repo_with_org() {
   local dir="$1"
   local org="$2"
   local repo="$3"
+  local host="${4:-github.com}"
   mkdir -p "$dir"
   common_setup
   GIT_CEILING_DIRECTORIES="$(dirname "$dir")" git -C "$dir" init --quiet
-  git -C "$dir" remote add origin "git@github.com:${org}/${repo}.git"
+  git -C "$dir" remote add origin "git@${host}:${org}/${repo}.git"
 }
 
 # make_container_seed DIR — commits whatever DIR already holds as one commit on

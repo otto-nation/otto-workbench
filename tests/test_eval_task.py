@@ -474,6 +474,7 @@ def test_empty_conditions_is_an_error(tmp_path, em):
 def test_each_condition_gets_its_own_seeded_tree_and_row(tmp_path, monkeypatch, em):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     _fake_claude(tmp_path / "claude")
+    monkeypatch.setenv("AI_BACKEND", "claude")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str((tmp_path / "claude").resolve()))
     calls = []
     monkeypatch.setattr(em, "get_task", _recording_task(calls))
@@ -482,3 +483,37 @@ def test_each_condition_gets_its_own_seeded_tree_and_row(tmp_path, monkeypatch, 
     dirs = {c["rules_home"] for c in calls}
     assert len(dirs) == 2, "each arm needs its own tree"
     assert all(Path(d).is_absolute() for d in dirs)
+
+
+def test_a_pi_backend_seeds_from_pi_layers_not_claude(tmp_path, monkeypatch, em):
+    _make_case(tmp_path / "corpus", "a", task="ci-fix")
+    seen = {}
+
+    def fake_prepare(kind, dest, *, workbench_dir=None):
+        seen["kind"] = kind
+        dest = Path(dest)
+        (dest / "rules").mkdir(parents=True)
+        (dest / "rules" / "general.md").write_text("# g\n")
+        return dest.resolve()
+
+    monkeypatch.setattr(em.ai_backend, "selected_backend", lambda: em.ai_backend.Backend.PI)
+    monkeypatch.setattr(em.conditions, "prepare_seed_source", fake_prepare)
+    calls = []
+    monkeypatch.setattr(em, "get_task", _recording_task(calls))
+    em.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1))
+    assert seen["kind"] == "pi"
+    assert len({c["rules_home"] for c in calls}) == 2
+
+
+def test_a_missing_pi_source_fails_loudly_rather_than_seeding_empty(
+    tmp_path, monkeypatch, em,
+):
+    _make_case(tmp_path / "corpus", "a", task="ci-fix")
+
+    def fake_prepare(kind, dest, *, workbench_dir=None):
+        raise em.conditions.MissingRuleSource("Pi rule layers produced no files")
+
+    monkeypatch.setattr(em.ai_backend, "selected_backend", lambda: em.ai_backend.Backend.PI)
+    monkeypatch.setattr(em.conditions, "prepare_seed_source", fake_prepare)
+    with pytest.raises(SystemExit, match="Pi rule layers produced no files"):
+        em.run_eval(_args(tmp_path, conditions="full", runs=1))

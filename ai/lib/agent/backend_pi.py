@@ -61,6 +61,7 @@ from core import log
 from core import timeouts
 from core.proc import _kill_group
 from agent.backend import AgentInvocation, agent_env
+from agent.rule_prefix import materialize as materialize_rule_prefix
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
     pi_tool_signature, pi_wrote_output,
@@ -144,12 +145,13 @@ def _guard_env(inv: AgentInvocation) -> dict[str, str]:
 
 
 def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
-    """The subprocess environment. ``rules_home`` is a no-op on this backend.
+    """The subprocess environment. ``rules_home`` is not an env mapping here.
 
-    Task 10 maps it to ``--append-system-prompt`` of a generated AGENTS.md,
-    keeping ``--no-context-files``. ``PI_CODING_AGENT_DIR`` is the wrong
-    mapping: it relocates settings, sessions and extensions/ (Vertex
-    provider, gh_* tools) rather than the operator rule prefix.
+    The operator rule prefix is injected on the argv as
+    ``--append-system-prompt`` (see ``_rule_prefix_flags``), keeping
+    ``--no-context-files``. ``PI_CODING_AGENT_DIR`` is the wrong mapping: it
+    relocates settings, sessions and extensions/ (Vertex provider, gh_*
+    tools) rather than the operator rule prefix.
     """
     if REVIEW_EXTENSION.is_file():
         return _guard_env(inv)
@@ -179,6 +181,18 @@ def _resolve_skill_path(agent: str) -> Path | None:
     if AGENT_PROTOCOL_PLACEHOLDER in skill_file.read_text():
         return None
     return skill_file
+
+
+def _rule_prefix_flags(inv: AgentInvocation) -> list[str]:
+    """``--append-system-prompt`` of the arm, or nothing when ``rules_home`` is empty.
+
+    Empty is byte-identical to the pre-Task-10 argv: no flag, no temp file.
+    A *set* home is materialised to a file because Pi treats an existing path
+    as file contents, and the blob is too large for the text form.
+    """
+    if not inv.rules_home:
+        return []
+    return ["--append-system-prompt", materialize_rule_prefix(inv.rules_home)]
 
 
 # ── Command builders ──────────────────────────────────────────────────────────
@@ -215,6 +229,7 @@ def _build_agent_cmd(inv: AgentInvocation, extension: str | None = None) -> list
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_AGENT_TOOLS, *BARE_FLAGS,
     ]
+    cmd += _rule_prefix_flags(inv)
     if inv.agent:
         skill_path = _resolve_skill_path(inv.agent)
         if skill_path:
@@ -255,6 +270,7 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_FIX_TOOLS, *BARE_FLAGS,
     ]
+    cmd += _rule_prefix_flags(inv)
     if inv.provider:
         cmd += ["--provider", inv.provider]
     if inv.model:

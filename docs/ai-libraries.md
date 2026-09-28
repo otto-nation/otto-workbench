@@ -2620,6 +2620,23 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
+### agent/rule_prefix.py
+
+Assemble a Pi system-prompt prefix from a seeded ``rules_home``.
+
+Pi has no ``CLAUDE_CONFIG_DIR`` equivalent that relocates *only* the operator
+rule prefix: ``PI_CODING_AGENT_DIR`` also moves settings, sessions and
+extensions (the Vertex provider and the ``gh_*`` tools). The eval therefore
+keeps ``--no-context-files`` — so the operator's ~39k ``AGENTS.md`` does not
+load — and injects the arm with ``--append-system-prompt``.
+
+The files to inject are ``rules_home/rules/*.md``, concatenated the way
+``step_pi_guidelines`` builds ``~/.pi/agent/AGENTS.md``: YAML frontmatter is
+stripped, a ``paths:`` scope is dropped (Pi has no path-conditional context),
+and a ``harness:`` list that omits ``pi`` is dropped. Empty ``rules_home`` is
+the caller's problem; a *set* but unreadable or empty home is an error, never
+a silent empty prompt.
+
 ### agent/token_count.py
 
 Exact input-token counts for a prompt, where the platform can give them.

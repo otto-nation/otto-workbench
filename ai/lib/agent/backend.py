@@ -264,9 +264,10 @@ class AgentInvocation:
 
     ``provider`` is honoured by the Pi backend and ignored by Claude Code,
     which has no --provider flag; ``thinking`` is likewise ignored there.
-    ``rules_home`` is the inverse: Claude Code honours it and Pi currently
-    no-ops it. All three stay on the object so callers do not branch on the
-    backend.
+    ``rules_home`` is the inverse: Claude Code maps it to
+    ``CLAUDE_CONFIG_DIR`` and Pi injects it with ``--append-system-prompt``,
+    keeping ``--no-context-files``. All three stay on the object so callers
+    do not branch on the backend.
 
     ``task``, ``repo``, and ``pr`` are not passed to the backend at all: they
     only label the usage ledger record for this call.

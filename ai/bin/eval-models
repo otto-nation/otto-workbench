@@ -33,6 +33,7 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
+from agent import backend as ai_backend  # noqa: E402
 from eval import conditions  # noqa: E402
 from eval.scoring import (  # noqa: E402
     SCHEMA_VERSION,
@@ -338,6 +339,24 @@ def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
     return {}, 0
 
 
+def _seed_kind() -> str:
+    return "pi" if ai_backend.selected_backend() is ai_backend.Backend.PI else "claude"
+
+
+def _seed_arms(repo_root: Path, tmpdir: Path, arms: list[str]) -> dict[str, Path]:
+    """One seeded tree per arm. Fails loudly when the backend's source is missing."""
+    try:
+        source = conditions.prepare_seed_source(
+            _seed_kind(), tmpdir / "source", workbench_dir=repo_root,
+        )
+    except conditions.MissingRuleSource as exc:
+        sys.exit(f"error: {exc}")
+    return {
+        arm: conditions.seed_config_tree(source, tmpdir / f"cc-{arm}", arm)
+        for arm in arms
+    }
+
+
 def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
     repo_root = Path(__file__).resolve().parent.parent.parent
     corpus_dir = args.corpus
@@ -361,14 +380,8 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
     if args.dry_run:
         return _dry_run(entries, len(models) * len(arms) * args.runs)
 
-    config_home = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     with tempfile.TemporaryDirectory(prefix="eval-cc-") as tmpdir:
-        seeded = {
-            arm: conditions.seed_config_tree(
-                config_home, Path(tmpdir) / f"cc-{arm}", arm,
-            )
-            for arm in arms
-        }
+        seeded = _seed_arms(repo_root, Path(tmpdir), arms)
 
         all_results: dict[tuple[str, str, str], list] = {}
         for entry, (model, label), arm in product(

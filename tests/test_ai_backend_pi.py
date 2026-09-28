@@ -1986,8 +1986,15 @@ class TestAskForDeliverableOnAgentEnd:
         assert result.error is None
 
 
+def _arm(tmp_path, name="arm", body="# general\nKeep this.\n"):
+    home = tmp_path / name
+    (home / "rules").mkdir(parents=True)
+    (home / "rules" / "general.md").write_text(body)
+    return home
+
+
 class TestRulesHomeIsANoop:
-    """Task 9: Pi does not map ``rules_home``. Task 10 will."""
+    """Pi does not map ``rules_home`` to a config-dir env var."""
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_rules_home_does_not_set_pi_coding_agent_dir(
@@ -1999,7 +2006,66 @@ class TestRulesHomeIsANoop:
         getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
-            rules_home=str(tmp_path / "rules"),
+            rules_home=str(_arm(tmp_path)),
         ))
         assert "PI_CODING_AGENT_DIR" not in seen["env"]
         assert "CLAUDE_CONFIG_DIR" not in seen["env"]
+
+
+class TestRulesHomePrefix:
+    """Task 10: ``rules_home`` is injected as ``--append-system-prompt``."""
+
+    def test_empty_rules_home_argv_is_byte_identical_to_today(self):
+        fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        agent = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        empty_fix = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
+        )
+        empty_agent = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
+        )
+        assert fix == empty_fix
+        assert agent == empty_agent
+        assert fix == [
+            "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
+            "--tools", ai_backend_pi.PI_FIX_TOOLS,
+            "--no-context-files", "--no-skills",
+        ]
+        assert "--append-system-prompt" not in agent
+        assert agent == [
+            "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
+            "--tools", ai_backend_pi.PI_AGENT_TOOLS,
+            "--no-context-files", "--no-skills",
+        ]
+
+    def test_rules_home_is_appended_as_a_file_and_keeps_bare_flags(self, tmp_path):
+        home = _arm(tmp_path)
+        cmd = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", rules_home=str(home)),
+        )
+        assert "--no-context-files" in cmd
+        assert "--no-skills" in cmd
+        assert "--append-system-prompt" in cmd
+        blob = Path(cmd[cmd.index("--append-system-prompt") + 1])
+        assert blob.is_file()
+        text = blob.read_text()
+        assert "Keep this." in text
+        assert "general.md" in text
+
+    def test_missing_rules_home_fails_loudly(self, tmp_path):
+        from agent.rule_prefix import RulePrefixError
+        with pytest.raises(RulePrefixError, match="rules/"):
+            ai_backend_pi._build_fix_cmd(
+                ai_backend_pi.AgentInvocation(
+                    prompt="", rules_home=str(tmp_path / "missing"),
+                ),
+            )
+
+    def test_relative_rules_home_is_rejected(self, tmp_path):
+        from agent.rule_prefix import RulePrefixError
+        with pytest.raises(RulePrefixError, match="absolute"):
+            ai_backend_pi._build_fix_cmd(
+                ai_backend_pi.AgentInvocation(
+                    prompt="", rules_home="relative/arm",
+                ),
+            )

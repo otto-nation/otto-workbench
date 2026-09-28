@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-stat-portability",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "report.sh calls stat -c on a BSD userland, so the size column is a filesystem report instead of a number",
+  "tags": ["ci-fix", "portability", "bash"]
+}

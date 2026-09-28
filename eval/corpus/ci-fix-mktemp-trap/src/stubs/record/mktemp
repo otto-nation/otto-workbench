@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Delegates to the host mktemp and records the path so verify can see a leak
+# without depending on whether this userland honours TMPDIR.
+set -euo pipefail
+
+result=$(/usr/bin/mktemp "$@")
+if [[ -n "${MKTEMP_LOG:-}" ]]; then
+  printf '%s\n' "$result" >> "$MKTEMP_LOG"
+fi
+printf '%s\n' "$result"

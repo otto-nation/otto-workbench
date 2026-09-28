@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-missing-regression-test",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "in_range is inclusive at the upper bound but no test fails when that bound is made exclusive",
+  "tags": ["ci-fix", "regression", "testing"]
+}

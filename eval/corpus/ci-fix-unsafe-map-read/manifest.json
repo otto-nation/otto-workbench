@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-unsafe-map-read",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "read_config.py indexes JSON with d[\"name\"], so a payload missing that key raises KeyError",
+  "tags": ["ci-fix", "map-access", "python"]
+}

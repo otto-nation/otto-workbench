@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Stands in for BSD stat, which does not accept GNU's -c format flag. The
+# host's stat is GNU on ubuntu-24.04 and would make the unfixed source pass,
+# so the case pins the misread here and stays deterministic on both userlands.
+if [[ "${1:-}" == "-c" ]]; then
+  cat <<'EOF'
+  File: "disk0s2"
+  Type: filesystem
+  Blocks: 4096
+EOF
+  exit 0
+fi
+exec /usr/bin/stat "$@"

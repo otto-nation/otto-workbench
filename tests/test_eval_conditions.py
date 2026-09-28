@@ -28,6 +28,13 @@ def test_an_unrecognised_rule_fails_the_run_rather_than_joining_an_arm():
         conditions.classify(installed)
 
 
+def test_a_rule_in_both_arms_fails_the_run(monkeypatch):
+    monkeypatch.setattr(conditions, "KEPT_RULES", frozenset({"shared", "kept"}))
+    monkeypatch.setattr(conditions, "DROPPED_RULES", frozenset({"shared", "dropped"}))
+    with pytest.raises(conditions.UnclassifiedRule, match="shared"):
+        conditions.classify(["kept", "dropped", "shared"])
+
+
 def test_the_full_arm_seeds_every_rule_and_the_trimmed_arm_only_the_kept(tmp_path):
     source = tmp_path / "real"
     (source / "rules").mkdir(parents=True)
@@ -51,15 +58,20 @@ def test_seeding_copies_and_leaves_the_source_tree_untouched(tmp_path):
     (source / "settings.json").write_text("{}")
     before = sorted(p.name for p in (source / "rules").iterdir())
 
-    conditions.seed_config_tree(source, tmp_path / "cc-trimmed", "trimmed")
+    dest = conditions.seed_config_tree(source, tmp_path / "cc-trimmed", "trimmed")
 
     assert sorted(p.name for p in (source / "rules").iterdir()) == before
     assert len(before) == 27
+    assert {p.stem for p in (dest / "rules").glob("*.md")} == set(conditions.KEPT_RULES)
+    assert (dest / "settings.json").is_file()
 
 
-def test_the_seeded_path_is_absolute_because_the_cli_rejects_a_relative_one(tmp_path):
+def test_the_seeded_path_is_absolute_because_the_cli_rejects_a_relative_one(
+    tmp_path, monkeypatch,
+):
     source = tmp_path / "real"
     (source / "rules").mkdir(parents=True)
     (source / "settings.json").write_text("{}")
-    dest = conditions.seed_config_tree(source, tmp_path / "cc-full", "full")
+    monkeypatch.chdir(tmp_path)
+    dest = conditions.seed_config_tree(source, Path("cc-full"), "full")
     assert dest.is_absolute()

@@ -42,6 +42,12 @@ class UnclassifiedRule(Exception):
 
 def classify(installed: list[str]) -> None:
     """Raise unless every installed rule name is in exactly one arm."""
+    both = sorted(KEPT_RULES & DROPPED_RULES)
+    if both:
+        raise UnclassifiedRule(
+            f"rules in both arms, so the trim set is contradictory: "
+            f"{', '.join(both)}",
+        )
     unknown = sorted(set(installed) - KEPT_RULES - DROPPED_RULES)
     if unknown:
         raise UnclassifiedRule(

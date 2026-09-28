@@ -202,28 +202,10 @@ when the thread was opened:
 | the thread's line no longer means what it did when it was read | `Already addressed:` | `Already addressed` |
 
 The commit is the one `git log -L` names for the thread's line, so two threads
-on one file get two answers. Both halves of that have to survive a rebase,
-which rewrites every commit on the branch at once:
-
-- **The line.** A line number is a coordinate in the tree it was read in. Once
-  the file has changed underneath it the number names whatever code inherited
-  it, and the walk answers confidently about a line the thread was never about.
-  So the coordinate is checked against the tree it was recorded in first, and a
-  row whose file has moved since cites nothing. A row that never recorded a tree
-  is not treated as stale — that is the run being unable to check, not evidence
-  the coordinate is wrong.
-- **The date.** The *older* of the commit's committer and author dates is what
-  gets compared. The committer date alone reads a rebase as work landing now,
-  because a rebase resets it on every commit it replays — which once published a
-  branch's own base commit as the commit carrying four of its fixes. The author
-  date alone has the opposite failure: a cherry-picked fix keeps the date it was
-  first written at, placing work before the review that asked for it. The
-  minimum is wrong in neither direction.
-
+on one file get two answers, and both the line and the date it is judged by are
+checked so a rebase cannot invent one — `pr/attribution.py` carries the rules.
 Either timestamp missing reads as pre-existing: claiming credit for a fix is the
-assertion that needs evidence, and there is none when one side of the comparison
-cannot be dated. The same coordinate check guards `--settle`, which writes its
-answer into the state file rather than only rendering it.
+assertion that needs evidence, and there is none when one side cannot be dated.
 
 `pr comments --finish` reaches this reply from a second direction. A fixed
 thread whose commit the resolver cannot cite — a hook rejected the pass's

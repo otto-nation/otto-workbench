@@ -1409,6 +1409,10 @@ class TestDryRunIntegration:
         "## File Triage\n"
         "- `handler.go` — **Tier 2** (application logic)\n"
         "\n"
+        "## Prior findings\n"
+        "- **[M4]** `handler.go` — Fixed\n"
+        "- **[S7]** `config.sh` — Still open\n"
+        "\n"
         "## Must fix\n"
         "\n"
         "- **[M1]** **`handler.go:11`** — missing error check\n"
@@ -1520,6 +1524,24 @@ class TestDryRunIntegration:
         payload = self._extract_json(result.stdout)
         assert "File Triage" not in payload["body"]
         assert "Tier 2" not in payload["body"]
+
+    def test_dry_run_omits_prior_findings_from_body(self, tmp_path):
+        """A ledger reaching review-post unstripped stays out of the posted body.
+
+        The full pipeline strips it in `post_process_findings`, so this covers
+        the path that skips that pass: a review written by the agent protocol
+        directly, or a `--post` of a file never post-processed. Its IDs number
+        the prior review, so posting them beside this review's findings shows a
+        reader two numbering schemes with nothing telling them apart.
+        """
+        review_file = self._setup_review(tmp_path)
+        result = self._run_dry_run(review_file, tmp_path)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = self._extract_json(result.stdout)
+        assert "Prior findings" not in payload["body"]
+        # The prior IDs themselves, which are what would confuse a reader.
+        assert "[M4]" not in payload["body"]
+        assert "[S7]" not in payload["body"]
 
     def test_dry_run_with_severity_filter(self, tmp_path):
         review_file = self._setup_review(tmp_path)
@@ -1807,6 +1829,20 @@ class TestReviewSections:
         )
         sections = rp.ReviewSections.from_text(text)
         assert sections.get("file_triage") == ""
+        assert sections.after_findings() == []
+
+    def test_prior_findings_is_not_extracted(self, rp):
+        text = (
+            "## Prior findings\n"
+            "- **[M4]** `a.go` — Fixed\n"
+            "- **[S7]** `b.go` — Still open\n"
+            "\n"
+            "## Must fix\n"
+            "\n"
+            "- **[M1]** **`a.go:1`** — bug\n"
+        )
+        sections = rp.ReviewSections.from_text(text)
+        assert sections.get("prior_findings") == ""
         assert sections.after_findings() == []
 
     def test_before_findings_omits_empty(self, rp):

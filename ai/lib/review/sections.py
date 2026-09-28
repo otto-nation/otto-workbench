@@ -14,8 +14,8 @@ from typing import Literal
 
 from core.text import slugify
 from review.document import (
-    SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
-    SECTION_VERDICT, ReviewDocument,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
+    SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument,
 )
 from review.types import SEVERITIES
 
@@ -28,9 +28,21 @@ for _s in SEVERITIES:
     for _a in _s.aliases:
         _SEVERITY_HEADERS.add(_a.lower())
 
-# Sections written to the local review file for coverage tracking only — they
-# document which files the reviewer looked at, which is noise on the PR.
-_INTERNAL_HEADERS: set[str] = {SECTION_FILE_TRIAGE.lower()}
+# Sections written to the local review file as bookkeeping rather than as
+# reviewer claims about the code. File Triage documents which files the
+# reviewer looked at, which is noise on the PR. The prior-findings ledger
+# reports on the *previous* review: its IDs number that review, so posting it
+# beside findings numbered for this one puts two numbering schemes in front of
+# a reader with nothing distinguishing them.
+#
+# `post_process_findings` already strips the ledger before publish, so on the
+# full pipeline this is belt-and-braces. It is load-bearing for a review that
+# reaches `review-post` without that pass — one written by the agent protocol
+# directly, or a `--post` of a file that was never post-processed.
+_INTERNAL_HEADERS: set[str] = {
+    SECTION_FILE_TRIAGE.lower(),
+    SECTION_PRIOR_FINDINGS.lower(),
+}
 
 
 @dataclass(frozen=True)

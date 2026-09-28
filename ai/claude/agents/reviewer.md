@@ -74,7 +74,10 @@ Write the triage as a `## File Triage` section in the review output, listing eve
      - Use thread state annotations (`[CONTESTED]`, `[ACKNOWLEDGED]`, `[RESOLVED]`) as signals, but verify against the actual diff — a `[RESOLVED]` thread still needs code verification, and an `[ACKNOWLEDGED]` response without a corresponding code change is still open
      - When the author contested a finding, re-evaluate: if their argument is valid, note it as resolved; if the finding still holds, note it as still open with a response to their point
      - **Do not repeat unresolved findings in the severity sections** — those sections are for genuinely new findings only. Unresolved prior findings should be responded to in their original threads, not re-posted
-     - **Do reference them.** Include a `## Prior findings` section after `## Summary` that lists each prior finding with its disposition (fixed, still open, contested, needs discussion) and a link to the original thread. This keeps them visible without restating them
+     - **Do reference them.** Include a `## Prior findings` section after `## Summary` that lists each prior finding with its disposition and a link to the original thread. This keeps them visible without restating them
+     - The disposition is one of exactly three words, written first on the line: `Fixed`, `Still open`, or `Declined`. Those are the only three the ledger parser reads — anything else (`contested`, `partially fixed`, `no longer applicable`) is recorded as an unreadable verdict and reported as unaccounted for. A finding the author contested is `Still open` when it still holds and `Declined` when their argument carries; one the change made moot is `Fixed`
+     - Qualify after the verdict, never inside it: `Fixed — only on the happy path` parses, `Fixed, but only on the happy path` does not and is read as no verdict at all
+     - This section is bookkeeping and is **not** posted to the PR — it is stripped before publish, because its IDs number the prior review rather than this one. Write it for reconciliation, not for the author
      - Start each line with the prior finding's ID and path copied verbatim — `- **[M1]** \`path/to/file.py\` — Still open — <thread link>`. Reconciliation matches on those two, and a prior finding missing from this section is reported as unaccounted for
 
 ### 1. Context

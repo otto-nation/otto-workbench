@@ -270,6 +270,13 @@ def shows_work(
     is what keeps a long-lived background process from answering this question
     forever on behalf of a tool call that has actually stopped.
 
+    ceiling-permanent: a recycled pid landing back in the baseline is invisible
+    to both signals, so work done by it would not count. Telling it apart needs
+    each process's start time carried alongside its pid on every sample, which
+    is a second `ps` field and an identity comparison on every membership test
+    — real complexity against a case that needs pid wraparound inside one tool
+    call and costs one retry when it happens, since an abort is retryable.
+
     The root is the one exception to that exclusion, and it has to be: it is
     the agent process itself, so it is in the baseline by construction, and a
     tool that does its work in process rather than by spawning would otherwise
@@ -318,7 +325,15 @@ class StallWatch:
     aborted_reason: str = ""
 
     def stamp(self) -> None:
-        """Record that the stream produced an event. Called per line."""
+        """Record that the stream produced an event. Called per line.
+
+        Deliberately outside the lock, unlike every other writer here. This
+        runs once per event on the stream's hot path, and a float store is
+        atomic under the GIL, so the only race is the watcher reading a value
+        one event stale. That can only make a gap look *longer* than it is,
+        which costs a confirm window nobody sees — and a confirm window still
+        has to find no work before anything happens.
+        """
         self._last_event_at = time.monotonic()
 
     def arm(self, tool: str) -> None:

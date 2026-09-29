@@ -2159,9 +2159,13 @@ _captures() {
     'gh issue list'; do
     # Sourced from the script rather than restated: a copy here would be a
     # fourth spelling, and the test would pass while the three real ones drift.
-    eval "$re_bash"
+    # Unwrapped into a local of this test's own naming rather than eval'd into
+    # the script's variable name, which shellcheck cannot see being assigned.
+    local pattern="${re_bash#re_issue_create=}"
+    pattern="${pattern#\'}"
+    pattern="${pattern%\'}"
     local bash_result=false
-    [[ "$cmd" =~ $re_issue_create ]] && bash_result=true
+    [[ "$cmd" =~ $pattern ]] && bash_result=true
 
     _captures "$cmd"
     local pi="$output"

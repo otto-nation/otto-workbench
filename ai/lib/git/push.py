@@ -893,11 +893,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--branch", required=True)
     parser.add_argument("--remote", default="origin")
     parser.add_argument("--set-upstream", action="store_true")
+    parser.add_argument(
+        "--no-verify", action="store_true",
+        help="Skip the pre-push hook. For a push whose gate failure is already "
+             "understood — a flake, or a failure the branch did not cause.",
+    )
     ns = parser.parse_args(argv)
 
     # The branch is named explicitly rather than left to git's push.default,
     # because the shell caller has already decided which branch it means.
+    #
+    # `--no-verify` is the caller's to pass, not this script's to infer. The
+    # retry path below reaches for it on its own and can justify that — the
+    # gates passed for that exact commit moments earlier. Nothing here knows
+    # that, so skipping the hook is a decision an operator makes.
     args = (["-u"] if ns.set_upstream else []) + [ns.remote, ns.branch]
+    if ns.no_verify:
+        args = ["--no-verify", *args]
     result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote, args=args)
     report(result, ns.cwd)
     return _EXIT_CODES[result.status]

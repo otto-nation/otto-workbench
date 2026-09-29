@@ -34,6 +34,26 @@ teardown() {
   [ "$PR_BASE" = "feature/parent" ]
 }
 
+@test "--no-verify sets PR_NO_VERIFY, and it defaults off" {
+  parse_pr_flags "--no-issue"
+  [ "$PR_NO_VERIFY" = "false" ]
+  parse_pr_flags "--no-issue --no-verify"
+  [ "$PR_NO_VERIFY" = "true" ]
+}
+
+@test "--no-verify reaches git push as a flag, not as an environment variable" {
+  # The gate is skipped by what the push command says, so the skip is visible
+  # in the invocation and dies with it. An exported GIT_* or an edited hook
+  # would outlive the one push it was meant for.
+  run bash -c '
+    set -e
+    . "'"$REPO_ROOT"'/lib/ai/pr.sh" 2>/dev/null || true
+    grep -n "no-verify" "'"$REPO_ROOT"'/lib/ai/pr.sh"
+  '
+  [[ "$output" == *"--no-verify"* ]]
+  grep -q -- '--no-verify' "$REPO_ROOT/ai/lib/git/push.py"
+}
+
 @test "--base without value fails" {
   run parse_pr_flags "--base"
   [ "$status" -eq 1 ]

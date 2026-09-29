@@ -12,8 +12,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from cli import pr_describe as pr_describe_cli  # noqa: E402
+from config.workbench_config import IssueProvider  # noqa: E402
 from pr import domains as pr_domains  # noqa: E402
 from pr import state as pr_state  # noqa: E402
+from pr.follow_ups import FollowUp, FollowUpDomain, FollowUpSource, IssueRef  # noqa: E402
 
 
 def _ctx(worktree, head_sha="aaaa111", pr_number=7):
@@ -275,6 +277,34 @@ def test_prompt_says_so_when_the_repo_ships_no_template(worktree):
                            return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(worktree))
     assert "this repo ships none" in prompt.call_args[0][0]
+
+
+# ── follow-up projection ────────────────────────────────────────────────────
+
+
+def test_an_id_less_entry_is_not_marked_projected(worktree):
+    """`render_block` skips an id-less entry, so marking it would lie to readiness.
+
+    Without the `e.ref.id` filter in `_mark_projected`, this entry would be
+    flagged `in_pr_body=True` even though `project_follow_ups` never wrote it
+    into the rendered block a reviewer sees.
+    """
+    ctx = _ctx(worktree)
+    state = pr_state.new_state(ctx.repo, ctx.branch, pr_number=ctx.pr_number,
+                               head_sha=ctx.head_sha, worktree_root=str(worktree))
+    anonymous = FollowUp(
+        ref=IssueRef(provider=IssueProvider.GITHUB, id="", url=""),
+        title="an id-less follow-up", source=FollowUpSource.SELF_REVIEW,
+    )
+    pr_state.apply(state, FollowUpDomain(entries=[anonymous], updated_at="t"))
+
+    with mock.patch.object(pr_describe_cli, "_fetch_pr_body",
+                           return_value=("t", "body")), \
+         mock.patch.object(pr_describe_cli, "_apply_body", return_value=True):
+        moved, _ = pr_describe_cli.project_follow_ups(ctx, state)
+
+    assert moved is False
+    assert state.follow_ups.entries[0].in_pr_body is False
 
 
 # ── worktree_root guards ──────────────────────────────────────────────────

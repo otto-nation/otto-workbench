@@ -191,8 +191,8 @@ def _persist(wt: Path, ctx: pr_context.ResolvedContext,
 
 def project_follow_ups(
     ctx: pr_context.ResolvedContext, state, *, trail: Trail | None = None,
-) -> bool:
-    """Put the branch's follow-ups in the PR body. Returns whether state moved.
+) -> tuple[bool, tuple[str, str] | None]:
+    """Put the branch's follow-ups in the PR body.
 
     Its own pass, ahead of the HEAD gate below, because a follow-up is filed
     without a commit far more often than with one: `pr comments --finish` writes
@@ -202,38 +202,50 @@ def project_follow_ups(
     Cheap enough to run unconditionally: one `gh pr view` and, only when the
     rendered block differs from what is already there, one `gh pr edit`. No AI
     call, which is what the HEAD gate exists to protect.
+
+    Returns `(moved, fetched)` — whether state moved, and the `(title, body)`
+    pair this pass read (the body reflecting whatever it wrote, if it wrote).
+    `run_describe` goes on to fetch the body itself for the revision prompt;
+    handing that fetch back here means it can reuse this one instead of
+    issuing a second `gh pr view` on every run that has follow-ups to project.
     """
     entries = state.follow_ups.entries if state else []
     if not entries:
-        return False
+        return False, None
 
     fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
     if fetched is None:
         log.warn("could not read the PR body — leaving the follow-ups unprojected")
-        return False
-    _, body = fetched
+        return False, None
+    title, body = fetched
 
     projected = pr_follow_ups.project(body, entries)
     if projected.strip() == body.strip():
         # Already there. Still mark the entries, because an earlier run may have
         # written the block and failed before recording that it had.
-        return _mark_projected(state, entries)
+        return _mark_projected(state, entries), fetched
 
     if not _apply_body(ctx.repo, ctx.pr_number, projected):
         # Draft mode, or a write that failed. Either way the body does not hold
         # them, so the flags stay off and readiness keeps saying so.
-        return False
+        return False, fetched
 
     log.info(f"Projected {len(entries)} follow-up(s) into the PR description")
     if trail:
         trail.info("describe", f"projected {len(entries)} follow-up(s)",
                    data={"pr": ctx.pr_number})
-    return _mark_projected(state, entries)
+    return _mark_projected(state, entries), (title, projected)
 
 
 def _mark_projected(state, entries) -> bool:
-    """Record that these entries have reached the body. Returns whether any moved."""
-    unmarked = [e for e in entries if not e.in_pr_body]
+    """Record that these entries have reached the body. Returns whether any moved.
+
+    Filtered to `e.ref.id` first, matching `pr_follow_ups.render_block`'s own
+    filter — an id-less entry is never written into the rendered block, so
+    marking it projected here would tell `readiness()` a reviewer can see an
+    entry that in fact never reached the body.
+    """
+    unmarked = [e for e in entries if e.ref.id and not e.in_pr_body]
     if not unmarked:
         return False
     pr_state.apply(state, pr_follow_ups.FollowUpDomain(
@@ -258,8 +270,11 @@ def run_describe(
 
     # Ahead of the HEAD gate: see project_follow_ups. Skipped on a dry run,
     # which must not write to GitHub.
-    if state and not dry_run and project_follow_ups(ctx, state, trail=trail):
-        pr_state.save_state(ctx.target_dir, state)
+    fetched = None
+    if state and not dry_run:
+        moved, fetched = project_follow_ups(ctx, state, trail=trail)
+        if moved:
+            pr_state.save_state(ctx.target_dir, state)
 
     last_sha = state.describe.head_sha if state else ""
     if last_sha and last_sha == ctx.head_sha and not force:
@@ -268,7 +283,10 @@ def run_describe(
         return 0
 
     template = pr_template.load(wt_path)
-    fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
+    # Reuse project_follow_ups's read when it made one, rather than asking gh
+    # for the same body twice.
+    if fetched is None:
+        fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
     if fetched is None:
         if trail:
             trail.error("describe", "could not read the PR body",

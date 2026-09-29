@@ -282,3 +282,18 @@ def test_held_back_failures_are_recorded_as_skipped(tmp_path):
     assert recorded["infra-1"].read_sha == "cafe123"
     assert state.ci.fix.commit_sha == "deadbee"
     assert saved.called
+
+
+def test_the_agent_may_write_the_tracking_file_it_is_judged_on(tmp_path):
+    """CIFixAdapter declares no add_dirs, so it inherits the base grant.
+
+    Its artifacts sit under the target dir rather than the worktree, which is
+    the same siting that left the comments pass unable to write the checklist
+    `produced()` reads. Pinned here because the fix lives on the base class:
+    nothing else in this suite would notice an override reintroducing the hole.
+    """
+    adapter = _adapter(tmp_path, {})
+
+    assert adapter.tracking_path.parent in adapter.add_dirs()
+    assert adapter.verify_tracking_path(1).parent in adapter.add_dirs()
+    assert adapter.workdir in adapter.add_dirs()

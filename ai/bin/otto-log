@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
@@ -316,7 +317,13 @@ def _format_origin(origin: dict | None) -> str:
 
 # ── Usage stats ───────────────────────────────────────────────────────────
 
-STATS_GROUPINGS = ("script", "task", "model", "day")
+STATS_GROUPINGS = ("script", "task", "model", "day", "phase")
+
+# The grouping that earns the turn columns. Turn budgets are set per phase, so
+# a turn distribution is only readable against one: rolled up by script or by
+# day it mixes a 15-turn review agent with an 80-turn fix pass and the median
+# describes neither.
+_TURN_GROUPING = "phase"
 
 # A session can span several models. The CLI reports cost per model but tokens only
 # per session, so grouping by model splits the cost and leaves the token columns
@@ -355,6 +362,14 @@ class UsageRow:
     cache_read_tokens: int | None
     cache_read_ratio: float | None
     median_duration_ms: int | None
+    # Turn distribution against the budget, for `--by phase`. None in every
+    # other grouping, and None here too until records carrying both counts
+    # accumulate: a ledger written before the two were separate keys cannot
+    # say what any run was allowed, and reporting that as a zero would show a
+    # well-sized phase as never reaching its cap.
+    p50_turns: int | None = None
+    p95_turns: int | None = None
+    at_cap_ratio: float | None = None
 
 
 def _cost_shares(rec: dict, by: str) -> list[CostShare]:
@@ -373,6 +388,7 @@ def _new_group() -> dict:
     return {
         "calls": 0, "cost": 0.0, "billed_input": 0,
         "output_tokens": 0, "cache_read_tokens": 0, "durations": [],
+        "turns": [], "at_cap": [],
     }
 
 
@@ -382,6 +398,7 @@ def _accumulate(group: dict, rec: dict, cost: float, attribute_tokens: bool) -> 
     duration = rec.get("duration_ms") or 0
     if duration:
         group["durations"].append(duration)
+    _accumulate_turns(group, rec)
     if not attribute_tokens:
         return
     group["billed_input"] += sum(rec.get(k) or 0 for k in _BILLED_KEYS)
@@ -389,10 +406,43 @@ def _accumulate(group: dict, rec: dict, cost: float, attribute_tokens: bool) -> 
     group["cache_read_tokens"] += rec.get("cache_read_tokens") or 0
 
 
+def _accumulate_turns(group: dict, rec: dict) -> None:
+    """Collect the turn readings one record carries, and only those it carries.
+
+    A record with no `num_turns` contributes to neither list rather than a
+    zero, and one with no `max_turns` contributes to the distribution but not
+    to the cap ratio: it says what the run spent and nothing about what it was
+    allowed, so counting it as under its cap would be an answer the record
+    cannot support.
+    """
+    spent = rec.get("num_turns")
+    if spent is None:
+        return
+    group["turns"].append(spent)
+    allowed = rec.get("max_turns")
+    if allowed:
+        group["at_cap"].append(spent >= allowed)
+
+
+def _percentile(values: list[int], fraction: float) -> int | None:
+    """The value at *fraction* through a sorted list, by nearest rank.
+
+    Nearest rank rather than `statistics.quantiles`, which interpolates and
+    raises below two data points. A turn count is a whole number of turns that
+    some run actually took, and a p95 of 30.5 is not one of them.
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, math.ceil(fraction * len(ordered)) - 1)
+    return ordered[index]
+
+
 def _finalize_group(name: str, group: dict, attribute_tokens: bool) -> UsageRow:
     durations = group["durations"]
     billed = group["billed_input"] if attribute_tokens else None
     cache_read = group["cache_read_tokens"] if attribute_tokens else None
+    at_cap = group["at_cap"]
     return UsageRow(
         group=name,
         calls=group["calls"],
@@ -402,6 +452,9 @@ def _finalize_group(name: str, group: dict, attribute_tokens: bool) -> UsageRow:
         cache_read_tokens=cache_read,
         cache_read_ratio=(cache_read / billed) if billed else None,
         median_duration_ms=int(statistics.median(durations)) if durations else None,
+        p50_turns=_percentile(group["turns"], 0.50),
+        p95_turns=_percentile(group["turns"], 0.95),
+        at_cap_ratio=(sum(at_cap) / len(at_cap)) if at_cap else None,
     )
 
 
@@ -470,6 +523,27 @@ _STATS_COLUMNS = (
     Column("MED TIME", lambda r: _fmt_duration(r.median_duration_ms)),
 )
 
+# Appended only under `--by phase`. Carried separately rather than always
+# printed because every other grouping would show three columns of "—": the
+# reading is honest there (a turn distribution across phases describes
+# nothing) but it is three columns of honest noise to serve one grouping.
+_TURN_COLUMNS = (
+    Column("P50 TURNS", lambda r: _fmt_count(r.p50_turns)),
+    Column("P95 TURNS", lambda r: _fmt_count(r.p95_turns)),
+    Column("AT CAP", lambda r: _fmt_ratio(r.at_cap_ratio)),
+)
+
+
+def stats_columns(by: str) -> tuple[Column, ...]:
+    """The table's schema for one grouping."""
+    if by == _TURN_GROUPING:
+        return _STATS_COLUMNS + _TURN_COLUMNS
+    return _STATS_COLUMNS
+
+
+def _fmt_count(n: int | None) -> str:
+    return _NO_GROUP if n is None else str(n)
+
 
 def _totals_row(rows: list[UsageRow]) -> UsageRow:
     billed = sum(r.billed_input or 0 for r in rows)
@@ -482,7 +556,9 @@ def _totals_row(rows: list[UsageRow]) -> UsageRow:
         output_tokens=sum(r.output_tokens or 0 for r in rows) or None,
         cache_read_tokens=cache_read or None,
         cache_read_ratio=(cache_read / billed) if billed else None,
-        # A median of per-group medians is not a median of anything.
+        # A median of per-group medians is not a median of anything. The same
+        # holds for the turn percentiles, and for a cap ratio whose groups
+        # were each measured against a different cap.
         median_duration_ms=None,
     )
 
@@ -491,15 +567,16 @@ def _pad(cell: str, width: int, align: Align) -> str:
     return cell.ljust(width) if align is Align.LEFT else cell.rjust(width)
 
 
-def format_stats_table(rows: list[UsageRow]) -> str:
-    header = tuple(col.label for col in _STATS_COLUMNS)
-    body = [tuple(col.render(row) for col in _STATS_COLUMNS)
+def format_stats_table(rows: list[UsageRow], by: str = "script") -> str:
+    columns = stats_columns(by)
+    header = tuple(col.label for col in columns)
+    body = [tuple(col.render(row) for col in columns)
             for row in (*rows, _totals_row(rows))]
     cells = [header, *body]
     widths = [max(len(c) for c in column) for column in zip(*cells)]
     lines = [
         "  ".join(_pad(cell, width, col.align)
-                  for cell, width, col in zip(cell_row, widths, _STATS_COLUMNS))
+                  for cell, width, col in zip(cell_row, widths, columns))
         for cell_row in cells
     ]
     lines[0] = f"{ANSI_BOLD}{lines[0]}{ANSI_RESET}"
@@ -713,7 +790,7 @@ def cmd_stats(args):
             print(json.dumps(asdict(row), separators=(",", ":")))
         return
     print(f"AI usage — last {args.since}, by {args.by}")
-    print(format_stats_table(rows))
+    print(format_stats_table(rows, args.by))
 
 
 # ── Main ──────────────────────────────────────────────────────────────────

@@ -212,9 +212,25 @@ def record(
     repo: str | None = None,
     pr: str | None = None,
     phase: str | None = None,
-    num_turns: int | None = None,
+    max_turns: int | None = None,
 ) -> None:
-    """Append one usage record to the global ledger. Never raises."""
+    """Append one usage record to the global ledger. Never raises.
+
+    `num_turns` and `max_turns` are separate keys because they are separate
+    quantities: what the run spent, and what it was allowed. They shared one
+    key when both were first recorded — the budget written only when the
+    session log had not reported real turns — which made the ledger's turn
+    count unreadable. A row saying 40 was either a run that spent forty or a
+    run allowed forty and measured at nothing, and no field said which, so the
+    one question the pair exists to answer — is this phase's budget calibrated
+    — could not be asked of it at all.
+
+    Either may be absent. A backend that reports no turn count leaves
+    `num_turns` off rather than writing the budget in its place, and a caller
+    with no budget to declare leaves `max_turns` off. A reader must treat a
+    missing key as unknown rather than as zero; `otto-log stats --by phase`
+    does.
+    """
     global _warned
     rec = {
         "ts": _iso_now(),
@@ -232,12 +248,9 @@ def record(
     }
     if usage.cost_by_model:
         rec["cost_by_model"] = usage.cost_by_model
-    # Prefer the session's actual turns; the allocated budget is the fallback
-    # when the log did not say how many it spent.
-    turns = usage.num_turns if usage.num_turns is not None else num_turns
     for key, value in (
         ("task", task), ("repo", repo), ("pr", pr),
-        ("phase", phase), ("num_turns", turns),
+        ("phase", phase), ("num_turns", usage.num_turns), ("max_turns", max_turns),
     ):
         if value is not None and value != "":
             rec[key] = value

@@ -443,12 +443,70 @@ class TestStatsAggregation:
         assert len(rows) == 1
         assert rows[0].calls == 2
 
+    # passes-at-base: aggregate_usage groups by any key; what this change adds is phase as an accepted choice, pinned by the test below
+    def test_groups_by_phase(self):
+        rows = otto_log.aggregate_usage(
+            [_usage(phase="fix"), _usage(phase="fix"), _usage(phase="group")],
+            by="phase",
+        )
+        assert _by_group(rows)["fix"].calls == 2
+
+    def test_phase_is_a_grouping_the_cli_will_accept(self):
+        # `aggregate_usage` groups by whatever key it is handed, so the test
+        # above passed before `phase` was a choice anyone could pass — the
+        # argument parser rejected it and the function was never reached.
+        # This is the half that was actually missing.
+        assert "phase" in otto_log.STATS_GROUPINGS
+
     def test_groups_by_day_chronologically(self):
         rows = otto_log.aggregate_usage(
             [_usage(ts="2026-08-20T01:00:00Z"), _usage(ts="2026-08-18T01:00:00Z")],
             by="day",
         )
         assert [r.group for r in rows] == ["2026-08-18", "2026-08-20"]
+
+    def test_turn_percentiles_come_from_what_runs_actually_spent(self):
+        rows = otto_log.aggregate_usage(
+            [_usage(phase="fix", num_turns=n) for n in (5, 10, 40)], by="phase",
+        )
+        row = _by_group(rows)["fix"]
+        # Exact values: a percentile is one of the readings, so an assertion
+        # that only bounded it would pass for an interpolated 27.5 — a turn
+        # count no run took.
+        assert row.p50_turns == 10
+        assert row.p95_turns == 40
+
+    def test_a_group_whose_records_carry_no_cap_reports_no_ratio(self):
+        """Unknown is not zero, and this is the day-one state of the ledger.
+
+        Every record written before the budget became its own key has turns
+        and no cap. Reporting those as 0.0 would show every phase as never
+        reaching its cap — a confident answer drawn from records that cannot
+        support one, and the reading a person would act on.
+        """
+        rows = otto_log.aggregate_usage(
+            [_usage(phase="fix", num_turns=40)], by="phase",
+        )
+        assert _by_group(rows)["fix"].at_cap_ratio is None
+
+    def test_the_cap_ratio_counts_only_the_runs_that_declared_one(self):
+        rows = otto_log.aggregate_usage([
+            _usage(phase="fix", num_turns=20, max_turns=20),
+            _usage(phase="fix", num_turns=20, max_turns=20),
+            _usage(phase="fix", num_turns=5, max_turns=20),
+            # No cap declared: it contributes to the distribution and must not
+            # dilute the ratio, which would otherwise read 2/4.
+            _usage(phase="fix", num_turns=5),
+        ], by="phase")
+        assert _by_group(rows)["fix"].at_cap_ratio == pytest.approx(2 / 3)
+
+    def test_a_run_that_reported_no_turns_is_not_counted_as_zero(self):
+        rows = otto_log.aggregate_usage(
+            [_usage(phase="fix", num_turns=30), _usage(phase="fix")], by="phase",
+        )
+        # A record with no turn count says nothing about turns. Reading it as
+        # zero would halve every median in the table.
+        assert _by_group(rows)["fix"].p50_turns == 30
 
     def test_by_model_splits_cost_across_models(self):
         rows = otto_log.aggregate_usage(
@@ -509,6 +567,30 @@ class TestStatsTable:
         body = otto_log.format_stats_table(self._rows()).splitlines()[1:]
         assert len({len(line) for line in body}) == 1
 
+    def _phase_rows(self):
+        return otto_log.aggregate_usage(
+            [_usage(phase="fix", num_turns=20, max_turns=20)], by="phase",
+        )
+
+    def test_the_turn_columns_appear_under_by_phase(self):
+        header = otto_log.format_stats_table(self._phase_rows(), "phase")
+        assert "P95 TURNS" in header
+        assert "AT CAP" in header
+
+    def test_the_turn_columns_stay_out_of_the_other_groupings(self):
+        table = otto_log.format_stats_table(self._rows(), "script")
+        assert "P95 TURNS" not in table
+        assert "AT CAP" not in table
+
+    def test_phase_rows_line_up_across_the_wider_table(self):
+        # The render loop zips cells against columns, and zip truncates in
+        # silence: pairing the wider rows against the narrower column tuple
+        # dropped the three new columns from the output while every other
+        # test passed.
+        body = otto_log.format_stats_table(self._phase_rows(), "phase").splitlines()
+        assert len({len(line) for line in body[1:]}) == 1
+        assert body[0].count("TURNS") == 2
+
 
 class TestStatsCommand:
     @pytest.fixture
@@ -551,9 +633,13 @@ class TestStatsCommand:
         self._write(ledger, _usage(script="pr"))
         self._run(monkeypatch, as_json=True)
         row = json.loads(capsys.readouterr().out.splitlines()[0])
+        # The turn fields are appended, which is the one change this schema
+        # tolerates: a consumer reading by key is unaffected, and the eight
+        # before them are still in their original positions.
         assert list(row) == [
             "group", "calls", "cost", "billed_input", "output_tokens",
             "cache_read_tokens", "cache_read_ratio", "median_duration_ms",
+            "p50_turns", "p95_turns", "at_cap_ratio",
         ]
 
     def test_empty_ledger_says_so(self, ledger, monkeypatch, capsys):

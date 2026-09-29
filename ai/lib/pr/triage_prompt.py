@@ -128,6 +128,19 @@ def build_triage_prompt(
     if code_context:
         context_block = f"\nCode context for referenced files:\n{code_context}\n"
 
+    # The evidence requirement is only answerable against code that is in the
+    # prompt. Asking for a citation with nothing to cite is what sent a model
+    # off to narrate a file read it had no tool to perform, so where there is
+    # no context the two verdicts that need one are withdrawn rather than left
+    # standing as an instruction that cannot be followed.
+    no_context_block = "" if code_context else (
+        f"\nNOTE: no code context was available for these threads, so "
+        f"{Verification.ALREADY_ADDRESSED} and {Verification.INVALID} are not "
+        f"available this round — both are claims about code you cannot see. "
+        f"Use {Verification.NEEDS_DISCUSSION} where you would have reached for "
+        f"either.\n"
+    )
+
     history_block = ""
     if commit_log:
         history_block = (
@@ -210,7 +223,7 @@ For each thread, provide:
 
 Thread data:
 {thread_json}
-{context_block}{history_block}{comments_block}
+{context_block}{no_context_block}{history_block}{comments_block}
 Return JSON matching this exact schema:
 {{
   "threads": [
@@ -228,5 +241,9 @@ Return JSON matching this exact schema:
     }}
   ]{comment_items_schema}
 }}
+
+You have no tools and cannot read files, run commands, or look anything up: the
+code above is all of it. Classify from what is in this prompt and answer in one
+reply — there is no turn after this one in which a file read could land.
 
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."""

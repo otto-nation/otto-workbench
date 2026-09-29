@@ -5828,6 +5828,36 @@ class TestTriagePromptVerificationValues:
         assert "Commits already made on this branch" not in prompt
 
 
+class TestTriagePromptStatesItsOwnLimits:
+    """What the prompt promises must match the shape it runs in.
+
+    Triage is prompt-shaped: the backend is invoked with no tools at all. A
+    prompt that requires a cited line as evidence, handed no code to cite,
+    reads to a model as an instruction to go and read the file — and the reply
+    is a narration of that read rather than the JSON the caller parses. Both
+    halves are asserted here because either alone leaves the contradiction.
+    """
+
+    def test_it_says_there_are_no_tools_to_read_with(self):
+        prompt = triage_prompt.build_triage_prompt([], "diff")
+        assert "cannot read files" in prompt
+
+    def test_the_no_tools_line_survives_having_no_context(self):
+        prompt = triage_prompt.build_triage_prompt([], "")
+        assert "cannot read files" in prompt
+
+    def test_with_no_code_the_evidence_verdicts_are_not_offered(self):
+        """Nothing to cite means the two posted-outward verdicts are unreachable."""
+        prompt = triage_prompt.build_triage_prompt([], "")
+        assert "no code context was available" in prompt
+        assert str(Verification.NEEDS_DISCUSSION) in prompt
+
+    def test_with_code_the_evidence_requirement_stands(self):
+        prompt = triage_prompt.build_triage_prompt([], "some code")
+        assert "no code context was available" not in prompt
+        assert "REQUIRED for" in prompt
+
+
 class TestTheSchemaExampleIsValidJson:
     """The prompt closes with "Return ONLY the JSON object", so the shape it
     shows has to be one.

@@ -2161,9 +2161,88 @@ _captures() {
   [ "$status" -ne 0 ]
 }
 
+@test "issue-capture: the recorder is handed its payload on stdin" {
+  # `execFile` has no `input` option. Passing one leaves the recorder blocked on
+  # a stdin that never closes and the hook hangs — which is not a crash, so
+  # nothing reports it: the filing simply never reaches the ledger. Asserted on
+  # the wiring because the failure is invisible in the extension's own output.
+  local index="$REPO_ROOT/ai/pi/extensions/issue-capture/index.ts"
+  grep -q 'child.stdin?.end(' "$index"
+  run grep -nE 'execFile\([^)]*\binput:' "$index"
+  [ "$status" -ne 0 ]
+
+  # And the real shape round-trips: a payload written to stdin reaches a reader
+  # that blocks on `cat`, and the callback fires.
+  run node --input-type=module -e "
+    import { execFile } from 'node:child_process';
+    const child = execFile('bash', ['-c', 'cat'], { timeout: 5000 },
+      (err, stdout) => { console.log(err ? 'ERR' : stdout.trim()); });
+    child.stdin.end('{\"ok\":1}');
+  "
+  [ "$output" = '{"ok":1}' ]
+}
+
 @test "issue-capture: both harnesses write through the one recorder" {
   # Two copies of "what a ledger entry looks like" would drift the way the
   # guards did before they shared a scan.
   grep -q 'record-filed-issue' "$REPO_ROOT/ai/pi/extensions/issue-capture/index.ts"
   grep -q 'record-filed-issue' "$REPO_ROOT/ai/claude/settings.json"
+}
+
+# ── record-filed-issue ───────────────────────────────────────────────────────
+#
+# The shared writer both harnesses hand a payload to. Exercised directly here
+# (rather than through either extension) because the URL-attribution question
+# below is about the writer's own parsing, not about either hook's wiring.
+
+_record_filed_issue_setup() {
+  RFI_REPO="$TMPDIR/rfi-repo"
+  mkdir -p "$RFI_REPO"
+  git -C "$RFI_REPO" init -q -b main
+  git -C "$RFI_REPO" remote add origin git@github.com:acme/widget.git
+  git -C "$RFI_REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+
+  RFI_TARGET=$(python3 - "$REPO_ROOT" "$RFI_REPO" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "ai" / "lib"))
+from pr import target as pr_target
+print(pr_target.target_dir_for_checkout(Path(sys.argv[2])))
+PY
+)
+  mkdir -p "$RFI_TARGET"
+  cat > "$RFI_TARGET/state.json" <<EOF
+{"_version": 1, "identity": {"repo": "acme/widget", "branch": "main", "pr_number": null, "head_sha": "abc123", "worktree_root": "$RFI_REPO"}, "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:00:00Z"}
+EOF
+}
+
+_rfi_entry_count() {
+  python3 -c "
+import json
+with open('$RFI_TARGET/state.json') as f:
+    d = json.load(f)
+print(len(d.get('follow_ups', {}).get('entries', [])))
+"
+}
+
+@test "record-filed-issue: a single issue URL is recorded" {
+  _record_filed_issue_setup
+  cd "$RFI_REPO"
+  payload='{"tool_input":{"command":"gh issue create --title x"},"tool_response":{"stdout":"https://github.com/acme/widget/issues/42"}}'
+  run bash -c "printf '%s' '$payload' | '$REPO_ROOT/ai/bin/record-filed-issue'"
+  [ "$status" -eq 0 ]
+  [ "$(_rfi_entry_count)" = "1" ]
+  grep -q '"id": "42"' "$RFI_TARGET/state.json"
+}
+
+@test "record-filed-issue: more than one URL-shaped match records nothing rather than guess" {
+  # Nothing here tells the hook which of the two matches this `gh issue
+  # create` actually filed, so it must not guess with `tail -1` and risk
+  # attributing the wrong issue to this filing.
+  _record_filed_issue_setup
+  cd "$RFI_REPO"
+  payload='{"tool_input":{"command":"gh issue create --title x"},"tool_response":{"stdout":"https://github.com/acme/widget/issues/42\nhttps://github.com/acme/widget/issues/99"}}'
+  run bash -c "printf '%s' '$payload' | '$REPO_ROOT/ai/bin/record-filed-issue'"
+  [ "$status" -eq 0 ]
+  [ "$(_rfi_entry_count)" = "0" ]
 }

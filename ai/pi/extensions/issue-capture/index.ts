@@ -55,17 +55,23 @@ export default function (pi: ExtensionAPI) {
     // Handed to ai/bin/record-filed-issue, which owns the write. One
     // implementation of "what a ledger entry for a hand-filed issue looks
     // like", reached from both harnesses rather than written twice — the
-    // duplication the guards spent this epic removing. Detached and unawaited:
-    // the turn must not wait on a bookkeeping write, and a failure here is not
-    // the agent's problem.
-    execFile(
+    // duplication the guards spent this epic removing. Unawaited: the turn must
+    // not wait on a bookkeeping write, and a failure here is not the agent's
+    // problem.
+    //
+    // The payload goes through `child.stdin`, not an `input` option — `execFile`
+    // has no such option, so passing one leaves the recorder blocked on a stdin
+    // that never closes, and the hook hangs until something kills it. `timeout`
+    // is the backstop for a recorder that blocks for any other reason.
+    const child = execFile(
       "bash",
       [`${process.env.HOME}/.local/bin/record-filed-issue`],
-      { input: JSON.stringify({
-          tool_input: { command },
-          tool_response: { stdout: url },
-        }) } as never,
+      { timeout: 10_000 },
       () => {},
     );
+    child.stdin?.end(JSON.stringify({
+      tool_input: { command },
+      tool_response: { stdout: url },
+    }));
   });
 }

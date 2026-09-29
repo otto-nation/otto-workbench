@@ -274,7 +274,15 @@ def run_describe(
     force: bool = False, dry_run: bool = False,
     trail: Trail | None = None,
 ) -> int:
-    """Revise the PR description if HEAD moved since the last pass."""
+    """Revise the PR description if HEAD moved since the last pass.
+
+    Callers must hold the target's run lock before calling this: it writes to
+    GitHub (via `project_follow_ups`) and to the state file ahead of the
+    HEAD-gate check below, and neither write is itself serialized. `main`
+    acquires the lock via `run_lock.claim_for_process` before reaching here;
+    a caller that skips `main` (tests, or a future direct caller) must claim
+    it too rather than invoke this concurrently.
+    """
     if not ctx.pr_number:
         log.info("No PR for this branch — nothing to describe")
         return 0

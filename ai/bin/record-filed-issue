@@ -73,9 +73,16 @@ re_issue_create='(^|[;&|][[:space:]]*)gh[[:space:]]+issue[[:space:]]+create([[:s
 
 # `gh issue create` prints the new issue's URL and nothing else. No URL means
 # the command failed, or printed somewhere this hook cannot see — either way
-# there is no issue to record.
-url=$(printf '%s' "$response" | grep -oE 'https://[^[:space:]]+/issues/[0-9]+' | tail -1) || exit 0
-[[ -n "$url" ]] || exit 0
+# there is no issue to record. More than one URL-shaped match means the
+# output is not what a bare `gh issue create` prints (a chained command, or
+# noise ahead of the real line) and there is no way to tell which one this
+# invocation actually filed, so this records nothing rather than guess with
+# `tail -1` and risk attributing someone else's issue to this filing.
+urls=$(printf '%s' "$response" | grep -oE 'https://[^[:space:]]+/issues/[0-9]+') || exit 0
+[[ -n "$urls" ]] || exit 0
+url_count=$(printf '%s\n' "$urls" | wc -l | tr -d ' ')
+[[ "$url_count" == 1 ]] || exit 0
+url="$urls"
 
 # Where ai/lib is. This hook is installed to ~/.local/bin as a symlink into the
 # checkout, so the entry points' own resolver answers it — spelling a path here

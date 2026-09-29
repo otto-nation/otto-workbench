@@ -36,7 +36,7 @@ const REDIRECTS = [">>", "&>>", "&>", ">|", ">", "<<<", "<<", "<"];
  * per operator kind and no third enumerating both — a spare copy is one a
  * maintainer can edit without the others noticing.
  */
-const CONTROL = [";;", "&&", "||", ";", "|", "&", "(", ")"];
+const CONTROL = [";;", "&&", "||", "|&", ";", "|", "&", "(", ")"];
 
 export interface Token {
   /** The word with its quotes removed, which is what the shell passes along. */

@@ -70,7 +70,7 @@ with `otto-log stats`:
 ```bash
 otto-log stats                      # last 7 days, grouped by script
 otto-log stats --since 24h          # any h/d/m window
-otto-log stats --by task            # or: script, model, day
+otto-log stats --by task            # or: script, model, day, phase
 otto-log stats --by day --json      # one JSON object per row
 ```
 

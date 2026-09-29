@@ -406,12 +406,19 @@ def _scope_to_surface(raw_diff: str, pr_files: list[dict]) -> str:
 class DeltaScope:
     """What changed since the prior review, and whether that answer is trusted.
 
-    `files` and `lines` are the author's work alone — what the branch gained
-    that the base did not — while `diff` is the whole range narrowed to the
-    review's surface. The two disagree by design: the diff is prompt context,
-    where showing a base-branch hunk costs a few hundred bytes, and the file
-    list is a gate, where naming a file the author never touched costs an agent
-    call per group holding it.
+    `files` and `weighted_lines` are the author's work alone — what the branch
+    gained that the base did not — while `diff` is the whole range narrowed to
+    the review's surface. The two disagree by design: the diff is prompt
+    context, where showing a base-branch hunk costs a few hundred bytes, and
+    the file list is a gate, where naming a file the author never touched costs
+    an agent call per group holding it.
+
+    Two line counts, because they answer different questions and a single
+    field could only lie about one of them. `weighted_lines` is review effort,
+    where a deletion costs less than an addition (`git.numstat` says why), and
+    is what sizes the run. `raw_lines` is what the diff actually contains, and
+    is what the trail reports — redefining the number recorded there would
+    silently break every comparison against a run from before the weighting.
 
     `attribution` is what separates "the author changed nothing" from "this run
     could not tell". Only the ancestry walk reports `ATTRIBUTED`, and only once
@@ -425,9 +432,10 @@ class DeltaScope:
     diff: str = ""
     commit_log: str = ""
     files: list[str] = field(default_factory=list)
-    lines: int = 0
+    weighted_lines: int = 0
     prior_sha: str = ""
     attribution: DeltaAttribution = DeltaAttribution.NONE
+    raw_lines: int = 0
 
     @property
     def proven_empty(self) -> bool:
@@ -608,7 +616,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
     # merge resolving a conflict in it — and each consumer counts what it is
     # given: the group gate sets, the prompt lists, the line total sums.
     files = sorted({f["path"] for f in authored.files})
-    lines = authored.additions + authored.deletions
+    weighted = numstat.weighted_lines(authored.additions, authored.deletions)
     span = f"{git_client.abbrev(prior_sha)}..{git_client.abbrev(job.pr.head_sha)}"
     if not files:
         log.info(f"Incremental review: no author changes since prior review ({span})")
@@ -617,7 +625,9 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
             f"Incremental review: {len(files)} files changed since prior review ({span})"
         )
     return DeltaScope(
-        delta_diff, delta_log, files, lines, prior_sha, DeltaAttribution.ATTRIBUTED,
+        delta_diff, delta_log, files, weighted, prior_sha,
+        DeltaAttribution.ATTRIBUTED,
+        raw_lines=authored.additions + authored.deletions,
     )
 
 
@@ -809,7 +819,8 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         delta_diff=delta.diff,
         delta_commit_log=delta.commit_log,
         delta_files=delta.files,
-        delta_lines=delta.lines,
+        delta_weighted_lines=delta.weighted_lines,
+        delta_raw_lines=delta.raw_lines,
         delta_attribution=delta.attribution,
         prior_head_sha=delta.prior_sha,
     )

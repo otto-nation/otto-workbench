@@ -50,6 +50,7 @@ import math
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -70,6 +71,7 @@ from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
     pi_tool_signature, pi_wrote_output,
 )
+from agent.stall import StallWatch
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
@@ -304,6 +306,15 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
 # ── RPC protocol helpers ─────────────────────────────────────────────────────
 
 
+# Serialises writes to the child's stdin. The stall watchdog sends its abort
+# from its own thread while the stream loop may be sending a steer, and two
+# unsynchronised write/flush pairs can interleave into one malformed JSONL
+# line — which Pi answers with a parse error and drops, losing whichever
+# command mattered. One lock around the whole line is enough because every
+# command here is a single short write.
+_STDIN_LOCK = threading.Lock()
+
+
 def _send(proc: subprocess.Popen, command: dict) -> bool:
     """Write a JSONL command to the RPC process's stdin. True when it landed.
 
@@ -317,8 +328,9 @@ def _send(proc: subprocess.Popen, command: dict) -> bool:
     command mattered.
     """
     try:
-        proc.stdin.write(json.dumps(command) + "\n")
-        proc.stdin.flush()
+        with _STDIN_LOCK:
+            proc.stdin.write(json.dumps(command) + "\n")
+            proc.stdin.flush()
         return True
     except (BrokenPipeError, ValueError):
         return False
@@ -765,7 +777,8 @@ def _consume_stream(
 ) -> StreamResult:
     """Consume the RPC event stream, enforcing turn and budget limits.
 
-    stop_reason is one of: "completed", "max_turns", "max_budget", "error".
+    stop_reason is one of: "completed", "max_turns", "max_budget", "stalled",
+    "error".
 
     `output_path` is the deliverable. Progress is measured against it rather
     than against any write, so an agent probing with a scratch file under /tmp
@@ -778,6 +791,45 @@ def _consume_stream(
     every `agent_end` after it breaks unconditionally. At most two runs are
     consumed, and each iteration still reads one line, so EOF ends the loop as
     it always did.
+
+    A `StallWatch` runs alongside for the ending none of the above catches: a
+    tool call that stops doing anything. Turn and budget limits are counted at
+    `turn_end`, which a wedged call never reaches, so without it such a run
+    ends only when a person notices. It is armed per tool call rather than for
+    the whole stream because waiting on the model is itself silent —
+    `agent.stall` has the reasoning. A stall aborts the run, so it arrives here
+    as an ordinary `agent_end` and keeps the salvage ask below.
+    """
+    # A process with no pid cannot be sampled, so the watch is constructed
+    # inert rather than absent: every call site keeps one object with one
+    # contract, and the stream loop does not grow a `None` check per event.
+    # `StallWatch` treats a root of 0 as never-arming.
+    watch = StallWatch(
+        root_pid=getattr(process, "pid", 0) or 0,
+        send=lambda c: _send(process, c),
+        prefix=prefix,
+    )
+    watch.start()
+    try:
+        return _consume_events(
+            process, log_file, prefix, watch,
+            max_turns=max_turns, max_budget=max_budget, output_path=output_path,
+        )
+    finally:
+        watch.stop()
+
+
+def _consume_events(
+    process: subprocess.Popen, log_file, prefix: str, watch: StallWatch,
+    max_turns: int | None = None,
+    max_budget: float | None = None,
+    output_path: str = "",
+) -> StreamResult:
+    """The event loop itself, with the stall watch already running.
+
+    Split from `_consume_stream` so the watch is stopped on every path out,
+    including an exception, without wrapping the loop in a level of
+    indentation that `validate-nesting` would then be measuring.
     """
     prev_tool = ""
     turn_count = 0
@@ -802,6 +854,34 @@ def _consume_stream(
         log_file.flush()
 
         event_type, data = _parse_event_type(raw_line)
+
+        # Any event is evidence the run is alive; a tool call starting is what
+        # arms the watch, and anything that ends the call disarms it. Stamped
+        # before the parsers below so a line that none of them claims still
+        # counts as liveness.
+        # One arm/disarm pair is enough because Pi executes a turn's tool
+        # calls in a sequential `await` loop, so only one is ever in flight.
+        # Were they concurrent, an `end` for the first would disarm the watch
+        # while a second was still wedged.
+        #
+        # `tool_execution_end` is emitted only once the tool has resolved, so
+        # a wedged call never reaches it and the watch stays armed — which is
+        # what stops this being a detector that can only fire on runs that
+        # were going to finish anyway. `turn_end` and `agent_end` are here for
+        # the paths that skip it, such as a batch failed before execution.
+        watch.stamp()
+        if event_type == "tool_execution_start":
+            watch.arm(pi_tool_signature(data) or "")
+        elif event_type in ("tool_execution_end", "turn_end", "agent_end"):
+            watch.disarm()
+
+        # The watch sends its own abort and follow_up, exactly as
+        # `_check_limits` does for a cap, so the run is already ending by the
+        # time this is read. Recording it as aborted here is what stops the
+        # follow-up's own turn_end from being counted as work and what stops
+        # the salvage ask below from asking a second time.
+        if watch.aborted_reason and not aborted:
+            stop_reason, aborted = "stalled", True
 
         # Checked after the raw line is logged, so the one message explaining
         # the failure is in the session log, and before every parser below,

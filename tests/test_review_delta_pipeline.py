@@ -152,13 +152,73 @@ def run_phases(monkeypatch):
     return _run
 
 
+class TestPipelineSizingWeightsDeletions:
+    """A branch that removes code is less review than one that adds it.
+
+    Asserted as a pair in one test rather than as two independent ones. The
+    threshold has to sit between the two sizes for the claim to mean anything,
+    and a single-sided assertion passes whenever it happens to sit anywhere
+    above or below both.
+    """
+
+    @staticmethod
+    def _pr(lines: int, *, deleting: bool) -> dict:
+        added, removed = (0, lines) if deleting else (lines, 0)
+        return {
+            "additions": added, "deletions": removed, "changed_files": 1,
+            "files": [{"path": "a.py", "additions": added, "deletions": removed}],
+        }
+
+    def test_a_deletion_takes_the_path_an_addition_of_the_same_size_does_not(
+        self, tmp_path, run_phases,
+    ):
+        size = _PRESET.multi_phase_line_threshold * 2
+
+        adding = _job(tmp_path, **self._pr(size, deleting=False))
+        adding.preflight = _preflight()
+        _, _, adding_pipeline = run_phases(adding)
+
+        deleting = _job(tmp_path, **self._pr(size, deleting=True))
+        deleting.preflight = _preflight()
+        _, _, deleting_pipeline = run_phases(deleting)
+
+        assert adding_pipeline == Pipeline.MULTI
+        assert deleting_pipeline == Pipeline.SINGLE
+
+    # It exists to stop the weight being tuned to zero, which would satisfy
+    # the test above while exempting pure removals from review entirely.
+    # passes-at-base: pins the half of the contract this change preserves, that a big enough deletion still fans out
+    def test_a_large_enough_deletion_still_fans_out(self, tmp_path, run_phases):
+        # The weight lowers the price of a deletion; it does not exempt one.
+        size = _PRESET.multi_phase_line_threshold * 8
+        job = _job(tmp_path, **self._pr(size, deleting=True))
+        job.preflight = _preflight()
+
+        _, _, pipeline = run_phases(job)
+
+        assert pipeline == Pipeline.MULTI
+
+    def test_the_trail_reports_the_real_line_count_and_the_weighted_one(
+        self, tmp_path, run_phases,
+    ):
+        size = _PRESET.multi_phase_line_threshold * 2
+        job = _job(tmp_path, **self._pr(size, deleting=True))
+        job.preflight = _preflight()
+
+        trail, _, _ = run_phases(job)
+
+        recorded = trail.named("select_pipeline")
+        assert recorded["total_lines"] == size
+        assert recorded["weighted_lines"] < size
+
+
 class TestPipelineSizingUsesTheDelta:
     def test_a_large_pr_with_a_small_delta_takes_the_single_agent_path(
         self, tmp_path, run_phases,
     ):
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.preflight = _preflight(
-            delta_files=["a.py"], delta_lines=2, prior_head_sha="0ldc0de",
+            delta_files=["a.py"], delta_weighted_lines=2, prior_head_sha="0ldc0de",
             delta_attribution=DeltaAttribution.ATTRIBUTED,
         )
 
@@ -173,7 +233,7 @@ class TestPipelineSizingUsesTheDelta:
             delta_files=[
                 f"f{i}.py" for i in range(_PRESET.multi_phase_file_threshold * 4)
             ],
-            delta_lines=_PRESET.multi_phase_line_threshold * 6,
+            delta_weighted_lines=_PRESET.multi_phase_line_threshold * 6,
             prior_head_sha="0ldc0de", delta_attribution=DeltaAttribution.ATTRIBUTED,
         )
 
@@ -199,7 +259,8 @@ class TestPipelineSizingUsesTheDelta:
     ):
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.preflight = _preflight(
-            delta_files=["a.py"], delta_lines=2, prior_head_sha="0ldc0de",
+            delta_files=["a.py"], delta_weighted_lines=2, delta_raw_lines=5,
+            prior_head_sha="0ldc0de",
             delta_attribution=DeltaAttribution.ATTRIBUTED,
         )
 
@@ -208,7 +269,11 @@ class TestPipelineSizingUsesTheDelta:
         recorded = trail.named("select_pipeline")
         assert recorded["basis"] == "delta"
         assert recorded["changed_files"] == 1
-        assert recorded["total_lines"] == 2
+        # `total_lines` is the diff's own count and must stay that, or a run
+        # recorded after the weighting cannot be compared with one before it.
+        # The number that actually chose the pipeline is reported beside it.
+        assert recorded["total_lines"] == 5
+        assert recorded["weighted_lines"] == 2
 
 
 class TestTheEmptyDeltaFastPath:
@@ -217,7 +282,7 @@ class TestTheEmptyDeltaFastPath:
         """A re-review whose HEAD moved by a merge the author did not write."""
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.preflight = _preflight(
-            delta_files=[], delta_lines=0, delta_attribution=DeltaAttribution.ATTRIBUTED,
+            delta_files=[], delta_weighted_lines=0, delta_attribution=DeltaAttribution.ATTRIBUTED,
             prior_head_sha="0ldc0de",
         )
         return job
@@ -287,7 +352,7 @@ class TestTheEmptyDeltaFastPath:
         """The inversion the duplicate sections caused, asserted end to end."""
         job = _job(tmp_path, prior_review=_PRIOR_APPROVED, **_BIG_PR)
         job.preflight = _preflight(
-            delta_files=[], delta_lines=0,
+            delta_files=[], delta_weighted_lines=0,
             delta_attribution=DeltaAttribution.ATTRIBUTED,
             prior_head_sha="0ldc0de",
         )
@@ -339,7 +404,7 @@ class TestTheFastPathStaysShut:
         """
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.preflight = _preflight(
-            delta_files=[], delta_lines=0, delta_attribution=DeltaAttribution.UNATTRIBUTED,
+            delta_files=[], delta_weighted_lines=0, delta_attribution=DeltaAttribution.UNATTRIBUTED,
             prior_head_sha="0ldc0de",
         )
 
@@ -379,7 +444,7 @@ class TestTheFastPathStaysShut:
     def test_author_work_beside_a_merge_is_reviewed(self, tmp_path, run_phases):
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.preflight = _preflight(
-            delta_files=["a.py"], delta_lines=1, prior_head_sha="0ldc0de",
+            delta_files=["a.py"], delta_weighted_lines=1, prior_head_sha="0ldc0de",
             delta_attribution=DeltaAttribution.ATTRIBUTED,
         )
 
@@ -399,7 +464,7 @@ class TestSelfReviewIsUnaffected:
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.mode = Mode.SELF
         job.preflight = _preflight(
-            delta_files=[], delta_lines=0, prior_head_sha="0ldc0de",
+            delta_files=[], delta_weighted_lines=0, prior_head_sha="0ldc0de",
         )
 
         _, called, _ = run_phases(job)

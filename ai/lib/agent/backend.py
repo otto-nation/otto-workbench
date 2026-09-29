@@ -162,7 +162,7 @@ def _script_name() -> str:
 def _record(
     *, entry_point: str, usage: ai_usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
-    phase: str | None = None, num_turns: int | None = None,
+    phase: str | None = None, max_turns: int | None = None,
 ) -> None:
     """Append one ledger record. A missing usage source records nothing —
     an absent measurement is more honest than a zeroed one."""
@@ -176,7 +176,7 @@ def _record(
             # of failing loudly, which is the opposite of the intent.
             backend=(sel.value if (sel := selected_backend()) else "unknown"),
             model=model, usage=usage, exit_code=exit_code,
-            task=task, repo=repo, pr=pr, phase=phase, num_turns=num_turns,
+            task=task, repo=repo, pr=pr, phase=phase, max_turns=max_turns,
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         pass
@@ -355,7 +355,7 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
         exit_code=exit_code, model=inv.model or None,
         task=inv.task, repo=inv.repo, pr=inv.pr,
         phase=inv.phase,
-        num_turns=inv.max_turns,
+        max_turns=inv.max_turns,
     )
 
 

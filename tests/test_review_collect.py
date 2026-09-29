@@ -1070,7 +1070,7 @@ class TestCollectDeltaAncestry:
         delta = rc._collect_delta(self._merged(tmp_path, ["mine.go", "shared.go"]))
         capsys.readouterr()
         assert delta.files == []
-        assert delta.lines == 0
+        assert delta.weighted_lines == 0
 
     def test_base_work_on_a_file_the_pr_also_touches_is_excluded(
         self, tmp_path, capsys,
@@ -1097,7 +1097,7 @@ class TestCollectDeltaAncestry:
         capsys.readouterr()
 
         assert delta.files == ["mine.go"]
-        assert delta.lines > 0
+        assert delta.weighted_lines > 0
         assert delta.proven_empty is False
 
     def test_a_merge_of_a_sub_branch_keeps_the_topics_own_commits(
@@ -1171,7 +1171,34 @@ class TestCollectDeltaAncestry:
         delta = rc._collect_delta(self._job(repo, prior_sha, ["mine.go", "shared.go"]))
         capsys.readouterr()
 
-        assert delta.lines == 6
+        # The rewrite replaces the file's one existing line, so this is five
+        # additions and one deletion rather than six additions: six lines of
+        # diff, priced as five lines of review. Both are pinned because only
+        # the pair shows the weighting applied to the right half — an equal
+        # split, or a weight on additions, moves one of these and not the
+        # other.
+        assert delta.raw_lines == 6
+        assert delta.weighted_lines == 5
+
+    def test_a_delta_that_removes_lines_is_priced_below_one_that_adds_them(
+        self, tmp_path, capsys,
+    ):
+        """A deletion is review too, but less of it than an addition is.
+
+        Pinned on the delta path specifically. The PR path weights at its own
+        call site, so a weighting applied there and not here would leave a
+        re-review sized by the unweighted count with nothing failing.
+        """
+        repo, prior_sha = self._repo(tmp_path)
+        git_out(repo, "merge", "-q", "main", "-m", "Merge main")
+        (repo / "mine.go").write_text("package main\n")
+        commit_all(repo, "strip it back")
+
+        delta = rc._collect_delta(self._job(repo, prior_sha, ["mine.go", "shared.go"]))
+        capsys.readouterr()
+
+        assert delta.raw_lines > 0
+        assert delta.weighted_lines < delta.raw_lines
 
     def test_a_file_both_walks_report_is_named_once(self, tmp_path, capsys):
         """A commit and a later conflict resolution can touch the same file.

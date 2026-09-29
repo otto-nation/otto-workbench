@@ -303,25 +303,51 @@ def test_record_omits_absent_optional_context(ledger):
     assert "num_turns" not in rec
 
 
-def test_record_includes_phase_and_turns(ledger):
+def test_record_includes_phase_and_the_budget(ledger):
     ai_usage.record(
         script="s", entry_point="fix", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
-        phase="fix", num_turns=80,
+        phase="fix", max_turns=80,
     )
     rec = _records(ledger)[0]
     assert rec["phase"] == "fix"
-    assert rec["num_turns"] == 80
+    assert rec["max_turns"] == 80
 
 
-def test_record_prefers_session_turns_over_the_allocated_budget(ledger):
-    """The log says what the agent spent; the budget is only a fallback."""
+def test_spent_and_allocated_turns_are_separate_keys(ledger):
+    """What a run used and what it was allowed are different numbers.
+
+    They shared `num_turns` before, with the budget written only when the
+    session reported nothing, so a row saying 80 was either a run that spent
+    eighty or one allowed eighty and never measured. Both are asserted here
+    because only the pair shows they are no longer the same field: writing
+    the budget into `num_turns` satisfies either assertion alone.
+    """
     ai_usage.record(
         script="s", entry_point="fix", backend="claude", model=None,
         usage=SessionUsage(num_turns=17), exit_code=0,
-        phase="fix", num_turns=80,
+        phase="fix", max_turns=80,
     )
-    assert _records(ledger)[0]["num_turns"] == 17
+    rec = _records(ledger)[0]
+    assert rec["num_turns"] == 17
+    assert rec["max_turns"] == 80
+
+
+def test_an_unmeasured_run_records_no_spent_turns_rather_than_its_budget(ledger):
+    """A backend that reported no turn count leaves the key off.
+
+    Writing the budget in its place is what made the ledger unreadable: it
+    produced a row indistinguishable from a run that genuinely spent its cap,
+    which is the exact reading "did this phase hit its cap" depends on.
+    """
+    ai_usage.record(
+        script="s", entry_point="fix", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=0,
+        phase="fix", max_turns=80,
+    )
+    rec = _records(ledger)[0]
+    assert "num_turns" not in rec
+    assert rec["max_turns"] == 80
 
 
 def test_record_carries_per_model_cost(ledger):

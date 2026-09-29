@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -229,6 +230,144 @@ class TestCheckLimits:
         proc = self._make_proc()
         stop, steered = ai_backend_pi._check_limits(proc, 5, 2.0, 10, 5.0, steered=False)
         assert steered is False
+
+
+class TestStallWatchWiring:
+    """The stream loop arms the stall watch, and a stall ends the run.
+
+    The watch itself is covered by `test_agent_stall.py`; what is checked here
+    is the wiring, which is where it can be switched off without anything
+    looking broken.
+    """
+
+    class _Watch:
+        """Records what the stream loop asked of the watch."""
+
+        def __init__(self, abort_after=None):
+            self.events = []
+            self.aborted_reason = ""
+            self._abort_after = abort_after
+
+        def stamp(self):
+            self.events.append("stamp")
+            if self._abort_after is not None and \
+                    self.events.count("stamp") > self._abort_after:
+                self.aborted_reason = "stalled: nothing was happening"
+
+        def arm(self, tool):
+            self.events.append(f"arm:{tool}")
+
+        def disarm(self):
+            self.events.append("disarm")
+
+    def _run(self, lines, watch):
+        proc = TestConsumeStreamTracksWrites.MockProc(
+            [json.dumps(line) + "\n" for line in lines],
+        )
+        return proc, ai_backend_pi._consume_events(proc, io.StringIO(), "", watch)
+
+    def test_a_tool_call_arms_the_watch_and_its_turn_disarms_it(self):
+        watch = self._Watch()
+        self._run([
+            {"type": "tool_execution_start",
+             "toolName": "bash", "args": {"command": "sleep 1"}},
+            {"type": "turn_end"},
+            {"type": "agent_end"},
+        ], watch)
+        armed = [e for e in watch.events if e.startswith("arm:")]
+        assert len(armed) == 1
+        # Ordering, not mere presence: a disarm that ran before the arm would
+        # leave the watch live across the model round trip, which is the
+        # false-positive this gating exists to prevent.
+        assert watch.events.index(armed[0]) < watch.events.index("disarm")
+
+    def test_the_watch_is_not_armed_by_an_ordinary_event(self):
+        watch = self._Watch()
+        self._run([{"type": "turn_end"}, {"type": "agent_end"}], watch)
+        assert not [e for e in watch.events if e.startswith("arm:")]
+
+    def test_every_line_counts_as_liveness(self):
+        watch = self._Watch()
+        self._run([
+            {"type": "message_update"},
+            {"type": "turn_end"},
+            {"type": "agent_end"},
+        ], watch)
+        assert watch.events.count("stamp") == 3
+
+    def test_a_stalled_run_reports_itself_as_stalled(self):
+        watch = self._Watch(abort_after=1)
+        _, stream = self._run([
+            {"type": "tool_execution_start",
+             "toolName": "bash", "args": {"command": "sleep 1"}},
+            {"type": "turn_end"},
+            {"type": "agent_end"},
+        ], watch)
+        assert stream.stop_reason == "stalled"
+
+    def test_the_follow_up_turn_after_a_stall_is_not_counted_as_work(self):
+        # The watch sends abort and follow_up itself, so the turn_end that
+        # follows is the summary being written, not another turn of work.
+        watch = self._Watch(abort_after=1)
+        _, stream = self._run([
+            {"type": "tool_execution_start",
+             "toolName": "bash", "args": {"command": "sleep 1"}},
+            {"type": "turn_end"},
+            {"type": "turn_end"},
+            {"type": "agent_end"},
+        ], watch)
+        assert stream.turn_count == 0
+
+    def test_a_healthy_run_is_not_reported_as_stalled(self):
+        watch = self._Watch()
+        _, stream = self._run([
+            {"type": "tool_execution_start",
+             "toolName": "bash", "args": {"command": "echo hi"}},
+            {"type": "turn_end"},
+            {"type": "agent_end"},
+        ], watch)
+        assert stream.stop_reason == "completed"
+
+    def test_a_process_with_no_pid_leaves_the_watch_inert(self):
+        # Every mock proc in this suite lacks a pid, so an inert watch is what
+        # keeps them running. That makes this the load-bearing case: if the
+        # inert path were reached in production the detector would be off
+        # everywhere and nothing else here would notice.
+        watch = ai_backend_pi.StallWatch(root_pid=0, send=lambda _c: True)
+        watch.arm("bash")
+        watch.start()
+        try:
+            time.sleep(0.05)
+        finally:
+            watch.stop()
+        assert watch.aborted_reason == ""
+
+    def test_a_real_process_gets_a_watch_bound_to_it(self, monkeypatch):
+        # The counterpart to the case above, and the more important half: the
+        # inert path must be reachable only by a proc with no pid. Hard-wiring
+        # the root to 0 would switch the detector off everywhere while every
+        # other test in this file — all of which use a pidless mock — kept
+        # passing, so this is what stands between that and a silent no-op.
+        #
+        # Built through `_consume_stream` rather than by hand for the same
+        # reason: the construction is the subject, so a test that constructs
+        # its own watch is testing the class, not the wiring.
+        seen = {}
+        real = ai_backend_pi.StallWatch
+
+        def capture(**kwargs):
+            seen.update(kwargs)
+            return real(**kwargs)
+
+        monkeypatch.setattr(ai_backend_pi, "StallWatch", capture)
+        proc = subprocess.Popen(["sleep", "5"])
+        proc.stdout = iter([json.dumps({"type": "agent_end"}) + "\n"])
+        try:
+            ai_backend_pi._consume_stream(proc, io.StringIO(), "")
+        finally:
+            proc.kill()
+            proc.wait()
+        assert seen["root_pid"] == proc.pid
 
 
 class TestLimitStopTurnCount:

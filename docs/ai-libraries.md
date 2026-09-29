@@ -151,6 +151,96 @@ permission to save can still be recovered.
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
 
+### agent/stall.py
+
+Tell an agent run that has stopped apart from one that is merely slow.
+
+`core.timeouts` argues at length that a bound on *duration* cannot work for
+work whose cost is whatever the input costs: a breach is indistinguishable
+from "the repository is large" or "this hook runs a test suite", and a fixed
+number there converts a big repo into a broken tool. That argument is right,
+and it is why no wall-clock timeout was put on agent runs when the rest of the
+review pipeline was fixed.
+
+What it leaves uncovered is a run that has genuinely stopped. One was observed
+silent for 38 minutes at 0.0% CPU, and nothing anywhere ended it: the turn and
+budget caps are counted at `turn_end`, which a wedged tool call never reaches,
+and Pi's bash tool has no default timeout of its own — its schema says
+"Timeout in seconds (optional, no default timeout)", and the model rarely
+passes one.
+
+So this bounds liveness rather than duration, which is a different predicate
+and not the one `timeouts` rejects. A large tree and a slow hook are both
+*working*, and this asks whether anything is.
+
+## Why the event gap alone is not the answer
+
+The obvious version — bound the gap between RPC events — does not work, and
+Pi's source is what says so. The bash tool drives its updates entirely from
+child output:
+
+    const handleData = (data) => {
+        if (!acceptingOutput) return;
+        output.append(data); scheduleOutputUpdate();
+    };
+
+with one unconditional opening update before the child starts and nothing
+periodic behind it. A command that runs for ten minutes printing nothing
+therefore emits exactly one update and then silence — the same bytes, on the
+same stream, as the hang above. Since the agent's commands run under a pipe
+rather than a tty, block buffering makes that the common case and not an
+exotic one: a `pytest` whose output has not yet filled its 8KB buffer, a
+`go build`, a `git clone` resolving deltas.
+
+A gap is therefore grounds for suspicion and never for a verdict.
+
+What makes the gap meaningful at all is that Pi has no heartbeat: there is no
+`setInterval` in either its RPC layer or its agent loop, so nothing arrives on
+the stream that the run did not do. A gap is silence about work, not a dropped
+keepalive.
+
+## What separates them
+
+Two measurements over the Pi process's descendants, either of which is
+evidence of work:
+
+| Case | CPU delta | pid churn | Verdict |
+|---|---|---|---|
+| Many short-lived children (a build) | 0.12s | yes | live |
+| One spinning child (busy-wait) | 2.69s | no | live |
+| Blocked, producing nothing (the hang) | 0.00s | no | stall |
+
+They are complementary rather than belt-and-braces. `ps` reports a process's
+own CPU time and a reaped child's is unrecoverable on this platform, so a
+workload made of many short children reads as idle by CPU alone and is caught
+only by churn; a single long-lived spinner never changes the pid set and is
+caught only by CPU.
+
+## Three things that would each defeat it
+
+The tree is walked by **PPID, not PGID**. Pi spawns every bash child
+`detached`, so each one leads its own process group and a pgid filter reads
+zero CPU for a maximally busy child — which would declare every long command a
+stall rather than none.
+
+The watch is armed **only during a tool call**. Waiting on the model is itself
+a silent zero-CPU stretch, routinely tens of seconds, and a watch left armed
+across it aborts healthy runs.
+
+Work that predates the call **does not count**. The descendant set is
+snapshotted when the watch arms and only pids outside it are measured, so a
+background process left running by an earlier turn cannot mask a stall
+indefinitely.
+
+## The spin case is deliberately not caught here
+
+A busy-wait deadlock burns CPU while emitting nothing, so the liveness test
+reads it as live. That is the test answering honestly — the process *is*
+running — so the answer is a second predicate rather than a fudge to the
+first: `ABSOLUTE_CAP` bounds any single tool call regardless of what it is
+doing. Keeping it separate is what stops it from weakening the liveness test
+into the duration bound `timeouts` rejects.
+
 ### agent/templates.py
 
 Where prompt templates live, and the one way to render one.
@@ -2751,6 +2841,20 @@ row cannot be told apart from.
 only, because the CLI reports cost per model but tokens per session — leaving the
 token columns blank beats counting one session's tokens against every model it
 used.
+
+`--by phase` is the one breakdown that reports turns, and the only one it could
+be: a turn budget is set per phase, so a distribution rolled up by script or by
+day mixes a 15-turn review agent with an 80-turn fix pass and describes neither.
+Its `AT CAP` column is the share of a phase's runs that spent their whole
+budget, which is the reading that says whether the budget is calibrated — a
+phase hitting its cap on a third of runs is one whose constant is too low.
+
+That column is blank, not zero, for a phase whose records never said what they
+were allowed. Spent turns and the allocated budget shared one key until
+`record` split them, so every record written before that carries a number with
+no way to tell which it is; counting those as under-cap would report every
+phase as comfortably sized on the strength of records that cannot say. The
+column fills in as new runs land.
 
 ### agent/vertex_quota.py
 

@@ -33,3 +33,30 @@ class TestParseNumstat:
         assert counts.files == []
         assert counts.additions == 0
         assert counts.deletions == 0
+
+
+class TestWeightedLines:
+    """Review effort, in added-line equivalents.
+
+    Exact values rather than inequalities: a bound is satisfied by any weight
+    below one, so it would pass for a weight of zero — which would make a
+    deletion free and exempt a branch of pure removals from review entirely.
+    """
+
+    def test_an_addition_counts_in_full(self):
+        assert numstat.weighted_lines(100, 0) == 100
+
+    def test_a_deletion_counts_for_a_quarter(self):
+        assert numstat.weighted_lines(0, 100) == 25
+
+    def test_a_deletion_is_not_free(self):
+        # Review of a deletion is what it broke, which is real work even for
+        # one line. A weight that rounded this to nothing would let a branch
+        # of pure removals size as an empty diff.
+        assert numstat.weighted_lines(0, 4) > 0
+
+    def test_the_two_are_summed(self):
+        assert numstat.weighted_lines(50, 40) == 60
+
+    def test_an_empty_diff_is_zero(self):
+        assert numstat.weighted_lines(0, 0) == 0

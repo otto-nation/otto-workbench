@@ -68,6 +68,7 @@ from core.tool_parser import enum_arg
 # The function rather than the module: `git.client` binds `run` and `ok`, which
 # `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
 # means two things. `abbrev` is pure formatting of a sha already in hand.
+from git import numstat
 from git.client import abbrev
 from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
@@ -95,7 +96,8 @@ SCRIPT = "review-orchestrate"
 _SUBMODULES = (
     _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc,
     _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
-    ai_backend, log, module_proxy, pr_state, pr_target, proc, publishing,
+    ai_backend, log, module_proxy, numstat, pr_state, pr_target, proc,
+    publishing,
 )
 
 module_proxy.install(__name__, _SUBMODULES)
@@ -247,11 +249,20 @@ class ReviewScale:
     `basis` is on the record rather than inferred by the reader because it is
     what the trail reports: a pipeline choice that looks wrong for the PR is
     read entirely differently once it says it sized itself by the delta.
+
+    `lines` and `raw_lines` are both here for the same reason `basis` is. The
+    first is review effort, which prices a deleted line below an added one and
+    is what the thresholds are compared against; the second is what the diff
+    really contains. A pipeline choice that looks wrong for the diff size is a
+    different thing once the reader can see the two numbers differ, and
+    reporting only the weighted one would make every run silently
+    incomparable with one recorded before the weighting existed.
     """
 
     files: int
     lines: int
     basis: str
+    raw_lines: int = 0
 
 
 def _review_scale(job) -> ReviewScale:
@@ -270,6 +281,12 @@ def _review_scale(job) -> ReviewScale:
     meant for a small one — sizing down on the strength of a failure. A
     first-pass review has no delta at all. Both fall back to the PR's own
     stats, which is the only measure of them there is.
+
+    Either count is weighted before it is compared against a threshold: a
+    deleted line is less review than an added one, and pricing them alike is
+    what put branches that mostly removed code on the multi-agent pipeline.
+    `git.numstat.weighted_lines` owns the weighting and says why it is not
+    also applied to group sizing.
     """
     pf = job.preflight
     attributed = (
@@ -277,8 +294,16 @@ def _review_scale(job) -> ReviewScale:
         and pf.delta_attribution is DeltaAttribution.ATTRIBUTED
     )
     if attributed:
-        return ReviewScale(len(pf.delta_files), pf.delta_lines, "delta")
-    return ReviewScale(job.pr.changed_files, job.pr.total_lines, "pr")
+        return ReviewScale(
+            len(pf.delta_files), pf.delta_weighted_lines, "delta",
+            raw_lines=pf.delta_raw_lines,
+        )
+    return ReviewScale(
+        job.pr.changed_files,
+        numstat.weighted_lines(job.pr.additions, job.pr.deletions),
+        "pr",
+        raw_lines=job.pr.total_lines,
+    )
 
 
 def _pipeline_thresholds(job, explicit_effort: Effort | None = None) -> tuple[int, int]:
@@ -343,10 +368,16 @@ def _run_phases(trail, args, job) -> Pipeline:
     trail.decision(
         "select_pipeline",
         f"chose {pipeline}",
-        reason=f"{scale.basis}: files={scale.files} lines={scale.lines} thresholds=(files={file_threshold} lines={line_threshold})",
+        reason=f"{scale.basis}: files={scale.files} lines={scale.raw_lines} "
+               f"weighted={scale.lines} "
+               f"thresholds=(files={file_threshold} lines={line_threshold})",
         data={
             "pipeline": pipeline, "changed_files": scale.files,
-            "total_lines": scale.lines, "basis": scale.basis,
+            # `total_lines` keeps meaning the diff's own count, so a record
+            # from before the weighting still compares. The number that chose
+            # the pipeline is the one beside it.
+            "total_lines": scale.raw_lines, "weighted_lines": scale.lines,
+            "basis": scale.basis,
         },
     )
 

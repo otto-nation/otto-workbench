@@ -72,6 +72,11 @@ WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-
 . "$WORKBENCH_DIR/lib/migrations.sh"
 # shellcheck source=/dev/null
 . "$WORKBENCH_DIR/lib/install.sh"
+# _repo_key, which memory_orphans (lib/projects.sh) calls via cmd_projects_prune
+# below, lives here rather than in projects.sh itself — see lib/ai/session-count.sh's
+# own header for why the split.
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/ai/session-count.sh"
 
 # Auto-discover and source all steps.sh files.
 # Each steps.sh self-derives its own paths; no external variables need to be injected.

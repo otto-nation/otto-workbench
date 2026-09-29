@@ -470,7 +470,7 @@ def canonical_slug(path: Path | str) -> str:
     itself need: the gate stamps under ``$GATE_STAMPS_DIR`` and ``dream-scan``'s
     per-project grouping key. Addressing a harness's own store needs that
     harness's transform instead — ``pi_session_slug`` above, or ``claude_slug``
-    below, which is also where memory hangs.
+    below.
 
     ASCII alnum, not ``str.isalnum()``, for the reason ``claude_slug`` below
     spells it that way: the shell half is ``_encode_slug`` in
@@ -499,10 +499,10 @@ def _harness_named(name: str) -> Harness:
 
 
 def claude_projects_root(home: Path) -> Path:
-    """Claude Code's session store, which is also where memory lives.
+    """Claude Code's session store.
 
-    Read off HARNESSES rather than spelled again, so the root has one owner
-    whichever of its two jobs a caller came for.
+    Read off HARNESSES rather than spelled again, so callers share one owner
+    for the path.
     """
     return _harness_root(home, _harness_named("claude"))
 
@@ -512,11 +512,10 @@ def claude_slug(path: Path | str) -> str:
 
     Claude's transform, not ``canonical_slug`` above: every character outside
     ``[A-Za-z0-9]`` becomes a hyphen, underscores included. The two disagree on
-    purpose and both are needed — this one addresses Claude's own store, which
-    is where memory lives, and that one names the harness-neutral slug.
+    purpose and both are needed — this one addresses Claude's own session
+    store, and that one names the harness-neutral slug.
 
     Lossy, so it is never inverted: ``a-b`` and ``a_b`` both arrive as ``a-b``.
-    A caller wanting every memory directory sweeps with ``memory_dirs``.
 
     ASCII alnum, not ``str.isalnum()``: ``_claude_project_dir`` in
     ``lib/ai/session-count.sh`` encodes with the class ``A-Za-z0-9``, which

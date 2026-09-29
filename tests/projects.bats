@@ -359,6 +359,80 @@ make_bare_worktree_layout() {
   [ "$output" = "$TMPDIR/alpha"$'\t'"$TMPDIR/alpha/.git" ]
 }
 
+# ─── Memory orphans ─────────────────────────────────────────────────────────
+
+@test "memory_orphans reports nothing when \$WORKBENCH_MEMORY_DIR does not exist" {
+  # WORKBENCH_MEMORY_DIR is derived from WORKBENCH_DATA_DIR once, at lib/ui.sh's
+  # source time — setting the latter afterwards would not move it.
+  WORKBENCH_MEMORY_DIR="$TMPDIR/data/memory"
+
+  run memory_orphans
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "memory_orphans reports nothing when \$WORKBENCH_MEMORY_DIR is empty" {
+  WORKBENCH_MEMORY_DIR="$TMPDIR/data/memory"
+  mkdir -p "$WORKBENCH_MEMORY_DIR"
+
+  run memory_orphans
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "memory_orphans skips a key whose repo is still registered" {
+  # shellcheck source=../lib/ai/session-count.sh
+  . "$REPO_ROOT/lib/ai/session-count.sh"
+  WORKBENCH_MEMORY_DIR="$TMPDIR/data/memory"
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  project_register "$TMPDIR/alpha"
+  record_project_repo_ids
+
+  local key
+  key="$(_repo_key "$TMPDIR/alpha")"
+  mkdir -p "$WORKBENCH_MEMORY_DIR/$key"
+  echo note > "$WORKBENCH_MEMORY_DIR/$key/topic.md"
+
+  run memory_orphans
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "memory_orphans reports a key with no registered repo, and its file count" {
+  WORKBENCH_MEMORY_DIR="$TMPDIR/data/memory"
+  mkdir -p "$WORKBENCH_MEMORY_DIR/gone-key"
+  echo note1 > "$WORKBENCH_MEMORY_DIR/gone-key/one.md"
+  echo note2 > "$WORKBENCH_MEMORY_DIR/gone-key/two.md"
+  # Not a .md file — not counted.
+  echo raw > "$WORKBENCH_MEMORY_DIR/gone-key/notes.txt"
+
+  run memory_orphans
+  [ "$status" -eq 0 ]
+  [ "$output" = "gone-key"$'\t'"2" ]
+}
+
+@test "memory_orphans reports one orphan and skips one live key together" {
+  # shellcheck source=../lib/ai/session-count.sh
+  . "$REPO_ROOT/lib/ai/session-count.sh"
+  WORKBENCH_MEMORY_DIR="$TMPDIR/data/memory"
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  project_register "$TMPDIR/alpha"
+  record_project_repo_ids
+
+  local key
+  key="$(_repo_key "$TMPDIR/alpha")"
+  mkdir -p "$WORKBENCH_MEMORY_DIR/$key"
+  echo note > "$WORKBENCH_MEMORY_DIR/$key/topic.md"
+  mkdir -p "$WORKBENCH_MEMORY_DIR/gone-key"
+  echo note > "$WORKBENCH_MEMORY_DIR/gone-key/topic.md"
+
+  run memory_orphans
+  [ "$status" -eq 0 ]
+  [ "$output" = "gone-key"$'\t'"1" ]
+}
+
 # ─── Backfill ────────────────────────────────────────────────────────────────
 
 @test "the backfill seeds the repos Claude Code recorded sessions in" {
@@ -1049,6 +1123,26 @@ assert workbench_projects.register('$TMPDIR/alpha')
   run "$REPO_ROOT/bin/otto-workbench" projects nonsense
   [ "$status" -eq 1 ]
   [[ "$output" == *"Usage: otto-workbench projects"* ]]
+}
+
+@test "projects prune reports an orphaned memory directory without a shell error" {
+  # memory_orphans (lib/projects.sh) calls _repo_key while walking
+  # project_repo_leaders — which only runs it when a repo is actually
+  # registered, so a repo needs to be live here for the call to happen at all.
+  # _repo_key lives in lib/ai/session-count.sh, which bin/otto-workbench must
+  # source itself, or the call fails with "command not found" rather than
+  # resolving.
+  export WORKBENCH_DATA_DIR="$TMPDIR/data"
+  mkdir -p "$WORKBENCH_STATE_DIR" "$WORKBENCH_DATA_DIR/memory/gone-key"
+  echo note > "$WORKBENCH_DATA_DIR/memory/gone-key/topic.md"
+  make_repo "$TMPDIR/alpha"
+  PROJECTS_EXCLUDED_PREFIXES=() run "$REPO_ROOT/bin/otto-workbench" --workbench-dir "$REPO_ROOT" projects add "$TMPDIR/alpha"
+  [ "$status" -eq 0 ]
+
+  run "$REPO_ROOT/bin/otto-workbench" projects prune
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"command not found"* ]]
+  [[ "$output" == *"gone-key (1 topic file(s))"* ]]
 }
 
 # ─── Consumers ───────────────────────────────────────────────────────────────

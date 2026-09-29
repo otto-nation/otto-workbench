@@ -54,7 +54,7 @@ BODY_PREVIEW_LENGTH = 500
 
 
 from config import workbench_projects
-from core import log, memory, sessions, workbench_paths
+from core import log, memory
 
 
 # ── Core functions ───────────────────────────────────────────────────────────

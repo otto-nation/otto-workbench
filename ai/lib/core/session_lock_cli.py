@@ -72,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     pid = args.pid if args.pid is not None else os.getppid()
 
     if args.release:
+        # Return value discarded on purpose, unlike --acquire below: a release
+        # that finds nothing to drop (already gone, already released) is not
+        # a failure worth a stderr diagnostic, only a failed *acquire* is.
         session_lock.release(worktree, pid)
         return 0
 

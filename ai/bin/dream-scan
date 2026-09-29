@@ -92,7 +92,7 @@ SIGNAL_PRIORITY = ["correction", "preference", "decision", "pattern", "review_fe
 
 
 from config import workbench_projects
-from core import log, memory, sessions, workbench_paths
+from core import log, memory, sessions
 
 
 # ── Core functions ───────────────────────────────────────────────────────────

@@ -3,12 +3,6 @@ set -e
 # Migration: carry per-project memory out of Claude's tree into the data root,
 # keyed by repo identity, and split the gate stamps out of it.
 #
-# _migration_repo_for_slug below leans on _encode_slug, _repo_key,
-# _gate_repo_dir and _gate_stamp_file, which live in lib/ai/session-count.sh
-# and are not otherwise on the migration framework's load path.
-# shellcheck source=../../../lib/ai/session-count.sh
-. "$LIB_SRC_DIR/ai/session-count.sh"
-#
 # Machine-scoped, so no work tree is passed: the sweep is over every slug under
 # ~/.claude/projects, and the orphans this is meant to report are exactly the
 # ones no work tree would reach.
@@ -27,6 +21,16 @@ set -e
 # reopen a window that has already closed.
 
 migration_20260930_memory_to_data_root() {
+  # Sourced here rather than at file scope: the framework sources every
+  # migration file to discover its function, so a file-scope source runs on
+  # every migration run including the ones that never call this. The helpers
+  # below — _encode_slug, _repo_key, _gate_repo_dir, _gate_stamp_file — live
+  # in lib/ai/session-count.sh and are on nothing else's load path here, and
+  # without them every slug resolves as an unresolvable orphan and no memory
+  # is carried at all.
+  # shellcheck source=../../../lib/ai/session-count.sh
+  . "$LIB_SRC_DIR/ai/session-count.sh"
+
   local projects_dir="$CLAUDE_DIR/projects"
 
   # NOOP rather than DEFERRED: a machine with no Claude projects tree has

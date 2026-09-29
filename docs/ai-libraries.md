@@ -151,96 +151,6 @@ permission to save can still be recovered.
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
 
-### agent/stall.py
-
-Tell an agent run that has stopped apart from one that is merely slow.
-
-`core.timeouts` argues at length that a bound on *duration* cannot work for
-work whose cost is whatever the input costs: a breach is indistinguishable
-from "the repository is large" or "this hook runs a test suite", and a fixed
-number there converts a big repo into a broken tool. That argument is right,
-and it is why no wall-clock timeout was put on agent runs when the rest of the
-review pipeline was fixed.
-
-What it leaves uncovered is a run that has genuinely stopped. One was observed
-silent for 38 minutes at 0.0% CPU, and nothing anywhere ended it: the turn and
-budget caps are counted at `turn_end`, which a wedged tool call never reaches,
-and Pi's bash tool has no default timeout of its own — its schema says
-"Timeout in seconds (optional, no default timeout)", and the model rarely
-passes one.
-
-So this bounds liveness rather than duration, which is a different predicate
-and not the one `timeouts` rejects. A large tree and a slow hook are both
-*working*, and this asks whether anything is.
-
-## Why the event gap alone is not the answer
-
-The obvious version — bound the gap between RPC events — does not work, and
-Pi's source is what says so. The bash tool drives its updates entirely from
-child output:
-
-    const handleData = (data) => {
-        if (!acceptingOutput) return;
-        output.append(data); scheduleOutputUpdate();
-    };
-
-with one unconditional opening update before the child starts and nothing
-periodic behind it. A command that runs for ten minutes printing nothing
-therefore emits exactly one update and then silence — the same bytes, on the
-same stream, as the hang above. Since the agent's commands run under a pipe
-rather than a tty, block buffering makes that the common case and not an
-exotic one: a `pytest` whose output has not yet filled its 8KB buffer, a
-`go build`, a `git clone` resolving deltas.
-
-A gap is therefore grounds for suspicion and never for a verdict.
-
-What makes the gap meaningful at all is that Pi has no heartbeat: there is no
-`setInterval` in either its RPC layer or its agent loop, so nothing arrives on
-the stream that the run did not do. A gap is silence about work, not a dropped
-keepalive.
-
-## What separates them
-
-Two measurements over the Pi process's descendants, either of which is
-evidence of work:
-
-| Case | CPU delta | pid churn | Verdict |
-|---|---|---|---|
-| Many short-lived children (a build) | 0.12s | yes | live |
-| One spinning child (busy-wait) | 2.69s | no | live |
-| Blocked, producing nothing (the hang) | 0.00s | no | stall |
-
-They are complementary rather than belt-and-braces. `ps` reports a process's
-own CPU time and a reaped child's is unrecoverable on this platform, so a
-workload made of many short children reads as idle by CPU alone and is caught
-only by churn; a single long-lived spinner never changes the pid set and is
-caught only by CPU.
-
-## Three things that would each defeat it
-
-The tree is walked by **PPID, not PGID**. Pi spawns every bash child
-`detached`, so each one leads its own process group and a pgid filter reads
-zero CPU for a maximally busy child — which would declare every long command a
-stall rather than none.
-
-The watch is armed **only during a tool call**. Waiting on the model is itself
-a silent zero-CPU stretch, routinely tens of seconds, and a watch left armed
-across it aborts healthy runs.
-
-Work that predates the call **does not count**. The descendant set is
-snapshotted when the watch arms and only pids outside it are measured, so a
-background process left running by an earlier turn cannot mask a stall
-indefinitely.
-
-## The spin case is deliberately not caught here
-
-A busy-wait deadlock burns CPU while emitting nothing, so the liveness test
-reads it as live. That is the test answering honestly — the process *is*
-running — so the answer is a second predicate rather than a fudge to the
-first: `ABSOLUTE_CAP` bounds any single tool call regardless of what it is
-doing. Keeping it separate is what stops it from weakening the liveness test
-into the duration bound `timeouts` rejects.
-
 ### agent/templates.py
 
 Where prompt templates live, and the one way to render one.
@@ -715,29 +625,20 @@ it can afford to carry.
 
 Running review-orchestrate and reporting what it did.
 
-The argv both review flows build, the call, and the two guards that decide a
+The argv both review flows build, the spawn, and the two guards that decide a
 run failed. One module because the flows differ in how they *reach* this point
 — which worktree, which checks, which prompts — and not at all in what happens
 once they are here.
 
-This was the whole of the process boundary, and it is now an in-process call
-through `core.publishing.call_entry_point`. Nothing above this module names
-`review-orchestrate` or constructs its argv, which is what made the
-conversion a change to one function body.
+It is also the whole of the process boundary. #909's tranche 4 replaces the
+spawn with an in-process call, and when it does, this file is what it rewrites:
+nothing above it names `review-orchestrate`, constructs argv, or knows that a
+review is produced by a subprocess at all.
 
-The call goes through layer 1 rather than through `cli.dispatch`, which is
-what `pr` uses for the same purpose: this is layer 6 and cannot import layer
-8. That constraint is why the seam lives in `core.publishing` at all.
-
-The argv survives the spawn. Orchestration takes about thirty flags, and they
-are the contract `review_invoke_test.py` pins one at a time; handing over a
-list that its own parser reads keeps that surface, and keeps `ai/bin/review-
-orchestrate` a genuine equal of this path rather than a second entry point
-drifting from it.
-
-`--post` on that argv still does not mean "publish this review" — it tells the
-orchestration that its fix pass may push. The gate it opens used to be scoped
-by this being a subprocess; `publishing.call_entry_point` scopes it now.
+The boundary is not incidental. `--post` on that argv does not mean "publish
+this review" — it tells the orchestrate process that its fix pass may push,
+because `core.publishing`'s gate is process-wide and has no `disable()`. Today
+a subprocess is what scopes it to one run.
 
 ### review/outcome.py
 
@@ -1442,21 +1343,17 @@ people the moment it lands, and a wrong one has to be retracted in front of the
 reviewer. So the default is to draft: callers print what they would have sent and
 report failure, and nothing leaves the machine until the entrypoint opts in.
 
-One flag owns this. Modules that write externally (`pr.comments`,
-`review.issue`) ask here rather than carrying their own switch.
-
-The decision is scoped to a **run**, not to the process. `pr fix` runs a
-review, a CI pass and a describe pass in one process, so the dispatch seam
-wraps each handler in `scope()` and whatever that handler opened closes again
-on the way out — what one pass was told to publish is not an authorisation for
-the next. Until in-process dispatch landed, the subprocess boundary was doing
-that scoping by accident, and there was no way to close the gate at all.
+`run` owns this for one invocation. Modules that write externally
+(`pr.comments`, `review.issue`) ask here rather than carrying their own switch.
+Nested `run` calls save and restore, so an inner command cannot inherit an
+outer gate it did not open, and cannot close one it did not own.
 
 A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the
-machine, whatever the entrypoint was told. `hold` closes the gate for good and
-is not restored when a run exits, so the two only ever compose in the safe
-direction at both scopes.
+machine, whatever the entrypoint was told. `hold` closes the gate for the rest
+of that run, so the two only ever compose in the safe direction. The next `run`
+starts clean: both the flag and the hold reset, or a hold would outrank a
+`--post` nobody in that invocation asked to refuse.
 
 What that means at the CLI: `pr comments` writes nothing outward unless you
 pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
@@ -1470,11 +1367,9 @@ thing by it. Both commit what their agent fixed and both draft the push without
 it, so `--post` reads as "publish what this run produces" wherever it appears
 next to a fix pass — as against `pr review --post` on its own, which publishes
 the review already on disk. The review fix pass runs inside
-`review-orchestrate`, which is reached before any posting decision would
+`review-orchestrate`, a subprocess spawned before any posting decision would
 otherwise be made, so `claude-review` forwards the flag to it rather than
-opening a gate the pass would never see. That forwarding predates in-process
-dispatch and survives it: the flag is how the pass learns, and `scope()` is
-what keeps the answer from outliving the run.
+opening a gate the pass would never see.
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
@@ -1984,26 +1879,6 @@ summary comment that renders the same deferral as a row
 (`pr.summary_render`) — see `finalize_deferred` for the one ordering
 dependency between that surface and this one.
 
-### review/finding_issue.py
-
-Filing a tracker issue for the findings a review left unresolved.
-
-The threads half of this has existed for a while: `pr comments --finish --track`
-files one tracking issue for the review comments a fix pass deferred. Findings
-had no path to a tracker at all — the outcome was annotated on the review
-markdown, which lives under `~/.local/state/workbench/reviews/` on one machine,
-and named in a commit message, which is not a tracker. Both are gone the moment
-the branch merges.
-
-Selection is the threads convention rather than a second one: nothing is filed
-unless `--track` names it or `--track-all` is passed, and nothing is published
-unless the publishing gate is open. Filing posts under the operator's name and
-a deferral is a per-finding judgement, so neither is a sensible default.
-
-What it does not do is decide *which* findings are filable. That is
-`ReviewMeta.open_findings`, written by the fix pass, because a deferred finding
-leaves no trace on the document to read back.
-
 ### review/issue.py
 
 Issue tracking integration for claude-review.
@@ -2424,28 +2299,6 @@ snapshotted before the pass ran, so it learns of the threads the pass resolved
 only from the delta applied here. A second save would write the fix record
 against a tally that had not moved, and `pr status` would report threads still
 open that GitHub has already closed.
-
-### pr/follow_ups.py
-
-What this branch deferred, and whether a reviewer can see it.
-
-A follow-up filed while working on a branch is the one artifact of that work
-that outlives it: the branch merges, the review file is reclaimed, and the issue
-stays open. Until now nothing recorded that a filing happened — `PRState.fix`
-carries three fields for the single aggregate issue the comment pass files, and
-a follow-up filed by a self-review, a CI pass, or by hand left no trace at all.
-The trail saw the subprocess, never the intent.
-
-So this is a ledger rather than a counter: each entry records what was filed,
-which run filed it, what the branch looked like at the time, why the work was
-deferred instead of done, and whether it has reached the PR description. The
-last of those is what a reviewer actually depends on, and it is the only field
-anything else writes after the entry is created.
-
-Keyed on the branch, not the PR, because `pr/target.py` keys its directory on
-`(repo-key, branch-slug)` with no network call — which means entries accrue from
-the moment work starts, including before a PR exists. That is when a self-review
-files the most.
 
 ### pr/history_rewrite.py
 
@@ -2883,20 +2736,6 @@ row cannot be told apart from.
 only, because the CLI reports cost per model but tokens per session — leaving the
 token columns blank beats counting one session's tokens against every model it
 used.
-
-`--by phase` is the one breakdown that reports turns, and the only one it could
-be: a turn budget is set per phase, so a distribution rolled up by script or by
-day mixes a 15-turn review agent with an 80-turn fix pass and describes neither.
-Its `AT CAP` column is the share of a phase's runs that spent their whole
-budget, which is the reading that says whether the budget is calibrated — a
-phase hitting its cap on a third of runs is one whose constant is too low.
-
-That column is blank, not zero, for a phase whose records never said what they
-were allowed. Spent turns and the allocated budget shared one key until
-`record` split them, so every record written before that carries a number with
-no way to tell which it is; counting those as under-cap would report every
-phase as comfortably sized on the strength of records that cannot say. The
-column fills in as new runs land.
 
 ### agent/vertex_quota.py
 
@@ -3403,6 +3242,16 @@ Both halves are here, below any package that knows what a row *means*. What a
 cell says is a domain question; that a pipe inside one has to be escaped, and
 that a link renders as `[label](url)`, is not.
 
+### core/memory.py
+
+Per-repo authored memory, keyed by shared git dir rather than cwd.
+
+Memory topic files live under ``workbench_paths.memory_dir() / repo_key()``.
+The key is ``<canonical_slug[:64]>-<sha256(identity)[:8]>`` so three paths
+that collide under a bare slug — ``/Users/x/a-b/c``, ``/Users/x/a/b/c``,
+``/Users/x/a.b/c`` — still get three directories. Identity is
+``git_layout.shared_dir``, never Python's process-randomised ``hash()``.
+
 ### core/module_proxy.py
 
 A command module standing in front of the submodules its flow is spread over.
@@ -3650,12 +3499,10 @@ than read the file, call ``is_held``.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
-so invoking any of them directly is guarded too. When ``pr`` dispatches to one
-it resolves the same target, computes the same key, finds it in
-``WORKBENCH_RUN_LOCK`` and passes through as a no-op instead of deadlocking
-against the lock its own caller holds. That holds whether the delegate is a
-child process or an in-process call — the marker is process environment, and
-re-claiming a lock this process already holds is a no-op by construction.
+so invoking any of them directly is guarded too. When ``pr`` launched them they
+resolve the same target, compute the same key, find it in
+``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead of deadlocking
+against the lock their own parent holds.
 
 That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
 are the remaining delegates and take no lock of their own, for a reason that is
@@ -3722,6 +3569,60 @@ for serialization and type-hint-driven reconstruction for deserialization.
 not the only thing that has to know what an annotation means — `schema_gen`
 describes the same hints to a model and dispatches on the same answer.
 
+### core/session_lock.py
+
+Which worktrees an interactive agent session is editing right now.
+
+An unattended fix pass and a person editing in Pi or Claude Code are two
+writers in one working tree, and neither can see the other. The pass commits
+what it finds, so a half-finished edit lands in a commit nobody reviewed.
+
+The three locks in this package answer three different questions, and taking
+the wrong one is worse than taking none:
+
+``run_lock``
+    One workbench command per checkout — an exclusive flock held for the
+    length of a ``pr`` run.
+``tree_lock``
+    A validator is *reading* this tree, so nothing may edit it. Both edit
+    guards refuse writes while it is held, so a session that took this one
+    would block its own edits.
+``session_lock``
+    This module. A person is editing here, so an unattended pass must not
+    commit.
+
+A record, not a flock, and that is the design rather than a shortcut. A flock
+is held by a process, and under Claude Code there is no process to hold one:
+``SessionStart`` and ``SessionEnd`` are short-lived subprocesses whose locks
+die with the hook. Holding one would take a daemon per session, and a daemon
+that dies while its session lives is a lock that lies. So the holder is the
+harness process itself, named rather than attached to.
+
+Kill-safety comes from the pid instead of the kernel. A record is live only
+while its pid exists *and* was started at the recorded time: ``ps -o lstart=``
+returns non-zero for a dead pid, so a session killed with SIGKILL leaves a
+record the next reader prunes, and a pid recycled onto an unrelated process
+fails the start-time match rather than impersonating the session that died.
+That is strictly more than a bare ``os.kill(pid, 0)`` — which is all
+``tree_lock._alive`` needs, because there the flock is the verdict and the pid
+only names a holder in a diagnostic. Here the record *is* the verdict.
+
+Several sessions in one worktree are legitimate, so the file is JSONL with one
+object per holder, as ``tree_lock``'s is.
+
+### core/session_lock_cli.py
+
+Command-line face of the interactive session lock.
+
+Separate from session_lock.py so the library stays importable without argparse
+ceremony, and so each harness's hook has one file to invoke.
+
+Unlike ``tree_lock_cli``, nothing here wraps a child process. That module's
+lock is a flock, which lives only while a process holds the descriptor, so the
+work has to run underneath it. This one records a pid and returns — which is
+the whole reason a record was chosen: the harness process is the holder, and a
+hook that exits immediately can still name it. See ``session_lock``'s header.
+
 ### core/sessions.py
 
 Session transcripts, across every agent harness on this machine.
@@ -3750,19 +3651,17 @@ normalises both to ``UserMessage`` so consumers never branch on harness.
 The slug a directory is named for is deliberately never parsed back into a path.
 Claude's transform maps every non-alphanumeric to ``-``, so ``a-b`` and ``a_b``
 both become ``a-b`` and the original is unrecoverable; Pi's transform
-(``pi_session_slug``) only replaces ``/``, ``\`` and ``:`` — a dot, a space, an
+(``pi_session_slug``) only replaces ``/``, ``\\`` and ``:`` — a dot, a space, an
 accent, an emoji all survive verbatim — so the two harnesses do not even agree
 on the encoding, and the harness-neutral ``canonical_slug`` (which replaces
 everything outside ``[A-Za-z0-9_]``) matches neither one's store. Both write
 the cwd *into* the transcript, which is a fact rather than an inference, so
 ``project_path_of`` reads that. The slug is written, never read.
 
-Memory is the one thing here that is genuinely Claude-shaped: it still lives in
-that harness's tree, one ``memory/`` directory per project slug. That is not a
-statement about which harness a session ran in — sessions come from every
-harness in the table — and moving those artifacts out is tracked separately.
-``memory_dirs`` is here so the location is stated once rather than at each
-consumer, which is how the transform came to be spelled four different ways.
+Memory is no longer addressed from here. It is keyed by repo identity under
+the data root, which every harness reads the same way — see
+``ai/lib/core/memory.py``. What remains here is the session stores, which are
+genuinely harness-shaped: one directory per harness, per cwd slug.
 
 ``lib/ai/session-count.sh`` is the shell expression of the same model, for the
 Stop-hook gates that cannot afford a Python start-up. ``tests/sessions_ssot.bats``
@@ -3924,14 +3823,11 @@ one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
 repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
 terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
 
-One user command is several runs: ``pr review`` calls ``claude-review``,
-which calls ``review-orchestrate``, and each opens its own trail with its own
+One user command is several processes: ``pr review`` spawns ``claude-review``,
+which spawns ``review-orchestrate``, and each opens its own trail with its own
 ``invocation``. They are tied together by ``root`` — the invocation of the
-outermost recorded run, carried in ``TRAIL_ROOT_ENV`` and recorded on every
-event a descendant writes. The variable is process environment, which is what
-lets the correlation survive whether the descendant is a child process or an
-in-process call: the root is published before a nested ``Trail.start`` reads
-it either way. ``otto-log show <root>`` renders
+outermost recorded run, carried down the process tree in ``TRAIL_ROOT_ENV`` and
+recorded on every event a descendant writes. ``otto-log show <root>`` renders
 the whole command as one timeline and ``otto-log query --root <id>`` selects it,
 while ``--invocation`` still addresses one process on its own.
 
@@ -4900,41 +4796,6 @@ Usage:
   claude-review --self [<pr_url_or_number>]
   claude-review [--self] --recover [<pr_url_or_number>]
 
-### cli/dispatch.py
-
-Call a `pr` subcommand's handler in this process.
-
-`pr` used to run its delegates as child processes: build an argv, spawn
-`ai/bin/<script>`, read the returncode. This module is what replaced the
-spawn, and its job is to keep the two properties the process boundary was
-providing for free — because those were load-bearing, and nothing else was
-holding them.
-
-**However a handler ends, the caller gets an int.** A child that called
-`sys.exit` was still just a returncode to its parent. In-process, that same
-`sys.exit` is a `SystemExit` unwinding through `pr` itself: a review that
-exits 0 because the operator declined a prompt would take the whole of
-`pr fix` with it, skipping the CI and describe passes and reporting success.
-
-**What a handler publishes is scoped to that handler.** `publishing` is a
-process global. Five entry points call `enable()` when their own `--post`
-says so, and as separate processes that was the end of it. In one process,
-`pr fix`'s review pass opening the gate would leave it open for the describe
-pass, which would then edit the PR body nobody asked it to post.
-
-Both are enforced by `core.publishing.call_entry_point`, which every caller
-invokes directly — there is deliberately no `dispatch.call` alias. Two names
-for one seam means a test has to know which one its subject reached for, and
-a patch on the wrong one passes while testing nothing. The machinery is at
-layer 1 because `review.invoke` needs it too and cannot import this package.
-
-What lives here is the argv side: which flags a delegate is told to resolve,
-and how a bare token in its argv is classified before anyone knows what the
-delegate's flags mean.
-
-Neither property is the delegate's to maintain. A handler that forgets either
-is still correct, and a new one cannot reintroduce the leak by omission.
-
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.
@@ -4957,14 +4818,19 @@ importable module, so `CommandSpec.handler` could not name them. They live
 here so the field means one thing across the nine: a `"<module>:<attr>"`
 string that importlib can resolve, or None.
 
-`cmd_fix`'s three passes are in-process calls through `cli.dispatch`.
-`cmd_create` is the one surviving spawn in this module and stays one: it runs
-`task pr:create`, which is a Taskfile target and not a Python delegate.
+Still spawning. `cmd_fix` runs `claude-review`, `ci-check` and `pr-describe`
+as child processes, and `cmd_create` still shells out to `task pr:create`.
+#909 T7 commit 4c turns those into calls; this module is the seam that makes
+the four importable without changing how they run.
 
-`cmd_review` and `cmd_comments` stay in `ai/bin/pr`. Both are argv shaping
-ahead of a delegate the registry already names — `--self` injection, mode
-routing — rather than commands in their own right, which is why the registry
-points `review` and `comments` at the delegates themselves.
+Each spawn is *given* the directory to run from rather than deriving one from
+`__file__`. Under `WORKBENCH_AI_LIB_DIR` this module resolves inside the
+pinned checkout while the entry point's own BIN_DIR does not, so a path
+derived here would spawn a different tree's delegates than `ai/bin/pr` does.
+Matches `cli.review_modes` and `review.publish.post`.
+
+`cmd_review` and `cmd_comments` stay in the binary: they call `_run_delegate`,
+which this commit does not move. Their `CommandSpec.handler` is None until 4c.
 
 ### cli/pr_describe.py
 
@@ -5033,16 +4899,11 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All nine name an importable function, resolved and called through
-`core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
-directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
-`cli.review_modes`'s `post`/`repair` for the rest.
-
-`script` outlives the spawn it used to name. Nothing in `pr` runs it any
-more — dispatch imports `handler` instead — but MCP still executes the shim
-by path, so the field is the declaration of which `ai/bin` name that is. The
-command/domain/phase join in `tests/test_cli_join.py` is what keeps it from
-going stale now that no `pr` code path would notice if it did.
+Seven of the nine name an importable function today. `review` and `comments`
+are None — their wrappers (`cmd_review`, `cmd_comments`) still live in
+`ai/bin/pr` and call `_run_delegate`, which this commit does not move. Filling
+those two is T7 commit 4c; an honest None beats a string that would resolve
+to the wrong callable.
 
 ### cli/review_modes.py
 
@@ -5054,20 +4915,14 @@ an argv resolves rather than a constant — could not be stated anywhere a
 library module could read it. `cli.registry` imports `need_for` from here for
 exactly that reason.
 
-`--post` and `--repair` call `review-post` and `review-rebuild` in this
-process, through `core.publishing.call_entry_point` — the seam itself rather
-than `cli.dispatch`, which wraps it. These two build their own argv and want
-only the call, and reaching for the dispatcher would close a cycle:
-`cli.registry` imports this module for the one need an argv resolves.
+Still spawning: `--post` and `--repair` run `review-post` and `review-rebuild`
+as child processes, exactly as the binary did. #909 T7 commit 4 makes them
+calls.
 
-Both used to be spawns; `--repair` also used to capture the rebuild's stdout
-and grep it for a `REVIEW_SUMMARY:` marker, which `cli.review_rebuild` has
-never written — the domain is synced from the file the rebuild produced
-instead.
-
-Handlers still take `bin_dir`. Nothing in this module spawns any more, but the
-four share one signature and `summary` never needed it either; the parameter
-is the mode-handler contract rather than a path any of them uses today.
+Each handler is *given* the directory to spawn from rather than deriving one,
+matching `review.publish.post`. Under `WORKBENCH_AI_LIB_DIR` this module sits
+in the pinned checkout while the entry point does not, so a path derived here
+would spawn a different tree's delegates than `ai/bin/pr` does.
 
 ### cli/review_orchestrate.py
 

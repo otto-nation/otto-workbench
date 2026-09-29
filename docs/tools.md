@@ -53,6 +53,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
 | `claude-edit-guard` | PreToolUse hook for Edit/Write — blocks edits on main/master unless gitignored, and edits to a tree a validator holds |
+| `claude-session-lock` | Session hooks that record this session as editing its worktree — what stops an unattended fix pass committing over it |
 | `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |
@@ -62,6 +63,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI |
 | `validate-all` | Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI |
 | `with-tree-lock` | Declares a tree under validation while a command runs — the lock that tells editors a gate is in flight |
+| `with-session-lock` | Records that an interactive agent session is editing a worktree — the lock that stops an unattended fix pass committing over it |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |

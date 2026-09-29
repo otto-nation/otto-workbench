@@ -72,9 +72,19 @@ _run_migration() {
 
   [ -f "$WORKBENCH_DATA_DIR/memory/$key/topic.md" ]
   [ "$(cat "$WORKBENCH_DATA_DIR/memory/$key/topic.md")" = "some note" ]
-  # renamed rather than deleted
+  # renamed rather than deleted, and the topic file came with it: memory is
+  # authored and has no producer to write it again, so the migration leaves
+  # the source for a person to delete once they have looked.
+  #
+  # Counted through a glob expansion rather than `[ -d ... ]` on the pattern:
+  # `-d` takes one operand, so against a pattern it tests the literal string
+  # when nothing matches and silently passes on whichever path sorts first
+  # when several do.
+  local migrated=("$HOME/.claude/projects/$SLUG"/memory-migrated-*)
+  [ "${#migrated[@]}" -eq 1 ]
+  [ -d "${migrated[0]}" ]
+  [ -f "${migrated[0]}/topic.md" ]
   [ ! -d "$MEM_DIR" ]
-  [ -d "$HOME/.claude/projects/$SLUG"/memory-migrated-* ]
 }
 
 @test "does not report a registered repo's memory as orphaned" {

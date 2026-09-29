@@ -156,12 +156,6 @@ class TestSampleSubtree:
     make the detector fire on every long command rather than on none.
     """
 
-    @staticmethod
-    def _spin():
-        return subprocess.Popen(
-            [sys.executable, "-c", "x=0\nwhile True: x+=1"], start_new_session=True,
-        )
-
     def test_a_detached_busy_descendant_is_attributed_to_the_root(self):
         parent = subprocess.Popen(
             [sys.executable, "-c",

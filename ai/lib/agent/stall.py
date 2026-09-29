@@ -93,7 +93,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Container, Mapping
+from collections.abc import Callable, Container, Mapping
 from dataclasses import dataclass, field
 
 from core import log, proc, timeouts
@@ -317,7 +317,7 @@ class StallWatch:
     """
 
     root_pid: int
-    send: object
+    send: Callable[[dict], bool]
     prefix: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _wake: threading.Event = field(default_factory=threading.Event)

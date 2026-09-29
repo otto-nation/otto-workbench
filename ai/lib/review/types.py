@@ -611,6 +611,11 @@ class PreflightData:
     delta_files: list[str] = field(default_factory=list)
     # Review effort, with deletions weighted below additions by
     # `git.numstat.weighted_lines`. This is what sizes the run.
+    #
+    # The weighting rounds to the nearest int, so a lone deleted line (weight
+    # 0.25) rounds to zero here even though `numstat`'s own reasoning is that
+    # a deletion is "not free" — that argument holds in aggregate over a diff,
+    # not for one deleted line in isolation.
     delta_weighted_lines: int = 0
     # What the delta actually contains. Reported rather than acted on: the
     # trail's line count has to keep meaning the same thing across runs from

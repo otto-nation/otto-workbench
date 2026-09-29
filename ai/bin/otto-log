@@ -323,7 +323,12 @@ STATS_GROUPINGS = ("script", "task", "model", "day", "phase")
 # a turn distribution is only readable against one: rolled up by script or by
 # day it mixes a 15-turn review agent with an 80-turn fix pass and the median
 # describes neither.
+#
+# Must be one of STATS_GROUPINGS above — stats_columns() below compares `by`
+# against this literal, and a value not in STATS_GROUPINGS can never be
+# reached from the CLI's `--by` choices.
 _TURN_GROUPING = "phase"
+assert _TURN_GROUPING in STATS_GROUPINGS
 
 # A session can span several models. The CLI reports cost per model but tokens only
 # per session, so grouping by model splits the cost and leaves the token columns

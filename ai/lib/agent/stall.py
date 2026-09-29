@@ -224,14 +224,24 @@ def sample_subtree(root_pid: int) -> Sample:
     children: dict[int, list[int]] = {}
     for pid, ppid, _ in rows:
         children.setdefault(ppid, []).append(pid)
+    seen = _walk(root_pid, children)
+    return Sample(cpu_by_pid={pid: cpu for pid, _, cpu in rows if pid in seen})
+
+
+def _walk(root_pid: int, children: dict[int, list[int]]) -> set[int]:
+    """Every pid reachable from *root_pid* by PPID edges, the root included.
+
+    Iterative rather than recursive: the depth is whatever the agent's tools
+    happen to nest to, and a shell pipeline inside a script inside a hook is
+    not a bound anything here controls.
+    """
     seen = {root_pid}
     stack = [root_pid]
     while stack:
-        for child in children.get(stack.pop(), []):
-            if child not in seen:
-                seen.add(child)
-                stack.append(child)
-    return Sample(cpu_by_pid={pid: cpu for pid, _, cpu in rows if pid in seen})
+        unseen = [c for c in children.get(stack.pop(), []) if c not in seen]
+        seen.update(unseen)
+        stack.extend(unseen)
+    return seen
 
 
 def shows_work(

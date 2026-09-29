@@ -72,15 +72,7 @@ otto-log stats                      # last 7 days, grouped by script
 otto-log stats --since 24h          # any h/d/m window
 otto-log stats --by task            # or: script, model, day, phase
 otto-log stats --by day --json      # one JSON object per row
-otto-log stats --by phase           # adds turn distribution against the budget
 ```
-
-`--by phase` is the one grouping that reports turns, because a turn budget is
-set per phase and a median mixing a 15-turn review agent with an 80-turn fix
-pass describes neither. `AT CAP` is the share of runs that spent their whole
-budget, and reads `—` for a phase whose records do not say what they were
-allowed — which is every record written before the budget became its own
-ledger key.
 
 What is recorded, and what each column means, is documented on
 [`agent/usage.py`](ai-libraries.md#agentusagepy).
